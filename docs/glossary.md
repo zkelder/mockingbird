@@ -349,11 +349,19 @@ Local summaries of outdoor activity over time.
 ## Observation Control
 
 The Stream-page **Start observing** / **Stop observing** action and its
-compact camera/Observation Engine health. It runs the accepted Observation
-Engine against a paired Camera Node directly from the app; no CLI
-acceptance tool is required. Stopping is bounded and always disables
-candidate authority. It never exposes internal Stage numbers, CUDA, or
-ONNX vocabulary in its basic state.
+compact camera/observation health, unified across every currently-supported
+Stream type (Unified Observation Experience v1). A paired Camera Node
+reuses the accepted frame-driven Observation Engine directly from the app;
+an RTSP, Linux local USB, or Windows DirectShow Stream reuses the existing
+durable monitoring policy; a Source configured with a plain still-image URL
+reuses the existing Snapshot monitor; a Stream with no integrated runtime
+reports that honestly instead of a Start button that would only fail. No
+CLI acceptance tool is required for any of them. Stopping is bounded, works
+the same way for every lane, and a Camera Node Stream stopping always
+disables candidate authority. It never exposes internal Stage numbers,
+CUDA, ONNX, or runtime-provider vocabulary in its basic state; that detail
+stays in its collapsed advanced diagnostics. See
+[unified-observation-panel-contract.md](unified-observation-panel-contract.md).
 
 ## Stream Monitoring Policy
 

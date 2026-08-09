@@ -1333,26 +1333,41 @@ class ObservationSessionCounts(BaseModel):
 
 
 class ObservationSessionStatusResponse(BaseModel):
-    """The simple observation control's whole product contract: current
-    state, camera health, and Observation Engine health for one Stream.
-    Side-effect-free to read; only start/stop mutate it. Basic fields only
-    (`state`, `observing`, `message`, `camera_connected`,
-    `camera_message`); `advanced` is the bounded, optional diagnostics
-    surface (provider ids, activation boundary, suppressed-candidate
-    reasons) the basic UI never needs to render."""
+    """The unified Observation panel's whole product contract (Unified
+    Observation Experience v1): current state, camera health, and
+    observation-capability health for one Stream, regardless of which
+    existing runtime actually backs it (Camera Node's frame-driven engine,
+    existing backend-owned live monitoring, or the existing Snapshot Source
+    monitor). Side-effect-free to read; only start/stop mutate it. Basic
+    fields only (`state`, `observing`, `message`, `camera_connected`,
+    `camera_message`, `runtime_available`, `setup_action`, `retry_action`);
+    `advanced` is the bounded, optional diagnostics surface (runtime kind,
+    provider ids, activation boundary, suppressed-candidate reasons) the
+    basic UI never needs to render."""
 
     stream_id: str
-    state: Literal["stopped", "starting", "observing", "stopping", "error"]
+    state: Literal["stopped", "starting", "observing", "stopping", "needs_attention"]
     observing: bool
     message: str
     camera_connected: bool
     camera_message: str
     engine_available: bool
     engine_message: str
+    # False only when this Stream has no integrated observation runtime at
+    # all (an honest unavailable state rather than a Start button that
+    # would only fail).
+    runtime_available: bool = True
     started_at: datetime | None = None
     stopped_at: datetime | None = None
     stopped_reason: str | None = None
     last_candidate_visit_id: str | None = None
+    last_useful_frame_at: datetime | None = None
+    # When set, the basic UI shows the one relevant existing setup action
+    # (Edit camera setup) instead of a Start button that cannot succeed yet.
+    setup_action: Literal["edit_camera_setup"] | None = None
+    # True only for the existing live-monitoring lane's own bounded
+    # runtime/retry action, reusing `POST .../runtime/retry` unchanged.
+    retry_action: bool = False
     counts: ObservationSessionCounts = Field(default_factory=ObservationSessionCounts)
     advanced: dict[str, object] = Field(default_factory=dict)
 

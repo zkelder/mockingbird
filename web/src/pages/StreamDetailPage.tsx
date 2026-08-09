@@ -9,7 +9,6 @@ import {
 import { apiClient } from "../api/client";
 import type {
   Event,
-  CameraHealthDetailResponse,
   LocalCameraFrameCaptureResponse,
   LiveCameraSessionStatus,
   LiveMotionEvaluateResponse,
@@ -21,9 +20,7 @@ import type {
   SourceSetupReviewResponse,
   SpeciesCandidatePack,
   Stream,
-  StreamMonitoringPolicy,
   StreamPlaybackStatus,
-  StreamRuntimeStatus,
   StreamSpeciesCandidatePackSelection,
   StreamVisitSummary,
   Visit,
@@ -317,35 +314,6 @@ function hasRealLivePlayback(status?: StreamPlaybackStatus | null): boolean {
     isWindowsDshowBridgePlayback(status) ||
     isCameraNodePlayback(status)
   );
-}
-
-function cameraHealthLabel(state: CameraHealthDetailResponse["health"]["state"]): string {
-  return {
-    healthy: "Healthy",
-    starting: "Starting",
-    waiting_for_capacity: "Waiting for capacity",
-    camera_unavailable: "Camera unavailable",
-    no_recent_frame: "No recent frame",
-    evidence_storage_degraded: "Evidence storage degraded",
-    recovering: "Recovering",
-    stopped: "Monitoring stopped",
-    setup_incomplete: "Setup incomplete",
-  }[state];
-}
-
-function cameraHealthTone(
-  state: CameraHealthDetailResponse["health"]["state"],
-): "good" | "review" | "quiet" {
-  if (state === "healthy") return "good";
-  if (state === "starting" || state === "stopped") return "quiet";
-  return "review";
-}
-
-function frameAgeLabel(seconds?: number | null): string {
-  if (seconds == null) return "Not available";
-  if (seconds < 60) return "Under a minute";
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes} min${minutes === 1 ? "" : "s"}`;
 }
 
 function supportsLiveMotionMonitoring(status?: StreamPlaybackStatus | null): boolean {
@@ -689,19 +657,6 @@ export function StreamDetailPage({
   const [showLiveZones, setShowLiveZones] = useState(true);
   const [liveSession, setLiveSession] = useState<LiveCameraSessionStatus | null>(null);
   const [liveSessionError, setLiveSessionError] = useState<string | null>(null);
-  const [monitoringPolicy, setMonitoringPolicy] =
-    useState<StreamMonitoringPolicy | null>(null);
-  const [runtimeStatus, setRuntimeStatus] = useState<StreamRuntimeStatus | null>(null);
-  const [cameraHealth, setCameraHealth] = useState<CameraHealthDetailResponse | null>(null);
-  const [cameraHealthError, setCameraHealthError] = useState<string | null>(null);
-  const [isLoadingCameraHealth, setIsLoadingCameraHealth] = useState(true);
-  const [isValidatingCameraHealth, setIsValidatingCameraHealth] = useState(false);
-  const [monitoringContinuityError, setMonitoringContinuityError] =
-    useState<string | null>(null);
-  const [isLoadingMonitoringContinuity, setIsLoadingMonitoringContinuity] =
-    useState(true);
-  const [isUpdatingMonitoringContinuity, setIsUpdatingMonitoringContinuity] =
-    useState(false);
   const [isStartingLiveSession, setIsStartingLiveSession] = useState(false);
   const [isStoppingLiveSession, setIsStoppingLiveSession] = useState(false);
   const [captureResult, setCaptureResult] = useState<LocalCameraFrameCaptureResponse | null>(null);
@@ -1101,72 +1056,6 @@ export function StreamDetailPage({
     }
   }
 
-  async function setDurableMonitoringEnabled(enabled: boolean) {
-    setIsUpdatingMonitoringContinuity(true);
-    setMonitoringContinuityError(null);
-    try {
-      const result = await apiClient.updateStreamMonitoringPolicy(streamId, {
-        enabled,
-        idempotency_key:
-          globalThis.crypto?.randomUUID?.() ??
-          `monitoring-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      });
-      setMonitoringPolicy(result.policy);
-      setRuntimeStatus(result.runtime);
-      const health = await apiClient.getStreamCameraHealth(streamId).catch(() => null);
-      if (health) setCameraHealth(health);
-    } catch (caught) {
-      setMonitoringContinuityError(
-        caught instanceof Error ? caught.message : "Could not update monitoring.",
-      );
-    } finally {
-      setIsUpdatingMonitoringContinuity(false);
-    }
-  }
-
-  async function retryDurableMonitoring() {
-    setIsUpdatingMonitoringContinuity(true);
-    setMonitoringContinuityError(null);
-    try {
-      const result = await apiClient.retryStreamMonitoring(streamId, {
-        idempotency_key:
-          globalThis.crypto?.randomUUID?.() ??
-          `monitoring-retry-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-      });
-      setMonitoringPolicy(result.policy);
-      setRuntimeStatus(result.runtime);
-      const health = await apiClient.getStreamCameraHealth(streamId).catch(() => null);
-      if (health) setCameraHealth(health);
-    } catch (caught) {
-      setMonitoringContinuityError(
-        caught instanceof Error ? caught.message : "Could not retry monitoring.",
-      );
-    } finally {
-      setIsUpdatingMonitoringContinuity(false);
-    }
-  }
-
-  async function validateCameraHealthSetup() {
-    if (!detail) return;
-    setIsValidatingCameraHealth(true);
-    setCameraHealthError(null);
-    try {
-      const [setupReview, playback, health] = await Promise.all([
-        apiClient.getSourceSetupReview(detail.stream.source_id),
-        apiClient.getStreamPlaybackStatus(detail.stream.id),
-        apiClient.getStreamCameraHealth(detail.stream.id),
-      ]);
-      setDetail((current) => current ? { ...current, setupReview, playback } : current);
-      setCameraHealth(health);
-    } catch {
-      setCameraHealthError(
-        "Could not validate saved camera setup. MockingBird did not start a camera or change monitoring.",
-      );
-    } finally {
-      setIsValidatingCameraHealth(false);
-    }
-  }
-
   useEffect(() => {
     if (detail?.stream.id !== streamId) {
       return;
@@ -1223,69 +1112,6 @@ export function StreamDetailPage({
     recentVisitsRefreshToken,
     streamId,
   ]);
-
-  useEffect(() => {
-    let isMounted = true;
-    setMonitoringPolicy(null);
-    setRuntimeStatus(null);
-    setMonitoringContinuityError(null);
-    setIsLoadingMonitoringContinuity(true);
-
-    async function loadMonitoringContinuity() {
-      try {
-        const [policy, status] = await Promise.all([
-          apiClient.getStreamMonitoringPolicy(streamId),
-          apiClient.getStreamRuntimeStatus(streamId),
-        ]);
-        if (isMounted) {
-          setMonitoringPolicy(policy);
-          setRuntimeStatus(status);
-        }
-      } catch (caught) {
-        if (isMounted) {
-          setMonitoringContinuityError(
-            caught instanceof Error
-              ? caught.message
-              : "Could not load monitoring continuity status.",
-          );
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoadingMonitoringContinuity(false);
-        }
-      }
-    }
-
-    void loadMonitoringContinuity();
-    return () => {
-      isMounted = false;
-    };
-  }, [streamId]);
-
-  useEffect(() => {
-    let isMounted = true;
-    setCameraHealth(null);
-    setCameraHealthError(null);
-    setIsLoadingCameraHealth(true);
-
-    async function loadCameraHealth() {
-      try {
-        const health = await apiClient.getStreamCameraHealth(streamId);
-        if (isMounted) setCameraHealth(health);
-      } catch {
-        if (isMounted) {
-          setCameraHealthError("Could not refresh saved camera health. Existing camera controls are unchanged.");
-        }
-      } finally {
-        if (isMounted) setIsLoadingCameraHealth(false);
-      }
-    }
-
-    void loadCameraHealth();
-    return () => {
-      isMounted = false;
-    };
-  }, [streamId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -2595,19 +2421,6 @@ export function StreamDetailPage({
       Boolean(liveViewError));
   const liveZonesVisible = (showLiveZones || drawMode) && !livePlaybackNeedsAttention;
   const activeZoneCount = detail.zones.filter((zone) => zone.is_active).length;
-  const continuityNeedsAttention =
-    runtimeStatus?.actual_state === "interrupted" ||
-    runtimeStatus?.actual_state === "blocked" ||
-    Boolean(monitoringContinuityError);
-  const continuityLabel = monitoringContinuityError
-    ? "Unavailable"
-    : isLoadingMonitoringContinuity
-      ? "Loading"
-      : monitoringPolicy
-        ? monitoringPolicy.mode === "armed"
-          ? "Monitoring enabled"
-          : "Monitoring disabled"
-        : "Unavailable";
 
   return (
     <div className="page-stack">
@@ -4184,186 +3997,7 @@ export function StreamDetailPage({
         />
       )}
 
-      <ObservationControlPanel streamId={detail.stream.id} />
-
-      <section className="panel stream-camera-health" aria-label="Camera health">
-        <div className="section-heading">
-          <div>
-            <h2>Camera health</h2>
-            <span className="meta-text">Saved operational state, separate from wildlife activity and review truth</span>
-          </div>
-          {cameraHealth ? (
-            <StatusPill
-              label={cameraHealthLabel(cameraHealth.health.state)}
-              tone={cameraHealthTone(cameraHealth.health.state)}
-            />
-          ) : null}
-        </div>
-        {isLoadingCameraHealth ? (
-          <span className="meta-text">Reading saved camera health…</span>
-        ) : cameraHealthError ? (
-          <div className="continuity-message is-error">
-            <strong>Camera health could not be refreshed.</strong>
-            <span>{cameraHealthError}</span>
-          </div>
-        ) : cameraHealth ? (
-          <>
-            <div className="monitoring-continuity-facts">
-              <span><strong>Desired monitoring</strong> {cameraHealth.health.desired_mode === "armed" ? "Enabled" : "Disabled"}</span>
-              <span><strong>Actual monitoring</strong> {formatLabel(cameraHealth.health.actual_state)}</span>
-              <span><strong>Preview / readiness</strong> {formatLabel(cameraHealth.health.readiness_status)}</span>
-              <span><strong>Last successful frame</strong> {cameraHealth.health.last_good_frame_at ? formatDateTime(cameraHealth.health.last_good_frame_at) : "Not yet received"}</span>
-              <span><strong>Frame age</strong> {frameAgeLabel(cameraHealth.health.frame_age_seconds)}</span>
-              <span><strong>Last evidence write</strong> {cameraHealth.health.last_evidence_persisted_at ? formatDateTime(cameraHealth.health.last_evidence_persisted_at) : "Not available"}</span>
-              <span><strong>Open activity sessions</strong> {cameraHealth.health.open_activity_session_count}</span>
-              <span><strong>Next retry</strong> {cameraHealth.health.next_retry_at ? formatDateTime(cameraHealth.health.next_retry_at) : "Not scheduled"}</span>
-            </div>
-            <div className="continuity-message">
-              <strong>{cameraHealth.health.failure_reason ?? cameraHealth.health.message}</strong>
-              <span>Preview availability, frame health, and wildlife activity are different signals. Health never creates a Visit, evidence, or reviewed label.</span>
-            </div>
-            <div className="panel-actions">
-              {cameraHealth.health.desired_mode === "armed" ? (
-                <>
-                  <button className="secondary-button" disabled={isUpdatingMonitoringContinuity} onClick={() => void retryDurableMonitoring()} type="button">Retry now</button>
-                  <button className="secondary-button" disabled={isUpdatingMonitoringContinuity} onClick={() => void setDurableMonitoringEnabled(false)} type="button">Disable monitoring</button>
-                </>
-              ) : (
-                <button className="primary-button" disabled={isUpdatingMonitoringContinuity} onClick={() => void setDurableMonitoringEnabled(true)} type="button">Enable monitoring</button>
-              )}
-              <button className="secondary-button" disabled={isValidatingCameraHealth} onClick={() => void validateCameraHealthSetup()} type="button">{isValidatingCameraHealth ? "Validating setup…" : "Validate setup"}</button>
-              <button className="text-action" onClick={onOpenCameraSetup} type="button">Edit camera setup</button>
-            </div>
-            {cameraHealth.incidents.length > 0 ? (
-              <div className="continuity-message">
-                <strong>Recent health history</strong>
-                {cameraHealth.incidents.slice(0, 5).map((incident) => (
-                  <span key={incident.id}>{formatLabel(incident.category)} · {incident.resolved_at ? `Resolved ${formatDateTime(incident.resolved_at)}` : `Open since ${formatDateTime(incident.started_at)}`}</span>
-                ))}
-              </div>
-            ) : (
-              <span className="meta-text">No recent camera-health incidents.</span>
-            )}
-          </>
-        ) : null}
-      </section>
-
-      <section className="panel stream-monitoring-continuity" aria-label="Monitoring continuity">
-        <div className="section-heading">
-          <div>
-            <h2>Monitoring continuity</h2>
-            <span className="meta-text">Restart-safe camera monitoring intent</span>
-          </div>
-          <StatusPill
-            label={continuityLabel}
-            tone={continuityNeedsAttention ? "review" : "quiet"}
-          />
-        </div>
-        {isLoadingMonitoringContinuity ? (
-          <span className="meta-text">Reading saved monitoring intent...</span>
-        ) : monitoringContinuityError ? (
-          <div className="continuity-message is-error">
-            <strong>Continuity status could not be loaded.</strong>
-            <span>{monitoringContinuityError} Existing camera controls are unchanged.</span>
-          </div>
-        ) : monitoringPolicy && runtimeStatus ? (
-          <>
-            <div className="monitoring-continuity-facts">
-              <span>
-                <strong>Desired state</strong>{" "}
-                {monitoringPolicy.mode === "armed"
-                  ? "Monitoring enabled"
-                  : "Monitoring disabled"}
-              </span>
-              <span>
-                <strong>Actual runtime</strong> {formatLabel(runtimeStatus.actual_state)}
-              </span>
-              <span>
-                <strong>Active sessions</strong> {runtimeStatus.active_session_count}
-              </span>
-              <span>
-                <strong>Last start</strong>{" "}
-                {runtimeStatus.last_start_attempt_at
-                  ? formatDateTime(runtimeStatus.last_start_attempt_at)
-                  : "Not started yet"}
-              </span>
-              <span>
-                <strong>Next retry</strong>{" "}
-                {runtimeStatus.next_retry_at
-                  ? formatDateTime(runtimeStatus.next_retry_at)
-                  : "Not scheduled"}
-              </span>
-              <span>
-                <strong>Exposure</strong>{" "}
-                {runtimeStatus.exposure_interval_active ? "Active" : "Closed"}
-              </span>
-              <span>
-                <strong>Current healthy time</strong>{" "}
-                {runtimeStatus.current_healthy_duration_seconds != null
-                  ? formatVisitDuration(runtimeStatus.current_healthy_duration_seconds)
-                  : "No active interval"}
-              </span>
-              <span>
-                <strong>Exposure today</strong>{" "}
-                {formatVisitDuration(runtimeStatus.durable_exposure_today_seconds)}
-              </span>
-              <span>
-                <strong>Exposure history</strong>{" "}
-                {runtimeStatus.exposure_history_available_from
-                  ? formatDateTime(runtimeStatus.exposure_history_available_from)
-                  : "Not collected yet"}
-              </span>
-              <span>
-                <strong>Last fresh frame</strong>{" "}
-                {runtimeStatus.latest_confirmed_exposure_at
-                  ? formatDateTime(runtimeStatus.latest_confirmed_exposure_at)
-                  : "Not confirmed yet"}
-              </span>
-              {runtimeStatus.most_recent_exposure_close_reason ? (
-                <span>
-                  <strong>Last exposure close</strong>{" "}
-                  {formatLabel(runtimeStatus.most_recent_exposure_close_reason)}
-                </span>
-              ) : null}
-            </div>
-            <div className="continuity-message">
-              <strong>{runtimeStatus.message}</strong>
-              <span>
-                {runtimeStatus.failure_code
-                  ? "The camera needs attention before the next local start."
-                  : "Enablement changes only saved local monitoring intent."}{" "}
-                Monitoring never creates reviewed Bird Log truth.
-              </span>
-            </div>
-            <div className="panel-actions">
-              <button
-                type="button"
-                className={monitoringPolicy.mode === "armed" ? "secondary-button" : "primary-button"}
-                disabled={isUpdatingMonitoringContinuity}
-                onClick={() =>
-                  void setDurableMonitoringEnabled(monitoringPolicy.mode !== "armed")
-                }
-              >
-                {isUpdatingMonitoringContinuity
-                  ? "Updating monitoring…"
-                  : monitoringPolicy.mode === "armed"
-                    ? "Disable monitoring"
-                    : "Enable monitoring"}
-              </button>
-              {monitoringPolicy.mode === "armed" && (
-                <button
-                  type="button"
-                  className="secondary-button"
-                  disabled={isUpdatingMonitoringContinuity}
-                  onClick={() => void retryDurableMonitoring()}
-                >
-                  Retry now
-                </button>
-              )}
-            </div>
-          </>
-        ) : null}
-      </section>
+      <ObservationControlPanel streamId={detail.stream.id} onOpenCameraSetup={onOpenCameraSetup} />
 
       <div className="stream-context-strip">
         <span>

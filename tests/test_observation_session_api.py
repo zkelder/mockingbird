@@ -1,13 +1,18 @@
-"""API contract for the simple observation control (Product requirement 1):
-start/stop/status over HTTP, Camera Node unavailable state, and
-side-effect-free status reads. The underlying session lifecycle itself is
-covered in depth by `tests/test_engine_runtime.py`; this file only proves
-the FastAPI route wiring and response shape.
+"""API contract for the simple observation control (Product requirement 1)
+and its Unified Observation Experience v1 lane routing: start/stop/status
+over HTTP for the Camera Node lane specifically, honest "no runtime here"
+behavior for a Stream with no integrated observation lane at all, and
+side-effect-free status reads. The underlying Camera Node session lifecycle
+itself is covered in depth by `tests/test_engine_runtime.py`; the other
+lanes (live monitoring, Snapshot monitor) are covered by
+`tests/test_observation_unified_api.py`. This file proves the FastAPI route
+wiring and response shape.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -31,6 +36,17 @@ def repository(tmp_path: Path) -> ProductRepository:
 @pytest.fixture
 def client(repository: ProductRepository) -> TestClient:
     return TestClient(app)
+
+
+def configure_unpaired_camera_node(client: TestClient) -> None:
+    """A real `camera_node` Source (so lane resolution routes to the
+    accepted engine) that has never completed pairing."""
+
+    response = client.patch(
+        "/api/sources/source-backyard-demo/provider-configuration",
+        json={"provider_key": "camera_node", "config": {}},
+    )
+    assert response.status_code == 200
 
 
 def test_start_on_unknown_stream_returns_404(client: TestClient) -> None:
@@ -61,22 +77,65 @@ def test_status_before_start_is_stopped_and_side_effect_free(
     assert repository.get_observation_authority_state().mode == "shadow"
 
 
-def test_start_on_non_camera_node_stream_is_honest_not_a_crash(
+def test_start_on_stream_with_no_observation_runtime_is_honest_not_a_crash(
     client: TestClient, repository: ProductRepository,
 ) -> None:
-    """The demo/seed stream is not a paired Camera Node. Product requirement
-    1 requires a calm, honest status here -- never a 500, never a silent
-    fallback to a different runtime."""
+    """The demo/seed stream has no provider configured at all, so it has no
+    integrated observation runtime (Unified Observation Experience v1: an
+    honest unavailable state, never scaffolded fake support). Product
+    requirement 1 requires a calm, honest status here -- never a 500, never
+    a silent fallback to a runtime this Stream doesn't use."""
 
     response = client.post(f"/api/streams/{DEMO_STREAM_ID}/observation/start")
     assert response.status_code == 200
     payload = response.json()
     assert payload["observing"] is False
-    assert "Camera Node" in payload["camera_message"]
+    assert payload["runtime_available"] is False
     # Never expose internal Stage numbers/vendor terms in this basic contract.
     for forbidden in ("Stage 7", "AssembledVisitProposal", "ONNX", "CUDA", "candidate_visit_authority"):
         assert forbidden not in payload["message"]
         assert forbidden not in payload["camera_message"]
+    # No Stage 7 authority was ever touched for a Stream with no runtime.
+    assert repository.get_observation_authority_state().mode == "shadow"
+
+
+def test_start_on_unpaired_camera_node_stream_reports_pairing_reason(
+    client: TestClient, repository: ProductRepository,
+) -> None:
+    """A genuine `camera_node` Source still routes to the accepted engine
+    lane and keeps its existing pairing-required message -- only a Stream
+    whose provider isn't `camera_node` at all skips the engine now."""
+
+    configure_unpaired_camera_node(client)
+
+    response = client.post(f"/api/streams/{DEMO_STREAM_ID}/observation/start")
+    assert response.status_code == 200
+
+    # The engine's own pairing check runs on its background thread (see
+    # `test_engine_runtime.py`'s identical `_wait_until` convention); poll
+    # status instead of asserting on the transient initial "starting" snapshot.
+    payload = response.json()
+    deadline = time.monotonic() + 5.0
+    while payload["state"] == "starting" and time.monotonic() < deadline:
+        time.sleep(0.02)
+        payload = client.get(f"/api/streams/{DEMO_STREAM_ID}/observation/status").json()
+
+    assert payload["observing"] is False
+    assert payload["runtime_available"] is True
+    assert payload["state"] == "needs_attention"
+    assert "Camera Node" in payload["camera_message"]
+    assert repository.get_observation_authority_state().mode == "shadow"
+
+
+def test_camera_node_status_advanced_diagnostics_report_runtime_kind(
+    client: TestClient, repository: ProductRepository,
+) -> None:
+    configure_unpaired_camera_node(client)
+
+    response = client.get(f"/api/streams/{DEMO_STREAM_ID}/observation/status")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["advanced"]["runtime_kind"] == "camera_node_engine"
 
 
 def test_stop_without_a_running_session_is_a_clean_no_op(

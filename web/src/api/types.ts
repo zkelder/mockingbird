@@ -998,10 +998,13 @@ export interface LiveCameraSessionStatus {
   warnings: string[];
 }
 
-/** The simple observation control's whole product contract for one Stream:
- * current state, camera health, and Observation Engine health. `advanced`
- * is optional, bounded diagnostics (provider ids, suppressed-candidate
- * reasons) the basic UI never needs to render. */
+/** The unified Observation panel's whole product contract for one Stream
+ * (Unified Observation Experience v1): current state, camera health, and
+ * observation-capability health, regardless of which existing runtime
+ * actually backs it (Camera Node's frame-driven engine, existing
+ * backend-owned live monitoring, or the existing Snapshot Source monitor).
+ * `advanced` is optional, bounded diagnostics (runtime kind, provider ids,
+ * suppressed-candidate reasons) the basic UI never needs to render. */
 export interface ObservationSessionCounts {
   track_updates_observed: number;
   evidence_candidates_observed: number;
@@ -1013,17 +1016,28 @@ export interface ObservationSessionCounts {
 
 export interface ObservationSessionStatus {
   stream_id: string;
-  state: "stopped" | "starting" | "observing" | "stopping" | "error";
+  state: "stopped" | "starting" | "observing" | "stopping" | "needs_attention";
   observing: boolean;
   message: string;
   camera_connected: boolean;
   camera_message: string;
   engine_available: boolean;
   engine_message: string;
+  /** False only when this Stream has no integrated observation runtime at
+   * all -- an honest unavailable state rather than a Start button that
+   * would only fail. */
+  runtime_available: boolean;
   started_at?: string | null;
   stopped_at?: string | null;
   stopped_reason?: string | null;
   last_candidate_visit_id?: string | null;
+  last_useful_frame_at?: string | null;
+  /** When set, show the one relevant existing setup action instead of a
+   * Start button that cannot succeed yet. */
+  setup_action?: "edit_camera_setup" | null;
+  /** True only for the existing live-monitoring lane's own bounded
+   * runtime/retry action. */
+  retry_action: boolean;
   counts: ObservationSessionCounts;
   advanced: Record<string, unknown>;
 }

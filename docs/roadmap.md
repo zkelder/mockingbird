@@ -570,6 +570,23 @@ observation engine through a modular migration.
 compatibility, fallback, and deterministic comparison provider rather than the
 long-term golden path.
 
+**Unified Observation Experience v1** makes that same basic Start/Stop/Health
+product action consistent across every currently-supported Stream type,
+described in
+[unified-observation-panel-contract.md](unified-observation-panel-contract.md):
+the existing `/api/streams/{id}/observation/start|stop|status` contract Product
+Vertical Slice v1 established is now lane-aware -- a paired Camera Node keeps
+using the accepted engine unchanged, an RTSP/Linux local USB/Windows
+DirectShow Stream reuses the existing durable monitoring policy, a remaining
+`external_url` Stream reuses the existing Snapshot Source monitor, and a
+Stream with no integrated runtime reports that honestly. Stream Detail shows
+one `Observation` panel instead of the previous Camera-Node-only panel next
+to separate "Camera health"/"Monitoring continuity" sections. It changes no
+detector, tracker, burst-scheduler, evidence-scoring, authority-gate, or
+existing monitoring-policy behavior, adds no new runtime, and grants no
+provider new candidate/review authority; a provider's Visit-creation
+authority remains exactly what it already was.
+
 Observation Engine v2 sequence: (1) provider-neutral frame/detection/track/
 evidence/Visit-proposal capability contracts; (2) deterministic recorded-media
 replay benchmarks; (3) ONNX Runtime CUDA shadow provider with verified local RTX 4060 Ti

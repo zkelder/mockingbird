@@ -635,6 +635,21 @@ motion-evidence roles, was extended additively to also recognize Stage 7's
 `identification`/`context`/`alternate` roles. It changes no detector,
 tracker, burst-scheduler, evidence-scoring, or authority-gate behavior.
 
+Unified Observation Experience v1 makes that same app control's product
+contract (`GET/POST /api/streams/{id}/observation/status|start|stop`)
+consistent across every currently-supported Stream type, described in
+[unified-observation-panel-contract.md](unified-observation-panel-contract.md):
+`mockingbird.observation.unified_status` is a pure, side-effect-free
+composition layer that picks one existing runtime per Stream -- this engine
+for a paired Camera Node, the existing durable `StreamMonitoringPolicy` +
+`DurableMonitoringSupervisor` + `LiveCameraSessionManager` path for RTSP/
+local USB/Windows DirectShow, the existing `SourceMonitorManager` for a
+remaining `external_url` Source, or an honest unavailable status otherwise
+-- and normalizes each into the same basic state/health vocabulary. It adds
+no new runtime, detector, tracker, or candidate authority; it only decides
+which already-accepted runtime a Stream's Start/Stop/Status action reaches,
+and each runtime keeps its own existing authority semantics unchanged.
+
 The Stream-to-proposed-Visit subsystem will be reworked through a strangler
 migration, not a product rewrite. A provider-neutral Observation Engine consumes
 Stream capabilities and emits only evidence-side `FramePacket`,

@@ -15,6 +15,7 @@ import subprocess
 import sys
 import threading
 from typing import Any, Mapping
+import uuid
 
 import numpy as np
 import cv2
@@ -250,6 +251,7 @@ from mockingbird.api.schemas import (
     StreamMonitoringStatusListResponse,
     StreamPlaybackStatus,
     StreamPlaybackStatusResponse,
+    StreamPlaybackStatusValue,
     StreamRuntimeStatusResponse,
     StreamVisitSummary,
     TaxonomyLabel,
@@ -371,6 +373,7 @@ from mockingbird.monitoring import (
 from mockingbird.observation import (
     ObservationEngineRegistry,
     SnapshotObservationProvider,
+    unified_status,
 )
 from mockingbird.observation.engine_runtime import (
     ObservationEngineSessionManager,
@@ -10221,44 +10224,92 @@ async def stop_stream_live_camera_session(
     )
 
 
-def _observation_session_status_response(
-    status: ObservationEngineSessionStatus,
+def _observation_panel_response(
+    stream_id: str, facts: unified_status.ObservationPanelFacts,
 ) -> ObservationSessionStatusResponse:
+    """Wrap one lane's composed facts in the unified wire contract. The one
+    place every lane's Start/Stop/Status handler converges, so the response
+    shape is identical no matter which existing runtime produced it."""
+
     return ObservationSessionStatusResponse(
-        stream_id=status.stream_id,
-        state=status.state,
-        observing=status.observing,
-        message=status.message,
-        camera_connected=status.camera_connected,
-        camera_message=status.camera_message,
-        engine_available=status.engine_available,
-        engine_message=status.engine_message,
-        started_at=status.started_at,
-        stopped_at=status.stopped_at,
-        stopped_reason=status.stopped_reason,
-        last_candidate_visit_id=status.last_candidate_visit_id,
+        stream_id=stream_id,
+        state=facts.state,
+        observing=facts.observing,
+        message=facts.message,
+        camera_connected=facts.camera_connected,
+        camera_message=facts.camera_message,
+        engine_available=facts.engine_available,
+        engine_message=facts.engine_message,
+        runtime_available=facts.runtime_available,
+        started_at=facts.started_at,
+        stopped_at=facts.stopped_at,
+        stopped_reason=facts.stopped_reason,
+        last_candidate_visit_id=facts.last_candidate_visit_id,
+        last_useful_frame_at=facts.last_useful_frame_at,
+        setup_action=facts.setup_action,
+        retry_action=facts.retry_action,
         counts=ObservationSessionCounts(
-            track_updates_observed=status.counts.track_updates_observed,
-            evidence_candidates_observed=status.counts.evidence_candidates_observed,
-            proposals_observed=status.counts.proposals_observed,
-            candidates_created=status.counts.candidates_created,
-            candidates_suppressed=status.counts.candidates_suppressed,
-            suppressed_reasons=[list(item) for item in status.counts.suppressed_reasons],
+            track_updates_observed=facts.counts.track_updates_observed,
+            evidence_candidates_observed=facts.counts.evidence_candidates_observed,
+            proposals_observed=facts.counts.proposals_observed,
+            candidates_created=facts.counts.candidates_created,
+            candidates_suppressed=facts.counts.candidates_suppressed,
+            suppressed_reasons=[list(item) for item in facts.counts.suppressed_reasons],
         ),
-        advanced=status.advanced,
+        advanced=facts.advanced,
     )
 
 
-_STOPPED_OBSERVATION_SESSION_STATUS = ObservationSessionStatusResponse(
-    stream_id="",
-    state="stopped",
-    observing=False,
-    message="Not observing.",
-    camera_connected=False,
-    camera_message="Not yet connected to the Camera Node.",
-    engine_available=False,
-    engine_message="Observation Engine has not started yet.",
-)
+def _external_url_snapshot_url_configured(
+    repository: ProductRepository, source_id: str,
+) -> bool:
+    """Side-effect-free mirror of `_validate_monitor_source`'s own
+    readiness check, reused for the pre-start "Ready"/"Needs attention"
+    health fact instead of re-deriving new copy."""
+
+    configuration = repository.get_source_provider_configuration(source_id)
+    if configuration is None or configuration.provider_key != "external_url":
+        return False
+    url = configuration.safe_config_preview.get("url")
+    return bool(url) and url != "not_configured"
+
+
+async def _unified_observation_facts(
+    stream_id: str, configuration: StreamLivePlaybackConfig,
+) -> unified_status.ObservationPanelFacts:
+    """Side-effect-free composition of the unified status for whichever
+    lane this Stream actually uses. Never starts a camera, model, monitor,
+    or session -- only reads facts each existing runtime already exposes."""
+
+    repository = get_repository()
+    playback = repository.get_stream_playback_status(stream_id)
+    lane = unified_status.resolve_observation_runtime(configuration)
+
+    if lane == unified_status.RUNTIME_KIND_CAMERA_NODE:
+        session_status = get_observation_engine_session_manager().status(stream_id)
+        return unified_status.camera_node_facts(
+            session_status=session_status, config=configuration, playback=playback,
+        )
+
+    if lane == unified_status.RUNTIME_KIND_LIVE_MONITORING:
+        policy = repository.get_stream_monitoring_policy(stream_id)
+        runtime = repository.get_stream_runtime_status(stream_id)
+        health = repository.get_stream_camera_health(stream_id)
+        return unified_status.live_monitoring_facts(
+            policy=policy, runtime=runtime,
+            health=health.health if health is not None else None,
+            playback=playback,
+        )
+
+    if lane == unified_status.RUNTIME_KIND_SNAPSHOT_MONITOR:
+        monitor_state = await get_source_monitor_manager().status(stream_id)
+        monitor = _monitor_status_response(monitor_state) if monitor_state is not None else None
+        url_configured = _external_url_snapshot_url_configured(repository, configuration.source_id)
+        return unified_status.snapshot_monitor_facts(
+            monitor=monitor, url_configured=url_configured, playback=playback,
+        )
+
+    return unified_status.unavailable_facts(config=configuration, playback=playback)
 
 
 @app.post(
@@ -10266,21 +10317,88 @@ _STOPPED_OBSERVATION_SESSION_STATUS = ObservationSessionStatusResponse(
     response_model=ObservationSessionStatusResponse,
 )
 async def start_stream_observation(stream_id: str) -> ObservationSessionStatusResponse:
-    """Start the accepted Observation Engine for this Stream (Product
-    requirement 1) -- the one explicit action a normal user takes instead of
-    `candidate-authority-trial`/other CLI acceptance tools. Uses this
-    Stream's already-configured Camera Node pairing and this Stream's own
-    Privacy/Ignore Zones; a Stream that is not a paired Camera Node reports
-    an honest, bounded "not available" status rather than silently starting
-    a different runtime."""
+    """Unified Start observing (Unified Observation Experience v1): one
+    product action for every currently-supported Stream type, each routed
+    to its own existing, unmodified runtime.
+
+    - A paired Camera Node Stream reuses the accepted Observation Engine
+      start path unchanged (Product requirement 1).
+    - A Stream configured for an existing backend-owned live-video kind
+      (RTSP, Linux local USB, Windows DirectShow) arms the existing durable
+      monitoring policy -- the same action "Enable monitoring" already
+      performs -- instead of a second monitoring worker.
+    - A remaining `external_url` Stream starts the existing Snapshot Source
+      monitor.
+    - A Stream with no integrated observation runtime reports an honest
+      unavailable status rather than scaffolding fake support.
+
+    Always 200 with an honest status; invalid configuration is rejected
+    safely (never arms a policy or worker that cannot start) instead of
+    raising."""
 
     repository = get_repository()
     configuration = _stream_live_playback_config_or_404(stream_id, require_active_source=True)
-    regions = repository.stream_privacy_ignore_regions(stream_id)
-    status = get_observation_engine_session_manager().start(
-        stream_id, configuration, privacy_ignore_regions=regions,
+    lane = unified_status.resolve_observation_runtime(configuration)
+
+    if lane == unified_status.RUNTIME_KIND_CAMERA_NODE:
+        regions = repository.stream_privacy_ignore_regions(stream_id)
+        status = get_observation_engine_session_manager().start(
+            stream_id, configuration, privacy_ignore_regions=regions,
+        )
+        facts = unified_status.camera_node_facts(
+            session_status=status, config=configuration,
+            playback=repository.get_stream_playback_status(stream_id),
+        )
+        return _observation_panel_response(stream_id, facts)
+
+    if lane == unified_status.RUNTIME_KIND_LIVE_MONITORING:
+        playback = repository.get_stream_playback_status(stream_id)
+        if playback is None or playback.status != StreamPlaybackStatusValue.live_ready:
+            # Reject invalid configuration safely: never arm a policy that
+            # cannot actually start.
+            facts = unified_status.live_monitoring_facts(
+                policy=repository.get_stream_monitoring_policy(stream_id),
+                runtime=repository.get_stream_runtime_status(stream_id),
+                health=repository.get_stream_camera_health(stream_id).health,
+                playback=playback,
+            )
+            return _observation_panel_response(stream_id, facts)
+        mutation = await update_stream_monitoring_policy(
+            stream_id,
+            StreamMonitoringPolicyUpdate(
+                enabled=True, idempotency_key=f"observation-start-{uuid.uuid4().hex}",
+            ),
+        )
+        facts = unified_status.live_monitoring_facts(
+            policy=mutation.policy, runtime=mutation.runtime,
+            health=repository.get_stream_camera_health(stream_id).health,
+            playback=playback,
+        )
+        return _observation_panel_response(stream_id, facts)
+
+    if lane == unified_status.RUNTIME_KIND_SNAPSHOT_MONITOR:
+        playback = repository.get_stream_playback_status(stream_id)
+        url_configured = _external_url_snapshot_url_configured(repository, configuration.source_id)
+        try:
+            monitor = await start_stream_monitor(stream_id)
+        except HTTPException as error:
+            # Reject invalid configuration safely instead of a raw 400,
+            # while preserving that route's own sanitized reason.
+            reason = str(error.detail)
+            facts = unified_status.snapshot_monitor_facts(
+                monitor=None, url_configured=url_configured, playback=playback,
+            )
+            facts = replace(facts, message=reason, camera_message=reason, engine_message=reason)
+            return _observation_panel_response(stream_id, facts)
+        facts = unified_status.snapshot_monitor_facts(
+            monitor=monitor, url_configured=url_configured, playback=playback,
+        )
+        return _observation_panel_response(stream_id, facts)
+
+    facts = unified_status.unavailable_facts(
+        config=configuration, playback=repository.get_stream_playback_status(stream_id),
     )
-    return _observation_session_status_response(status)
+    return _observation_panel_response(stream_id, facts)
 
 
 @app.post(
@@ -10288,16 +10406,59 @@ async def start_stream_observation(stream_id: str) -> ObservationSessionStatusRe
     response_model=ObservationSessionStatusResponse,
 )
 async def stop_stream_observation(stream_id: str) -> ObservationSessionStatusResponse:
-    """Stop cleanly and bounded, and act as this feature's kill switch: this
-    always returns candidate authority to shadow, so no candidate can be
-    created after Stop even if the background session is slow to finish
-    draining. Never touches an already-created candidate Visit."""
+    """Unified Stop observing: works for every integrated runtime, is
+    bounded, releases that runtime's own resources, and never deletes
+    evidence or changes reviewed/candidate records. A user never needs to
+    know which runtime they are stopping.
 
-    _stream_live_playback_config_or_404(stream_id)
-    status = get_observation_engine_session_manager().stop(stream_id)
-    if status is None:
-        return _STOPPED_OBSERVATION_SESSION_STATUS.model_copy(update={"stream_id": stream_id})
-    return _observation_session_status_response(status)
+    - Camera Node: the accepted engine's own kill switch, unchanged --
+      candidate authority always reverts to shadow.
+    - Live monitoring: disarms the existing durable monitoring policy, the
+      same action "Disable monitoring" already performs.
+    - Snapshot monitor: stops the existing Snapshot Source monitor.
+    - No integrated runtime: a clean no-op, honestly reported.
+
+    Idempotent: stopping an already-stopped Stream is always a safe no-op."""
+
+    repository = get_repository()
+    configuration = _stream_live_playback_config_or_404(stream_id)
+    lane = unified_status.resolve_observation_runtime(configuration)
+
+    if lane == unified_status.RUNTIME_KIND_CAMERA_NODE:
+        status = get_observation_engine_session_manager().stop(stream_id)
+        facts = unified_status.camera_node_facts(
+            session_status=status, config=configuration,
+            playback=repository.get_stream_playback_status(stream_id),
+        )
+        return _observation_panel_response(stream_id, facts)
+
+    if lane == unified_status.RUNTIME_KIND_LIVE_MONITORING:
+        mutation = await update_stream_monitoring_policy(
+            stream_id,
+            StreamMonitoringPolicyUpdate(
+                enabled=False, idempotency_key=f"observation-stop-{uuid.uuid4().hex}",
+            ),
+        )
+        facts = unified_status.live_monitoring_facts(
+            policy=mutation.policy, runtime=mutation.runtime,
+            health=repository.get_stream_camera_health(stream_id).health,
+            playback=repository.get_stream_playback_status(stream_id),
+        )
+        return _observation_panel_response(stream_id, facts)
+
+    if lane == unified_status.RUNTIME_KIND_SNAPSHOT_MONITOR:
+        monitor = await stop_stream_monitor(stream_id)
+        playback = repository.get_stream_playback_status(stream_id)
+        url_configured = _external_url_snapshot_url_configured(repository, configuration.source_id)
+        facts = unified_status.snapshot_monitor_facts(
+            monitor=monitor, url_configured=url_configured, playback=playback,
+        )
+        return _observation_panel_response(stream_id, facts)
+
+    facts = unified_status.unavailable_facts(
+        config=configuration, playback=repository.get_stream_playback_status(stream_id),
+    )
+    return _observation_panel_response(stream_id, facts)
 
 
 @app.get(
@@ -10305,13 +10466,12 @@ async def stop_stream_observation(stream_id: str) -> ObservationSessionStatusRes
     response_model=ObservationSessionStatusResponse,
 )
 async def get_stream_observation_status(stream_id: str) -> ObservationSessionStatusResponse:
-    """Side-effect-free: never starts a camera, model, or session."""
+    """Side-effect-free: never starts a camera, model, monitor, or session,
+    regardless of which existing runtime this Stream uses."""
 
-    _stream_live_playback_config_or_404(stream_id)
-    status = get_observation_engine_session_manager().status(stream_id)
-    if status is None:
-        return _STOPPED_OBSERVATION_SESSION_STATUS.model_copy(update={"stream_id": stream_id})
-    return _observation_session_status_response(status)
+    configuration = _stream_live_playback_config_or_404(stream_id)
+    facts = await _unified_observation_facts(stream_id, configuration)
+    return _observation_panel_response(stream_id, facts)
 
 
 @app.get("/api/streams/{stream_id}/live-session/current-frame")

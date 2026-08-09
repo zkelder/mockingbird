@@ -64,11 +64,17 @@ MockingBird currently provides:
 - an optional local-LAN MockingBird Camera Node package for paired bounded
   snapshots from an edge camera, with no cloud relay, discovery, remote shell,
   recording, audio, or automatic monitoring
-- a Stream-scoped **Start observing** / **Stop observing** control that runs
-  the accepted Observation Engine against a paired Camera Node directly from
-  the app, with camera/engine health and a conservative candidate-quality
-  check before anything reaches Review Queue -- no CLI acceptance tooling
-  required for normal use
+- one unified Stream-scoped **Start observing** / **Stop observing**
+  Observation panel that works the same way for every currently-supported
+  Stream type -- a paired Camera Node reuses the accepted frame-driven
+  Observation Engine with its conservative candidate-quality check before
+  anything reaches Review Queue, RTSP/local USB/Windows DirectShow Streams
+  reuse the existing durable monitoring policy, and remaining external
+  still-image Streams reuse the existing Snapshot monitor -- with plain
+  camera/observation health, a sanitized failure reason, and collapsed
+  advanced diagnostics; a Stream with no integrated observation runtime
+  reports that honestly instead of a Start button that would only fail; no
+  CLI acceptance tooling required for normal use
 - a shared Dashboard centered on Today in Your Yard: detector-qualified animal
   Visits, reviewed discoveries, best evidence-backed moments, Zone/hour context,
   bounded confirmation work, and compact observation health; it remains
@@ -147,17 +153,36 @@ or recording. See [Camera Node boundary](docs/camera-node-boundary-design.md).
 
 ### Start observing wildlife
 
-Once a Camera Node is paired and a local Observation Engine model bundle is
-configured (see [Optional ONNX Runtime CUDA
-replay](#optional-onnx-runtime-cuda-replay) below for that one-time local
-setup), open that camera's Stream page and use **Start observing**. No CLI
-tool is required for normal use. The panel shows whether the camera is
-connected and whether the Observation Engine is ready, and **Stop
-observing** always cleanly stops the session. A useful wildlife moment
-appears in Review Queue only when it clears a conservative evidence-quality
-check; a quiet or distant scene honestly shows no candidates rather than a
-low-value one. See
-[observation-engine-product-control-contract.md](docs/observation-engine-product-control-contract.md).
+Every configured Stream shows the same **Observation** panel, and it works
+the same way no matter which camera type is underneath: open that camera's
+Stream page and use **Start observing**. No CLI tool is required for normal
+use. The panel shows plain camera/observation health (Ready, Observing, or
+Needs attention with a plain-language reason and the relevant setup action)
+and **Stop observing** always cleanly stops it.
+
+- Once a Camera Node is paired and a local Observation Engine model bundle
+  is configured (see [Optional ONNX Runtime CUDA
+  replay](#optional-onnx-runtime-cuda-replay) below for that one-time local
+  setup), **Start observing** runs the accepted Observation Engine. A
+  useful wildlife moment appears in Review Queue only when it clears a
+  conservative evidence-quality check; a quiet or distant scene honestly
+  shows no candidates rather than a low-value one.
+- For an RTSP, Linux local USB, or Windows DirectShow Stream, **Start
+  observing** arms the existing durable monitoring policy (the same
+  continuity that already survives a restart).
+- For a Source configured with a plain still-image URL, **Start observing**
+  starts the existing Snapshot monitor.
+- A Stream with no integrated observation runtime (for example manual media
+  or an unconfigured Source) reports that honestly instead of a Start
+  button that would only fail.
+
+Advanced technical detail (which runtime is underneath, provider ids,
+durable-monitoring state) stays in one collapsed "Advanced diagnostics"
+section. See
+[observation-engine-product-control-contract.md](docs/observation-engine-product-control-contract.md)
+for the accepted engine this panel wraps for Camera Node, and
+[unified-observation-panel-contract.md](docs/unified-observation-panel-contract.md)
+for the panel itself and the current provider support matrix.
 
 ### Optional ONNX Runtime CUDA replay
 
