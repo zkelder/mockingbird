@@ -59,8 +59,10 @@ package_observation_runtime_assets = _MODULE["package_observation_runtime_assets
 sync_packaged_web_dist = _MODULE["sync_packaged_web_dist"]
 verify_clean_tracked_source = _MODULE["verify_clean_tracked_source"]
 verify_windows_gpu_runtime_dll_closure = _MODULE["verify_windows_gpu_runtime_dll_closure"]
+write_build_identity = _MODULE["write_build_identity"]
 write_deterministic_zip = _MODULE["write_deterministic_zip"]
 write_manifest = _MODULE["write_manifest"]
+BuildIdentity = _MODULE["BuildIdentity"]
 LocalProductBuildError = _MODULE["LocalProductBuildError"]
 ModelBundleProvenance = _MODULE["ModelBundleProvenance"]
 NativeRuntimeVerification = _MODULE["NativeRuntimeVerification"]
@@ -69,6 +71,7 @@ ACCEPTED_SOURCE_MODEL_SHA256 = _MODULE["ACCEPTED_SOURCE_MODEL_SHA256"]
 ACCEPTED_MODEL_KEY = _MODULE["ACCEPTED_MODEL_KEY"]
 ACCEPTED_MODEL_DECODER = _MODULE["ACCEPTED_MODEL_DECODER"]
 ACCEPTED_MODEL_LICENSE = _MODULE["ACCEPTED_MODEL_LICENSE"]
+PACKAGED_BUILD_INFO_FILENAME = _MODULE["PACKAGED_BUILD_INFO_FILENAME"]
 PACKAGED_OBSERVATION_RUNTIME_DIRNAME = _MODULE["PACKAGED_OBSERVATION_RUNTIME_DIRNAME"]
 PACKAGED_PROVIDER_CONFIG_FILENAME = _MODULE["PACKAGED_PROVIDER_CONFIG_FILENAME"]
 DEFAULT_MODEL_BUNDLE_SOURCE = _MODULE["DEFAULT_MODEL_BUNDLE_SOURCE"]
@@ -1035,3 +1038,223 @@ def test_real_local_model_bundle_matches_accepted_provenance_when_present(tmp_pa
         assert bundle.source_model_fingerprint == ACCEPTED_SOURCE_MODEL_SHA256
     finally:
         sys.path.remove(str(ROOT / "src"))
+
+
+# --- Build identity (git commit / build id a running instance self-reports,
+# see docs/windows-dev-deployment-design.md) ---
+
+
+def test_write_build_identity_writes_the_expected_file(tmp_path: Path) -> None:
+    site_packages = tmp_path / "site-packages"
+    (site_packages / "mockingbird").mkdir(parents=True)
+    identity = BuildIdentity(
+        git_commit="a" * 40, build_id="deadbeefcafef00d", built_at="2026-01-01T00:00:00+00:00",
+        app_version="0.1.0",
+    )
+
+    destination = write_build_identity(site_packages=site_packages, identity=identity)
+
+    assert destination == site_packages / "mockingbird" / PACKAGED_BUILD_INFO_FILENAME
+    payload = json.loads(destination.read_text(encoding="utf-8"))
+    assert payload == {
+        "git_commit": "a" * 40, "build_id": "deadbeefcafef00d", "built_at": "2026-01-01T00:00:00+00:00",
+        "app_version": "0.1.0",
+    }
+
+
+def test_write_manifest_records_build_identity(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "bundle"
+    bundle_dir.mkdir()
+    (bundle_dir / "file.txt").write_text("x", encoding="utf-8")
+    zip_path = write_deterministic_zip(bundle_dir, tmp_path / "out.zip")
+    identity = BuildIdentity(
+        git_commit="b" * 40, build_id="0123456789abcdef", built_at="2026-02-02T00:00:00+00:00",
+        app_version="0.1.0",
+    )
+
+    manifest_path, _ = write_manifest(
+        output_dir=tmp_path, bundle_dir=bundle_dir, zip_path=zip_path, source_state=f"git:{'b' * 40}",
+        build_identity=identity,
+    )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["build_identity"] == {
+        "git_commit": "b" * 40, "build_id": "0123456789abcdef", "built_at": "2026-02-02T00:00:00+00:00",
+        "app_version": "0.1.0",
+    }
+
+
+def test_write_manifest_defaults_build_identity_to_none_when_not_evaluated(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "bundle"
+    bundle_dir.mkdir()
+    (bundle_dir / "file.txt").write_text("x", encoding="utf-8")
+    zip_path = write_deterministic_zip(bundle_dir, tmp_path / "out.zip")
+
+    manifest_path, _ = write_manifest(
+        output_dir=tmp_path, bundle_dir=bundle_dir, zip_path=zip_path, source_state="test-fixture-state",
+    )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["build_identity"] is None
+
+
+def test_build_local_product_resolves_a_relative_output_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test for a real discovered defect (see
+    docs/windows-dev-deployment-design.md and this module's own "Release
+    -build source integrity" docstring section): `output_dir` must be
+    resolved to an absolute path before it is used for *anything*. A
+    *relative* `output_dir` previously resolved against two different
+    directories -- the release-build subprocess's own `cwd` (a `git
+    archive` staging temp directory) for the actual `pip wheel` write, vs.
+    this process's own cwd for the later `output_dir.glob(...)` existence
+    check -- so the wheel silently landed in the staging tree, which was
+    then deleted before anything looked there
+    (`LocalProductBuildError: Wheel build did not produce a
+    mockingbird-*.whl file`, discovered validating the CUDA dependency
+    -closure fix). Never reproduces once `output_dir` is absolute
+    throughout, which is exactly what this proves: the relative path
+    resolves against *this process's actual cwd at call time*, immediately
+    -- before the (here, faked-to-raise) clean-source check ever runs, let
+    alone a subprocess with a different cwd.
+    """
+
+    def _raising_verify(*_args: object, **_kwargs: object) -> str:
+        raise LocalProductBuildError("stop here -- this test only cares what happened before this point")
+
+    monkeypatch.setitem(build_local_product.__globals__, "verify_clean_tracked_source", _raising_verify)
+
+    different_cwd = tmp_path / "somewhere-else-entirely"
+    different_cwd.mkdir()
+    monkeypatch.chdir(different_cwd)
+
+    with pytest.raises(LocalProductBuildError):
+        build_local_product(
+            Path("relative-output"),
+            skip_frontend_build=True,
+            install_dependencies=lambda _target: None,
+            install_gpu_dependencies=_noop_gpu_installer,
+            model_bundle_source=None,
+        )
+
+    assert (different_cwd / "relative-output").is_dir()
+
+
+def test_build_local_product_end_to_end_records_a_verified_build_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real wiring, start to finish: `build_local_product` ->
+    `assemble_windows_bundle` -> `write_build_identity` places
+    `build_info.json` inside the installed package, and `write_manifest`
+    records the identical identity in `manifest.json` -- proving a
+    deployment tool reading either source can trust the exact commit/build
+    this artifact was produced from (`mockingbird.runtime_state.
+    resolve_build_identity` reads the packaged copy at runtime; see
+    docs/windows-dev-deployment-design.md).
+
+    Everything that would otherwise need network access, a real git
+    history, or a real `npm run build` is faked (matching this module's
+    own stated hermetic-test philosophy); what genuinely runs is the exact
+    file-assembly wiring this test exists to prove.
+    """
+
+    fake_commit = "c" * 40
+
+    def _fake_verify_clean_tracked_source(*_args: object, **_kwargs: object) -> str:
+        return fake_commit
+
+    def _fake_export_clean_source_tree(*, ref: str, destination: Path, cwd: Path = ROOT) -> Path:
+        destination.mkdir(parents=True, exist_ok=True)
+        return destination
+
+    def _fake_sync_packaged_web_dist(*, source_dist: Path | None = None, target_dir: Path | None = None) -> Path:
+        assert target_dir is not None
+        target_dir.mkdir(parents=True, exist_ok=True)
+        (target_dir / "index.html").write_text("<!doctype html><title>MockingBird</title>", encoding="utf-8")
+        return target_dir
+
+    def _fake_build_wheel(output_dir: Path, *, source_root: Path = ROOT) -> Path:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return _fake_wheel(output_dir, package_name="mockingbird")
+
+    for name, fake in (
+        ("verify_clean_tracked_source", _fake_verify_clean_tracked_source),
+        ("export_clean_source_tree", _fake_export_clean_source_tree),
+        ("sync_packaged_web_dist", _fake_sync_packaged_web_dist),
+        ("build_wheel", _fake_build_wheel),
+    ):
+        monkeypatch.setitem(build_local_product.__globals__, name, fake)
+
+    artifact = build_local_product(
+        tmp_path / "out",
+        skip_frontend_build=True,
+        embed_zip_override=_fake_embeddable_zip(tmp_path),
+        install_dependencies=lambda _target: None,
+        include_gpu_runtime=False,
+        model_bundle_source=None,
+    )
+
+    assert artifact.build_identity.git_commit == fake_commit
+    assert len(artifact.build_identity.build_id) == 16
+    assert all(character in "0123456789abcdef" for character in artifact.build_identity.build_id)
+    assert artifact.build_identity.app_version
+
+    build_info_path = (
+        artifact.bundle_dir / "python" / "site-packages" / "mockingbird" / PACKAGED_BUILD_INFO_FILENAME
+    )
+    payload = json.loads(build_info_path.read_text(encoding="utf-8"))
+    assert payload["git_commit"] == fake_commit
+    assert payload["build_id"] == artifact.build_identity.build_id
+
+    manifest = json.loads(artifact.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["build_identity"]["git_commit"] == fake_commit
+    assert manifest["build_identity"]["build_id"] == artifact.build_identity.build_id
+    assert manifest["source_state"] == f"git:{fake_commit}"
+
+
+def test_build_local_product_dirty_source_records_a_best_effort_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--allow-dirty-source` never proves a clean commit the way the
+    default path does, but a build identity is still recorded -- best
+    -effort, from plain `git rev-parse HEAD` (`_current_head_commit`),
+    never fabricated. Distinguishable from a verified build purely by
+    `source_state` (`dirty:unverified-working-tree`, never `git:<hash>`),
+    matching the existing convention the manifest's `source_state` field
+    already uses for this distinction."""
+
+    def _fake_sync_packaged_web_dist(*, source_dist: Path | None = None, target_dir: Path | None = None) -> Path:
+        destination = target_dir or (tmp_path / "packaged-web-dist")
+        destination.mkdir(parents=True, exist_ok=True)
+        (destination / "index.html").write_text("<!doctype html><title>MockingBird</title>", encoding="utf-8")
+        return destination
+
+    def _fake_build_wheel(output_dir: Path, *, source_root: Path = ROOT) -> Path:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return _fake_wheel(output_dir, package_name="mockingbird")
+
+    def _fake_current_head_commit(*, cwd: Path = ROOT) -> str:
+        return "d" * 40
+
+    for name, fake in (
+        ("sync_packaged_web_dist", _fake_sync_packaged_web_dist),
+        ("build_wheel", _fake_build_wheel),
+        ("_current_head_commit", _fake_current_head_commit),
+    ):
+        monkeypatch.setitem(build_local_product.__globals__, name, fake)
+
+    artifact = build_local_product(
+        tmp_path / "out",
+        skip_frontend_build=True,
+        embed_zip_override=_fake_embeddable_zip(tmp_path),
+        install_dependencies=lambda _target: None,
+        include_gpu_runtime=False,
+        model_bundle_source=None,
+        allow_dirty_source=True,
+    )
+
+    assert artifact.build_identity.git_commit == "d" * 40
+    manifest = json.loads(artifact.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["source_state"] == "dirty:unverified-working-tree"
+    assert manifest["build_identity"]["git_commit"] == "d" * 40

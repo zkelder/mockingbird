@@ -450,6 +450,7 @@ from mockingbird.runtime_state import (
     current_runtime_home,
     mark_clean_shutdown,
     previous_shutdown_was_clean,
+    resolve_build_identity,
     resolve_instance_id,
 )
 from mockingbird.storage.database import (
@@ -10099,18 +10100,25 @@ async def get_product_health() -> ProductHealthStatus:
 
 @app.get("/api/product/instance", response_model=ProductInstanceIdentity)
 async def get_product_instance_identity() -> ProductInstanceIdentity:
-    """Answer "which local installation/data directory is this," so the
-    local launcher can tell an already-running copy of itself apart from an
-    arbitrary other service (or a MockingBird instance forwarded from a
-    different environment, such as WSL) that merely answers the same
-    `/health` shape on the same port. Not otherwise part of the product
-    surface -- see docs/camera-node-pairing-persistence-design.md.
+    """Answer "which local installation/data directory is this, and exactly
+    which build," so the local launcher can tell an already-running copy of
+    itself apart from an arbitrary other service (or a MockingBird instance
+    forwarded from a different environment, such as WSL) that merely
+    answers the same `/health` shape on the same port. `git_commit`/
+    `build_id` additionally let a developer tool (see
+    docs/windows-dev-deployment-design.md) prove a running instance matches
+    the exact commit/build it deployed, never inferred from a folder name.
+    Not otherwise part of the basic product surface -- see
+    docs/camera-node-pairing-persistence-design.md.
     """
 
     runtime_home = current_runtime_home()
+    git_commit, build_id = resolve_build_identity()
     return ProductInstanceIdentity(
         instance_id=resolve_instance_id(runtime_home) if runtime_home is not None else None,
         app_version=APP_VERSION,
+        git_commit=git_commit,
+        build_id=build_id,
     )
 
 

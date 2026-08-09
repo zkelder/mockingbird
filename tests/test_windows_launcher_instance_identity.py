@@ -180,6 +180,71 @@ def test_resolve_instance_id_recovers_from_a_corrupt_identity_file(tmp_path: Pat
     assert runtime_state.resolve_instance_id(home) == instance_id
 
 
+# ---------------------------------------------------------------------------
+# Build identity: which exact commit/build a *packaged* instance is running
+# (docs/windows-dev-deployment-design.md). `_build_info_path` is redirected
+# per test the same way test_engine_runtime.py redirects `packaged_
+# observation_runtime_root` -- never by writing a fixture file into this
+# real installed package's own source tree.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_build_identity_is_none_without_a_packaged_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bare development checkout (this test suite's own real state) never
+    went through `write_build_identity` -- the conservative "cannot
+    confirm" default, matching `resolve_instance_id`'s own philosophy,
+    rather than inventing a commit/build."""
+
+    monkeypatch.setattr(runtime_state, "_build_info_path", lambda: tmp_path / "no-such-build-info.json")
+
+    assert runtime_state.resolve_build_identity() == (None, None)
+
+
+def test_resolve_build_identity_reads_a_real_packaged_build_info(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    build_info = tmp_path / "build_info.json"
+    build_info.write_text(
+        '{"git_commit": "af15161d76f214d9b10310284840a8069b12eb70", "build_id": "0123456789abcdef", '
+        '"built_at": "2026-08-09T00:00:00+00:00", "app_version": "0.1.0"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runtime_state, "_build_info_path", lambda: build_info)
+
+    git_commit, build_id = runtime_state.resolve_build_identity()
+
+    assert git_commit == "af15161d76f214d9b10310284840a8069b12eb70"
+    assert build_id == "0123456789abcdef"
+
+
+def test_resolve_build_identity_recovers_from_a_corrupt_build_info(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    build_info = tmp_path / "build_info.json"
+    build_info.write_text("not valid json {{{", encoding="utf-8")
+    monkeypatch.setattr(runtime_state, "_build_info_path", lambda: build_info)
+
+    # Must not raise -- an honest "cannot confirm", same as a missing file.
+    assert runtime_state.resolve_build_identity() == (None, None)
+
+
+def test_resolve_build_identity_ignores_malformed_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `build_info.json` that parses as JSON but whose fields are not the
+    non-empty strings this contract requires (a wrong type, or an empty
+    string) is treated exactly like a missing field -- never surfaced as a
+    truthy-but-wrong identity a caller could act on."""
+
+    build_info = tmp_path / "build_info.json"
+    build_info.write_text('{"git_commit": 12345, "build_id": ""}', encoding="utf-8")
+    monkeypatch.setattr(runtime_state, "_build_info_path", lambda: build_info)
+
+    assert runtime_state.resolve_build_identity() == (None, None)
+
+
 @pytest.mark.anyio
 async def test_product_instance_endpoint_reports_none_without_a_real_launch(
     monkeypatch: pytest.MonkeyPatch,
@@ -191,15 +256,60 @@ async def test_product_instance_endpoint_reports_none_without_a_real_launch(
     `runtime_state._runtime_home` is a process-global by product design (one
     real launch is one process); explicitly cleared here so this assertion
     is independent of whatever other test in the same pytest process may
-    have already exercised a real launch path and left it set.
+    have already exercised a real launch path and left it set. Also never
+    went through `write_build_identity`, so `git_commit`/`build_id` are
+    conservatively `None` too -- `_build_info_path` is redirected to a path
+    that cannot exist so this assertion is independent of whether this
+    particular test host happens to have a real packaged build_info.json
+    lying around anywhere.
     """
 
     monkeypatch.setattr(runtime_state, "_runtime_home", None)
+    monkeypatch.setattr(runtime_state, "_build_info_path", lambda: Path("/no/such/build_info.json"))
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         response = await client.get("/api/product/instance")
     assert response.status_code == 200
-    assert response.json()["instance_id"] is None
+    payload = response.json()
+    assert payload["instance_id"] is None
+    assert payload["git_commit"] is None
+    assert payload["build_id"] is None
+
+
+@pytest.mark.anyio
+async def test_product_instance_endpoint_reports_build_identity_when_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The positive case: once a process is running from a real packaged
+    build, `/api/product/instance` self-reports its exact commit/build --
+    what a dev-deployment tool's verification step actually reads (see
+    docs/windows-dev-deployment-design.md).
+
+    Redirects the same low-level `_build_info_path` seam the other
+    `resolve_build_identity` tests use, rather than monkeypatching
+    `resolve_build_identity` itself: `api/main.py` imported that name with
+    `from mockingbird.runtime_state import resolve_build_identity`, a
+    separate binding in `api_main`'s own module namespace that reassigning
+    `runtime_state.resolve_build_identity` would not reach -- redirecting
+    the lower-level seam instead exercises the real function through the
+    real endpoint, unaffected by which module's copy of the name is used.
+    """
+
+    build_info = tmp_path / "build_info.json"
+    build_info.write_text(
+        '{"git_commit": "af15161d76f214d9b10310284840a8069b12eb70", "build_id": "cafef00ddeadbeef", '
+        '"built_at": "2026-08-09T00:00:00+00:00", "app_version": "0.1.0"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(runtime_state, "_build_info_path", lambda: build_info)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/api/product/instance")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["git_commit"] == "af15161d76f214d9b10310284840a8069b12eb70"
+    assert payload["build_id"] == "cafef00ddeadbeef"
 
 
 @pytest.fixture

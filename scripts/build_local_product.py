@@ -26,6 +26,13 @@ and double-click `Start MockingBird.vbs`. It contains:
 - `manifest.json` / `SHA256SUMS`: build provenance, mirroring the existing
   convention in scripts/build_camera_node_artifact.py, including Observation
   runtime model/GPU provenance.
+- `python/site-packages/mockingbird/build_info.json`: this exact build's own
+  identity (source git commit, a random per-build `build_id`, build
+  timestamp, app version) -- see `write_build_identity` and
+  `mockingbird.runtime_state.resolve_build_identity`. A *running* instance
+  self-reports it via `GET /api/product/instance`, so a developer tool never
+  has to infer which commit/build is running from a folder or process name;
+  see docs/windows-dev-deployment-design.md.
 
 Usage:
 
@@ -103,9 +110,11 @@ from __future__ import annotations
 import argparse
 import csv
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+import secrets
 import shutil
 import subprocess
 import sys
@@ -225,6 +234,11 @@ REQUIRED_ORT_CUDA_PROVIDER_DLL_BASENAMES: tuple[str, ...] = (
 PACKAGED_OBSERVATION_RUNTIME_DIRNAME = "observation_runtime"
 PACKAGED_PROVIDER_CONFIG_FILENAME = "provider-config.json"
 
+# Mirrors `mockingbird.runtime_state.BUILD_INFO_FILENAME` exactly -- same
+# duplicated-literal convention as the two constants above (see their own
+# comment); keep the two values in sync.
+PACKAGED_BUILD_INFO_FILENAME = "build_info.json"
+
 # Doctrine-recorded provenance for the one accepted Observation Engine model
 # (docs/megadetector-runtime-findings.md's "Approved local-artifact
 # provenance" record for `md-v5a`, and the real NVIDIA-GPU-validated ONNX
@@ -333,6 +347,7 @@ class LocalProductArtifact:
     zip_path: Path
     manifest_path: Path
     checksums_path: Path
+    build_identity: BuildIdentity
 
 
 @dataclass(frozen=True)
@@ -386,6 +401,42 @@ class NativeRuntimeVerification:
             "reason": self.reason,
             "verified_dlls": list(self.verified_dlls),
             "dll_directories": list(self.dll_directories),
+        }
+
+
+@dataclass(frozen=True)
+class BuildIdentity:
+    """What *this exact build run* is -- written into the bundle itself
+    (`write_build_identity`) so a running instance can self-report it via
+    `GET /api/product/instance` (see `mockingbird.runtime_state.
+    resolve_build_identity`), the fact a Windows dev-deployment tool needs
+    to prove "the process answering this port is really the build I just
+    deployed," never inferred from a folder name or process name (see
+    docs/windows-dev-deployment-design.md).
+
+    Distinct from `source_state` (`git:<hash>` or
+    `dirty:unverified-working-tree`) recorded in `manifest.json` alongside
+    it: `git_commit` here is the same commit but `build_id` is a fresh
+    random token minted once per *build invocation*, not per commit --
+    mirrors `runtime_state.resolve_instance_id`'s own "a random token is
+    the smallest fact that is true only for..." reasoning. Two builds of
+    the exact same commit (a rebuild after an unrelated local fix, or a
+    deliberate re-build to test packaging itself) still get different
+    `build_id`s, so a stale build can never be mistaken for a fresh one
+    merely because they share a commit.
+    """
+
+    git_commit: str | None
+    build_id: str
+    built_at: str
+    app_version: str
+
+    def as_manifest_dict(self) -> dict[str, str | None]:
+        return {
+            "git_commit": self.git_commit,
+            "build_id": self.build_id,
+            "built_at": self.built_at,
+            "app_version": self.app_version,
         }
 
 
@@ -479,6 +530,24 @@ def verify_clean_tracked_source(
             f"Could not resolve the current git commit for a clean release build: {head.stderr.strip()}"
         )
     return head.stdout.strip()
+
+
+def _current_head_commit(*, cwd: Path = ROOT) -> str | None:
+    """Best-effort HEAD commit for `BuildIdentity`/`manifest.json`, even on
+    an `--allow-dirty-source` build -- which by definition has no *verified*
+    clean commit the way `verify_clean_tracked_source` proves for a real
+    release build. Never raises: a build host with no git history at all
+    (rare, only reachable via the dirty-source dev-iteration path) simply
+    gets `None`, an honest "unknown" rather than a build failure over a
+    build-provenance nicety.
+    """
+
+    completed = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=cwd, check=False, capture_output=True, text=True,
+    )
+    if completed.returncode != 0 or not completed.stdout.strip():
+        return None
+    return completed.stdout.strip()
 
 
 def export_clean_source_tree(*, ref: str, destination: Path, cwd: Path = ROOT) -> Path:
@@ -750,6 +819,30 @@ def package_observation_runtime_assets(
         source_model_sha256=source_sha256,
         onnx_model_sha256=onnx_sha256,
     )
+
+
+def write_build_identity(*, site_packages: Path, identity: BuildIdentity) -> Path:
+    """Write `identity` into the installed package itself
+    (`<site_packages>/mockingbird/build_info.json`) -- the same "packaged
+    asset next to this installed package" convention `package_observation_
+    runtime_assets`/`sync_packaged_web_dist` already use, so a running
+    instance can read its own build identity from `Path(__file__)`
+    regardless of the launcher, the process working directory, or where the
+    bundle was unpacked to (see `mockingbird.runtime_state.
+    resolve_build_identity`).
+
+    Unlike the Observation model bundle, this is never optional or
+    best-effort: every build gets one, and this raises like any other
+    filesystem step in `assemble_windows_bundle` if it cannot write it,
+    rather than silently shipping a bundle a running instance could never
+    identify itself from.
+    """
+
+    destination = site_packages / "mockingbird" / PACKAGED_BUILD_INFO_FILENAME
+    destination.write_text(
+        json.dumps(identity.as_manifest_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return destination
 
 
 def _iter_installed_dll_entries(site_packages: Path) -> list[tuple[Path, int | None]]:
@@ -1026,6 +1119,7 @@ def write_manifest(
     model_bundle_provenance: ModelBundleProvenance | None = None,
     gpu_runtime_included: bool | None = None,
     native_runtime_verification: NativeRuntimeVerification | None = None,
+    build_identity: BuildIdentity | None = None,
 ) -> tuple[Path, Path]:
     version = _source_version()
     files = _iter_files_sorted(bundle_dir)
@@ -1052,6 +1146,11 @@ def write_manifest(
             if native_runtime_verification is not None
             else NativeRuntimeVerification(checked=False, reason="not_evaluated").as_manifest_dict()
         ),
+        # `None` (never a fabricated placeholder) when the caller did not
+        # supply one -- `build_local_product` always does; only a caller
+        # invoking `write_manifest` directly (existing tests exercising it
+        # in isolation) can omit it.
+        "build_identity": build_identity.as_manifest_dict() if build_identity is not None else None,
         "bundle_file_count": len(files),
         "bundle_total_bytes": sum(path.stat().st_size for path in files),
         "zip_sha256": _sha256(zip_path),
@@ -1097,7 +1196,20 @@ def build_local_product(
     `HEAD`, not the live checkout -- see `verify_clean_tracked_source`/
     `export_clean_source_tree`. `allow_dirty_source=True` exists only for
     iterating on this build script itself against uncommitted local edits.
+
+    `output_dir` is resolved to an absolute path immediately: the non-dirty
+    path below runs `build_wheel` with `cwd` set to a `git archive` staging
+    temp directory, so a *relative* `output_dir` would otherwise resolve
+    against that temp `cwd` inside the subprocess while every later
+    `output_dir`-relative lookup in this process resolves it against the
+    caller's own cwd instead -- two different directories, and the wheel
+    silently lands in the staging tree that is deleted before anything
+    looks there (`LocalProductBuildError: Wheel build did not produce a
+    mockingbird-*.whl file`, discovered validating the CUDA dependency
+    -closure fix; see docs/windows-dev-deployment-design.md).
     """
+
+    output_dir = output_dir.resolve()
 
     if not skip_frontend_build:
         build_frontend()
@@ -1105,6 +1217,7 @@ def build_local_product(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if allow_dirty_source:
+        commit = _current_head_commit()
         resolved_source_state = source_state or "dirty:unverified-working-tree"
         sync_packaged_web_dist()
         wheel_path = build_wheel(output_dir / "_wheel", source_root=ROOT)
@@ -1131,6 +1244,16 @@ def build_local_product(
         wheel_cache_dir=wheel_cache_dir,
     )
 
+    build_identity = BuildIdentity(
+        git_commit=commit,
+        build_id=secrets.token_hex(8),
+        built_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        app_version=_source_version(),
+    )
+    write_build_identity(
+        site_packages=bundle_dir / "python" / "site-packages", identity=build_identity,
+    )
+
     zip_path = write_deterministic_zip(bundle_dir, output_dir / "MockingBird-windows-x64.zip")
     manifest_path, checksums_path = write_manifest(
         output_dir=output_dir,
@@ -1140,12 +1263,14 @@ def build_local_product(
         model_bundle_provenance=model_provenance,
         gpu_runtime_included=include_gpu_runtime,
         native_runtime_verification=native_runtime_verification,
+        build_identity=build_identity,
     )
     return LocalProductArtifact(
         bundle_dir=bundle_dir,
         zip_path=zip_path,
         manifest_path=manifest_path,
         checksums_path=checksums_path,
+        build_identity=build_identity,
     )
 
 

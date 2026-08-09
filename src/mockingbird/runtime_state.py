@@ -31,6 +31,13 @@ LOG_FILENAME = "mockingbird.log"
 _MAX_LOG_BYTES = 5_000_000
 _LOG_BACKUP_COUNT = 3
 
+# Mirrors `scripts/build_local_product.py`'s `PACKAGED_BUILD_INFO_FILENAME`
+# exactly -- duplicated as a literal (like `engine_runtime.py`'s own
+# `PACKAGED_OBSERVATION_RUNTIME_DIRNAME` convention) rather than imported, so
+# this module never depends on the build script's own module namespace.
+# Keep the two values in sync.
+BUILD_INFO_FILENAME = "build_info.json"
+
 # Module-level, not per-request: these facts are fixed for the lifetime of one
 # running MockingBird process and are set exactly once at startup.
 _runtime_home: Path | None = None
@@ -147,6 +154,53 @@ def resolve_instance_id(runtime_home: Path) -> str:
     except OSError:
         pass
     return instance_id
+
+
+def _build_info_path() -> Path:
+    """Where a packaged MockingBird install ships this exact build's own
+    identity -- populated by `scripts/build_local_product.py`'s
+    `write_build_identity`, mirroring `web_app.resolve_frontend_dist`'s
+    (`web_dist`) and `engine_runtime.packaged_observation_runtime_root`'s
+    (`observation_runtime`) own "packaged asset next to this installed
+    package" convention exactly. Resolved from *this module's own
+    installed location* (`Path(__file__)`), never `os.getcwd()`, so it
+    keeps resolving correctly regardless of the process working directory
+    or how MockingBird was launched. Its own function (rather than inlined
+    into `resolve_build_identity`) purely so tests can redirect it the same
+    way `test_engine_runtime.py` redirects `packaged_observation_runtime_
+    root` -- never by writing a fixture file into this real installed
+    package's own source tree."""
+
+    return Path(__file__).resolve().parent / BUILD_INFO_FILENAME
+
+
+def resolve_build_identity() -> tuple[str | None, str | None]:
+    """`(git_commit, build_id)` for *this exact installed build*, if this
+    process is actually running from a packaged bundle.
+
+    `(None, None)` for anything that never went through that build step -- a
+    bare development checkout, every ASGI-transport test, `pip install .`
+    without the Windows packaging pipeline: the conservative "cannot confirm
+    a build identity" default, matching `resolve_instance_id`'s own
+    never-guess philosophy, rather than inventing one. A developer/dev-
+    deployment tool (see docs/windows-dev-deployment-design.md) uses this,
+    via `GET /api/product/instance`, to prove a running instance's exact
+    source commit and build -- never process name, PID, or a folder name,
+    none of which a caller can trust without asking the process itself.
+    """
+
+    try:
+        payload = json.loads(_build_info_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None, None
+    if not isinstance(payload, dict):
+        return None, None
+    git_commit = payload.get("git_commit")
+    build_id = payload.get("build_id")
+    return (
+        git_commit if isinstance(git_commit, str) and git_commit else None,
+        build_id if isinstance(build_id, str) and build_id else None,
+    )
 
 
 def configure_file_logging(runtime_home: Path) -> Path | None:

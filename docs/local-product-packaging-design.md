@@ -28,6 +28,11 @@ and backup/restore
 than re-implementing any of them. It does not touch the Observation Engine,
 detectors, trackers, or candidate authority.
 
+Developer tooling for deploying/verifying a build this phase produces on a
+Windows development machine (never end-user packaging itself) is a separate,
+later addition -- see
+[windows-dev-deployment-design.md](windows-dev-deployment-design.md).
+
 ## First-run detection and persistence
 
 `AppSetupStateModel` (schema version 29, `app_setup_state` table) is a single

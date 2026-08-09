@@ -4642,8 +4642,8 @@ class ProductHealthStatus(BaseModel):
 class ProductInstanceIdentity(BaseModel):
     """Identity of THIS running MockingBird process's own local installation.
 
-    Used only by the local launcher, to tell an already-running copy of
-    this exact installation apart from an unrelated service, a different
+    Used by the local launcher, to tell an already-running copy of this
+    exact installation apart from an unrelated service, a different
     MockingBird install, or one forwarded from another environment (for
     example WSL) that merely answers on the same port -- see "Windows
     launcher defects" in docs/camera-node-pairing-persistence-design.md.
@@ -4652,10 +4652,23 @@ class ProductInstanceIdentity(BaseModel):
     match. `instance_id` is `None` only when this process was not started
     through the real launcher (for example a bare development server),
     which conservatively means "cannot confirm this is the same install."
+
+    `git_commit`/`build_id` additionally answer "exactly which build is
+    this" -- for a developer verifying a Windows dev deployment (see
+    docs/windows-dev-deployment-design.md), never for the basic product UI.
+    Both are `None` unless this process is running from a bundle built by
+    `scripts/build_local_product.py` (a bare `python -m mockingbird` from a
+    development checkout has neither). `build_id` is a fresh random token
+    minted once per *build*, not per commit: two builds of the same commit
+    (a rebuild after an unrelated local fix) still get different `build_id`s,
+    so a stale build can never be mistaken for a fresh one that happens to
+    share a commit.
     """
 
     instance_id: str | None = None
     app_version: str
+    git_commit: str | None = None
+    build_id: str | None = None
 
 
 class StorageCleanupCategorySummary(BaseModel):
