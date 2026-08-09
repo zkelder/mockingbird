@@ -84,6 +84,15 @@ Needs attention with a plain-language reason and what to do about it.
 Observing only ever starts when you choose to start it; MockingBird does not
 turn a camera on by itself.
 
+MockingBird reports Camera health and Observation health separately: a
+camera can be fully connected and ready while Observation itself needs
+attention (for example, an unsupported graphics card), and vice versa -- you
+always see which one actually has the problem. On a Windows PC with a
+compatible NVIDIA graphics card and a current driver, Start observing needs
+no extra setup; the pieces it needs are already included in your MockingBird
+folder. If your PC's graphics card is not supported, MockingBird says so
+directly instead of guessing or silently running in a reduced mode.
+
 ## Review
 
 When MockingBird notices a meaningful wildlife visit, it appears in **Review

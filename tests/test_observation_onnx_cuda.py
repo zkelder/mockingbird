@@ -11,6 +11,7 @@ import pytest
 from PIL import Image
 
 from mockingbird.observation.contracts import FramePacket
+from mockingbird.observation import onnx_provider
 from mockingbird.observation.onnx_provider import (
     BUNDLE_SCHEMA_VERSION,
     OnnxCudaObservationProvider,
@@ -415,3 +416,75 @@ def test_cli_requires_config_and_runs_fake_cuda_twice_deterministically(
     assert payloads[0]["execution"]["inference_count"] == 1
     assert all(session.closed for session in sessions)
     assert str(bundle_path.parent.resolve()) not in json.dumps(payloads[0]["semantic"])
+
+
+# --- Windows CUDA/cuDNN DLL search-path wiring ------------------------------
+
+
+def test_windows_dll_search_path_finds_every_real_nested_dll_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real `nvidia-cuda-runtime` Windows wheel nests its DLL four
+    directories under `nvidia/` (`nvidia/cu13/bin/x86_64/cudart64_13.dll`),
+    not the `nvidia/<component>/bin/` shape its Linux `.so` counterpart
+    uses -- confirmed against the real win_amd64 wheel from PyPI. A
+    same-depth-guess implementation missed this; this fixture reproduces
+    that exact real layout (plus a *differently*-nested second package, to
+    prove the search does not assume one fixed depth) so the recursive
+    `.dll` discovery is proven, not assumed."""
+
+    site_packages = tmp_path / "site-packages"
+    cudart_dir = site_packages / "nvidia" / "cu13" / "bin" / "x86_64"
+    cudart_dir.mkdir(parents=True)
+    (cudart_dir / "cudart64_13.dll").write_bytes(b"fixture-dll")
+    # A differently-shaped package (shallower nesting) in the same tree.
+    cublas_dir = site_packages / "nvidia" / "cublas" / "bin"
+    cublas_dir.mkdir(parents=True)
+    (cublas_dir / "cublas64_13.dll").write_bytes(b"fixture-dll")
+    # A non-DLL file elsewhere under `nvidia/` must never be added.
+    (site_packages / "nvidia" / "cu13" / "include").mkdir(parents=True)
+    (site_packages / "nvidia" / "cu13" / "include" / "cuda.h").write_text("", encoding="utf-8")
+
+    added_directories: list[str] = []
+    monkeypatch.setattr(onnx_provider, "_windows_dll_search_path_prepared", False)
+    monkeypatch.setattr(onnx_provider.os, "name", "nt")
+    monkeypatch.setattr(onnx_provider.os, "add_dll_directory", added_directories.append, raising=False)
+
+    onnx_provider._prepare_windows_onnxruntime_dll_search_path(site_packages=site_packages)
+
+    assert set(added_directories) == {str(cudart_dir), str(cublas_dir)}
+
+
+def test_windows_dll_search_path_is_a_noop_off_windows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    site_packages = tmp_path / "site-packages"
+    dll_dir = site_packages / "nvidia" / "cu13" / "bin"
+    dll_dir.mkdir(parents=True)
+    (dll_dir / "cudart64_13.dll").write_bytes(b"fixture-dll")
+
+    calls: list[str] = []
+    monkeypatch.setattr(onnx_provider, "_windows_dll_search_path_prepared", False)
+    monkeypatch.setattr(onnx_provider.os, "name", "posix")
+    monkeypatch.setattr(onnx_provider.os, "add_dll_directory", calls.append, raising=False)
+
+    onnx_provider._prepare_windows_onnxruntime_dll_search_path(site_packages=site_packages)
+
+    assert calls == []
+
+
+def test_windows_dll_search_path_runs_at_most_once_per_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    site_packages = tmp_path / "site-packages"
+    dll_dir = site_packages / "nvidia" / "cu13" / "bin"
+    dll_dir.mkdir(parents=True)
+    (dll_dir / "cudart64_13.dll").write_bytes(b"fixture-dll")
+
+    added_directories: list[str] = []
+    monkeypatch.setattr(onnx_provider, "_windows_dll_search_path_prepared", False)
+    monkeypatch.setattr(onnx_provider.os, "name", "nt")
+    monkeypatch.setattr(onnx_provider.os, "add_dll_directory", added_directories.append, raising=False)
+
+    onnx_provider._prepare_windows_onnxruntime_dll_search_path(site_packages=site_packages)
+    onnx_provider._prepare_windows_onnxruntime_dll_search_path(site_packages=site_packages)
+
+    assert len(added_directories) == 1

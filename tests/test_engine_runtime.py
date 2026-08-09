@@ -19,6 +19,7 @@ import time
 import pytest
 from PIL import Image
 
+from mockingbird.observation import engine_runtime
 from mockingbird.observation.candidate_visit_authority import ObservationAuthorityMode
 from mockingbird.observation.contracts import DetectionObservation, FramePacket
 from mockingbird.observation.engine_runtime import (
@@ -106,6 +107,149 @@ def test_provider_load_failure_reports_honest_unavailable_engine(repository: Pro
     assert repository.get_observation_authority_state().mode == "shadow"
 
 
+def test_real_provider_loader_reports_honest_missing_model_end_to_end(
+    repository: ProductRepository, tmp_path: Path,
+) -> None:
+    """Exercises `engine_runtime._load_real_provider` itself (never faked
+    here, unlike every other test in this module) against a genuinely
+    missing packaged provider config -- the exact packaged-Windows-artifact
+    defect this milestone fixes, proven end to end through the real
+    loading path a normal install actually takes, not just its
+    `FrameDrivenProviderConfiguration.load` unit underneath."""
+
+    missing_config_path = tmp_path / "observation_runtime" / "provider-config.json"
+    manager = _manager(repository)  # default provider_loader = the real _load_real_provider
+    manager.start(STREAM_ID, _camera_node_config(), provider_config_path=missing_config_path)
+    assert _wait_until(lambda: manager.status(STREAM_ID).state != "starting", timeout=10.0)
+    status = manager.status(STREAM_ID)
+
+    assert status.state == "error"
+    assert status.camera_connected is True  # never a contradictory "not connected"
+    assert status.engine_available is False
+    assert "model bundle" in status.engine_message.lower()
+    assert "invalid_frame_driven_configuration" in status.engine_message
+    assert status.advanced.get("engine_error_category") == "missing_model_or_runtime"
+
+
+# --- Camera health/status correction: never contradict a paired camera -----
+
+
+def test_engine_load_failure_leaves_camera_reported_ready(repository: ProductRepository) -> None:
+    """Product requirement: a Camera Node whose pairing is already fully
+    configured must never show a stale "not yet connected" camera fact next
+    to an unrelated Observation runtime failure -- the exact packaged-
+    runtime defect this contract fixes. `camera_connected`/`camera_message`
+    must report the camera as configured, and the headline `message` (what
+    the basic panel actually shows) must be the *engine's* honest reason,
+    not a generic camera placeholder."""
+
+    def _failing_loader(path: Path):
+        raise ValueError("invalid_frame_driven_configuration")
+
+    manager = _manager(repository, provider_loader=_failing_loader)
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state != "starting")
+    status = manager.status(STREAM_ID)
+
+    assert status.state == "error"
+    assert status.camera_connected is True
+    assert "not yet connected" not in status.camera_message.lower()
+    assert "not connected" not in status.message.lower()
+    assert status.engine_available is False
+    assert "model bundle" in status.engine_message.lower()
+    assert "invalid_frame_driven_configuration" in status.engine_message
+    # The env var name must not appear in the basic-tier message -- a
+    # normal packaged install never requires the user to know it.
+    assert engine_runtime.PROVIDER_CONFIG_PATH_ENV not in status.engine_message
+    # The headline message the basic panel renders is the real engine
+    # failure, not a benign camera placeholder.
+    assert status.message == status.engine_message
+
+
+def test_unsupported_gpu_failure_reports_distinct_honest_category(repository: ProductRepository) -> None:
+    """A CUDA/GPU-shaped failure code must produce different, honestly
+    distinct wording from a missing-model-bundle failure -- "Observation
+    runtime: ... Unsupported GPU" as its own recognizable state, per the
+    Camera-vs-Observation health contract."""
+
+    def _failing_loader(path: Path):
+        raise ValueError("onnx_cuda_no_fallback")
+
+    manager = _manager(repository, provider_loader=_failing_loader)
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state != "starting")
+    status = manager.status(STREAM_ID)
+
+    assert status.camera_connected is True
+    assert status.engine_available is False
+    assert "gpu" in status.engine_message.lower()
+    assert status.advanced.get("engine_error_category") == "unsupported_gpu"
+
+
+def test_missing_model_bundle_and_unsupported_gpu_are_distinct_categories(
+    repository: ProductRepository,
+) -> None:
+    def _missing_model(path: Path):
+        raise ValueError("invalid_model_bundle_path")
+
+    def _bad_gpu(path: Path):
+        raise ValueError("onnx_cuda_unavailable")
+
+    manager = _manager(repository, provider_loader=_missing_model)
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state != "starting")
+    missing_model_status = manager.status(STREAM_ID)
+
+    manager = _manager(repository, provider_loader=_bad_gpu)
+    manager.start("stream-2", _camera_node_config(stream_id="stream-2"))
+    assert _wait_until(lambda: manager.status("stream-2").state != "starting")
+    bad_gpu_status = manager.status("stream-2")
+
+    assert missing_model_status.advanced.get("engine_error_category") == "missing_model_or_runtime"
+    assert bad_gpu_status.advanced.get("engine_error_category") == "unsupported_gpu"
+    assert missing_model_status.engine_message != bad_gpu_status.engine_message
+
+
+def test_pairing_incomplete_still_reports_camera_as_the_problem(repository: ProductRepository) -> None:
+    """The other side of the same fix: when pairing itself is genuinely
+    incomplete, the headline message must be the specific camera reason,
+    never a generic engine placeholder (a pre-existing latent mismatch in
+    the same ternary this contract corrects)."""
+
+    manager = _manager(repository)
+    manager.start(STREAM_ID, _non_camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state != "starting")
+    status = manager.status(STREAM_ID)
+
+    assert status.camera_connected is False
+    assert status.message == status.camera_message
+    assert "Camera Node" in status.message
+
+
+def test_engine_load_duration_is_measured_and_status_never_reloads(repository: ProductRepository) -> None:
+    """Performance requirement: Observation Start latency/model-init time is
+    measured and surfaced (advanced diagnostics), and repeated status polls
+    never re-invoke the provider loader (no repeated model loading)."""
+
+    load_calls: list[Path] = []
+
+    def _counting_loader(path: Path):
+        load_calls.append(path)
+        raise ValueError("onnx_cuda_unavailable")
+
+    manager = _manager(repository, provider_loader=_counting_loader)
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state != "starting")
+
+    for _ in range(5):
+        status = manager.status(STREAM_ID)
+
+    assert len(load_calls) == 1
+    duration = status.advanced.get("engine_load_duration_ms")
+    assert isinstance(duration, (int, float))
+    assert duration >= 0
+
+
 def _table_counts(repository: ProductRepository) -> dict[str, int]:
     from sqlalchemy import func, select
 
@@ -149,11 +293,76 @@ def test_provider_load_failure_makes_no_unexpected_product_writes(repository: Pr
     assert _table_counts(repository) == before
 
 
-def test_resolve_provider_config_path_defaults_and_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    from mockingbird.observation import engine_runtime
+# --- Packaged-runtime configuration resolution (no env var required) -------
+
+
+def test_resolve_provider_config_path_falls_back_to_workspace_relative_dev_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no packaged install and no env override, a development checkout
+    still resolves the historical `data/models/...` convention -- but
+    anchored to the discovered workspace root, never to `os.getcwd()`, so it
+    keeps working regardless of which directory the process was started
+    from (the exact defect that produced `invalid_frame_driven_configuration`
+    on the packaged Windows artifact)."""
 
     monkeypatch.delenv(engine_runtime.PROVIDER_CONFIG_PATH_ENV, raising=False)
-    assert resolve_provider_config_path() == engine_runtime.DEFAULT_PROVIDER_CONFIG_PATH
+    monkeypatch.setattr(engine_runtime, "packaged_observation_runtime_root", lambda: Path("/no/such/packaged/root"))
+    resolved = resolve_provider_config_path()
+    assert resolved.is_absolute()
+    assert resolved == Path(__file__).resolve().parents[1] / engine_runtime.DEFAULT_PROVIDER_CONFIG_PATH
+
+
+def test_resolve_provider_config_path_prefers_packaged_root_over_dev_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """A normal packaged install resolves its default provider config
+    without any environment variable -- the packaged production
+    configuration wins over the development-checkout fallback."""
+
+    monkeypatch.delenv(engine_runtime.PROVIDER_CONFIG_PATH_ENV, raising=False)
+    packaged_root = tmp_path / "observation_runtime"
+    packaged_root.mkdir()
+    packaged_config = packaged_root / engine_runtime.PACKAGED_PROVIDER_CONFIG_FILENAME
+    packaged_config.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(engine_runtime, "packaged_observation_runtime_root", lambda: packaged_root)
+
+    assert resolve_provider_config_path() == packaged_config
+
+
+def test_resolve_provider_config_path_independent_of_cwd(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Restarting MockingBird from another working directory (exactly what
+    `runtime.py`'s `run_preflight` does by `os.chdir`-ing to the runtime
+    home before the API ever loads) must not change which provider config
+    resolves."""
+
+    monkeypatch.delenv(engine_runtime.PROVIDER_CONFIG_PATH_ENV, raising=False)
+    packaged_root = tmp_path / "observation_runtime"
+    packaged_root.mkdir()
+    (packaged_root / engine_runtime.PACKAGED_PROVIDER_CONFIG_FILENAME).write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(engine_runtime, "packaged_observation_runtime_root", lambda: packaged_root)
+
+    elsewhere = tmp_path / "some" / "other" / "working" / "directory"
+    elsewhere.mkdir(parents=True)
+    monkeypatch.chdir(elsewhere)
+
+    assert resolve_provider_config_path() == packaged_root / engine_runtime.PACKAGED_PROVIDER_CONFIG_FILENAME
+
+
+def test_resolve_provider_config_path_env_and_explicit_override_still_win(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The advanced/developer environment override, and an explicit
+    caller-supplied override, both still work -- they are just never
+    required for a normal packaged install."""
+
+    packaged_root = tmp_path / "observation_runtime"
+    packaged_root.mkdir()
+    (packaged_root / engine_runtime.PACKAGED_PROVIDER_CONFIG_FILENAME).write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(engine_runtime, "packaged_observation_runtime_root", lambda: packaged_root)
+
     monkeypatch.setenv(engine_runtime.PROVIDER_CONFIG_PATH_ENV, "/tmp/custom-provider-config.json")
     assert resolve_provider_config_path() == Path("/tmp/custom-provider-config.json")
     assert resolve_provider_config_path(Path("/explicit.json")) == Path("/explicit.json")

@@ -184,13 +184,16 @@ use. The panel shows plain camera/observation health (Ready, Observing, or
 Needs attention with a plain-language reason and the relevant setup action)
 and **Stop observing** always cleanly stops it.
 
-- Once a Camera Node is paired and a local Observation Engine model bundle
-  is configured (see [Optional ONNX Runtime CUDA
+- Once a Camera Node is paired, **Start observing** runs the accepted
+  Observation Engine. The packaged native-Windows product
+  (`scripts/build_local_product.py`) already includes the default model
+  bundle and GPU runtime, so a normal packaged install needs no manual
+  setup; a development checkout still needs the local model bundle
+  configured (see [Optional ONNX Runtime CUDA
   replay](#optional-onnx-runtime-cuda-replay) below for that one-time local
-  setup), **Start observing** runs the accepted Observation Engine. A
-  useful wildlife moment appears in Review Queue only when it clears a
-  conservative evidence-quality check; a quiet or distant scene honestly
-  shows no candidates rather than a low-value one.
+  setup). A useful wildlife moment appears in Review Queue only when it
+  clears a conservative evidence-quality check; a quiet or distant scene
+  honestly shows no candidates rather than a low-value one.
 - For an RTSP, Linux local USB, or Windows DirectShow Stream, **Start
   observing** arms the existing durable monitoring policy (the same
   continuity that already survives a restart).

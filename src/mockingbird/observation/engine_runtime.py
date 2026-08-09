@@ -41,6 +41,7 @@ import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Callable, Protocol
 
 from mockingbird.observation.camera_node_live import (
@@ -64,9 +65,15 @@ from mockingbird.observation.onnx_provider import OnnxCudaObservationProvider, O
 from mockingbird.observation.visit_episode_assembler import assemble_visit_episodes, build_tracklets
 from mockingbird.repository.product_repository import ProductRepository, StreamLivePlaybackConfig
 from mockingbird.source_providers.camera_node import CameraNodeClientError
+from mockingbird.web_app import find_workspace_root
 
 PROVIDER_CONFIG_PATH_ENV = "MOCKINGBIRD_OBSERVATION_PROVIDER_CONFIG_PATH"
+# Historical developer/CLI convention (README.md, replay-benchmark,
+# candidate-authority-trial): a path *relative to a development checkout's
+# root*, never to process cwd -- see `resolve_provider_config_path`.
 DEFAULT_PROVIDER_CONFIG_PATH = Path("data/models/observation-frame-driven/provider-config.json")
+PACKAGED_OBSERVATION_RUNTIME_DIRNAME = "observation_runtime"
+PACKAGED_PROVIDER_CONFIG_FILENAME = "provider-config.json"
 
 _BATCH_FRAMES = 20
 _ASSEMBLY_TICK_SECONDS = 10.0
@@ -108,17 +115,57 @@ def _default_transport_factory(config: StreamLivePlaybackConfig, stream_id: str)
     )
 
 
+def packaged_observation_runtime_root() -> Path:
+    """Where a packaged MockingBird install ships its default Observation
+    Engine provider configuration and model bundle -- populated by
+    `scripts/build_local_product.py`, mirroring `web_app.
+    resolve_frontend_dist`'s own "packaged asset next to this installed
+    package" convention exactly (`web_dist` there, `observation_runtime`
+    here: both live at the installed `mockingbird` package's own root,
+    sibling to this `observation/` package). Resolved from *this module's
+    own installed location*, never from `os.getcwd()`, so it keeps
+    resolving correctly after `runtime.py`'s `run_preflight()` changes the
+    process working directory to the runtime home, and after restarting
+    MockingBird from any other working directory."""
+
+    return Path(__file__).resolve().parent.parent / PACKAGED_OBSERVATION_RUNTIME_DIRNAME
+
+
 def resolve_provider_config_path(override: Path | None = None) -> Path:
-    """Where the accepted Observation Engine's model-bundle configuration
-    lives -- an explicit local file the user (or a future setup flow)
-    already supplied, exactly like the existing `replay-benchmark`/
-    `candidate-authority-trial` CLI convention documented in README.md. The
-    app never downloads or generates this file."""
+    """Packaged-runtime configuration resolution order (a normal packaged
+    install never needs `MOCKINGBIRD_OBSERVATION_PROVIDER_CONFIG_PATH` set):
+
+    1. an explicit caller-supplied override (tests, a future setup flow);
+    2. the explicit advanced/developer environment override -- still
+       honored, for a developer or advanced user who wants a different
+       bundle than the one that shipped, but never required;
+    3. the packaged production provider configuration next to this
+       installed package (`build_local_product.py` places one there --
+       see `packaged_observation_runtime_root`);
+    4. the historical development-checkout convention
+       (`data/models/observation-frame-driven/provider-config.json`),
+       resolved against the discovered workspace root (`find_workspace_root`,
+       the same helper `runtime.py` already uses) rather than
+       `os.getcwd()`, so a developer checkout keeps working regardless of
+       which directory MockingBird was started from;
+    5. if none of the above exist, the packaged-root candidate path is
+       still returned -- never raises here. `FrameDrivenProviderConfiguration
+       .load` reports one honest, specific "missing" failure rather than
+       this function guessing or silently picking a wrong path.
+    """
 
     if override is not None:
         return override
     configured = os.environ.get(PROVIDER_CONFIG_PATH_ENV)
-    return Path(configured) if configured else DEFAULT_PROVIDER_CONFIG_PATH
+    if configured:
+        return Path(configured)
+    packaged_candidate = packaged_observation_runtime_root() / PACKAGED_PROVIDER_CONFIG_FILENAME
+    if packaged_candidate.is_file():
+        return packaged_candidate
+    workspace_root = find_workspace_root()
+    if workspace_root is not None:
+        return workspace_root / DEFAULT_PROVIDER_CONFIG_PATH
+    return packaged_candidate
 
 
 @dataclass(frozen=True)
@@ -163,6 +210,64 @@ def _sanitized(error: BaseException) -> str:
     return text[:200]
 
 
+# The bounded, already-honest error codes `FrameDrivenProviderConfiguration
+# .load`/`OnnxModelBundle.load` (missing/invalid provider config or model
+# bundle, corrupt file, fingerprint mismatch) and `OnnxCudaObservationProvider
+# .load` (missing/unsupported CUDA execution provider) already raise --
+# classified here into the two plain-language product categories the "Camera
+# health/status correction" contract asks for, so a normal user sees *which*
+# subsystem is actually broken instead of one generic sentence. Never widens
+# or invents a new failure mode: every code below is already produced
+# upstream unchanged.
+_MISSING_MODEL_OR_RUNTIME_CODES = frozenset({
+    "invalid_frame_driven_configuration",
+    "invalid_frame_driven_settings",
+    "invalid_model_bundle_path",
+    "invalid_model_bundle_json",
+    "unsupported_model_bundle_version",
+    "invalid_model_path",
+    "unsupported_model_format",
+    "unsupported_decoder",
+    "invalid_model_bundle",
+    "model_fingerprint_mismatch",
+    "provider_configuration_required",
+    "provider_already_loaded",
+})
+_UNSUPPORTED_GPU_CODES = frozenset({
+    "onnx_cuda_unavailable",
+    "onnx_cuda_no_fallback",
+    "onnx_cuda_session_load_failed",
+    "onnx_cuda_mixed_execution",
+    "onnx_cuda_verification_insufficient",
+})
+
+
+def _engine_failure_message(error: BaseException) -> tuple[str, str]:
+    """Return `(basic_message, category)` for an Observation Engine start
+    failure. `basic_message` never tells a normal user to set an
+    environment variable or otherwise touch packaging internals -- the
+    product requirement is that a normal packaged install never requires
+    that. The short stable error code stays visible in parentheses (already
+    the existing convention here) for advanced diagnostics/support, and
+    `category` is recorded separately in `advanced` rather than folded into
+    the basic sentence."""
+
+    code = _sanitized(error)
+    if code in _MISSING_MODEL_OR_RUNTIME_CODES:
+        return (
+            f"The Observation Engine's model bundle is missing or invalid. "
+            f"Reinstalling MockingBird usually fixes this. ({code})",
+            "missing_model_or_runtime",
+        )
+    if code in _UNSUPPORTED_GPU_CODES:
+        return (
+            f"This PC's GPU/graphics driver does not meet Observation Engine "
+            f"requirements (a compatible NVIDIA GPU and driver are required). ({code})",
+            "unsupported_gpu",
+        )
+    return (f"The Observation Engine could not start. ({code})", "failed")
+
+
 class _EngineSession:
     """One Stream's bounded background observation loop and its snapshot-
     able status. All mutable state is behind `_state_lock`; the network/GPU
@@ -194,7 +299,7 @@ class _EngineSession:
         self._stopped_at: datetime | None = None
         self._stopped_reason: str | None = None
         self._camera_connected = False
-        self._camera_message = "Not yet connected to the Camera Node."
+        self._camera_message = "Connecting to the Camera Node…"
         self._engine_available = False
         self._engine_message = "Observation Engine has not started yet."
         self._counts = ObservationEngineCounts()
@@ -247,7 +352,16 @@ class _EngineSession:
                 "observing": "MockingBird is watching this camera for wildlife.",
                 "stopping": "Stopping observation…",
                 "stopped": "Not observing.",
-                "error": self._engine_message if not self._camera_connected else self._camera_message,
+                # Headline whichever subsystem is actually the blocking
+                # problem: an unpaired/unreachable camera is reported via
+                # its own specific `camera_message` (never a generic engine
+                # placeholder); once the camera is configured, a later
+                # Observation Engine failure (missing model, unsupported
+                # GPU) is reported via its own specific `engine_message` --
+                # never the other way around, which is exactly the
+                # contradiction the "Camera health/status correction"
+                # contract exists to fix.
+                "error": self._camera_message if not self._camera_connected else self._engine_message,
             }[self._state]
             suppressed_reasons = tuple(
                 sorted(self._suppressed.items(), key=lambda item: (-item[1], item[0]))[:_MAX_SUPPRESSED_REASONS]
@@ -313,17 +427,33 @@ class _EngineSession:
                 )
             return
 
+        # Pairing configuration is already fully validated above -- report
+        # the Camera Node as configured now, *before* attempting the
+        # potentially slow, GPU-heavy Observation Engine load below. This is
+        # what the "Camera health/status correction" contract requires: a
+        # later engine-load failure (missing model, unsupported GPU) must
+        # never leave a stale "not yet connected" camera fact sitting next
+        # to an unrelated Observation runtime problem. A genuine transport
+        # failure once frames are actually requested still revises this
+        # back down (see the `CameraNodeClientError` handling below).
+        with self._state_lock:
+            self._camera_connected = True
+            self._camera_message = "Camera Node is paired and configured."
+
+        load_started = perf_counter()
         try:
             provider, detector = self._provider_loader(self._provider_config_path)
         except (ValueError, OSError, RuntimeError) as error:
+            basic_message, category = _engine_failure_message(error)
             with self._state_lock:
                 self._state = "error"
                 self._engine_available = False
-                self._engine_message = (
-                    "The Observation Engine could not start. Confirm a local model bundle is "
-                    f"configured (see {PROVIDER_CONFIG_PATH_ENV}) and a compatible GPU is "
-                    f"available. ({_sanitized(error)})"
-                )
+                self._engine_message = basic_message
+                self._advanced["engine_error_category"] = category
+                self._advanced["engine_error_code"] = _sanitized(error)
+                self._advanced["provider_config_path"] = str(self._provider_config_path)
+                self._advanced["provider_config_env_var"] = PROVIDER_CONFIG_PATH_ENV
+                self._advanced["engine_load_duration_ms"] = round((perf_counter() - load_started) * 1000, 1)
             return
 
         with self._state_lock:
@@ -331,6 +461,18 @@ class _EngineSession:
             self._engine_message = "Observation Engine is running."
             self._advanced["provider_key"] = provider.provider_id
             self._advanced["detector_provider_key"] = getattr(detector, "provider_id", "onnx-cuda")
+            self._advanced["engine_load_duration_ms"] = round((perf_counter() - load_started) * 1000, 1)
+            # GPU/execution-provider/model-bundle-version facts for the
+            # collapsed advanced-diagnostics disclosure only (never the
+            # basic UI) -- whatever the real detector already computes in
+            # `report_metadata`, untouched; a fixture detector without one
+            # (existing hardware-free tests) is simply omitted, not an error.
+            report_metadata = getattr(detector, "report_metadata", None)
+            if callable(report_metadata):
+                try:
+                    self._advanced["model_runtime_metadata"] = report_metadata()
+                except Exception:  # pragma: no cover - diagnostics must never break Start
+                    pass
 
         repository = self._repository_factory()
         try:

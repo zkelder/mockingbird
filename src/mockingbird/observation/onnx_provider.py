@@ -8,6 +8,7 @@ from importlib import import_module, util
 from io import BytesIO
 import json
 import math
+import os
 from pathlib import Path
 import tempfile
 from time import perf_counter
@@ -36,6 +37,56 @@ CUDA_EXECUTION_VERIFIED = "cuda_only_verified"
 CUDA_EXECUTION_MIXED = "mixed_cuda_cpu_execution"
 CUDA_EXECUTION_UNVERIFIABLE = "cuda_execution_verification_insufficient"
 
+_windows_dll_search_path_prepared = False
+
+
+def _prepare_windows_onnxruntime_dll_search_path(*, site_packages: Path | None = None) -> None:
+    """Let onnxruntime's CUDA execution provider find its CUDA/cuDNN DLLs on
+    a packaged Windows install without the user ever setting `PATH` or
+    `LD_LIBRARY_PATH` themselves (see the Observation runtime section of
+    docs/local-product-packaging-design.md).
+
+    `scripts/build_local_product.py` pip-installs the CUDA/cuDNN
+    redistributable wheels (`nvidia-cuda-runtime`, `nvidia-cublas`, etc.)
+    into the same flat `site-packages` layout as every other dependency --
+    there is no system-wide CUDA Toolkit install and no PATH entry pointing
+    at one. Windows Python 3.8+ no longer implicitly searches a DLL's own
+    directory or PATH for its own dependencies; `os.add_dll_directory` is
+    the documented replacement. A no-op on any non-Windows host, and safe
+    to call repeatedly (does the real work at most once per process)."""
+
+    global _windows_dll_search_path_prepared
+    if _windows_dll_search_path_prepared or os.name != "nt":
+        return
+    _windows_dll_search_path_prepared = True
+    # This module lives at <site-packages>/mockingbird/observation/
+    # onnx_provider.py in both a normal venv and this project's packaged
+    # flat `pip install --target site-packages` layout -- two `.parent`
+    # steps up is always that shared `site-packages` root. `site_packages`
+    # is only ever overridden by tests (real call sites always resolve it
+    # from this module's own real installed location).
+    site_packages = site_packages or Path(__file__).resolve().parent.parent
+    nvidia_root = site_packages / "nvidia"
+    if not nvidia_root.is_dir():
+        return
+    # NVIDIA's own Windows wheel layout nests each `.dll` a *different*
+    # number of directories deep per package (confirmed against the real
+    # `nvidia-cuda-runtime` wheel: `nvidia/cu13/bin/x86_64/cudart64_13.dll`,
+    # four levels under `nvidia/`, not the `nvidia/<component>/bin/` shape
+    # its Linux `.so` counterpart uses) -- a fully recursive search for the
+    # actual `.dll` files, rather than any fixed depth, is the only layout
+    # -independent way to find every directory that actually needs adding.
+    seen_directories: set[Path] = set()
+    for dll_path in nvidia_root.rglob("*.dll"):
+        dll_dir = dll_path.parent
+        if dll_dir in seen_directories:
+            continue
+        seen_directories.add(dll_dir)
+        try:
+            os.add_dll_directory(str(dll_dir))
+        except OSError:
+            pass
+
 
 class CudaRuntime(Protocol):
     def available_providers(self) -> tuple[str, ...]: ...
@@ -50,6 +101,7 @@ class OptionalOrtCudaRuntime:
         if util.find_spec("onnxruntime") is None:
             return ()
         try:
+            _prepare_windows_onnxruntime_dll_search_path()
             runtime = import_module("onnxruntime")
             return tuple(runtime.get_available_providers())
         except Exception:
@@ -59,12 +111,14 @@ class OptionalOrtCudaRuntime:
         if util.find_spec("onnxruntime") is None:
             return None
         try:
+            _prepare_windows_onnxruntime_dll_search_path()
             return str(import_module("onnxruntime").__version__)
         except Exception:
             return None
 
     def create_session(self, model_path: Path, *, input_name: str, output_names: tuple[str, ...]) -> Any:
         try:
+            _prepare_windows_onnxruntime_dll_search_path()
             runtime = import_module("onnxruntime")
             options = runtime.SessionOptions()
             options.intra_op_num_threads = 1

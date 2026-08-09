@@ -176,6 +176,16 @@ export function ObservationControlPanel({
                     <strong>Camera</strong> {status.camera_connected ? "Healthy" : "Needs attention"}
                   </span>
                 ) : null}
+                {/* Camera and Observation are reported separately -- a
+                    successfully paired, reachable camera must never read
+                    "Needs attention" merely because the *Observation*
+                    runtime (model bundle, GPU/CUDA) is what actually failed
+                    to start, and vice versa. */}
+                {status.state !== "observing" ? (
+                  <span>
+                    <strong>Observation</strong> {status.engine_available ? "Ready" : "Needs attention"}
+                  </span>
+                ) : null}
                 {status.last_useful_frame_at ? (
                   <span>
                     <strong>Last activity</strong> {formatDateTime(status.last_useful_frame_at)}
