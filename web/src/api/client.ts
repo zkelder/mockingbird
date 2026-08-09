@@ -72,6 +72,7 @@ import type {
   HealthStatus,
   LocalCameraFrameCaptureResponse,
   LiveCameraSessionStatus,
+  ObservationSessionStatus,
   LivePreviewLeaseRequest,
   LivePreviewLeaseResponse,
   LivePreviewReleaseResponse,
@@ -613,6 +614,20 @@ export const apiClient = {
     ),
   liveCameraSessionMjpegUrl: (streamId: string) =>
     `${API_BASE_URL}/api/streams/${encodeURIComponent(streamId)}/live-session/mjpeg`,
+  startStreamObservation: (streamId: string) =>
+    request<ObservationSessionStatus>(
+      `/api/streams/${encodeURIComponent(streamId)}/observation/start`,
+      { method: "POST" },
+    ),
+  stopStreamObservation: (streamId: string) =>
+    request<ObservationSessionStatus>(
+      `/api/streams/${encodeURIComponent(streamId)}/observation/stop`,
+      { method: "POST" },
+    ),
+  getStreamObservationStatus: (streamId: string) =>
+    request<ObservationSessionStatus>(
+      `/api/streams/${encodeURIComponent(streamId)}/observation/status`,
+    ),
   liveCameraCurrentFrameUrl: (streamId: string) =>
     `${API_BASE_URL}/api/streams/${encodeURIComponent(streamId)}/live-session/current-frame`,
   openLiveOverviewPreview: (streamId: string, payload: LivePreviewLeaseRequest) =>

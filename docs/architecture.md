@@ -618,6 +618,23 @@ validation without a live incremental assembler -- the trial periodically
 reruns the same bounded, post-hoc `build_tracklets`/`assemble_visit_
 episodes` pass over the live session's own accumulated track updates.
 
+Product Vertical Slice v1 makes this engine reachable from the app itself,
+described in
+[observation-engine-product-control-contract.md](observation-engine-product-control-contract.md):
+`mockingbird.observation.engine_runtime.ObservationEngineSessionManager` is
+an app-owned, per-Stream background session (mirroring
+`LiveCameraSessionManager`'s lifecycle convention) that reuses this same
+construction long-running and stoppable instead of trial-bounded, activating
+`candidate_visit` authority on Start and reverting to `shadow` on Stop or
+any session end. A new conservative candidate-quality admission boundary
+(`mockingbird.observation.candidate_quality_gate`) sits between an
+authority-approved proposal and its actual persistence, composed only from
+already-produced Stage 6/6.19 facts. Existing Review Queue effective-primary
+and product-category classification logic, previously tuned only to legacy
+motion-evidence roles, was extended additively to also recognize Stage 7's
+`identification`/`context`/`alternate` roles. It changes no detector,
+tracker, burst-scheduler, evidence-scoring, or authority-gate behavior.
+
 The Stream-to-proposed-Visit subsystem will be reworked through a strangler
 migration, not a product rewrite. A provider-neutral Observation Engine consumes
 Stream capabilities and emits only evidence-side `FramePacket`,

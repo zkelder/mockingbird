@@ -346,6 +346,15 @@ A local export of reviewed media, labels, corrections, and metadata.
 
 Local summaries of outdoor activity over time.
 
+## Observation Control
+
+The Stream-page **Start observing** / **Stop observing** action and its
+compact camera/Observation Engine health. It runs the accepted Observation
+Engine against a paired Camera Node directly from the app; no CLI
+acceptance tool is required. Stopping is bounded and always disables
+candidate authority. It never exposes internal Stage numbers, CUDA, or
+ONNX vocabulary in its basic state.
+
 ## Stream Monitoring Policy
 
 Durable, user-authored intent for whether a supported live-video Stream should

@@ -2583,8 +2583,8 @@ export function ReviewQueuePage({
       ) : null}
       {queueItems.length === 0 ? (
         <EmptyState
-          title="No review items need correction"
-          description="Review Queue contains Events and Visits that need user correction. Live candidates appear here only after explicit handoff, and Bird Log updates only after correction."
+          title="No wildlife moments ready for review"
+          description="MockingBird only surfaces a candidate here once it has a clear enough moment to actually review. If observation is running but nothing appears, MockingBird saw activity but couldn't capture a clear enough moment yet -- that's expected, not an error."
           action={
             <button className="primary-action" onClick={onOpenExports}>
               Open Dataset Exports
@@ -4456,6 +4456,22 @@ function FastReviewPanel({
             <button
               className="secondary-action"
               disabled={isSaving}
+              onClick={() => void saveAndNext("bird", "Confirmed bird in Fast Review.")}
+              type="button"
+            >
+              Confirm bird
+            </button>
+            <button
+              className="secondary-action"
+              disabled={isSaving}
+              onClick={() => void saveAndNext("unknown_bird", "Marked unknown bird in Fast Review.")}
+              type="button"
+            >
+              Unknown bird
+            </button>
+            <button
+              className="secondary-action"
+              disabled={isSaving}
               onClick={() => void saveAndNext("blank", "Marked blank or no activity in Fast Review.")}
               type="button"
             >
@@ -4467,7 +4483,7 @@ function FastReviewPanel({
               onClick={() => void saveAndNext("false_positive", "Marked false activity in Fast Review.")}
               type="button"
             >
-              False activity
+              False positive
             </button>
             <button
               className="secondary-action"

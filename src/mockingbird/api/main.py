@@ -223,6 +223,8 @@ from mockingbird.api.schemas import (
     ObservationEngineStatusResponse,
     ObservationProviderCapabilitiesResponse,
     ObservationProviderHealthResponse,
+    ObservationSessionCounts,
+    ObservationSessionStatusResponse,
     SourceFolderImportPreviewRequest,
     SourceFolderImportPreviewResponse,
     SourceProviderConfiguration,
@@ -369,6 +371,10 @@ from mockingbird.monitoring import (
 from mockingbird.observation import (
     ObservationEngineRegistry,
     SnapshotObservationProvider,
+)
+from mockingbird.observation.engine_runtime import (
+    ObservationEngineSessionManager,
+    ObservationEngineSessionStatus,
 )
 from mockingbird.playback import (
     live_camera_session,
@@ -580,6 +586,7 @@ _patch_testclient_for_pytest()
 _repository: ProductRepository | None = None
 _source_monitor_manager: SnapshotObservationProvider | None = None
 _live_camera_session_manager: live_camera_session.LiveCameraSessionManager | None = None
+_observation_engine_session_manager: ObservationEngineSessionManager | None = None
 _live_preview_lease_manager: live_preview_leases.LivePreviewLeaseManager | None = None
 _durable_monitoring_supervisor: DurableMonitoringSupervisor | None = None
 _local_storage_retention_service: LocalStorageRetentionService | None = None
@@ -1127,6 +1134,7 @@ def _stop_runtime_activity(*, reason: str) -> None:
     global _durable_monitoring_supervisor, _local_storage_retention_service
     global _source_monitor_manager, _live_camera_session_manager, _live_preview_lease_manager
     global _live_object_detector_manager, _tracked_activity_detector_manager
+    global _observation_engine_session_manager
     detector_drained = False
 
     def drain_live_detector() -> None:
@@ -1154,6 +1162,9 @@ def _stop_runtime_activity(*, reason: str) -> None:
     if _live_camera_session_manager is not None:
         _live_camera_session_manager.stop_all(reason=reason)
         _live_camera_session_manager = None
+    if _observation_engine_session_manager is not None:
+        _observation_engine_session_manager.stop_all(reason=reason)
+        _observation_engine_session_manager = None
     if _live_object_detector_manager is not None:
         # The manager was drained before durable stop persistence; release its
         # owner reference only after the rest of process-owned cleanup finishes.
@@ -1320,6 +1331,23 @@ def get_live_camera_session_manager() -> live_camera_session.LiveCameraSessionMa
     if _live_camera_session_manager is None:
         _live_camera_session_manager = live_camera_session.LiveCameraSessionManager()
     return _live_camera_session_manager
+
+
+def get_observation_engine_session_manager() -> ObservationEngineSessionManager:
+    """The app-owned Observation Engine lifecycle (Product requirement 1).
+
+    Each background session opens its own dedicated `ProductRepository`
+    (matching the resolved database/media root `get_repository()` already
+    uses) rather than sharing the app's own instance, so a session can be
+    closed independently on stop without ever touching the shared
+    repository other requests depend on."""
+
+    global _observation_engine_session_manager
+    if _observation_engine_session_manager is None:
+        _observation_engine_session_manager = ObservationEngineSessionManager(
+            repository_factory=ProductRepository,
+        )
+    return _observation_engine_session_manager
 
 
 def get_tracked_activity_detector_manager() -> TrackedOutdoorActivityDetectorManager:
@@ -10191,6 +10219,99 @@ async def stop_stream_live_camera_session(
         configuration,
         message="Camera session stopped and durable monitoring disabled.",
     )
+
+
+def _observation_session_status_response(
+    status: ObservationEngineSessionStatus,
+) -> ObservationSessionStatusResponse:
+    return ObservationSessionStatusResponse(
+        stream_id=status.stream_id,
+        state=status.state,
+        observing=status.observing,
+        message=status.message,
+        camera_connected=status.camera_connected,
+        camera_message=status.camera_message,
+        engine_available=status.engine_available,
+        engine_message=status.engine_message,
+        started_at=status.started_at,
+        stopped_at=status.stopped_at,
+        stopped_reason=status.stopped_reason,
+        last_candidate_visit_id=status.last_candidate_visit_id,
+        counts=ObservationSessionCounts(
+            track_updates_observed=status.counts.track_updates_observed,
+            evidence_candidates_observed=status.counts.evidence_candidates_observed,
+            proposals_observed=status.counts.proposals_observed,
+            candidates_created=status.counts.candidates_created,
+            candidates_suppressed=status.counts.candidates_suppressed,
+            suppressed_reasons=[list(item) for item in status.counts.suppressed_reasons],
+        ),
+        advanced=status.advanced,
+    )
+
+
+_STOPPED_OBSERVATION_SESSION_STATUS = ObservationSessionStatusResponse(
+    stream_id="",
+    state="stopped",
+    observing=False,
+    message="Not observing.",
+    camera_connected=False,
+    camera_message="Not yet connected to the Camera Node.",
+    engine_available=False,
+    engine_message="Observation Engine has not started yet.",
+)
+
+
+@app.post(
+    "/api/streams/{stream_id}/observation/start",
+    response_model=ObservationSessionStatusResponse,
+)
+async def start_stream_observation(stream_id: str) -> ObservationSessionStatusResponse:
+    """Start the accepted Observation Engine for this Stream (Product
+    requirement 1) -- the one explicit action a normal user takes instead of
+    `candidate-authority-trial`/other CLI acceptance tools. Uses this
+    Stream's already-configured Camera Node pairing and this Stream's own
+    Privacy/Ignore Zones; a Stream that is not a paired Camera Node reports
+    an honest, bounded "not available" status rather than silently starting
+    a different runtime."""
+
+    repository = get_repository()
+    configuration = _stream_live_playback_config_or_404(stream_id, require_active_source=True)
+    regions = repository.stream_privacy_ignore_regions(stream_id)
+    status = get_observation_engine_session_manager().start(
+        stream_id, configuration, privacy_ignore_regions=regions,
+    )
+    return _observation_session_status_response(status)
+
+
+@app.post(
+    "/api/streams/{stream_id}/observation/stop",
+    response_model=ObservationSessionStatusResponse,
+)
+async def stop_stream_observation(stream_id: str) -> ObservationSessionStatusResponse:
+    """Stop cleanly and bounded, and act as this feature's kill switch: this
+    always returns candidate authority to shadow, so no candidate can be
+    created after Stop even if the background session is slow to finish
+    draining. Never touches an already-created candidate Visit."""
+
+    _stream_live_playback_config_or_404(stream_id)
+    status = get_observation_engine_session_manager().stop(stream_id)
+    if status is None:
+        return _STOPPED_OBSERVATION_SESSION_STATUS.model_copy(update={"stream_id": stream_id})
+    return _observation_session_status_response(status)
+
+
+@app.get(
+    "/api/streams/{stream_id}/observation/status",
+    response_model=ObservationSessionStatusResponse,
+)
+async def get_stream_observation_status(stream_id: str) -> ObservationSessionStatusResponse:
+    """Side-effect-free: never starts a camera, model, or session."""
+
+    _stream_live_playback_config_or_404(stream_id)
+    status = get_observation_engine_session_manager().status(stream_id)
+    if status is None:
+        return _STOPPED_OBSERVATION_SESSION_STATUS.model_copy(update={"stream_id": stream_id})
+    return _observation_session_status_response(status)
 
 
 @app.get("/api/streams/{stream_id}/live-session/current-frame")

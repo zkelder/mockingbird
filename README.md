@@ -64,6 +64,11 @@ MockingBird currently provides:
 - an optional local-LAN MockingBird Camera Node package for paired bounded
   snapshots from an edge camera, with no cloud relay, discovery, remote shell,
   recording, audio, or automatic monitoring
+- a Stream-scoped **Start observing** / **Stop observing** control that runs
+  the accepted Observation Engine against a paired Camera Node directly from
+  the app, with camera/engine health and a conservative candidate-quality
+  check before anything reaches Review Queue -- no CLI acceptance tooling
+  required for normal use
 - a shared Dashboard centered on Today in Your Yard: detector-qualified animal
   Visits, reviewed discoveries, best evidence-backed moments, Zone/hour context,
   bounded confirmation work, and compact observation health; it remains
@@ -140,6 +145,20 @@ are transient and monitoring stays off until explicitly enabled. There is no
 automatic LAN discovery, service installer, remote shell, cloud relay, audio,
 or recording. See [Camera Node boundary](docs/camera-node-boundary-design.md).
 
+### Start observing wildlife
+
+Once a Camera Node is paired and a local Observation Engine model bundle is
+configured (see [Optional ONNX Runtime CUDA
+replay](#optional-onnx-runtime-cuda-replay) below for that one-time local
+setup), open that camera's Stream page and use **Start observing**. No CLI
+tool is required for normal use. The panel shows whether the camera is
+connected and whether the Observation Engine is ready, and **Stop
+observing** always cleanly stops the session. A useful wildlife moment
+appears in Review Queue only when it clears a conservative evidence-quality
+check; a quiet or distant scene honestly shows no candidates rather than a
+low-value one. See
+[observation-engine-product-control-contract.md](docs/observation-engine-product-control-contract.md).
+
 ### Optional ONNX Runtime CUDA replay
 
 The Stage 3 accelerated provider is an offline, shadow-only benchmark path. Core
@@ -188,9 +207,10 @@ Stage 5 adds a separate live-shadow adapter for an already paired Camera Node. I
 uses one authenticated, frame-bounded multipart-JPEG analysis stream and a
 profile-bound one-frame evidence burst. The PC keeps at most the newest bounded
 work, applies Privacy/Ignore masking before ONNX CUDA inference, tracks source-time
-frames, and emits temporary shadow evidence only. It does not start through the
-normal application launcher, replace Snapshot monitoring, or create product
-records. See the
+frames, and emits temporary shadow evidence only. This shadow-only CLI path does
+not start through the normal application launcher or create product records; the
+same pipeline reachable from **Start observing** on the Stream page (see above)
+is the app-owned, bounded, explicitly-activated production path. See the
 [Camera Node live-shadow contract](docs/camera-node-live-shadow-contract.md).
 
 ### Optional local species suggestions

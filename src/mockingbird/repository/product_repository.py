@@ -73,6 +73,7 @@ from mockingbird.observation.candidate_visit_authority import (
     ObservationAuthorityMode,
     evaluate_candidate_authority,
 )
+from mockingbird.observation.candidate_quality_gate import evaluate_evidence_admission
 from mockingbird.species.bioclip_adapter import (
     BIOCLIP_ADAPTER_ID,
     BIOCLIP_ADAPTER_NAME,
@@ -2515,6 +2516,27 @@ class ProductRepository:
             )
 
         bounded_items = evidence_items[: limits.max_evidence_items_per_candidate]
+
+        # Product admission boundary: assembled proposal -> candidate
+        # authority (already decided "create" above) -> (here) -> Review
+        # Queue candidate. A conservative, product-level check on the
+        # already-selected evidence itself, composed only from existing
+        # scorer/assembler facts -- never a new detector threshold. Checked
+        # before any file is written, so an insufficient-evidence proposal
+        # leaves the proposal shadow-only: no MediaAsset, Visit, or Event is
+        # ever created for it. See docs/candidate-visit-authority-contract.md
+        # and docs/observation-engine-product-control-contract.md.
+        items_with_content = [item for item in bounded_items if item.content]
+        if not items_with_content:
+            return CandidateVisitCreationOutcome(
+                "blocked_missing_evidence", "no_persistable_evidence_bytes", None, None, proposal.proposal_id, (),
+            )
+        quality = evaluate_evidence_admission(proposal, items_with_content)
+        if not quality.admitted:
+            return CandidateVisitCreationOutcome(
+                quality.outcome, quality.reason, None, None, proposal.proposal_id, (),
+            )
+
         persisted: list[tuple[CandidateEvidenceItem, MediaAssetModel]] = []
         total_bytes = 0
         for item in bounded_items:
@@ -7113,6 +7135,44 @@ class ProductRepository:
         with self.session_factory() as session:
             return self._zones_for_stream(session, stream_id)
 
+    def stream_privacy_ignore_regions(
+        self, stream_id: str,
+    ) -> tuple[tuple[float, float, float, float], ...]:
+        """Side-effect-free: this Stream's active Privacy/Ignore Zones as
+        normalized axis-aligned bounding boxes, for a caller that needs a
+        bounded exclusion-region shape (for example
+        `observation.camera_node_live.CameraNodeAnalysisSource.
+        analysis_excluded_regions`) rather than a polygon. A bounding box is
+        never smaller than the drawn polygon, so this stays conservative in
+        the safe direction -- it can only exclude more area than the user
+        drew, never less."""
+
+        with self.session_factory() as session:
+            zones = session.scalars(
+                select(ZoneModel).where(
+                    ZoneModel.stream_id == stream_id,
+                    ZoneModel.zone_type.in_((ZoneType.privacy.value, ZoneType.ignore.value)),
+                    ZoneModel.is_active.is_(True),
+                )
+            ).all()
+            regions: list[tuple[float, float, float, float]] = []
+            for zone in zones:
+                try:
+                    points = json.loads(zone.polygon_json)
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if not isinstance(points, list) or len(points) < 3:
+                    continue
+                xs = [float(point["x"]) for point in points if isinstance(point, dict) and "x" in point]
+                ys = [float(point["y"]) for point in points if isinstance(point, dict) and "y" in point]
+                if len(xs) != len(points) or len(ys) != len(points):
+                    continue
+                left, right = max(0.0, min(xs)), min(1.0, max(xs))
+                top, bottom = max(0.0, min(ys)), min(1.0, max(ys))
+                if right > left and bottom > top:
+                    regions.append((left, top, right, bottom))
+            return tuple(regions[:64])
+
     def create_zone(self, payload: ZoneCreate) -> Zone:
         with self.session_factory() as session:
             with session.begin():
@@ -9356,6 +9416,8 @@ class ProductRepository:
                 ),
                 evidence_frames=self._visit_evidence_frames_from_visit(session, visit, event),
                 fallback_captured_at=event.started_at,
+                event_type=event.event_type,
+                subject_label=visit.subject_label,
             )
             if context["is_demo_source"] or context["detector_class"] != "animal":
                 continue
@@ -9412,6 +9474,8 @@ class ProductRepository:
                 ),
                 evidence_frames=self._visit_evidence_frames_from_visit(session, visit, event),
                 fallback_captured_at=event.started_at,
+                event_type=event.event_type,
+                subject_label=visit.subject_label,
             )
             if not context["is_demo_source"] and context["detector_class"] == "animal":
                 detector_qualified_animal_visit_count += 1
@@ -22141,6 +22205,14 @@ class ProductRepository:
                 session,
                 event.stream_id,
             )
+            visit_model = session.get(VisitModel, visit.id)
+            if visit_model is None:
+                continue
+            evidence_frames = self._visit_evidence_frames_from_visit(
+                session,
+                visit_model,
+                event_model,
+            )
             media_asset = self._media_asset_for_path_from_session(
                 session,
                 visit.representative_media_path,
@@ -22151,14 +22223,24 @@ class ProductRepository:
                 visit_id=visit.id,
                 media_asset_id=media_asset.id if media_asset else None,
             )
-            visit_model = session.get(VisitModel, visit.id)
-            if visit_model is None:
-                continue
-            evidence_frames = self._visit_evidence_frames_from_visit(
-                session,
-                visit_model,
-                event_model,
-            )
+            if media_asset is None and evidence is None and evidence_frames:
+                # Stage 7 candidate Visits (and any future Visit-evidence-link
+                # -only creation path) have neither a legacy
+                # `representative_media_path` nor MotionEvidence -- their
+                # evidence lives only in `VisitEvidenceLinkModel` rows,
+                # already resolved into `evidence_frames` above. Reuse the
+                # same primary-link fact the Visit was actually created with
+                # instead of leaving the review card with no image at all.
+                # Existing Visits with either signal already set are
+                # untouched: this branch only runs when both are absent.
+                primary_frame = next(
+                    (frame for frame in evidence_frames if frame.is_primary),
+                    evidence_frames[0],
+                )
+                primary_model = session.get(MediaAssetModel, primary_frame.media_asset_id)
+                media_asset = (
+                    _media_asset_from_model(primary_model) if primary_model is not None else None
+                )
             activity_context = self._review_queue_activity_context(evidence)
             best_media_asset_id = (
                 media_asset.id
@@ -22224,6 +22306,8 @@ class ProductRepository:
                     media_asset=media_asset,
                     evidence_frames=evidence_frames,
                     fallback_captured_at=event.started_at,
+                    event_type=event.event_type,
+                    subject_label=visit.subject_label,
                 ),
             )
             queue_item.identification = self._review_identification_summary_for_item(
@@ -22317,6 +22401,7 @@ class ProductRepository:
                     media_asset=media_asset,
                     evidence_frames=[],
                     fallback_captured_at=event.started_at,
+                    event_type=event.event_type,
                 ),
             )
             queue_item.identification = self._review_identification_summary_for_item(
@@ -26106,6 +26191,8 @@ def _review_queue_product_context(
     media_asset: MediaAsset | None,
     evidence_frames: list[VisitEvidenceFrame],
     fallback_captured_at: datetime,
+    event_type: str = "",
+    subject_label: str | None = None,
 ) -> dict[str, Any]:
     """Classify durable review provenance without turning evidence into truth."""
 
@@ -26171,6 +26258,27 @@ def _review_queue_product_context(
         if candidate is not None
         else None
     )
+
+    # Stage 7 candidate Visits (`event_type == "observation_engine_candidate"`)
+    # never populate legacy MotionEvidence `scoring_config_json`, so the
+    # `candidate`-derived signal above is always absent for them -- without
+    # this fallback every Stage 7 Visit reads `detector_class=None` and is
+    # silently misclassified as "unchecked" (Review Queue) / excluded from
+    # Today in Your Yard's "detector-qualified" queries, even though it
+    # already passed detector confirmation, tracking, shadow assembly, and
+    # the Stage 7 candidate-quality gate -- a materially higher evidence bar
+    # than the single-frame legacy signal this function was built around.
+    # `subject_label` is the persisted `VisitModel.subject_label`
+    # (`AssembledVisitProposal.broad_class`, never a species guess); only a
+    # genuinely recognized person/vehicle label narrows the category, and
+    # every other non-blank broad class (including "unknown_animal") reads
+    # as "animal" rather than staying unclassified.
+    if detector_class is None and event_type == "observation_engine_candidate":
+        normalized_subject_label = (subject_label or "").strip().lower()
+        if normalized_subject_label in {"person", "vehicle"}:
+            detector_class = normalized_subject_label
+        elif normalized_subject_label:
+            detector_class = "animal"
 
     if review_status == ReviewStatus.reviewed:
         category = "reviewed"

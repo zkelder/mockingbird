@@ -150,3 +150,74 @@ def test_no_useful_primary_requires_every_candidate_to_fail() -> None:
     result = select_effective_primary([crop, tracked])
 
     assert (result.media_asset_id, result.reason) == ("tracked", "no_useful_primary_evidence")
+
+
+# --- Stage 7 candidate-Visit evidence roles ---------------------------------
+# (identification/context/alternate; see
+# docs/candidate-visit-authority-contract.md "Evidence persistence")
+
+
+def test_identification_evidence_becomes_effective_primary() -> None:
+    identification = candidate(
+        "shadow-burst-id", "identification", width=4624, height=3472,
+    )
+
+    result = select_effective_primary([identification])
+
+    assert (result.media_asset_id, result.reason) == (
+        "shadow-burst-id",
+        "identification_evidence_preferred",
+    )
+
+
+def test_identification_is_preferred_over_context_and_alternate() -> None:
+    identification = candidate("id", "identification", width=4624, height=3472)
+    context = candidate("ctx", "context", width=1920, height=1080)
+    alternate = candidate("alt", "alternate", width=1920, height=1080)
+
+    result = select_effective_primary([context, alternate, identification])
+
+    assert result.media_asset_id == "id"
+    assert result.reason == "identification_evidence_preferred"
+
+
+def test_context_becomes_effective_primary_when_no_identification_exists() -> None:
+    context = candidate("ctx", "context", width=1920, height=1080)
+    alternate = candidate("alt", "alternate", width=1920, height=1080)
+
+    result = select_effective_primary([alternate, context])
+
+    assert (result.media_asset_id, result.reason) == ("ctx", "context_evidence_preferred")
+
+
+def test_unavailable_identification_evidence_is_not_selected_as_primary() -> None:
+    """A missing/undecodable identification file must not be silently
+    presented as the effective primary -- this is the exact "dark artifact"
+    failure mode Product requirement 3 exists to fix, applied to Stage 7
+    evidence roles instead of legacy motion evidence."""
+
+    broken_identification = candidate(
+        "broken-id", "identification", width=4624, height=3472, available=False,
+    )
+    context = candidate("ctx", "context", width=1920, height=1080)
+
+    result = select_effective_primary([broken_identification, context])
+
+    assert result.media_asset_id == "ctx"
+    assert result.reason == "context_evidence_preferred"
+
+
+def test_identification_only_candidate_still_wins_when_unavailable() -> None:
+    """When *nothing* qualifies, the fallback still honestly prefers the
+    identification role over an arbitrary first item, and reports the
+    existing, unmodified "no_useful_primary_evidence" reason."""
+
+    broken_identification = candidate(
+        "broken-id", "identification", width=10, height=10,
+    )
+    alternate = candidate("alt", "alternate", width=1920, height=1080)
+
+    result = select_effective_primary([alternate, broken_identification])
+
+    assert result.media_asset_id == "broken-id"
+    assert result.reason == "no_useful_primary_evidence"

@@ -1320,6 +1320,43 @@ class ObservationEngineStatusResponse(BaseModel):
     persistent: bool = False
 
 
+class ObservationSessionCounts(BaseModel):
+    """Transient, per-running-session diagnostic counts -- advanced
+    diagnostics only, never dataset truth or a durable record."""
+
+    track_updates_observed: int = 0
+    evidence_candidates_observed: int = 0
+    proposals_observed: int = 0
+    candidates_created: int = 0
+    candidates_suppressed: int = 0
+    suppressed_reasons: list[list[str | int]] = Field(default_factory=list)
+
+
+class ObservationSessionStatusResponse(BaseModel):
+    """The simple observation control's whole product contract: current
+    state, camera health, and Observation Engine health for one Stream.
+    Side-effect-free to read; only start/stop mutate it. Basic fields only
+    (`state`, `observing`, `message`, `camera_connected`,
+    `camera_message`); `advanced` is the bounded, optional diagnostics
+    surface (provider ids, activation boundary, suppressed-candidate
+    reasons) the basic UI never needs to render."""
+
+    stream_id: str
+    state: Literal["stopped", "starting", "observing", "stopping", "error"]
+    observing: bool
+    message: str
+    camera_connected: bool
+    camera_message: str
+    engine_available: bool
+    engine_message: str
+    started_at: datetime | None = None
+    stopped_at: datetime | None = None
+    stopped_reason: str | None = None
+    last_candidate_visit_id: str | None = None
+    counts: ObservationSessionCounts = Field(default_factory=ObservationSessionCounts)
+    advanced: dict[str, object] = Field(default_factory=dict)
+
+
 class SourceMonitorStatusResponse(BaseModel):
     # Monitor state is in-memory and evidence-only; correction remains truth.
     observation_provider_id: str = "snapshot"

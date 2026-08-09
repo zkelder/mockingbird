@@ -32,6 +32,10 @@ function evidenceRoleLabel(frame: VisitEvidenceFrame): string {
     high_resolution_original: "Full-resolution original",
     pretrigger: "Pre-trigger context",
     tracked_best_frame: "Tracked monitoring frame",
+    // Observation Engine candidate evidence roles.
+    identification: "Best identification image",
+    context: "Context image",
+    alternate: "Alternate image",
   };
   return labels[frame.evidence_role] ?? "Monitoring context";
 }

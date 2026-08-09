@@ -96,22 +96,44 @@ def select_effective_primary(
         ):
             continue
         return _selection(item, "high_resolution_temporally_aligned")
+    # Stage 7 candidate-Visit evidence roles (see
+    # docs/candidate-visit-authority-contract.md, "Evidence persistence"):
+    # `identification` is the evidence scorer's own already-selected best
+    # identification candidate for this proposal, not raw motion evidence,
+    # so it is preferred immediately after a temporally-proven legacy crop
+    # rather than competing with `tracked_best_frame`/`pretrigger` scoring
+    # built for a different evidence shape.
+    for item in assessed:
+        if item.candidate.role == "identification" and not item.rejected:
+            return _selection(item, "identification_evidence_preferred")
     for item in assessed:
         if item.candidate.role == "tracked_best_frame" and not item.rejected:
             return _selection(item, "tracked_best_frame_preferred")
     for item in assessed:
         if item.candidate.role == "pretrigger" and not item.rejected:
             return _selection(item, "pretrigger_frame_preferred")
+    # `context` is the scorer's separately-selected context candidate: useful
+    # supporting evidence, but never preferred over an identification pick.
+    for item in assessed:
+        if item.candidate.role == "context" and not item.rejected:
+            return _selection(item, "context_evidence_preferred")
 
     # Preserve the one-primary presentation invariant only after no role reaches
     # automatic eligibility. An uncertain crop stays attached as secondary
     # evidence, but is not a confirmed useful primary for the admitted subject.
     fallback = next(
+        (item for item in assessed if item.candidate.role == "identification"),
+        None,
+    )
+    fallback = fallback or next(
         (item for item in assessed if item.candidate.role == "tracked_best_frame"),
         None,
     )
     fallback = fallback or next(
         (item for item in assessed if item.candidate.role == "pretrigger"), None
+    )
+    fallback = fallback or next(
+        (item for item in assessed if item.candidate.role == "context"), None
     )
     fallback = fallback or (assessed[0] if assessed else None)
     if fallback:

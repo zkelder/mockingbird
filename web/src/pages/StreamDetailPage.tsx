@@ -37,6 +37,7 @@ import type {
 } from "../api/types";
 import { CurrentFrameView, type CurrentFrameMetadata } from "../components/CurrentFrameView";
 import { EmptyState } from "../components/EmptyState";
+import { ObservationControlPanel } from "../components/ObservationControlPanel";
 import { StatusPill } from "../components/StatusPill";
 import { StreamPanel } from "../components/StreamPanel";
 import { VisitEvidenceSequence } from "../components/VisitEvidenceSequence";
@@ -4182,6 +4183,8 @@ export function StreamDetailPage({
           onDrawEnd={handleDrawEnd}
         />
       )}
+
+      <ObservationControlPanel streamId={detail.stream.id} />
 
       <section className="panel stream-camera-health" aria-label="Camera health">
         <div className="section-heading">

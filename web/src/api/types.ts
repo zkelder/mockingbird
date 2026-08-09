@@ -998,6 +998,36 @@ export interface LiveCameraSessionStatus {
   warnings: string[];
 }
 
+/** The simple observation control's whole product contract for one Stream:
+ * current state, camera health, and Observation Engine health. `advanced`
+ * is optional, bounded diagnostics (provider ids, suppressed-candidate
+ * reasons) the basic UI never needs to render. */
+export interface ObservationSessionCounts {
+  track_updates_observed: number;
+  evidence_candidates_observed: number;
+  proposals_observed: number;
+  candidates_created: number;
+  candidates_suppressed: number;
+  suppressed_reasons: Array<[string, number]>;
+}
+
+export interface ObservationSessionStatus {
+  stream_id: string;
+  state: "stopped" | "starting" | "observing" | "stopping" | "error";
+  observing: boolean;
+  message: string;
+  camera_connected: boolean;
+  camera_message: string;
+  engine_available: boolean;
+  engine_message: string;
+  started_at?: string | null;
+  stopped_at?: string | null;
+  stopped_reason?: string | null;
+  last_candidate_visit_id?: string | null;
+  counts: ObservationSessionCounts;
+  advanced: Record<string, unknown>;
+}
+
 export interface LivePreviewLeaseRequest {
   owner_id: string;
 }

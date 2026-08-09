@@ -544,6 +544,25 @@ reconnect, burst-scheduler, evidence-scoring, or Privacy/Ignore-masking
 behavior; a bounded real Camera Node trial (`python -m mockingbird
 candidate-authority-trial`, hard-capped at 10 minutes and 3 candidates)
 provides the first genuine live round-trip validation.
+
+**Product Vertical Slice v1** makes that accepted engine usable from the
+app itself, described in
+[observation-engine-product-control-contract.md](observation-engine-product-control-contract.md):
+a Stream-scoped Start/Stop observation control
+(`mockingbird.observation.engine_runtime.ObservationEngineSessionManager`)
+reuses the Stage 5/7 pipeline unchanged, with no CLI required; a new
+conservative candidate-quality admission boundary
+(`mockingbird.observation.candidate_quality_gate`) sits between
+authority-approved proposals and actual persistence, composed only from
+existing Stage 6 evidence-scorer/Stage 6.19 assembler facts; and the
+existing Review Queue effective-primary/classification logic, previously
+tuned only to legacy motion-evidence roles, now also recognizes Stage 7's
+`identification`/`context`/`alternate` evidence roles so a candidate opens
+with its real best image and is correctly counted as detector-qualified
+wildlife activity. It changes no detector, tracker, burst-scheduler,
+evidence-scoring, or authority-gate behavior, and the durable `shadow`
+default, kill switch, rate limits, and Privacy/Ignore masking are unchanged
+and additionally exercised through the new app control.
 This remains a contained observation-
 subsystem strangler migration: keep the MockingBird product; replace its
 observation engine through a modular migration.

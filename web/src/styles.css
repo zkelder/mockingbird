@@ -4837,6 +4837,17 @@ a.secondary-action {
   color: #7c2d1e;
 }
 
+.observation-control-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.observation-status-message {
+  margin: 0;
+  color: #34473b;
+  font-size: 0.95rem;
+}
+
 .stream-scene {
   position: relative;
   aspect-ratio: 16 / 9;
