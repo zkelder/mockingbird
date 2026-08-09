@@ -9012,3 +9012,28 @@ a.secondary-action {
     grid-template-columns: 1fr;
   }
 }
+
+/* MockingBird Installable Local Product v1: guided first-run onboarding. */
+.onboarding-wizard {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 32px 16px;
+}
+
+.onboarding-promise-list {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.onboarding-storage-path {
+  display: block;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: #eef2ec;
+  border: 1px solid #d6ddd1;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}

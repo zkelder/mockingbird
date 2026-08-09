@@ -12,6 +12,7 @@ import { EmptyState } from "../components/EmptyState";
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
+import { formatBytes } from "../utils";
 
 interface LocalDataPageProps {
   onOpenDashboard: () => void;
@@ -21,20 +22,6 @@ interface LocalDataPageProps {
   onOpenExports: () => void;
   onOpenDetectionProposals: () => void;
   onResetComplete: () => Promise<void>;
-}
-
-function formatBytes(value: number) {
-  if (value < 1024) {
-    return `${value} B`;
-  }
-  const units = ["KB", "MB", "GB", "TB"];
-  let amount = value / 1024;
-  let unitIndex = 0;
-  while (amount >= 1024 && unitIndex < units.length - 1) {
-    amount /= 1024;
-    unitIndex += 1;
-  }
-  return `${amount >= 10 ? amount.toFixed(0) : amount.toFixed(1)} ${units[unitIndex]}`;
 }
 
 function formatBackupTime(value: string) {
@@ -533,6 +520,14 @@ export function LocalDataPage({
                 <div className="data-row">
                   <span>Local database</span>
                   <strong>{storageSummary.approximate_database_bytes === null || storageSummary.approximate_database_bytes === undefined ? "Size unavailable" : formatBytes(storageSummary.approximate_database_bytes)}</strong>
+                </div>
+                <div className="data-row">
+                  <span>Free disk space</span>
+                  <strong>{formatBytes(storageSummary.disk_free_bytes)} of {formatBytes(storageSummary.disk_total_bytes)}</strong>
+                </div>
+                <div className="data-row">
+                  <span>Storage writable</span>
+                  <strong>{storageSummary.is_writable ? "Yes" : "No -- check folder permissions"}</strong>
                 </div>
                 <div className="data-row">
                   <span>Protected review context</span>

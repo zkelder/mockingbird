@@ -12,6 +12,7 @@ import type {
   ProductAlertAction,
   ReviewCorrectionResult,
   ReviewQueueItem,
+  SetupState,
   SpeciesSuggestion,
   Stream,
 } from "./api/types";
@@ -21,6 +22,7 @@ import { ActivityLibraryPage, activityLibraryPath } from "./pages/ActivityLibrar
 import { BirdLogPage } from "./pages/BirdLogPage";
 import { CameraSetupPage } from "./pages/CameraSetupPage";
 import { CameraConfigurationPage } from "./pages/CameraConfigurationPage";
+import { OnboardingWizard } from "./components/OnboardingWizard";
 import { ClassifierManifestPage } from "./pages/ClassifierManifestPage";
 import { ClassifierReadinessPage } from "./pages/ClassifierReadinessPage";
 import { CollectionsPage } from "./pages/CollectionsPage";
@@ -142,6 +144,10 @@ export default function App() {
   const [loadWarnings, setLoadWarnings] = useState<string[]>([]);
   const [isAdvancedNavOpen, setIsAdvancedNavOpen] = useState(false);
   const [isDeveloperMode, setIsDeveloperMode] = useState(false);
+  // `null` while unknown. A read failure fails open (treated as complete)
+  // rather than trapping an existing user behind a broken wizard -- see
+  // docs/local-product-packaging-design.md.
+  const [setupState, setSetupState] = useState<SetupState | null>(null);
 
   function applyRoute(route: AppRoute) {
     setPageState(route.page);
@@ -267,6 +273,18 @@ export default function App() {
   useEffect(() => {
     void loadAppData();
   }, []);
+
+  useEffect(() => {
+    void apiClient
+      .getSetupState()
+      .then(setSetupState)
+      .catch(() => setSetupState({ completed: true, current_step: "done", updated_at: new Date().toISOString() }));
+  }, []);
+
+  function handleOnboardingFinished() {
+    setSetupState((current) => (current ? { ...current, completed: true } : current));
+    void loadAppData({ showLoading: false });
+  }
 
   useEffect(() => {
     if (initialRoute.recoveredFromUnknownPath) {
@@ -821,6 +839,14 @@ export default function App() {
         onResetComplete={refreshAfterLocalReset}
       />
       );
+  }
+
+  // Gated to the dashboard route only: a real user's browser always opens
+  // there first, and every deep link (including the whole existing browser
+  // test suite) keeps working unaffected during a fresh install. See
+  // docs/local-product-packaging-design.md.
+  if (page === "dashboard" && setupState !== null && !setupState.completed) {
+    return <OnboardingWizard onFinished={handleOnboardingFinished} />;
   }
 
   return (

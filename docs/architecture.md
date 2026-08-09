@@ -789,6 +789,26 @@ focused services, and primary frontend work should move touched page behavior
 toward focused components/hooks and scoped styles. Refactoring preserves
 behavior and remains separate from unrelated features.
 
+## Local product packaging and lifecycle
+
+MockingBird's runtime architecture -- one FastAPI process serving both the
+product API and the built frontend from the same origin, backed by local
+SQLite -- is host-neutral by construction; nothing about it is
+Windows-specific. Phase 27 (see
+[local-product-packaging-design.md](local-product-packaging-design.md))
+packages that same architecture as a self-contained "unpack and run" bundle
+with a real embedded Python runtime, first on Windows, without introducing a
+second UI runtime, a container, or a service-manager dependency.
+
+First-run state (`app_setup_state`, schema 29) is ordinary product state,
+seeded once from the one-time "was this database just created" fact
+`initialize_database` already computes, never recomputed from current
+Source/Stream counts. A small `runtime_state` module (deliberately dependent
+on neither `runtime.py` nor `api/main.py`, which already depend on each
+other in narrow, deferred ways) tracks the previous-shutdown marker and the
+fixed local log location; both are best-effort local facts, never required
+for startup to proceed.
+
 ## Architecture invariants
 
 - Streams and Zones remain central even when playback is unavailable.

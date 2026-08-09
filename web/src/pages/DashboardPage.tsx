@@ -11,6 +11,7 @@ import type {
 } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { LiveCameraOverview } from "../components/LiveCameraOverview";
+import { ProductHealthPanel } from "../components/ProductHealthPanel";
 import { StatusPill } from "../components/StatusPill";
 import { formatDateTime, formatLabel } from "../utils";
 
@@ -263,6 +264,8 @@ export function DashboardPage({
           </button>
         </div>
       </section>
+
+      <ProductHealthPanel />
 
       {refreshError ? (
         <div className="dashboard-refresh-notice" role="status">

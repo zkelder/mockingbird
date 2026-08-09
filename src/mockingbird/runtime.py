@@ -18,6 +18,11 @@ import webbrowser
 
 import uvicorn
 
+from mockingbird.runtime_state import (
+    configure_file_logging,
+    prepare_runtime_state,
+    uvicorn_log_config,
+)
 from mockingbird.storage.database import DatabaseSchemaCompatibilityError
 from mockingbird.web_app import (
     WEB_DIST_ENV_VAR,
@@ -229,6 +234,13 @@ def run(argv: list[str] | None = None) -> int:
 
     _print_preflight(preflight)
 
+    # Only the real launch path touches the crash marker/log file -- `--check`
+    # above returns before this point so repeated validation runs never make
+    # the *next* real launch think the previous one crashed.
+    log_path = configure_file_logging(preflight.runtime_home)
+    if prepare_runtime_state(preflight.runtime_home) is False:
+        print("Note: MockingBird did not shut down cleanly last time. Your local data is unaffected.")
+
     if not args.no_browser:
         threading.Thread(
             target=open_browser_when_ready,
@@ -239,7 +251,13 @@ def run(argv: list[str] | None = None) -> int:
 
     from mockingbird.api.main import app
 
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        log_level="info",
+        log_config=uvicorn_log_config(log_path),
+    )
     return 0
 
 

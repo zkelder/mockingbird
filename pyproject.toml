@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 dependencies = [
   "anyio>=3.7,<4.0",
   "fastapi>=0.111,<0.116",
+  "Pillow>=10,<12",
   "pydantic>=2.7,<3.0",
   "python-multipart>=0.0.9,<1.0",
   "SQLAlchemy>=2.0,<3.0",
@@ -31,7 +32,6 @@ detector-megadetector = [
 observation-onnx-cuda = [
   "numpy>=1.26,<3.0",
   "onnxruntime-gpu>=1.18,<2.0; python_version < '3.14'",
-  "Pillow>=10,<12",
 ]
 test = [
   "httpx>=0.27,<0.28",
@@ -40,3 +40,11 @@ test = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.hatch.build.targets.wheel]
+# `src/mockingbird/web_dist/` is a build-time-generated, gitignored copy of
+# the built frontend (see web_app.py's `resolve_frontend_dist`, which already
+# prefers this packaged path). Hatchling only includes VCS-tracked files by
+# default; `artifacts` is its documented escape hatch for a generated file
+# that must still ship in the wheel. See docs/local-product-packaging-design.md.
+artifacts = ["src/mockingbird/web_dist/**/*"]

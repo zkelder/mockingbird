@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import os
 from pathlib import Path
+import shutil
 from typing import Callable
 
 from sqlalchemy import (
@@ -39,7 +40,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 28
+CURRENT_DATABASE_SCHEMA_VERSION = 29
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -650,6 +651,40 @@ def _migrate_to_species_candidate_packs(connection: Connection) -> None:
             )
 
 
+def _migrate_to_app_setup_state(connection: Connection) -> None:
+    """Mark a pre-existing database as already past first-run onboarding.
+
+    A database reaching this migration already existed before the setup-state
+    concept did, so it is by definition not a fresh install -- seed it
+    `completed` so an established installation never sees the onboarding
+    wizard. A genuinely new database instead gets its `app_setup_state` row
+    from `initialize_database` below, seeded `completed=False`.
+
+    Guards against a row already existing (never overwrites it): a schema
+    downgrade/replay test harness can rerun this migration against a database
+    that kept this table from an earlier, already-current copy, and product
+    code never re-runs a migration against a database already at the current
+    version, so the only real caller of this guard is that kind of replay.
+    """
+
+    table = Base.metadata.tables["app_setup_state"]
+    table.create(bind=connection, checkfirst=True)
+    existing = connection.execute(
+        select(table.c.singleton_id).where(table.c.singleton_id == 1)
+    ).first()
+    if existing is not None:
+        return
+    connection.execute(
+        table.insert().values(
+            singleton_id=1,
+            completed=True,
+            current_step="done",
+            last_created_stream_id=None,
+            updated_at=datetime.now(UTC),
+        )
+    )
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -678,6 +713,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     26: _migrate_to_high_resolution_crop_refinement,
     27: _migrate_to_monitoring_exposure_intervals,
     28: _migrate_to_observation_candidate_authority,
+    29: _migrate_to_app_setup_state,
 }
 
 
@@ -734,6 +770,62 @@ def _ensure_sqlite_parent(db_url: str) -> None:
         return
 
     Path(path).parent.mkdir(parents=True, exist_ok=True)
+
+
+# Below this line: low-space is a large fraction of the host volume being
+# full, not managed-media exceeding a configured retention target. That
+# media-relative signal already exists on `StorageSummary.storage_warning`;
+# this is the separate, more basic "is the disk itself okay" fact a normal
+# local application answers regardless of retention configuration.
+LOW_DISK_FREE_BYTES_THRESHOLD = 1_000_000_000
+LOW_DISK_FREE_RATIO_THRESHOLD = 0.05
+
+
+@dataclass(frozen=True)
+class LocalStorageDiskStatus:
+    total_bytes: int
+    free_bytes: int
+    is_writable: bool
+
+    @property
+    def is_low_space(self) -> bool:
+        if self.total_bytes <= 0:
+            return False
+        return (
+            self.free_bytes < LOW_DISK_FREE_BYTES_THRESHOLD
+            or (self.free_bytes / self.total_bytes) < LOW_DISK_FREE_RATIO_THRESHOLD
+        )
+
+
+def probe_local_storage_disk(directory: Path) -> LocalStorageDiskStatus:
+    """Report host disk capacity/writability for the directory holding local data.
+
+    This is deliberately a real bounded write-and-delete probe rather than
+    `os.access`, which can misreport effective writability (notably on
+    Windows ACLs). It never touches managed media or the database file
+    itself -- only a small throwaway sentinel beside them.
+    """
+
+    try:
+        usage = shutil.disk_usage(directory)
+        total_bytes, free_bytes = usage.total, usage.free
+    except OSError:
+        total_bytes, free_bytes = 0, 0
+
+    probe_path = directory / f".mockingbird-write-check-{os.getpid()}.tmp"
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        with open(probe_path, "wb") as handle:
+            handle.write(b"ok")
+        is_writable = True
+    except OSError:
+        is_writable = False
+    finally:
+        try:
+            probe_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return LocalStorageDiskStatus(total_bytes=total_bytes, free_bytes=free_bytes, is_writable=is_writable)
 
 
 def create_database_engine(db_url: str | None = None) -> Engine:
@@ -842,6 +934,20 @@ def initialize_database(engine: Engine) -> DatabaseSchemaStatus:
                 _SCHEMA_VERSION_TABLE.insert().values(
                     singleton_id=1,
                     version=CURRENT_DATABASE_SCHEMA_VERSION,
+                    updated_at=datetime.now(UTC),
+                )
+            )
+            # A database created fresh right now (as opposed to one that
+            # migrated up to this version from an older release) is the one
+            # genuine "new installation" signal: seed onboarding as not yet
+            # completed. An upgraded database is seeded `completed` instead,
+            # by `_migrate_to_app_setup_state` above.
+            connection.execute(
+                Base.metadata.tables["app_setup_state"].insert().values(
+                    singleton_id=1,
+                    completed=False,
+                    current_step="welcome",
+                    last_created_stream_id=None,
                     updated_at=datetime.now(UTC),
                 )
             )

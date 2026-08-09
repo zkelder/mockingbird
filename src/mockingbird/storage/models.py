@@ -1090,3 +1090,19 @@ class ActivityLibrarySavedViewModel(Base):
     filters_json: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AppSetupStateModel(Base):
+    """One durable first-run/onboarding progress record (see
+    docs/local-product-packaging-design.md). Seeded once by
+    `initialize_database`/its schema-29 migration -- never recomputed from
+    current Source/Stream counts -- so an installation's onboarding state
+    cannot flip merely because a user later removes every camera."""
+
+    __tablename__ = "app_setup_state"
+
+    singleton_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    completed: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    current_step: Mapped[str] = mapped_column(String, nullable=False)
+    last_created_stream_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

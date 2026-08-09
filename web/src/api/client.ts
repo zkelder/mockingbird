@@ -80,6 +80,9 @@ import type {
   LocalBackupRestoreResponse,
   LocalBackupVerificationResponse,
   LocalDataStatus,
+  ProductHealthStatus,
+  SetupState,
+  SetupStateUpdate,
   StorageCleanupHistoryResponse,
   StorageCleanupPreviewResponse,
   StorageCleanupResult,
@@ -1139,6 +1142,13 @@ export const apiClient = {
     );
   },
   getLocalDataStatus: () => request<LocalDataStatus>("/api/settings/local-data"),
+  getSetupState: () => request<SetupState>("/api/setup/state"),
+  updateSetupState: (payload: SetupStateUpdate) =>
+    request<SetupState>("/api/setup/state", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+  getProductHealth: () => request<ProductHealthStatus>("/api/product/health"),
   getStorageRetentionSummary: () =>
     request<StorageSummary>("/api/settings/storage-retention/summary"),
   getStorageRetentionSettings: () =>

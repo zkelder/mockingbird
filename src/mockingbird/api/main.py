@@ -24,6 +24,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import FileResponse, Response, StreamingResponse
 
+from mockingbird import __version__ as APP_VERSION
 from mockingbird.api.schemas import (
     AnalyticsSummary,
     AlertCategory,
@@ -154,6 +155,10 @@ from mockingbird.api.schemas import (
     ProductAlertListResponse,
     ProductAlertMarkVisibleReadRequest,
     ProductAlertUnreadResponse,
+    ProductHealthBackupSummary,
+    ProductHealthCameraSummary,
+    ProductHealthObservationSummary,
+    ProductHealthStatus,
     ReviewLabel,
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
@@ -187,6 +192,8 @@ from mockingbird.api.schemas import (
     ReviewQueueItem,
     ReviewQueueSpeciesSuggestionBatchPrepareRequest,
     ReviewQueueSpeciesSuggestionBatchPrepareResponse,
+    SetupState,
+    SetupStateUpdate,
     SavedMediaBulkMotionEvidenceRequest,
     SavedMediaBulkMotionEvidenceResponse,
     SavedMediaFrameSummary,
@@ -433,7 +440,16 @@ from mockingbird.storage.backup import (
     LocalBackupUnsupportedError,
     LocalBackupValidationError,
 )
-from mockingbird.storage.database import create_database_engine
+from mockingbird.runtime_state import (
+    current_log_path,
+    mark_clean_shutdown,
+    previous_shutdown_was_clean,
+)
+from mockingbird.storage.database import (
+    LOW_DISK_FREE_BYTES_THRESHOLD,
+    LOW_DISK_FREE_RATIO_THRESHOLD,
+    create_database_engine,
+)
 from mockingbird.storage.retention_service import LocalStorageRetentionService
 from mockingbird.web_app import frontend_response
 
@@ -476,6 +492,9 @@ async def _app_lifespan(_app: FastAPI):
             _live_object_detector_manager = None
         if _automatic_review_identification_assist is not None:
             _automatic_review_identification_assist.shutdown()
+        # Recorded last: a process that dies before reaching this line still
+        # correctly reports "did not shut down cleanly" on its next launch.
+        mark_clean_shutdown()
 
 
 app = FastAPI(
@@ -9878,6 +9897,88 @@ async def get_dashboard_summary() -> DashboardSummary:
     return repository.dashboard_summary(runtime_by_stream)
 
 
+# States a healthy or merely-idle camera can be in; anything else is a basic
+# "needs attention" signal, matching DashboardPage's own `cameraHealthTone`.
+_CAMERA_HEALTH_OK_STATES = {
+    CameraHealthState.healthy,
+    CameraHealthState.stopped,
+    CameraHealthState.starting,
+}
+
+
+@app.get("/api/product/health", response_model=ProductHealthStatus)
+async def get_product_health() -> ProductHealthStatus:
+    """One bounded, basic-first "is MockingBird okay" aggregate.
+
+    Reuses `dashboard_summary` (cameras/observation counts), `storage_summary`
+    (disk writable/low-space), the existing backup library, the running app
+    version, and the runtime-lifecycle marker/log path -- it computes nothing
+    those surfaces do not already compute. See
+    docs/local-product-packaging-design.md.
+    """
+
+    repository = get_repository()
+    runtime_by_stream = await _dashboard_runtime_by_stream(repository)
+    dashboard = repository.dashboard_summary(runtime_by_stream)
+    storage = repository.storage_summary()
+
+    try:
+        backups = _local_backup_manager(repository).list_backups().backups
+    except LocalBackupError:
+        backups = []
+    most_recent_backup = backups[0] if backups else None
+
+    needs_attention_count = sum(
+        1
+        for camera in dashboard.today.observation_health
+        if camera.state not in _CAMERA_HEALTH_OK_STATES
+    )
+    storage_low_space = storage.disk_total_bytes > 0 and (
+        storage.disk_free_bytes < LOW_DISK_FREE_BYTES_THRESHOLD
+        or storage.disk_free_bytes / storage.disk_total_bytes < LOW_DISK_FREE_RATIO_THRESHOLD
+    )
+
+    ready = storage.is_writable and needs_attention_count == 0
+    if not storage.is_writable:
+        message = "MockingBird's local storage is not writable. Check that its data folder allows writes."
+    elif needs_attention_count > 0:
+        message = (
+            f"{needs_attention_count} camera{'s' if needs_attention_count != 1 else ''} "
+            "need attention."
+        )
+    elif storage.storage_warning:
+        message = storage.storage_warning
+    else:
+        message = "MockingBird is ready."
+
+    return ProductHealthStatus(
+        app_version=APP_VERSION,
+        ready=ready,
+        message=message,
+        storage_writable=storage.is_writable,
+        storage_low_space=storage_low_space,
+        storage_warning=storage.storage_warning,
+        cameras=ProductHealthCameraSummary(needs_attention_count=needs_attention_count),
+        observation=ProductHealthObservationSummary(
+            configured_stream_count=dashboard.headline.configured_stream_count,
+            monitored_stream_count=dashboard.headline.monitored_stream_count,
+        ),
+        backup=ProductHealthBackupSummary(
+            has_backup=most_recent_backup is not None,
+            last_backup_at=most_recent_backup.created_at if most_recent_backup else None,
+            last_backup_verified=(
+                most_recent_backup.verification_status == "verified"
+                if most_recent_backup
+                else None
+            ),
+        ),
+        previous_shutdown_clean=previous_shutdown_was_clean(),
+        database_schema_version=repository.schema_status.version,
+        log_path=str(current_log_path()) if current_log_path() else None,
+        generated_at=datetime.now(UTC),
+    )
+
+
 @app.get("/api/streams/{stream_id}", response_model=Stream)
 async def get_stream(stream_id: str) -> Stream:
     stream = get_repository().get_stream(stream_id)
@@ -12914,6 +13015,20 @@ async def get_wildlife_journal_history(
 @app.get("/api/settings/local-data", response_model=LocalDataStatus)
 async def get_local_data_status() -> LocalDataStatus:
     return get_repository().local_data_status()
+
+
+@app.get("/api/setup/state", response_model=SetupState)
+async def get_setup_state() -> SetupState:
+    """Read-only: never inferred from Source/Stream counts, see AppSetupStateModel."""
+
+    return get_repository().get_setup_state()
+
+
+@app.put("/api/setup/state", response_model=SetupState)
+async def update_setup_state(payload: SetupStateUpdate) -> SetupState:
+    """Persist explicit first-run wizard progress. Creates no Source/Stream/Zone."""
+
+    return get_repository().update_setup_state(payload)
 
 
 def _storage_retention_http_error(error: ValueError) -> HTTPException:

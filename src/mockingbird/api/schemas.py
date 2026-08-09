@@ -4498,8 +4498,73 @@ class StorageSummary(BaseModel):
     unresolved_visit_evidence_count: int = Field(ge=0)
     reviewed_bird_wildlife_evidence_count: int = Field(ge=0)
     reviewed_non_bird_blank_ambiguous_evidence_count: int = Field(ge=0)
+    # Host-disk facts, distinct from the managed-media accounting above: a
+    # normal user's "is my storage okay" question is about the real volume
+    # MockingBird's data directory lives on, not a configured retention
+    # target. `is_writable` is a genuine bounded write probe, not `os.access`.
+    disk_total_bytes: int = Field(ge=0)
+    disk_free_bytes: int = Field(ge=0)
+    is_writable: bool
     storage_warning: str | None = None
     message: str
+
+
+class SetupState(BaseModel):
+    """Durable first-run/onboarding progress (see AppSetupStateModel)."""
+
+    completed: bool
+    current_step: str
+    last_created_stream_id: str | None = None
+    updated_at: datetime
+
+
+class SetupStateUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_step: str = Field(min_length=1, max_length=40)
+    completed: bool
+    last_created_stream_id: str | None = Field(default=None, max_length=64)
+
+
+class ProductHealthCameraSummary(BaseModel):
+    needs_attention_count: int = Field(ge=0)
+
+
+class ProductHealthObservationSummary(BaseModel):
+    configured_stream_count: int = Field(ge=0)
+    monitored_stream_count: int = Field(ge=0)
+
+
+class ProductHealthBackupSummary(BaseModel):
+    has_backup: bool
+    last_backup_at: datetime | None = None
+    last_backup_verified: bool | None = None
+
+
+class ProductHealthStatus(BaseModel):
+    """One bounded, basic-first product status aggregate.
+
+    Reuses `storage_summary`, the Dashboard's existing camera-attention list,
+    and the existing backup library rather than recomputing any of them; see
+    docs/local-product-packaging-design.md. Advanced-only facts
+    (`database_schema_version`, `log_path`) stay out of the basic fields the
+    same way the Observation panel keeps runtime vocabulary out of its basic
+    state.
+    """
+
+    app_version: str
+    ready: bool
+    message: str
+    storage_writable: bool
+    storage_low_space: bool
+    storage_warning: str | None = None
+    cameras: ProductHealthCameraSummary
+    observation: ProductHealthObservationSummary
+    backup: ProductHealthBackupSummary
+    previous_shutdown_clean: bool | None = None
+    database_schema_version: int = Field(ge=1)
+    log_path: str | None = None
+    generated_at: datetime
 
 
 class StorageCleanupCategorySummary(BaseModel):

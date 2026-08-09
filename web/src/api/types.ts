@@ -4034,8 +4034,44 @@ export interface StorageSummary {
   unresolved_visit_evidence_count: number;
   reviewed_bird_wildlife_evidence_count: number;
   reviewed_non_bird_blank_ambiguous_evidence_count: number;
+  disk_total_bytes: number;
+  disk_free_bytes: number;
+  is_writable: boolean;
   storage_warning?: string | null;
   message: string;
+}
+
+export interface SetupState {
+  completed: boolean;
+  current_step: string;
+  last_created_stream_id?: string | null;
+  updated_at: string;
+}
+
+export interface SetupStateUpdate {
+  current_step: string;
+  completed: boolean;
+  last_created_stream_id?: string | null;
+}
+
+export interface ProductHealthStatus {
+  app_version: string;
+  ready: boolean;
+  message: string;
+  storage_writable: boolean;
+  storage_low_space: boolean;
+  storage_warning?: string | null;
+  cameras: { needs_attention_count: number };
+  observation: { configured_stream_count: number; monitored_stream_count: number };
+  backup: {
+    has_backup: boolean;
+    last_backup_at?: string | null;
+    last_backup_verified?: boolean | null;
+  };
+  previous_shutdown_clean?: boolean | null;
+  database_schema_version: number;
+  log_path?: string | null;
+  generated_at: string;
 }
 
 export interface StorageCleanupCategorySummary {

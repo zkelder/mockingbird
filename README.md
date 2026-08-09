@@ -11,6 +11,12 @@ The first vertical is backyard bird-feeder monitoring and species review. The
 broader product covers wildlife, yard activity, pets, people, vehicles,
 feeders, birdbaths, driveways, Privacy Zones, and Ignore Zones.
 
+Just want to install and use MockingBird? See
+[docs/using-mockingbird.md](docs/using-mockingbird.md) -- install, first-run
+setup, add a camera, start observing, review, and backup/restore, with no
+assumed Python/command-line knowledge. This README is the developer/source
+checkout guide.
+
 ## Product principles
 
 - Streams and Zones are the center of the experience.
@@ -79,6 +85,15 @@ MockingBird currently provides:
   Visits, reviewed discoveries, best evidence-backed moments, Zone/hour context,
   bounded confirmation work, and compact observation health; it remains
   read-only and never changes monitoring or creates evidence
+- a guided first-run setup wizard shown only for a genuinely new local
+  installation (welcome, local storage location/status, guided Add Camera,
+  and Observation readiness), never re-shown to an existing installation; a
+  consolidated basic product-health summary on the Dashboard (storage,
+  cameras needing attention, observation counts, backup status, app
+  version); and a self-contained Windows local-product bundle with no
+  Python/pip/npm knowledge required to run it -- see
+  [docs/using-mockingbird.md](docs/using-mockingbird.md) and
+  [docs/local-product-packaging-design.md](docs/local-product-packaging-design.md)
 
 Monitoring remains local and explicitly Stream-scoped. Every Stream starts
 disabled; when a user enables supported backend-owned live monitoring, the one
@@ -124,11 +139,20 @@ npm ci
 cd ..
 ```
 
-Windows users can open `Start MockingBird.cmd`. The cross-platform command is:
+Windows users can open `Start MockingBird.cmd`; Linux/macOS checkouts can run
+`./start-mockingbird.sh`. Both find the local virtual environment
+automatically and launch the same unified runtime. The cross-platform command
+is:
 
 ```sh
 python -m mockingbird
 ```
+
+A normal user with no development checkout does not run any of the above --
+see [docs/using-mockingbird.md](docs/using-mockingbird.md) for the
+self-contained Windows bundle (`scripts/build_local_product.py` builds it;
+[docs/local-product-packaging-design.md](docs/local-product-packaging-design.md)
+documents the packaging decision).
 
 The launcher checks the frontend and local database, starts one local-only app
 process, reuses an already-running healthy instance, and opens the browser when
@@ -375,6 +399,10 @@ paths and must not be committed.
 
 ## Documentation map
 
+- [docs/using-mockingbird.md](docs/using-mockingbird.md): normal-user guide
+  (install, first run, add a camera, start observing, review, backup/restore)
+- [docs/local-product-packaging-design.md](docs/local-product-packaging-design.md):
+  first-run/packaging contract and the Windows packaging decision
 - [AGENTS.md](AGENTS.md): task packets, universal guardrails, and conditional
   document routing
 - [docs/product-doctrine.md](docs/product-doctrine.md): non-negotiable product

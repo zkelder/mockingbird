@@ -259,6 +259,10 @@ from mockingbird.api.schemas import (
     ProductAlertAction,
     ProductAlertListResponse,
     ProductAlertUnreadResponse,
+    ProductHealthBackupSummary,
+    ProductHealthCameraSummary,
+    ProductHealthObservationSummary,
+    ProductHealthStatus,
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
     VisitReviewHistory,
@@ -327,6 +331,8 @@ from mockingbird.api.schemas import (
     ReviewQueueSpeciesSuggestionBatchPrepareResult,
     ReviewQueueSpeciesSuggestionBatchPrepareStatus,
     ReviewStatus,
+    SetupState,
+    SetupStateUpdate,
     SavedMediaBulkMotionEvidenceRequest,
     SavedMediaBulkMotionEvidenceResponse,
     SavedMediaBulkMotionEvidenceResult,
@@ -484,11 +490,13 @@ from mockingbird.storage.database import (
     create_database_engine,
     create_session_factory,
     initialize_database,
+    probe_local_storage_disk,
     resolve_media_root,
     resolve_database_url,
 )
 from mockingbird.storage.models import (
     ActivityLibrarySavedViewModel,
+    AppSetupStateModel,
     Base,
     BioClipIdentificationAttemptModel,
     CameraSetupOperationModel,
@@ -2776,6 +2784,60 @@ class ProductRepository:
     def local_data_status(self) -> LocalDataStatus:
         with self.session_factory() as session:
             return self._local_data_status(session)
+
+    def get_setup_state(self) -> SetupState:
+        with self.session_factory() as session:
+            return self._setup_state_response(session.get(AppSetupStateModel, 1))
+
+    def update_setup_state(self, payload: SetupStateUpdate) -> SetupState:
+        """Persist explicit onboarding progress.
+
+        This is the only writer of `app_setup_state`; it is never inferred
+        from current Source/Stream counts, so a user who later removes every
+        camera does not silently see the onboarding wizard again.
+        """
+
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(AppSetupStateModel, 1)
+                if model is None:
+                    model = AppSetupStateModel(
+                        singleton_id=1,
+                        completed=payload.completed,
+                        current_step=payload.current_step,
+                        last_created_stream_id=payload.last_created_stream_id,
+                        updated_at=now,
+                    )
+                    session.add(model)
+                else:
+                    model.completed = payload.completed
+                    model.current_step = payload.current_step
+                    if payload.last_created_stream_id is not None:
+                        model.last_created_stream_id = payload.last_created_stream_id
+                    model.updated_at = now
+            return self._setup_state_response(model)
+
+    @staticmethod
+    def _setup_state_response(model: AppSetupStateModel | None) -> SetupState:
+        if model is None:
+            # A row is missing only if a caller bypassed `initialize_database`
+            # (for example a repository built directly against a bare
+            # in-memory engine in a narrow unit test). Default to the same
+            # not-yet-completed state a genuine fresh install seeds, rather
+            # than guessing from unrelated product data.
+            return SetupState(
+                completed=False,
+                current_step="welcome",
+                last_created_stream_id=None,
+                updated_at=datetime.now(UTC),
+            )
+        return SetupState(
+            completed=model.completed,
+            current_step=model.current_step,
+            last_created_stream_id=model.last_created_stream_id,
+            updated_at=model.updated_at,
+        )
 
     def get_worker_status(self) -> WorkerStatusResponse:
         workers = list_worker_status_items()
@@ -10228,6 +10290,13 @@ class ProductRepository:
                 if target is not None and total_bytes > target
                 else None
             )
+            disk_status = probe_local_storage_disk(
+                Path(database_path).parent if database_path else self.media_root
+            )
+            if warning is None and not disk_status.is_writable:
+                warning = "MockingBird's local storage location is not writable."
+            elif warning is None and disk_status.is_low_space:
+                warning = "Local storage space is running low."
             return StorageSummary(
                 total_managed_media_bytes=total_bytes,
                 total_managed_media_count=sum(1 for asset in assets if self._storage_managed_media_path(asset)[0] is not None),
@@ -10243,6 +10312,9 @@ class ProductRepository:
                 unresolved_visit_evidence_count=unresolved_count,
                 reviewed_bird_wildlife_evidence_count=reviewed_wildlife_count,
                 reviewed_non_bird_blank_ambiguous_evidence_count=reviewed_other_count,
+                disk_total_bytes=disk_status.total_bytes,
+                disk_free_bytes=disk_status.free_bytes,
+                is_writable=disk_status.is_writable,
                 storage_warning=warning,
                 message="Managed media is summarized locally. Protected evidence is counted but never treated as cleanup permission.",
             )

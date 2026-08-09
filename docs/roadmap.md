@@ -954,6 +954,19 @@ Finish packaging, first-run setup, update/recovery policy, accessibility,
 performance, dependency reproducibility, upgrade support, and release
 acceptance for a dependable local product.
 
+Phase 27A (Installable Local Product v1) is complete: first-run detection and
+a guided setup wizard that composes the existing Add Camera and Observation
+panel, host-disk storage writable/low-space status, one consolidated basic
+product-health view, a previous-shutdown marker and fixed log location, and a
+self-contained Windows "unpack and run" bundle with an embedded Python
+runtime (no Python/pip/npm knowledge required to use it). See
+[local-product-packaging-design.md](local-product-packaging-design.md) and
+the normal-user guide, [using-mockingbird.md](using-mockingbird.md). Native
+Windows hardware acceptance of the produced bundle remains a pending manual
+step outside this environment. Accessibility, update policy, and further
+dependency-reproducibility/performance work remain open for a later Phase 27
+increment.
+
 ## Cross-cutting roadmap invariants
 
 - Source adapters remain underneath Sources, Streams, Zones, Events, Visits,

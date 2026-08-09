@@ -20,6 +20,10 @@ dist/
 build/
 .next/
 
+# Packaged local-product build artifacts (see scripts/build_local_product.py)
+src/mockingbird/web_dist/
+.build-cache/
+
 # Local data
 data/
 data/models/

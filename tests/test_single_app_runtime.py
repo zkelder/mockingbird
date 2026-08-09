@@ -8,6 +8,8 @@ import pytest
 
 import mockingbird.api.main as api_main
 from mockingbird.api.main import app
+import mockingbird.runtime as runtime_module
+import mockingbird.runtime_state as runtime_state
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.runtime import (
     APP_HOME_ENV_VAR,
@@ -231,6 +233,21 @@ def test_app_shutdown_stops_process_owned_runtime_activity(
     assert camera_session.stopped_reason == "api_shutdown"
 
 
+def test_app_shutdown_records_a_clean_shutdown_marker(tmp_path: Path, monkeypatch) -> None:
+    repository = ProductRepository(db_url=f"sqlite:///{tmp_path / 'mockingbird.sqlite3'}")
+    monkeypatch.setattr(api_main, "_repository", repository)
+    marked = []
+    monkeypatch.setattr(api_main, "mark_clean_shutdown", lambda: marked.append(True))
+
+    async def exercise_lifespan() -> None:
+        async with api_main._app_lifespan(app):
+            assert marked == []  # not marked clean until shutdown actually completes
+
+    asyncio.run(exercise_lifespan())
+
+    assert marked == [True]
+
+
 def test_repository_reconfiguration_stops_the_live_detector_generation(monkeypatch) -> None:
     class DetectorStub:
         stopped = False
@@ -245,3 +262,123 @@ def test_repository_reconfiguration_stops_the_live_detector_generation(monkeypat
 
     assert detector.stopped is True
     assert api_main._live_object_detector_manager is None
+
+
+# MockingBird Installable Local Product v1: previous-crash detection and a
+# fixed log location (docs/local-product-packaging-design.md).
+
+
+def test_prepare_runtime_state_detects_an_unclean_previous_run(tmp_path: Path) -> None:
+    first_run = runtime_state.prepare_runtime_state(tmp_path)
+    assert first_run is None  # never ran against this data directory before
+
+    runtime_state.mark_clean_shutdown()
+    second_run = runtime_state.prepare_runtime_state(tmp_path)
+    assert second_run is True
+
+    # No `mark_clean_shutdown()` before the next start -- for example a crash
+    # or a forced kill.
+    third_run = runtime_state.prepare_runtime_state(tmp_path)
+    assert third_run is False
+    assert runtime_state.previous_shutdown_was_clean() is False
+
+
+def test_mark_clean_shutdown_is_a_safe_no_op_before_any_run_is_prepared(monkeypatch) -> None:
+    monkeypatch.setattr(runtime_state, "_runtime_home", None)
+
+    runtime_state.mark_clean_shutdown()  # must not raise
+
+
+def test_configure_file_logging_creates_a_fixed_discoverable_log_file(tmp_path: Path) -> None:
+    import logging
+
+    log_path = runtime_state.configure_file_logging(tmp_path)
+
+    assert log_path == tmp_path / "logs" / "mockingbird.log"
+    logging.getLogger("mockingbird.test_logger").info("fidelity marker line")
+    for handler in logging.getLogger().handlers:
+        handler.flush()
+    assert "fidelity marker line" in log_path.read_text(encoding="utf-8")
+    assert runtime_state.current_log_path() == log_path
+
+
+def test_check_mode_never_touches_the_crash_marker_or_log_file(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """`--check` must stay side-effect-light: repeatedly validating startup
+    must never make the *next real launch* think the previous one crashed.
+    """
+
+    # `run_preflight()` (exercised for real below) changes the process
+    # working directory by product design; restore it so this test cannot
+    # leak a changed cwd into later tests that assume the repository root.
+    monkeypatch.chdir(Path.cwd())
+    dist_path = tmp_path / "dist"
+    create_frontend_build(dist_path)
+    monkeypatch.setenv(WEB_DIST_ENV_VAR, str(dist_path))
+    monkeypatch.setenv(APP_HOME_ENV_VAR, str(tmp_path / "home"))
+    # A real (not monkeypatched) `run_preflight()` call constructs a real
+    # repository through the process-wide `get_repository()` singleton;
+    # resetting it here, through monkeypatch, both starts this test from a
+    # clean slate and automatically restores whatever was there afterward.
+    monkeypatch.setattr(api_main, "_repository", None)
+
+    prepare_calls = []
+    monkeypatch.setattr(
+        runtime_module,
+        "prepare_runtime_state",
+        lambda runtime_home: prepare_calls.append(runtime_home),
+    )
+    log_calls = []
+    monkeypatch.setattr(
+        runtime_module,
+        "configure_file_logging",
+        lambda runtime_home: log_calls.append(runtime_home),
+    )
+
+    result = run(["--check", "--skip-frontend-build"])
+
+    assert result == 0
+    assert prepare_calls == []
+    assert log_calls == []
+
+
+def test_real_launch_prepares_the_crash_marker_and_logging_before_serving(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    # The real (unmocked) `run_preflight()` this test exercises below changes
+    # the process working directory to the runtime home, by product design
+    # (see runtime.py) -- restore it so this test cannot leak a changed cwd
+    # into later tests that assume the repository root (`monkeypatch.chdir`
+    # restores whatever cwd was current the moment this line runs).
+    monkeypatch.chdir(Path.cwd())
+    dist_path = tmp_path / "dist"
+    create_frontend_build(dist_path)
+    monkeypatch.setenv(WEB_DIST_ENV_VAR, str(dist_path))
+    runtime_home = tmp_path / "home"
+    monkeypatch.setenv(APP_HOME_ENV_VAR, str(runtime_home))
+    monkeypatch.setattr(api_main, "_repository", None)
+
+    prepare_calls = []
+    monkeypatch.setattr(
+        runtime_module,
+        "prepare_runtime_state",
+        lambda home: prepare_calls.append(home),
+    )
+    log_calls = []
+    monkeypatch.setattr(
+        runtime_module,
+        "configure_file_logging",
+        lambda home: log_calls.append(home),
+    )
+    # Never actually bind a port or block forever in a test.
+    monkeypatch.setattr(runtime_module, "port_is_available", lambda _host, _port: True)
+    monkeypatch.setattr(runtime_module.uvicorn, "run", lambda *args, **kwargs: None)
+
+    result = run(["--no-browser", "--port", "8199", "--skip-frontend-build"])
+
+    assert result == 0
+    assert prepare_calls == [runtime_home.resolve()]
+    assert log_calls == [runtime_home.resolve()]
