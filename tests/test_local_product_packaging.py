@@ -15,13 +15,17 @@ Every call into `assemble_windows_bundle`/`build_local_product` below passes
 an explicit fake `install_gpu_dependencies` (or `include_gpu_runtime=False`)
 and a `model_bundle_source` under the test's own `tmp_path` -- never the real
 ~1.1 GB CUDA/cuDNN download or this repository's own real ~500 MB model file.
-One exception, clearly marked and skipped when unavailable:
+Two exceptions, clearly marked and skipped when unavailable:
 `test_real_local_model_bundle_matches_accepted_provenance_when_present`
 reads (never writes/downloads) whatever real bundle already sits at
 `DEFAULT_MODEL_BUNDLE_SOURCE` on *this* machine, the same real,
 GPU-validated MDv5 artifact `build_local_product.py`'s own module docstring
-describes -- a genuine, not-faked provenance proof, skipped rather than
-failed on a build host that does not have it.
+describes; `test_real_windows_gpu_runtime_dll_closure_against_the_pinned_
+wheel_cache` really installs (offline, from this machine's own local wheel
+cache -- never the network) the pinned win_amd64 CUDA/cuDNN stack and runs
+the real `verify_windows_gpu_runtime_dll_closure` against it. Both are
+genuine, not-faked proofs, skipped rather than failed on a build host that
+does not have the real asset they need.
 
 The full pipeline (frontend build, real wheel build, real win_amd64
 dependency resolution including the GPU/CUDA stack, real model-bundle
@@ -36,6 +40,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import runpy
 import subprocess
@@ -49,13 +54,16 @@ _MODULE = runpy.run_path(ROOT / "scripts" / "build_local_product.py")
 assemble_windows_bundle = _MODULE["assemble_windows_bundle"]
 build_local_product = _MODULE["build_local_product"]
 export_clean_source_tree = _MODULE["export_clean_source_tree"]
+install_windows_gpu_runtime_dependencies = _MODULE["install_windows_gpu_runtime_dependencies"]
 package_observation_runtime_assets = _MODULE["package_observation_runtime_assets"]
 sync_packaged_web_dist = _MODULE["sync_packaged_web_dist"]
 verify_clean_tracked_source = _MODULE["verify_clean_tracked_source"]
+verify_windows_gpu_runtime_dll_closure = _MODULE["verify_windows_gpu_runtime_dll_closure"]
 write_deterministic_zip = _MODULE["write_deterministic_zip"]
 write_manifest = _MODULE["write_manifest"]
 LocalProductBuildError = _MODULE["LocalProductBuildError"]
 ModelBundleProvenance = _MODULE["ModelBundleProvenance"]
+NativeRuntimeVerification = _MODULE["NativeRuntimeVerification"]
 ACCEPTED_ONNX_MODEL_SHA256 = _MODULE["ACCEPTED_ONNX_MODEL_SHA256"]
 ACCEPTED_SOURCE_MODEL_SHA256 = _MODULE["ACCEPTED_SOURCE_MODEL_SHA256"]
 ACCEPTED_MODEL_KEY = _MODULE["ACCEPTED_MODEL_KEY"]
@@ -64,6 +72,9 @@ ACCEPTED_MODEL_LICENSE = _MODULE["ACCEPTED_MODEL_LICENSE"]
 PACKAGED_OBSERVATION_RUNTIME_DIRNAME = _MODULE["PACKAGED_OBSERVATION_RUNTIME_DIRNAME"]
 PACKAGED_PROVIDER_CONFIG_FILENAME = _MODULE["PACKAGED_PROVIDER_CONFIG_FILENAME"]
 DEFAULT_MODEL_BUNDLE_SOURCE = _MODULE["DEFAULT_MODEL_BUNDLE_SOURCE"]
+DEFAULT_WHEEL_CACHE_DIR = _MODULE["DEFAULT_WHEEL_CACHE_DIR"]
+REQUIRED_CUDA_RUNTIME_DLL_BASENAMES = _MODULE["REQUIRED_CUDA_RUNTIME_DLL_BASENAMES"]
+REQUIRED_ORT_CUDA_PROVIDER_DLL_BASENAMES = _MODULE["REQUIRED_ORT_CUDA_PROVIDER_DLL_BASENAMES"]
 
 
 def _noop_gpu_installer(_site_packages: Path) -> None:
@@ -109,6 +120,77 @@ def _fake_wheel(directory: Path, *, package_name: str = "fakepkg") -> Path:
         for name, data in files.items():
             archive.writestr(name, data)
     return wheel_path
+
+
+def _write_fake_dll_package(
+    site_packages: Path,
+    *,
+    package_name: str,
+    dll_relative_paths_and_bytes: dict[str, bytes],
+    omit_from_disk: frozenset[str] = frozenset(),
+) -> None:
+    """A minimal fake installed package: a real `RECORD` declaring each given
+    relative path at its real byte size, shaped exactly like what a real
+    `pip install --target ... --platform win_amd64` writes (a real `RECORD`
+    is generated from the wheel's own manifest regardless of whether the
+    installed platform matches the build host) -- but with a few bytes of
+    fixture content standing in for a real multi-hundred-MB NVIDIA/
+    onnxruntime-gpu DLL, and the hash field left blank (verification never
+    reads it), matching this file's existing `_fake_wheel` RECORD convention.
+
+    `omit_from_disk` declares a path in `RECORD` (a real byte size and all)
+    without actually writing the file -- reproducing the exact real
+    discovered defect: a package's own manifest claims a DLL that is not
+    actually present in the assembled bundle.
+    """
+
+    dist_info = site_packages / f"{package_name}-1.0.0.dist-info"
+    dist_info.mkdir(parents=True, exist_ok=True)
+    record_lines = []
+    for relative_path, data in dll_relative_paths_and_bytes.items():
+        if relative_path not in omit_from_disk:
+            target = site_packages / relative_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        record_lines.append(f"{relative_path},,{len(data)}")
+    record_lines.append(f"{package_name}-1.0.0.dist-info/RECORD,,")
+    (dist_info / "RECORD").write_text("\n".join(record_lines) + "\n", encoding="utf-8")
+
+
+# The real, confirmed directory each required DLL's real Windows wheel nests
+# it under (see docs/local-product-packaging-design.md and the module
+# docstring's "Native GPU/CUDA runtime DLL verification" section) -- fixture
+# data describing the real layout, never read by the production RECORD-driven
+# verification itself.
+_FAKE_GPU_DLL_DIRECTORY_BY_BASENAME: dict[str, str] = {
+    "cudart64_13.dll": "nvidia/cu13/bin/x86_64",
+    "cublas64_13.dll": "nvidia/cu13/bin/x86_64",
+    "cublasLt64_13.dll": "nvidia/cu13/bin/x86_64",
+    "cudnn64_9.dll": "nvidia/cudnn/bin",
+    "onnxruntime_providers_cuda.dll": "onnxruntime/capi",
+    "onnxruntime_providers_shared.dll": "onnxruntime/capi",
+}
+
+
+def _write_fake_complete_gpu_runtime(site_packages: Path) -> dict[str, bytes]:
+    """Writes a minimal-but-complete fake install satisfying every DLL
+    `verify_windows_gpu_runtime_dll_closure` requires -- derived from the
+    real `REQUIRED_CUDA_RUNTIME_DLL_BASENAMES`/`REQUIRED_ORT_CUDA_PROVIDER_
+    DLL_BASENAMES` constants (so this fixture cannot silently drift out of
+    sync with what the real verification actually demands) placed at each
+    basename's real confirmed directory. Returns the relative-path -> bytes
+    mapping actually written, for tests that want to tamper with one entry
+    afterward."""
+
+    required_basenames = (*REQUIRED_CUDA_RUNTIME_DLL_BASENAMES, *REQUIRED_ORT_CUDA_PROVIDER_DLL_BASENAMES)
+    contents = {
+        f"{_FAKE_GPU_DLL_DIRECTORY_BY_BASENAME[name]}/{name}": f"fake-{name}-content".encode()
+        for name in required_basenames
+    }
+    _write_fake_dll_package(
+        site_packages, package_name="fake_nvidia_cuda_stack", dll_relative_paths_and_bytes=contents,
+    )
+    return contents
 
 
 def _fake_web_dist(directory: Path) -> Path:
@@ -158,12 +240,17 @@ def test_assemble_windows_bundle_produces_a_python_and_pip_free_user_experience(
         (site_packages / "fastapi_stub").mkdir()
         (site_packages / "fastapi_stub" / "__init__.py").write_text("", encoding="utf-8")
 
-    bundle_dir_result, model_provenance = assemble_windows_bundle(
+    bundle_dir_result, model_provenance, native_runtime_verification = assemble_windows_bundle(
         bundle_dir=bundle_dir,
         wheel_path=wheel_path,
         embed_zip_path=embed_zip,
         install_dependencies=fake_install_dependencies,
-        install_gpu_dependencies=_noop_gpu_installer,
+        # This test is about the base Python/pip-free bundle shape, not the
+        # GPU/CUDA stack -- `include_gpu_runtime=False` keeps it that way
+        # rather than coupling it to a fake DLL closure it does not care
+        # about (see the "Windows GPU/CUDA native runtime" section below for
+        # that verification's own dedicated tests).
+        include_gpu_runtime=False,
         model_bundle_source=None,
     )
 
@@ -171,6 +258,8 @@ def test_assemble_windows_bundle_produces_a_python_and_pip_free_user_experience(
     assert installed_targets == [bundle_dir / "python" / "site-packages"]
     assert model_provenance.included is False
     assert model_provenance.reason == "no_model_bundle_source_supplied"
+    assert native_runtime_verification.checked is False
+    assert native_runtime_verification.reason == "gpu_runtime_skipped"
 
     # No Python/pip/npm knowledge needed: one launcher, no visible interpreter
     # concept, no console window (`pythonw.exe`, window style 0).
@@ -201,22 +290,31 @@ def test_assemble_windows_bundle_includes_gpu_runtime_by_default_via_injected_in
 ) -> None:
     """`include_gpu_runtime` defaults to True (a real release always wants
     the GPU stack) -- proven here with a fake installer, never the real
-    ~1.1 GB download."""
+    ~1.1 GB download. The fake installer still writes a minimal-but-complete
+    fake DLL closure (`_write_fake_complete_gpu_runtime`) so it satisfies
+    `verify_windows_gpu_runtime_dll_closure`, which now also runs by default
+    whenever `include_gpu_runtime` is True -- this test's own concern is
+    only "was the installer actually invoked", not that verification."""
 
     embed_zip = _fake_embeddable_zip(tmp_path)
     wheel_path = _fake_wheel(tmp_path, package_name="mockingbird")
     gpu_installed_targets: list[Path] = []
 
-    _, _provenance = assemble_windows_bundle(
+    def fake_gpu_installer(site_packages: Path) -> None:
+        gpu_installed_targets.append(site_packages)
+        _write_fake_complete_gpu_runtime(site_packages)
+
+    _, _provenance, native_runtime_verification = assemble_windows_bundle(
         bundle_dir=tmp_path / "bundle",
         wheel_path=wheel_path,
         embed_zip_path=embed_zip,
         install_dependencies=lambda _target: None,
-        install_gpu_dependencies=gpu_installed_targets.append,
+        install_gpu_dependencies=fake_gpu_installer,
         model_bundle_source=None,
     )
 
     assert gpu_installed_targets == [tmp_path / "bundle" / "python" / "site-packages"]
+    assert native_runtime_verification.checked is True
 
 
 def test_assemble_windows_bundle_skip_gpu_runtime_never_calls_installer(tmp_path: Path) -> None:
@@ -224,7 +322,7 @@ def test_assemble_windows_bundle_skip_gpu_runtime_never_calls_installer(tmp_path
     wheel_path = _fake_wheel(tmp_path, package_name="mockingbird")
     calls: list[Path] = []
 
-    assemble_windows_bundle(
+    _, _provenance, native_runtime_verification = assemble_windows_bundle(
         bundle_dir=tmp_path / "bundle",
         wheel_path=wheel_path,
         embed_zip_path=embed_zip,
@@ -235,6 +333,311 @@ def test_assemble_windows_bundle_skip_gpu_runtime_never_calls_installer(tmp_path
     )
 
     assert calls == []
+    # `--skip-gpu-runtime` is an explicitly supported, honestly-reported
+    # state -- never a build failure -- but must also never *claim* a DLL
+    # closure it never actually checked.
+    assert native_runtime_verification.checked is False
+    assert native_runtime_verification.reason == "gpu_runtime_skipped"
+    assert native_runtime_verification.verified_dlls == ()
+
+
+# --- Windows GPU/CUDA native runtime DLL closure verification --------------
+#
+# The real discovered defect this section's tests target: a real native-
+# Windows acceptance pass against a real GPU found `onnxruntime_providers_
+# cuda.dll` present and `onnxruntime.get_available_providers()` correctly
+# reporting `CUDAExecutionProvider`, with its own `cublasLt64_13.dll`
+# dependency silently absent from the assembled bundle -- CUDA session
+# creation then failed with Windows Error 126. Nothing in the build had ever
+# verified the DLLs `pip install` claimed to install were actually present.
+
+
+def test_verify_windows_gpu_runtime_dll_closure_passes_with_a_complete_closure(tmp_path: Path) -> None:
+    site_packages = tmp_path / "site-packages"
+    site_packages.mkdir()
+    contents = _write_fake_complete_gpu_runtime(site_packages)
+
+    result = verify_windows_gpu_runtime_dll_closure(site_packages=site_packages)
+
+    assert result.checked is True
+    assert result.reason is None
+    expected_names = {Path(path).name for path in contents}
+    assert set(result.verified_dlls) == expected_names
+    assert "nvidia/cu13/bin/x86_64" in result.dll_directories
+    assert "nvidia/cudnn/bin" in result.dll_directories
+    assert "onnxruntime/capi" in result.dll_directories
+
+
+def test_verify_windows_gpu_runtime_dll_closure_fails_when_cublas_lt_missing_from_disk(
+    tmp_path: Path,
+) -> None:
+    """The exact real discovered defect, reproduced directly: the owning
+    package's own `RECORD` declares `cublasLt64_13.dll` (a real size and
+    all) but the file itself was never actually written to the bundle."""
+
+    site_packages = tmp_path / "site-packages"
+    site_packages.mkdir()
+    contents = {
+        f"{_FAKE_GPU_DLL_DIRECTORY_BY_BASENAME[name]}/{name}": f"fake-{name}-content".encode()
+        for name in (*REQUIRED_CUDA_RUNTIME_DLL_BASENAMES, *REQUIRED_ORT_CUDA_PROVIDER_DLL_BASENAMES)
+    }
+    _write_fake_dll_package(
+        site_packages,
+        package_name="fake_nvidia_cuda_stack",
+        dll_relative_paths_and_bytes=contents,
+        omit_from_disk=frozenset({"nvidia/cu13/bin/x86_64/cublasLt64_13.dll"}),
+    )
+
+    with pytest.raises(LocalProductBuildError, match="cublasLt64_13.dll"):
+        verify_windows_gpu_runtime_dll_closure(site_packages=site_packages)
+
+
+def test_verify_windows_gpu_runtime_dll_closure_fails_when_a_dll_is_truncated(tmp_path: Path) -> None:
+    """Catches corruption, not only outright absence: the file exists but is
+    a different size than its own package's `RECORD` declares -- e.g. an
+    interrupted/partial download or write."""
+
+    site_packages = tmp_path / "site-packages"
+    site_packages.mkdir()
+    _write_fake_complete_gpu_runtime(site_packages)
+    truncated = site_packages / "nvidia/cu13/bin/x86_64/cublasLt64_13.dll"
+    truncated.write_bytes(b"short")
+
+    with pytest.raises(LocalProductBuildError, match="cublasLt64_13.dll"):
+        verify_windows_gpu_runtime_dll_closure(site_packages=site_packages)
+
+
+def test_verify_windows_gpu_runtime_dll_closure_fails_when_required_ort_provider_dll_missing(
+    tmp_path: Path,
+) -> None:
+    """A complete CUDA/cuDNN runtime with no onnxruntime-gpu provider DLL at
+    all is still refused -- `cublasLt64_13.dll` is not the only thing that
+    must be present for a real CUDA session to actually load."""
+
+    site_packages = tmp_path / "site-packages"
+    site_packages.mkdir()
+    contents = {
+        f"{_FAKE_GPU_DLL_DIRECTORY_BY_BASENAME[name]}/{name}": f"fake-{name}-content".encode()
+        for name in REQUIRED_CUDA_RUNTIME_DLL_BASENAMES
+    }
+    _write_fake_dll_package(site_packages, package_name="fake_nvidia_cuda_stack", dll_relative_paths_and_bytes=contents)
+
+    with pytest.raises(LocalProductBuildError, match="onnxruntime_providers_cuda.dll"):
+        verify_windows_gpu_runtime_dll_closure(site_packages=site_packages)
+
+
+def test_verify_windows_gpu_runtime_dll_closure_fails_when_no_dlls_present(tmp_path: Path) -> None:
+    site_packages = tmp_path / "site-packages"
+    site_packages.mkdir()
+
+    with pytest.raises(LocalProductBuildError, match="zero .dll files"):
+        verify_windows_gpu_runtime_dll_closure(site_packages=site_packages)
+
+
+def test_verify_windows_gpu_runtime_dll_closure_ignores_a_record_entry_that_escapes_site_packages(
+    tmp_path: Path,
+) -> None:
+    """A `RECORD` row is untrusted, RECORD-declared data, not a guaranteed-
+    safe path -- a `../`-escaping entry must be skipped, never resolved to
+    (and checked, or worse reported as verified) somewhere outside
+    `site_packages` entirely."""
+
+    site_packages = tmp_path / "site-packages"
+    site_packages.mkdir()
+    _write_fake_complete_gpu_runtime(site_packages)
+    outside_target = tmp_path / "outside-site-packages.dll"
+    outside_target.write_bytes(b"should-never-be-considered")
+    sneaky_dist_info = site_packages / "sneaky-1.0.0.dist-info"
+    sneaky_dist_info.mkdir()
+    (sneaky_dist_info / "RECORD").write_text(
+        f"../outside-site-packages.dll,,{outside_target.stat().st_size}\n"
+        "sneaky-1.0.0.dist-info/RECORD,,\n",
+        encoding="utf-8",
+    )
+
+    result = verify_windows_gpu_runtime_dll_closure(site_packages=site_packages)
+
+    assert "outside-site-packages.dll" not in result.verified_dlls
+
+
+def test_verify_windows_gpu_runtime_dll_closure_never_consults_system_cuda_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Proves the "no system CUDA Toolkit required" packaging contract:
+    verification passes or fails purely from the bundled `site_packages`,
+    unaffected by a build host's own (here, deliberately bogus/nonexistent)
+    system CUDA environment -- it must never let a build host's own CUDA
+    install, or lack of one, influence the result either way."""
+
+    monkeypatch.setenv("CUDA_PATH", str(tmp_path / "not-a-real-cuda-toolkit"))
+    monkeypatch.setenv("PATH", f"{tmp_path / 'not-a-real-cuda-bin'}{os.pathsep}/usr/bin")
+    site_packages = tmp_path / "site-packages"
+    site_packages.mkdir()
+    _write_fake_complete_gpu_runtime(site_packages)
+
+    result = verify_windows_gpu_runtime_dll_closure(site_packages=site_packages)
+
+    assert result.checked is True
+
+
+def test_assemble_windows_bundle_fails_release_build_when_required_gpu_dll_missing(
+    tmp_path: Path,
+) -> None:
+    """Integration proof that the verification is actually wired into the
+    real build path, not merely a standalone unused function: a build must
+    fail outright -- never silently ship, never silently fall back to a
+    CPU-only artifact -- when the GPU install leaves a required DLL missing.
+    """
+
+    embed_zip = _fake_embeddable_zip(tmp_path)
+    wheel_path = _fake_wheel(tmp_path, package_name="mockingbird")
+
+    def broken_gpu_installer(site_packages: Path) -> None:
+        _write_fake_complete_gpu_runtime(site_packages)
+        # Simulate the real defect directly against a real installer shape:
+        # everything else lands, `cublasLt64_13.dll` alone does not.
+        (site_packages / "nvidia/cu13/bin/x86_64/cublasLt64_13.dll").unlink()
+
+    with pytest.raises(LocalProductBuildError, match="cublasLt64_13.dll"):
+        assemble_windows_bundle(
+            bundle_dir=tmp_path / "bundle",
+            wheel_path=wheel_path,
+            embed_zip_path=embed_zip,
+            install_dependencies=lambda _target: None,
+            install_gpu_dependencies=broken_gpu_installer,
+            model_bundle_source=None,
+        )
+
+
+def test_assemble_windows_bundle_records_native_runtime_verification(tmp_path: Path) -> None:
+    embed_zip = _fake_embeddable_zip(tmp_path)
+    wheel_path = _fake_wheel(tmp_path, package_name="mockingbird")
+
+    _, _provenance, native_runtime_verification = assemble_windows_bundle(
+        bundle_dir=tmp_path / "bundle",
+        wheel_path=wheel_path,
+        embed_zip_path=embed_zip,
+        install_dependencies=lambda _target: None,
+        install_gpu_dependencies=lambda target: _write_fake_complete_gpu_runtime(target),
+        model_bundle_source=None,
+    )
+
+    assert native_runtime_verification.checked is True
+    for name in (*REQUIRED_CUDA_RUNTIME_DLL_BASENAMES, *REQUIRED_ORT_CUDA_PROVIDER_DLL_BASENAMES):
+        assert name in native_runtime_verification.verified_dlls
+    assert any("nvidia" in directory for directory in native_runtime_verification.dll_directories)
+
+
+def test_write_manifest_records_native_cuda_runtime_verification(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "bundle"
+    bundle_dir.mkdir()
+    zip_path = write_deterministic_zip(bundle_dir, tmp_path / "out.zip")
+    verification = NativeRuntimeVerification(
+        checked=True,
+        verified_dlls=("cublasLt64_13.dll", "cublas64_13.dll", "cudart64_13.dll", "cudnn64_9.dll"),
+        dll_directories=("nvidia/cu13/bin/x86_64", "nvidia/cudnn/bin"),
+    )
+
+    manifest_path, _ = write_manifest(
+        output_dir=tmp_path, bundle_dir=bundle_dir, zip_path=zip_path,
+        source_state="git:deadbeef", gpu_runtime_included=True,
+        native_runtime_verification=verification,
+    )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["native_cuda_runtime"]["checked"] is True
+    assert "cublasLt64_13.dll" in manifest["native_cuda_runtime"]["verified_dlls"]
+    assert "nvidia/cu13/bin/x86_64" in manifest["native_cuda_runtime"]["dll_directories"]
+
+
+def test_write_manifest_defaults_native_cuda_runtime_to_not_evaluated(tmp_path: Path) -> None:
+    """Mirrors `ModelBundleProvenance`'s own `not_evaluated` default: a
+    caller that forgets to pass `native_runtime_verification` gets an honest
+    "not evaluated" record, never a manifest that looks like a real pass."""
+
+    bundle_dir = tmp_path / "bundle"
+    bundle_dir.mkdir()
+    zip_path = write_deterministic_zip(bundle_dir, tmp_path / "out.zip")
+
+    manifest_path, _ = write_manifest(
+        output_dir=tmp_path, bundle_dir=bundle_dir, zip_path=zip_path, source_state="git:deadbeef",
+    )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["native_cuda_runtime"]["checked"] is False
+    assert manifest["native_cuda_runtime"]["reason"] == "not_evaluated"
+
+
+def test_install_windows_gpu_runtime_dependencies_uses_local_wheel_cache_when_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache_dir = tmp_path / "wheel-cache"
+    cache_dir.mkdir()
+    captured_commands: list[list[str]] = []
+    monkeypatch.setitem(
+        install_windows_gpu_runtime_dependencies.__globals__,
+        "_run",
+        lambda command, *, cwd: captured_commands.append(list(command)),
+    )
+
+    install_windows_gpu_runtime_dependencies(
+        site_packages=tmp_path / "site-packages", requirements=("fake-pkg==1.0",), wheel_cache_dir=cache_dir,
+    )
+
+    [command] = captured_commands
+    assert "--find-links" in command
+    assert str(cache_dir) in command
+    assert "--no-index" in command
+    assert "fake-pkg==1.0" in command
+
+
+def test_install_windows_gpu_runtime_dependencies_falls_back_to_network_when_cache_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_commands: list[list[str]] = []
+    monkeypatch.setitem(
+        install_windows_gpu_runtime_dependencies.__globals__,
+        "_run",
+        lambda command, *, cwd: captured_commands.append(list(command)),
+    )
+
+    install_windows_gpu_runtime_dependencies(
+        site_packages=tmp_path / "site-packages",
+        requirements=("fake-pkg==1.0",),
+        wheel_cache_dir=tmp_path / "no-such-cache-directory",
+    )
+
+    [command] = captured_commands
+    assert "--find-links" not in command
+    assert "--no-index" not in command
+    assert "fake-pkg==1.0" in command
+
+
+@pytest.mark.skipif(
+    not DEFAULT_WHEEL_CACHE_DIR.is_dir(),
+    reason="real win_amd64 CUDA/cuDNN wheel cache not present on this build host",
+)
+def test_real_windows_gpu_runtime_dll_closure_against_the_pinned_wheel_cache(tmp_path: Path) -> None:
+    """Not a fixture: really installs the pinned win_amd64/cp312 CUDA/cuDNN +
+    onnxruntime-gpu stack from this build host's own local wheel cache
+    (offline, real NVIDIA/onnxruntime-gpu wheels, no network -- see
+    `DEFAULT_WHEEL_CACHE_DIR`) and runs the real `verify_windows_gpu_runtime_
+    dll_closure` against it -- the genuine "the actual required files from
+    the pinned Windows NVIDIA packages" proof, skipped (never failed) on a
+    build host that does not have this ~1.3 GB cache rather than requiring
+    every contributor to have it locally."""
+
+    site_packages = tmp_path / "site-packages"
+    site_packages.mkdir()
+
+    install_windows_gpu_runtime_dependencies(site_packages=site_packages, wheel_cache_dir=DEFAULT_WHEEL_CACHE_DIR)
+    result = verify_windows_gpu_runtime_dll_closure(site_packages=site_packages)
+
+    assert result.checked is True
+    for name in (*REQUIRED_CUDA_RUNTIME_DLL_BASENAMES, *REQUIRED_ORT_CUDA_PROVIDER_DLL_BASENAMES):
+        assert name in result.verified_dlls
+    assert any(directory.endswith("nvidia/cu13/bin/x86_64") for directory in result.dll_directories)
+    assert any(directory.endswith("onnxruntime/capi") for directory in result.dll_directories)
 
 
 def test_patch_pth_file_is_idempotent(tmp_path: Path) -> None:
