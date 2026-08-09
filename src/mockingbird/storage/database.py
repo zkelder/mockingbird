@@ -40,7 +40,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 29
+CURRENT_DATABASE_SCHEMA_VERSION = 30
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -685,6 +685,18 @@ def _migrate_to_app_setup_state(connection: Connection) -> None:
     )
 
 
+def _migrate_to_camera_node_pending_setup(connection: Connection) -> None:
+    """Add durable pending-pairing storage; no existing Source/Stream changes.
+
+    A brand-new, always-empty-on-migration table: a pairing handoff that was
+    still only in the previous ten-minute in-memory store at upgrade time was
+    already gone before this migration could ever see it, so there is
+    nothing to backfill.
+    """
+
+    Base.metadata.tables["camera_node_pending_setups"].create(bind=connection, checkfirst=True)
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -714,6 +726,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     27: _migrate_to_monitoring_exposure_intervals,
     28: _migrate_to_observation_candidate_authority,
     29: _migrate_to_app_setup_state,
+    30: _migrate_to_camera_node_pending_setup,
 }
 
 

@@ -19,11 +19,13 @@ import json
 import logging
 import logging.handlers
 from pathlib import Path
+import secrets
 from typing import Any
 
 import uvicorn.config
 
 RUNTIME_STATE_FILENAME = "runtime_state.json"
+INSTANCE_IDENTITY_FILENAME = "instance_identity.json"
 LOG_SUBDIRECTORY = "logs"
 LOG_FILENAME = "mockingbird.log"
 _MAX_LOG_BYTES = 5_000_000
@@ -95,6 +97,56 @@ def mark_clean_shutdown() -> None:
 
 def previous_shutdown_was_clean() -> bool | None:
     return _previous_shutdown_clean
+
+
+def current_runtime_home() -> Path | None:
+    """The data directory the real launch path resolved, if any.
+
+    `None` for any process that never went through `prepare_runtime_state`
+    (every ASGI-transport test, a bare development server) -- exactly the
+    processes for which "which local installation is this" cannot be
+    answered, so callers should treat that as "not confirmed," never guess.
+    """
+
+    return _runtime_home
+
+
+def resolve_instance_id(runtime_home: Path) -> str:
+    """A stable identity for one local installation's own data directory.
+
+    Created once per `runtime_home` and reused after -- the basis for
+    telling "an already-running copy of this exact installation" apart from
+    an unrelated service, a different MockingBird install, or one
+    forwarded from another environment (for example WSL) that merely
+    answers the same `/health` shape on the same port. See "Windows
+    launcher defects" in docs/camera-node-pairing-persistence-design.md.
+
+    Deliberately never derived from hostname, PID, or process name: those
+    are exactly the kind of guessable, spoofable, or environment-specific
+    signal a same-machine WSL/native collision would still share. A random
+    token written inside the data directory itself is the smallest fact
+    that is true only for "the process that already owns this directory."
+    """
+
+    path = runtime_home / INSTANCE_IDENTITY_FILENAME
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        value = payload.get("instance_id") if isinstance(payload, dict) else None
+        if (
+            isinstance(value, str)
+            and len(value) == 32
+            and all(character in "0123456789abcdef" for character in value)
+        ):
+            return value
+    except (OSError, ValueError):
+        pass
+    instance_id = secrets.token_hex(16)
+    try:
+        runtime_home.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"instance_id": instance_id}), encoding="utf-8")
+    except OSError:
+        pass
+    return instance_id
 
 
 def configure_file_logging(runtime_home: Path) -> Path | None:

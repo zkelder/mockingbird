@@ -12,6 +12,7 @@ import math
 import os
 from pathlib import Path
 import re
+import secrets
 import shutil
 import struct
 import threading
@@ -99,7 +100,11 @@ from mockingbird.species.bioclip_adapter import (
 )
 from mockingbird.source_providers.camera_node import (
     CAMERA_NODE_RUNTIME_FAILURE_CODES,
+    CameraNodeCamera,
+    CameraNodeCaptureProfile,
+    CameraNodeCaptureProfileStatus,
     CameraNodeClientError,
+    CameraNodePairing,
     normalize_camera_node_address,
 )
 from mockingbird.time_utils import normalize_optional_utc, normalize_utc
@@ -145,6 +150,7 @@ from mockingbird.api.schemas import (
     CameraConfigurationRevision,
     CameraConfigurationSecretAction,
     CameraConfigurationValidationSummary,
+    CameraNodePendingSetupDraftUpdate,
     CameraSetupCompleteRequest,
     CameraSetupCompletionResponse,
     CameraSetupOption,
@@ -502,6 +508,7 @@ from mockingbird.storage.models import (
     CameraSetupOperationModel,
     CameraConfigurationRevisionModel,
     CameraHealthIncidentModel,
+    CameraNodePendingSetupModel,
     CameraSourceModel,
     DEFAULT_STREAM_MONITORING_INTERVAL_SECONDS,
     DEFAULT_STREAM_MONITORING_MINIMUM_DETECTIONS,
@@ -1980,6 +1987,176 @@ def _validate_camera_setup_urls(provider_key: str, config: dict[str, str]) -> No
                 normalize_camera_node_address(address)
             except CameraNodeClientError as error:
                 raise ValueError("camera_setup_invalid_node_address") from error
+
+
+@dataclass(frozen=True)
+class CameraNodePendingSetup:
+    """A durable, server-only pending Camera Node pairing/setup draft.
+
+    Deliberately a plain internal dataclass, never a `mockingbird.api.schemas`
+    response model: it carries the raw Node credential, which must never be
+    reachable through a FastAPI `response_model=`. See
+    docs/camera-node-pairing-persistence-design.md.
+    """
+
+    pairing_token: str
+    status: str
+    node_id: str
+    display_name: str
+    api_version: str
+    base_address: str
+    credential: str
+    capability_fingerprint: str
+    recommended_snapshot_timeout_seconds: float | None
+    cameras: list[CameraNodeCamera]
+    selected_camera_id: str | None
+    camera_name: str | None
+    stream_name: str | None
+    zone_name: str | None
+    zone_type: str | None
+    polygon: list[Point] | None
+    sensitivity: str | None
+    monitoring_enabled: bool
+
+    @property
+    def pairing(self) -> CameraNodePairing:
+        """The same shape callers already know how to use a fresh pairing as."""
+
+        return CameraNodePairing(
+            base_address=self.base_address,
+            node_id=self.node_id,
+            display_name=self.display_name,
+            api_version=self.api_version,
+            credential=self.credential,
+            cameras=self.cameras,
+            capability_fingerprint=self.capability_fingerprint,
+            recommended_snapshot_timeout_seconds=self.recommended_snapshot_timeout_seconds,
+        )
+
+
+def _camera_node_cameras_to_json(cameras: list[CameraNodeCamera]) -> str:
+    """Serialize only the safe, already-validated advertised camera list."""
+
+    return json.dumps(
+        [
+            {
+                "camera_id": camera.camera_id,
+                "display_name": camera.display_name,
+                "status": camera.status,
+                "snapshot_supported": camera.snapshot_supported,
+                "setup_hint": camera.setup_hint,
+                "provider_type": camera.provider_type,
+                "capture_readiness": camera.capture_readiness,
+                "capture_profiles": [
+                    {
+                        "profile_id": profile.profile_id,
+                        "purposes": list(profile.purposes),
+                        "width": profile.width,
+                        "height": profile.height,
+                        "jpeg_supported": profile.jpeg_supported,
+                        "max_expected_bytes": profile.max_expected_bytes,
+                        "capture_class": profile.capture_class,
+                        "geometry_group": profile.geometry_group,
+                        "orientation": profile.orientation,
+                        "mirrored": profile.mirrored,
+                        "same_fov": profile.same_fov,
+                    }
+                    for profile in camera.capture_profiles
+                ],
+                "capture_profile_status": [
+                    {"profile_id": status.profile_id, "state": status.state}
+                    for status in camera.capture_profile_status
+                ],
+            }
+            for camera in cameras
+        ],
+        sort_keys=True,
+    )
+
+
+def _camera_node_cameras_from_json(cameras_json: str) -> list[CameraNodeCamera]:
+    """Deserialize a durably-stored camera list. Defensive, not paranoid --
+    this product writes this column itself; a corrupt row degrades to no
+    advertised cameras rather than crashing setup resume."""
+
+    try:
+        raw = json.loads(cameras_json)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(raw, list):
+        return []
+    cameras: list[CameraNodeCamera] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        try:
+            cameras.append(
+                CameraNodeCamera(
+                    camera_id=item["camera_id"],
+                    display_name=item["display_name"],
+                    status=item["status"],
+                    snapshot_supported=bool(item.get("snapshot_supported")),
+                    setup_hint=item.get("setup_hint"),
+                    provider_type=item.get("provider_type"),
+                    capture_profiles=tuple(
+                        CameraNodeCaptureProfile(
+                            profile_id=profile["profile_id"],
+                            purposes=tuple(profile.get("purposes") or ()),
+                            width=profile["width"],
+                            height=profile["height"],
+                            jpeg_supported=bool(profile.get("jpeg_supported")),
+                            max_expected_bytes=profile["max_expected_bytes"],
+                            capture_class=profile["capture_class"],
+                            geometry_group=profile.get("geometry_group"),
+                            orientation=profile.get("orientation", "normal"),
+                            mirrored=bool(profile.get("mirrored")),
+                            same_fov=bool(profile.get("same_fov")),
+                        )
+                        for profile in (item.get("capture_profiles") or [])
+                    ),
+                    capture_readiness=item.get("capture_readiness", "not_initialized"),
+                    capture_profile_status=tuple(
+                        CameraNodeCaptureProfileStatus(
+                            profile_id=status["profile_id"],
+                            state=status["state"],
+                        )
+                        for status in (item.get("capture_profile_status") or [])
+                    ),
+                )
+            )
+        except (KeyError, TypeError):
+            continue
+    return cameras
+
+
+def _camera_node_pending_setup_from_model(
+    model: CameraNodePendingSetupModel,
+) -> CameraNodePendingSetup:
+    polygon = (
+        [Point(**point) for point in json.loads(model.polygon_json)]
+        if model.polygon_json
+        else None
+    )
+    return CameraNodePendingSetup(
+        pairing_token=model.token,
+        status=model.status,
+        node_id=model.node_id,
+        display_name=model.display_name,
+        api_version=model.api_version,
+        base_address=model.base_address,
+        credential=model.credential,
+        capability_fingerprint=model.capability_fingerprint,
+        recommended_snapshot_timeout_seconds=model.recommended_snapshot_timeout_seconds,
+        cameras=_camera_node_cameras_from_json(model.cameras_json),
+        selected_camera_id=model.selected_camera_id,
+        camera_name=model.camera_name,
+        stream_name=model.stream_name,
+        zone_name=model.zone_name,
+        zone_type=model.zone_type,
+        polygon=polygon,
+        sensitivity=model.sensitivity,
+        monitoring_enabled=model.monitoring_enabled,
+    )
 
 
 class ProductRepository:
@@ -3884,6 +4061,16 @@ class ProductRepository:
                         created_at=now,
                     )
                 )
+                if definition.provider_key == "camera_node" and payload.node_pairing_token:
+                    # The credential now lives in `configuration` above too;
+                    # atomically drop the now-redundant pending row in the
+                    # same transaction so it can never be offered as a
+                    # "resume setup" later for a camera that already exists.
+                    pending_setup = session.get(
+                        CameraNodePendingSetupModel, payload.node_pairing_token
+                    )
+                    if pending_setup is not None:
+                        session.delete(pending_setup)
                 session.flush()
                 return CameraSetupCompletionResponse(
                     source=_source_from_model(source),
@@ -4304,6 +4491,18 @@ class ProductRepository:
                     stream.name = payload.stream_name
                 model.config_json = json.dumps(proposed_config, sort_keys=True)
                 model.updated_at = now
+                if model.provider_key == "camera_node" and payload.node_pairing_token:
+                    # A re-pair through Edit Camera Setup durably persisted its
+                    # own pending-setup row too (see `create_camera_node_pending_
+                    # setup`); the credential now lives in `model.config_json`
+                    # above, so drop the now-redundant row in the same
+                    # transaction. Otherwise a later, unrelated Add Camera
+                    # attempt could see it as a stale "resume setup" offer.
+                    pending_setup = session.get(
+                        CameraNodePendingSetupModel, payload.node_pairing_token
+                    )
+                    if pending_setup is not None:
+                        session.delete(pending_setup)
 
                 actual_before = _stream_runtime_state_from_checkpoint(checkpoint)
                 restart_requested = bool(
@@ -4436,6 +4635,227 @@ class ProductRepository:
                 checkpoint.updated_at = now
                 self._sync_monitoring_alert(session, stream.id, now)
                 return True
+
+    def create_camera_node_pending_setup(
+        self,
+        pairing: CameraNodePairing,
+        *,
+        renews_pairing_token: str | None = None,
+    ) -> CameraNodePendingSetup:
+        """Persist a just-accepted Node pairing immediately and durably.
+
+        Called once, right after the Node confirms the one-time code -- by
+        the time this returns, the credential already lives here rather
+        than only in the browser's React state for the rest of guided
+        setup. See "Core design correction" in
+        docs/camera-node-pairing-persistence-design.md. The one-time code
+        itself was already consumed by the Node to produce `pairing`; this
+        record has no expiry of its own -- only an explicit cancel-with-
+        revoke, a genuine Node-side rejection, or a completed setup ends it.
+
+        `renews_pairing_token` is set only when this call is the explicit
+        "renew pairing" recovery action for a `needs_renewal` record: its
+        already-entered draft fields (camera name, view name, Zone,
+        sensitivity) carry over onto the new record, and the stale record
+        is retired in the same transaction -- see "Existing paired-but-
+        incomplete recovery" in docs/camera-node-pairing-persistence-design.md.
+        """
+
+        now = datetime.now(UTC)
+        token = f"node-pair-{secrets.token_urlsafe(24)}"
+        initial_camera_id = next(
+            (
+                camera.camera_id
+                for camera in pairing.cameras
+                if camera.status == "available" and camera.snapshot_supported
+            ),
+            None,
+        )
+        with self.session_factory() as session:
+            with session.begin():
+                carried_draft: dict[str, Any] = {}
+                if renews_pairing_token:
+                    previous = session.get(CameraNodePendingSetupModel, renews_pairing_token)
+                    if previous is not None:
+                        carried_draft = {
+                            "camera_name": previous.camera_name,
+                            "stream_name": previous.stream_name,
+                            "zone_name": previous.zone_name,
+                            "zone_type": previous.zone_type,
+                            "polygon_json": previous.polygon_json,
+                            "sensitivity": previous.sensitivity,
+                            "monitoring_enabled": previous.monitoring_enabled,
+                        }
+                        session.delete(previous)
+                model = CameraNodePendingSetupModel(
+                    token=token,
+                    node_id=pairing.node_id,
+                    display_name=pairing.display_name,
+                    api_version=pairing.api_version,
+                    base_address=pairing.base_address,
+                    credential=pairing.credential,
+                    capability_fingerprint=pairing.capability_fingerprint,
+                    recommended_snapshot_timeout_seconds=pairing.recommended_snapshot_timeout_seconds,
+                    cameras_json=_camera_node_cameras_to_json(pairing.cameras),
+                    status="active",
+                    selected_camera_id=initial_camera_id,
+                    camera_name=carried_draft.get("camera_name"),
+                    stream_name=carried_draft.get("stream_name"),
+                    zone_name=carried_draft.get("zone_name"),
+                    zone_type=carried_draft.get("zone_type"),
+                    polygon_json=carried_draft.get("polygon_json"),
+                    sensitivity=carried_draft.get("sensitivity"),
+                    monitoring_enabled=carried_draft.get("monitoring_enabled", False),
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(model)
+                session.flush()
+                return _camera_node_pending_setup_from_model(model)
+
+    def get_camera_node_pending_setup(self, token: str) -> CameraNodePendingSetup | None:
+        with self.session_factory() as session:
+            model = session.get(CameraNodePendingSetupModel, token)
+            return _camera_node_pending_setup_from_model(model) if model is not None else None
+
+    def get_latest_camera_node_pending_setup(self) -> CameraNodePendingSetup | None:
+        """The most recently touched not-yet-completed pairing, if any.
+
+        Lets a reloaded or relaunched wizard resume without the browser
+        needing to remember any token at all -- see "Resume behavior" in
+        docs/camera-node-pairing-persistence-design.md. This product guides
+        one operator through one camera at a time, so "most recent" is
+        unambiguous in ordinary use; an older abandoned attempt simply
+        stops being offered once a newer one exists.
+        """
+
+        with self.session_factory() as session:
+            model = session.scalar(
+                select(CameraNodePendingSetupModel)
+                .order_by(CameraNodePendingSetupModel.updated_at.desc())
+                .limit(1)
+            )
+            return _camera_node_pending_setup_from_model(model) if model is not None else None
+
+    def update_camera_node_pending_setup_draft(
+        self,
+        token: str,
+        update: CameraNodePendingSetupDraftUpdate,
+    ) -> CameraNodePendingSetup | None:
+        """Persist already-entered setup fields, independent of the pairing
+        itself -- so a camera name, view name, Zone, or sensitivity already
+        typed survives a refresh or restart exactly like the pairing does,
+        and is preserved even through a later re-pair."""
+
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(CameraNodePendingSetupModel, token)
+                if model is None:
+                    return None
+                changes = update.model_dump(exclude_none=True, mode="json")
+                if "selected_camera_id" in changes:
+                    model.selected_camera_id = changes["selected_camera_id"]
+                if "camera_name" in changes:
+                    model.camera_name = changes["camera_name"]
+                if "stream_name" in changes:
+                    model.stream_name = changes["stream_name"]
+                if "zone_name" in changes:
+                    model.zone_name = changes["zone_name"]
+                if "zone_type" in changes:
+                    model.zone_type = changes["zone_type"]
+                if "polygon" in changes:
+                    model.polygon_json = json.dumps(changes["polygon"])
+                if "sensitivity" in changes:
+                    model.sensitivity = changes["sensitivity"]
+                if "monitoring_enabled" in changes:
+                    model.monitoring_enabled = changes["monitoring_enabled"]
+                model.updated_at = now
+                session.flush()
+                return _camera_node_pending_setup_from_model(model)
+
+    def refresh_camera_node_pending_setup_cameras(
+        self,
+        token: str,
+        cameras: list[CameraNodeCamera],
+    ) -> bool:
+        """Refresh only the transient advertised camera list for one pairing.
+
+        Mirrors the previous in-memory store's `refresh_cameras`: a
+        PiCamera2 Node may finish its bounded warm-profile proof shortly
+        after accepting a one-time code; this replaces only safe advertised
+        camera metadata so setup can select the already-proven Node-owned
+        profiles. The durable credential and every already-entered draft
+        field are untouched.
+        """
+
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(CameraNodePendingSetupModel, token)
+                if model is None:
+                    return False
+                model.cameras_json = _camera_node_cameras_to_json(cameras)
+                model.updated_at = now
+                return True
+
+    def mark_camera_node_pending_setup_needs_renewal(self, token: str) -> None:
+        """Record that the Node itself rejected the stored credential.
+
+        Never called merely from reading/resuming a pending setup -- only
+        from an actual `authentication_rejected` response to a live Node
+        call, so an ordinary resume can never manufacture a false
+        "needs renewal" state on its own.
+        """
+
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(CameraNodePendingSetupModel, token)
+                if model is None:
+                    return
+                model.status = "needs_renewal"
+                model.updated_at = now
+
+    def resolve_camera_node_pending_pairing(
+        self,
+        token: str,
+        *,
+        camera_id: str,
+    ) -> CameraNodePairing | None:
+        """Read-only resolution of a durable pending pairing for one
+        explicit, already-advertised camera. Never mutates status -- an
+        `authentication_rejected` response from the Node itself is what
+        marks `needs_renewal`, not merely reading this record."""
+
+        with self.session_factory() as session:
+            model = session.get(CameraNodePendingSetupModel, token)
+            if model is None:
+                return None
+            pending = _camera_node_pending_setup_from_model(model)
+            camera = next(
+                (item for item in pending.cameras if item.camera_id == camera_id),
+                None,
+            )
+            if camera is None or camera.status != "available" or not camera.snapshot_supported:
+                raise CameraNodeClientError("node_camera_not_allowed")
+            return pending.pairing
+
+    def delete_camera_node_pending_setup(self, token: str) -> tuple[str, str] | None:
+        """Return `(base_address, credential)` then delete the durable row --
+        for an explicit, authenticated "forget this Node" action. The
+        caller must revoke at the Node itself using the returned credential;
+        this mirrors the parallel completed-Source path,
+        `camera_node_pairing_secret`/`revoke_camera_node_pairing`."""
+
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(CameraNodePendingSetupModel, token)
+                if model is None:
+                    return None
+                secret = (model.base_address, model.credential)
+                session.delete(model)
+                return secret
 
     def preview_source_folder_import(
         self,

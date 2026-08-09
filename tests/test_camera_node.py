@@ -960,44 +960,60 @@ async def test_pairing_returns_while_picamera2_warm_proof_runs() -> None:
     provider.close()
 
 
-def test_pairing_store_refreshes_only_transient_advertised_camera_metadata() -> None:
-    store = api_main.CameraNodePairingStore()
-    pairing = CameraNodePairing(
-        base_address="http://192.168.1.112:8787",
-        node_id="node-test",
-        display_name="Test node",
-        api_version="v1",
-        credential="local-only-credential",
-        cameras=[CameraNodeCamera("picamera2-camera-0", "Pi camera", "available", True)],
-        capability_fingerprint="fingerprint",
-    )
-    session = store.create(pairing)
-    refreshed = CameraNodeCamera(
-        camera_id="picamera2-camera-0",
-        display_name="Pi camera",
-        status="available",
-        snapshot_supported=True,
-        capture_profiles=(
-            CameraNodeCaptureProfile(
-                profile_id="opaque-monitoring",
-                purposes=("monitoring",),
-                width=1920,
-                height=1440,
-                jpeg_supported=True,
-                max_expected_bytes=1_500_000,
-                capture_class="warm_concurrent",
-                geometry_group="same-fov",
-                orientation="normal",
-                mirrored=False,
-                same_fov=True,
+def test_pending_setup_refreshes_only_transient_advertised_camera_metadata(tmp_path) -> None:
+    """Replaces the previous in-memory `CameraNodePairingStore` unit test: the
+    same "refresh advertised cameras without touching the credential" contract
+    now lives on the durable repository-backed pending setup instead -- see
+    docs/camera-node-pairing-persistence-design.md."""
+
+    repository = _repository(tmp_path)
+    try:
+        pairing = CameraNodePairing(
+            base_address="http://192.168.1.112:8787",
+            node_id="node-test",
+            display_name="Test node",
+            api_version="v1",
+            credential="local-only-credential",
+            cameras=[CameraNodeCamera("picamera2-camera-0", "Pi camera", "available", True)],
+            capability_fingerprint="fingerprint",
+        )
+        pending = repository.create_camera_node_pending_setup(pairing)
+        refreshed = CameraNodeCamera(
+            camera_id="picamera2-camera-0",
+            display_name="Pi camera",
+            status="available",
+            snapshot_supported=True,
+            capture_profiles=(
+                CameraNodeCaptureProfile(
+                    profile_id="opaque-monitoring",
+                    purposes=("monitoring",),
+                    width=1920,
+                    height=1440,
+                    jpeg_supported=True,
+                    max_expected_bytes=1_500_000,
+                    capture_class="warm_concurrent",
+                    geometry_group="same-fov",
+                    orientation="normal",
+                    mirrored=False,
+                    same_fov=True,
+                ),
             ),
-        ),
-    )
-    assert store.refresh_cameras(session.token, [refreshed]) is True
-    selected = store.consume(session.token, camera_id="picamera2-camera-0")
-    assert selected is not None
-    assert selected.cameras[0].capture_profiles[0].profile_id == "opaque-monitoring"
-    assert "local-only-credential" not in str(selected.cameras)
+        )
+        assert (
+            repository.refresh_camera_node_pending_setup_cameras(
+                pending.pairing_token, [refreshed]
+            )
+            is True
+        )
+        selected = repository.resolve_camera_node_pending_pairing(
+            pending.pairing_token, camera_id="picamera2-camera-0"
+        )
+        assert selected is not None
+        assert selected.cameras[0].capture_profiles[0].profile_id == "opaque-monitoring"
+        assert selected.credential == "local-only-credential"
+        assert "local-only-credential" not in str(selected.cameras)
+    finally:
+        repository.close()
 
 
 def test_profile_refresh_waits_for_a_proven_warm_concurrent_pair() -> None:
@@ -1832,7 +1848,7 @@ def test_schema_v24_adds_no_camera_node_configuration_to_existing_sources(tmp_pa
     engine = create_database_engine(f"sqlite:///{database_path}")
     try:
         status = initialize_database(engine)
-        assert status.version == CURRENT_DATABASE_SCHEMA_VERSION == 29
+        assert status.version == CURRENT_DATABASE_SCHEMA_VERSION == 30
         with engine.connect() as connection:
             count = connection.exec_driver_sql("SELECT COUNT(*) FROM source_provider_configurations WHERE provider_key = 'camera_node'").scalar_one()
         assert count == 0

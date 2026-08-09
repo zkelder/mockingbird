@@ -24,6 +24,9 @@ import type {
   CameraConfigurationImpactPreviewRequest,
   CameraNodePairRequest,
   CameraNodePairResponse,
+  CameraNodePendingSetupDraftUpdate,
+  CameraNodePendingSetupResponse,
+  CameraNodePendingSetupRevokeRequest,
   CameraNodePreviewRequest,
   CameraNodePairRevokeRequest,
   CameraSetupCompleteRequest,
@@ -402,6 +405,21 @@ export const apiClient = {
     }),
   previewCameraNode: (payload: CameraNodePreviewRequest) =>
     requestImage("/api/camera-nodes/preview", payload),
+  getCameraNodePendingSetup: () =>
+    request<CameraNodePendingSetupResponse>("/api/camera-nodes/pending-setup"),
+  updateCameraNodePendingSetup: (
+    pairingToken: string,
+    payload: CameraNodePendingSetupDraftUpdate,
+  ) =>
+    request<CameraNodePendingSetupResponse>(
+      `/api/camera-nodes/pending-setup/${encodeURIComponent(pairingToken)}`,
+      { method: "PATCH", body: JSON.stringify(payload) },
+    ),
+  revokeCameraNodePendingSetup: (payload: CameraNodePendingSetupRevokeRequest) =>
+    request<void>("/api/camera-nodes/pending-setup/revoke", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
   revokeCameraNodePairing: (payload: CameraNodePairRevokeRequest) =>
     request<void>("/api/camera-nodes/pair/revoke", {
       method: "POST",

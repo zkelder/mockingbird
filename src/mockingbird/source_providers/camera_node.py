@@ -8,13 +8,12 @@ instantiate this client or contact a Node.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from http.client import HTTPConnection, HTTPSConnection
 import ipaddress
 import json
 import secrets
 import socket
-import threading
 import time
 from typing import Any, Protocol
 from urllib.parse import urlsplit, urlunsplit
@@ -24,7 +23,6 @@ NODE_API_VERSION = "v1"
 MAX_NODE_JSON_BYTES = 128_000
 MAX_NODE_SNAPSHOT_BYTES = 1_500_000
 MAX_NODE_CAPTURE_BYTES = 16_000_000
-PAIRING_SESSION_TTL_SECONDS = 10 * 60
 NODE_CONNECT_TIMEOUT_SECONDS = 2.0
 NODE_METADATA_RESPONSE_TIMEOUT_SECONDS = 3.0
 NODE_WARM_SNAPSHOT_RESPONSE_TIMEOUT_SECONDS = 4.0
@@ -156,13 +154,6 @@ class CameraNodePairing:
     cameras: list[CameraNodeCamera]
     capability_fingerprint: str
     recommended_snapshot_timeout_seconds: float | None = None
-
-
-@dataclass(frozen=True)
-class CameraNodePairingSession:
-    token: str
-    pairing: CameraNodePairing
-    expires_at: datetime
 
 
 class CameraNodeRequester(Protocol):
@@ -687,59 +678,3 @@ class CameraNodeClient:
         status, _, _ = self._request(base_address=base, path="/node/v1/pair/revoke", method="POST", credential=credential)
         if status not in {204, 401}:
             raise CameraNodeClientError("node_unavailable")
-
-
-class CameraNodePairingStore:
-    """Short-lived main-app handoff; it never returns a durable credential."""
-    def __init__(self, *, ttl_seconds: int = PAIRING_SESSION_TTL_SECONDS) -> None:
-        self._ttl = timedelta(seconds=ttl_seconds)
-        self._sessions: dict[str, CameraNodePairingSession] = {}
-        self._lock = threading.RLock()
-
-    def create(self, pairing: CameraNodePairing) -> CameraNodePairingSession:
-        now = datetime.now(UTC)
-        session = CameraNodePairingSession(f"node-pair-{secrets.token_urlsafe(24)}", pairing, now + self._ttl)
-        with self._lock:
-            self._purge(now)
-            self._sessions[session.token] = session
-        return session
-
-    def consume(self, token: str, *, camera_id: str) -> CameraNodePairing | None:
-        now = datetime.now(UTC)
-        with self._lock:
-            self._purge(now)
-            session = self._sessions.get(token)
-            if session is None:
-                return None
-            camera = next(
-                (candidate for candidate in session.pairing.cameras if candidate.camera_id == camera_id),
-                None,
-            )
-            if camera is None or camera.status != "available" or not camera.snapshot_supported:
-                raise CameraNodeClientError("node_camera_not_allowed")
-            return session.pairing
-
-    def refresh_cameras(
-        self,
-        token: str,
-        cameras: list[CameraNodeCamera],
-    ) -> bool:
-        """Refresh only the transient advertised views for one explicit pairing.
-
-        A PiCamera2 Node may complete its bounded warm-profile proof shortly
-        after accepting a one-time code.  The durable credential remains inside
-        the existing session; this method replaces only safe advertised camera
-        metadata so setup can select the already-proven Node-owned profiles.
-        """
-
-        now = datetime.now(UTC)
-        with self._lock:
-            self._purge(now)
-            session = self._sessions.get(token)
-            if session is None:
-                return False
-            session.pairing.cameras[:] = list(cameras)
-            return True
-
-    def _purge(self, now: datetime) -> None:
-        self._sessions = {token: session for token, session in self._sessions.items() if session.expires_at > now}

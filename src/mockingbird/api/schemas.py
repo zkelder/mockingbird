@@ -1803,6 +1803,7 @@ class CameraNodePairRequest(BaseModel):
 
     base_address: str = Field(min_length=8, max_length=260)
     pairing_code: str = Field(min_length=8, max_length=128)
+    renews_pairing_token: str | None = Field(default=None, min_length=16, max_length=160)
 
 
 class CameraNodeAdvertisedCamera(BaseModel):
@@ -1833,13 +1834,70 @@ class CameraNodeCaptureProfile(BaseModel):
 
 
 class CameraNodePairResponse(BaseModel):
+    """Confirms a one-time code was accepted. The pairing itself is already
+    durable server-side by the time this response is sent (see
+    docs/camera-node-pairing-persistence-design.md) -- `pairing_token` is an
+    opaque reference to that durable record, not a time-boxed handoff, so
+    this response deliberately carries no expiry: the one-time *code* was
+    already consumed to produce it, and nothing about finishing setup is
+    still racing a clock.
+    """
+
     pairing_token: str
-    pairing_expires_at: datetime
     node_id: str
     display_name: str
     api_version: str
     cameras: list[CameraNodeAdvertisedCamera] = Field(default_factory=list, max_length=16)
     message: str
+
+
+class CameraNodePendingSetupResponse(BaseModel):
+    """Safe, resumable view of a durable Camera Node pairing/setup draft.
+
+    Never includes the Node address or credential -- both stay server-side
+    only, exactly like a completed Source's saved configuration keeps them.
+    `status == "needs_renewal"` means the Node no longer accepts the stored
+    credential (for example a genuine revocation); setup can only continue
+    after an explicit, deliberate re-pair, and any already-entered draft
+    fields below are preserved through that re-pair.
+    """
+
+    pairing_token: str
+    status: str
+    node_id: str
+    display_name: str
+    api_version: str
+    cameras: list[CameraNodeAdvertisedCamera] = Field(default_factory=list, max_length=16)
+    selected_camera_id: str | None = None
+    camera_name: str | None = None
+    stream_name: str | None = None
+    zone_name: str | None = None
+    zone_type: ZoneType | None = None
+    polygon: list[Point] | None = None
+    sensitivity: ZoneActivitySensitivity | None = None
+    monitoring_enabled: bool = False
+    message: str
+
+
+class CameraNodePendingSetupDraftUpdate(BaseModel):
+    """Explicit update to a resumable draft's own already-entered fields.
+
+    Never accepts a camera address or credential -- those change only
+    through pairing itself. This exists solely so a camera name, view name,
+    Zone, or sensitivity already typed survives a refresh or app restart
+    too, not only the pairing. Any field left out keeps its saved value.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    selected_camera_id: str | None = Field(default=None, max_length=120)
+    camera_name: str | None = Field(default=None, max_length=120)
+    stream_name: str | None = Field(default=None, max_length=120)
+    zone_name: str | None = Field(default=None, max_length=120)
+    zone_type: ZoneType | None = None
+    polygon: list[Point] | None = Field(default=None, min_length=3, max_length=32)
+    sensitivity: ZoneActivitySensitivity | None = None
+    monitoring_enabled: bool | None = None
 
 
 class CameraNodePreviewRequest(BaseModel):
@@ -1849,6 +1907,20 @@ class CameraNodePreviewRequest(BaseModel):
 
     pairing_token: str = Field(min_length=16, max_length=160)
     camera_id: str = Field(min_length=1, max_length=120)
+
+
+class CameraNodePendingSetupRevokeRequest(BaseModel):
+    """Explicit, deliberate 'forget this Camera Node' action.
+
+    Distinct from leaving/refreshing/discarding the wizard, which always
+    preserves a resumable pending pairing -- see 'Pairing semantics' in
+    docs/camera-node-pairing-persistence-design.md. This is the one path
+    that actually revokes Node access.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    pairing_token: str = Field(min_length=16, max_length=160)
 
 
 class CameraNodePairRevokeRequest(BaseModel):
@@ -4565,6 +4637,25 @@ class ProductHealthStatus(BaseModel):
     database_schema_version: int = Field(ge=1)
     log_path: str | None = None
     generated_at: datetime
+
+
+class ProductInstanceIdentity(BaseModel):
+    """Identity of THIS running MockingBird process's own local installation.
+
+    Used only by the local launcher, to tell an already-running copy of
+    this exact installation apart from an unrelated service, a different
+    MockingBird install, or one forwarded from another environment (for
+    example WSL) that merely answers on the same port -- see "Windows
+    launcher defects" in docs/camera-node-pairing-persistence-design.md.
+    Never process name, PID, or hostname: those are exactly the kind of
+    guessable, spoofable, or environment-specific signal that could falsely
+    match. `instance_id` is `None` only when this process was not started
+    through the real launcher (for example a bare development server),
+    which conservatively means "cannot confirm this is the same install."
+    """
+
+    instance_id: str | None = None
+    app_version: str
 
 
 class StorageCleanupCategorySummary(BaseModel):

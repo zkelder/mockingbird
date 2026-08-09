@@ -52,6 +52,9 @@ from mockingbird.api.schemas import (
     CameraNodeCaptureProfile,
     CameraNodePairRequest,
     CameraNodePairResponse,
+    CameraNodePendingSetupDraftUpdate,
+    CameraNodePendingSetupResponse,
+    CameraNodePendingSetupRevokeRequest,
     CameraNodePreviewRequest,
     CameraNodePairRevokeRequest,
     CameraHealthDetailResponse,
@@ -159,6 +162,7 @@ from mockingbird.api.schemas import (
     ProductHealthCameraSummary,
     ProductHealthObservationSummary,
     ProductHealthStatus,
+    ProductInstanceIdentity,
     ReviewLabel,
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
@@ -396,6 +400,7 @@ from mockingbird.playback import (
 )
 from mockingbird.repository.product_repository import (
     CameraConfigurationConflictError,
+    CameraNodePendingSetup,
     FastReviewConflictError,
     MonitoringOperationConflictError,
     ProductRepository,
@@ -423,7 +428,7 @@ from mockingbird.source_providers.camera_node import (
     CameraNodeCaptureProfile as NodeCaptureProfile,
     CameraNodeClient,
     CameraNodeClientError,
-    CameraNodePairingStore,
+    CameraNodePairing,
 )
 from mockingbird.species.automatic_identification import (
     AutomaticReviewIdentificationAssist,
@@ -442,8 +447,10 @@ from mockingbird.storage.backup import (
 )
 from mockingbird.runtime_state import (
     current_log_path,
+    current_runtime_home,
     mark_clean_shutdown,
     previous_shutdown_was_clean,
+    resolve_instance_id,
 )
 from mockingbird.storage.database import (
     LOW_DISK_FREE_BYTES_THRESHOLD,
@@ -612,7 +619,6 @@ _observation_engine_session_manager: ObservationEngineSessionManager | None = No
 _live_preview_lease_manager: live_preview_leases.LivePreviewLeaseManager | None = None
 _durable_monitoring_supervisor: DurableMonitoringSupervisor | None = None
 _local_storage_retention_service: LocalStorageRetentionService | None = None
-_camera_node_pairing_store: CameraNodePairingStore | None = None
 _camera_node_client: CameraNodeClient | None = None
 _automatic_review_identification_assist: AutomaticReviewIdentificationAssist | None = (
     None
@@ -635,15 +641,6 @@ def get_repository() -> ProductRepository:
         return _repository
 
 
-def get_camera_node_pairing_store() -> CameraNodePairingStore:
-    """Keep unpersisted pairing handoffs local and short-lived until setup completes."""
-
-    global _camera_node_pairing_store
-    if _camera_node_pairing_store is None:
-        _camera_node_pairing_store = CameraNodePairingStore()
-    return _camera_node_pairing_store
-
-
 def get_camera_node_client() -> CameraNodeClient:
     global _camera_node_client
     if _camera_node_client is None:
@@ -659,12 +656,14 @@ async def _refresh_camera_node_pairing_profiles(
     """Boundedly refresh a just-paired Node while its local warm proof completes.
 
     This work is part of the explicit one-time pairing action.  It does not
-    start a camera from a status/configuration read, persist credentials, or
-    create product records; it updates only the short-lived pairing handoff.
+    start a camera from a status/configuration read or create product
+    records; it updates only the transient advertised-camera list on the
+    already-durable pending setup record (see
+    docs/camera-node-pairing-persistence-design.md).
     """
 
     client = get_camera_node_client()
-    store = get_camera_node_pairing_store()
+    repository = get_repository()
     for attempt in range(_CAMERA_NODE_PAIRING_REFRESH_ATTEMPTS):
         try:
             cameras = client.cameras(
@@ -673,7 +672,7 @@ async def _refresh_camera_node_pairing_profiles(
             )
         except CameraNodeClientError:
             return
-        if not store.refresh_cameras(pairing_token, cameras):
+        if not repository.refresh_camera_node_pending_setup_cameras(pairing_token, cameras):
             return
         if any(_camera_node_has_warm_profile_pair(camera) for camera in cameras):
             return
@@ -1064,7 +1063,8 @@ def _camera_node_prepared_config(
     camera_id = (config.get("node_camera_id") or "").strip()
     if not pairing_token or not camera_id:
         raise ValueError("camera_node_pairing_required")
-    pairing = get_camera_node_pairing_store().consume(pairing_token, camera_id=camera_id)
+    repository = get_repository()
+    pairing = repository.resolve_camera_node_pending_pairing(pairing_token, camera_id=camera_id)
     if pairing is None:
         raise ValueError("camera_node_pairing_expired")
     selected_camera = next(
@@ -1072,10 +1072,19 @@ def _camera_node_prepared_config(
         None,
     )
     if verify_camera:
-        advertised = get_camera_node_client().cameras(
-            base_address=pairing.base_address,
-            credential=pairing.credential,
-        )
+        try:
+            advertised = get_camera_node_client().cameras(
+                base_address=pairing.base_address,
+                credential=pairing.credential,
+            )
+        except CameraNodeClientError as error:
+            if str(error) == "authentication_rejected":
+                # The Node itself rejected our stored credential -- a genuine
+                # revocation, not a transient network failure. Mark the
+                # durable pending setup so a resumed wizard shows "pairing
+                # needs to be renewed" instead of silently retrying forever.
+                repository.mark_camera_node_pending_setup_needs_renewal(pairing_token)
+            raise
         selected_camera = next(
             (
                 camera
@@ -1141,11 +1150,10 @@ def _camera_node_prepared_edit_payload(
 
 
 def configure_repository(repository: ProductRepository | None) -> None:
-    global _repository, _camera_node_pairing_store
+    global _repository
     with _repository_access_lock:
         previous_repository = _repository
         _stop_runtime_activity(reason="repository_reconfigured")
-        _camera_node_pairing_store = None
         _repository = repository
         if previous_repository is not None and previous_repository is not repository:
             previous_repository.close()
@@ -8700,9 +8708,75 @@ async def get_camera_setup_options() -> CameraSetupOptionsResponse:
     return get_repository().camera_setup_options()
 
 
+def _camera_node_advertised_cameras(cameras: list[Any]) -> list[CameraNodeAdvertisedCamera]:
+    """The one safe, API-shaped view of a Node's advertised cameras -- shared
+    by every response that can show "what did pairing find" (a fresh pair,
+    a resumed pending setup, or a refreshed draft)."""
+
+    return [
+        CameraNodeAdvertisedCamera(
+            camera_id=camera.camera_id,
+            display_name=camera.display_name,
+            status=camera.status,
+            snapshot_supported=camera.snapshot_supported,
+            setup_hint=camera.setup_hint,
+            provider_type=camera.provider_type,
+            capture_profiles=[
+                CameraNodeCaptureProfile(
+                    profile_id=profile.profile_id,
+                    purposes=list(profile.purposes),
+                    width=profile.width,
+                    height=profile.height,
+                    jpeg_supported=profile.jpeg_supported,
+                    max_expected_bytes=profile.max_expected_bytes,
+                    capture_class=profile.capture_class,
+                    geometry_group=profile.geometry_group,
+                    orientation=profile.orientation,
+                    mirrored=profile.mirrored,
+                    same_fov=profile.same_fov,
+                )
+                for profile in camera.capture_profiles
+            ],
+        )
+        for camera in cameras
+    ]
+
+
+def _camera_node_pending_setup_response(
+    pending: CameraNodePendingSetup,
+    *,
+    message: str,
+) -> CameraNodePendingSetupResponse:
+    return CameraNodePendingSetupResponse(
+        pairing_token=pending.pairing_token,
+        status=pending.status,
+        node_id=pending.node_id,
+        display_name=pending.display_name,
+        api_version=pending.api_version,
+        cameras=_camera_node_advertised_cameras(pending.cameras),
+        selected_camera_id=pending.selected_camera_id,
+        camera_name=pending.camera_name,
+        stream_name=pending.stream_name,
+        zone_name=pending.zone_name,
+        zone_type=pending.zone_type,
+        polygon=pending.polygon,
+        sensitivity=pending.sensitivity,
+        monitoring_enabled=pending.monitoring_enabled,
+        message=message,
+    )
+
+
 @app.post("/api/camera-nodes/pair", response_model=CameraNodePairResponse)
 async def pair_camera_node(payload: CameraNodePairRequest) -> CameraNodePairResponse:
-    """Make the explicitly requested, bounded LAN pairing call exactly once."""
+    """Make the explicitly requested, bounded LAN pairing call exactly once.
+
+    The Node's one-time code is consumed by the instant `pair()` below
+    succeeds. From that point the resulting credential is durably
+    persisted before this response is even built -- see "Core design
+    correction" in docs/camera-node-pairing-persistence-design.md -- so a
+    refresh, a closed tab, or an application restart can never strand a
+    Node that already accepted its code.
+    """
 
     try:
         # Health is deliberately an actual request so "Node found" is never metadata-only.
@@ -8720,67 +8794,111 @@ async def pair_camera_node(payload: CameraNodePairRequest) -> CameraNodePairResp
         }
         status = 400 if str(error).startswith("node_address") else 409 if str(error).startswith("pairing_") else 502
         raise HTTPException(status_code=status, detail=messages.get(str(error), "Camera Node is unavailable or returned an invalid response.")) from None
-    session = get_camera_node_pairing_store().create(pairing)
+    pending = get_repository().create_camera_node_pending_setup(
+        pairing, renews_pairing_token=payload.renews_pairing_token
+    )
     asyncio.create_task(
         _refresh_camera_node_pairing_profiles(
-            pairing_token=session.token,
+            pairing_token=pending.pairing_token,
             pairing=pairing,
         )
     )
     return CameraNodePairResponse(
-        pairing_token=session.token,
-        pairing_expires_at=session.expires_at,
+        pairing_token=pending.pairing_token,
         node_id=pairing.node_id,
         display_name=pairing.display_name,
         api_version=pairing.api_version,
-        cameras=[
-            CameraNodeAdvertisedCamera(
-                camera_id=camera.camera_id,
-                display_name=camera.display_name,
-                status=camera.status,
-                snapshot_supported=camera.snapshot_supported,
-                setup_hint=camera.setup_hint,
-                provider_type=camera.provider_type,
-                capture_profiles=[
-                    CameraNodeCaptureProfile(
-                        profile_id=profile.profile_id,
-                        purposes=list(profile.purposes),
-                        width=profile.width,
-                        height=profile.height,
-                        jpeg_supported=profile.jpeg_supported,
-                        max_expected_bytes=profile.max_expected_bytes,
-                        capture_class=profile.capture_class,
-                        geometry_group=profile.geometry_group,
-                        orientation=profile.orientation,
-                        mirrored=profile.mirrored,
-                        same_fov=profile.same_fov,
-                    )
-                    for profile in camera.capture_profiles
-                ],
-            )
-            for camera in pairing.cameras
-        ],
+        cameras=_camera_node_advertised_cameras(pairing.cameras),
         message="Camera Node found and paired. Choose one advertised camera to continue setup.",
     )
+
+
+@app.get("/api/camera-nodes/pending-setup", response_model=CameraNodePendingSetupResponse)
+async def get_camera_node_pending_setup() -> CameraNodePendingSetupResponse:
+    """Resume the most recent not-yet-completed Camera Node pairing, if any.
+
+    A fresh page load, a reload mid-setup, or a relaunched application all
+    call this the same way -- the browser never needs to remember a token
+    of its own to recover an already-successful pairing. 404 (not a 200
+    with an empty body) when nothing is resumable, so the wizard can tell
+    "nothing paired yet" apart from a real failure.
+    """
+
+    pending = get_repository().get_latest_camera_node_pending_setup()
+    if pending is None:
+        raise HTTPException(status_code=404, detail="No Camera Node pairing is waiting to be resumed.")
+    message = (
+        "Pairing needs to be renewed."
+        if pending.status == "needs_renewal"
+        else "Camera Node paired. Continue setup."
+    )
+    return _camera_node_pending_setup_response(pending, message=message)
+
+
+@app.patch("/api/camera-nodes/pending-setup/{pairing_token}", response_model=CameraNodePendingSetupResponse)
+async def update_camera_node_pending_setup(
+    pairing_token: str,
+    payload: CameraNodePendingSetupDraftUpdate,
+) -> CameraNodePendingSetupResponse:
+    """Persist already-entered setup fields so they survive a refresh or
+    restart exactly like the pairing itself does -- see "Required-field
+    UX" in docs/camera-node-pairing-persistence-design.md."""
+
+    pending = get_repository().update_camera_node_pending_setup_draft(pairing_token, payload)
+    if pending is None:
+        raise HTTPException(status_code=404, detail="This Camera Node pairing is no longer available.")
+    return _camera_node_pending_setup_response(pending, message="Setup progress saved.")
+
+
+@app.post("/api/camera-nodes/pending-setup/revoke", status_code=204)
+async def revoke_camera_node_pending_setup(
+    payload: CameraNodePendingSetupRevokeRequest,
+) -> Response:
+    """Explicitly, deliberately forget a Camera Node before setup finished.
+
+    Distinct from leaving, refreshing, or discarding the wizard, which all
+    preserve a resumable pending pairing -- see "Pairing semantics" in
+    docs/camera-node-pairing-persistence-design.md. Uses the same
+    authenticated Node revoke call as an already-completed camera; a failed
+    remote request leaves the local pending setup intact so a transient
+    network failure cannot silently strand it.
+    """
+
+    repository = get_repository()
+    pending = repository.get_camera_node_pending_setup(payload.pairing_token)
+    if pending is None:
+        raise HTTPException(status_code=404, detail="This Camera Node pairing is no longer available.")
+    try:
+        get_camera_node_client().revoke(base_address=pending.base_address, credential=pending.credential)
+    except CameraNodeClientError:
+        raise HTTPException(status_code=502, detail="Camera Node could not confirm pairing revocation.") from None
+    repository.delete_camera_node_pending_setup(payload.pairing_token)
+    return Response(status_code=204)
 
 
 @app.post("/api/camera-nodes/preview")
 async def preview_camera_node(payload: CameraNodePreviewRequest) -> Response:
     """Fetch one selected Node image without creating media, evidence, or truth."""
 
+    repository = get_repository()
     try:
-        pairing = get_camera_node_pairing_store().consume(
+        pairing = repository.resolve_camera_node_pending_pairing(
             payload.pairing_token,
             camera_id=payload.camera_id,
         )
         if pairing is None:
             raise ValueError("camera_node_pairing_expired")
-        image = get_camera_node_client().snapshot(
-            base_address=pairing.base_address,
-            credential=pairing.credential,
-            camera_id=payload.camera_id,
-            recommended_timeout_seconds=pairing.recommended_snapshot_timeout_seconds,
-        )
+        try:
+            image = get_camera_node_client().snapshot(
+                base_address=pairing.base_address,
+                credential=pairing.credential,
+                camera_id=payload.camera_id,
+                recommended_timeout_seconds=pairing.recommended_snapshot_timeout_seconds,
+            )
+        except CameraNodeClientError as error:
+            if str(error) == "authentication_rejected":
+                repository.mark_camera_node_pending_setup_needs_renewal(payload.pairing_token)
+            raise
     except CameraNodeClientError as error:
         messages = {
             "node_camera_not_allowed": "Choose an available camera advertised by this Camera Node.",
@@ -9976,6 +10094,23 @@ async def get_product_health() -> ProductHealthStatus:
         database_schema_version=repository.schema_status.version,
         log_path=str(current_log_path()) if current_log_path() else None,
         generated_at=datetime.now(UTC),
+    )
+
+
+@app.get("/api/product/instance", response_model=ProductInstanceIdentity)
+async def get_product_instance_identity() -> ProductInstanceIdentity:
+    """Answer "which local installation/data directory is this," so the
+    local launcher can tell an already-running copy of itself apart from an
+    arbitrary other service (or a MockingBird instance forwarded from a
+    different environment, such as WSL) that merely answers the same
+    `/health` shape on the same port. Not otherwise part of the product
+    surface -- see docs/camera-node-pairing-persistence-design.md.
+    """
+
+    runtime_home = current_runtime_home()
+    return ProductInstanceIdentity(
+        instance_id=resolve_instance_id(runtime_home) if runtime_home is not None else None,
+        app_version=APP_VERSION,
     )
 
 

@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import io
 import json
+import logging
 import os
 from pathlib import Path
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 import time
 from urllib.error import URLError
@@ -21,6 +24,7 @@ import uvicorn
 from mockingbird.runtime_state import (
     configure_file_logging,
     prepare_runtime_state,
+    resolve_instance_id,
     uvicorn_log_config,
 )
 from mockingbird.storage.database import DatabaseSchemaCompatibilityError
@@ -33,6 +37,74 @@ from mockingbird.web_app import (
 
 APP_HOME_ENV_VAR = "MOCKINGBIRD_HOME"
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+_logger = logging.getLogger(__name__)
+
+
+def _ensure_console_streams() -> bool:
+    """Return whether a real console/terminal was attached to this process.
+
+    `pythonw.exe` (the packaged Windows launcher's runtime -- see
+    `Start MockingBird.vbs`) has no console at all: CPython documents that
+    `sys.stdin`/`stdout`/`stderr` are `None` there. An unguarded `print()`
+    would otherwise crash the process before it ever binds a port --
+    invisibly, since there is also no console to show the resulting
+    traceback. Give every stream a safe sink either way, once, as early as
+    possible, so nothing later in this process (this module's own
+    messages, a library's stray `print()`, a default logging
+    `StreamHandler`) can crash it.
+    """
+
+    has_console = sys.stdin is not None and sys.stdout is not None and sys.stderr is not None
+    if sys.stdin is None:
+        sys.stdin = io.StringIO()
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
+    return has_console
+
+
+def _alert_failure(message: str, *, has_console: bool) -> None:
+    """Make a startup failure impossible to miss.
+
+    A console launch (a terminal, `python\\python.exe -m mockingbird`)
+    already shows the printed line right there. A console-less launch
+    (`pythonw.exe`, what the packaged `.vbs` launcher actually runs) cannot
+    show one at all, so a real user would otherwise see nothing happen --
+    pop up one native, no-dependency dialog instead. Never let the dialog
+    mechanism itself become a new way to fail.
+    """
+
+    print(message)
+    _logger.error(message)
+    if has_console or os.name != "nt":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(0, message, "MockingBird", 0x10)
+    except Exception:
+        pass
+
+
+def _remote_instance_id(base_url: str, *, timeout_seconds: float = 0.5) -> str | None:
+    """Bounded, tolerant read of another running MockingBird's own identity.
+
+    Any failure -- an older version without this endpoint, a timeout, a
+    malformed response -- returns `None`, meaning "cannot confirm this is
+    the same installation," never a guess in either direction. See
+    "Windows launcher defects" in docs/camera-node-pairing-persistence-design.md.
+    """
+
+    try:
+        with urlopen(f"{base_url}/api/product/instance", timeout=timeout_seconds) as response:
+            if response.status != 200:
+                return None
+            payload = json.loads(response.read(4096).decode("utf-8"))
+    except (OSError, URLError, ValueError):
+        return None
+    instance_id = payload.get("instance_id") if isinstance(payload, dict) else None
+    return instance_id if isinstance(instance_id, str) and instance_id else None
 
 
 class RuntimePreflightError(RuntimeError):
@@ -199,66 +271,109 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
 
 def run(argv: list[str] | None = None) -> int:
+    has_console = _ensure_console_streams()
     args = build_argument_parser().parse_args(argv)
     if not 1 <= args.port <= 65535:
-        print("Choose a port between 1 and 65535.")
+        _alert_failure("Choose a port between 1 and 65535.", has_console=has_console)
         return 2
     if args.host not in _LOOPBACK_HOSTS and not args.allow_network:
-        print("MockingBird stays on this device unless network access is explicitly allowed.")
+        _alert_failure(
+            "MockingBird stays on this device unless network access is explicitly allowed.",
+            has_console=has_console,
+        )
         return 2
 
     if args.check:
         try:
             preflight = run_preflight(build_frontend=not args.skip_frontend_build)
         except (DatabaseSchemaCompatibilityError, OSError, RuntimePreflightError) as error:
-            print(str(error))
+            _alert_failure(str(error), has_console=has_console)
             return 2
         _print_preflight(preflight)
         return 0
 
     base_url = local_base_url(args.host, args.port)
-    if healthy_mockingbird_at(base_url):
-        print(f"MockingBird is already running at {base_url}")
-        if not args.no_browser and not args.check:
-            webbrowser.open(base_url)
-        return 0
-    if not port_is_available(args.host, args.port):
-        print(f"Port {args.port} is already in use by another application.")
-        return 2
+    # Resolved before any reuse decision: comparing "is that other instance
+    # really me" requires knowing this process's own identity first, and a
+    # brand-new data directory (never launched before) has nothing to
+    # compare yet either way. Also doubles as the earliest safe point to
+    # start file logging, so a failure anywhere below -- including a
+    # rejected reuse decision -- leaves a discoverable trail even with no
+    # console at all. `--check` above already returned, so this never runs
+    # for a validate-only invocation.
+    own_runtime_home = resolve_runtime_home(find_workspace_root())
+    own_runtime_home.mkdir(parents=True, exist_ok=True)
+    log_path = configure_file_logging(own_runtime_home)
 
     try:
-        preflight = run_preflight(build_frontend=not args.skip_frontend_build)
-    except (DatabaseSchemaCompatibilityError, OSError, RuntimePreflightError) as error:
-        print(str(error))
+        if healthy_mockingbird_at(base_url):
+            own_instance_id = resolve_instance_id(own_runtime_home)
+            remote_instance_id = _remote_instance_id(base_url)
+            if remote_instance_id is not None and remote_instance_id == own_instance_id:
+                print(f"MockingBird is already running at {base_url}")
+                if not args.no_browser:
+                    webbrowser.open(base_url)
+                return 0
+            # Something answers a healthy MockingBird `/health` on this port,
+            # but it is not confirmed to be *this* installation -- for
+            # example a different native install, or one forwarded from a
+            # different environment such as WSL. Never silently attach to
+            # it and never kill it; explain the conflict and stop.
+            _alert_failure(
+                f"Port {args.port} is already used by a different MockingBird "
+                "installation, or another service (for example one forwarded "
+                "from WSL) -- not this one. Close it, or start MockingBird "
+                "with a different --port.",
+                has_console=has_console,
+            )
+            return 2
+        if not port_is_available(args.host, args.port):
+            _alert_failure(
+                f"Port {args.port} is already in use by another application.",
+                has_console=has_console,
+            )
+            return 2
+
+        try:
+            preflight = run_preflight(build_frontend=not args.skip_frontend_build)
+        except (DatabaseSchemaCompatibilityError, OSError, RuntimePreflightError) as error:
+            _alert_failure(str(error), has_console=has_console)
+            return 2
+
+        _print_preflight(preflight)
+
+        # Only the real launch path touches the crash marker -- `--check`
+        # above returns before this point so repeated validation runs never
+        # make the *next* real launch think the previous one crashed.
+        if prepare_runtime_state(preflight.runtime_home) is False:
+            print("Note: MockingBird did not shut down cleanly last time. Your local data is unaffected.")
+
+        if not args.no_browser:
+            threading.Thread(
+                target=open_browser_when_ready,
+                args=(base_url,),
+                daemon=True,
+                name="mockingbird-browser-opener",
+            ).start()
+
+        from mockingbird.api.main import app
+
+        uvicorn.run(
+            app,
+            host=args.host,
+            port=args.port,
+            log_level="info",
+            log_config=uvicorn_log_config(log_path),
+        )
+        return 0
+    except Exception:
+        _logger.exception("MockingBird failed to start.")
+        _alert_failure(
+            "MockingBird could not start because of an unexpected error."
+            + (f" See {log_path} for details." if log_path else ""),
+            has_console=has_console,
+        )
         return 2
-
-    _print_preflight(preflight)
-
-    # Only the real launch path touches the crash marker/log file -- `--check`
-    # above returns before this point so repeated validation runs never make
-    # the *next* real launch think the previous one crashed.
-    log_path = configure_file_logging(preflight.runtime_home)
-    if prepare_runtime_state(preflight.runtime_home) is False:
-        print("Note: MockingBird did not shut down cleanly last time. Your local data is unaffected.")
-
-    if not args.no_browser:
-        threading.Thread(
-            target=open_browser_when_ready,
-            args=(base_url,),
-            daemon=True,
-            name="mockingbird-browser-opener",
-        ).start()
-
-    from mockingbird.api.main import app
-
-    uvicorn.run(
-        app,
-        host=args.host,
-        port=args.port,
-        log_level="info",
-        log_config=uvicorn_log_config(log_path),
-    )
-    return 0
 
 
 def main() -> None:

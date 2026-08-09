@@ -483,6 +483,9 @@ export interface CameraSetupCompletionResponse {
 export interface CameraNodePairRequest {
   base_address: string;
   pairing_code: string;
+  /** Set only when this pairing renews an existing "needs renewal" setup;
+   * carries its already-entered draft fields over and retires it. */
+  renews_pairing_token?: string | null;
 }
 
 export interface CameraNodeAdvertisedCamera {
@@ -496,12 +499,51 @@ export interface CameraNodeAdvertisedCamera {
 
 export interface CameraNodePairResponse {
   pairing_token: string;
-  pairing_expires_at: string;
   node_id: string;
   display_name: string;
   api_version: string;
   cameras: CameraNodeAdvertisedCamera[];
   message: string;
+}
+
+/**
+ * Safe, resumable view of a durable Camera Node pairing/setup draft --
+ * never the Node address or credential, exactly like a completed camera's
+ * saved configuration never returns them either. `status ===
+ * "needs_renewal"` means the Node no longer accepts the stored credential;
+ * every other field below still reflects what was already entered.
+ */
+export interface CameraNodePendingSetupResponse {
+  pairing_token: string;
+  status: "active" | "needs_renewal";
+  node_id: string;
+  display_name: string;
+  api_version: string;
+  cameras: CameraNodeAdvertisedCamera[];
+  selected_camera_id?: string | null;
+  camera_name?: string | null;
+  stream_name?: string | null;
+  zone_name?: string | null;
+  zone_type?: ZoneType | null;
+  polygon?: Point[] | null;
+  sensitivity?: ZoneActivitySensitivity | null;
+  monitoring_enabled: boolean;
+  message: string;
+}
+
+export interface CameraNodePendingSetupDraftUpdate {
+  selected_camera_id?: string | null;
+  camera_name?: string | null;
+  stream_name?: string | null;
+  zone_name?: string | null;
+  zone_type?: ZoneType | null;
+  polygon?: Point[] | null;
+  sensitivity?: ZoneActivitySensitivity | null;
+  monitoring_enabled?: boolean | null;
+}
+
+export interface CameraNodePendingSetupRevokeRequest {
+  pairing_token: string;
 }
 
 export interface CameraNodePreviewRequest {

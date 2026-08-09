@@ -1106,3 +1106,51 @@ class AppSetupStateModel(Base):
     current_step: Mapped[str] = mapped_column(String, nullable=False)
     last_created_stream_id: Mapped[str | None] = mapped_column(String, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CameraNodePendingSetupModel(Base):
+    """A durable, server-only record of a Camera Node pairing not yet
+    promoted into a Source (see docs/camera-node-pairing-persistence-design.md).
+
+    Exists so that once a Node accepts its one-time pairing code, the
+    resulting credential is never held only in React state, sessionStorage,
+    or process memory for the rest of guided setup -- a browser refresh, a
+    closed tab, or an application restart can always recover it. The
+    credential is kept exactly the way a completed Source already keeps one
+    (plain local SQLite -- this product's existing trust boundary -- never
+    returned by any API response and never logged); this row is deleted the
+    moment setup actually completes and the credential is copied into
+    `SourceProviderConfigurationModel`. `status` distinguishes a pairing
+    still believed usable (`active`) from one the Node has since rejected
+    (`needs_renewal`), so a resumed wizard can tell "continue setup" from
+    "pairing needs to be renewed" without re-probing the Node on every load.
+    """
+
+    __tablename__ = "camera_node_pending_setups"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'needs_renewal')",
+            name="ck_camera_node_pending_setup_status",
+        ),
+    )
+
+    token: Mapped[str] = mapped_column(String, primary_key=True)
+    node_id: Mapped[str] = mapped_column(String, nullable=False)
+    display_name: Mapped[str] = mapped_column(String, nullable=False)
+    api_version: Mapped[str] = mapped_column(String, nullable=False)
+    base_address: Mapped[str] = mapped_column(String, nullable=False)
+    credential: Mapped[str] = mapped_column(String, nullable=False)
+    capability_fingerprint: Mapped[str] = mapped_column(String, nullable=False)
+    recommended_snapshot_timeout_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cameras_json: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    selected_camera_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    camera_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    stream_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    zone_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    zone_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    polygon_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sensitivity: Mapped[str | None] = mapped_column(String, nullable=True)
+    monitoring_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

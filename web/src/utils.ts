@@ -29,6 +29,32 @@ export function parentDirectory(path: string): string {
   return lastSlash <= 0 ? path : path.slice(0, lastSlash);
 }
 
+/**
+ * Bound how long a UI waits on one network action. A slow or unreachable
+ * local device (for example a Camera Node that stopped responding) must
+ * become a clear, actionable message -- never a button left gray forever
+ * with no explanation. Does not cancel the underlying request; it only
+ * bounds how long the UI keeps waiting on it, which is what "the button
+ * is stuck" actually needs fixed.
+ */
+export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, action: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${action} timed out. Check the connection and try again.`));
+    }, timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 export function formatBytes(value: number): string {
   if (value < 1024) {
     return `${value} B`;
