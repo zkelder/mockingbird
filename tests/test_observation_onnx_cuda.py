@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import gc
 import hashlib
 from io import BytesIO
 import json
+import os
+import sys
+import tempfile
 from pathlib import Path
 from datetime import UTC, datetime
 
@@ -73,6 +77,95 @@ class FakeRuntime:
     def create_session(self, model_path: Path, *, input_name: str, output_names: tuple[str, ...]) -> FakeSession:
         self.session_creations += 1
         return self.session
+
+
+# --- Fakes for `OptionalOrtCudaRuntime` itself (the real `onnxruntime`
+# import boundary) -- everything above fakes the higher-level `CudaRuntime`
+# Protocol and never exercises `OptionalOrtCudaRuntime.create_session`'s own
+# DLL-search-path/tempfile-profiling/error-handling internals at all. These
+# stand in for the `onnxruntime` *module* so those internals can be driven
+# directly, without a real ONNX Runtime/CUDA install. -----------------------
+
+
+class _FakeOrtSessionOptions:
+    def __init__(self) -> None:
+        self.intra_op_num_threads: int | None = None
+        self.inter_op_num_threads: int | None = None
+        self.enable_profiling = False
+        self.profile_file_prefix: str | None = None
+        self.config_entries: dict[str, str] = {}
+
+    def add_session_config_entry(self, key: str, value: str) -> None:
+        self.config_entries[key] = value
+
+
+class _FakeOrtInferenceSession:
+    def __init__(self, providers: tuple[str, ...]) -> None:
+        self._providers = providers
+
+    def get_providers(self) -> list[str]:
+        return list(self._providers)
+
+    def end_profiling(self) -> str:
+        handle = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
+        try:
+            handle.write(json.dumps([]))
+        finally:
+            handle.close()
+        return handle.name
+
+
+class _FakeOnnxRuntimeModule:
+    """A minimal stand-in for the real `onnxruntime` module -- just enough
+    surface for `OptionalOrtCudaRuntime` to drive end-to-end (`available_
+    providers`/`create_session`) without a real ONNX Runtime/CUDA install."""
+
+    def __init__(
+        self,
+        *,
+        available_providers: tuple[str, ...] = ("CUDAExecutionProvider",),
+        session_providers: tuple[str, ...] | None = None,
+        session_error: Exception | None = None,
+        on_session_create: "object | None" = None,
+    ) -> None:
+        self._available_providers = available_providers
+        self._session_providers = session_providers if session_providers is not None else available_providers
+        self._session_error = session_error
+        self._on_session_create = on_session_create
+        self.created_sessions: list[_FakeOrtInferenceSession] = []
+
+    def get_available_providers(self) -> list[str]:
+        return list(self._available_providers)
+
+    def SessionOptions(self) -> _FakeOrtSessionOptions:
+        return _FakeOrtSessionOptions()
+
+    def InferenceSession(
+        self, model_path: object, sess_options: object = None, providers: object = None,
+    ) -> _FakeOrtInferenceSession:
+        if self._on_session_create is not None:
+            self._on_session_create()
+        if self._session_error is not None:
+            raise self._session_error
+        session = _FakeOrtInferenceSession(self._session_providers)
+        self.created_sessions.append(session)
+        return session
+
+
+class _CleanupRaisingTemporaryDirectory:
+    """Stands in for `tempfile.TemporaryDirectory`, but `.cleanup()` always
+    raises -- reproducing a Windows `WinError 32` (the ONNX Runtime
+    profiling JSON is still open) so tests can prove MockingBird's own
+    handling never lets a cleanup failure mask a real error, without
+    depending on platform-specific file-locking behavior to reproduce it."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        self.name = "fake-profile-root"
+        self.cleanup_attempted = False
+
+    def cleanup(self) -> None:
+        self.cleanup_attempted = True
+        raise OSError(32, "The process cannot access the file because it is being used by another process")
 
 
 def _bundle(tmp_path: Path, **updates: object) -> tuple[Path, OnnxModelBundle]:
@@ -449,6 +542,10 @@ def test_windows_dll_search_path_finds_every_real_nested_dll_directory(
     monkeypatch.setattr(onnx_provider, "_windows_dll_search_path_prepared", False)
     monkeypatch.setattr(onnx_provider.os, "name", "nt")
     monkeypatch.setattr(onnx_provider.os, "add_dll_directory", added_directories.append, raising=False)
+    # This function also updates the real `PATH` env var (see the PATH
+    # test below) -- `setenv` to its own current value here so monkeypatch
+    # restores it afterwards regardless.
+    monkeypatch.setenv("PATH", os.environ.get("PATH", ""))
 
     onnx_provider._prepare_windows_onnxruntime_dll_search_path(site_packages=site_packages)
 
@@ -483,8 +580,316 @@ def test_windows_dll_search_path_runs_at_most_once_per_process(
     monkeypatch.setattr(onnx_provider, "_windows_dll_search_path_prepared", False)
     monkeypatch.setattr(onnx_provider.os, "name", "nt")
     monkeypatch.setattr(onnx_provider.os, "add_dll_directory", added_directories.append, raising=False)
+    monkeypatch.setenv("PATH", os.environ.get("PATH", ""))
 
     onnx_provider._prepare_windows_onnxruntime_dll_search_path(site_packages=site_packages)
     onnx_provider._prepare_windows_onnxruntime_dll_search_path(site_packages=site_packages)
 
     assert len(added_directories) == 1
+
+
+# --- DLL-directory handle lifetime, ORT session-creation cleanup safety,
+# and no-silent-CPU-fallback (Windows CUDA DLL loading fix) ----------------
+
+
+class _FakeDllDirectoryHandle:
+    """Stands in for the object `os.add_dll_directory()` returns on real
+    Windows: closing it removes the directory from the process DLL search
+    path again, same as the real `os._AddedDllDirectory`."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FakeWindowsOs:
+    """A narrow stand-in for the `os` module, swapped into `onnx_provider`'s
+    own `os` name specifically -- never the real process-global `os` module
+    -- so a test can simulate `os.name == "nt"` around a real `pathlib.Path
+    (__file__)` call.
+
+    Mutating the *real* `os.name` instead (as the pre-existing tests above
+    do, safely, because they always pass an explicit `site_packages=` and so
+    never reach a `Path(__file__)` call) breaks `pathlib.Path` construction
+    outright on this non-Windows interpreter: `WindowsPath.__new__`'s
+    refusal to instantiate is decided once, when `pathlib` is first
+    imported (using the real `os.name` at that time), not re-checked on
+    every call -- so a later `os.name` mutation just makes the *generic*
+    `Path(...)` factory dispatch to a `WindowsPath` class that then refuses
+    to construct at all, crashing the code under test (and, if that
+    propagates into a failing assertion while the mutation is still active,
+    pytest's own failure-reporting machinery too). Swapping the whole `os`
+    reference used inside `onnx_provider` sidesteps this entirely: `pathlib`
+    keeps using the real, unmutated global `os` module internally."""
+
+    name = "nt"
+    pathsep = ";"  # real Windows os.pathsep -- independent of the real host's
+
+    def __init__(self) -> None:
+        self.added_directories: list[str] = []
+        self.environ: dict[str, str] = {}
+
+    def add_dll_directory(self, path: str) -> _FakeDllDirectoryHandle:
+        self.added_directories.append(path)
+        return _FakeDllDirectoryHandle()
+
+
+def _reset_windows_dll_search_path_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(onnx_provider, "_windows_dll_search_path_prepared", False)
+    monkeypatch.setattr(onnx_provider, "_retained_windows_dll_directory_handles", [])
+
+
+def test_windows_dll_search_path_default_site_packages_finds_real_layout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test for the actual bug behind the reported "cublasLt64_13
+    .dll missing" failure: the *default* `site_packages` auto-detection --
+    the computation every real call site uses, since none of them pass an
+    explicit override -- must resolve to the real `site-packages` root given
+    this module's real installed location two directories below it
+    (`<site-packages>/mockingbird/observation/onnx_provider.py`), not one
+    directory short of it. Every *other* test in this file passes
+    `site_packages=` explicitly and so never exercises this computation --
+    that is exactly how the previous off-by-one (`parent.parent` instead of
+    `parent.parent.parent`) shipped undetected: it silently found zero
+    `nvidia/` directories and registered nothing, on every real packaged
+    install."""
+
+    site_packages = tmp_path / "site-packages"
+    dll_dir = site_packages / "nvidia" / "cu13" / "bin" / "x86_64"
+    dll_dir.mkdir(parents=True)
+    (dll_dir / "cublasLt64_13.dll").write_bytes(b"fixture-dll")
+
+    fake_os = _FakeWindowsOs()
+    _reset_windows_dll_search_path_state(monkeypatch)
+    monkeypatch.setattr(onnx_provider, "os", fake_os)
+    monkeypatch.setattr(
+        onnx_provider, "__file__",
+        str(site_packages / "mockingbird" / "observation" / "onnx_provider.py"),
+    )
+
+    onnx_provider._prepare_windows_onnxruntime_dll_search_path()  # no override -- the real call shape
+
+    assert fake_os.added_directories == [str(dll_dir)]
+    assert len(onnx_provider._retained_windows_dll_directory_handles) == 1
+
+
+def test_windows_dll_search_path_also_updates_path_for_onnxruntimes_own_dependency_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test for a second real gap, found only by actually
+    creating a CUDA session on a real Windows host with a real GPU:
+    `add_dll_directory` alone was proven *insufficient* -- with every
+    nvidia DLL directory already registered that way and its handle
+    retained, onnxruntime's own provider-bridge dependency resolution for
+    `onnxruntime_providers_cuda.dll`'s CUDA/cuDNN dependencies still
+    reported `cublasLt64_13.dll` "missing" (Error 126), even though a
+    direct `ctypes.WinDLL()` load of that exact DLL succeeded. Adding the
+    same directories to `PATH` -- which is what onnxruntime's own loading
+    actually consults, matching NVIDIA's own `cuda.pathfinder` package
+    pairing the same two calls -- was what actually fixed it. The existing
+    `PATH` value must be preserved, not clobbered."""
+
+    site_packages = tmp_path / "site-packages"
+    dll_dir = site_packages / "nvidia" / "cu13" / "bin" / "x86_64"
+    dll_dir.mkdir(parents=True)
+    (dll_dir / "cublasLt64_13.dll").write_bytes(b"fixture-dll")
+
+    fake_os = _FakeWindowsOs()
+    fake_os.environ["PATH"] = "C:\\Windows\\System32"
+    _reset_windows_dll_search_path_state(monkeypatch)
+    monkeypatch.setattr(onnx_provider, "os", fake_os)
+
+    onnx_provider._prepare_windows_onnxruntime_dll_search_path(site_packages=site_packages)
+
+    path_entries = fake_os.environ["PATH"].split(fake_os.pathsep)
+    assert str(dll_dir) in path_entries
+    assert "C:\\Windows\\System32" in path_entries
+
+
+def test_windows_dll_directory_handles_are_not_garbage_collected_away(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A handle created and immediately discarded -- never assigned to any
+    surviving variable -- is exactly the shape of the original bug: kept
+    alive only in a short-lived local, it would be eligible for garbage
+    collection the instant `_prepare_windows_onnxruntime_dll_search_path`
+    returns, which is before `OptionalOrtCudaRuntime.create_session` ever
+    loads `onnxruntime_providers_cuda.dll`. Forcing a real GC pass here is
+    what would catch a regression back to discarding the return value."""
+
+    site_packages = tmp_path / "site-packages"
+    dll_dir = site_packages / "nvidia" / "cu13" / "bin" / "x86_64"
+    dll_dir.mkdir(parents=True)
+    (dll_dir / "cublasLt64_13.dll").write_bytes(b"fixture-dll")
+
+    created_handles: list[_FakeDllDirectoryHandle] = []
+
+    def _fake_add_dll_directory(path: str) -> _FakeDllDirectoryHandle:
+        handle = _FakeDllDirectoryHandle()
+        created_handles.append(handle)
+        return handle
+
+    _reset_windows_dll_search_path_state(monkeypatch)
+    monkeypatch.setattr(onnx_provider.os, "name", "nt")
+    monkeypatch.setattr(onnx_provider.os, "add_dll_directory", _fake_add_dll_directory, raising=False)
+    monkeypatch.setenv("PATH", os.environ.get("PATH", ""))
+
+    onnx_provider._prepare_windows_onnxruntime_dll_search_path(site_packages=site_packages)
+
+    assert len(created_handles) == 1
+    gc.collect()  # a handle stashed only in a discarded local would die here
+
+    assert created_handles[0].closed is False
+    assert created_handles[0] in onnx_provider._retained_windows_dll_directory_handles
+
+
+def test_windows_dll_directory_handles_stay_alive_through_ort_session_creation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end through the real `OptionalOrtCudaRuntime.create_session`
+    (not just the registration helper in isolation): the handles returned by
+    `os.add_dll_directory` must still be retained and unclosed at the exact
+    moment `onnxruntime.InferenceSession(...)` runs -- that is when
+    onnxruntime actually loads `onnxruntime_providers_cuda.dll` and,
+    transitively, `cublasLt64_13.dll` -- not merely before it, and must
+    still be alive afterwards too (subsequent inference calls on the
+    returned session need the same DLLs already resolved)."""
+
+    site_packages = tmp_path / "site-packages"
+    dll_dir = site_packages / "nvidia" / "cu13" / "bin" / "x86_64"
+    dll_dir.mkdir(parents=True)
+    (dll_dir / "cublasLt64_13.dll").write_bytes(b"fixture-dll")
+
+    fake_os = _FakeWindowsOs()
+    _reset_windows_dll_search_path_state(monkeypatch)
+    monkeypatch.setattr(onnx_provider, "os", fake_os)
+    # Exercise the real default `site_packages` auto-detection -- the same
+    # code path production hits -- not the test-only override.
+    monkeypatch.setattr(
+        onnx_provider, "__file__",
+        str(site_packages / "mockingbird" / "observation" / "onnx_provider.py"),
+    )
+
+    observed: dict[str, object] = {}
+
+    def _on_session_create() -> None:
+        gc.collect()
+        handles = onnx_provider._retained_windows_dll_directory_handles
+        observed["retained_count"] = len(handles)
+        observed["any_closed"] = any(handle.closed for handle in handles)
+
+    fake_ort = _FakeOnnxRuntimeModule(on_session_create=_on_session_create)
+    monkeypatch.setitem(sys.modules, "onnxruntime", fake_ort)
+
+    runtime = onnx_provider.OptionalOrtCudaRuntime()
+    session = runtime.create_session(tmp_path / "model.onnx", input_name="images", output_names=("out",))
+
+    assert fake_os.added_directories == [str(dll_dir)], "the real site_packages auto-detection must have found the fake nvidia DLL directory"
+    assert observed["retained_count"] == 1
+    assert observed["any_closed"] is False
+    handles = list(onnx_provider._retained_windows_dll_directory_handles)
+    assert handles and all(not handle.closed for handle in handles)
+    session.close()
+    assert all(not handle.closed for handle in handles), "closing the ORT session must not touch DLL search-path handles"
+
+
+def test_cleanup_failure_never_masks_original_cuda_session_load_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reproduces the reported secondary defect: a `TemporaryDirectory.
+    cleanup()` failure (Windows `WinError 32`, the profiling JSON still open
+    after a failed load) while handling a real CUDA session-load failure
+    must never replace/mask that original error. The cleanup/exception
+    -handling logic under test is not itself OS-gated, so this deliberately
+    does not simulate `os.name == "nt"` -- see `_FakeWindowsOs` above for
+    why mutating the real `os.name` is actively unsafe here (this test's
+    default `_prepare_windows_onnxruntime_dll_search_path()` call would hit
+    a real, unmocked `Path(__file__)` construction)."""
+
+    fake_temp_dir = _CleanupRaisingTemporaryDirectory()
+    monkeypatch.setattr(onnx_provider.tempfile, "TemporaryDirectory", lambda *a, **k: fake_temp_dir)
+
+    original_error = RuntimeError(
+        "LoadLibrary failed with error 126: cublasLt64_13.dll could not be found"
+    )
+    fake_ort = _FakeOnnxRuntimeModule(session_error=original_error)
+    monkeypatch.setitem(sys.modules, "onnxruntime", fake_ort)
+
+    runtime = onnx_provider.OptionalOrtCudaRuntime()
+    with pytest.raises(ReplayValidationError, match="onnx_cuda_session_load_failed") as caught:
+        runtime.create_session(tmp_path / "model.onnx", input_name="images", output_names=("out",))
+
+    assert fake_temp_dir.cleanup_attempted is True
+    assert caught.value.__cause__ is original_error
+    assert "cublasLt64_13.dll" in str(caught.value.__cause__)
+
+
+def test_profile_root_cleanup_never_raises_out_of_session_close(tmp_path: Path) -> None:
+    """`_ProfiledOrtSession.close()` -- the normal, successful-session-close
+    path, not just the session-creation-failure path -- must not propagate a
+    Windows profiling-directory cleanup failure either."""
+
+    fake_temp_dir = _CleanupRaisingTemporaryDirectory()
+    fake_session = _FakeOrtInferenceSession(("CUDAExecutionProvider",))
+    profiled = onnx_provider._ProfiledOrtSession(fake_session, fake_temp_dir)
+
+    profiled.close()  # must not raise despite fake_temp_dir.cleanup() raising
+
+    assert fake_temp_dir.cleanup_attempted is True
+
+
+def test_onnxruntime_runtime_never_silently_falls_back_to_cpu_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end through the real `OptionalOrtCudaRuntime` (not just the
+    `CudaRuntime`-Protocol test doubles used elsewhere in this file): on a
+    simulated Windows host, CPU-only availability must be rejected before
+    any session is ever created -- no silent fallback."""
+
+    _reset_windows_dll_search_path_state(monkeypatch)
+    monkeypatch.setattr(onnx_provider, "os", _FakeWindowsOs())
+    monkeypatch.setattr(onnx_provider.util, "find_spec", lambda name: True)
+
+    fake_ort = _FakeOnnxRuntimeModule(available_providers=("CPUExecutionProvider",))
+    monkeypatch.setitem(sys.modules, "onnxruntime", fake_ort)
+
+    _, bundle = _bundle(tmp_path)
+    provider = OnnxCudaObservationProvider(runtime=onnx_provider.OptionalOrtCudaRuntime(), bundle=bundle)
+
+    with pytest.raises(ReplayValidationError, match="onnx_cuda_unavailable"):
+        provider.load()
+
+    assert provider.session_loaded is False
+    assert fake_ort.created_sessions == []
+
+
+def test_onnxruntime_runtime_rejects_session_that_selects_cpu_first_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Even once a real (fake-onnxruntime) session is created successfully
+    through `OptionalOrtCudaRuntime.create_session` -- DLL search path
+    prepared, profiling temp dir created -- a session that selects CPU
+    first must still be rejected outright, and its profiling temp dir must
+    still be cleaned up (bounded/safe), not leaked."""
+
+    _reset_windows_dll_search_path_state(monkeypatch)
+    monkeypatch.setattr(onnx_provider, "os", _FakeWindowsOs())
+    monkeypatch.setattr(onnx_provider.util, "find_spec", lambda name: True)
+
+    fake_ort = _FakeOnnxRuntimeModule(
+        available_providers=("CUDAExecutionProvider", "CPUExecutionProvider"),
+        session_providers=("CPUExecutionProvider", "CUDAExecutionProvider"),
+    )
+    monkeypatch.setitem(sys.modules, "onnxruntime", fake_ort)
+
+    _, bundle = _bundle(tmp_path)
+    provider = OnnxCudaObservationProvider(runtime=onnx_provider.OptionalOrtCudaRuntime(), bundle=bundle)
+
+    with pytest.raises(ReplayValidationError, match="onnx_cuda_no_fallback"):
+        provider.load()
+
+    assert provider.session_loaded is False
+    assert len(fake_ort.created_sessions) == 1

@@ -38,6 +38,20 @@ CUDA_EXECUTION_MIXED = "mixed_cuda_cpu_execution"
 CUDA_EXECUTION_UNVERIFIABLE = "cuda_execution_verification_insufficient"
 
 _windows_dll_search_path_prepared = False
+# `os.add_dll_directory()` returns a handle object, and the directory it
+# added stays on the process's DLL search path only for as long as that
+# handle stays alive -- closing it (explicitly, or via a `with` block) is
+# how the stdlib documents undoing the addition. onnxruntime does not
+# resolve `onnxruntime_providers_cuda.dll`'s own CUDA/cuDNN dependencies
+# (`cublasLt64_13.dll` etc.) until CUDA session creation actually loads
+# that provider DLL -- which happens well after this module finishes
+# registering directories. A handle created and discarded in a local/loop
+# variable would be eligible for collection long before then; retaining
+# every handle here, for the life of the process, is what keeps the search
+# path entries valid for the complete ORT session creation/runtime
+# lifetime (`OptionalOrtCudaRuntime.create_session` and every inference
+# call on the session it returns).
+_retained_windows_dll_directory_handles: list[Any] = []
 
 
 def _prepare_windows_onnxruntime_dll_search_path(*, site_packages: Path | None = None) -> None:
@@ -52,8 +66,19 @@ def _prepare_windows_onnxruntime_dll_search_path(*, site_packages: Path | None =
     there is no system-wide CUDA Toolkit install and no PATH entry pointing
     at one. Windows Python 3.8+ no longer implicitly searches a DLL's own
     directory or PATH for its own dependencies; `os.add_dll_directory` is
-    the documented replacement. A no-op on any non-Windows host, and safe
-    to call repeatedly (does the real work at most once per process)."""
+    the documented modern replacement, and is registered here -- but
+    verified against a real Windows host with a real GPU that it is not
+    sufficient on its own: onnxruntime's own provider-bridge dependency
+    resolution for `onnxruntime_providers_cuda.dll`'s CUDA/cuDNN
+    dependencies (`cublasLt64_13.dll` etc.) does not honor it and reports
+    them "missing" (`Error 126`) even though a direct `ctypes.WinDLL()`
+    load of that exact same DLL succeeds once its directory is registered
+    -- `PATH` is what onnxruntime's own loading actually consults, so both
+    are set. NVIDIA's own `cuda.pathfinder` package (bundled by the `cuda-
+    python` dependency stack) pairs the same two calls for the same
+    documented reason ("PATH ... to also cover legacy dependent-DLL
+    resolution"). A no-op on any non-Windows host, and safe to call
+    repeatedly (does the real work at most once per process)."""
 
     global _windows_dll_search_path_prepared
     if _windows_dll_search_path_prepared or os.name != "nt":
@@ -61,11 +86,17 @@ def _prepare_windows_onnxruntime_dll_search_path(*, site_packages: Path | None =
     _windows_dll_search_path_prepared = True
     # This module lives at <site-packages>/mockingbird/observation/
     # onnx_provider.py in both a normal venv and this project's packaged
-    # flat `pip install --target site-packages` layout -- two `.parent`
-    # steps up is always that shared `site-packages` root. `site_packages`
-    # is only ever overridden by tests (real call sites always resolve it
-    # from this module's own real installed location).
-    site_packages = site_packages or Path(__file__).resolve().parent.parent
+    # flat `pip install --target site-packages` layout -- three `.parent`
+    # steps up (out of `observation/`, then out of `mockingbird/`) is what
+    # actually reaches that shared `site-packages` root. This was
+    # previously two steps, landing one level short on the `mockingbird/`
+    # package directory itself, so `nvidia_root` never existed on a real
+    # packaged install and *zero* directories were ever registered there --
+    # every unit test overrides `site_packages` explicitly, so that miss
+    # never showed up in test. `site_packages` is only ever overridden by
+    # tests (real call sites always resolve it from this module's own real
+    # installed location).
+    site_packages = site_packages or Path(__file__).resolve().parent.parent.parent
     nvidia_root = site_packages / "nvidia"
     if not nvidia_root.is_dir():
         return
@@ -83,15 +114,56 @@ def _prepare_windows_onnxruntime_dll_search_path(*, site_packages: Path | None =
             continue
         seen_directories.add(dll_dir)
         try:
-            os.add_dll_directory(str(dll_dir))
+            handle = os.add_dll_directory(str(dll_dir))
         except OSError:
-            pass
+            continue
+        # Retained for the rest of the process's life -- see the comment on
+        # `_retained_windows_dll_directory_handles` above.
+        _retained_windows_dll_directory_handles.append(handle)
+    if not seen_directories:
+        return
+    # See the "not sufficient on its own" paragraph above -- PATH is what
+    # onnxruntime's own provider-bridge dependency resolution actually
+    # consults, verified against a real Windows host with a real GPU: a
+    # session still failed to find `cublasLt64_13.dll` with every directory
+    # above already registered via `add_dll_directory` alone, and started
+    # finding it only once this ran too.
+    existing_path = os.environ.get("PATH", "")
+    existing_path_entries = existing_path.split(os.pathsep) if existing_path else []
+    new_path_entries = [
+        str(directory) for directory in sorted(seen_directories, key=str)
+        if str(directory) not in existing_path_entries
+    ]
+    if new_path_entries:
+        os.environ["PATH"] = os.pathsep.join([*new_path_entries, *existing_path_entries])
 
 
 class CudaRuntime(Protocol):
     def available_providers(self) -> tuple[str, ...]: ...
     def runtime_version(self) -> str | None: ...
     def create_session(self, model_path: Path, *, input_name: str, output_names: tuple[str, ...]) -> Any: ...
+
+
+def _cleanup_profile_root(profile_root: tempfile.TemporaryDirectory[str]) -> None:
+    """Best-effort delete of the ONNX Runtime profiling temp directory.
+
+    On Windows, the profiling JSON inside it can still be held open (by the
+    ONNX Runtime session itself right after a failed load, or momentarily by
+    antivirus/indexer scanners) when this runs, which makes `.cleanup()`
+    raise `OSError`/`WinError 32` ("The process cannot access the file
+    because it is being used by another process"). `ignore_cleanup_errors=
+    True` on the `TemporaryDirectory` already makes `.cleanup()` swallow
+    that internally (with a permission-reset-and-retry pass first -- see
+    `tempfile.TemporaryDirectory._rmtree`), so this call is not expected to
+    raise; the `try/except` here is belt-and-suspenders so a cleanup failure
+    -- for any reason -- can never itself raise and replace/mask whatever
+    real error (e.g. the original CUDA session-load failure) the caller is
+    already handling."""
+
+    try:
+        profile_root.cleanup()
+    except OSError:
+        pass
 
 
 class OptionalOrtCudaRuntime:
@@ -124,7 +196,9 @@ class OptionalOrtCudaRuntime:
             options.intra_op_num_threads = 1
             options.inter_op_num_threads = 1
             options.add_session_config_entry("session.disable_cpu_ep_fallback", "1")
-            profile_root = tempfile.TemporaryDirectory(prefix="mockingbird-onnx-profile-")
+            profile_root = tempfile.TemporaryDirectory(
+                prefix="mockingbird-onnx-profile-", ignore_cleanup_errors=True,
+            )
             options.enable_profiling = True
             options.profile_file_prefix = str(Path(profile_root.name) / "onnxruntime")
             try:
@@ -132,7 +206,11 @@ class OptionalOrtCudaRuntime:
                     str(model_path), sess_options=options, providers=["CUDAExecutionProvider"]
                 )
             except Exception:
-                profile_root.cleanup()
+                # Never let a Windows temp-dir cleanup failure (the
+                # profiling JSON still open after a failed load) mask the
+                # real error being handled here -- see
+                # `_cleanup_profile_root`.
+                _cleanup_profile_root(profile_root)
                 raise
             return _ProfiledOrtSession(session, profile_root)
         except Exception as error:
@@ -206,7 +284,7 @@ class _ProfiledOrtSession:
         if self._assignment is None:
             self.execution_assignment()
         self._session = None
-        self._profile_root.cleanup()
+        _cleanup_profile_root(self._profile_root)
 
 
 @dataclass(frozen=True)
