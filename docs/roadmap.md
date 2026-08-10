@@ -40,22 +40,33 @@ analytics; unknown and abstained outcomes are valid.
   install bundle (Phase 27A); and two real-hardware defects found and fixed
   in the most recent field session (Camera Node pairing repair, and an
   Observation/live-view capture-ownership collision).
-- **Remains for this phase:** confirm the two just-fixed paths against a
-  real end-to-end bird Visit (not yet attempted); resolve the still-
-  insufficient admission recall measured in the July 30 cohort; verify
-  bounded CPU/RAM/storage behavior and truthful capability reporting against
-  representative unattended field conditions, not only shadow/synthetic
+- **Remains for this phase:** a 2026-08-10 real end-to-end Camera Node
+  session (25.3 minutes, the two just-fixed paths holding up cleanly)
+  proved the structural path but found admission *precision* is not yet
+  trustworthy -- all 3 candidate Visits created were false positives (bare
+  tree bark, empty grass, the hummingbird feeder itself), root-caused to
+  detector confidence never being consulted by either admission gate. That
+  same day's Detection Quality Accounting v1 milestone (see
+  [detection-quality-accounting-contract.md](detection-quality-accounting-contract.md))
+  added the measurement/shadow-evaluation infrastructure this needs but
+  did not change production admission behavior, pending a larger, less
+  session-concentrated reviewed cohort (see that contract's "Production
+  authority gate"); the July 30 cohort's separately-measured insufficient
+  admission *recall* also still needs resolving; bounded CPU/RAM/storage
+  behavior and truthful capability reporting against representative
+  unattended field conditions remain unverified beyond shadow/synthetic
   benchmarks.
 - **Explicitly deferred:** Phases 2 and 5-8 below do not start in earnest
   until Phase 1's exit gate is met, except where already-shipped Phase 3/4
-  capability (Today in Your Yard v1, Phase 27A packaging) made opportunistic
-  progress -- see "Phase sequencing."
-- **Next recommended implementation milestone:** a bounded, real Camera Node
-  field session that answers one question -- does a real bird now produce
-  one coherent candidate Visit end-to-end through the fixed
-  capture-ownership and detection path? The last field session's fixes have
-  not yet been exercised against a live bird. See "Field-testing doctrine,"
-  below, for how to scope it.
+  capability (Today in Your Yard v1, Phase 27A packaging) or Phase-1-
+  motivated Detection Quality Accounting v1 infrastructure made
+  opportunistic progress -- see "Phase sequencing."
+- **Next recommended implementation milestone:** collect a larger, less
+  session-concentrated reviewed field-truth cohort (the current 51-example/
+  4-session corpus is real but too concentrated to promote a confidence-
+  aware admission policy) -- see [detection-quality-accounting-contract.md](detection-quality-accounting-contract.md)'s
+  "Production authority gate" and this milestone's final report for the
+  specific numbers a promotion decision would need.
 
 ## Phase sequencing
 
@@ -116,7 +127,16 @@ benchmark, a shadow-only incumbent-vs-candidate comparison tool (already used
 to reject the `spruce` MegaDetector candidate on measured precision/recall
 and licensing grounds), multi-scale and adaptive motion-proposal benchmarks,
 an evidence-usefulness benchmark, and the shadow-evaluation discipline the
-whole Observation Engine migration was built on. See "Detection Quality
+whole Observation Engine migration was built on. Detection Quality
+Accounting v1 (2026-08-10, see
+[detection-quality-accounting-contract.md](detection-quality-accounting-contract.md)),
+motivated by that day's real-field finding that all 3 candidate Visits one
+Camera Node session produced were false positives, added confidence/evidence
+lineage from detection through assembled Visit proposal (previously
+discarded at proposal assembly), a bounded six-stage accounting report, and
+a SHADOW-only confidence-aware admission-policy evaluator measured against
+51 real reviewed historical examples (17 true positives / 33 false
+positives / 1 ambiguous, across 4 sessions) -- see "Detection Quality
 Accounting" and "Formal model lifecycle" in [architecture.md](architecture.md).
 
 Remains: organize this prior art into the explicit 14-stage accounting in
@@ -125,14 +145,17 @@ difficult-case slices as a standing structure (common/uncommon/unknown
 species, partial/occluded animals, multiple animals, small/distant subjects,
 feeder obstruction, motion blur, poor lighting/dawn/dusk, non-birds, empty
 backgrounds); implement abstention, which does not exist anywhere in the
-pipeline today; add classifier-side calibration; formalize rejected-
-candidate/counterfactual auditing as a standing, bounded record; define an
-explicit promotion-decision rule, versioned deployment, monitoring, and
-rollback/retirement policy; and collect the representative (30-100 example)
-species-level correction truth needed to actually validate BioCLIP --
-never completed under the earlier "visual species identification" priority
--- before deciding production selection or its abstention/calibration
-policy.
+pipeline today; add classifier-side calibration; wire Detection Quality
+Accounting into a *live* session rather than an offline pass over
+already-recorded facts; collect a larger, more representative (not
+session-concentrated) reviewed cohort before any confidence-aware admission
+policy could satisfy detection-quality-accounting-contract.md's "Production
+authority gate"; define an explicit promotion-decision rule, versioned
+deployment, monitoring, and rollback/retirement policy; and collect the
+representative (30-100 example) species-level correction truth needed to
+actually validate BioCLIP -- never completed under the earlier "visual
+species identification" priority -- before deciding production selection or
+its abstention/calibration policy.
 
 Exit condition: we can explain quantitatively where the vision pipeline is
 good, where it fails, and whether a candidate actually improves the product.

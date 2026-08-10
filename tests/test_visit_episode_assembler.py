@@ -13,7 +13,9 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from mockingbird.observation.contracts import TrackUpdate
+import pytest
+
+from mockingbird.observation.contracts import DetectionEvidenceSample, TrackUpdate
 from mockingbird.observation.frame_tracker import ProviderNeutralFrameTracker, TrackerConfiguration
 from mockingbird.observation.reconnect_continuity import ReconnectBridgeConfig
 from mockingbird.observation.replay import BenchmarkManifest, ExpectedVisit, _match
@@ -439,6 +441,66 @@ def test_build_tracklets_skips_unconfirmed_and_derives_support_facts() -> None:
     assert tracklet.end_offset_ms == 2500
     assert tracklet.last_strong_detector_offset_ms == 0
     assert tracklet.track_ids == ("gen-a-track",)
+
+
+def test_build_tracklets_confidence_evidence_honestly_reports_unknown_strong_weak_for_legacy_updates() -> None:
+    """Detection Quality Accounting v1 (see
+    docs/detection-quality-accounting-contract.md): a generation whose
+    `TrackUpdate`s were reconstructed from a pre-Detection-Quality-
+    Accounting recorded report (for example via the Stage 6.17
+    `rescore_visit_truth.py` JSON-reconstruction pattern) carries a real,
+    exact `detector_confirmation_count` but empty `confidence_samples` --
+    `build_tracklets` must report the strong/weak split as unknown
+    (`None`), never a fabricated `0`, while still reporting the exact
+    `detection_count` and `max_confidence` that were already recorded."""
+    legacy_updates = (
+        _track_update(
+            "gen-legacy", 0, "started", "weak_detector_supported",
+            detector_confirmation_count=1, confidence=0.42,
+        ),
+        _track_update(
+            "gen-legacy", 500, "ended", "weak_detector_supported", lifecycle_state="ended",
+            terminal_reason="end_of_replay", detector_confirmation_count=3, confidence=0.55,
+        ),
+    )
+    tracklet = build_tracklets(legacy_updates, stream_id="stream-x")[0]
+
+    assert tracklet.confidence_evidence.detection_count == 3  # the exact, already-recorded count survives
+    assert tracklet.confidence_evidence.max_confidence == 0.55  # likewise the exact recorded max
+    assert tracklet.confidence_evidence.strong_detection_count is None  # honestly unknown, not 0
+    assert tracklet.confidence_evidence.weak_detection_count is None
+    assert tracklet.confidence_evidence.max_consecutive_detector_confirmed_frames is None
+    assert tracklet.confidence_evidence.mean_confidence is None  # no per-detection samples to average
+    assert tracklet.confidence_evidence.median_confidence is None
+    assert tracklet.confidence_evidence.samples == ()
+    assert tracklet.confidence_evidence.sample_truncated is True
+
+
+def test_build_tracklets_confidence_evidence_reports_real_strong_weak_split_for_fresh_updates() -> None:
+    """The mirror-image case: a generation whose updates carry real
+    `confidence_samples` (the normal case for anything produced by the
+    current tracker) gets the exact strong/weak split and mean/median,
+    never `None`."""
+    samples_first = (DetectionEvidenceSample(0.42, 0, "frame-a", "obs-a", is_strong=False),)
+    samples_final = samples_first + (DetectionEvidenceSample(0.9, 500, "frame-b", "obs-b", is_strong=True),)
+    fresh_updates = (
+        _track_update(
+            "gen-fresh", 0, "started", "weak_detector_supported",
+            detector_confirmation_count=1, confidence=0.42, confidence_samples=samples_first,
+        ),
+        _track_update(
+            "gen-fresh", 500, "ended", "strong_detector_supported", lifecycle_state="ended",
+            terminal_reason="end_of_replay", detector_confirmation_count=2, confidence=0.9,
+            confidence_samples=samples_final,
+        ),
+    )
+    tracklet = build_tracklets(fresh_updates, stream_id="stream-x")[0]
+
+    assert tracklet.confidence_evidence.detection_count == 2
+    assert tracklet.confidence_evidence.strong_detection_count == 1
+    assert tracklet.confidence_evidence.weak_detection_count == 1
+    assert tracklet.confidence_evidence.mean_confidence == pytest.approx((0.42 + 0.9) / 2)
+    assert tracklet.confidence_evidence.sample_truncated is False
 
 
 def test_custom_configuration_changes_merge_behavior() -> None:

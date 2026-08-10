@@ -13,11 +13,26 @@ from hashlib import sha256
 from math import hypot
 from typing import Literal, NamedTuple, Protocol
 
-from mockingbird.observation.contracts import DetectionObservation, FramePacket, TrackUpdate
+from mockingbird.observation.contracts import (
+    DetectionEvidenceSample, DetectionObservation, FramePacket, TrackUpdate,
+)
 from mockingbird.observation.reconnect_continuity import ReconnectBridgeConfig
 
 
 TRACKER_VERSION = "spatial-frame-tracker-v1"
+# Detection Quality Accounting v1 (see
+# docs/detection-quality-accounting-contract.md): bounded cap on how many
+# per-detection confidence samples one track generation retains. Derived,
+# not an arbitrary magic number: `FrameDrivenSettings`'s own default
+# `maximum_track_duration_ms` (30000) times its own default `candidate_
+# detector_fps` (4.0) is ~120 -- the theoretical maximum genuine matched
+# detections one generation could ever accumulate under today's real
+# deployment configuration -- rounded up. A differently-configured tracker
+# (a longer `maximum_track_duration_ms`, a test fixture, or a future
+# candidate detector's own settings) can still exceed this cap; when it
+# does, `ConfidenceEvidenceSummary.sample_truncated` honestly reports it
+# rather than growing the retained list without bound.
+MAX_TRACK_CONFIDENCE_SAMPLES = 128
 
 
 @dataclass(frozen=True)
@@ -117,6 +132,12 @@ class TrackView:
     # docs/tracklet-visit-assembly-contract.md. Defaulted for the same
     # backward-compatibility reason as the two fields above.
     ambiguous_start: bool = False
+    # Detection Quality Accounting v1: mirrors `_Track.confidence_samples`/
+    # `max_consecutive_detector_confirmed_frames` below -- see
+    # docs/detection-quality-accounting-contract.md. Defaulted for the same
+    # backward-compatibility reason as the fields above.
+    confidence_samples: tuple[DetectionEvidenceSample, ...] = ()
+    max_consecutive_detector_confirmed_frames: int = 0
 
 
 class TrackerSupportResolver(Protocol):
@@ -227,6 +248,16 @@ class _Track:
     # life, so every update simply carries the value the generation was born
     # with -- a consumer inspecting only a terminal update still sees it.
     ambiguous_start: bool = False
+    # Detection Quality Accounting v1 (see
+    # docs/detection-quality-accounting-contract.md). `confidence_samples`
+    # is bounded by `MAX_TRACK_CONFIDENCE_SAMPLES`; `consecutive_detector_
+    # confirmed_frames` is transient (reset by any non-detector-matched
+    # frame) mirroring `consecutive_negative_detector_frames`'s own shape,
+    # and `max_consecutive_detector_confirmed_frames` is the running max of
+    # it for this generation's life, exposed on `TrackView`/`TrackUpdate`.
+    confidence_samples: list[DetectionEvidenceSample] = field(default_factory=list)
+    consecutive_detector_confirmed_frames: int = 0
+    max_consecutive_detector_confirmed_frames: int = 0
 
     def view(self) -> TrackView:
         return TrackView(
@@ -245,6 +276,8 @@ class _Track:
             self.weak_detector_support_count,
             self.support_state,
             self.ambiguous_start,
+            tuple(self.confidence_samples),
+            self.max_consecutive_detector_confirmed_frames,
         )
 
 
@@ -313,6 +346,11 @@ class ProviderNeutralFrameTracker:
             track.reconnect_bridge_frames_remaining = config.maximum_reconnect_bridge_frames
             track.lifecycle_state = "temporarily_lost"
             track.support_state = "temporarily_lost"
+            # A reconnect boundary interrupts the connection itself -- a
+            # "consecutive detector-confirmed frames" streak must not claim
+            # continuity across it (see docs/detection-quality-accounting-
+            # contract.md).
+            track.consecutive_detector_confirmed_frames = 0
             # Stage 6.19: a reconnect boundary is a synthetic bookkeeping
             # marker, not a real per-frame detector evaluation -- honestly
             # `detector_ran=False` here, exactly like `finalize()`'s own
@@ -434,6 +472,11 @@ class ProviderNeutralFrameTracker:
                 # `_observe_tracker_support`).
                 assert track.reconnect_bridge_frames_remaining is not None
                 assert track.reconnect_bridge_deadline_offset_ms is not None
+                # No detection matched this track this frame -- a
+                # "consecutive detector-confirmed frames" streak cannot
+                # continue through a reconnect gap either (see
+                # docs/detection-quality-accounting-contract.md).
+                track.consecutive_detector_confirmed_frames = 0
                 track.reconnect_bridge_frames_remaining -= 1
                 expired = (
                     track.reconnect_bridge_frames_remaining <= 0
@@ -450,6 +493,10 @@ class ProviderNeutralFrameTracker:
             track.missed_frames += 1
             track.lifecycle_state = "temporarily_lost"
             track.support_state = "temporarily_lost"
+            # No detection matched this track this frame -- see the
+            # reconnect-branch comment above for why this streak resets here
+            # too, regardless of whether the detector ran at all.
+            track.consecutive_detector_confirmed_frames = 0
             # Stage 6.16: the same widened tolerance as the pre-check loop
             # above, applied to the ordinary miss-count/expiry bound. A
             # widening-eligible confirmed track relies on the time-based
@@ -553,6 +600,9 @@ class ProviderNeutralFrameTracker:
             last_strong_detector_offset_ms=frame.source_offset_ms if strong else None,
             support_state="strong_detector_supported" if strong else "weak_detector_supported",
             ambiguous_start=ambiguous,
+            confidence_samples=[_evidence_sample(detection, frame, is_strong=strong)],
+            consecutive_detector_confirmed_frames=1,
+            max_consecutive_detector_confirmed_frames=1,
         )
         self._tracks[track.track_id] = track
         return track, ambiguous
@@ -684,12 +734,26 @@ class ProviderNeutralFrameTracker:
         # still terminates on the same ordinary tight bound as before this
         # stage. See docs/sustained-visit-continuity-contract.md.
         track.detector_confirmation_count += 1
-        if (detection.confidence or 0.0) >= self.configuration.strong_detection_threshold:
+        strong = (detection.confidence or 0.0) >= self.configuration.strong_detection_threshold
+        if strong:
             track.last_strong_detector_offset_ms = frame.source_offset_ms
             track.support_state = "strong_detector_supported"
         else:
             track.weak_detector_support_count += 1
             track.support_state = "weak_detector_supported"
+        # Detection Quality Accounting v1 (see
+        # docs/detection-quality-accounting-contract.md): a genuine matched
+        # detector observation, strong or weak -- record it as a bounded
+        # sample and extend this generation's own consecutive-confirmation
+        # streak. Bounded by `MAX_TRACK_CONFIDENCE_SAMPLES`; once reached,
+        # later samples are honestly dropped rather than grown without
+        # bound (`ConfidenceEvidenceSummary.sample_truncated` reports this).
+        if len(track.confidence_samples) < MAX_TRACK_CONFIDENCE_SAMPLES:
+            track.confidence_samples.append(_evidence_sample(detection, frame, is_strong=strong))
+        track.consecutive_detector_confirmed_frames += 1
+        track.max_consecutive_detector_confirmed_frames = max(
+            track.max_consecutive_detector_confirmed_frames, track.consecutive_detector_confirmed_frames,
+        )
         self._remember(track, frame)
         self._confirm(track)
 
@@ -710,6 +774,9 @@ class ProviderNeutralFrameTracker:
         track.missed_frames = 0
         track.tracker_support_count += 1
         track.support_state = "tracker_supported"
+        # The detector did not itself confirm this track this frame -- see
+        # the docs/detection-quality-accounting-contract.md streak rule.
+        track.consecutive_detector_confirmed_frames = 0
         self._remember(track, frame)
         self._confirm(track)
 
@@ -875,6 +942,8 @@ class ProviderNeutralFrameTracker:
             support_state=track.support_state,
             detector_ran=detector_ran,
             ambiguous_start=track.ambiguous_start,
+            confidence_samples=tuple(track.confidence_samples),
+            max_consecutive_detector_confirmed_frames=track.max_consecutive_detector_confirmed_frames,
         )
 
     def _terminal_update(
@@ -908,7 +977,27 @@ class ProviderNeutralFrameTracker:
             support_state=view.support_state,
             detector_ran=detector_ran,
             ambiguous_start=view.ambiguous_start,
+            confidence_samples=view.confidence_samples,
+            max_consecutive_detector_confirmed_frames=view.max_consecutive_detector_confirmed_frames,
         )
+
+
+def _evidence_sample(
+    detection: DetectionObservation, frame: FramePacket, *, is_strong: bool,
+) -> DetectionEvidenceSample:
+    """One bounded Detection Quality Accounting v1 sample from a genuine
+    matched detector observation (see
+    docs/detection-quality-accounting-contract.md). `confidence` follows
+    this module's own established `detection.confidence or 0.0` convention
+    for treating an absent score as zero (matching the `animals` filter in
+    `observe()` and every other confidence read in this file)."""
+    return DetectionEvidenceSample(
+        confidence=detection.confidence if detection.confidence is not None else 0.0,
+        source_offset_ms=frame.source_offset_ms,
+        frame_id=frame.frame_id,
+        observation_id=detection.observation_id,
+        is_strong=is_strong,
+    )
 
 
 def _center(box: tuple[float, float, float, float]) -> tuple[float, float]:

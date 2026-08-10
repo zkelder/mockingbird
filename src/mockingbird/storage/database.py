@@ -40,7 +40,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 30
+CURRENT_DATABASE_SCHEMA_VERSION = 31
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -685,6 +685,32 @@ def _migrate_to_app_setup_state(connection: Connection) -> None:
     )
 
 
+def _migrate_to_observation_confidence_evidence(connection: Connection) -> None:
+    """Add the Detection Quality Accounting v1 diagnostic lineage column to
+    the existing Stage 7 candidate-Visit ledger (see
+    docs/detection-quality-accounting-contract.md).
+
+    Nullable, no default: every row that already exists at migration time
+    reads back `confidence_evidence_json=None` -- the honest "this candidate
+    predates confidence lineage" fact, never a fabricated summary (see "no
+    fabricated confidence for legacy records" in product-doctrine.md). This
+    migration writes no data of its own, mirroring `_migrate_to_
+    observation_candidate_authority`'s own additive-column pattern.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Observation confidence-evidence migration requires local SQLite storage."
+        )
+    ledger_columns = {
+        column["name"] for column in inspect(connection).get_columns("observation_candidate_visits")
+    }
+    if "confidence_evidence_json" not in ledger_columns:
+        connection.exec_driver_sql(
+            "ALTER TABLE observation_candidate_visits ADD COLUMN confidence_evidence_json TEXT"
+        )
+
+
 def _migrate_to_camera_node_pending_setup(connection: Connection) -> None:
     """Add durable pending-pairing storage; no existing Source/Stream changes.
 
@@ -727,6 +753,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     28: _migrate_to_observation_candidate_authority,
     29: _migrate_to_app_setup_state,
     30: _migrate_to_camera_node_pending_setup,
+    31: _migrate_to_observation_confidence_evidence,
 }
 
 

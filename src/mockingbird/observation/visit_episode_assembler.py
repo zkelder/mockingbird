@@ -34,9 +34,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from hashlib import sha256
 from math import hypot
+from statistics import median
 from typing import Literal
 
-from mockingbird.observation.contracts import TrackUpdate, VisitProposal
+from mockingbird.observation.contracts import (
+    EMPTY_CONFIDENCE_EVIDENCE,
+    ConfidenceEvidenceSummary,
+    TrackUpdate,
+    VisitProposal,
+    merge_confidence_evidence,
+)
 
 ASSEMBLER_VERSION = "tracklet-visit-assembler-v1"
 
@@ -106,6 +113,12 @@ class Tracklet:
     last_strong_detector_offset_ms: int | None = None
     zone_id: str | None = None
     ambiguous_start: bool = False
+    # Detection Quality Accounting v1 (see
+    # docs/detection-quality-accounting-contract.md). Defaulted to the
+    # honestly-empty summary so every pre-existing direct `Tracklet(...)`
+    # construction (this module's own tests build synthetic tracklets
+    # without a full tracker replay) remains valid unchanged.
+    confidence_evidence: ConfidenceEvidenceSummary = EMPTY_CONFIDENCE_EVIDENCE
 
     def __post_init__(self) -> None:
         if not self.generation_id or not self.stream_id or not self.broad_class:
@@ -219,11 +232,17 @@ def build_tracklets(
         }))
         confidences = [item.confidence for item in ordered if item.confidence is not None]
         track_ids = tuple(dict.fromkeys(item.track_id for item in ordered if item.track_id))
+        resolved_broad_class = terminal.broad_class or first.broad_class or "animal"
+        confidence_evidence = _confidence_evidence_from_terminal(
+            terminal,
+            max_confidence=max(confidences) if confidences else None,
+            broad_class=resolved_broad_class,
+        )
 
         tracklets.append(Tracklet(
             generation_id=generation_id,
             stream_id=stream_id,
-            broad_class=terminal.broad_class or first.broad_class or "animal",
+            broad_class=resolved_broad_class,
             start_offset_ms=first.source_offset_ms,
             end_offset_ms=terminal.source_offset_ms,
             start_bounding_box=first.bounding_box,
@@ -246,8 +265,88 @@ def build_tracklets(
             last_strong_detector_offset_ms=last_strong_offset,
             zone_id=(zone_id_by_generation or {}).get(generation_id),
             ambiguous_start=any(item.ambiguous_start for item in ordered),
+            confidence_evidence=confidence_evidence,
         ))
     return tuple(tracklets)
+
+
+def _confidence_evidence_from_terminal(
+    terminal: TrackUpdate,
+    *,
+    max_confidence: float | None,
+    broad_class: str,
+) -> ConfidenceEvidenceSummary:
+    """Build one generation's `ConfidenceEvidenceSummary` from its own
+    terminal `TrackUpdate` -- which already carries this generation's full
+    cumulative-so-far `confidence_samples`/`max_consecutive_detector_
+    confirmed_frames` (see docs/detection-quality-accounting-contract.md).
+    `max_confidence` is the exact value `build_tracklets` already computed
+    for `Tracklet.confidence` -- reused, not recomputed, so the two can
+    never disagree.
+
+    `strong_detection_count`/`weak_detection_count` are deliberately
+    derived from `samples` (each one `is_strong`-tagged at the moment it was
+    recorded) rather than reusing the existing frame-scanning `strong_count`/
+    `weak_count` locals this function's caller also computes for `Tracklet.
+    strong_detector_frame_count`/`weak_detector_frame_count`: those count
+    *frames* (a track's synthetic `finalize()`/reconnect-boundary echo update
+    can legitimately re-report the same already-counted `support_state` at
+    the same offset as the last real one, so frame counts can exceed the
+    real detection count -- proven by
+    `test_track_metrics_expose_raw_fragmentation_independent_of_assembly`),
+    while `samples` is appended exactly once per genuine matched detection
+    and therefore never double-counts.
+
+    A terminal update reconstructed from a pre-Detection-Quality-Accounting
+    record (for example a legacy `replay-report.json` loaded through the
+    Stage 6.17 `rescore_visit_truth.py` JSON-reconstruction pattern) simply
+    has an empty `confidence_samples` tuple and a zero streak -- the dataclass
+    defaults -- so this honestly reports no samples / no mean / no median /
+    no strong-weak split rather than fabricating them, while `detection_
+    count`/`max_confidence` remain exact because they were already recorded
+    before this contract existed.
+    """
+
+    samples = terminal.confidence_samples
+    sample_confidences = [sample.confidence for sample in samples]
+    offsets = [sample.source_offset_ms for sample in samples if sample.source_offset_ms is not None]
+    detection_count = terminal.detector_confirmation_count
+    if samples:
+        strong_detection_count: int | None = sum(1 for sample in samples if sample.is_strong)
+        weak_detection_count: int | None = sum(1 for sample in samples if not sample.is_strong)
+        max_consecutive: int | None = terminal.max_consecutive_detector_confirmed_frames
+    elif detection_count > 0:
+        # Detections genuinely happened (the exact, always-recorded count
+        # proves it) but no per-detection sample survived to say which were
+        # strong/weak, or how many were consecutive -- honestly unknown, not
+        # zero (see the `strong_detection_count` docstring on
+        # `ConfidenceEvidenceSummary`). A legacy-reconstructed `TrackUpdate`
+        # (for example via the Stage 6.17 `rescore_visit_truth.py` JSON-
+        # reconstruction pattern) has no `confidence_samples` at all and its
+        # `max_consecutive_detector_confirmed_frames` is just that field's
+        # own backward-compatible dataclass default (`0`), not a real
+        # measurement.
+        strong_detection_count = None
+        weak_detection_count = None
+        max_consecutive = None
+    else:
+        strong_detection_count = 0
+        weak_detection_count = 0
+        max_consecutive = 0
+    return ConfidenceEvidenceSummary(
+        detection_count=detection_count,
+        max_confidence=max_confidence,
+        mean_confidence=(sum(sample_confidences) / len(sample_confidences)) if sample_confidences else None,
+        median_confidence=median(sample_confidences) if sample_confidences else None,
+        strong_detection_count=strong_detection_count,
+        weak_detection_count=weak_detection_count,
+        max_consecutive_detector_confirmed_frames=max_consecutive,
+        samples=samples,
+        broad_class=broad_class,
+        first_detection_offset_ms=min(offsets) if offsets else None,
+        last_detection_offset_ms=max(offsets) if offsets else None,
+        sample_truncated=len(samples) < detection_count,
+    )
 
 
 # --- Assembly decision contract ----------------------------------------------
@@ -481,6 +580,14 @@ class AssembledVisitProposal:
     ambiguous_adjacent_proposal_ids: tuple[str, ...] = ()
     limitation_facts: tuple[str, ...] = ()
     shadow_only: bool = True
+    # Detection Quality Accounting v1 (see
+    # docs/detection-quality-accounting-contract.md): the merged confidence/
+    # evidence accounting across every constituent tracklet -- evidence for
+    # a quality-accounting pass or a *shadow* admission-policy evaluator,
+    # never itself observational authority (see "The truth boundary" in
+    # product-doctrine.md). Defaulted so every pre-existing direct
+    # `AssembledVisitProposal(...)` construction remains valid unchanged.
+    confidence_evidence: ConfidenceEvidenceSummary = EMPTY_CONFIDENCE_EVIDENCE
 
     def __post_init__(self) -> None:
         if not self.shadow_only:
@@ -671,6 +778,9 @@ def _build_proposal(
         zone_id=next((item.zone_id for item in ordered_members if item.zone_id is not None), None),
         ambiguous_adjacent_proposal_ids=tuple(sorted({proposal_ids[index] for index in ambiguous_with})),
         limitation_facts=tuple(limitation_facts),
+        confidence_evidence=merge_confidence_evidence(
+            tuple(item.confidence_evidence for item in ordered_members)
+        ),
     )
 
 
@@ -704,4 +814,5 @@ def project_to_visit_proposal(assembled: AssembledVisitProposal, *, source_id: s
         provider_key=None,
         provider_version=ASSEMBLER_VERSION,
         supporting_source_capture_frame_ids=assembled.source_capture_frame_ids,
+        confidence_evidence=assembled.confidence_evidence,
     )

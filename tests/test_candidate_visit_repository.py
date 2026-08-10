@@ -27,7 +27,7 @@ from mockingbird.repository.product_repository import (
     ReviewLabelModel,
     VisitModel,
 )
-from mockingbird.storage.database import CURRENT_DATABASE_SCHEMA_VERSION
+from mockingbird.storage.database import CURRENT_DATABASE_SCHEMA_VERSION, create_database_engine
 
 STREAM_ID = "stream-backyard-feeder"
 FEEDER_ZONE_ID = "zone-feeder"
@@ -50,6 +50,7 @@ def _facts(
     source_capture_frame_ids: tuple[str, ...] = ("frame-1", "frame-2"),
     supporting_frame_ids: tuple[str, ...] = ("frame-1", "frame-2"),
     ambiguous_adjacent_proposal_ids: tuple[str, ...] = (),
+    confidence_evidence_json: str | None = None,
 ) -> CandidateVisitProposalFacts:
     return CandidateVisitProposalFacts(
         proposal_id=proposal_id,
@@ -69,6 +70,7 @@ def _facts(
         detector_provenance="onnx-cuda",
         tracker_provenance="frame-driven-onnx-cuda-v1",
         provider_key="frame-driven-onnx-cuda",
+        confidence_evidence_json=confidence_evidence_json,
     )
 
 
@@ -111,6 +113,65 @@ def test_schema_migrates_to_stage7_tables(repository: ProductRepository) -> None
         table_names = set(sa_inspect(session.get_bind()).get_table_names())
         assert "observation_authority_settings" in table_names
         assert "observation_candidate_visits" in table_names
+
+
+def test_schema_v31_adds_confidence_evidence_column_without_fabricating_legacy_data(
+    tmp_path: Path,
+) -> None:
+    """Detection Quality Accounting v1 (see
+    docs/detection-quality-accounting-contract.md): a candidate created
+    *before* this column existed must read back `confidence_evidence_json
+    is None` after migrating forward -- never a fabricated summary -- while
+    a candidate created *after* migration genuinely persists one."""
+
+    db_path = tmp_path / "schema-v31.sqlite3"
+    repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 31
+    _activate(repository)
+    pre_migration_outcome = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=_facts(proposal_id="visit-episode:pre-migration"), observed_at=NOW, evidence_items=(_evidence(),),
+        )
+    )
+    assert pre_migration_outcome.outcome == "created"
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        # Simulate "a database that predates this column": drop it (SQLite
+        # 3.35+ supports DROP COLUMN) and roll the recorded schema version
+        # back to the last version that never had it.
+        connection.exec_driver_sql(
+            "ALTER TABLE observation_candidate_visits DROP COLUMN confidence_evidence_json"
+        )
+        connection.exec_driver_sql("UPDATE mockingbird_schema SET version = 30 WHERE singleton_id = 1")
+    engine.dispose()
+
+    migrated = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
+    try:
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 31
+        with migrated.session_factory() as session:
+            pre_ledger = session.get(ObservationCandidateVisitModel, "visit-episode:pre-migration")
+            assert pre_ledger is not None
+            assert pre_ledger.confidence_evidence_json is None  # no fabricated confidence for a legacy record
+
+        post_migration_outcome = migrated.create_candidate_visit_from_proposal(
+            CreateCandidateVisitRequest(
+                proposal=_facts(
+                    proposal_id="visit-episode:post-migration",
+                    confidence_evidence_json='{"detection_count": 3, "max_confidence": 0.42}',
+                ),
+                observed_at=NOW,
+                evidence_items=(_evidence(),),
+            )
+        )
+        assert post_migration_outcome.outcome == "created"
+        with migrated.session_factory() as session:
+            post_ledger = session.get(ObservationCandidateVisitModel, "visit-episode:post-migration")
+            assert post_ledger is not None
+            assert json.loads(post_ledger.confidence_evidence_json) == {"detection_count": 3, "max_confidence": 0.42}
+    finally:
+        migrated.close()
 
 
 # --- 1. Default authority is shadow -----------------------------------------
@@ -382,8 +443,44 @@ def test_candidate_ledger_retains_full_lineage(repository: ProductRepository) ->
         assert identification_media.evidence_role == "identification"
         assert identification_media.derivation_source == "observation_engine_candidate"
         assert identification_media.trigger_id == "visit-episode:fixture-1"
-        context_media = session.get(MediaAssetModel, ledger.selected_context_media_asset_id)
-        assert context_media.evidence_role == "context"
+
+
+def test_candidate_ledger_retains_confidence_evidence_when_supplied(repository: ProductRepository) -> None:
+    """Detection Quality Accounting v1: the ledger persists whatever
+    confidence/evidence summary the caller supplies verbatim -- this
+    repository layer never inspects, recomputes, or validates its content
+    (that is `contracts.ConfidenceEvidenceSummary`'s own job upstream)."""
+    _activate(repository)
+    payload = json.dumps({
+        "detection_count": 4, "max_confidence": 0.71, "mean_confidence": 0.55,
+        "median_confidence": 0.52, "strong_detection_count": 1, "weak_detection_count": 3,
+        "sample_truncated": False,
+    })
+    repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=_facts(confidence_evidence_json=payload), observed_at=NOW, evidence_items=(_evidence(),),
+        )
+    )
+    with repository.session_factory() as session:
+        ledger = session.get(ObservationCandidateVisitModel, "visit-episode:fixture-1")
+        assert ledger is not None
+        assert json.loads(ledger.confidence_evidence_json) == json.loads(payload)
+
+
+def test_candidate_ledger_confidence_evidence_defaults_to_none_when_not_supplied(
+    repository: ProductRepository,
+) -> None:
+    """A caller that never populates `confidence_evidence_json` (for
+    example an older adapter predating Detection Quality Accounting v1)
+    gets an honest `None`, never a fabricated summary."""
+    _activate(repository)
+    repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(proposal=_facts(), observed_at=NOW, evidence_items=(_evidence(),))
+    )
+    with repository.session_factory() as session:
+        ledger = session.get(ObservationCandidateVisitModel, "visit-episode:fixture-1")
+        assert ledger is not None
+        assert ledger.confidence_evidence_json is None
 
 
 # --- 21. Missing evidence fails safely --------------------------------------

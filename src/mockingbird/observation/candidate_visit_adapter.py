@@ -16,8 +16,9 @@ this package's own `test_candidate_visit_authority.py` structural test).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
+import json
 from typing import Mapping
 
 from mockingbird.observation.contracts import EvidenceCandidate
@@ -119,6 +120,13 @@ class CandidateVisitAuthorityAdapter:
             detector_provenance=self._detector_provenance,
             tracker_provenance=self._tracker_provenance,
             provider_key=self._provider_key,
+            # Detection Quality Accounting v1 (see
+            # docs/detection-quality-accounting-contract.md): this proposal's
+            # own merged detector-confidence/evidence accounting, persisted
+            # as diagnostic lineage on the Stage 7 ledger row -- evidence for
+            # quality accounting / shadow admission-policy evaluation,
+            # never itself observational authority or reviewed truth.
+            confidence_evidence_json=json.dumps(asdict(proposal.confidence_evidence), sort_keys=True),
         )
         request = CreateCandidateVisitRequest(proposal=facts, observed_at=observed_at, evidence_items=evidence_items)
         try:

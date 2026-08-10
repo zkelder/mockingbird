@@ -1755,6 +1755,15 @@ class ObservationCandidateVisitModel(Base):
     limitation_facts_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     ambiguous_adjacent_proposal_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Detection Quality Accounting v1 (schema 31, see
+    # docs/detection-quality-accounting-contract.md): one serialized
+    # `contracts.ConfidenceEvidenceSummary` JSON object -- diagnostic
+    # detector-confidence/evidence lineage for this candidate, never
+    # reviewed truth or observational authority. Nullable with no default:
+    # every row created before this column existed reads back `None`
+    # rather than a fabricated summary (see "no fabricated confidence for
+    # legacy records" in product-doctrine.md).
+    confidence_evidence_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 @dataclass(frozen=True)
@@ -1825,6 +1834,14 @@ class CandidateVisitProposalFacts:
     detector_provenance: str | None = None
     tracker_provenance: str | None = None
     provider_key: str | None = None
+    # Detection Quality Accounting v1 (see
+    # docs/detection-quality-accounting-contract.md): a pre-serialized JSON
+    # `contracts.ConfidenceEvidenceSummary` -- serialized by the caller
+    # (`candidate_visit_adapter`, the one place that already imports the
+    # engine-side `AssembledVisitProposal`) rather than this repository-level
+    # dataclass importing an observation-engine type. `None` for a caller
+    # that predates this field; never fabricated for a legacy record.
+    confidence_evidence_json: str | None = None
 
 
 @dataclass(frozen=True)
@@ -2847,6 +2864,7 @@ class ProductRepository:
                 limitation_facts_json=json.dumps(list(proposal.limitation_facts)),
                 ambiguous_adjacent_proposal_ids_json=json.dumps(list(proposal.ambiguous_adjacent_proposal_ids)),
                 created_at=observed_at,
+                confidence_evidence_json=proposal.confidence_evidence_json,
             )
         )
         session.flush()

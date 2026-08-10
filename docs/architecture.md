@@ -198,7 +198,8 @@ stage's full contract:
 [candidate-visit-authority-contract.md](candidate-visit-authority-contract.md),
 [reconnect-continuity-contract.md](reconnect-continuity-contract.md),
 [observation-engine-product-control-contract.md](observation-engine-product-control-contract.md),
-[unified-observation-panel-contract.md](unified-observation-panel-contract.md).
+[unified-observation-panel-contract.md](unified-observation-panel-contract.md),
+[detection-quality-accounting-contract.md](detection-quality-accounting-contract.md).
 
 ### Detection Quality Accounting
 
@@ -247,9 +248,26 @@ samples, stage-of-rejection information, temporary retention) rather than
 either discarding rejection reasons entirely or permanently storing every
 rejected frame. The burst scheduler's suppression-reason bookkeeping and the
 calibration benchmark's false-negative/below-threshold classification are the
-existing precedent for this pattern; formalizing it as a standing, bounded
-rejected-candidate record is open work (see [roadmap.md](roadmap.md) Phase
-2).
+existing precedent for this pattern.
+
+Detection Quality Accounting v1 (see
+[detection-quality-accounting-contract.md](detection-quality-accounting-contract.md))
+formalizes the stage-4-through-6 slice of this accounting motivated by the
+2026-08-10 real-field false-candidate finding: bounded, model-neutral
+detector-confidence/evidence lineage (`contracts.ConfidenceEvidenceSummary`)
+now survives from detection through track, tracklet, and assembled Visit
+proposal instead of being discarded at proposal assembly; a pure six-stage
+accounting report (`detection_quality_accounting.py`) covers animal-presence
+proposal through candidate Visit creation; and a SHADOW-only, deterministic
+admission-policy evaluator (`admission_policy.py`) compares the current
+(confidence-blind) production behavior against candidate confidence/temporal
+policies on real reviewed historical data, without granting any candidate
+policy production authority. Remains open: a standing rejected-candidate
+record wired into a *live* session (today's mechanism is an offline pass over
+already-recorded facts, run via `scripts/run_detection_quality_accounting.py`);
+representative difficult-case slices as a standing benchmark structure; and
+the promotion decision this contract's "Production authority gate" describes
+but does not itself make.
 
 ### Formal model lifecycle
 
