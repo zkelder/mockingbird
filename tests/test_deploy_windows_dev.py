@@ -648,6 +648,36 @@ def test_materialize_release_layout_matches_the_real_bundle_structure(tmp_path: 
     assert materialized.junctioned_relative_paths  # something was actually linked
 
 
+def test_materialize_release_copies_a_bare_file_top_level_runtime_entry(tmp_path: Path, fake_host: WindowsHost) -> None:
+    """Regression test: a real `site-packages` is not only directories at
+    the top level -- some third-party distributions ship a single-file
+    top-level module (`typing_extensions.py` is exactly this shape)
+    alongside their own `<name>.dist-info/`, rather than a package
+    directory. NTFS junctions can only target a directory (`New-Item
+    -ItemType Junction` fails outright on a file target, "A directory is
+    required for the operation"), so a bare-file runtime-tier entry must be
+    copied fresh from the cache's own verified copy instead of linked.
+    Found only via a real end-to-end deploy against a real built bundle --
+    `make_bundle` only ever synthesizes directory-shaped third-party
+    packages, which is exactly why this shipped untested."""
+
+    bundle = make_bundle(tmp_path / "build", git_commit="a" * 40, build_id="id1")
+    (bundle / "python" / "site-packages" / "typing_extensions.py").write_text(
+        "# fake single-file top-level module\n", encoding="utf-8",
+    )
+    release_dir = tmp_path / "releases" / "aaaaaaa"
+
+    materialized = _materialize(bundle, release_dir, tmp_path=tmp_path, fake_host=fake_host)
+
+    copied = release_dir / "python" / "site-packages" / "typing_extensions.py"
+    assert copied.is_file()
+    assert not copied.is_symlink()
+    assert copied.read_text(encoding="utf-8") == "# fake single-file top-level module\n"
+    assert str(copied.relative_to(release_dir)) not in materialized.junctioned_relative_paths
+    # The directory-shaped runtime-tier packages beside it are still linked as before.
+    assert (release_dir / "python" / "site-packages" / "fastapi").is_symlink()
+
+
 def test_materialize_release_never_overwrites_an_existing_release_directory(
     tmp_path: Path, fake_host: WindowsHost,
 ) -> None:
@@ -839,6 +869,37 @@ def test_launch_release_points_mockingbird_home_at_the_shared_dev_userdata_dir(
     # Never the real product default (%LOCALAPPDATA%\MockingBird, sibling
     # of %LOCALAPPDATA%\MockingBirdDev) -- structurally a different path.
     assert calls[0]["extra_env"]["MOCKINGBIRD_HOME"] != str(tmp_path / "LOCALAPPDATA" / "MockingBird")
+
+
+def test_launch_release_sends_mockingbird_home_through_to_windows_path(
+    tmp_path: Path, fake_host: WindowsHost,
+) -> None:
+    """Regression test: `MOCKINGBIRD_HOME` becomes a real Windows process's
+    own environment variable, so it must be built via `to_windows_path`,
+    never a bare `str(userdata_dir)` -- `userdata_dir` is WSL-visible
+    (typically `/mnt/c/...`), and native Windows `pathlib` treats that as
+    rooted but *not absolute* (no drive letter), silently resolving it
+    relative to whatever drive the launched process's own current directory
+    happens to be on instead of raising. Found only by actually launching a
+    real release on a real Windows host and finding a live
+    `mockingbird.sqlite3` under a bogus `C:\\mnt\\c\\...` path instead of the
+    documented one -- the *other* `launch_release` test above never caught
+    it because the shared `fake_host`'s `to_windows_path` is the identity
+    function, so a bare `str(path)` and a real conversion happen to produce
+    the same value there either way. This test swaps in a
+    non-identity `to_windows_path` specifically to prove `launch_release`
+    actually routes the value through the seam rather than through `str`."""
+
+    bundle = make_bundle(tmp_path / "build", git_commit="a" * 40, build_id="id1")
+    release_dir = tmp_path / "releases" / "aaaaaaa"
+    shutil.copytree(bundle, release_dir)
+    userdata_dir = tmp_path / "LOCALAPPDATA" / DEV_ROOT_DIRNAME / USERDATA_DIRNAME
+    host = dataclasses.replace(fake_host, to_windows_path=lambda path: f"WIN:{path}")
+
+    launch_release(release_dir, host=DEFAULT_HOST, port=DEFAULT_PORT, userdata_dir=userdata_dir, windows_host=host)
+
+    calls = host.launch_release.calls  # type: ignore[attr-defined]
+    assert calls[0]["extra_env"]["MOCKINGBIRD_HOME"] == f"WIN:{userdata_dir}"
 
 
 def test_launch_release_refuses_a_non_default_host_or_port(tmp_path: Path, fake_host: WindowsHost) -> None:
@@ -1328,6 +1389,39 @@ def test_deploy_redeploying_the_identical_commit_is_idempotent(
 
     assert first.sha == second.sha
     assert second.verification.ok is True
+
+
+def test_deploy_redeploying_the_identical_commit_from_a_fresh_rebuild_is_idempotent(
+    tmp_path: Path, dev_root: Path, fake_host: WindowsHost,
+) -> None:
+    """Regression test for the realistic shape of an idempotent redeploy:
+    a real `python scripts/deploy_windows_dev.py` rerun with no intervening
+    commit always goes through `build_release_source` -> `build_local_
+    product`, which mints a brand new random `build_id` on *every*
+    invocation regardless of whether the commit changed -- unlike
+    `accept_release_source` (`--artifact`), which just reads whatever
+    `build_id` is already on the given bundle's disk. The test above only
+    exercises the latter (both calls share one `bundle`/`build_id`), so it
+    never caught this: a second deploy of the same commit reused the
+    already-materialized release directory (correct -- nothing changed)
+    but then verified against the brand new build's own `build_id`, which
+    was never written into that reused directory (`materialize_release`
+    never reran) -- rejecting its own legitimate idempotent reuse, every
+    time, unconditionally. Simulated here with two separate bundles that
+    share a commit but (like two independent real builds of it) do not
+    share a `build_id`."""
+
+    bundle_1 = make_bundle(tmp_path / "build-1", git_commit="a" * 40, build_id="first-build-id")
+    bundle_2 = make_bundle(tmp_path / "build-2", git_commit="a" * 40, build_id="second-build-id")
+
+    first = deploy(repo_root=ROOT, dev_root=dev_root, windows_host=fake_host, artifact_path=bundle_1, verify_timeout_seconds=5.0, sleep=_NO_SLEEP)
+    second = deploy(repo_root=ROOT, dev_root=dev_root, windows_host=fake_host, artifact_path=bundle_2, verify_timeout_seconds=5.0, sleep=_NO_SLEEP)
+
+    assert first.sha == second.sha
+    assert second.verification.ok is True
+    # The release directory was genuinely reused, not silently rebuilt out
+    # from under the first deploy's own materialization.
+    assert second.verification.reported_build_id == "first-build-id"
 
 
 def test_deploy_failure_leaves_the_previous_release_usable(

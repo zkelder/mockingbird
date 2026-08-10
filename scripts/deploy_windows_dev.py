@@ -946,9 +946,26 @@ def materialize_release(
                 junctioned.append(str(model_target.relative_to(release_dir)))
         else:
             # Every third-party dependency -- the large, rarely-changing
-            # runtime tier, linked (not copied) to the shared cache.
-            windows_host.make_junction(target, cached_site_packages / entry.name)
-            junctioned.append(str(target.relative_to(release_dir)))
+            # runtime tier, linked (not copied) to the shared cache. A
+            # top-level `site-packages` entry is not always a directory:
+            # some distributions ship a single-file top-level module
+            # alongside their own `<name>.dist-info/` (`typing_extensions`
+            # is exactly this shape) rather than a package directory. NTFS
+            # junctions can only target a directory -- `New-Item -ItemType
+            # Junction` fails outright on a file target ("A directory is
+            # required for the operation") -- so a bare-file entry here is
+            # copied fresh from the cache's own verified copy instead,
+            # mirroring the `python/`-top-level-files branch above. Found
+            # only by a real end-to-end deploy against a real built bundle:
+            # `make_bundle`'s hermetic fixture only ever synthesizes
+            # directory-shaped third-party packages.
+            cached_entry = cached_site_packages / entry.name
+            if entry.is_dir():
+                windows_host.make_junction(target, cached_entry)
+                junctioned.append(str(target.relative_to(release_dir)))
+            else:
+                windows_host.copy_file(cached_entry, target)
+                bytes_copied += cached_entry.stat().st_size
 
     for name in ("Start MockingBird.vbs", "README-FIRST.txt"):
         source = bundle_dir / name
@@ -1176,7 +1193,24 @@ def launch_release(release_dir: Path, *, host: str, port: int, userdata_dir: Pat
     if not vbs_path.is_file():
         raise DeploymentError(f"{vbs_path} is missing -- was this release fully materialized?")
     _validate_host_port(host, port)
-    windows_host.launch_release(release_dir, {"MOCKINGBIRD_HOME": str(userdata_dir)})
+    # `to_windows_path`, never a bare `str(userdata_dir)`: `userdata_dir` is
+    # WSL-visible (typically `/mnt/c/...`), but this becomes a real Windows
+    # process's own environment variable, read back by `mockingbird.runtime.
+    # resolve_runtime_home` via native Windows `pathlib`. A bare POSIX-style
+    # string is not absolute to Windows `pathlib` (no drive letter) -- it
+    # silently resolves *relative to whatever drive the launched process's
+    # own current directory happens to be on* (`Start MockingBird.vbs`
+    # always sets that to the release directory, always on the same drive
+    # as `%LOCALAPPDATA%`), landing on a bogus `C:\mnt\c\Users\...` sibling
+    # of the real, documented `%LOCALAPPDATA%\MockingBirdDev\userdata`
+    # rather than raising -- a real, always-reproducing defect found only by
+    # actually launching a real release on a real Windows host and finding
+    # a live `mockingbird.sqlite3` sitting under `C:\mnt\c\...` instead of
+    # the documented path. No hermetic test caught it because the fake
+    # `WindowsHost.to_windows_path` used in tests is the identity function,
+    # so a bare `str(path)` and a real conversion happen to produce the
+    # same value there either way.
+    windows_host.launch_release(release_dir, {"MOCKINGBIRD_HOME": windows_host.to_windows_path(userdata_dir)})
 
 
 # ---------------------------------------------------------------------------
@@ -1618,7 +1652,33 @@ def deploy(
         host=host,
         port=port,
         expected_commit=source.git_commit,
-        expected_build_id=source.build_id,
+        # `record.build_id`, never `source.build_id`: in the reuse branch
+        # above, `record` is the *existing* ledger entry and `release_dir`
+        # was deliberately left untouched (never re-materialized) -- but
+        # `source` still comes from a brand new call to
+        # `build_release_source`/`build_local_product`, which mints a fresh
+        # random `build_id` on *every* invocation regardless of whether the
+        # commit changed. Verifying against `source.build_id` therefore
+        # checks for a build identity that was never written into the
+        # reused release directory's own `build_info.json` at all --
+        # `deploy()` would then always reject its own legitimate idempotent
+        # reuse, unconditionally, for any commit redeployed a second time
+        # without an intervening change. `record.build_id` matches
+        # `source.build_id` exactly in the fresh-materialize branch (the
+        # `ReleaseRecord` there is built from `source` directly) and is the
+        # *only* correct expectation in the reuse branch, so using it
+        # unconditionally here is correct either way. Real end-to-end
+        # deploys always rebuild (`build_release_source` has no equivalent
+        # of `accept_release_source`'s "read the identity already on disk"
+        # shortcut), so this is not a narrow edge case -- simply running
+        # `python scripts/deploy_windows_dev.py` a second time with no
+        # intervening commit hit this every time. The existing
+        # `test_deploy_redeploying_the_identical_commit_is_idempotent`
+        # never caught it: it redeploys via `artifact_path`, which reads a
+        # fixed, already-on-disk `build_id` via `accept_release_source`
+        # rather than minting a fresh one on each call the way a real
+        # `python scripts/deploy_windows_dev.py` rebuild does.
+        expected_build_id=record.build_id,
         release_dir=release_dir,
         runtime_cache_dir=runtime_cache_dir,
         windows_host=windows_host,
@@ -1860,10 +1920,29 @@ def _run_powershell(script: str, *, timeout: float | None = None) -> str:
     try:
         script_path.write_text(script, encoding="utf-8")
         windows_script_path = _wslpath(["-w", str(script_path)])
-        completed = subprocess.run(
-            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", windows_script_path],
-            capture_output=True, text=True, timeout=timeout, check=False,
-        )
+        try:
+            completed = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", windows_script_path],
+                capture_output=True, text=True, timeout=timeout, check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            # A named, actionable `DeploymentError` -- never a bare
+            # traceback -- matching every other failure path here. Killing
+            # this `powershell.exe` process (`subprocess.run`'s own timeout
+            # behavior) does not necessarily kill whatever native process it
+            # itself launched (no Windows job-object linkage) -- a real,
+            # observed case: `wscript.exe`, left running well past this
+            # timeout by an unrelated quoting defect (see
+            # `_launch_release_real`), stayed orphaned rather than exiting
+            # with its waiter. Includes a script excerpt (there is no
+            # per-call-site label otherwise) -- diagnosing a real timeout
+            # here once meant manually cross-referencing every `timeout=`
+            # call site in this file against the bare number in the error.
+            excerpt = " | ".join(line.strip() for line in script.splitlines() if line.strip())[:200]
+            raise DeploymentError(
+                f"powershell.exe did not finish within {timeout}s running: {excerpt} -- it (or a process it "
+                "launched) may still be running orphaned on the Windows side; check Task Manager if this recurs."
+            ) from error
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
     if completed.returncode != 0:
@@ -1933,8 +2012,7 @@ def _retrying_rmdir_powershell(quoted_windows_path: str, *, recursive: bool) -> 
     )
 
 
-def _run_verified_removal(path: Path, *, recursive: bool, timeout: float) -> None:
-    windows_path = _to_windows_path_real(path)
+def _run_verified_removal(path: Path, *, windows_path: str, recursive: bool, timeout: float) -> None:
     script = _retrying_rmdir_powershell(_ps_quote(windows_path), recursive=recursive)
     result = _run_powershell(script, timeout=timeout).strip().splitlines()
     if not result or result[-1].strip() != "GONE":
@@ -1950,9 +2028,32 @@ def _remove_junction_real(link: Path) -> None:
     `Remove-Item -Recurse` has real historical bugs that can follow a
     reparse point into its target. See docs/windows-dev-deployment
     -design.md. Retried and verified -- see `_retrying_rmdir_powershell`.
+
+    Deliberately does *not* resolve `link`'s own Windows path via plain
+    `_to_windows_path_real(link)`: by the time this runs, `link` always
+    already exists as a real junction, and WSL's drvfs surfaces an NTFS
+    junction as a POSIX symlink on the Linux side (confirmed: `stat`/
+    `readlink -f` on an already-created junction reports `symbolic link`,
+    target the junction's real target) -- `wslpath -w`, like `realpath`,
+    transparently resolves through it, silently returning the *target*'s
+    (the shared cache's) Windows path instead of the junction's own. That
+    is a real, reproducible defect, found only by actually removing a
+    junction against a real Windows host: every hermetic test fakes a
+    junction as a plain symlink under an ordinary temp directory with
+    `to_windows_path`/`remove_junction` themselves faked, so it never went
+    through real `wslpath` resolution at all. Luckily never destructive --
+    `rmdir` with no `/s` refuses a real, non-empty directory -- but it does
+    mean every attempt silently targets the wrong path and exhausts every
+    retry ("STILL-PRESENT"), never actually unlinking `link`. This tool's
+    own junction topology never nests one junction's target inside
+    another, so `link`'s *parent* is always a real directory, never itself
+    a symlink -- resolving the parent via `_to_windows_path_real` and
+    appending `link.name` as a literal string reaches `link` itself
+    without ever asking `wslpath` to resolve through it.
     """
 
-    _run_verified_removal(link, recursive=False, timeout=60)
+    windows_path = f"{_to_windows_path_real(link.parent)}\\{link.name}"
+    _run_verified_removal(link, windows_path=windows_path, recursive=False, timeout=60)
 
 
 def _remove_tree_real(path: Path) -> None:
@@ -1969,7 +2070,7 @@ def _remove_tree_real(path: Path) -> None:
     `_retrying_rmdir_powershell`.
     """
 
-    _run_verified_removal(path, recursive=True, timeout=180)
+    _run_verified_removal(path, windows_path=_to_windows_path_real(path), recursive=True, timeout=180)
 
 
 def _launch_release_real(release_dir: Path, extra_env: dict[str, str]) -> None:
@@ -1978,9 +2079,55 @@ def _launch_release_real(release_dir: Path, extra_env: dict[str, str]) -> None:
     script = (
         "$ErrorActionPreference = 'Stop'\n"
         f"{env_lines}\n"
-        f"Start-Process -FilePath 'wscript.exe' -ArgumentList '{_ps_quote(vbs_windows)}' -Wait\n"
+        # `-ArgumentList` takes a *value*, not a pre-tokenized argv -- a bare
+        # path containing a space (the release directory, or simply the
+        # literal filename "Start MockingBird.vbs" itself, always) is handed
+        # to CreateProcess unquoted and silently splits into two arguments
+        # for wscript.exe, which then treats the first half as the script to
+        # run, fails to find it, and shows a blocking "Windows Script Host"
+        # error dialog. Wrapping the value in an embedded, literal `"..."`
+        # pair (inside the outer PowerShell single-quoted string) makes
+        # `-ArgumentList` hand wscript.exe one properly quoted token, same
+        # fix shape as `_retrying_rmdir_powershell`'s own `cmd.exe` call
+        # already uses for the same reason. Found only by actually launching
+        # a real release on a real Windows host and inspecting the child's
+        # own received command line via `Get-CimInstance Win32_Process`.
+        #
+        # Deliberately `-PassThru` + a short bounded poll on `$p.HasExited`,
+        # never `-Wait`: proven by hand, repeatably, that `Start-Process
+        # -Wait` on `wscript.exe` here does not return when `wscript.exe`
+        # itself exits (confirmed separately, via `-PassThru`, to exit in
+        # about a second with `ExitCode=0`) -- it still had not returned
+        # after 180s. `shell.Run(..., 0, False)` inside the vbs launches
+        # `pythonw.exe` without giving it a fresh console of its own, so it
+        # inherits wscript.exe's own (WSL-interop-spawned, so already
+        # somewhat unusual) console/handle set; `-Wait`'s underlying
+        # `Process.WaitForExit()` was observed to block until every process
+        # sharing those handles exits, not just `wscript.exe` -- and
+        # `pythonw.exe` is a long-running server that is never expected to
+        # exit on its own, so `-Wait` would never return by design, not
+        # merely slowly. `verify_deployment`'s own bounded HTTP polling is
+        # the real confirmation the server actually started; this only
+        # needs to know whether the tiny launcher script itself ran
+        # successfully (its one failure mode: `WScript.Quit 1` when
+        # `pythonw.exe` is missing from the release).
+        f"""$p = Start-Process -FilePath 'wscript.exe' -ArgumentList '"{_ps_quote(vbs_windows)}"' -PassThru\n"""
+        "for ($i = 0; $i -lt 30; $i++) {\n"
+        "    Start-Sleep -Milliseconds 500\n"
+        "    if ($p.HasExited) { break }\n"
+        "}\n"
+        "if ($p.HasExited -and $p.ExitCode -ne 0) {\n"
+        "    Write-Output \"LAUNCHER-FAILED exit-code=$($p.ExitCode)\"\n"
+        "} else {\n"
+        "    Write-Output \"LAUNCHER-OK has-exited=$($p.HasExited)\"\n"
+        "}\n"
     )
-    _run_powershell(script, timeout=30)
+    output = _run_powershell(script, timeout=30)
+    if "LAUNCHER-FAILED" in output:
+        raise DeploymentError(
+            f"Start MockingBird.vbs exited with a non-zero code ({output.strip()}) -- see its own message box "
+            '(e.g. "pythonw.exe is missing") on the Windows desktop for the exact reason.'
+        )
 
 
 def _http_get_real(url: str, timeout: float) -> HttpProbe:

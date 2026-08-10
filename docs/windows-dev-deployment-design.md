@@ -349,6 +349,132 @@ against the same general shape of transient contention (antivirus, the
 Windows Search indexer) that is well-documented on Windows generally, even
 though this tool's own usage pattern was not observed to need it.
 
+## Real end-to-end findings (first actual `python scripts/deploy_windows_dev.py` run)
+
+The hand-validation above exercised each `WindowsHost` mechanism in
+isolation, in a disposable location, against a throwaway stand-in server --
+deliberately not a real ~1.9 GB build, for the reasons the (now out-of-date)
+"left for follow-up" note below used to give. That gap turned out to matter:
+running the actual bare command, for the first time, against a real
+integrated build produced five real, previously-unknown defects, none
+reachable by the hermetic suite's own fakes and none exercised by the
+isolated hand-validation above. All five are fixed; each is retained here
+because each is exactly the shape of bug that only a real end-to-end run
+against a real bundle can surface, and a future change in this vicinity
+should re-read this before assuming the hermetic suite alone is sufficient
+proof of correctness:
+
+1. **`materialize_release` crashed on a bare-file top-level runtime-tier
+   entry.** `typing_extensions` ships as a single `typing_extensions.py`
+   file directly under `site-packages/`, not a package directory. The
+   runtime-tier linking loop assumed every top-level entry it did not copy
+   was a directory and unconditionally junctioned it; `New-Item -ItemType
+   Junction` cannot target a file ("A directory is required for the
+   operation"). Fixed by branching on `entry.is_dir()`, mirroring the
+   `python/`-top-level-files loop just above it in the same function, and
+   copying a bare-file entry from the cache instead of linking it.
+   `make_bundle`'s fixture only ever synthesizes directory-shaped
+   third-party packages, which is exactly why 89 passing hermetic tests
+   never caught this.
+2. **Junction removal silently targeted the shared cache instead of the
+   release's own link.** WSL's drvfs surfaces an NTFS junction as a plain
+   POSIX symlink on the Linux side (`stat`/`readlink -f` on an
+   already-created junction reports `symbolic link`, target the junction's
+   real target); `wslpath -w`, like `realpath`, transparently resolves
+   through it. `_remove_junction_real` converted the *link's* WSL path
+   directly, so every removal attempt actually asked Windows to `rmdir` the
+   runtime/model **cache** directory, not the release's junction --
+   non-destructive only by luck (`rmdir` with no `/s` refuses a real,
+   non-empty directory), but it meant the removal always failed, exhausting
+   every retry. Fixed by resolving the junction's *parent* (never itself a
+   symlink, since this tool never nests one junction's target inside
+   another) via `_to_windows_path_real` and appending the link's own name
+   as a literal string, never letting `wslpath` see the symlink itself.
+3. **`Start-Process -ArgumentList` handed `wscript.exe` an unquoted path
+   containing a space.** Every release path ends in the literal filename
+   `Start MockingBird.vbs`; `_ps_quote` only escapes PowerShell's own
+   single-quote syntax, so the value handed to `-ArgumentList` reached
+   `CreateProcess` with no surrounding double quotes and silently split
+   into two arguments. `wscript.exe` then tried to run the first half as a
+   script, failed to find it, and raised a blocking "Windows Script Host"
+   error dialog -- confirmed directly via `Get-CimInstance Win32_Process`
+   (the process's own received command line) and a `user32.dll`
+   `EnumWindows` probe (a real window titled "Windows Script Host"
+   belonging to that PID). Fixed by wrapping the path in an embedded,
+   literal `"..."` pair inside the outer single-quoted PowerShell string --
+   the same fix shape `_retrying_rmdir_powershell`'s own `cmd.exe` call
+   already used for the same reason.
+4. **`MOCKINGBIRD_HOME` was set to a WSL path, not a Windows one.**
+   `launch_release` passed `str(userdata_dir)` -- WSL-visible, typically
+   `/mnt/c/...` -- directly as the environment variable value, never
+   through `to_windows_path`. Native Windows `pathlib` treats a bare
+   `/mnt/c/...` string as *rooted but not absolute* (no drive letter), so
+   it silently resolved relative to whatever drive the launched process's
+   own current directory happened to be on (always the same drive as
+   `%LOCALAPPDATA%`, since `Start MockingBird.vbs` sets
+   `shell.CurrentDirectory` to the release directory) -- landing on a bogus
+   `C:\mnt\c\Users\...\MockingBirdDev\userdata` sibling instead of raising.
+   Confirmed directly: a live `mockingbird.sqlite3` and `mockingbird.log`
+   turned up under that bogus path, real and currently open, while the
+   documented `%LOCALAPPDATA%\MockingBirdDev\userdata` sat empty. Fixed by
+   routing the value through `windows_host.to_windows_path` like every
+   other cross-boundary path. No hermetic test caught it because the fake
+   `WindowsHost.to_windows_path` is the identity function, so a bare
+   `str(path)` and a real conversion happen to produce the same value
+   there either way.
+5. **`Start-Process -Wait` on `wscript.exe` never returns.** Proven by
+   hand, repeatably: swapping `-Wait` for `-PassThru` plus a bounded poll
+   on `$p.HasExited` completes in about a second with `ExitCode=0`; `-Wait`
+   itself had still not returned after 180s, even though the launch fully
+   succeeded within a couple of seconds every single time (the server came
+   up healthy and reported the right identity moments later). Root cause:
+   `shell.Run(..., 0, False)` inside the launcher starts `pythonw.exe`
+   without giving it a fresh console of its own, so it inherits
+   `wscript.exe`'s own (WSL-interop-spawned, so already somewhat unusual)
+   console/handle set; `-Wait`'s underlying `Process.WaitForExit()` was
+   observed to block until every process sharing those handles exits, not
+   only `wscript.exe` -- and `pythonw.exe` is a long-running server never
+   expected to exit on its own, so `-Wait` was never going to return, not
+   merely slowly. Fixed by switching to `-PassThru` plus a short bounded
+   poll, checking only whether the launcher script itself exited zero (its
+   one real failure mode: `WScript.Quit 1` when `pythonw.exe` is missing);
+   the actual confirmation that the server started is `verify_deployment`'s
+   own bounded HTTP polling regardless, unaffected by this.
+6. **The idempotent-redeploy path verified against a build identity it
+   never wrote anywhere.** `deploy()` always calls `build_release_source`
+   (never `accept_release_source`'s "read the identity already on disk"
+   shortcut) for a plain `python scripts/deploy_windows_dev.py` invocation,
+   which mints a fresh random `build_id` on *every* build regardless of
+   whether the commit changed. When redeploying a commit whose release
+   directory already exists, `deploy()` correctly reuses it rather than
+   re-materializing -- but then verified the running instance against
+   `source.build_id` (the fresh, throwaway one from the rebuild that was
+   never applied to the reused directory) instead of `record.build_id`
+   (the existing ledger entry, i.e. what the reused directory's own
+   `build_info.json` actually contains) -- rejecting its own legitimate
+   reuse, unconditionally, every time a commit was redeployed unchanged.
+   The existing `test_deploy_redeploying_the_identical_commit_is_idempotent`
+   never caught it: both of its `deploy()` calls go through
+   `accept_release_source` against one fixed bundle, so `source.build_id`
+   never changes between them either. Fixed by verifying against
+   `record.build_id` unconditionally (identical to `source.build_id` in the
+   fresh-materialize branch, correct in the reuse branch); added
+   `test_deploy_redeploying_the_identical_commit_from_a_fresh_rebuild_is_idempotent`,
+   which uses two bundles sharing a commit but not a `build_id` -- the
+   actual shape of two independent real builds of the same commit -- and
+   confirmed it fails on the old code with the identical real error message
+   before confirming it passes on the fix.
+
+All five were found, root-caused, and fixed using the same real
+WSL2/Windows/GPU interop as [[sandbox-has-windows-gpu-interop]] and
+[[windows-onnxruntime-cuda-dll-loading-fix]] -- diagnostic scripts against
+the actual packaged bundle, `Get-CimInstance`/`EnumWindows`/timed
+reproductions to isolate each root cause precisely rather than guessing from
+symptoms, and a full clean-slate `python scripts/deploy_windows_dev.py` run
+that ended healthy, correctly identified, and correctly rooted at
+`%LOCALAPPDATA%\MockingBirdDev\userdata` only after all five were fixed
+together.
+
 ## Left for follow-up (deliberately out of scope here)
 
 - **Cache garbage collection.** `--keep` bounds *release* directories only;
@@ -367,13 +493,19 @@ though this tool's own usage pattern was not observed to need it.
   reading over the WSL UNC path from the Windows side. Simpler and already
   correct; a real optimization opportunity if this one-time cost is ever
   measured and found too slow in practice.
-- Real native-Windows execution of this tool itself (not just the packaging
-  it wraps) was validated by hand against a real WSL2/Windows host for the
-  specific mechanisms above, not end-to-end with a real ~1.9 GB build --
-  the same "final native-Windows smoke is handed off" pattern this
-  repository's own packaging design doc already uses, for the same reason
-  (this sandboxed session cannot execute a native Windows binary or spend
-  the several minutes/network access a real build requires).
+- ~~Real native-Windows execution of this tool itself... not end-to-end
+  with a real ~1.9 GB build~~ -- superseded: a real, clean-slate
+  `python scripts/deploy_windows_dev.py` end-to-end run, against a real
+  ~1.9 GB build on real native Windows with a real GPU, was completed after
+  all -- this sandbox has genuine WSL2/Windows/GPU interop (see
+  [[sandbox-has-windows-gpu-interop]]), the same access that made
+  `af15161`/`60928815e5` possible. It found and fixed five real defects
+  -- see "Real end-to-end findings" above -- that neither the hermetic
+  suite nor the isolated hand-validation elsewhere in this document could
+  have caught. The final native-Windows *product* smoke (camera, live
+  detection, a real Visit) is still a separate, deliberately-out-of-scope
+  handoff -- this tool's own job is proven; MockingBird's product behavior
+  on a real bird is not this tool's concern to verify.
 
 ## Non-goals
 
