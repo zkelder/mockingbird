@@ -719,8 +719,15 @@ def ensure_cache(
     comparison logic. An existing directory at the expected hash-named path
     that does *not* match its own recorded manifest (corrupted, tampered,
     or from an interrupted run predating the atomic-rename fix below) is
-    never trusted just because its name matches -- it is removed and
-    rebuilt fresh, the same as a genuine cache miss.
+    never trusted just because its name matches -- it is rebuilt fresh, the
+    same as a genuine cache miss, but never by deleting the old entry *in
+    place*: it is renamed out of the way first (a same-volume rename does
+    not require closing any file handle already open inside it, unlike
+    deletion), so a release currently running with files open straight out
+    of this exact path is never disturbed and the trusted path itself is
+    never left in a partially-deleted state -- see the real incident this
+    fixed in docs/windows-dev-deployment-design.md's "Real end-to-end
+    findings".
 
     Reuse only re-verifies a cheap structural fact (file count/total bytes
     against the manifest `_write_cache_manifest` recorded when the entry
@@ -742,12 +749,34 @@ def ensure_cache(
 
     cache_dir = cache_root / content_hash
 
+    stale_dir: Path | None = None
     if cache_dir.is_dir():
         if _cache_directory_matches(
             cache_dir, content_hash=content_hash, file_count=expected_file_count, total_bytes=expected_total_bytes,
         ):
             return CachePopulationResult(cache_dir=cache_dir, content_hash=content_hash, reused=True)
-        windows_host.remove_tree(cache_dir)
+        # A mismatching entry at the trusted, hash-named path is never
+        # deleted *in place* -- renamed out of the way first instead, real
+        # end-to-end evidence for why: a release currently running can have
+        # files open straight out of this exact path (via its own junction
+        # into it), and deleting a directory that contains a currently
+        # -loaded `.pyd`/`.dll` only ever succeeds *partially* (Windows
+        # refuses to delete a loaded module; `rmdir /s /q` quietly deletes
+        # everything else and leaves those behind) -- corrupting the entry
+        # for every release that reuses it, reproduced for real once (see
+        # docs/windows-dev-deployment-design.md's "Real end-to-end
+        # findings"). A same-volume rename, by contrast, does not require
+        # closing any open handle inside it -- Windows binds an open handle
+        # to the file object, not the path, so a process already using
+        # files from here is completely undisturbed by the directory
+        # itself moving. The new, correct content is staged and atomically
+        # renamed into the real, trusted `cache_dir` path below *before*
+        # this renamed-away copy is ever touched again, so a later,
+        # best-effort cleanup of it can fail (still-locked files) without
+        # ever leaving `cache_dir` itself in a corrupted or ambiguous
+        # state.
+        stale_dir = cache_root / f"{content_hash}.stale-{secrets.token_hex(4)}"
+        windows_host.rename(cache_dir, stale_dir)
 
     windows_host.ensure_dir(cache_root)
     staging_dir = cache_root / f"{content_hash}.staging-{secrets.token_hex(4)}"
@@ -773,6 +802,18 @@ def ensure_cache(
             pass
         raise
     windows_host.rename(staging_dir, cache_dir)
+
+    if stale_dir is not None:
+        # Best-effort only: whatever was still using the old, mismatching
+        # entry may still be holding some of its files open, so this can
+        # genuinely fail (or partially fail) -- that must never mask the
+        # successful population above, and by this point nothing depends
+        # on `stale_dir` any more regardless.
+        try:
+            windows_host.remove_tree(stale_dir)
+        except Exception:
+            pass
+
     return CachePopulationResult(cache_dir=cache_dir, content_hash=content_hash, reused=False)
 
 
@@ -1210,7 +1251,32 @@ def launch_release(release_dir: Path, *, host: str, port: int, userdata_dir: Pat
     # `WindowsHost.to_windows_path` used in tests is the identity function,
     # so a bare `str(path)` and a real conversion happen to produce the
     # same value there either way.
-    windows_host.launch_release(release_dir, {"MOCKINGBIRD_HOME": windows_host.to_windows_path(userdata_dir)})
+    windows_host.launch_release(
+        release_dir,
+        {
+            "MOCKINGBIRD_HOME": windows_host.to_windows_path(userdata_dir),
+            # The runtime cache is junctioned, not copied, into every
+            # release that shares it -- so *every* file the running process
+            # itself writes through that junction lands directly in the
+            # shared cache directory, not somewhere private to this
+            # release. CPython does exactly this on every first import: it
+            # writes a `.pyc` next to the `.py` it just compiled. Real
+            # end-to-end evidence: after a release actually ran for a
+            # while, its runtime cache directory had genuinely grown from
+            # 2626 files to 3060 -- all 434 extra ones freshly written
+            # `__pycache__/*.pyc` files, nothing else differed -- which
+            # then made `ensure_cache`'s own manifest-vs-live-content check
+            # correctly (not spuriously) report a mismatch on the next
+            # deploy, since the manifest still claimed the pre-run file
+            # count. `ensure_cache` now recovers from that safely either
+            # way (see its own docstring), but suppressing bytecode writes
+            # for *this dev tool's own* launches avoids manufacturing the
+            # mismatch in the first place -- never a change to the real
+            # product's own packaging or normal (non-dev-tool) startup
+            # behavior, which keeps writing `.pyc`s as usual.
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

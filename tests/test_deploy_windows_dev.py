@@ -573,6 +573,54 @@ def test_ensure_cache_detects_and_rebuilds_a_corrupted_entry(tmp_path: Path, fak
     assert (second.cache_dir / "python" / "site-packages" / "fastapi" / "__init__.py").is_file()
 
 
+def test_ensure_cache_rebuilds_a_mismatching_entry_by_renaming_it_away_not_deleting_it_in_place(
+    tmp_path: Path, fake_host: WindowsHost,
+) -> None:
+    """Regression test for a real incident: deleting a mismatching cache
+    entry *in place* only ever succeeds partially when a release currently
+    running has files open straight out of it (Windows refuses to delete a
+    loaded `.pyd`/`.dll`; `rmdir /s /q` quietly deletes everything else and
+    leaves those behind), corrupting the entry for every release that
+    reuses it -- reproduced for real once, recovered by a full manual
+    repopulation (see docs/windows-dev-deployment-design.md's "Real
+    end-to-end findings"). `ensure_cache` must rename the old entry out of
+    the way first and populate/rename the new one into the trusted path
+    *before* ever touching the old, renamed-away copy -- proven here by
+    making removal of anything *other* than the freshly staged/populated
+    directories fail outright (simulating files still locked by whatever
+    was using the mismatching entry) and confirming population still fully
+    succeeds, with correct fresh content landing at the real, trusted
+    `cache_dir` path regardless."""
+
+    bundle = make_bundle(tmp_path / "build", git_commit="a" * 40, build_id="id1")
+    cache_root = tmp_path / "cache" / "runtime"
+    first = ensure_runtime_cache(bundle, cache_root=cache_root, windows_host=fake_host)
+    victim = next((first.cache_dir / "python" / "site-packages").glob("fastapi/__init__.py"))
+    victim.unlink()  # corrupt it, forcing the mismatch/rebuild path
+
+    def _refuse_removal_of_anything_not_staging_or_stale(path: Path) -> None:
+        # The real failure mode: removing the *old*, renamed-away copy can
+        # fail (still-locked files) without that ever being allowed to
+        # affect population of the new one.
+        if ".stale-" not in path.name:
+            raise AssertionError(f"unexpected remove_tree call on {path} -- only the renamed-away stale copy "
+                                  "should ever be removed once a mismatch is detected")
+        raise OSError("simulated: still-locked file inside the renamed-away stale copy")
+
+    host = dataclasses.replace(fake_host, remove_tree=_refuse_removal_of_anything_not_staging_or_stale)
+
+    second = ensure_runtime_cache(bundle, cache_root=cache_root, windows_host=host)
+
+    assert second.reused is False
+    assert second.cache_dir == first.cache_dir  # same trusted, hash-named path
+    assert (second.cache_dir / "python" / "site-packages" / "fastapi" / "__init__.py").is_file()
+    # Exactly one renamed-away stale copy left behind (best-effort cleanup
+    # of it failed, by design of this test) -- never left at the trusted
+    # path itself, and never silently lost track of either.
+    stale_dirs = [p for p in cache_root.iterdir() if ".stale-" in p.name]
+    assert len(stale_dirs) == 1
+
+
 def test_ensure_cache_population_is_atomic_no_partial_entry_left_on_a_failed_populate(
     tmp_path: Path, fake_host: WindowsHost,
 ) -> None:
@@ -869,6 +917,33 @@ def test_launch_release_points_mockingbird_home_at_the_shared_dev_userdata_dir(
     # Never the real product default (%LOCALAPPDATA%\MockingBird, sibling
     # of %LOCALAPPDATA%\MockingBirdDev) -- structurally a different path.
     assert calls[0]["extra_env"]["MOCKINGBIRD_HOME"] != str(tmp_path / "LOCALAPPDATA" / "MockingBird")
+
+
+def test_launch_release_suppresses_bytecode_writes_into_the_shared_runtime_cache(
+    tmp_path: Path, fake_host: WindowsHost,
+) -> None:
+    """Regression test: the runtime cache is junctioned, not copied, into
+    every release that shares it, so a running process's own `.pyc` writes
+    (CPython writes one next to every `.py` it compiles, on first import)
+    land directly in the shared cache directory -- real end-to-end
+    evidence: a release that actually ran for a while grew its runtime
+    cache from 2626 to 3060 files, all 434 extra ones freshly written
+    `__pycache__/*.pyc`, which then made a later `ensure_cache` check
+    correctly report a mismatch against the pre-run manifest.
+    `PYTHONDONTWRITEBYTECODE=1` on this dev tool's own launches avoids
+    manufacturing that mismatch in the first place -- never a change to
+    the real product's own packaging or its normal (non-dev-tool) startup
+    behavior."""
+
+    bundle = make_bundle(tmp_path / "build", git_commit="a" * 40, build_id="id1")
+    release_dir = tmp_path / "releases" / "aaaaaaa"
+    shutil.copytree(bundle, release_dir)
+    userdata_dir = tmp_path / "LOCALAPPDATA" / DEV_ROOT_DIRNAME / USERDATA_DIRNAME
+
+    launch_release(release_dir, host=DEFAULT_HOST, port=DEFAULT_PORT, userdata_dir=userdata_dir, windows_host=fake_host)
+
+    calls = fake_host.launch_release.calls  # type: ignore[attr-defined]
+    assert calls[0]["extra_env"]["PYTHONDONTWRITEBYTECODE"] == "1"
 
 
 def test_launch_release_sends_mockingbird_home_through_to_windows_path(

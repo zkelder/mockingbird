@@ -464,16 +464,54 @@ proof of correctness:
    actual shape of two independent real builds of the same commit -- and
    confirmed it fails on the old code with the identical real error message
    before confirming it passes on the fix.
+7. **A mismatching runtime-cache entry was deleted *in place*, corrupting
+   it.** Confirmed by real damage: validating a second real commit against
+   an already-populated cache, `ensure_cache` decided the existing
+   `runtime/<hash>/` entry no longer matched its own manifest and called
+   `remove_tree` on it directly, in place -- while a still-running,
+   legitimately-deployed release had files open straight out of that exact
+   path via its own junction into it. `rmdir /s /q` deleted everything it
+   could (2613 of 2626 files) and silently left the 13 it could not --
+   every one of them a currently-loaded `.pyd`/`.dll` (Windows refuses to
+   delete a loaded module) -- corrupting the cache entry for every release
+   referencing it. Recovered by stopping the process (releasing the locks)
+   and fully repopulating. Fixed by never deleting a mismatching entry in
+   place: `ensure_cache` now renames it out of the way first (a
+   same-volume rename does not require closing handles already open
+   inside it, unlike deletion, so a process using files from here is
+   completely undisturbed), populates and atomically renames the fresh
+   entry into the real, trusted path, and only *then* best-effort-cleans
+   up the renamed-away copy -- a failure there (still-locked files) can no
+   longer corrupt what the trusted path itself points at.
+8. **The mismatch in (7) was not corruption at all -- it was the running
+   application itself, by entirely ordinary means.** Root-caused by direct
+   comparison of the cache directory's actual contents against the fresh
+   bundle's own runtime-tier file list: exactly 434 extra files, every
+   single one a `__pycache__/*.pyc`, nothing else differed. The runtime
+   cache is *junctioned*, not copied, into every release that shares it --
+   so any file the running process itself writes through that junction
+   (CPython writes a `.pyc` next to every `.py` it compiles, on first
+   import, unless told not to) lands directly in the shared cache
+   directory, not somewhere private to the release. A cache entry that
+   actually gets *used* by a real, running release reliably grows past its
+   own population-time manifest this way -- "once written, never modified
+   again" was never quite true in practice once (7) is accounted for.
+   Fixed at the source rather than only tolerating the resulting mismatch:
+   `launch_release` now also sets `PYTHONDONTWRITEBYTECODE=1` for this dev
+   tool's own launches, the same way it already sets `MOCKINGBIRD_HOME` --
+   never a change to the real product's own packaging or its normal
+   (non-dev-tool) startup behavior, which keeps writing `.pyc`s as usual.
 
-All five were found, root-caused, and fixed using the same real
+All eight were found, root-caused, and fixed using the same real
 WSL2/Windows/GPU interop as [[sandbox-has-windows-gpu-interop]] and
 [[windows-onnxruntime-cuda-dll-loading-fix]] -- diagnostic scripts against
 the actual packaged bundle, `Get-CimInstance`/`EnumWindows`/timed
-reproductions to isolate each root cause precisely rather than guessing from
-symptoms, and a full clean-slate `python scripts/deploy_windows_dev.py` run
-that ended healthy, correctly identified, and correctly rooted at
-`%LOCALAPPDATA%\MockingBirdDev\userdata` only after all five were fixed
-together.
+reproductions, and direct before/after directory-content comparisons to
+isolate each root cause precisely rather than guessing from symptoms, and a
+full clean-slate `python scripts/deploy_windows_dev.py` run (twice, against
+two real separate commits) that ended healthy, correctly identified, and
+correctly rooted at `%LOCALAPPDATA%\MockingBirdDev\userdata` only after all
+eight were fixed together.
 
 ## Left for follow-up (deliberately out of scope here)
 
