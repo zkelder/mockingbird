@@ -509,13 +509,22 @@ class CameraNodeClient:
         base = normalize_camera_node_address(base_address)
         code = pairing_code.strip()
         if not code or len(code) > 128:
-            raise CameraNodeClientError("pairing_rejected")
+            # Never sent to the Node at all -- a malformed request, not a
+            # verdict from the Node about the code's correctness.
+            raise CameraNodeClientError("pairing_code_malformed")
         status, _, data = self._request(base_address=base, path="/node/v1/pair", method="POST", payload={"pairing_code": code})
         if status == 410:
             raise CameraNodeClientError("pairing_code_expired")
         if status == 429:
             raise CameraNodeClientError("pairing_rate_limited")
-        if status in {401, 409}:
+        if status == 409:
+            # The Node's one-time code is single-use; 409 means *some* pair()
+            # call already consumed it -- a local repair-state question ("did
+            # my last attempt actually succeed?"), never evidence the code
+            # itself is wrong. Keep this distinct from a genuine 401 rejection
+            # so the two are never shown as the same "was rejected" message.
+            raise CameraNodeClientError("pairing_code_already_used")
+        if status == 401:
             raise CameraNodeClientError("pairing_rejected")
         if status != 200:
             raise CameraNodeClientError("node_unavailable")

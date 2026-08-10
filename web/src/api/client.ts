@@ -439,6 +439,10 @@ export const apiClient = {
     request<CameraConfigurationEditResponse>(
       `/api/streams/${encodeURIComponent(streamId)}/camera-configuration`,
     ),
+  getCameraConfigurationPendingPairing: (streamId: string) =>
+    request<CameraNodePendingSetupResponse>(
+      `/api/streams/${encodeURIComponent(streamId)}/camera-configuration/pending-pairing`,
+    ),
   previewCameraConfiguration: (
     streamId: string,
     payload: CameraConfigurationImpactPreviewRequest,

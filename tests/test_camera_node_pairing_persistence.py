@@ -534,7 +534,12 @@ def test_duplicate_pair_with_the_same_code_fails_cleanly_without_losing_the_firs
 
             second = await _pair(client, code="only-once-code")
             assert second.status_code == 409
-            assert "rejected" in second.json()["detail"].lower()
+            # Distinct from a genuine Node rejection of a wrong code (see
+            # tests/test_camera_node_repair_pairing.py) -- a 409 here means
+            # the code already succeeded once, a local repair-state question,
+            # never a verdict that the code itself was wrong.
+            assert "already used" in second.json()["detail"].lower()
+            assert "rejected" not in second.json()["detail"].lower()
 
             # The first, genuinely successful pairing must still be intact
             # and resumable -- a redundant/duplicate click never loses it.

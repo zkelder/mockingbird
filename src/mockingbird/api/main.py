@@ -1121,6 +1121,8 @@ def _camera_node_prepared_config(
 
 def _camera_node_prepared_edit_payload(
     payload: CameraConfigurationImpactPreviewRequest | CameraConfigurationApplyRequest,
+    *,
+    verify_camera: bool = False,
 ) -> CameraConfigurationImpactPreviewRequest | CameraConfigurationApplyRequest:
     if payload.provider_key != "camera_node" or not payload.node_pairing_token:
         return payload
@@ -1128,6 +1130,7 @@ def _camera_node_prepared_edit_payload(
         provider_key=payload.provider_key,
         config=payload.config,
         pairing_token=payload.node_pairing_token,
+        verify_camera=verify_camera,
     )
     for key in {"node_monitoring_profile_id", "node_evidence_profile_id"}:
         if not configured.get(key):
@@ -8767,6 +8770,51 @@ def _camera_node_pending_setup_response(
     )
 
 
+def _camera_node_pairing_http_error(error: CameraNodeClientError) -> HTTPException:
+    """One explicit status+message per failure cause -- a malformed request,
+    an expired code, a Node's genuine rejection of a wrong code, and a code
+    already consumed by an earlier accepted pairing (`pairing_code_already_
+    used`) are never collapsed into the same "was rejected" text. The last
+    one is a local repair-state question ("did an earlier attempt already
+    succeed?"), not a verdict about the code -- see
+    tests/test_camera_node_repair_pairing.py for the real repro this fixes."""
+
+    code = str(error)
+    messages = {
+        "node_address_invalid": "Enter a complete HTTP or HTTPS Camera Node address.",
+        "node_address_requires_lan_ip": "Use an explicit local LAN IP address; discovery names are not supported yet.",
+        "node_address_not_local": "Camera Node addresses must be local LAN addresses.",
+        "pairing_code_malformed": "Enter the Camera Node's one-time pairing code.",
+        "pairing_code_expired": "The Camera Node pairing code expired. Start the Node again for a new code.",
+        "pairing_rate_limited": "Pairing attempts are temporarily limited on the Camera Node.",
+        "pairing_rejected": "The Camera Node pairing code was rejected.",
+        "pairing_code_already_used": (
+            "This one-time code was already used for a pairing attempt. If a "
+            "repair or setup already completed, refresh to resume it before "
+            "requesting a new code from the Camera Node."
+        ),
+        "node_api_unsupported": "This Camera Node uses an unsupported API version.",
+    }
+    # A malformed request (never reached the Node) and a genuine Node verdict
+    # are both 4xx, but distinct statuses keep them distinguishable to a
+    # caller that isn't just reading the message text.
+    status_by_code = {
+        "node_address_invalid": 400,
+        "node_address_requires_lan_ip": 400,
+        "node_address_not_local": 400,
+        "pairing_code_malformed": 400,
+        "pairing_code_expired": 409,
+        "pairing_rate_limited": 409,
+        "pairing_rejected": 409,
+        "pairing_code_already_used": 409,
+        "node_api_unsupported": 502,
+    }
+    return HTTPException(
+        status_code=status_by_code.get(code, 502),
+        detail=messages.get(code, "Camera Node is unavailable or returned an invalid response."),
+    )
+
+
 @app.post("/api/camera-nodes/pair", response_model=CameraNodePairResponse)
 async def pair_camera_node(payload: CameraNodePairRequest) -> CameraNodePairResponse:
     """Make the explicitly requested, bounded LAN pairing call exactly once.
@@ -8784,17 +8832,7 @@ async def pair_camera_node(payload: CameraNodePairRequest) -> CameraNodePairResp
         get_camera_node_client().health(payload.base_address)
         pairing = get_camera_node_client().pair(payload.base_address, payload.pairing_code)
     except CameraNodeClientError as error:
-        messages = {
-            "node_address_invalid": "Enter a complete HTTP or HTTPS Camera Node address.",
-            "node_address_requires_lan_ip": "Use an explicit local LAN IP address; discovery names are not supported yet.",
-            "node_address_not_local": "Camera Node addresses must be local LAN addresses.",
-            "pairing_code_expired": "The Camera Node pairing code expired. Start the Node again for a new code.",
-            "pairing_rate_limited": "Pairing attempts are temporarily limited on the Camera Node.",
-            "pairing_rejected": "The Camera Node pairing code was rejected.",
-            "node_api_unsupported": "This Camera Node uses an unsupported API version.",
-        }
-        status = 400 if str(error).startswith("node_address") else 409 if str(error).startswith("pairing_") else 502
-        raise HTTPException(status_code=status, detail=messages.get(str(error), "Camera Node is unavailable or returned an invalid response.")) from None
+        raise _camera_node_pairing_http_error(error) from None
     pending = get_repository().create_camera_node_pending_setup(
         pairing, renews_pairing_token=payload.renews_pairing_token
     )
@@ -10157,6 +10195,8 @@ def _camera_configuration_http_error(error: Exception) -> HTTPException:
         "camera_node_pairing_required": "Pair a Camera Node and select an advertised camera before saving.",
         "camera_node_pairing_expired": "Camera Node pairing expired. Pair the Node again before saving.",
         "camera_node_identity_changed": "This paired Node has a different identity. Add it as a separate camera instead.",
+        "authentication_rejected": "Camera Node pairing is no longer accepted. Pair the Node again before saving.",
+        "node_unavailable": "Camera Node is unavailable. Check the local Node before saving.",
     }
     if code in conflict_messages:
         return HTTPException(status_code=409, detail=conflict_messages[code])
@@ -10180,6 +10220,43 @@ async def get_camera_configuration_edit(
     if configuration is None:
         raise _not_found("Stream", stream_id)
     return configuration
+
+
+@app.get(
+    "/api/streams/{stream_id}/camera-configuration/pending-pairing",
+    response_model=CameraNodePendingSetupResponse,
+)
+async def get_camera_configuration_pending_pairing(
+    stream_id: str,
+) -> CameraNodePendingSetupResponse:
+    """Resume a not-yet-saved *repair* pairing for this Stream's Camera Node.
+
+    "Pair or repair Node" durably persists its credential the moment the
+    Node accepts it -- before the repair page ever gets a chance to save it
+    onto the Stream (see `create_camera_node_pending_setup`). Without this,
+    a refresh, a closed tab, or simply not reaching Save yet orphans that
+    already-consumed one-time code: the browser's only visible recourse is
+    to re-enter it, which the Node correctly (and permanently) refuses a
+    second time. 404 (not a 200 with an empty body) when nothing is
+    resumable, so the repair page can tell "nothing pending" apart from a
+    real failure -- exactly like first-run's `/api/camera-nodes/pending-setup`.
+    """
+
+    try:
+        pending = get_repository().get_camera_node_pending_setup_for_stream(stream_id)
+    except ValueError as error:
+        raise _camera_configuration_http_error(error) from None
+    if pending is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No Camera Node pairing is waiting to be resumed for this camera.",
+        )
+    message = (
+        "Pairing needs to be renewed."
+        if pending.status == "needs_renewal"
+        else "Camera Node paired. Choose an advertised camera and save to finish repairing."
+    )
+    return _camera_node_pending_setup_response(pending, message=message)
 
 
 @app.post(
@@ -10213,7 +10290,11 @@ async def apply_camera_configuration(
     try:
         result = await CameraConfigurationApplicationService(get_repository()).apply(
             stream_id,
-            _camera_node_prepared_edit_payload(payload),
+            # An actual live check against the Node, exactly like first-run's
+            # `/api/camera-setup/complete` (never its own `/validate`/preview
+            # step) -- a stale or already-superseded credential is caught
+            # here, before it's saved, rather than persisted as if it worked.
+            _camera_node_prepared_edit_payload(payload, verify_camera=True),
         )
     except (CameraConfigurationConflictError, ValueError, RuntimeError) as error:
         raise _camera_configuration_http_error(error) from None

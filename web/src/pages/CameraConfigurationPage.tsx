@@ -87,6 +87,9 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
   const [selectedNodeCameraId, setSelectedNodeCameraId] = useState("");
   const [isPairingNode, setIsPairingNode] = useState(false);
   const [isRevokingNode, setIsRevokingNode] = useState(false);
+  const [isCheckingNodeResume, setIsCheckingNodeResume] = useState(false);
+  const [nodePairingNeedsRenewal, setNodePairingNeedsRenewal] = useState(false);
+  const [isCancelingNodePairing, setIsCancelingNodePairing] = useState(false);
 
   const canSave = Boolean(preview?.validation.can_apply && preview.changed_fields.length > 0);
   const secretFields = useMemo(
@@ -127,6 +130,53 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
     void load();
   }, [streamId]);
 
+  // Repair's "Pair or repair Node" durably persists its credential the
+  // instant the Node accepts it -- before this page ever gets a chance to
+  // save it onto the Stream (see create_camera_node_pending_setup). Without
+  // resuming it here, a refresh, a closed tab, or simply not reaching Save
+  // yet orphans that already-consumed one-time code: the only visible
+  // recourse would be re-entering it, which the Node correctly (and
+  // permanently) refuses a second time. Mirrors first-run's own resume
+  // check in CameraSetupPage.tsx; scoped to this Stream's own Camera Node
+  // identity so an unrelated in-progress Add Camera pairing is never
+  // surfaced here as if it belonged to this repair.
+  useEffect(() => {
+    if (!configuration || !configuration.editable || configuration.provider_key !== "camera_node") return;
+    let cancelled = false;
+    setIsCheckingNodeResume(true);
+    void apiClient.getCameraConfigurationPendingPairing(streamId)
+      .then((resumed) => {
+        if (cancelled) return;
+        if (resumed.status === "needs_renewal") {
+          setNodePairingNeedsRenewal(true);
+          setNodePairing(null);
+          return;
+        }
+        setNodePairingNeedsRenewal(false);
+        setNodePairing({
+          pairing_token: resumed.pairing_token,
+          node_id: resumed.node_id,
+          display_name: resumed.display_name,
+          api_version: resumed.api_version,
+          cameras: resumed.cameras,
+          message: resumed.message,
+        });
+        setSelectedNodeCameraId(resumed.selected_camera_id ?? "");
+        setPairingCode("");
+      })
+      .catch(() => {
+        // Nothing resumable (a plain 404) or the check itself failed --
+        // either way this fails open into the normal "enter a code" form,
+        // exactly like first-run's own resume check. Never blocks the page.
+      })
+      .finally(() => {
+        if (!cancelled) setIsCheckingNodeResume(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [streamId, configuration?.provider_key, configuration?.editable]);
+
   async function previewChanges() {
     if (!configuration) return;
     setIsPreviewing(true);
@@ -152,6 +202,7 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
     try {
       const pairing = await apiClient.pairCameraNode({ base_address: nodeAddress, pairing_code: pairingCode });
       setNodePairing(pairing);
+      setNodePairingNeedsRenewal(false);
       const initialCamera = pairing.cameras.find((camera) => camera.status === "available" && camera.snapshot_supported)?.camera_id ?? "";
       setSelectedNodeCameraId(initialCamera);
       setPairingCode("");
@@ -159,6 +210,22 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
       setError(caught instanceof Error ? caught.message : "Camera Node pairing could not be completed.");
     } finally {
       setIsPairingNode(false);
+    }
+  }
+
+  async function cancelNodePairingAttempt() {
+    if (!nodePairing) return;
+    setIsCancelingNodePairing(true);
+    setError(null);
+    try {
+      await apiClient.revokeCameraNodePendingSetup({ pairing_token: nodePairing.pairing_token });
+      setNodePairing(null);
+      setSelectedNodeCameraId("");
+      setNodePairingNeedsRenewal(false);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "This pairing attempt could not be canceled right now.");
+    } finally {
+      setIsCancelingNodePairing(false);
     }
   }
 
@@ -233,8 +300,13 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
             {configuration.provider_key === "camera_node" ? <div className="notice-panel">
               <strong>Repair or change Camera Node view</strong>
               <span>Pairing is explicit. Enter the Node’s address and one-time local code to repair pairing or choose another advertised camera from the same Node. The saved address and credential remain masked.</span>
+              {isCheckingNodeResume ? <span className="meta-text">Checking for an already-paired repair attempt…</span> : null}
+              {nodePairingNeedsRenewal ? <div className="error-panel">
+                <strong>Pairing needs to be renewed</strong>
+                <span>MockingBird found an earlier repair pairing for this Camera Node, but it is no longer accepted. Pair again below with a new one-time code.</span>
+              </div> : null}
               <label>Node address<input onChange={(event) => { setNodeAddress(event.target.value); setPreview(null); }} placeholder="http://192.168.1.50:8787" value={nodeAddress} /></label>
-              <label>One-time pairing code<input onChange={(event) => setPairingCode(event.target.value)} type="password" value={pairingCode} /></label>
+              <label>One-time pairing code<input autoComplete="one-time-code" onChange={(event) => setPairingCode(event.target.value)} type="password" value={pairingCode} /></label>
               <button className="secondary-action" disabled={!nodeAddress || !pairingCode || isPairingNode} onClick={() => void pairNodeForRepair()} type="button">{isPairingNode ? "Pairing…" : "Pair or repair Node"}</button>
               <button className="secondary-action" disabled={isRevokingNode} onClick={() => void revokeNodePairing()} type="button">{isRevokingNode ? "Revoking…" : "Revoke current pairing"}</button>
               {nodePairing ? <><span><strong>Node found:</strong> {nodePairing.display_name} ({nodePairing.api_version})</span>
@@ -242,6 +314,8 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
                   <option value="">Choose an advertised camera</option>
                   {nodePairing.cameras.map((camera) => <option disabled={camera.status !== "available" || !camera.snapshot_supported} key={camera.camera_id} value={camera.camera_id}>{camera.display_name}{camera.provider_type ? ` (${camera.provider_type})` : ""} — {camera.status.replace(/_/g, " ")}</option>)}
                 </select></label>
+                <button className="secondary-action" disabled={isCancelingNodePairing} onClick={() => void cancelNodePairingAttempt()} type="button">{isCancelingNodePairing ? "Canceling…" : "Cancel this pairing attempt"}</button>
+                <span className="meta-text">Canceling revokes this not-yet-saved pairing at the Camera Node so it stops advertising it as paired; a new one-time code will be needed afterward.</span>
               </> : <span className="meta-text">You can still rename this Camera or Stream without re-pairing.</span>}
             </div> : configuration.editable_fields.map((field) => (
               <div className="page-stack" key={field.key}>

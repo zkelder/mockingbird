@@ -4737,6 +4737,45 @@ class ProductRepository:
             )
             return _camera_node_pending_setup_from_model(model) if model is not None else None
 
+    def get_camera_node_pending_setup_for_stream(
+        self,
+        stream_id: str,
+    ) -> CameraNodePendingSetup | None:
+        """Resume a not-yet-saved *repair* pairing for this Stream's own
+        Camera Node only -- the repair-flow counterpart of
+        `get_latest_camera_node_pending_setup` for first-run setup.
+
+        Repair's "Pair or repair Node" durably persists its credential the
+        instant the Node accepts it, exactly like first-run pairing (see
+        `create_camera_node_pending_setup`) -- but unlike first-run, a repair
+        is never the *first* thing this Stream's Camera Node identity is
+        established from. That gives this lookup something first-run's
+        global "most recent" resume cannot safely have: an already-known
+        `node_id` to require a match against, so an unrelated in-progress
+        "Add Camera" pairing for a *different* Node is never surfaced here as
+        if it belonged to this repair. Without a known `node_id` yet (an
+        edited Stream whose provider isn't `camera_node`, or one that has
+        literally never completed a pairing), nothing is resumed.
+        """
+
+        with self.session_factory() as session:
+            state = _camera_configuration_state_for_stream(session, stream_id)
+            if state is None:
+                return None
+            _, _, model, _, config, _, _ = state
+            if model.provider_key != "camera_node":
+                return None
+            existing_node_id = (config.get("node_id") or "").strip()
+            if not existing_node_id:
+                return None
+            pending = session.scalar(
+                select(CameraNodePendingSetupModel)
+                .where(CameraNodePendingSetupModel.node_id == existing_node_id)
+                .order_by(CameraNodePendingSetupModel.updated_at.desc())
+                .limit(1)
+            )
+            return _camera_node_pending_setup_from_model(pending) if pending is not None else None
+
     def update_camera_node_pending_setup_draft(
         self,
         token: str,
