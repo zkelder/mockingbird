@@ -1842,6 +1842,15 @@ class CandidateVisitProposalFacts:
     # dataclass importing an observation-engine type. `None` for a caller
     # that predates this field; never fabricated for a legacy record.
     confidence_evidence_json: str | None = None
+    # Visit Continuity / Provisional Admission Fix v1 (see
+    # docs/tracklet-visit-assembly-contract.md "Episode finality"): copied
+    # verbatim from `AssembledVisitProposal.continuation_pending` by the
+    # adapter, exactly how `ambiguous_adjacent_proposal_ids` already crosses
+    # this same engine-side/repository-side boundary -- lets `evaluate_
+    # candidate_authority`'s transactional re-check see it without this
+    # dataclass importing the assembler. Defaults `False` for a caller that
+    # predates this field, matching `AssembledVisitProposal`'s own default.
+    continuation_pending: bool = False
 
 
 @dataclass(frozen=True)

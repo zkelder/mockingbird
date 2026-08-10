@@ -216,6 +216,30 @@ foreclose a better answer later. The shadow proposal itself remains fully
 visible through existing shadow/replay diagnostics either way; this policy
 only decides Stage 7's own persistence action.
 
+## Continuation-pending policy (Visit Continuity / Provisional Admission Fix v1)
+
+A proposal whose own `continuation_pending` is `True` -- the assembler
+itself cannot yet certify this proposal's own tail boundary as final,
+because a same-encounter continuation tracklet could still be assembled
+onto it later (see "Episode finality" in
+[tracklet-visit-assembly-contract.md](tracklet-visit-assembly-contract.md))
+-- is conservatively **blocked** (`blocked_continuation_pending`), checked
+immediately after the ambiguity policy above and for the identical reason:
+persisting now would foreclose the assembler's own already-correct merge
+decision, which real 2026-08-10 evidence proved matters (candidate-004 was
+admitted, then a strict-superset continuation merged and was admitted
+*again* 56 seconds later as candidate-005, for one real ~75-second
+encounter). Unlike every other blocked outcome, this one is retryable
+(`candidate_visit_authority.RETRYABLE_OUTCOMES`): the identical `proposal_
+id` may honestly become eligible on a later attempt purely because more of
+the stream has now been observed, with nothing else about the proposal
+changed -- so a caller must not treat this outcome as a permanent fact the
+way every other blocked outcome already is (see `engine_runtime.
+_EngineSession._run_assembly_tick`'s own retry bookkeeping). This gate adds
+no new tracker/assembler logic of its own; it only ever reads a fact the
+assembler already computed, exactly like the ambiguity policy it sits next
+to.
+
 ## Idempotency and concurrency
 
 Proven at three layers (`tests/test_candidate_visit_repository.py`):

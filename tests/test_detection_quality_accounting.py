@@ -175,6 +175,28 @@ def test_report_separates_admitted_and_rejected_confidence_characteristics() -> 
     assert report["suppression_reason_counts"] == [{"reason": "reject_subject_geometry_invalid", "count": 1}]
 
 
+def test_report_explains_continuation_pending_suppressions_like_any_other_reason() -> None:
+    """Visit Continuity / Provisional Admission Fix v1 (see
+    docs/tracklet-visit-assembly-contract.md "Episode finality"): the new
+    `blocked_continuation_pending` outcome needs no special-casing here --
+    this module already counts *any* admission-attempt outcome string
+    honestly, so a caller can explain that several internal admission
+    attempts (one still-forming episode, reconsidered across ticks)
+    represented one eventual encounter without this module ever hiding
+    them from the funnel."""
+    report = build_detection_quality_report(
+        admission_records=(
+            AdmissionRecord("visit-episode:pending-1", "blocked_continuation_pending", admitted=False),
+            AdmissionRecord("visit-episode:pending-1", "blocked_continuation_pending", admitted=False),
+            AdmissionRecord("visit-episode:pending-1", "created", admitted=True),
+        ),
+    )
+    stages = {item["stage"]: item["count"] for item in report["pipeline_stage_counts"]}
+    assert stages[STAGE_ADMISSION_ATTEMPT] == 3  # every attempt stays visible, none hidden
+    assert stages[STAGE_CANDIDATE_VISIT_CREATION] == 1  # exactly one real admission
+    assert report["suppression_reason_counts"] == [{"reason": "blocked_continuation_pending", "count": 2}]
+
+
 def test_report_rates_are_insufficient_data_when_denominator_unknown() -> None:
     report = build_detection_quality_report()
     assert report["track_confirmation_rate"] == {"state": "insufficient_data", "value": None}

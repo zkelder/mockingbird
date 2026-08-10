@@ -42,7 +42,7 @@ from mockingbird.observation.camera_node_live import (
     LiveCameraNodeShadowSession,
 )
 from mockingbird.observation.candidate_visit_adapter import CandidateVisitAuthorityAdapter
-from mockingbird.observation.candidate_visit_authority import ObservationAuthorityMode
+from mockingbird.observation.candidate_visit_authority import RETRYABLE_OUTCOMES, ObservationAuthorityMode
 from mockingbird.observation.contracts import EvidenceCandidate, TrackUpdate
 from mockingbird.observation.frame_driven_provider import FrameDrivenObservationProvider, FrameDrivenProviderConfiguration
 from mockingbird.observation.onnx_provider import OnnxCudaObservationProvider, OnnxModelBundle
@@ -104,6 +104,12 @@ class _TrialState:
         self.candidates_created = 0
         self.attempts: list[dict[str, object]] = []
         self.proposals_observed = 0
+        # Visit Continuity / Provisional Admission Fix v1 (see
+        # docs/tracklet-visit-assembly-contract.md "Episode finality"): the
+        # latest source-relative offset observed so far, advancing on every
+        # analyzed frame regardless of whether it carried a track -- mirrors
+        # `engine_runtime._EngineSession`'s own `latest_known_offset_ms`.
+        self.latest_known_offset_ms = 0
 
 
 def _record_result(payload: object, state: _TrialState) -> None:
@@ -113,15 +119,23 @@ def _record_result(payload: object, state: _TrialState) -> None:
     for result in results:
         state.all_track_updates.extend(result.track_updates)
         state.all_evidence_candidates.extend(result.evidence_candidates)
+        for packet in result.frame_packets:
+            if packet.source_offset_ms is not None:
+                state.latest_known_offset_ms = max(state.latest_known_offset_ms, packet.source_offset_ms)
 
 
 def _run_assembly_tick(
     *, state: _TrialState, stream_id: str, session: LiveCameraNodeShadowSession,
-    adapter: CandidateVisitAuthorityAdapter, max_candidates: int, activated: bool,
+    adapter: CandidateVisitAuthorityAdapter, max_candidates: int, activated: bool, finalize: bool = False,
 ) -> bool:
     """Returns True if the trial's own candidate stop bound has been
     reached. A no-op (returns False, prints nothing new) when nothing new
-    has been assembled since the previous tick."""
+    has been assembled since the previous tick.
+
+    `finalize=True` (the trial's own final, post-`session.stop()` tick)
+    treats every proposal as already final -- correct, since the trial is
+    ending and no continuation could ever arrive -- exactly mirroring
+    `engine_runtime._EngineSession._run_assembly_tick`."""
 
     evidence_by_generation: dict[str, list[str]] = {}
     for candidate in state.all_evidence_candidates:
@@ -131,14 +145,15 @@ def _run_assembly_tick(
         tuple(state.all_track_updates), stream_id=stream_id,
         evidence_candidate_ids_by_generation={key: tuple(value) for key, value in evidence_by_generation.items()},
     )
-    proposals = assemble_visit_episodes(tracklets).proposals
+    proposals = assemble_visit_episodes(
+        tracklets, known_horizon_ms=None if finalize else state.latest_known_offset_ms,
+    ).proposals
     new_proposals = [item for item in proposals if item.proposal_id not in state.attempted_proposal_ids]
     if not new_proposals:
         return False
 
     candidates_by_id = {item.media_asset_id: item for item in state.all_evidence_candidates}
     for proposal in new_proposals:
-        state.attempted_proposal_ids.add(proposal.proposal_id)
         state.proposals_observed += 1
         relevant = tuple(
             candidates_by_id[media_id] for media_id in proposal.evidence_candidate_ids if media_id in candidates_by_id
@@ -147,6 +162,11 @@ def _run_assembly_tick(
         outcome = adapter.attempt_candidate(
             proposal, evidence_candidates=relevant, evidence_bytes=evidence_bytes, observed_at=datetime.now(UTC),
         )
+        # See `RETRYABLE_OUTCOMES`: a proposal blocked only because its own
+        # episode boundary is not yet final must be re-offered on a later
+        # tick, never permanently remembered as attempted.
+        if outcome.outcome not in RETRYABLE_OUTCOMES:
+            state.attempted_proposal_ids.add(proposal.proposal_id)
         entry = {
             "proposal_id": outcome.proposal_id,
             "outcome": outcome.outcome,
@@ -242,7 +262,7 @@ async def _run_trial(args: argparse.Namespace) -> dict[str, object]:
             _record_result(final_results, state)
             _run_assembly_tick(
                 state=state, stream_id=args.stream_id_in_product, session=session, adapter=adapter,
-                max_candidates=args.max_candidates, activated=args.activate,
+                max_candidates=args.max_candidates, activated=args.activate, finalize=True,
             )
             provider.close()
 

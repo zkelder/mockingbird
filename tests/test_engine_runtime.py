@@ -20,8 +20,9 @@ import pytest
 from PIL import Image
 
 from mockingbird.observation import engine_runtime
+from mockingbird.observation.candidate_visit_adapter import CandidateVisitAuthorityAdapter
 from mockingbird.observation.candidate_visit_authority import ObservationAuthorityMode
-from mockingbird.observation.contracts import DetectionObservation, FramePacket
+from mockingbird.observation.contracts import DetectionObservation, EvidenceCandidate, FramePacket, TrackUpdate
 from mockingbird.observation.engine_runtime import (
     ObservationEngineSessionManager,
     resolve_provider_config_path,
@@ -874,3 +875,167 @@ def test_repeated_start_stop_observing_pauses_and_resumes_each_time(
     manager.stop(STREAM_ID)
     assert len(coordinator.pause_calls) == 3
     assert len(coordinator.resume_calls) == 3
+
+
+# =============================================================================
+# Visit Continuity / Provisional Admission Fix v1 (see
+# docs/tracklet-visit-assembly-contract.md "Episode finality" and the real
+# 2026-08-10 fresh-cohort candidate-004/005 field defect: a provisional
+# tracklet was admitted as its own candidate Visit, then a same-encounter
+# continuation tracklet merged into it and was admitted *again* 56 seconds
+# later -- two persisted Visits for one real ~75-second encounter). These
+# tests drive `_EngineSession._run_assembly_tick` directly -- the actual
+# live production code path, not a reimplementation of it -- across
+# multiple simulated ticks, which the timer-paced end-to-end tests above
+# cannot exercise without a real multi-tick wall-clock wait.
+# =============================================================================
+
+
+def _tick_session(repository: ProductRepository) -> engine_runtime._EngineSession:
+    return engine_runtime._EngineSession(
+        stream_id=STREAM_ID,
+        playback_config=_camera_node_config(),
+        provider_config_path=Path("unused-for-this-test"),
+        privacy_ignore_regions=(),
+        repository_factory=lambda: repository,
+    )
+
+
+def _tick_adapter(repository: ProductRepository) -> CandidateVisitAuthorityAdapter:
+    return CandidateVisitAuthorityAdapter(
+        repository, detector_provenance="onnx-cuda", tracker_provenance="frame-driven-onnx-cuda",
+        provider_key="frame-driven-onnx-cuda",
+    )
+
+
+def _tick_track_updates(generation_id: str, start_ms: int, end_ms: int) -> tuple[TrackUpdate, ...]:
+    """One minimal confirmed-and-ended generation -- exactly what
+    `build_tracklets` requires: a `started` update and a terminal `ended`
+    update carrying `lifecycle_state == 'ended'`."""
+    box = (0.47, 0.58, 0.51, 0.63)
+    return (
+        TrackUpdate(
+            track_id=f"{generation_id}-track", generation_id=generation_id,
+            captured_at=NOW + timedelta(milliseconds=start_ms), status="started", lifecycle_state="confirmed",
+            frame_id=f"frame-{generation_id}-start", source_offset_ms=start_ms, broad_class="animal",
+            bounding_box=box, supporting_frame_ids=(f"frame-{generation_id}-start",),
+            support_state="weak_detector_supported", detector_ran=True,
+        ),
+        TrackUpdate(
+            track_id=f"{generation_id}-track", generation_id=generation_id,
+            captured_at=NOW + timedelta(milliseconds=end_ms), status="ended", lifecycle_state="ended",
+            frame_id=f"frame-{generation_id}-end", source_offset_ms=end_ms, broad_class="animal",
+            bounding_box=box, supporting_frame_ids=(f"frame-{generation_id}-end",),
+            support_state="weak_detector_supported", detector_ran=True,
+            terminal_reason="maximum_unsupported_duration",
+        ),
+    )
+
+
+def _tick_evidence(generation_id: str, role: str, suffix: str) -> tuple[EvidenceCandidate, bytes]:
+    candidate = EvidenceCandidate(
+        media_asset_id=f"shadow-burst:{suffix}", stream_id=STREAM_ID, role=role, captured_at=NOW,
+        frame_id=f"frame-{generation_id}-start", subject_geometry=(0.47, 0.58, 0.51, 0.63),
+        track_generation_id=generation_id,
+    )
+    return candidate, _jpeg_bytes()
+
+
+def test_continuation_pending_defers_admission_until_encounter_resolves(repository: ProductRepository) -> None:
+    """Direct reproduction of the real 004/005 field defect at the actual
+    `_EngineSession._run_assembly_tick` call site: a tracklet that
+    finalizes alone must not be admitted before its own continuation
+    window closes; once a genuine continuation tracklet merges into it,
+    only the merged episode is ever admitted -- one encounter, one Visit,
+    never two."""
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, now=NOW)
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    gen_early, gen_continuation = "gen-early", "gen-continuation"
+    early_updates = list(_tick_track_updates(gen_early, 0, 5_000))
+    # Within merge_gap_ms (15,000ms) of gen_early's own end -- a same
+    # -encounter continuation after a brief reacquisition gap, exactly the
+    # real attempt-3/004-005 shape.
+    continuation_updates = list(_tick_track_updates(gen_continuation, 12_000, 17_000))
+
+    evidence_a, bytes_a = _tick_evidence(gen_early, "high_resolution_burst", "hash-a")
+    evidence_b, bytes_b = _tick_evidence(gen_continuation, "context", "hash-b")
+    burst_bytes_cache = {evidence_a.media_asset_id: bytes_a, evidence_b.media_asset_id: bytes_b}
+    attempted_proposal_ids: set[str] = set()
+
+    # Tick 1: only the early generation has finalized. Its own continuation
+    # window (`ambiguous_gap_ms`=45,000ms past its own end) has not closed
+    # -- this is the exact moment the real, pre-fix pipeline admitted
+    # candidate-004.
+    session._run_assembly_tick(
+        all_track_updates=early_updates, all_evidence_candidates=[evidence_a],
+        attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        known_horizon_ms=5_100,
+    )
+    assert session._counts.candidates_created == 0
+    assert attempted_proposal_ids == set()  # never permanently remembered -- must be retried
+    assert session._suppressed.get("blocked_continuation_pending") == 1
+
+    # Tick 2: the continuation generation has now also finalized and merges
+    # with the early one (real code path: the unmodified `assemble_visit_
+    # episodes` itself decides this). The *merged* proposal's own window
+    # has also not closed yet -- still correctly deferred.
+    all_updates = early_updates + continuation_updates
+    all_evidence = [evidence_a, evidence_b]
+    session._run_assembly_tick(
+        all_track_updates=all_updates, all_evidence_candidates=all_evidence,
+        attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        known_horizon_ms=17_100,
+    )
+    assert session._counts.candidates_created == 0
+    assert attempted_proposal_ids == set()
+    assert session._suppressed.get("blocked_continuation_pending") == 2
+
+    # Tick 3: enough of the stream has now been observed with nothing
+    # further arriving -- the merged episode finally becomes eligible.
+    session._run_assembly_tick(
+        all_track_updates=all_updates, all_evidence_candidates=all_evidence,
+        attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        known_horizon_ms=17_000 + 45_000 + 1,
+    )
+    assert session._counts.candidates_created == 1
+    assert len(attempted_proposal_ids) == 1
+
+    from mockingbird.repository.product_repository import ObservationCandidateVisitModel
+
+    final_proposal_id = next(iter(attempted_proposal_ids))
+    with repository.session_factory() as db_session:
+        import json as _json
+
+        ledger = db_session.get(ObservationCandidateVisitModel, final_proposal_id)
+        assert ledger is not None
+        assert _json.loads(ledger.constituent_generation_ids_json) == [gen_early, gen_continuation]
+        assert ledger.visit_id == session._last_candidate_visit_id
+
+
+def test_finalize_tick_admits_a_still_pending_singleton_immediately(repository: ProductRepository) -> None:
+    """Session end (`finalize=True`, real code path: the `finally:` block's
+    own last tick in `_run_async`) must treat a still-pending proposal as
+    final right away -- the stream itself has ended, so no continuation
+    could ever arrive. This is the exact real shape of the fresh cohort's
+    own candidate-006 (created during the session's graceful-teardown
+    window) and proves the fix does not silently swallow a genuine
+    encounter that simply never got a chance to wait out its own window."""
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, now=NOW)
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    updates = list(_tick_track_updates("gen-solo", 0, 1_000))
+    evidence_a, bytes_a = _tick_evidence("gen-solo", "high_resolution_burst", "hash-solo-a")
+    evidence_b, bytes_b = _tick_evidence("gen-solo", "context", "hash-solo-b")
+    burst_bytes_cache = {evidence_a.media_asset_id: bytes_a, evidence_b.media_asset_id: bytes_b}
+    attempted_proposal_ids: set[str] = set()
+
+    session._run_assembly_tick(
+        all_track_updates=updates, all_evidence_candidates=[evidence_a, evidence_b],
+        attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        known_horizon_ms=1_100, finalize=True,
+    )
+    assert session._counts.candidates_created == 1
+    assert session._suppressed.get("blocked_continuation_pending") is None

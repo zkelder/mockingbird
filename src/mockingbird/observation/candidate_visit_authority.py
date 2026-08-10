@@ -57,6 +57,13 @@ class ProposalLineage(Protocol):
     source_capture_frame_ids: tuple[str, ...]
     supporting_frame_ids: tuple[str, ...]
     ambiguous_adjacent_proposal_ids: tuple[str, ...]
+    # Visit Continuity / Provisional Admission Fix v1 (see
+    # docs/tracklet-visit-assembly-contract.md "Episode finality"): a fact
+    # the assembler already computed (never reconstructed here -- this gate
+    # stays a pure consumer, exactly like it already is for `ambiguous_
+    # adjacent_proposal_ids`) naming whether a same-encounter continuation
+    # tracklet could still be assembled onto this proposal's own tail later.
+    continuation_pending: bool
 
 
 class ObservationAuthorityMode(str, Enum):
@@ -77,6 +84,7 @@ AuthorityOutcome = Literal[
     "blocked_pre_activation",
     "blocked_invalid_lineage",
     "blocked_ambiguous_boundary",
+    "blocked_continuation_pending",
     "blocked_session_limit",
     "blocked_hourly_limit",
 ]
@@ -91,10 +99,22 @@ BLOCKED_OUTCOMES: frozenset[AuthorityOutcome] = frozenset(
         "blocked_pre_activation",
         "blocked_invalid_lineage",
         "blocked_ambiguous_boundary",
+        "blocked_continuation_pending",
         "blocked_session_limit",
         "blocked_hourly_limit",
     }
 )
+
+# `blocked_continuation_pending` is never a permanent fact about a given
+# `proposal_id` the way every other blocked outcome effectively is (see
+# "Continuation-pending policy" below): the identical proposal id, re
+# -evaluated later with nothing else changed but more of the stream having
+# been observed, can honestly reach a different outcome once its own
+# episode boundary finalizes. A caller retrying a "new" proposal across
+# repeated assembly passes (`engine_runtime.py`, `candidate_visit_authority
+# _cli.py`) uses this to decide which proposal ids are safe to remember as
+# permanently resolved versus which must be re-offered on a later pass.
+RETRYABLE_OUTCOMES: frozenset[AuthorityOutcome] = frozenset({"blocked_continuation_pending"})
 
 
 @dataclass(frozen=True)
@@ -209,9 +229,22 @@ def evaluate_candidate_authority(
        blocked rather than persisted with a boundary that might need to
        change -- see "Ambiguity policy" in the contract doc for the full
        rationale.
-    6. Session budget, then hourly budget: bounded, explicit, durable rate
+    6. Continuation-pending policy (Visit Continuity / Provisional
+       Admission Fix v1): a proposal whose own tail boundary the assembler
+       cannot yet certify as final (`continuation_pending`) is
+       conservatively blocked for the same reason ambiguity is -- a
+       same-encounter continuation tracklet may still be assembled onto it,
+       changing its constituent set before it would ever be revisited
+       otherwise (Stage 7 candidates are never re-merged after creation).
+       Structurally identical to the ambiguity check above: a fact the
+       assembler already computed, never reconstructed here. Unlike every
+       other blocked outcome, this one is retryable (see
+       `RETRYABLE_OUTCOMES`) -- the identical proposal id may honestly
+       become eligible later purely because more of the stream has now been
+       observed, with nothing else about the proposal changed.
+    7. Session budget, then hourly budget: bounded, explicit, durable rate
        limits.
-    7. Otherwise: create.
+    8. Otherwise: create.
     """
 
     limits = limits or AuthorityLimits()
@@ -229,6 +262,10 @@ def evaluate_candidate_authority(
     if proposal.ambiguous_adjacent_proposal_ids:
         return AuthorityDecision(
             proposal.proposal_id, "blocked_ambiguous_boundary", "proposal_boundary_ambiguous_with_adjacent_proposal",
+        )
+    if proposal.continuation_pending:
+        return AuthorityDecision(
+            proposal.proposal_id, "blocked_continuation_pending", "episode_boundary_not_yet_final",
         )
     if state.candidates_created_in_session >= limits.max_candidates_per_session:
         return AuthorityDecision(proposal.proposal_id, "blocked_session_limit", "session_candidate_budget_exhausted")

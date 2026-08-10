@@ -145,6 +145,28 @@ dataset-plan.md); it is the smaller, upstream fact of "does this benchmark
 example even have review provenance," checked before that larger governed
 decision would ever apply.
 
+Defense in depth (Visit Continuity / Provisional Admission Fix v1, Part 7
+audit): the product's own `ReviewLabel` schema has no reviewer-identity
+field at all -- a real `ReviewLabel` an agent writes through the genuine
+`POST /api/review-labels` path (as this milestone's own fresh-cohort
+candidate-004/005/006 labels, and the original three, were) is only
+distinguishable from a genuine human correction by free-text prose in
+`notes`, which nothing enforces. A future manifest-generation script could
+therefore carelessly (never maliciously) copy that same self-disclosure
+straight into `reviewed_by`/`source` while still claiming `status=
+"reviewed_truth"`. `EvaluationExample.__post_init__` now also rejects that
+combination outright (`reviewed_truth_requires_human_reviewer`) whenever
+`reviewed_by`/`source` contains an already-established self-disclosure
+marker (`agent`, `claude`, `language model`, ...) -- a bounded, documented
+vocabulary, not a content classifier, and not the only safeguard: the
+load-bearing rule remains procedural (only a human-run script, over
+material a human actually reviewed, constructs a `reviewed_truth`
+example). No committed evaluation tooling reads live `ReviewLabel` rows at
+all today (`scripts/run_detection_quality_accounting.py` sources reviewed
+truth only from already-exported, human-vetted Stage 6.17 manifests), so
+this closes a real but previously-latent gap rather than a currently
+-exploited one.
+
 The three 2026-08-10 false candidates are registered `diagnostic_only`
 (`source="agent-visual-inspection-2026-08-10"`) -- valuable hard negatives,
 never promoted to `reviewed_truth`. Their underlying per-detection confidence

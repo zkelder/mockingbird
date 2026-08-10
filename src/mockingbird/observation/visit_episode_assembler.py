@@ -588,6 +588,23 @@ class AssembledVisitProposal:
     # product-doctrine.md). Defaulted so every pre-existing direct
     # `AssembledVisitProposal(...)` construction remains valid unchanged.
     confidence_evidence: ConfidenceEvidenceSummary = EMPTY_CONFIDENCE_EVIDENCE
+    # Visit Continuity / Provisional Admission Fix v1 (see
+    # docs/tracklet-visit-assembly-contract.md "Episode finality"): whether
+    # this proposal's own *tail* boundary is not yet safe to treat as final
+    # -- a same-encounter continuation tracklet could still be assembled
+    # onto it later, which would change `constituent_generation_ids` (and
+    # therefore `proposal_id`) to a larger, more complete set. `False`
+    # unless the caller explicitly supplies `known_horizon_ms` to
+    # `assemble_visit_episodes` (every pre-existing caller -- `replay.py`,
+    # every existing test, an offline/already-complete recording -- omits
+    # it, so this field defaults to `False` and every prior behavior is
+    # unchanged). Only a caller re-running assembly incrementally over a
+    # still-live stream (`engine_runtime.py`, `candidate_visit_authority_cli.py`)
+    # ever sets it `True`, and only for as long as the episode's own
+    # continuation window (`VisitAssemblyConfiguration.ambiguous_gap_ms`,
+    # the exact bound the assembler's own merge algorithm already uses to
+    # decide whether a later tracklet could still attach) remains open.
+    continuation_pending: bool = False
 
     def __post_init__(self) -> None:
         if not self.shadow_only:
@@ -621,6 +638,8 @@ class VisitAssemblyResult:
 def assemble_visit_episodes(
     tracklets: tuple[Tracklet, ...],
     config: VisitAssemblyConfiguration | None = None,
+    *,
+    known_horizon_ms: int | None = None,
 ) -> VisitAssemblyResult:
     """Given a deterministic (but arbitrarily-ordered) sequence of finalized,
     confirmed tracklets, decide which adjacent ones belong to one sustained
@@ -630,7 +649,7 @@ def assemble_visit_episodes(
     Deterministic and product-write-free: never opens a database, a
     filesystem path beyond what the caller already supplied as bounded
     facts, or a network connection; every decision is a pure function of the
-    supplied `Tracklet`s and `config`.
+    supplied `Tracklet`s, `config`, and `known_horizon_ms`.
 
     Algorithm (see docs/tracklet-visit-assembly-contract.md for the full
     rationale): tracklets are first sorted into one deterministic total
@@ -645,6 +664,25 @@ def assemble_visit_episodes(
     bounded, monotonic argument, not a heuristic). This lets two genuinely
     separate simultaneous/crossing subjects each keep accumulating their own
     fragments correctly even while interleaved in time with each other.
+
+    `known_horizon_ms` (Visit Continuity / Provisional Admission Fix v1, see
+    docs/tracklet-visit-assembly-contract.md "Episode finality"): an
+    optional, purely-additive, source-offset-relative fact -- never a
+    wall-clock read, matching every other bound in this module -- naming the
+    latest point in the stream the caller has actually observed so far
+    (live or replay, but only meaningful for a caller that may still receive
+    *more* tracklets later; an offline pass over an already-complete
+    recording correctly omits it). When supplied, every resulting
+    proposal's own `continuation_pending` reuses exactly the same
+    `config.ambiguous_gap_ms` bound the algorithm above already uses to
+    decide whether a later tracklet could still attach to that proposal's
+    tail -- so a caller re-running this function incrementally over a still
+    -live stream can tell "this proposal's boundary is final" apart from
+    "a same-encounter continuation could still arrive and change this
+    proposal's own constituent set." Omitted (the default), every proposal
+    reports `continuation_pending=False`, exactly the prior (pre-fix)
+    behavior -- every existing caller (`replay.py`, every pre-existing
+    test) is unaffected.
     """
     config = config or VisitAssemblyConfiguration()
     ordered = sorted(
@@ -722,7 +760,10 @@ def assemble_visit_episodes(
 
     proposal_ids = [_proposal_id(members) for members in episodes]
     proposals = tuple(
-        _build_proposal(members, episode_decisions[index], proposal_ids, ambiguous_links.get(index, set()))
+        _build_proposal(
+            members, episode_decisions[index], proposal_ids, ambiguous_links.get(index, set()),
+            known_horizon_ms=known_horizon_ms, ambiguous_gap_ms=config.ambiguous_gap_ms,
+        )
         for index, members in enumerate(episodes)
     )
     return VisitAssemblyResult(
@@ -746,6 +787,9 @@ def _build_proposal(
     decisions: list[BoundaryDecision],
     proposal_ids: list[str],
     ambiguous_with: set[int],
+    *,
+    known_horizon_ms: int | None,
+    ambiguous_gap_ms: int,
 ) -> AssembledVisitProposal:
     ordered_members = sorted(members, key=lambda item: (item.start_offset_ms, item.generation_id))
     limitation_facts: list[str] = []
@@ -755,12 +799,13 @@ def _build_proposal(
         limitation_facts.append("contains_provisional_only_tracklet")
     if len(ordered_members) > 1:
         limitation_facts.append("assembled_from_multiple_tracklets")
+    end_offset_ms = max(item.end_offset_ms for item in ordered_members)
     return AssembledVisitProposal(
         proposal_id=_proposal_id(members),
         stream_id=ordered_members[0].stream_id,
         broad_class=ordered_members[0].broad_class,
         start_offset_ms=ordered_members[0].start_offset_ms,
-        end_offset_ms=max(item.end_offset_ms for item in ordered_members),
+        end_offset_ms=end_offset_ms,
         constituent_generation_ids=tuple(item.generation_id for item in ordered_members),
         constituent_track_ids=tuple(dict.fromkeys(
             track_id for item in ordered_members for track_id in item.track_ids
@@ -780,6 +825,15 @@ def _build_proposal(
         limitation_facts=tuple(limitation_facts),
         confidence_evidence=merge_confidence_evidence(
             tuple(item.confidence_evidence for item in ordered_members)
+        ),
+        # `<=`, mirroring the exact "still open" comparison `assemble_visit_
+        # episodes` itself already uses (`gap since episode end <=
+        # config.ambiguous_gap_ms`): stays pending until the caller's own
+        # observed horizon has moved strictly past the last point at which a
+        # later tracklet could still have been compared against this
+        # proposal's tail and found mergeable.
+        continuation_pending=(
+            known_horizon_ms is not None and (known_horizon_ms - end_offset_ms) <= ambiguous_gap_ms
         ),
     )
 

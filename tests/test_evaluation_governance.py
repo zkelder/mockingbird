@@ -130,3 +130,109 @@ def test_load_evaluation_manifest_rejects_example_missing_reviewer_when_claiming
     path.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(EvaluationGovernanceError, match="reviewed_truth_requires_reviewer_identity"):
         load_evaluation_manifest(path)
+
+
+# =============================================================================
+# Visit Continuity / Provisional Admission Fix v1, Part 7 audit: an agent's
+# own visual-inspection disclosure (the real, established convention this
+# codebase already uses -- see `DIAGNOSTIC_EXAMPLES` in
+# scripts/run_detection_quality_accounting.py and the real `ReviewLabel.
+# notes` text the 2026-08-10 fresh cohort wrote) must never be able to
+# masquerade as `reviewed_truth` even if a future manifest script
+# carelessly copies it into `reviewed_by`/`source`. Defense in depth only --
+# see the module docstring's own note that this is not the only safeguard.
+# =============================================================================
+
+
+def test_reviewed_truth_rejects_agent_disclosed_reviewer_text() -> None:
+    with pytest.raises(EvaluationGovernanceError, match="reviewed_truth_requires_human_reviewer"):
+        EvaluationExample(
+            example_id="visit-observation-candidate-004",
+            status="reviewed_truth",
+            source="fresh-cohort-2026-08-10",
+            description="ambiguous: real bird present, box off-target",
+            reviewed_by="Claude (agent visual inspection, not independently human-confirmed)",
+        )
+
+
+def test_reviewed_truth_rejects_the_real_disclosure_text_the_fresh_cohort_actually_wrote() -> None:
+    """The exact prose the 2026-08-10 fresh cohort recorded in the real
+    product's `ReviewLabel.notes` (see FINAL-REPORT.md Sec 6) must be
+    caught if it were ever copied into a manifest's `reviewed_by` field."""
+    with pytest.raises(EvaluationGovernanceError, match="reviewed_truth_requires_human_reviewer"):
+        EvaluationExample(
+            example_id="visit-observation-candidate-005",
+            status="reviewed_truth",
+            source="fresh-cohort-2026-08-10",
+            description="ambiguous: real bird present, box off-target, track fragmentation",
+            reviewed_by="[AGENT VISUAL REVIEW - not independently human-confirmed] full reasoning follows...",
+        )
+
+
+def test_reviewed_truth_rejects_agent_disclosed_source_even_with_innocuous_reviewer_text() -> None:
+    """The established convention already puts the disclosure in `source`
+    (`DIAGNOSTIC_EXAMPLES`'s own `"agent-visual-inspection-2026-08-10"`) --
+    the check must cover that field too, not only `reviewed_by`."""
+    with pytest.raises(EvaluationGovernanceError, match="reviewed_truth_requires_human_reviewer"):
+        EvaluationExample(
+            example_id="visit-observation-candidate-006",
+            status="reviewed_truth",
+            source="agent-visual-inspection-2026-08-10",
+            description="feeder hardware false positive",
+            reviewed_by="reviewer",
+        )
+
+
+def test_reviewed_truth_marker_check_is_case_insensitive() -> None:
+    with pytest.raises(EvaluationGovernanceError, match="reviewed_truth_requires_human_reviewer"):
+        EvaluationExample(
+            example_id="x", status="reviewed_truth", source="s", description="d",
+            reviewed_by="Reviewed by an AGENT visual pass",
+        )
+
+
+def test_reviewed_truth_accepts_genuinely_human_reviewer_text() -> None:
+    """Sanity: the real, already-accepted Stage 6.17 reviewer-identity
+    convention must not be caught by this defense-in-depth check."""
+    example = EvaluationExample(
+        example_id="session-04-visit-12",
+        status="reviewed_truth",
+        source="stage6.17-reviewed-visit-truth:session-04",
+        description="reviewed real Visit",
+        reviewed_by="temporal-review capture + Stage 6.17 reviewed-Visit-truth manifest",
+    )
+    assert example.training_eligible is True
+
+
+def test_diagnostic_only_may_freely_disclose_agent_review() -> None:
+    """The marker check only ever applies to a `reviewed_truth` claim --
+    `diagnostic_only` (the correct status for an agent's own visual
+    inspection) is exactly where this disclosure belongs and must never be
+    rejected."""
+    example = EvaluationExample(
+        example_id="visit-observation-candidate-004",
+        status="diagnostic_only",
+        source="agent-visual-inspection-2026-08-10",
+        description="ambiguous: real bird present, box off-target",
+        reviewed_by="Claude (agent visual inspection, not independently human-confirmed)",
+    )
+    assert example.training_eligible is False
+    assert example.evaluation_metric_eligible is False
+
+
+def test_load_evaluation_manifest_rejects_agent_disclosed_reviewer_claiming_reviewed_truth(
+    tmp_path: Path,
+) -> None:
+    payload = {
+        "schema_version": 1,
+        "examples": [
+            {
+                "example_id": "x", "status": "reviewed_truth", "source": "s", "description": "d",
+                "reviewed_by": "agent visual review",
+            },
+        ],
+    }
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(EvaluationGovernanceError, match="reviewed_truth_requires_human_reviewer"):
+        load_evaluation_manifest(path)

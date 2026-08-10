@@ -116,6 +116,10 @@ class CandidateVisitAuthorityAdapter:
             evidence_candidate_ids=proposal.evidence_candidate_ids,
             limitation_facts=proposal.limitation_facts,
             ambiguous_adjacent_proposal_ids=proposal.ambiguous_adjacent_proposal_ids,
+            # Visit Continuity / Provisional Admission Fix v1: copied
+            # verbatim, never recomputed here -- the assembler alone owns
+            # this fact (see docs/tracklet-visit-assembly-contract.md).
+            continuation_pending=proposal.continuation_pending,
             assembler_version=ASSEMBLER_VERSION,
             detector_provenance=self._detector_provenance,
             tracker_provenance=self._tracker_provenance,

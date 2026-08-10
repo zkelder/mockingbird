@@ -30,6 +30,7 @@ def _proposal(
     source_capture_frame_ids: tuple[str, ...] = ("frame-1", "frame-2"),
     supporting_frame_ids: tuple[str, ...] = ("frame-1", "frame-2"),
     constituent_generation_ids: tuple[str, ...] = ("gen-1",),
+    continuation_pending: bool = False,
 ) -> AssembledVisitProposal:
     return AssembledVisitProposal(
         proposal_id=proposal_id,
@@ -44,6 +45,7 @@ def _proposal(
         evidence_candidate_ids=("evidence-1",),
         assembly_decisions=(),
         ambiguous_adjacent_proposal_ids=ambiguous_adjacent_proposal_ids,
+        continuation_pending=continuation_pending,
     )
 
 
@@ -212,6 +214,46 @@ def test_ambiguous_adjacent_proposal_is_blocked_not_guessed() -> None:
     )
     assert decision.outcome == "blocked_ambiguous_boundary"
     assert not decision.should_create
+
+
+# --- 30. Visit Continuity / Provisional Admission Fix v1 -------------------
+# (see docs/tracklet-visit-assembly-contract.md "Episode finality" and the
+# fresh-cohort candidate-004/005 field defect this stage fixes.)
+
+
+def test_continuation_pending_proposal_is_blocked_not_admitted_early() -> None:
+    decision = evaluate_candidate_authority(
+        _proposal(continuation_pending=True), observed_at=NOW, state=_state(),
+    )
+    assert decision.outcome == "blocked_continuation_pending"
+    assert not decision.should_create
+
+
+def test_continuation_pending_false_is_the_default_and_does_not_block() -> None:
+    decision = evaluate_candidate_authority(_proposal(), observed_at=NOW, state=_state())
+    assert decision.should_create
+
+
+def test_continuation_pending_outcome_is_the_only_retryable_one() -> None:
+    """The live/trial loop's own retry bookkeeping (`engine_runtime.py`,
+    `candidate_visit_authority_cli.py`) relies on this set being exactly
+    `{"blocked_continuation_pending"}` -- every other outcome is a
+    permanently resolved fact about a given `proposal_id`."""
+    from mockingbird.observation.candidate_visit_authority import RETRYABLE_OUTCOMES
+
+    assert RETRYABLE_OUTCOMES == frozenset({"blocked_continuation_pending"})
+
+
+def test_ambiguity_is_checked_before_continuation_pending() -> None:
+    """When a proposal is somehow both -- an explicit same-pass ambiguity
+    conflict is a stronger, more specific signal than "not yet final" --
+    the more specific outcome is reported."""
+    decision = evaluate_candidate_authority(
+        _proposal(ambiguous_adjacent_proposal_ids=("visit-episode:other",), continuation_pending=True),
+        observed_at=NOW,
+        state=_state(),
+    )
+    assert decision.outcome == "blocked_ambiguous_boundary"
 
 
 # --- Explicit authority states (no vague boolean) ---------------------------

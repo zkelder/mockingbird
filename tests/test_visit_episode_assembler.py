@@ -374,6 +374,264 @@ def test_constituent_track_ids_preserved() -> None:
 
 
 # =============================================================================
+# Visit Continuity / Provisional Admission Fix v1: `known_horizon_ms` /
+# `continuation_pending` (see docs/tracklet-visit-assembly-contract.md
+# "Episode finality" and the fresh-cohort candidate-004/005 field defect --
+# a provisional-only tracklet was admitted as its own candidate Visit before
+# a same-encounter continuation tracklet merged into it, producing a second,
+# redundant candidate Visit 56 seconds later for one real ~75-second
+# encounter). These tests exercise the assembler in isolation; the exact
+# real-data replay lives in `test_replays_fresh_cohort_candidate_004_005_
+# encounter_as_one_proposal` below.
+# =============================================================================
+
+
+def test_known_horizon_ms_omitted_never_marks_continuation_pending() -> None:
+    """Every pre-existing caller (`replay.py`, every test above) omits
+    `known_horizon_ms` -- the exact prior (pre-fix) behavior must be
+    preserved byte-for-byte: no proposal is ever held pending."""
+    a = _tracklet("a", 0, 5_000)
+    b = _tracklet("b", 6_000, 9_000)
+    result = assemble_visit_episodes((a, b))
+    assert all(proposal.continuation_pending is False for proposal in result.proposals)
+
+
+def test_singleton_tracklet_is_pending_within_its_own_continuation_window() -> None:
+    a = _tracklet("solo", 0, 5_000)
+    result = assemble_visit_episodes((a,), known_horizon_ms=5_100)
+    assert result.proposals[0].continuation_pending is True
+
+
+def test_singleton_tracklet_becomes_final_once_its_continuation_window_closes() -> None:
+    a = _tracklet("solo", 0, 5_000)
+    default_config = VisitAssemblyConfiguration()
+    still_open = assemble_visit_episodes((a,), known_horizon_ms=5_000 + default_config.ambiguous_gap_ms)
+    assert still_open.proposals[0].continuation_pending is True
+    closed = assemble_visit_episodes((a,), known_horizon_ms=5_000 + default_config.ambiguous_gap_ms + 1)
+    assert closed.proposals[0].continuation_pending is False
+
+
+def test_merged_proposal_pending_state_follows_its_own_tail_not_first_member() -> None:
+    """A merged (multi-tracklet) proposal's continuation window is governed
+    by its own *latest* constituent's end offset, not the first tracklet's
+    -- otherwise a long-merged episode would go eligible too early."""
+    a = _tracklet("a", 0, 1_000)
+    b = _tracklet("b", 5_000, 20_000)  # within merge_gap_ms of a's end
+    merged = assemble_visit_episodes((a, b), known_horizon_ms=20_100)
+    assert merged.assembled_proposal_count == 1
+    proposal = merged.proposals[0]
+    assert proposal.constituent_generation_ids == ("a", "b")
+    assert proposal.continuation_pending is True  # governed by b's end (20,000), not a's (1,000)
+
+    resolved = assemble_visit_episodes((a, b), known_horizon_ms=20_000 + 45_001)
+    assert resolved.proposals[0].continuation_pending is False
+
+
+def test_replays_fresh_cohort_candidate_004_005_encounter_as_one_proposal() -> None:
+    """Exact reconstruction of the real 2026-08-10 fresh-cohort field defect
+    (see data/field-acceptance/2026-08-10-fresh-cohort-detection-quality/
+    fresh-candidates-extract.json and FINAL-REPORT.md Sec 10): tracklet
+    `frame-track-0043` alone was admitted as candidate-004
+    (`visit-episode:f6547de7632b52bc5c3a78f5`), then a second tracklet
+    (`frame-track-0045`, a continuation of the same bird-at-feeder encounter
+    after a brief reacquisition gap) merged with it and was admitted
+    *again* as candidate-005 (`visit-episode:1b04117cb680f080b04837ef`), 56
+    seconds later -- two persisted Visits for one real ~75-second encounter.
+
+    The generation ids, both proposals' own start/end offsets, and the
+    resulting `proposal_id`s below are exact, independently-recomputed
+    matches of the real historical candidates (verified byte-for-byte
+    against the real `sha256` derivation before this test was written).
+    Tracklet 0045's own exact start offset is not itself part of the
+    persisted candidate record (only the *merged* proposal's start/end
+    survive that far) -- reconstructed here from the first real
+    per-detection confidence sample the real candidate-005 evidence
+    recorded for this generation (1,970,653ms), consistent with a track
+    that begins at its own first detection; every fact this reconstruction
+    depends on (both proposals' ids, offsets, and generation ids) is real.
+    """
+    stream_id = "stream-ca892992771c"
+    gen_0043 = "stream-ca892992771c:frame-track:73aa21ee9c43c992f0cc"
+    gen_0045 = "stream-ca892992771c:frame-track:2424a2579cee08b3b687"
+    # The real, byte-identical evidence box both candidate-004 and
+    # candidate-005's own persisted media shared (`normalized_track_box_json`).
+    box = (0.4723, 0.5812, 0.5056, 0.6318)
+    tracklet_0043 = _tracklet(
+        gen_0043, 1_933_057, 1_963_271, stream_id=stream_id, track_ids=("frame-track-0043",),
+        start_bounding_box=box, end_bounding_box=box, geometry_envelope=box,
+    )
+    tracklet_0045 = _tracklet(
+        gen_0045, 1_970_653, 2_008_735, stream_id=stream_id, track_ids=("frame-track-0045",),
+        start_bounding_box=box, end_bounding_box=box, geometry_envelope=box,
+    )
+
+    # --- what the real (pre-fix) pipeline actually did: assembled in two
+    # separate, temporally-sequential passes, each producing an
+    # admission-eligible proposal with no notion that a continuation could
+    # still arrive.
+    only_0043 = assemble_visit_episodes((tracklet_0043,))
+    assert only_0043.assembled_proposal_count == 1
+    proposal_004 = only_0043.proposals[0]
+    assert proposal_004.proposal_id == "visit-episode:f6547de7632b52bc5c3a78f5"
+    assert proposal_004.continuation_pending is False  # pre-fix: nothing ever flagged this as unsafe
+
+    both = assemble_visit_episodes((tracklet_0043, tracklet_0045))
+    assert both.assembled_proposal_count == 1  # the assembler already correctly merges them
+    proposal_005 = both.proposals[0]
+    assert proposal_005.proposal_id == "visit-episode:1b04117cb680f080b04837ef"
+    assert proposal_005.constituent_generation_ids == (gen_0043, gen_0045)
+
+    # --- the corrected, horizon-aware pipeline instead: at the tick right
+    # after 0043 alone finalizes (0045 does not exist yet), the singleton
+    # proposal is correctly held pending -- never handed to authority --
+    # because a continuation could still arrive within `ambiguous_gap_ms`.
+    right_after_0043_ends = 1_963_271 + 500
+    pending_pass = assemble_visit_episodes((tracklet_0043,), known_horizon_ms=right_after_0043_ends)
+    assert pending_pass.proposals[0].proposal_id == proposal_004.proposal_id
+    assert pending_pass.proposals[0].continuation_pending is True
+
+    # --- and by the time that singleton's own pending window would have
+    # closed (1,963,271 + 45,000 = 2,008,271ms), 0045 has already arrived
+    # and finalized in the real session (1,970,653-2,008,735ms) -- so the
+    # next observed proposal is already the *merged* one, and candidate-004
+    # is never separately created under the corrected pipeline.
+    assert 1_970_653 < 1_963_271 + 45_000  # 0045 genuinely arrives inside 0043's own window
+    merged_pass_horizon = 2_008_735 + 500
+    merged_pending = assemble_visit_episodes(
+        (tracklet_0043, tracklet_0045), known_horizon_ms=merged_pass_horizon,
+    )
+    assert merged_pending.assembled_proposal_count == 1
+    assert merged_pending.proposals[0].proposal_id == proposal_005.proposal_id
+    assert merged_pending.proposals[0].continuation_pending is True  # its own tail window is still open
+
+    # --- once enough of the stream has been observed with nothing further
+    # arriving, the merged proposal -- and only the merged proposal --
+    # finally becomes eligible: one coherent encounter, one candidate.
+    final_horizon = 2_008_735 + 45_000 + 1
+    final_pass = assemble_visit_episodes((tracklet_0043, tracklet_0045), known_horizon_ms=final_horizon)
+    assert final_pass.assembled_proposal_count == 1
+    final_proposal = final_pass.proposals[0]
+    assert final_proposal.proposal_id == proposal_005.proposal_id
+    assert final_proposal.continuation_pending is False
+    assert final_proposal.constituent_generation_ids == (gen_0043, gen_0045)
+
+
+def test_replays_fresh_cohort_candidate_006_as_independent_of_004_005() -> None:
+    """candidate-006 (the feeder-hardware false positive, real proposal id
+    `visit-episode:6d2f6eab0b34ac96e5c0cb7c`) is a separate, ~7.5-minutes
+    -later encounter at the same feeder -- structurally incompatible with
+    the 004/005 encounter by gap alone (far beyond `ambiguous_gap_ms`), so
+    it is never coupled to whether 004/005 has resolved yet. Reproduces the
+    real session shape: candidate-006 was admitted at the session's own
+    final tick (`finalize=True` in engine_runtime.py, see
+    `test_finalize_tick_admits_a_still_pending_singleton_immediately` in
+    test_engine_runtime.py for the live-loop-level version of this same
+    fact) -- unaffected by the fix either way."""
+    stream_id = "stream-ca892992771c"
+    gen_0043 = "stream-ca892992771c:frame-track:73aa21ee9c43c992f0cc"
+    gen_0045 = "stream-ca892992771c:frame-track:2424a2579cee08b3b687"
+    gen_0052 = "stream-ca892992771c:frame-track:6b1aa6d633d81422104d"
+    box_004_005 = (0.4723, 0.5812, 0.5056, 0.6318)
+    box_006 = (0.464, 0.5722, 0.4916, 0.6395)  # candidate-006's real evidence box
+    tracklet_0043 = _tracklet(
+        gen_0043, 1_933_057, 1_963_271, stream_id=stream_id, track_ids=("frame-track-0043",),
+        start_bounding_box=box_004_005, end_bounding_box=box_004_005, geometry_envelope=box_004_005,
+    )
+    tracklet_0045 = _tracklet(
+        gen_0045, 1_970_653, 2_008_735, stream_id=stream_id, track_ids=("frame-track-0045",),
+        start_bounding_box=box_004_005, end_bounding_box=box_004_005, geometry_envelope=box_004_005,
+    )
+    # candidate-006's own real window (start_offset_ms/end_offset_ms), ~7.5
+    # minutes after candidate-005's own end.
+    tracklet_0052 = _tracklet(
+        gen_0052, 2_458_347, 2_468_992, stream_id=stream_id, track_ids=("frame-track-0052",),
+        start_bounding_box=box_006, end_bounding_box=box_006, geometry_envelope=box_006,
+    )
+
+    result = assemble_visit_episodes((tracklet_0043, tracklet_0045, tracklet_0052))
+    assert result.assembled_proposal_count == 2  # {0043, 0045} merged; {0052} separate
+    proposal_006 = next(item for item in result.proposals if item.constituent_generation_ids == (gen_0052,))
+    assert proposal_006.proposal_id == "visit-episode:6d2f6eab0b34ac96e5c0cb7c"
+    assert proposal_006.ambiguous_adjacent_proposal_ids == ()  # never coupled to the 004/005 encounter
+
+    finalized = assemble_visit_episodes((tracklet_0043, tracklet_0045, tracklet_0052), known_horizon_ms=None)
+    proposal_006_final = next(
+        item for item in finalized.proposals if item.constituent_generation_ids == (gen_0052,)
+    )
+    assert proposal_006_final.continuation_pending is False
+
+
+def test_two_separated_encounters_resolve_independently() -> None:
+    """Part 4 regression 2: two genuinely separate encounters with
+    sufficient temporal separation remain two proposals (pre-existing
+    behavior), and the new continuation-pending horizon resolves each
+    independently -- one proposal's own pending state never depends on a
+    temporally-distant, structurally-unrelated proposal's state."""
+    a = _tracklet("a", 0, 5_000)
+    b = _tracklet("b", 200_000, 205_000)
+    result = assemble_visit_episodes((a, b), known_horizon_ms=100_000)
+    assert result.assembled_proposal_count == 2
+    proposal_a = next(item for item in result.proposals if item.constituent_generation_ids == ("a",))
+    proposal_b = next(item for item in result.proposals if item.constituent_generation_ids == ("b",))
+    assert proposal_a.continuation_pending is False  # a's own window (closes at 50,000) is long past
+    assert proposal_b.continuation_pending is True  # b's own window (closes at 250,000) has not closed
+
+    resolved = assemble_visit_episodes((a, b), known_horizon_ms=250_001)
+    assert all(not item.continuation_pending for item in resolved.proposals)
+
+
+def test_spatially_incompatible_close_in_time_remain_separate_and_resolve_independently() -> None:
+    """Part 4 regression 3: existing spatial-discontinuity protection is
+    unaffected by the continuation-pending horizon -- two tracklets close
+    in time but geometrically incompatible stay two proposals, and neither
+    is coupled to the other's pending state."""
+    a = _tracklet("a", 0, 5_000, end_bounding_box=(0.02, 0.02, 0.10, 0.10))
+    b = _tracklet("b", 6_000, 9_000, start_bounding_box=(0.85, 0.85, 0.95, 0.95))
+    decision = classify_boundary(a, b)
+    assert decision.decision == "keep_separate"
+    assert decision.reason == "spatial_discontinuity"
+
+    result = assemble_visit_episodes((a, b), known_horizon_ms=9_000 + 45_001)
+    assert result.assembled_proposal_count == 2
+    assert all(not item.continuation_pending for item in result.proposals)
+
+
+def test_size_incompatible_tracklets_remain_separate_and_resolve_independently() -> None:
+    """Part 4 regression 4: existing size-change-ratio protection
+    (`maximum_size_change_ratio`) is unaffected -- a materially different
+    -size reacquisition still starts a new episode, independent of the
+    continuation-pending horizon."""
+    a = _tracklet("a", 0, 5_000, end_bounding_box=(0.40, 0.40, 0.44, 0.44))  # small box
+    b = _tracklet("b", 6_000, 9_000, start_bounding_box=(0.30, 0.30, 0.70, 0.70))  # much larger box
+    decision = classify_boundary(a, b)
+    assert decision.decision == "keep_separate"
+    assert decision.reason == "spatial_discontinuity"
+
+    result = assemble_visit_episodes((a, b), known_horizon_ms=9_000 + 45_001)
+    assert result.assembled_proposal_count == 2
+    assert all(not item.continuation_pending for item in result.proposals)
+
+
+def test_provisional_encounter_without_continuation_eventually_becomes_eligible() -> None:
+    """Part 4 regression 5: a provisional (never-strong) tracklet that
+    genuinely never receives a continuation must not wait forever -- once
+    the caller's own observed horizon has moved far enough past its own
+    end, it becomes eligible on its own, unmerged with anything."""
+    only = _tracklet("solo", 0, 5_000)
+    assert only.has_strong_evidence is False  # provisional, matching the real 004/005 shape
+
+    just_after = assemble_visit_episodes((only,), known_horizon_ms=5_100)
+    assert just_after.proposals[0].continuation_pending is True
+
+    still_within_window = assemble_visit_episodes((only,), known_horizon_ms=5_000 + 45_000)
+    assert still_within_window.proposals[0].continuation_pending is True
+
+    window_closed = assemble_visit_episodes((only,), known_horizon_ms=5_000 + 45_000 + 1)
+    assert window_closed.proposals[0].continuation_pending is False
+    assert window_closed.proposals[0].constituent_generation_ids == ("solo",)  # never merged, never lost
+
+
+# =============================================================================
 # Extra: `build_tracklets` itself (grouping/filtering/derivation from raw
 # `TrackUpdate`s), and a custom `VisitAssemblyConfiguration`. Not one of the
 # 30 enumerated scenarios on its own, but directly exercises two exports

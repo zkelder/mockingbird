@@ -31,6 +31,27 @@ to `shadow` before the session finishes stopping, so no candidate can ever
 be created once a user has pressed Stop, regardless of what else is still
 draining. Existing candidates are never touched by either action (see
 "Existing Visit protection" in docs/candidate-visit-authority-contract.md).
+
+Visit Continuity / Provisional Admission Fix v1 (see
+docs/tracklet-visit-assembly-contract.md "Episode finality"): `_run_
+assembly_tick` reruns the unmodified assembler over *every* track update
+observed so far on every tick, so a proposal's own constituent tracklet set
+-- and therefore its `proposal_id` -- can still grow on a later tick (a
+same-encounter continuation tracklet finalizing after a brief gap). Each
+tick supplies the latest source-relative offset this session has actually
+observed (`known_horizon_ms`, advancing every analyzed frame regardless of
+whether any track exists that frame) so the assembler itself can tell "this
+proposal's tail boundary might still change" apart from "this proposal is
+safe to offer for admission" -- never guessed here, never reconstructed
+from tracker facts a second time. A proposal blocked only for that reason
+(`blocked_continuation_pending`) is deliberately never marked permanently
+attempted (see `RETRYABLE_OUTCOMES`), so it is naturally re-offered, either
+under the same id once its boundary finalizes or under a new, larger id
+once a continuation tracklet actually merges into it -- either way, one
+coherent encounter still yields at most one candidate Visit. The session
+-ending tick (`finalize=True`) treats every still-pending proposal as final
+immediately: once the stream itself has ended, no continuation could ever
+arrive, so nothing is left waiting forever.
 """
 
 from __future__ import annotations
@@ -54,6 +75,7 @@ from mockingbird.observation.candidate_quality_gate import REJECTED_OUTCOMES
 from mockingbird.observation.candidate_visit_adapter import CandidateVisitAuthorityAdapter
 from mockingbird.observation.candidate_visit_authority import (
     BLOCKED_OUTCOMES,
+    RETRYABLE_OUTCOMES,
     ObservationAuthorityMode,
 )
 from mockingbird.observation.contracts import EvidenceCandidate, TrackUpdate
@@ -515,6 +537,15 @@ class _EngineSession:
             all_track_updates: list[TrackUpdate] = []
             all_evidence_candidates: list[EvidenceCandidate] = []
             attempted_proposal_ids: set[str] = set()
+            # The latest source-relative offset (ms) this session has
+            # actually processed so far -- advances on every analyzed frame
+            # (`ObservationResult.frame_packets`, always populated) whether
+            # or not that frame carried a track, so a genuinely quiet period
+            # still lets a pending episode's continuation window eventually
+            # close (see `_run_assembly_tick`'s `known_horizon_ms`). Never a
+            # wall-clock read itself -- this stays a source-relative fact,
+            # matching every offset the assembler already reasons about.
+            latest_known_offset_ms = 0
             # A track only becomes an assemble-able, terminal `Tracklet` once
             # its generation actually ends -- which, for a proposal only
             # completed by the stream's natural end, happens exactly when
@@ -562,6 +593,9 @@ class _EngineSession:
                         all_track_updates.extend(result.track_updates)
                         all_evidence_candidates.extend(result.evidence_candidates)
                         _harvest_burst_bytes(session, result.evidence_candidates, burst_bytes_cache)
+                        for packet in result.frame_packets:
+                            if packet.source_offset_ms is not None:
+                                latest_known_offset_ms = max(latest_known_offset_ms, packet.source_offset_ms)
                     with self._state_lock:
                         self._counts = ObservationEngineCounts(
                             track_updates_observed=len(all_track_updates),
@@ -579,6 +613,7 @@ class _EngineSession:
                             attempted_proposal_ids=attempted_proposal_ids,
                             burst_bytes_cache=burst_bytes_cache,
                             adapter=adapter,
+                            known_horizon_ms=latest_known_offset_ms,
                         )
             finally:
                 final_results = session.stop()
@@ -586,17 +621,24 @@ class _EngineSession:
                     all_track_updates.extend(result.track_updates)
                     all_evidence_candidates.extend(result.evidence_candidates)
                     _harvest_burst_bytes(session, result.evidence_candidates, burst_bytes_cache)
+                    for packet in result.frame_packets:
+                        if packet.source_offset_ms is not None:
+                            latest_known_offset_ms = max(latest_known_offset_ms, packet.source_offset_ms)
                 # The one tick that matters most for a short/naturally-ended
                 # session: tracks `stop()` just finalized are now terminal,
                 # and every burst byte any of them already captured survives
                 # in `burst_bytes_cache` regardless of `stop()`'s own cache
-                # clear above.
+                # clear above. `finalize=True`: the session itself is ending,
+                # so no continuation could ever arrive -- every still-pending
+                # episode is decided now rather than left waiting forever.
                 self._run_assembly_tick(
                     all_track_updates=all_track_updates,
                     all_evidence_candidates=all_evidence_candidates,
                     attempted_proposal_ids=attempted_proposal_ids,
                     burst_bytes_cache=burst_bytes_cache,
                     adapter=adapter,
+                    known_horizon_ms=latest_known_offset_ms,
+                    finalize=True,
                 )
                 with self._state_lock:
                     self._camera_connected = False
@@ -655,11 +697,24 @@ class _EngineSession:
         attempted_proposal_ids: set[str],
         burst_bytes_cache: dict[str, bytes],
         adapter: CandidateVisitAuthorityAdapter,
+        known_horizon_ms: int | None = None,
+        finalize: bool = False,
     ) -> None:
         """Reruns the unmodified, bounded, post-hoc Stage 6.19 assembler over
         every track update observed so far -- exactly
         `candidate_visit_authority_cli.py`'s own periodic-tick convention,
-        never a new live incremental assembler."""
+        never a new live incremental assembler.
+
+        `known_horizon_ms`/`finalize` implement the Visit Continuity /
+        Provisional Admission Fix v1 (see docs/tracklet-visit-assembly
+        -contract.md "Episode finality"): `finalize=True` (the session
+        -ending tick) omits the horizon entirely, so every proposal is
+        evaluated as already final -- correct, because the stream itself has
+        ended and no continuation could ever arrive. Otherwise
+        `known_horizon_ms` is passed straight through to `assemble_visit_
+        episodes`, which alone decides -- from facts it already owns --
+        whether each proposal's own tail boundary might still change.
+        """
 
         evidence_by_generation: dict[str, list[str]] = {}
         for candidate in all_evidence_candidates:
@@ -671,14 +726,15 @@ class _EngineSession:
             tuple(all_track_updates), stream_id=self.stream_id,
             evidence_candidate_ids_by_generation={key: tuple(value) for key, value in evidence_by_generation.items()},
         )
-        proposals = assemble_visit_episodes(tracklets).proposals
+        proposals = assemble_visit_episodes(
+            tracklets, known_horizon_ms=None if finalize else known_horizon_ms,
+        ).proposals
         new_proposals = [item for item in proposals if item.proposal_id not in attempted_proposal_ids]
         if not new_proposals:
             return
 
         candidates_by_id = {item.media_asset_id: item for item in all_evidence_candidates}
         for proposal in new_proposals:
-            attempted_proposal_ids.add(proposal.proposal_id)
             relevant = tuple(
                 candidates_by_id[media_id]
                 for media_id in proposal.evidence_candidate_ids
@@ -693,6 +749,18 @@ class _EngineSession:
                 proposal, evidence_candidates=relevant, evidence_bytes=evidence_bytes,
                 observed_at=datetime.now(UTC),
             )
+            # A proposal blocked only because its own episode boundary is
+            # not yet final (`blocked_continuation_pending`) is never marked
+            # permanently attempted: the identical proposal id must be
+            # re-offered on a later tick, either because a continuation
+            # tracklet has since merged into it (a different, larger
+            # proposal id, which is "new" anyway) or because enough of the
+            # stream has now been observed for its own boundary to finalize.
+            # Every other outcome -- created, idempotent, or any other
+            # block -- is a resolved fact about this exact proposal id and
+            # must never be revisited (see `RETRYABLE_OUTCOMES`).
+            if outcome.outcome not in RETRYABLE_OUTCOMES:
+                attempted_proposal_ids.add(proposal.proposal_id)
             with self._state_lock:
                 self._counts = ObservationEngineCounts(
                     track_updates_observed=self._counts.track_updates_observed,

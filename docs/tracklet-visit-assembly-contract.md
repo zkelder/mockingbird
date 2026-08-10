@@ -226,6 +226,69 @@ consumer that wants to treat ambiguous-adjacent proposals as one candidate
 Visit downstream can do so from this recorded fact; this stage does not
 decide that for them.
 
+## Episode finality (Visit Continuity / Provisional Admission Fix v1)
+
+The ambiguity policy above protects two proposals that are *both already
+visible in the same assembly pass*. It cannot protect against the shape a
+real 2026-08-10 fresh field cohort surfaced instead: a caller (`engine_
+runtime.py`, `candidate_visit_authority_cli.py`) that reruns
+`assemble_visit_episodes` periodically over a still-live stream's
+accumulated tracklets can observe a *singleton* proposal, hand it to Stage 7
+authority, and only later see a same-encounter continuation tracklet
+finalize and merge into what is now a *different, larger* proposal (a
+different `proposal_id`, since that id depends on the constituent set) --
+with nothing connecting the two, because the continuation tracklet did not
+exist yet at the moment the first proposal was assembled. Real evidence:
+candidate-004 (`{frame-track-0043}`) was admitted, then candidate-005
+(`{frame-track-0043, frame-track-0045}` -- a strict superset) was admitted
+56 seconds later for what a human reviewer's own visual inspection
+confirmed was one continuous ~75-second encounter.
+
+`assemble_visit_episodes` accepts an additional, optional, purely-additive
+`known_horizon_ms: int | None` parameter -- a source-offset-relative fact
+(never a wall-clock read, matching every other bound in this module) naming
+the latest point in the stream the caller has actually observed so far.
+When supplied, every resulting `AssembledVisitProposal.continuation_pending`
+reuses exactly `ambiguous_gap_ms` -- the identical bound the algorithm
+above already uses to decide whether a later tracklet could still be
+compared against a given episode's own tail -- to report whether *this*
+proposal's own tail boundary might still change:
+`continuation_pending = (known_horizon_ms - proposal.end_offset_ms) <=
+ambiguous_gap_ms`. Omitted (the default), every proposal reports
+`continuation_pending=False`, preserving the exact prior behavior for every
+existing caller (`replay.py`, every offline/already-complete recording,
+every pre-existing test).
+
+`candidate_visit_authority.evaluate_candidate_authority` blocks a
+`continuation_pending` proposal (`blocked_continuation_pending`) immediately
+after it checks `ambiguous_boundary` -- a fact the assembler already
+computed, never reconstructed in the authority gate, structurally identical
+to how the ambiguity check already works. Unlike every other blocked
+outcome, this one is retryable (`candidate_visit_authority.RETRYABLE_
+OUTCOMES`): the identical `proposal_id`, re-evaluated later with nothing
+else changed but more of the stream having been observed, can honestly
+reach a different outcome once its own boundary finalizes. A live/trial
+caller that reruns assembly on a timer (`engine_runtime._EngineSession.
+_run_assembly_tick`, `candidate_visit_authority_cli._run_assembly_tick`)
+supplies the latest source-relative offset it has actually processed --
+advancing on every analyzed frame regardless of whether that frame carried
+a track, so a genuinely quiet period still lets a pending episode's own
+window eventually close -- and never permanently marks a `blocked_
+continuation_pending` proposal as attempted, so it is naturally re-offered
+on a later tick. The session-ending tick omits the horizon entirely
+(`finalize=True`): once the stream itself has ended, no continuation could
+ever arrive, so nothing is left waiting forever.
+
+This is a *timing* correction, not a new merge rule: `classify_boundary`'s
+own gap/geometry/evidence-freshness logic is completely unchanged (every
+pre-existing replay/synthetic scenario above is unaffected, since none of
+them supply `known_horizon_ms`). The fix only changes *when* an
+already-correct merge decision is allowed to become an irreversible product
+write -- deliberately not a post-persistence deduplication pass: candidate
+authority is never made responsible for reconstructing tracker/assembler
+semantics a second time (see "Persistence adapter boundary" in
+docs/candidate-visit-authority-contract.md).
+
 ## VisitProposal lineage
 
 `AssembledVisitProposal`: deterministic `proposal_id` (`sha256` of the

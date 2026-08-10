@@ -63,6 +63,42 @@ class EvaluationGovernanceError(ValueError):
     """A bounded evaluation-manifest validation failure code."""
 
 
+# Visit Continuity / Provisional Admission Fix v1, Part 7 audit (see
+# docs/tracklet-visit-assembly-contract.md and the fresh-cohort field
+# report's own governance note): a defense-in-depth check, not the only
+# safeguard -- the load-bearing rule is still procedural ("only a script a
+# human runs, over material a human actually reviewed, may ever construct a
+# `reviewed_truth` example"). But `reviewed_by`/`source` are free text, and
+# this codebase already has a real, established convention of writing an
+# honest self-disclosure into exactly this kind of field when an agent's own
+# visual inspection produced the record (see `DIAGNOSTIC_EXAMPLES` in
+# scripts/run_detection_quality_accounting.py: `source="agent-visual-
+# inspection-2026-08-10"`; and the real `ReviewLabel.notes` disclosure
+# `"[AGENT VISUAL REVIEW ... not independently human-confirmed]"` the
+# 2026-08-10 fresh cohort wrote through the real product review path).
+# Catching that same honest disclosure here means a future manifest-
+# generation script that carelessly (never maliciously) copies an agent's
+# own disclosure straight into `reviewed_by`/`source` while also claiming
+# `status="reviewed_truth"` fails loudly at construction time instead of
+# silently entering a training/evaluation corpus. Bounded and explicit by
+# design -- this is not a content-moderation classifier, only a known,
+# documented vocabulary already used *by this codebase's own convention*.
+_NON_HUMAN_REVIEW_MARKERS: tuple[str, ...] = (
+    "agent", "claude", "language model", "llm", "autonomous", "chatbot",
+    "ai visual", "ai-visual", "machine visual", "model visual",
+)
+
+
+def _discloses_non_human_review(*texts: str | None) -> bool:
+    for text in texts:
+        if not text:
+            continue
+        lowered = text.lower()
+        if any(marker in lowered for marker in _NON_HUMAN_REVIEW_MARKERS):
+            return True
+    return False
+
+
 @dataclass(frozen=True)
 class EvaluationExample:
     """One governed entry: a proposal/Visit/frame this evaluation corpus
@@ -93,6 +129,13 @@ class EvaluationExample:
             # reviewed it. An agent's own visual inspection is honestly
             # `diagnostic_only`, never this.
             raise EvaluationGovernanceError("reviewed_truth_requires_reviewer_identity")
+        if self.status == "reviewed_truth" and _discloses_non_human_review(self.reviewed_by, self.source):
+            # Defense in depth (see `_NON_HUMAN_REVIEW_MARKERS`): the
+            # reviewer-identity text itself honestly says this was not a
+            # human. Language-model inspection must never silently become
+            # observational authority or training truth (product-doctrine.md
+            # "the truth boundary") -- this is honestly `diagnostic_only`.
+            raise EvaluationGovernanceError("reviewed_truth_requires_human_reviewer")
 
     @property
     def training_eligible(self) -> bool:
