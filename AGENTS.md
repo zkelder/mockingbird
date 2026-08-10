@@ -1,7 +1,11 @@
 # Codex Guardrails
 
-MockingBird is a local-first outdoor video intelligence platform. Video streams
-are central.
+MockingBird is a local-first, hardware-agnostic, bird-first but
+wildlife-native nature observatory -- not primarily an NVR, a surveillance
+platform, a camera-management product, an ML demo, or a species-classifier
+appliance. Streams, Zones, detectors, and classifiers are infrastructure that
+produce evidence; trustworthy Observations and growing understanding of a
+place are the product. See [docs/product-doctrine.md](docs/product-doctrine.md).
 
 ## Required reading
 
@@ -19,18 +23,36 @@ Completed-phase history is available in
 
 ## Product invariants
 
-Core product flow:
+User-facing loop: Observe -> Discover -> Understand -> Confirm -> Remember ->
+Improve. State task packets in these terms, not only the technical flow
+below.
 
-connect Source -> view Stream -> draw Zones -> analyze outdoor activity ->
-review Events/Visits -> correct labels/species -> export datasets and analytics.
+Technical flow: connect Source -> view Stream -> draw Zones -> analyze
+outdoor activity -> review Events/Visits -> correct labels/species -> export
+datasets and analytics.
 
-Preserve these concepts: Source, Stream, Zone, Event, Visit, Detection,
-review/correction, Dataset Export, and Analytics.
+Preserve these concepts: Source, Stream, Zone, Event (doctrine: Activity
+Session), Visit, Detection/DetectionProposal (doctrine: Detection Proposal),
+review/correction (doctrine: Review Decision), Observation (the durable
+reviewed object doctrine names as the product's semantic center -- distinct
+from the existing Observation Engine/Observation Control runtime, which is
+infrastructure), Dataset Export, and Analytics. See
+[docs/glossary.md](docs/glossary.md) for the full current-vs-doctrine-name
+mapping.
 
+- Detection, tracking, and classification are infrastructure that produce
+  evidence; trustworthy Observations and growing understanding of a place are
+  the product outcome. Do not organize a task around maximizing detections,
+  classifier sophistication, camera integrations, or model novelty.
+- A candidate detector/classifier does not gain production authority merely
+  because it is newer or appears better informally; require reproducible
+  incumbent comparison on identical data first.
 - Streams and Zones are the product center. Adapters normalize into product
   concepts; they do not define the product.
 - Detections, DetectionProposals, SpeciesSuggestions, MotionEvidence, imported
   media, and external labels are evidence or context, never reviewed truth.
+  Unknown and abstained outcomes are valid; never turn model, ecological-prior,
+  or language-model output into reviewed truth.
 - Explicit user correction creates dataset-grade ReviewLabel truth. Bird Log,
   reviewed analytics, classifier readiness, and reviewed-only exports derive
   from that truth.
@@ -43,8 +65,10 @@ review/correction, Dataset Export, and Analytics.
   stay under ignored local paths and are never committed.
 
 Do not center the product on Windows USB, PowerShell, CLI tools, ROI wording,
-interval analysis, debug internals, snapshot loops, one adapter, or hardware
-setup.
+interval analysis, debug internals, snapshot loops, one adapter, hardware
+setup, or NVR/security-platform framing. Today's WSL/checkout/CLI development
+mechanics are not the mature-product installation experience; see
+[docs/roadmap.md](docs/roadmap.md) Phase 4.
 
 ## Task packet
 
@@ -95,7 +119,7 @@ Read the smallest applicable set before working in one of these areas.
 | Work area | Required design documents | Boundary to preserve |
 | --- | --- | --- |
 | Motion trigger or MotionEvidence | [stream-motion-trigger-plan.md](docs/stream-motion-trigger-plan.md) and the directly applicable motion/evidence design | Motion is evidence; promotion is review context; correction creates truth. |
-| Model or detector adapter | [model-adapter-guardrails.md](docs/model-adapter-guardrails.md) and [model-selection.md](docs/model-selection.md) | Optional, lazy, local, evidence-only; no automatic downloads or truth writes. |
+| Model or detector adapter | [model-adapter-guardrails.md](docs/model-adapter-guardrails.md) and [model-selection.md](docs/model-selection.md) | Optional, lazy, local, evidence-only; no automatic downloads or truth writes; no production promotion without reproducible incumbent comparison (roadmap.md Phase 2). |
 | MegaDetector runtime | [megadetector-runtime-plan.md](docs/megadetector-runtime-plan.md), [megadetector-local-setup.md](docs/megadetector-local-setup.md), and [megadetector-runtime-findings.md](docs/megadetector-runtime-findings.md) | Official-package/local-model work remains optional and proposal-only; PyTorch-Wildlife remains experimental unless explicitly reopened. |
 | Species suggestions or SpeciesNet | [species-suggestion-adapter-design.md](docs/species-suggestion-adapter-design.md), then the applicable [SpeciesNet boundary plan](docs/speciesnet-adapter-boundary-plan.md) and linked investigation/source review | Suggestions remain evidence until explicit correction. |
 | BioCLIP runtime | [model-adapter-guardrails.md](docs/model-adapter-guardrails.md), [model-selection.md](docs/model-selection.md), and [species-suggestion-adapter-design.md](docs/species-suggestion-adapter-design.md) | Optional, explicit local model/labels/precomputed embeddings, request-bounded and memory-isolated; ranked output is uncalibrated suggestion evidence only. |

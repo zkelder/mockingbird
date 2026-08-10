@@ -81,15 +81,23 @@ creation merely to report readiness.
 
 ### Tier 4 - explicit hardware, failure, and soak validation
 
-For camera bridges, durable activation, field performance, destructive recovery
-drills, or release acceptance:
+For camera bridges, durable activation, field performance, destructive
+recovery drills, model/detector candidate promotion decisions, or release
+acceptance:
 
+- state the bounded question this field test/trial answers before starting
+  (see the field-testing doctrine in [roadmap.md](roadmap.md)); an
+  open-ended "leave it running and see what happens" session is not a Tier 4
+  plan
 - start only explicitly scoped hardware/runtime behavior
 - run the relevant Tier 3 gate first
 - use bounded fake-clock/fake-adapter checks before real hardware
 - run scoped failure-injection and long-run/soak checks
 - record environment, duration, representative inputs, product metrics,
   artifacts created, cleanup, and deviations
+- for a candidate detector/classifier specifically, require a reproducible
+  incumbent comparison on identical data before any promotion decision (see
+  "Formal model lifecycle" in [architecture.md](architecture.md))
 
 Tier 4 media, benchmark data, reports, model artifacts, and caches remain under
 ignored local paths.

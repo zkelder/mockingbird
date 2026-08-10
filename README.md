@@ -1,7 +1,11 @@
 # MockingBird
 
-MockingBird is a local-first, hardware-agnostic nature observatory that helps
-people notice, understand, and remember wildlife around a place.
+MockingBird is a local-first, hardware-agnostic, bird-first but
+wildlife-native nature observatory that helps people notice, understand,
+confirm, and remember wildlife around a place. It is not primarily an NVR, a
+surveillance platform, a camera-management product, an ML demo, or a
+species-classifier appliance -- see
+[docs/product-doctrine.md](docs/product-doctrine.md).
 
 Users connect outdoor camera or media Sources, view Streams, draw meaningful
 Zones, monitor outdoor activity, review Events/Visits, correct labels or
@@ -424,7 +428,9 @@ Focused feature contracts remain under `docs/` and are routed by `AGENTS.md`.
 ## Not the product center
 
 MockingBird is not centered on Windows USB scripts, PowerShell, CLI operation,
-ROI terminology, interval analysis, snapshot loops, debug internals, or one
-camera/provider adapter. Those may exist as implementation details; the product
-is the Stream, Zone, activity, review, correction, Bird Log, export, and
-analytics experience.
+ROI terminology, interval analysis, snapshot loops, debug internals, one
+camera/provider adapter, or NVR/security-platform framing. Those may exist as
+implementation details; the product is the Stream, Zone, activity, review,
+correction, Bird Log, export, and analytics experience -- see "Detection is
+infrastructure" in [docs/product-doctrine.md](docs/product-doctrine.md) for
+why detection sophistication is not the goal by itself.

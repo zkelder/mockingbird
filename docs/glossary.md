@@ -1,5 +1,12 @@
 # MockingBird Glossary
 
+Where current implementation vocabulary and the target doctrine chain in
+[product-doctrine.md](product-doctrine.md) (Source → Stream → Zone → Activity
+Session → Visit → Evidence → Detection Proposal → Interpretation → Review
+Decision → Observation → Export/Analytics) diverge, each entry below names
+both. Renaming schema, API, or UI to the doctrine vocabulary is a future
+implementation task, not something already done.
+
 ## Camera
 
 A user-facing outdoor camera concept.
@@ -265,17 +272,35 @@ A zone where detection, storage, or review should be limited or disabled.
 
 A zone where activity should not create normal review events.
 
-## Event
+## Event / Activity Session
 
-A meaningful outdoor activity record.
+A meaningful outdoor activity record, before it is known whether an animal
+was involved or how many. `product-doctrine.md` names this concept "Activity
+Session"; `EventModel` remains the implementation name.
 
 ## Visit
 
-A reviewable animal-centered event, especially around feeders, birdbaths, perches, or yard zones.
+A reviewable animal-centered event, especially around feeders, birdbaths,
+perches, or yard zones. A Visit represents captured activity. An Observation
+(below) represents what MockingBird believes happened, after evidence and
+review of that Visit -- a distinct, more durable concept even though no
+separate `Observation` product record exists yet.
 
-## Detection
+## Detection / Detection Proposal
 
-A machine-generated observation that may be right or wrong.
+A machine-generated observation that may be right or wrong; not final truth,
+only evidence for user review. `product-doctrine.md` names this concept
+"Detection Proposal"; the implementation already uses both `DetectionModel`
+and `DetectionProposalModel`/`DetectionProposal` for it.
+
+## Interpretation
+
+A proposed reading of what evidence means beyond raw identification --
+behavior, counts, relationships between Visits. Not yet implemented.
+Interpretation begins as a proposal/evidence, the same as a Detection
+Proposal, and remains appropriately uncertain until reviewed; it is never
+automatically truth. See "Wildlife-native semantics" in
+[product-doctrine.md](product-doctrine.md).
 
 ## Motion Candidate
 
@@ -334,9 +359,12 @@ A future explicit user action that pre-fills the existing correction flow from a
 
 The user process of confirming, correcting, merging, hiding, or rejecting events.
 
-## Correction
+## Correction / Review Decision
 
-A user-provided truth label that improves the local dataset.
+A user-provided truth label, correction, or explicit abstention that improves
+the local dataset. `product-doctrine.md` names this concept "Review
+Decision"; `ReviewLabelModel` remains the implementation name. This is the
+only dataset-grade truth write in the system.
 
 ## Dataset Export
 
@@ -345,6 +373,28 @@ A local export of reviewed media, labels, corrections, and metadata.
 ## Analytics
 
 Local summaries of outdoor activity over time.
+
+## Observation (product object)
+
+The target durable semantic product object from
+[product-doctrine.md](product-doctrine.md): what MockingBird believes
+happened, after evidence and review of a Visit. Not yet a distinct
+implementation object -- today's closest equivalent is a reviewed Visit
+(a Bird Log entry). Do not confuse this with "Observation Engine" or
+"Observation Control," below: those name the capture/detection runtime and
+its UI control, which produce evidence, never an Observation by themselves.
+This naming collision is intentional doctrine vocabulary landing on an
+already-used implementation word; resolving it (for example by renaming the
+runtime) is a future implementation decision, not something this glossary
+update performs.
+
+## Observation Engine
+
+The provider-neutral detection/tracking/evidence-scoring runtime described in
+[architecture.md](architecture.md) (frame/detection/track/evidence/
+Visit-proposal capability contracts). It is infrastructure: it emits evidence
+and shadow/candidate proposals, never reviewed truth, and never an
+Observation (above) by itself.
 
 ## Observation Control
 
