@@ -57,6 +57,28 @@ event loop, explicit start/stop, and side-effect-free status reads.
   disclosure. No Stage numbers, CUDA, or ONNX vocabulary appear in the
   basic fields.
 
+### Camera ownership vs. the legacy live-view/monitoring session
+
+A paired Camera Node's physical camera can also be driving the ordinary,
+independent live-view/monitoring session `LiveCameraSessionManager` already
+owns for that same Stream (`POST /api/streams/{id}/live-session/start`, or
+an Overview live-preview lease). Before Stage 5's `LiveCameraNodeShadowSession`
+starts pulling frames from the Node, `_EngineSession` calls
+`LiveCameraSessionManager.pause_for_observation` on that Stream so the two
+never unknowingly compete for the same Node-side capture: the legacy session
+is torn down cleanly and reported as the deliberate `status="paused"` (never
+`"failed"`), and a plain Start against it while paused is refused rather than
+racing a second capture in (`LiveCameraSessionManager.start` returns the
+existing paused snapshot unchanged). `resume_after_observation` restarts a
+fresh legacy session -- exactly like a normal Start -- from the outermost
+`finally` in `_run_async`, so it fires on *every* exit path (explicit Stop,
+a natural stream end, a Node transport failure, or an unhandled exception),
+matching the existing candidate-authority kill-switch discipline above. Both
+calls are best-effort: a coordinator bug can never block Start or Stop. An
+explicit Stop of the legacy session while it is paused always wins over a
+later resume -- Observation finishing afterward must not resurrect a session
+the user deliberately turned off in the meantime.
+
 "Start observing" is the one explicit action that also activates Stage 7's
 `candidate_visit` authority (`ProductRepository.
 set_observation_authority_mode`, the same call `candidate-authority-trial

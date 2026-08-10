@@ -113,7 +113,7 @@ type CameraTuningKey =
 
 type CameraTuningDraft = Record<CameraTuningKey, string>;
 
-type LiveViewState = "idle" | "opening" | "streaming" | "failed" | "no_frames";
+type LiveViewState = "idle" | "opening" | "streaming" | "failed" | "no_frames" | "paused";
 type LiveMonitorState =
   | "idle"
   | "waiting"
@@ -757,6 +757,22 @@ export function StreamDetailPage({
       } else {
         handleLiveStatusNoticeFromStatus(status);
       }
+      if (status.status === "paused") {
+        // Observation Engine deliberately owns the camera right now (see
+        // LiveCameraSessionManager.pause_for_observation). Any live view the
+        // user already had open would otherwise keep showing its last frame
+        // marked "Streaming" forever -- a stale, contradictory state next to
+        // a camera that is truthfully not capturing. Reflect the deliberate
+        // pause explicitly instead.
+        setLiveViewState((current) =>
+          current === "idle" || current === "paused" ? current : "paused",
+        );
+      } else if (status.status === "running") {
+        // Observation stopped and this manager's own resume already
+        // restarted the session -- let the next open/refresh reconnect
+        // normally rather than staying stuck on the paused placeholder.
+        setLiveViewState((current) => (current === "paused" ? "idle" : current));
+      }
       if (status.status !== "stopped" && status.last_motion_result) {
         setLiveMotionResult(status.last_motion_result);
         setLiveMonitorState(liveMonitorStateFor(status.last_motion_result));
@@ -1398,9 +1414,19 @@ export function StreamDetailPage({
     }
   }
 
+  function liveSessionNotRunningMessage(action: string): string {
+    // A paused session is a deliberate hand-off to Observation Engine, not a
+    // camera the user simply never started -- say so instead of implying
+    // they need to press Start themselves.
+    if (liveSession?.status === "paused") {
+      return "Live view is paused while Observation Engine is watching this camera.";
+    }
+    return `Start camera session before ${action}.`;
+  }
+
   function openLiveView() {
     if (detail && supportsBackendLiveSession(detail.playback) && liveSession?.status !== "running") {
-      setLiveViewError("Start camera session before opening live view.");
+      setLiveViewError(liveSessionNotRunningMessage("opening live view"));
       return;
     }
     setLiveViewOpen(true);
@@ -1421,7 +1447,7 @@ export function StreamDetailPage({
 
   function refreshLiveView() {
     if (detail && supportsBackendLiveSession(detail.playback) && liveSession?.status !== "running") {
-      setLiveViewError("Start camera session before reconnecting live view.");
+      setLiveViewError(liveSessionNotRunningMessage("reconnecting live view"));
       return;
     }
     if (!liveViewOpen) {
@@ -1578,7 +1604,7 @@ export function StreamDetailPage({
     }
     if (supportsBackendLiveSession(detail.playback) && liveSession?.status !== "running") {
       setLiveMonitorState("failed");
-      setLiveMotionError("Start camera session before monitoring.");
+      setLiveMotionError(liveSessionNotRunningMessage("monitoring"));
       return;
     }
     if (!supportsBackendLiveSession(detail.playback)) {
@@ -2054,7 +2080,9 @@ export function StreamDetailPage({
           ? "Failed"
           : liveViewState === "no_frames"
             ? "No frames"
-            : "Ready";
+            : liveViewState === "paused" || liveSession?.status === "paused"
+              ? "Paused (Observation running)"
+              : "Ready";
   const liveViewTone =
     liveSessionFailed || liveViewState === "failed" || liveViewState === "no_frames"
       ? "review"

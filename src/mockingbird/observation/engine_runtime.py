@@ -91,6 +91,19 @@ ProviderLoader = Callable[[Path], tuple[FrameDrivenObservationProvider, _Detecto
 TransportFactory = Callable[[StreamLivePlaybackConfig, str], CameraNodeLiveTransport]
 
 
+class LiveCameraSessionCoordinator(Protocol):
+    """The narrow slice of `mockingbird.playback.live_camera_session.
+    LiveCameraSessionManager` this module needs so Observation Engine never
+    unknowingly competes with the existing legacy live-view/monitoring
+    camera session for the same physical Camera Node camera. Both methods
+    are already idempotent/self-checking on the manager side: pausing when
+    nothing is running, or resuming a session this class did not itself
+    pause, is always a safe no-op there -- never re-implemented here."""
+
+    def pause_for_observation(self, stream_id: str) -> object | None: ...
+    def resume_after_observation(self, config: StreamLivePlaybackConfig) -> object | None: ...
+
+
 def _load_real_provider(provider_config_path: Path) -> tuple[FrameDrivenObservationProvider, OnnxCudaObservationProvider]:
     """The real, accepted Observation Engine provider construction --
     identical to `candidate_visit_authority_cli.py`'s own. Isolated into one
@@ -283,6 +296,7 @@ class _EngineSession:
         repository_factory: Callable[[], ProductRepository],
         provider_loader: ProviderLoader = _load_real_provider,
         transport_factory: TransportFactory = _default_transport_factory,
+        live_camera_sessions: LiveCameraSessionCoordinator | None = None,
     ) -> None:
         self.stream_id = stream_id
         self._playback_config = playback_config
@@ -291,6 +305,7 @@ class _EngineSession:
         self._repository_factory = repository_factory
         self._provider_loader = provider_loader
         self._transport_factory = transport_factory
+        self._live_camera_sessions = live_camera_sessions
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._state_lock = threading.RLock()
@@ -515,6 +530,14 @@ class _EngineSession:
             burst_bytes_cache: dict[str, bytes] = {}
 
             try:
+                # Right before this session starts actually pulling frames
+                # from the Node -- the earliest point it can collide with an
+                # already-running legacy live-view/monitoring camera session
+                # for the same physical camera. Pausing here (rather than
+                # any earlier, e.g. before the model even loads) means a
+                # live view that's already healthy stays healthy for every
+                # Start attempt that never reaches this point.
+                self._pause_live_camera_session()
                 session.start()
                 with self._state_lock:
                     self._camera_connected = True
@@ -579,6 +602,13 @@ class _EngineSession:
                     self._camera_connected = False
                 provider.close()
         finally:
+            # Hand the physical camera back the same unconditional way:
+            # whenever this session's own loop ends, for *any* reason, not
+            # only an explicit Stop. A no-op if `_pause_live_camera_session`
+            # above was never reached, or if the user already explicitly
+            # stopped the live session while it was paused (see
+            # `LiveCameraSessionManager.resume_after_observation`).
+            self._resume_live_camera_session()
             # Authority reverts to shadow whenever this session's own loop
             # ends, for *any* reason -- natural stream end, a transport
             # error, or an explicit Stop -- not only when a caller happens
@@ -592,6 +622,30 @@ class _EngineSession:
             except Exception:  # pragma: no cover - defensive: cleanup must never raise
                 pass
             repository.close()
+
+    def _pause_live_camera_session(self) -> None:
+        """Best-effort: a bug here must never prevent Observation Engine
+        from starting -- exactly how `report_metadata` above is already
+        allowed to fail without breaking Start."""
+
+        if self._live_camera_sessions is None:
+            return
+        try:
+            self._live_camera_sessions.pause_for_observation(self.stream_id)
+        except Exception:  # pragma: no cover - defensive: must never break Start
+            pass
+
+    def _resume_live_camera_session(self) -> None:
+        """Best-effort, matching `_pause_live_camera_session` -- a bug here
+        must never prevent Stop from completing or authority from
+        reverting."""
+
+        if self._live_camera_sessions is None:
+            return
+        try:
+            self._live_camera_sessions.resume_after_observation(self._playback_config)
+        except Exception:  # pragma: no cover - defensive: must never break Stop
+            pass
 
     def _run_assembly_tick(
         self,
@@ -693,10 +747,12 @@ class ObservationEngineSessionManager:
         repository_factory: Callable[[], ProductRepository],
         provider_loader: ProviderLoader = _load_real_provider,
         transport_factory: TransportFactory = _default_transport_factory,
+        live_camera_sessions: LiveCameraSessionCoordinator | None = None,
     ) -> None:
         self._repository_factory = repository_factory
         self._provider_loader = provider_loader
         self._transport_factory = transport_factory
+        self._live_camera_sessions = live_camera_sessions
         self._lock = threading.RLock()
         self._sessions: dict[str, _EngineSession] = {}
 
@@ -722,6 +778,7 @@ class ObservationEngineSessionManager:
                 repository_factory=self._repository_factory,
                 provider_loader=self._provider_loader,
                 transport_factory=self._transport_factory,
+                live_camera_sessions=self._live_camera_sessions,
             )
             self._sessions[stream_id] = session
             session.start()

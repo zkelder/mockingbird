@@ -1380,6 +1380,12 @@ def get_observation_engine_session_manager() -> ObservationEngineSessionManager:
     if _observation_engine_session_manager is None:
         _observation_engine_session_manager = ObservationEngineSessionManager(
             repository_factory=ProductRepository,
+            # So Start/Stop observing can deliberately pause/resume an
+            # existing legacy live-view/monitoring camera session for the
+            # same Stream instead of unknowingly competing with it for the
+            # same physical Camera Node camera (see live_camera_session.
+            # LiveCameraSessionManager.pause_for_observation).
+            live_camera_sessions=get_live_camera_session_manager(),
         )
     return _observation_engine_session_manager
 
@@ -3749,6 +3755,8 @@ def _live_camera_session_message(
         return "Camera session is stopping."
     if snapshot.status == "failed":
         return snapshot.last_error or "Camera session failed."
+    if snapshot.status == "paused":
+        return "Live view is paused while Observation Engine is watching this camera."
     return "Camera session is stopped."
 
 
@@ -10922,13 +10930,29 @@ async def open_stream_live_preview(
 
     if decision.should_start_session:
         try:
-            camera_manager.start(configuration)
+            started_snapshot = camera_manager.start(configuration)
         except (OSError, ValueError):
             preview_manager.abandon(owner_id=payload.owner_id, stream_id=stream_id)
             raise HTTPException(
                 status_code=502,
                 detail="Camera unavailable. The latest activity remains available for review.",
             ) from None
+        if started_snapshot.status == "paused":
+            # Observation Engine already owns this physical camera (see
+            # `LiveCameraSessionManager.pause_for_observation`); `start()`
+            # deliberately refused to fight it for the same Camera Node
+            # capture and returned the existing paused session unchanged.
+            # Report that honestly instead of claiming a live preview that
+            # cannot actually stream right now.
+            preview_manager.abandon(owner_id=payload.owner_id, stream_id=stream_id)
+            return LivePreviewLeaseResponse(
+                stream_id=stream_id,
+                owner_id=payload.owner_id,
+                status=LivePreviewLeaseStatus.unavailable,
+                max_active_previews=preview_manager.max_previews_per_owner,
+                effective_limit=decision.effective_limit,
+                message="Live preview is paused while Observation Engine is watching this camera.",
+            )
 
     return LivePreviewLeaseResponse(
         stream_id=stream_id,

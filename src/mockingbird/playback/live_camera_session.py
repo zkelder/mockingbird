@@ -64,6 +64,7 @@ _DIAGNOSTIC_EVENT_TYPES = {
     "auto_review_failed",
     "best_frame_saved",
     "camera_failed",
+    "camera_paused",
     "camera_started",
     "camera_stopped",
     "monitor_settings_changed",
@@ -370,23 +371,45 @@ class LiveCameraSessionManager:
         *,
         max_runtime_seconds: int | None = None,
     ) -> LiveCameraSessionSnapshot:
-        runtime_limit = max_runtime_seconds or self.max_runtime_seconds
         with self._lock:
             existing = self._sessions.get(config.stream_id)
             if existing is not None and existing.is_active:
                 return existing.snapshot()
+            if existing is not None and existing.is_paused_for_observation:
+                # Observation Engine deliberately owns the physical camera
+                # right now (see `pause_for_observation`); a normal Start
+                # must never silently fight it for the same Camera Node
+                # capture, so this returns the existing paused snapshot
+                # unchanged instead of racing a second consumer in. Only
+                # `resume_after_observation` -- or an explicit Stop, which
+                # supersedes the pause -- may restart it from here.
+                return existing.snapshot()
             if existing is not None:
                 existing.stop("replaced")
+            return self._start_locked(config, max_runtime_seconds=max_runtime_seconds)
 
-            process = _start_process(config)
-            session = _LiveCameraSession(
-                config=config,
-                process=process,
-                max_runtime_seconds=runtime_limit,
-            )
-            self._sessions[config.stream_id] = session
-            session.start()
-            return session.snapshot()
+    def _start_locked(
+        self,
+        config: Any,
+        *,
+        max_runtime_seconds: int | None = None,
+    ) -> LiveCameraSessionSnapshot:
+        """Actually spin up a fresh session/process. Callers already hold
+        `self._lock` and have already decided this stream_id's previous
+        session (if any) is done -- `start()` for a normal user action,
+        `resume_after_observation()` once Observation Engine releases the
+        camera it deliberately paused."""
+
+        runtime_limit = max_runtime_seconds or self.max_runtime_seconds
+        process = _start_process(config)
+        session = _LiveCameraSession(
+            config=config,
+            process=process,
+            max_runtime_seconds=runtime_limit,
+        )
+        self._sessions[config.stream_id] = session
+        session.start()
+        return session.snapshot()
 
     def stop(
         self, stream_id: str, *, reason: str = "user_stopped"
@@ -397,6 +420,43 @@ class LiveCameraSessionManager:
             return None
         session.stop(reason)
         return session.snapshot()
+
+    def pause_for_observation(
+        self, stream_id: str
+    ) -> LiveCameraSessionSnapshot | None:
+        """Explicitly release the physical camera for Observation Engine's
+        exclusive use, without ever reporting Failed. A safe no-op when no
+        live session is currently active for this Stream -- Observation
+        Engine then simply owns the camera outright -- and idempotent when
+        called again while already paused."""
+
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        if session is None:
+            return None
+        if session.is_paused_for_observation:
+            # Already paused by us -- idempotent: report the existing
+            # paused snapshot rather than silently doing nothing.
+            return session.snapshot()
+        if not session.is_active:
+            return None
+        session.pause("observation_started")
+        return session.snapshot()
+
+    def resume_after_observation(
+        self, config: Any
+    ) -> LiveCameraSessionSnapshot | None:
+        """Restart a session this manager itself paused for Observation
+        Engine. Only ever acts on a session still in exactly that paused
+        state -- one the user explicitly stopped (or that was never
+        running) in the meantime is left alone, so an explicit Stop always
+        wins over a resume."""
+
+        with self._lock:
+            existing = self._sessions.get(config.stream_id)
+            if existing is None or not existing.is_paused_for_observation:
+                return None
+            return self._start_locked(config)
 
     def status(self, stream_id: str) -> LiveCameraSessionSnapshot | None:
         with self._lock:
@@ -916,6 +976,17 @@ class _LiveCameraSession:
         with self._lock:
             return self.status in {"starting", "running"}
 
+    @property
+    def is_paused_for_observation(self) -> bool:
+        """True only for a session this class's own `pause()` put on hold
+        for Observation Engine -- never a generic "not running" check. An
+        explicit `stop()` (even while paused) always overwrites
+        `stop_reason`, so this reports False the moment a user-driven stop
+        supersedes the pause."""
+
+        with self._lock:
+            return self.status == "paused" and self.stop_reason == "observation_started"
+
     def start(self) -> None:
         with self._lock:
             self.status = "running"
@@ -954,6 +1025,48 @@ class _LiveCameraSession:
                 self.status = "stopped"
             self._record_diagnostic_event_locked(
                 "camera_stopped",
+                status=self.status,
+                reason=reason,
+            )
+
+    def pause(self, reason: str) -> None:
+        """Deliberately release the physical camera without ever reporting
+        Failed -- Observation Engine's exclusive-ownership window. Mechanically
+        identical to `stop()` (same reader-thread/monitor-thread teardown,
+        same idle process), but lands on a distinct terminal status so a
+        caller can tell "handed off on purpose" apart from "stopped" or
+        "failed" and `resume_after_observation` can find its own work again."""
+
+        with self._lock:
+            if self.status not in {"starting", "running"}:
+                return
+            monitor_was_running = self.monitor_running
+            self.status = "stopping"
+            self.monitor_running = False
+            if monitor_was_running:
+                self._record_diagnostic_event_locked(
+                    "monitor_stopped",
+                    status="stopped",
+                    reason="camera_paused",
+                )
+        self._stop_event.set()
+        self._monitor_stop_event.set()
+        _stop_process(self.process)
+        monitor_thread = self._monitor_thread
+        if monitor_thread is not None and monitor_thread.is_alive():
+            monitor_thread.join(timeout=2)
+        if self._thread.is_alive() and threading.current_thread() is not self._thread:
+            self._thread.join(timeout=2)
+        with self._lock:
+            # The reader thread we just joined already raced to set its own
+            # terminal status (see `_reader_loop`'s `_stop_event` branch,
+            # exactly as `stop()` above already tolerates) -- this
+            # unconditionally overwrites it with the deliberate outcome,
+            # never "failed", regardless of how the underlying process ended.
+            self.status = "paused"
+            self.stop_reason = reason
+            self._record_diagnostic_event_locked(
+                "camera_paused",
                 status=self.status,
                 reason=reason,
             )

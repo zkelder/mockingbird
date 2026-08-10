@@ -33,6 +33,7 @@ from mockingbird.observation.media_contracts import (
     EvidenceBurstResult,
 )
 from mockingbird.repository.product_repository import ProductRepository, StreamLivePlaybackConfig
+from mockingbird.source_providers.camera_node import CameraNodeClientError
 
 STREAM_ID = "stream-backyard-feeder"
 NOW = datetime(2026, 8, 8, 12, 0, 0, tzinfo=UTC)
@@ -682,3 +683,194 @@ def test_stop_is_bounded_while_actively_observing(repository: ProductRepository)
     assert repository.get_observation_authority_state().mode == "shadow"
     # A second status read after stop must stay stable (side-effect-free).
     assert manager.status(STREAM_ID).state == "stopped"
+
+
+# --- Camera session collision fix: pause/resume the legacy live session ----
+#
+# "Fix Observation camera session collision": Observation Engine used to
+# open its own Node connection with no awareness of an already-running
+# legacy live-view/monitoring camera session for the same physical camera.
+# These tests prove the coordination handshake -- pause right before this
+# session starts pulling frames, resume on every exit path, best-effort
+# either way -- without a real LiveCameraSessionManager (see
+# tests/test_live_camera_session.py for that side, in isolation).
+
+
+class _RecordingCameraCoordinator:
+    """Fake `engine_runtime.LiveCameraSessionCoordinator`, recording calls
+    in call order. Can be made to fail either call to prove a coordinator
+    bug never breaks Start or Stop (both calls are best-effort)."""
+
+    def __init__(self, *, fail_pause: bool = False, fail_resume: bool = False) -> None:
+        self.pause_calls: list[str] = []
+        self.resume_calls: list[StreamLivePlaybackConfig] = []
+        self._fail_pause = fail_pause
+        self._fail_resume = fail_resume
+
+    def pause_for_observation(self, stream_id: str) -> None:
+        self.pause_calls.append(stream_id)
+        if self._fail_pause:
+            raise RuntimeError("fixture_pause_failure")
+
+    def resume_after_observation(self, config: StreamLivePlaybackConfig) -> None:
+        self.resume_calls.append(config)
+        if self._fail_resume:
+            raise RuntimeError("fixture_resume_failure")
+
+
+def test_start_pauses_live_session_and_stop_resumes_it(repository: ProductRepository) -> None:
+    coordinator = _RecordingCameraCoordinator()
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: _SlowIndefiniteTransport(),
+        live_camera_sessions=coordinator,
+    )
+    config = _camera_node_config()
+    manager.start(STREAM_ID, config)
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "observing", timeout=10.0)
+
+    # Paused before this session ever pulled a frame from the Node, not
+    # lazily/after the fact.
+    assert coordinator.pause_calls == [STREAM_ID]
+    assert coordinator.resume_calls == []
+
+    manager.stop(STREAM_ID)
+
+    assert coordinator.resume_calls == [config]
+
+
+def test_natural_stream_end_also_resumes_the_live_session(repository: ProductRepository) -> None:
+    """Resume must fire on *every* exit path, not only an explicit Stop."""
+
+    coordinator = _RecordingCameraCoordinator()
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: _FixtureTransport(),
+        live_camera_sessions=coordinator,
+    )
+    config = _camera_node_config()
+    manager.start(STREAM_ID, config)
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "stopped", timeout=10.0)
+
+    assert coordinator.pause_calls == [STREAM_ID]
+    assert coordinator.resume_calls == [config]
+
+
+def test_camera_unavailable_mid_session_also_resumes_the_live_session(
+    repository: ProductRepository,
+) -> None:
+    """A Node transport failure ends the session exactly like an explicit
+    Stop from this coordination's point of view -- the physical camera must
+    still come back to the legacy live session, not sit paused forever."""
+
+    class _FailingTransport(_FixtureTransport):
+        def iter_analysis_frames(self, *, maximum_frames: int):
+            raise CameraNodeClientError("analysis_stream_unavailable")
+
+    coordinator = _RecordingCameraCoordinator()
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: _FailingTransport(),
+        live_camera_sessions=coordinator,
+    )
+    config = _camera_node_config()
+    manager.start(STREAM_ID, config)
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "stopped", timeout=10.0)
+
+    assert coordinator.pause_calls == [STREAM_ID]
+    assert coordinator.resume_calls == [config]
+
+
+def test_pairing_incomplete_never_touches_the_live_session(repository: ProductRepository) -> None:
+    """Observation never even validates its own config here -- it must not
+    interfere with an unrelated, perfectly healthy live view."""
+
+    coordinator = _RecordingCameraCoordinator()
+    manager = _manager(repository, live_camera_sessions=coordinator)
+    manager.start(STREAM_ID, _camera_node_config(camera_node_credential=None))
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "error", timeout=5.0)
+
+    assert coordinator.pause_calls == []
+    assert coordinator.resume_calls == []
+
+
+def test_provider_load_failure_never_touches_the_live_session(repository: ProductRepository) -> None:
+    """Observation Engine never reached the point of needing the physical
+    camera -- a missing model bundle must not pause a healthy live view."""
+
+    def _failing_loader(path: Path):
+        raise ValueError("invalid_model_bundle_path")
+
+    coordinator = _RecordingCameraCoordinator()
+    manager = _manager(repository, provider_loader=_failing_loader, live_camera_sessions=coordinator)
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "error", timeout=5.0)
+
+    assert coordinator.pause_calls == []
+    assert coordinator.resume_calls == []
+
+
+def test_pause_failure_never_prevents_observation_from_starting(repository: ProductRepository) -> None:
+    coordinator = _RecordingCameraCoordinator(fail_pause=True)
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: _SlowIndefiniteTransport(),
+        live_camera_sessions=coordinator,
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "observing", timeout=10.0)
+    assert coordinator.pause_calls == [STREAM_ID]
+    manager.stop(STREAM_ID)
+
+
+def test_resume_failure_never_prevents_stop_or_authority_revert(repository: ProductRepository) -> None:
+    coordinator = _RecordingCameraCoordinator(fail_resume=True)
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: _SlowIndefiniteTransport(),
+        live_camera_sessions=coordinator,
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "observing", timeout=10.0)
+
+    status = manager.stop(STREAM_ID)
+
+    assert status is not None
+    assert status.state == "stopped"
+    assert coordinator.resume_calls  # it was at least attempted
+    assert repository.get_observation_authority_state().mode == "shadow"
+
+
+def test_repeated_start_stop_observing_pauses_and_resumes_each_time(
+    repository: ProductRepository,
+) -> None:
+    """Idempotent repeated Start/Stop observing: each cycle must pause and
+    resume exactly once, never accumulate stale calls or skip a step."""
+
+    coordinator = _RecordingCameraCoordinator()
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: _SlowIndefiniteTransport(),
+        live_camera_sessions=coordinator,
+    )
+    config = _camera_node_config()
+
+    for cycle in range(1, 4):
+        manager.start(STREAM_ID, config)
+        assert _wait_until(lambda: manager.status(STREAM_ID).state == "observing", timeout=10.0)
+        manager.stop(STREAM_ID)
+        assert _wait_until(lambda: manager.status(STREAM_ID).state == "stopped", timeout=10.0)
+        assert len(coordinator.pause_calls) == cycle
+        assert len(coordinator.resume_calls) == cycle
+
+    # Repeated Stop (already stopped) must stay a safe no-op: no extra calls.
+    manager.stop(STREAM_ID)
+    assert len(coordinator.pause_calls) == 3
+    assert len(coordinator.resume_calls) == 3

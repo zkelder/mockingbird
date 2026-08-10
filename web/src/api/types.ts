@@ -968,7 +968,7 @@ export interface LiveCameraSessionStatus {
   stream_id: string;
   source_id?: string | null;
   playback_kind?: string | null;
-  status: "stopped" | "starting" | "running" | "stopping" | "failed" | string;
+  status: "stopped" | "starting" | "running" | "stopping" | "failed" | "paused" | string;
   started_at?: string | null;
   last_frame_at?: string | null;
   latest_frame_age_ms?: number | null;
