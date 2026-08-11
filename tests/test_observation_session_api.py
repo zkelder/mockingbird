@@ -156,3 +156,49 @@ def test_status_response_never_exposes_internal_vocabulary(
     body = response.text
     for forbidden in ("Stage 7", "AssembledVisitProposal", "provider_generation", "candidate_visit_authority"):
         assert forbidden not in body
+
+
+# =============================================================================
+# Rejected / Suppressed Detection Attribution v1 (see
+# docs/rejected-detection-attribution-contract.md): the read-only ROI/
+# time-window diagnostic surface.
+# =============================================================================
+
+
+def test_counterfactual_on_unknown_stream_returns_404(client: TestClient) -> None:
+    response = client.get(
+        "/api/streams/does-not-exist/observation/counterfactual",
+        params={"start_offset_ms": 0, "end_offset_ms": 1000},
+    )
+    assert response.status_code == 404
+
+
+def test_counterfactual_before_any_session_is_honest_and_side_effect_free(
+    client: TestClient, repository: ProductRepository,
+) -> None:
+    response = client.get(
+        f"/api/streams/{DEMO_STREAM_ID}/observation/counterfactual",
+        params={"start_offset_ms": 0, "end_offset_ms": 1000},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["raw_detections"] == []
+    assert payload["attribution"] == "insufficient_counterfactual_lineage"
+    # Side-effect-free: no session was created, no authority state touched.
+    assert repository.get_observation_authority_state().mode == "shadow"
+
+
+def test_counterfactual_rejects_invalid_window_and_partial_roi(
+    client: TestClient, repository: ProductRepository,
+) -> None:
+    bad_window = client.get(
+        f"/api/streams/{DEMO_STREAM_ID}/observation/counterfactual",
+        params={"start_offset_ms": 1000, "end_offset_ms": 0},
+    )
+    assert bad_window.status_code == 400
+
+    partial_roi = client.get(
+        f"/api/streams/{DEMO_STREAM_ID}/observation/counterfactual",
+        params={"start_offset_ms": 0, "end_offset_ms": 1000, "roi_left": 0.1, "roi_top": 0.1},
+    )
+    assert partial_roi.status_code == 400

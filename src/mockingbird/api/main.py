@@ -233,6 +233,13 @@ from mockingbird.api.schemas import (
     SourceFolderImportResponse,
     SourceMonitorStartRequest,
     SourceMonitorStatusResponse,
+    CounterfactualConfidenceSummaryResponse,
+    CounterfactualCoverageResponse,
+    CounterfactualLedgerAccountingResponse,
+    CounterfactualProposalOutcomeResponse,
+    CounterfactualRawDetectionResponse,
+    CounterfactualTrackGenerationResponse,
+    CounterfactualWindowResponse,
     ObservationEngineStatusResponse,
     ObservationProviderCapabilitiesResponse,
     ObservationProviderHealthResponse,
@@ -387,6 +394,7 @@ from mockingbird.observation import (
     SnapshotObservationProvider,
     unified_status,
 )
+from mockingbird.observation.counterfactual_lineage import classify_rejection_attribution
 from mockingbird.observation.engine_runtime import (
     ObservationEngineSessionManager,
     ObservationEngineSessionStatus,
@@ -10848,6 +10856,158 @@ async def get_stream_observation_status(stream_id: str) -> ObservationSessionSta
     configuration = _stream_live_playback_config_or_404(stream_id)
     facts = await _unified_observation_facts(stream_id, configuration)
     return _observation_panel_response(stream_id, facts)
+
+
+def _counterfactual_accounting_response(accounting) -> CounterfactualLedgerAccountingResponse:
+    return CounterfactualLedgerAccountingResponse(
+        retained_count=accounting.retained_count,
+        evicted_count=accounting.evicted_count,
+        recorded_count=accounting.recorded_count,
+        oldest_retained_offset_ms=accounting.oldest_retained_offset_ms,
+        newest_retained_offset_ms=accounting.newest_retained_offset_ms,
+    )
+
+
+def _counterfactual_confidence_response(evidence) -> CounterfactualConfidenceSummaryResponse:
+    return CounterfactualConfidenceSummaryResponse(
+        detection_count=evidence.detection_count if evidence is not None else 0,
+        max_confidence=evidence.max_confidence if evidence is not None else None,
+        strong_detection_count=evidence.strong_detection_count if evidence is not None else None,
+    )
+
+
+def _counterfactual_window_response(window, attribution) -> CounterfactualWindowResponse:
+    """Wrap the pure `counterfactual_lineage.CounterfactualWindowResult` (and
+    its own `classify_rejection_attribution` read) in the product wire
+    contract -- the one place engine-side facts cross into API vocabulary,
+    mirroring `_observation_panel_response`'s own established role."""
+
+    return CounterfactualWindowResponse(
+        stream_id=window.stream_id,
+        start_offset_ms=window.start_offset_ms,
+        end_offset_ms=window.end_offset_ms,
+        roi=list(window.roi) if window.roi is not None else None,
+        raw_detections=[
+            CounterfactualRawDetectionResponse(
+                source_offset_ms=item.source_offset_ms,
+                captured_at=item.captured_at,
+                frame_id=item.frame_id,
+                detector_id=item.detector_id,
+                provider_id=item.provider_id,
+                broad_class=item.broad_class,
+                is_animal=item.is_animal,
+                confidence=item.confidence,
+                bounding_box=list(item.bounding_box) if item.bounding_box is not None else None,
+            )
+            for item in window.raw_detections
+        ],
+        track_generations=[
+            CounterfactualTrackGenerationResponse(
+                generation_id=item.generation_id,
+                broad_class=item.broad_class,
+                track_ids=list(item.track_ids),
+                start_offset_ms=item.start_offset_ms,
+                end_offset_ms=item.end_offset_ms,
+                start_bounding_box=list(item.start_bounding_box),
+                end_bounding_box=list(item.end_bounding_box),
+                geometry_envelope=list(item.geometry_envelope),
+                confirmed=item.confirmed,
+                terminal_reason=item.terminal_reason,
+                terminal_geometry_source=item.terminal_geometry_source,
+                confidence_evidence=_counterfactual_confidence_response(item.confidence_evidence),
+            )
+            for item in window.track_generations
+        ],
+        proposal_outcomes=[
+            CounterfactualProposalOutcomeResponse(
+                proposal_id=item.proposal_id,
+                broad_class=item.broad_class,
+                zone_id=item.zone_id,
+                start_offset_ms=item.start_offset_ms,
+                end_offset_ms=item.end_offset_ms,
+                constituent_generation_ids=list(item.constituent_generation_ids),
+                outcome=item.outcome,
+                reason=item.reason,
+                admitted=item.admitted,
+                visit_id=item.visit_id,
+                decided_at=item.decided_at,
+            )
+            for item in window.proposal_outcomes
+        ],
+        raw_detection_count_in_roi=len(window.raw_detections_in_roi),
+        track_generation_count_in_roi=len(window.track_generations_in_roi),
+        coverage=CounterfactualCoverageResponse(
+            session_first_offset_ms=window.coverage.session_first_offset_ms,
+            session_last_offset_ms=window.coverage.session_last_offset_ms,
+            raw_detections=_counterfactual_accounting_response(window.coverage.raw_detection_retention),
+            track_generations=_counterfactual_accounting_response(window.coverage.track_generation_retention),
+            proposal_outcomes=_counterfactual_accounting_response(window.coverage.proposal_outcome_retention),
+        ),
+        attribution=attribution.attribution,
+        attribution_reason=attribution.reason,
+    )
+
+
+@app.get(
+    "/api/streams/{stream_id}/observation/counterfactual",
+    response_model=CounterfactualWindowResponse,
+)
+async def get_stream_observation_counterfactual(
+    stream_id: str,
+    start_offset_ms: int = Query(..., ge=0),
+    end_offset_ms: int = Query(..., ge=0),
+    roi_left: float | None = Query(None, ge=0.0, le=1.0),
+    roi_top: float | None = Query(None, ge=0.0, le=1.0),
+    roi_right: float | None = Query(None, ge=0.0, le=1.0),
+    roi_bottom: float | None = Query(None, ge=0.0, le=1.0),
+) -> CounterfactualWindowResponse:
+    """Rejected / Suppressed Detection Attribution v1 (see
+    docs/rejected-detection-attribution-contract.md): what happened around
+    one source-relative time window -- and, optionally, one normalized
+    region of interest (`roi_left/top/right/bottom`, all four or none) -- on
+    the current or most recently stopped Observation Engine session for
+    this Stream. Side-effect-free: never starts a session, never creates
+    evidence, never writes truth. Direct database archaeology is not
+    required for this diagnostic workflow.
+
+    404 for an unknown Stream (matching `/observation/status`); a known
+    Stream that has never started an Observation Engine session in this
+    process returns an honest, empty, `insufficient_counterfactual_lineage`
+    result rather than a 404 -- "never started" and "started but nothing
+    here" are different, both real, facts.
+    """
+
+    _stream_live_playback_config_or_404(stream_id)
+    if end_offset_ms < start_offset_ms:
+        raise HTTPException(status_code=400, detail="end_offset_ms must not precede start_offset_ms.")
+    roi_values = (roi_left, roi_top, roi_right, roi_bottom)
+    if any(value is not None for value in roi_values) and any(value is None for value in roi_values):
+        raise HTTPException(status_code=400, detail="Supply all four roi_* bounds, or none.")
+    roi = (roi_left, roi_top, roi_right, roi_bottom) if roi_left is not None else None
+    if roi is not None and (roi[0] >= roi[2] or roi[1] >= roi[3]):
+        raise HTTPException(status_code=400, detail="roi bounds must satisfy left < right and top < bottom.")
+
+    window = get_observation_engine_session_manager().counterfactual_query(
+        stream_id, start_offset_ms=start_offset_ms, end_offset_ms=end_offset_ms, roi=roi,
+    )
+    if window is None:
+        empty_accounting = CounterfactualLedgerAccountingResponse(
+            retained_count=0, evicted_count=0, recorded_count=0,
+        )
+        return CounterfactualWindowResponse(
+            stream_id=stream_id, start_offset_ms=start_offset_ms, end_offset_ms=end_offset_ms,
+            roi=list(roi) if roi is not None else None,
+            raw_detections=[], track_generations=[], proposal_outcomes=[],
+            raw_detection_count_in_roi=0, track_generation_count_in_roi=0,
+            coverage=CounterfactualCoverageResponse(
+                raw_detections=empty_accounting, track_generations=empty_accounting,
+                proposal_outcomes=empty_accounting,
+            ),
+            attribution="insufficient_counterfactual_lineage",
+            attribution_reason="no_observation_engine_session_has_run_for_this_stream_in_this_process",
+        )
+    attribution = classify_rejection_attribution(window)
+    return _counterfactual_window_response(window, attribution)
 
 
 @app.get("/api/streams/{stream_id}/live-session/current-frame")

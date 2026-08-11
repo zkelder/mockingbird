@@ -202,7 +202,8 @@ stage's full contract:
 [observation-engine-product-control-contract.md](observation-engine-product-control-contract.md),
 [unified-observation-panel-contract.md](unified-observation-panel-contract.md),
 [detection-quality-accounting-contract.md](detection-quality-accounting-contract.md),
-[localization-attribution-contract.md](localization-attribution-contract.md).
+[localization-attribution-contract.md](localization-attribution-contract.md),
+[rejected-detection-attribution-contract.md](rejected-detection-attribution-contract.md).
 
 ### Detection Quality Accounting
 
@@ -265,12 +266,11 @@ proposal through candidate Visit creation; and a SHADOW-only, deterministic
 admission-policy evaluator (`admission_policy.py`) compares the current
 (confidence-blind) production behavior against candidate confidence/temporal
 policies on real reviewed historical data, without granting any candidate
-policy production authority. Remains open: a standing rejected-candidate
-record wired into a *live* session (today's mechanism is an offline pass over
-already-recorded facts, run via `scripts/run_detection_quality_accounting.py`);
-representative difficult-case slices as a standing benchmark structure; and
-the promotion decision this contract's "Production authority gate" describes
-but does not itself make.
+policy production authority. A standing rejected-candidate record wired into
+a *live* session (previously open) is now covered for admission outcomes by
+Rejected / Suppressed Detection Attribution v1, below; representative
+difficult-case slices as a standing benchmark structure and the promotion
+decision this contract's "Production authority gate" describes remain open.
 
 Localization Attribution / Detection Geometry Lineage v1 (see
 [localization-attribution-contract.md](localization-attribution-contract.md))
@@ -299,6 +299,45 @@ that the transport's own already-computed capture latency
 rather than retained as this diagnostic fact. This is measurement only:
 no detector, tracker-policy, evidence-selection, or admission-gate behavior
 changed.
+
+Rejected / Suppressed Detection Attribution v1 (see
+[rejected-detection-attribution-contract.md](rejected-detection-attribution-contract.md))
+answers a narrower, complementary question the same 2026-08-11 session's own
+disclosed incidental finding raised: a real bird visible in one candidate's
+evidence imagery, near the feeder, was structurally unconnected to that
+candidate's own track, and the session's own report had to conclude
+whether MDv5 ever detected that specific bird was unrecoverable, because a
+live session's own suppressed-proposal facts were transient by design.
+Tracing the pipeline found three precise loss points: raw per-frame
+detector output (`ObservationResult.detection_observations`) was computed
+every inferred frame and never read by the live session driver at all;
+a track generation the tracker itself never confirmed left no trace once
+its generation ended (correctly out of scope for Visit assembly, but also
+retained nowhere else); and a non-created admission outcome collapsed to
+one bare `{reason: count}` in-memory tally, discarding the proposal's own
+id, lineage, and confidence/geometry evidence. `mockingbird.observation.
+counterfactual_lineage` adds one bounded, local-only, per-session
+standing ledger (`CounterfactualLedger`, capped by both count and age,
+deterministic oldest-first eviction) of three small record types --
+raw detections (including an explicit "detector ran, found nothing"
+heartbeat, distinguishing a genuine negative from an idle-cadence gap),
+track-generation outcomes (confirmed or rejected), and proposal admission
+outcomes (every outcome, not only suppressed ones) -- reusing
+`ConfidenceEvidenceSummary`/`GeometryAttribution`'s own vocabulary rather
+than inventing a parallel one. A pure, deterministic diagnostic
+(`counterfactual_lineage.classify_rejection_attribution`) classifies a
+queried region/time window into `detector_miss`, `detector_hit_then_
+tracker_lost`, `detector_hit_then_suppressed`, `tracker_drift`,
+`admission_rejected`, `visit_created`, or (never guessed, and never a
+false `detector_miss` from an evicted/partial window)
+`insufficient_counterfactual_lineage`. A new read-only API route
+(`GET /api/streams/{stream_id}/observation/counterfactual`, bounded
+time-window and optional region-of-interest query params) and a small
+Detection Quality Accounting integration
+(`admission_records_from_counterfactual_ledger`) round out the query/
+accounting surface, without a second review UI or metrics universe. This
+is measurement only: no detector, tracker-policy, Visit-assembly, or
+admission-gate behavior changed.
 
 ### Review Decision Provenance
 

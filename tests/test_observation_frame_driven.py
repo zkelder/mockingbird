@@ -173,6 +173,33 @@ async def test_idle_schedule_accelerates_for_candidate_and_tracks_every_frame() 
     assert any(item.lifecycle_state == "confirmed" for item in updates)
 
 
+async def test_result_detector_ran_matches_the_actual_inference_cadence() -> None:
+    """Rejected / Suppressed Detection Attribution v1 (see
+    docs/rejected-detection-attribution-contract.md): `ObservationResult.
+    detector_ran` is the fact a live counterfactual ledger needs to tell an
+    idle-cadence frame the detector never inspected apart from one it
+    inspected and found nothing in -- must exactly match `detector.
+    inferred`, never merely "some track update existed this frame" (which a
+    quiet frame with zero active tracks would not produce either way)."""
+    frames = _frames(7)
+    detector = FakeDetector({frames[0].frame_id or "": (_animal(frames[0], (0.2, 0.2, 0.4, 0.4)),)})
+    provider = FrameDrivenObservationProvider(detector=detector, settings=_settings(), tracker_support=lambda frame, track: track.bounding_box)
+    provider.load()
+    results = await provider.replay_frames(frames)
+    inferred_frame_ids = set(detector.inferred)
+    per_frame_results = [result for result in results if result.frame_packets]
+    assert len(per_frame_results) == len(frames)
+    for result in per_frame_results:
+        frame_id = result.frame_packets[0].frame_id
+        assert result.detector_ran == (frame_id in inferred_frame_ids)
+    # The synthetic end-of-replay finalization result (no `frame_packets` of
+    # its own -- see `_finalize_tracking`) honestly reports no detector
+    # evaluation for itself; it is not a per-frame result at all.
+    for result in results:
+        if not result.frame_packets:
+            assert result.detector_ran is False
+
+
 async def test_weak_detection_rejects_but_two_coherent_detections_confirm() -> None:
     frames = _frames(4, step_ms=1000)
     weak = FakeDetector({frames[0].frame_id or "": (_animal(frames[0], (0.1, 0.1, 0.2, 0.2), 0.3),)})

@@ -620,6 +620,7 @@ class FrameDrivenObservationProvider:
             track_updates=all_updates,
             evidence_candidates=tuple(terminal_evidence),
             visit_proposals=tuple(proposals),
+            detector_ran=detector_ran,
         )
 
     def finalize_replay(self) -> None:

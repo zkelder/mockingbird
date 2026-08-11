@@ -31,6 +31,7 @@ from statistics import median
 from typing import Sequence
 
 from mockingbird.observation.contracts import ConfidenceEvidenceSummary, DetectionObservation, TrackUpdate
+from mockingbird.observation.counterfactual_lineage import ProposalOutcomeRecord
 from mockingbird.observation.visit_episode_assembler import AssembledVisitProposal, Tracklet
 
 DETECTION_QUALITY_REPORT_SCHEMA_VERSION = 1
@@ -92,6 +93,39 @@ class AdmissionRecord:
     outcome: str
     admitted: bool
     confidence_evidence: ConfidenceEvidenceSummary | None = None
+
+
+def admission_records_from_counterfactual_ledger(
+    proposal_outcomes: Sequence[ProposalOutcomeRecord],
+) -> tuple[AdmissionRecord, ...]:
+    """Connect Rejected / Suppressed Detection Attribution v1's own bounded,
+    live-session-standing `ProposalOutcomeRecord` ledger (see
+    docs/rejected-detection-attribution-contract.md) to this module's
+    existing stage 5/6 accounting -- deliberately the *only* integration
+    point this milestone adds, per that contract's own "do not build a
+    parallel metrics universe" boundary. `ProposalOutcomeRecord` already
+    carries exactly the three facts `AdmissionRecord` needs
+    (`proposal_id`/`outcome`/`confidence_evidence`, plus `admitted`, reusing
+    the identical `outcome in ("created", "idempotent_repeat")` rule the
+    ledger itself already applied) -- this is a pure field projection, never
+    a recomputation, so `build_detection_quality_report` itself needed zero
+    changes to accept it. Closes the previously-disclosed gap that today's
+    accounting mechanism was "an offline pass over already-recorded facts"
+    with no standing live-session record at all (see "Remains open" in
+    docs/detection-quality-accounting-contract.md): a live session's own
+    counterfactual ledger can now feed this exact function directly, no
+    replay-report.json round trip required.
+    """
+
+    return tuple(
+        AdmissionRecord(
+            proposal_id=record.proposal_id,
+            outcome=record.outcome,
+            admitted=record.admitted,
+            confidence_evidence=record.confidence_evidence,
+        )
+        for record in proposal_outcomes
+    )
 
 
 def confidence_values_from(evidence: ConfidenceEvidenceSummary | None) -> tuple[float, ...]:

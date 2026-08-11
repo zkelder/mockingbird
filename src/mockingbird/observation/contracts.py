@@ -533,7 +533,20 @@ class VisitProposal:
 
 @dataclass(frozen=True)
 class ObservationResult:
-    """One provider result containing evidence facts, never product truth."""
+    """One provider result containing evidence facts, never product truth.
+
+    `detector_ran` (Rejected / Suppressed Detection Attribution v1, see
+    docs/rejected-detection-attribution-contract.md) is whether the
+    detector actually evaluated this result's own frame -- as opposed to an
+    idle-cadence frame it never inspected at all (`FrameDrivenObservation
+    Provider._should_infer`) -- mirroring `TrackUpdate.detector_ran`'s
+    identical "skipped vs. negative" distinction one layer earlier, before
+    any track exists. Defaulted `False` so every pre-existing positional/
+    keyword `ObservationResult(...)` call site remains valid; a producer
+    that predates this field, or one this milestone's live counterfactual
+    ledger does not consume, simply leaves it at the honest "not proven to
+    have run" default rather than a fabricated `True`.
+    """
 
     provider_id: str
     source_id: str
@@ -545,6 +558,7 @@ class ObservationResult:
     evidence_candidates: tuple[EvidenceCandidate, ...] = ()
     visit_proposals: tuple[VisitProposal, ...] = ()
     creates_truth: bool = False
+    detector_ran: bool = False
 
 
 @dataclass(frozen=True)

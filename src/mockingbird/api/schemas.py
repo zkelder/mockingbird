@@ -1383,6 +1383,114 @@ class ObservationSessionStatusResponse(BaseModel):
     advanced: dict[str, object] = Field(default_factory=dict)
 
 
+class CounterfactualConfidenceSummaryResponse(BaseModel):
+    """A minimal, wire-lean projection of `contracts.ConfidenceEvidenceSummary`
+    -- count/max/strong-count only, never the full per-detection sample
+    list (available to a Python-level caller of the underlying pure module
+    directly; kept out of the HTTP contract to stay a small, practical
+    surface -- see docs/rejected-detection-attribution-contract.md)."""
+
+    detection_count: int
+    max_confidence: float | None = None
+    strong_detection_count: int | None = None
+
+
+class CounterfactualRawDetectionResponse(BaseModel):
+    """One raw detector-evaluation fact -- either a genuine detection
+    (`bounding_box` set) or an explicit "the detector ran here and found
+    nothing usable" heartbeat (`bounding_box` absent). Diagnostic evidence
+    only, never reviewed truth."""
+
+    source_offset_ms: int
+    captured_at: datetime | None = None
+    frame_id: str | None = None
+    detector_id: str | None = None
+    provider_id: str | None = None
+    broad_class: str | None = None
+    is_animal: bool | None = None
+    confidence: float | None = None
+    bounding_box: list[float] | None = None
+
+
+class CounterfactualTrackGenerationResponse(BaseModel):
+    """One finalized tracker generation -- confirmed *or* rejected -- that
+    build_tracklets would otherwise have discarded entirely when not
+    confirmed."""
+
+    generation_id: str
+    broad_class: str
+    track_ids: list[str]
+    start_offset_ms: int
+    end_offset_ms: int
+    start_bounding_box: list[float]
+    end_bounding_box: list[float]
+    geometry_envelope: list[float]
+    confirmed: bool
+    terminal_reason: str | None = None
+    terminal_geometry_source: Literal["detector", "tracker", "carried_forward"] | None = None
+    confidence_evidence: CounterfactualConfidenceSummaryResponse
+
+
+class CounterfactualProposalOutcomeResponse(BaseModel):
+    """One decided admission attempt, recorded regardless of outcome."""
+
+    proposal_id: str
+    broad_class: str
+    zone_id: str | None = None
+    start_offset_ms: int
+    end_offset_ms: int
+    constituent_generation_ids: list[str]
+    outcome: str
+    reason: str
+    admitted: bool
+    visit_id: str | None = None
+    decided_at: datetime
+
+
+class CounterfactualLedgerAccountingResponse(BaseModel):
+    """Clear eviction accounting: how much of this ledger's own bounded
+    history is still retained versus already evicted."""
+
+    retained_count: int
+    evicted_count: int
+    recorded_count: int
+    oldest_retained_offset_ms: int | None = None
+    newest_retained_offset_ms: int | None = None
+
+
+class CounterfactualCoverageResponse(BaseModel):
+    session_first_offset_ms: int | None = None
+    session_last_offset_ms: int | None = None
+    raw_detections: CounterfactualLedgerAccountingResponse
+    track_generations: CounterfactualLedgerAccountingResponse
+    proposal_outcomes: CounterfactualLedgerAccountingResponse
+
+
+class CounterfactualWindowResponse(BaseModel):
+    """Rejected / Suppressed Detection Attribution v1 (see
+    docs/rejected-detection-attribution-contract.md): a bounded, read-only
+    reconstruction of what happened around one source-relative time window
+    -- and, optionally, one region of interest -- for the current (or most
+    recently stopped) Observation Engine session on this Stream. Never
+    starts a session, never creates evidence, and never itself reviewed
+    truth: `attribution` is diagnostic accounting a human reviewer's own
+    judgment must still confirm, exactly like `localization_attribution`'s
+    own classification already is."""
+
+    stream_id: str
+    start_offset_ms: int
+    end_offset_ms: int
+    roi: list[float] | None = None
+    raw_detections: list[CounterfactualRawDetectionResponse]
+    track_generations: list[CounterfactualTrackGenerationResponse]
+    proposal_outcomes: list[CounterfactualProposalOutcomeResponse]
+    raw_detection_count_in_roi: int
+    track_generation_count_in_roi: int
+    coverage: CounterfactualCoverageResponse
+    attribution: str
+    attribution_reason: str
+
+
 class SourceMonitorStatusResponse(BaseModel):
     # Monitor state is in-memory and evidence-only; correction remains truth.
     observation_provider_id: str = "snapshot"

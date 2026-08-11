@@ -47,14 +47,36 @@ analytics; unknown and abstained outcomes are valid.
   found -- `ReviewLabel` now carries durable, model-neutral provenance, and
   a non-human diagnostic assessment can no longer silently become reviewed
   Observation truth, reviewed-only export truth, or training-eligible truth;
-  and Localization Attribution / Detection Geometry Lineage v1 (see
+  Localization Attribution / Detection Geometry Lineage v1 (see
   [localization-attribution-contract.md](localization-attribution-contract.md)),
   which traced why 004/005 and a 2026-08-11 recurrence (007) each showed a
   real bird with a persisted box that missed it, added bounded raw-geometry
   lineage from detection through to the persisted MediaAsset, and added a
   deterministic diagnostic to classify a future localization failure --
-  live-verified on the real deployed build, though not yet exercised
-  against a fresh genuine-animal encounter (see "Remains for this phase").
+  live-verified on the real deployed build and, in a fuller 2026-08-11
+  45m47s live session run specifically to exercise it, correctly produced
+  `detector_off_target` and `tracker_drift` (with a real measured drift
+  distance) on real per-observation geometry for the first time, though
+  that session's own 2 admitted candidates were both false positives (a
+  midday dappled-shadow confusor family) with 0 genuine-animal encounters,
+  leaving the diagnostic's own A-vs-B question (for a real bird, is an
+  off-target box a raw-detector fault or a tracker/evidence-timing fault)
+  still unanswered pending a session that actually admits one; and
+  Rejected / Suppressed Detection Attribution v1 (see
+  [rejected-detection-attribution-contract.md](rejected-detection-attribution-contract.md)),
+  which closed the complementary gap that same 45m47s session's own
+  disclosed incidental finding exposed -- a real bird visible in one
+  candidate's evidence imagery, structurally unconnected to that
+  candidate's own track, whose own detection/tracking/suppression history
+  was unrecoverable because a live session's rejected-proposal facts were
+  discarded rather than retained. A bounded, local-only, per-session
+  counterfactual ledger (raw detector output, track-generation outcomes
+  including ones the tracker itself never confirmed, and every admission
+  outcome with full lineage) plus a deterministic attribution diagnostic
+  and a read-only ROI/time-window query API now make that question
+  answerable for the next real bird -- retrospective analysis of the
+  2026-08-11 session itself honestly remains `insufficient_counterfactual_
+  lineage`, since the ledger did not exist yet when that session ran.
 - **Remains for this phase:** a 2026-08-10 real end-to-end Camera Node
   session (25.3 minutes, the two just-fixed paths holding up cleanly)
   proved the structural path but found admission *precision* is not yet
@@ -96,24 +118,33 @@ analytics; unknown and abstained outcomes are valid.
 - **Explicitly deferred:** Phases 2 and 5-8 below do not start in earnest
   until Phase 1's exit gate is met, except where already-shipped Phase 3/4
   capability (Today in Your Yard v1, Phase 27A packaging) or Phase-1-
-  motivated Detection Quality Accounting v1 / Localization Attribution v1
-  infrastructure made opportunistic progress -- see "Phase sequencing."
+  motivated Detection Quality Accounting v1 / Localization Attribution v1 /
+  Rejected / Suppressed Detection Attribution v1 infrastructure made
+  opportunistic progress -- see "Phase sequencing."
 - **Next recommended implementation milestone:** run one bounded real
   Camera Node session (comparable in length to the 2026-08-10/2026-08-11
   sessions, not the large multi-session cohort described below) whose
-  specific purpose is capturing a fresh genuine-animal encounter with
-  Localization Attribution v1's lineage active, so
+  specific purpose is capturing a fresh genuine-animal encounter, now with
+  both Localization Attribution v1's lineage *and* Rejected / Suppressed
+  Detection Attribution v1's counterfactual ledger active, so
   `localization_attribution.classify_localization_attribution` can run
-  against real per-observation geometry for the first time rather than the
-  honestly-`insufficient_geometry_lineage` retrospective read on
-  candidates 004/005/007/008. That result is what decides Phase 2's actual
-  next step: if it shows a genuine, temporally-aligned detector hit still
-  missing the animal (`detector_off_target`), detector-candidate evaluation
-  (below) is justified; if it shows the box came from stale/tracker-support
-  geometry or an evidence-image timing gap (`detector_hit_then_lost`/
-  `evidence_geometry_misaligned`), the fix belongs in tracker/evidence-
-  timing work instead, not a detector swap. Separately, and not blocking
-  the above, collect a larger, less session-concentrated reviewed
+  against real per-observation geometry for an admitted candidate, and --
+  new this milestone -- `counterfactual_lineage.classify_rejection_
+  attribution` can be queried directly against the animal's own observed
+  screen region/time window even if no candidate is ever admitted for it,
+  rather than the honestly-`insufficient_geometry_lineage`/`insufficient_
+  counterfactual_lineage` retrospective reads every session before this one
+  produced. That result is what decides Phase 2's actual next step: if it
+  shows a genuine, temporally-aligned detector hit still missing the animal
+  (`detector_off_target`/`detector_hit_then_suppressed`), detector-candidate
+  evaluation (below) is justified; if it shows the box came from stale/
+  tracker-support geometry or an evidence-image timing gap
+  (`detector_hit_then_lost`/`evidence_geometry_misaligned`/`tracker_drift`),
+  the fix belongs in tracker/evidence-timing work instead, not a detector
+  swap; if it shows a true `detector_miss` over a fully-covered window, that
+  is itself new, actionable evidence a detector-candidate evaluation would
+  also want. Separately, and not blocking the above, collect a larger, less
+  session-concentrated reviewed
   field-truth cohort (the current 51-example/4-session corpus is real but
   too concentrated to promote a confidence-aware admission policy) -- see
   [detection-quality-accounting-contract.md](detection-quality-accounting-contract.md)'s
@@ -208,9 +239,12 @@ difficult-case slices as a standing structure (common/uncommon/unknown
 species, partial/occluded animals, multiple animals, small/distant subjects,
 feeder obstruction, motion blur, poor lighting/dawn/dusk, non-birds, empty
 backgrounds); implement abstention, which does not exist anywhere in the
-pipeline today; add classifier-side calibration; wire Detection Quality
-Accounting into a *live* session rather than an offline pass over
-already-recorded facts; collect a larger, more representative (not
+pipeline today; add classifier-side calibration; wiring Detection Quality
+Accounting into a *live* session (rather than only an offline pass over
+already-recorded facts) is now partially done for admission outcomes via
+Rejected / Suppressed Detection Attribution v1's counterfactual ledger
+(see [rejected-detection-attribution-contract.md](rejected-detection-attribution-contract.md));
+collect a larger, more representative (not
 session-concentrated) reviewed cohort before any confidence-aware admission
 policy could satisfy detection-quality-accounting-contract.md's "Production
 authority gate"; define an explicit promotion-decision rule, versioned

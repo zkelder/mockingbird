@@ -14,6 +14,7 @@ from mockingbird.observation.contracts import (
     EMPTY_CONFIDENCE_EVIDENCE,
     TrackUpdate,
 )
+from mockingbird.observation.counterfactual_lineage import proposal_outcome_record
 from mockingbird.observation.detection_quality_accounting import (
     AdmissionRecord,
     STAGE_ADMISSION_ATTEMPT,
@@ -22,6 +23,7 @@ from mockingbird.observation.detection_quality_accounting import (
     STAGE_CONFIRMED_TRACK_FORMATION,
     STAGE_LOCALIZATION_TRACKING,
     STAGE_VISIT_PROPOSAL_ASSEMBLY,
+    admission_records_from_counterfactual_ledger,
     build_detection_quality_report,
     confidence_values_from,
     summarize_confidence_distribution,
@@ -231,3 +233,43 @@ def test_report_is_deterministic_and_never_writes_product_truth() -> None:
         "reviewed_truth_created": False,
         "confidence_used_as_observational_authority": False,
     }
+
+
+# =============================================================================
+# Rejected / Suppressed Detection Attribution v1 integration (see
+# docs/rejected-detection-attribution-contract.md "Detection Quality
+# Accounting integration"): a live session's own standing counterfactual
+# ledger can now feed this exact six-stage report directly -- the
+# previously-disclosed gap that this module's own accounting had "no
+# standing live-session record ... today's mechanism is an offline pass
+# over already-recorded facts."
+# =============================================================================
+
+
+def test_admission_records_from_counterfactual_ledger_reproduces_the_funnel() -> None:
+    admitted_evidence = _summary(max_confidence=0.8, samples=(0.75, 0.8))
+    rejected_evidence = _summary(max_confidence=0.6, samples=(0.55, 0.6))
+    ledger_records = (
+        proposal_outcome_record(
+            _proposal("visit-episode:admit", confidence_evidence=admitted_evidence),
+            outcome="created", reason="candidate_visit_created", visit_id="visit-1",
+            decided_at=NOW, known_horizon_ms=1_500,
+        ),
+        proposal_outcome_record(
+            _proposal("visit-episode:reject", confidence_evidence=rejected_evidence),
+            outcome="blocked_ambiguous_boundary", reason="proposal_boundary_ambiguous_with_adjacent_proposal",
+            visit_id=None, decided_at=NOW, known_horizon_ms=1_500,
+        ),
+    )
+
+    admission_records = admission_records_from_counterfactual_ledger(ledger_records)
+    assert len(admission_records) == 2
+    assert {record.admitted for record in admission_records} == {True, False}
+
+    report = build_detection_quality_report(admission_records=admission_records)
+    stages = {item["stage"]: item["count"] for item in report["pipeline_stage_counts"]}
+    assert stages[STAGE_ADMISSION_ATTEMPT] == 2
+    assert stages[STAGE_CANDIDATE_VISIT_CREATION] == 1
+    assert report["suppression_reason_counts"] == [{"reason": "blocked_ambiguous_boundary", "count": 1}]
+    assert report["admitted_confidence_distribution"]["maximum"]["value"] == 0.8
+    assert report["rejected_confidence_distribution"]["maximum"]["value"] == 0.6

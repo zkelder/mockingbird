@@ -1039,3 +1039,146 @@ def test_finalize_tick_admits_a_still_pending_singleton_immediately(repository: 
     )
     assert session._counts.candidates_created == 1
     assert session._suppressed.get("blocked_continuation_pending") is None
+
+
+# =============================================================================
+# Rejected / Suppressed Detection Attribution v1 (see
+# docs/rejected-detection-attribution-contract.md): every admission outcome
+# -- not only a bare `_suppressed[reason] += 1` count -- is now retained
+# with full, reconstructable lineage in `session._counterfactual`, queryable
+# through `session.counterfactual_query`/`ObservationEngineSessionManager.
+# counterfactual_query`. These tests drive the real `_run_assembly_tick`
+# code path directly, mirroring the Visit Continuity tests immediately
+# above.
+# =============================================================================
+
+
+def test_run_assembly_tick_records_full_lineage_for_a_created_candidate(repository: ProductRepository) -> None:
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, now=NOW)
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    updates = list(_tick_track_updates("gen-solo", 0, 1_000))
+    evidence_a, bytes_a = _tick_evidence("gen-solo", "high_resolution_burst", "hash-solo-a")
+    evidence_b, bytes_b = _tick_evidence("gen-solo", "context", "hash-solo-b")
+    burst_bytes_cache = {evidence_a.media_asset_id: bytes_a, evidence_b.media_asset_id: bytes_b}
+
+    session._run_assembly_tick(
+        all_track_updates=updates, all_evidence_candidates=[evidence_a, evidence_b],
+        attempted_proposal_ids=set(), burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        known_horizon_ms=1_100, finalize=True,
+    )
+    assert session._counts.candidates_created == 1
+
+    window = session.counterfactual_query(start_offset_ms=0, end_offset_ms=1_000)
+    assert len(window.proposal_outcomes) == 1
+    outcome = window.proposal_outcomes[0]
+    assert outcome.outcome == "created"
+    assert outcome.admitted is True
+    assert outcome.constituent_generation_ids == ("gen-solo",)
+    assert outcome.visit_id == session._last_candidate_visit_id
+
+
+def test_suppressed_proposal_creates_no_visit_but_retains_exact_lineage(repository: ProductRepository) -> None:
+    """The exact real shape `_suppressed` alone already counted
+    (`blocked_missing_evidence`): no burst evidence ever became available,
+    so authority never even reaches the quality gate. Proves both halves of
+    the truth boundary at once: nothing about this attempt is visible as a
+    Visit/Event/ReviewLabel, and the *reason* the counterfactual ledger
+    retains is the real repository-level outcome code, not a guess."""
+
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, now=NOW)
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    from sqlalchemy import func, select
+
+    from mockingbird.repository.product_repository import EventModel, ReviewLabelModel
+
+    with repository.session_factory() as db_session:
+        # The fixture repository seeds demo data (including a demo
+        # ReviewLabel) by default -- compare before/after rather than an
+        # absolute total, matching `test_end_to_end_suppresses_insufficient_
+        # evidence_without_creating_a_visit`'s own established convention.
+        review_labels_before = db_session.scalar(select(func.count(ReviewLabelModel.id)))
+
+    updates = list(_tick_track_updates("gen-no-evidence", 0, 1_000))
+
+    session._run_assembly_tick(
+        all_track_updates=updates, all_evidence_candidates=[],
+        attempted_proposal_ids=set(), burst_bytes_cache={}, adapter=adapter,
+        known_horizon_ms=1_100, finalize=True,
+    )
+    assert session._counts.candidates_created == 0
+    assert session._suppressed.get("blocked_missing_evidence") == 1
+
+    window = session.counterfactual_query(start_offset_ms=0, end_offset_ms=1_000)
+    assert len(window.proposal_outcomes) == 1
+    outcome = window.proposal_outcomes[0]
+    assert outcome.outcome == "blocked_missing_evidence"
+    assert outcome.reason == "no_persistable_evidence_bytes"
+    assert outcome.admitted is False
+    assert outcome.visit_id is None
+
+    with repository.session_factory() as db_session:
+        candidate_events = db_session.scalar(
+            select(func.count(EventModel.id)).where(EventModel.event_type == "observation_engine_candidate")
+        )
+        assert candidate_events == 0
+        review_labels_after = db_session.scalar(select(func.count(ReviewLabelModel.id)))
+        assert review_labels_after == review_labels_before
+
+
+def test_counterfactual_query_advertises_bounded_eviction_accounting_in_status(
+    repository: ProductRepository,
+) -> None:
+    """The existing advanced-diagnostics status surface also gets a
+    lightweight, always-fresh eviction summary -- no query parameters
+    needed for the at-a-glance case."""
+
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, now=NOW)
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+    updates = list(_tick_track_updates("gen-solo", 0, 1_000))
+    session._run_assembly_tick(
+        all_track_updates=updates, all_evidence_candidates=[], attempted_proposal_ids=set(),
+        burst_bytes_cache={}, adapter=adapter, known_horizon_ms=1_100, finalize=True,
+    )
+
+    status = session.snapshot()
+    ledger_summary = status.advanced["counterfactual_ledger"]
+    assert ledger_summary["proposal_outcomes"]["retained_count"] == 1
+    assert ledger_summary["proposal_outcomes"]["evicted_count"] == 0
+
+
+def test_a_fresh_session_never_mixes_counterfactual_records_with_a_prior_one(
+    repository: ProductRepository,
+) -> None:
+    """Session reset/restart safety (Rejected / Suppressed Detection
+    Attribution v1): `ObservationEngineSessionManager.start` always
+    constructs a brand-new `_EngineSession`, so a brand-new
+    `CounterfactualLedger` is structurally guaranteed too -- proven directly
+    here rather than only inferred from that construction."""
+
+    first_session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+    updates = list(_tick_track_updates("gen-first-session", 0, 1_000))
+    first_session._run_assembly_tick(
+        all_track_updates=updates, all_evidence_candidates=[], attempted_proposal_ids=set(),
+        burst_bytes_cache={}, adapter=adapter, known_horizon_ms=1_100, finalize=True,
+    )
+    first_window = first_session.counterfactual_query(start_offset_ms=0, end_offset_ms=1_000)
+    assert len(first_window.proposal_outcomes) == 1
+
+    # A second Start for the identical Stream -- exactly what
+    # `ObservationEngineSessionManager.start` does after a prior session
+    # has stopped -- must begin with a completely empty ledger.
+    second_session = _tick_session(repository)
+    second_window = second_session.counterfactual_query(start_offset_ms=0, end_offset_ms=1_000)
+    assert second_window.proposal_outcomes == ()
+    assert second_window.track_generations == ()
+    assert second_window.coverage.session_first_offset_ms is None
+
+    # The first session's own records remain intact and unaffected.
+    first_window_again = first_session.counterfactual_query(start_offset_ms=0, end_offset_ms=1_000)
+    assert first_window_again == first_window

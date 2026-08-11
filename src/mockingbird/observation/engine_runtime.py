@@ -79,6 +79,11 @@ from mockingbird.observation.candidate_visit_authority import (
     ObservationAuthorityMode,
 )
 from mockingbird.observation.contracts import EvidenceCandidate, TrackUpdate
+from mockingbird.observation.counterfactual_lineage import (
+    BoundingBox,
+    CounterfactualLedger,
+    CounterfactualWindowResult,
+)
 from mockingbird.observation.frame_driven_provider import (
     FrameDrivenObservationProvider,
     FrameDrivenProviderConfiguration,
@@ -343,6 +348,14 @@ class _EngineSession:
         self._suppressed: dict[str, int] = {}
         self._last_candidate_visit_id: str | None = None
         self._advanced: dict[str, object] = {}
+        # Rejected / Suppressed Detection Attribution v1 (see
+        # docs/rejected-detection-attribution-contract.md): one bounded,
+        # local-only counterfactual ledger per session, created fresh here
+        # so a new Start can never mix its own records with a prior,
+        # already-stopped session's (see "session reset/restart" in the
+        # contract doc). `_suppressed` above is left unmodified/unremoved --
+        # this ledger is an addition, not a replacement.
+        self._counterfactual = CounterfactualLedger(stream_id=stream_id)
 
     @property
     def is_active(self) -> bool:
@@ -411,6 +424,8 @@ class _EngineSession:
                 candidates_suppressed=self._counts.candidates_suppressed,
                 suppressed_reasons=suppressed_reasons,
             )
+            advanced = dict(self._advanced)
+            advanced["counterfactual_ledger"] = self._counterfactual_summary()
             return ObservationEngineSessionStatus(
                 stream_id=self.stream_id,
                 state=self._state,
@@ -425,8 +440,46 @@ class _EngineSession:
                 stopped_reason=self._stopped_reason,
                 last_candidate_visit_id=self._last_candidate_visit_id,
                 counts=counts,
-                advanced=dict(self._advanced),
+                advanced=advanced,
             )
+
+    def _counterfactual_summary(self) -> dict[str, object]:
+        """Bounded, JSON-safe eviction/coverage summary for the existing
+        advanced-diagnostics surface (Rejected / Suppressed Detection
+        Attribution v1) -- an operator can see at a glance whether older
+        counterfactual evidence has already been evicted, without needing
+        the full ROI/time-window query surface (`counterfactual_query`)."""
+
+        coverage = self._counterfactual.coverage()
+
+        def _accounting(accounting) -> dict[str, object]:
+            return {
+                "retained_count": accounting.retained_count,
+                "evicted_count": accounting.evicted_count,
+                "recorded_count": accounting.recorded_count,
+                "oldest_retained_offset_ms": accounting.oldest_retained_offset_ms,
+                "newest_retained_offset_ms": accounting.newest_retained_offset_ms,
+            }
+
+        return {
+            "session_first_offset_ms": coverage.session_first_offset_ms,
+            "session_last_offset_ms": coverage.session_last_offset_ms,
+            "raw_detections": _accounting(coverage.raw_detection_retention),
+            "track_generations": _accounting(coverage.track_generation_retention),
+            "proposal_outcomes": _accounting(coverage.proposal_outcome_retention),
+        }
+
+    def counterfactual_query(
+        self, *, start_offset_ms: int, end_offset_ms: int, roi: BoundingBox | None = None,
+    ) -> CounterfactualWindowResult:
+        """Side-effect-free bounded read into this session's own
+        counterfactual ledger -- see docs/rejected-detection-attribution
+        -contract.md. Safe to call while `_run_async` is still actively
+        mutating the ledger from a different thread (the ledger is
+        internally locked, mirroring `_state_lock`'s own role for every
+        other cross-thread status read on this class)."""
+
+        return self._counterfactual.query(start_offset_ms=start_offset_ms, end_offset_ms=end_offset_ms, roi=roi)
 
     def _run(self) -> None:
         try:
@@ -593,6 +646,14 @@ class _EngineSession:
                         all_track_updates.extend(result.track_updates)
                         all_evidence_candidates.extend(result.evidence_candidates)
                         _harvest_burst_bytes(session, result.evidence_candidates, burst_bytes_cache)
+                        # Rejected / Suppressed Detection Attribution v1: the
+                        # one place this session previously discarded
+                        # `result.detection_observations`/`detector_ran`
+                        # entirely (see docs/rejected-detection-attribution
+                        # -contract.md) -- every raw detector output and
+                        # every finalized track generation, confirmed or
+                        # not, now feeds the bounded counterfactual ledger.
+                        self._counterfactual.observe_result(result)
                         for packet in result.frame_packets:
                             if packet.source_offset_ms is not None:
                                 latest_known_offset_ms = max(latest_known_offset_ms, packet.source_offset_ms)
@@ -621,6 +682,7 @@ class _EngineSession:
                     all_track_updates.extend(result.track_updates)
                     all_evidence_candidates.extend(result.evidence_candidates)
                     _harvest_burst_bytes(session, result.evidence_candidates, burst_bytes_cache)
+                    self._counterfactual.observe_result(result)
                     for packet in result.frame_packets:
                         if packet.source_offset_ms is not None:
                             latest_known_offset_ms = max(latest_known_offset_ms, packet.source_offset_ms)
@@ -745,9 +807,25 @@ class _EngineSession:
                 for candidate in relevant
                 if candidate.media_asset_id in burst_bytes_cache
             }
+            decided_at = datetime.now(UTC)
             outcome = adapter.attempt_candidate(
                 proposal, evidence_candidates=relevant, evidence_bytes=evidence_bytes,
-                observed_at=datetime.now(UTC),
+                observed_at=decided_at,
+            )
+            # Rejected / Suppressed Detection Attribution v1: recorded
+            # regardless of outcome (including a genuine "created"), so
+            # both "why was this Visit created" and "why was this potential
+            # Visit not created" are answerable from the same bounded
+            # ledger -- replacing the bare `self._suppressed[outcome] += 1`
+            # count below (kept, unmodified, for the existing basic
+            # diagnostics surface) with full, reconstructable lineage. This
+            # is the exact proposal/geometry/confidence detail a retried
+            # `blocked_continuation_pending` re-evaluation on a later tick
+            # previously discarded completely on every attempt but the
+            # last.
+            self._counterfactual.record_proposal_outcome(
+                proposal, outcome=outcome.outcome, reason=outcome.reason, visit_id=outcome.visit_id,
+                decided_at=decided_at, known_horizon_ms=known_horizon_ms,
             )
             # A proposal blocked only because its own episode boundary is
             # not yet final (`blocked_continuation_pending`) is never marked
@@ -864,6 +942,21 @@ class ObservationEngineSessionManager:
         with self._lock:
             session = self._sessions.get(stream_id)
         return session.snapshot() if session is not None else None
+
+    def counterfactual_query(
+        self, stream_id: str, *, start_offset_ms: int, end_offset_ms: int, roi: BoundingBox | None = None,
+    ) -> CounterfactualWindowResult | None:
+        """`None` only when this Stream has never started an Observation
+        Engine session in this process at all (mirroring `status()`'s own
+        "no session object exists yet" convention) -- never for a session
+        that simply has no matching lineage, which instead returns an
+        honest, empty `CounterfactualWindowResult`."""
+
+        with self._lock:
+            session = self._sessions.get(stream_id)
+        if session is None:
+            return None
+        return session.counterfactual_query(start_offset_ms=start_offset_ms, end_offset_ms=end_offset_ms, roi=roi)
 
     def stop_all(self, *, reason: str = "app_shutdown") -> None:
         with self._lock:

@@ -233,7 +233,7 @@ def build_tracklets(
         confidences = [item.confidence for item in ordered if item.confidence is not None]
         track_ids = tuple(dict.fromkeys(item.track_id for item in ordered if item.track_id))
         resolved_broad_class = terminal.broad_class or first.broad_class or "animal"
-        confidence_evidence = _confidence_evidence_from_terminal(
+        confidence_evidence = confidence_evidence_from_terminal_update(
             terminal,
             max_confidence=max(confidences) if confidences else None,
             broad_class=resolved_broad_class,
@@ -270,7 +270,7 @@ def build_tracklets(
     return tuple(tracklets)
 
 
-def _confidence_evidence_from_terminal(
+def confidence_evidence_from_terminal_update(
     terminal: TrackUpdate,
     *,
     max_confidence: float | None,
@@ -283,6 +283,17 @@ def _confidence_evidence_from_terminal(
     `max_confidence` is the exact value `build_tracklets` already computed
     for `Tracklet.confidence` -- reused, not recomputed, so the two can
     never disagree.
+
+    Public (not module-private): a terminal `TrackUpdate`'s own cumulative
+    fields are already sufficient to build a complete `ConfidenceEvidence
+    Summary` with no other update needed (`terminal.confidence` is itself
+    the generation's running max -- see `frame_tracker._observe_detection`'s
+    `track.confidence = max(track.confidence or 0.0, ...)`), which is
+    exactly why `mockingbird.observation.counterfactual_lineage` reuses this
+    function verbatim for a *rejected* (never-confirmed) generation too,
+    rather than duplicating this logic a second time (Rejected / Suppressed
+    Detection Attribution v1, see docs/rejected-detection-attribution
+    -contract.md).
 
     `strong_detection_count`/`weak_detection_count` are deliberately
     derived from `samples` (each one `is_strong`-tagged at the moment it was

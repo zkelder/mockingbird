@@ -70,7 +70,7 @@ class LocalizationAttributionResult:
             raise ValueError("invalid_localization_attribution_result")
 
 
-def _geometry_source_from_support_state(
+def geometry_source_from_support_state(
     support_state: str | None,
 ) -> Literal["detector", "tracker", "carried_forward"] | None:
     """The tracker's own `TrackUpdate.support_state` already distinguishes
@@ -85,7 +85,15 @@ def _geometry_source_from_support_state(
     existing, already-correct-by-construction fact is deliberate: a second,
     independently-derived offset-freshness check could only ever disagree
     with it if the tracker's own invariant were broken, which would be a
-    tracker bug to fix there, not paper over here."""
+    tracker bug to fix there, not paper over here.
+
+    Public (not module-private): `mockingbird.observation.counterfactual_
+    lineage` reuses this exact mapping one layer earlier -- for a track
+    generation's own last-known geometry, independent of whether that
+    geometry ever became any persisted candidate's evidence box -- rather
+    than duplicating the same three-way mapping a second time (Rejected /
+    Suppressed Detection Attribution v1, see docs/rejected-detection
+    -attribution-contract.md)."""
     if support_state in ("strong_detector_supported", "weak_detector_supported"):
         return "detector"
     if support_state == "tracker_supported":
@@ -137,7 +145,7 @@ def geometry_attribution_for_update(
     `evidence_source_offset_ms - update.bounding_box_source_offset_ms` when
     both are known, and left honestly `None` when neither is available.
     """
-    source = _geometry_source_from_support_state(update.support_state)
+    source = geometry_source_from_support_state(update.support_state)
     sample = _matching_confidence_sample(update) if source == "detector" else None
     if same_frame:
         gap_ms: int | None = 0
