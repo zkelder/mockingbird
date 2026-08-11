@@ -1220,3 +1220,76 @@ def test_episode_ids_remain_deterministic() -> None:
         return generations
 
     assert run() == run()
+
+
+# --------------------------------------------------------------------------
+# Localization Attribution / Detection Geometry Lineage v1 (see
+# docs/localization-attribution-contract.md)
+# --------------------------------------------------------------------------
+
+
+def test_detection_evidence_sample_retains_the_raw_detector_box() -> None:
+    """`DetectionEvidenceSample.bounding_box` must carry the exact raw
+    source-coordinate box the genuine matched detection reported -- not a
+    tracker-smoothed or otherwise transformed value."""
+    tracker = ProviderNeutralFrameTracker("stream", _config())
+    box = (0.21, 0.22, 0.53, 0.54)
+    frame = _frame(0, 0)
+    step = tracker.observe(frame, (_animal(frame, box, score=0.9),))
+    update = step.updates[-1]
+    assert len(update.confidence_samples) == 1
+    assert update.confidence_samples[0].bounding_box == box
+    assert update.confidence_samples[0].is_strong is True
+
+
+def test_bounding_box_source_offset_ms_lags_during_a_coasted_frame() -> None:
+    """`TrackUpdate.bounding_box_source_offset_ms` must track the *last
+    genuinely observed* moment, not merely echo this update's own `source_
+    offset_ms`, whenever a confirmed track coasts on its own widened-
+    tolerance gap (Stage 6.16) with no fresh detector or tracker-support
+    match this exact frame. This is the tracker-level fact `camera_node_
+    live`'s high-resolution burst path (and any future consumer) relies on
+    to tell a fresh box apart from a stale, carried-forward one -- see
+    `localization_attribution.geometry_attribution_for_update`."""
+    tracker = ProviderNeutralFrameTracker("stream", _config())
+    box = (0.2, 0.2, 0.5, 0.5)
+    frames = [_frame(index, index * 1000) for index in range(3)]
+
+    first_step = tracker.observe(frames[0], (_animal(frames[0], box, score=0.9),))
+    assert first_step.updates[-1].bounding_box_source_offset_ms == 0
+
+    confirm_step = tracker.observe(frames[1], (_animal(frames[1], box, score=0.9),))
+    confirm_update = confirm_step.updates[-1]
+    assert confirm_update.lifecycle_state == "confirmed"
+    assert confirm_update.source_offset_ms == 1000
+    assert confirm_update.bounding_box_source_offset_ms == 1000
+
+    # No detection and no tracker-support match this frame (default
+    # support_resolver returns None) -- a genuine "coasting" frame, bridged
+    # by the confirmed/graduated track's own widened gap tolerance rather
+    # than terminated.
+    coast_step = tracker.observe(frames[2], ())
+    coast_update = coast_step.updates[-1]
+    assert coast_update.support_state == "temporarily_lost"
+    assert coast_update.source_offset_ms == 2000
+    # The box itself did not move -- it is still whatever offset 1000 last
+    # established -- and this update honestly attributes it to that exact
+    # earlier moment, not to its own (later) source_offset_ms.
+    assert coast_update.bounding_box == box
+    assert coast_update.bounding_box_source_offset_ms == 1000
+
+
+def test_terminal_update_preserves_bounding_box_source_offset_ms() -> None:
+    """The synthetic terminal `TrackUpdate` a generation ends with (`status
+    == "ended"`) must report the same honest `bounding_box_source_offset_ms`
+    as its own last real update -- a track ending does not itself move or
+    refresh the box."""
+    tracker = ProviderNeutralFrameTracker("stream", _config())
+    box = (0.2, 0.2, 0.5, 0.5)
+    frames = [_frame(index, index * 1000) for index in range(2)]
+    tracker.observe(frames[0], (_animal(frames[0], box, score=0.9),))
+    tracker.observe(frames[1], (_animal(frames[1], box, score=0.9),))
+    final_step = tracker.finalize("end_of_replay")
+    terminal_update = final_step.updates[-1]
+    assert terminal_update.status == "ended"
+    assert terminal_update.bounding_box_source_offset_ms == 1000

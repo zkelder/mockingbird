@@ -40,13 +40,21 @@ analytics; unknown and abstained outcomes are valid.
   install bundle (Phase 27A); two real-hardware defects found and fixed in
   an earlier field session (Camera Node pairing repair, and an
   Observation/live-view capture-ownership collision); the Visit Continuity
-  fix for the candidate-004/005 fragmentation defect; and Review Decision
+  fix for the candidate-004/005 fragmentation defect; Review Decision
   Provenance / Truth Boundary v1 (see
   [review-decision-provenance-contract.md](review-decision-provenance-contract.md)),
   which closed the real truth-boundary gap that same defect's own audit
   found -- `ReviewLabel` now carries durable, model-neutral provenance, and
   a non-human diagnostic assessment can no longer silently become reviewed
-  Observation truth, reviewed-only export truth, or training-eligible truth.
+  Observation truth, reviewed-only export truth, or training-eligible truth;
+  and Localization Attribution / Detection Geometry Lineage v1 (see
+  [localization-attribution-contract.md](localization-attribution-contract.md)),
+  which traced why 004/005 and a 2026-08-11 recurrence (007) each showed a
+  real bird with a persisted box that missed it, added bounded raw-geometry
+  lineage from detection through to the persisted MediaAsset, and added a
+  deterministic diagnostic to classify a future localization failure --
+  live-verified on the real deployed build, though not yet exercised
+  against a fresh genuine-animal encounter (see "Remains for this phase").
 - **Remains for this phase:** a 2026-08-10 real end-to-end Camera Node
   session (25.3 minutes, the two just-fixed paths holding up cleanly)
   proved the structural path but found admission *precision* is not yet
@@ -62,19 +70,56 @@ analytics; unknown and abstained outcomes are valid.
   admission *recall* also still needs resolving; bounded CPU/RAM/storage
   behavior and truthful capability reporting against representative
   unattended field conditions remain unverified beyond shadow/synthetic
-  benchmarks.
+  benchmarks. A 2026-08-11 fresh field session then reproduced a sharper,
+  more specific finding: a genuine, visible bird's persisted candidate box
+  had zero IoU overlap with it -- the second independent session to show
+  this (after 004/005) -- while that same session's one false positive sat
+  at a confidence (0.544) too high for a confidence floor to plausibly
+  reject, directly undermining the confidence-gating hypothesis. Localization
+  Attribution / Detection Geometry Lineage v1 (see
+  [localization-attribution-contract.md](localization-attribution-contract.md))
+  answers the resulting open question precisely: geometry lineage (raw
+  detector boxes, tracker-support-vs-detector provenance, and whether a
+  persisted evidence image provably represents the same moment as the box
+  drawn on it) now survives from detection through to the persisted
+  MediaAsset. Tracing this path found the box a reviewer sees, for any real
+  live Camera Node candidate, always comes from a high-resolution evidence
+  burst captured measurably *later* than the triggering detection -- a
+  concrete, previously-undetected mechanism consistent with (not yet
+  proven as the sole cause of) both known off-target cases. A bounded
+  10-minute live smoke against the real deployed build confirmed the new
+  lineage code runs correctly on real hardware (387 track updates, 217
+  evidence candidates, zero errors) but produced no fresh admitted
+  candidate to exercise the new fine-grained diagnostic against a genuine
+  sighting -- the honest, disclosed outcome of a deliberately short window,
+  not a defect.
 - **Explicitly deferred:** Phases 2 and 5-8 below do not start in earnest
   until Phase 1's exit gate is met, except where already-shipped Phase 3/4
   capability (Today in Your Yard v1, Phase 27A packaging) or Phase-1-
-  motivated Detection Quality Accounting v1 infrastructure made
-  opportunistic progress -- see "Phase sequencing."
-- **Next recommended implementation milestone:** collect a larger, less
-  session-concentrated reviewed field-truth cohort (the current 51-example/
-  4-session corpus is real but too concentrated to promote a confidence-
-  aware admission policy) -- see [detection-quality-accounting-contract.md](detection-quality-accounting-contract.md)'s
-  "Production authority gate" and this milestone's final report for the
+  motivated Detection Quality Accounting v1 / Localization Attribution v1
+  infrastructure made opportunistic progress -- see "Phase sequencing."
+- **Next recommended implementation milestone:** run one bounded real
+  Camera Node session (comparable in length to the 2026-08-10/2026-08-11
+  sessions, not the large multi-session cohort described below) whose
+  specific purpose is capturing a fresh genuine-animal encounter with
+  Localization Attribution v1's lineage active, so
+  `localization_attribution.classify_localization_attribution` can run
+  against real per-observation geometry for the first time rather than the
+  honestly-`insufficient_geometry_lineage` retrospective read on
+  candidates 004/005/007/008. That result is what decides Phase 2's actual
+  next step: if it shows a genuine, temporally-aligned detector hit still
+  missing the animal (`detector_off_target`), detector-candidate evaluation
+  (below) is justified; if it shows the box came from stale/tracker-support
+  geometry or an evidence-image timing gap (`detector_hit_then_lost`/
+  `evidence_geometry_misaligned`), the fix belongs in tracker/evidence-
+  timing work instead, not a detector swap. Separately, and not blocking
+  the above, collect a larger, less session-concentrated reviewed
+  field-truth cohort (the current 51-example/4-session corpus is real but
+  too concentrated to promote a confidence-aware admission policy) -- see
+  [detection-quality-accounting-contract.md](detection-quality-accounting-contract.md)'s
+  "Production authority gate" and that milestone's final report for the
   specific numbers a promotion decision would need. Agent-assisted field-
-  cohort collection is safe to resume for this: Review Decision Provenance /
+  cohort collection is safe to resume for either: Review Decision Provenance /
   Truth Boundary v1 closed the gap that made that unsafe before (an agent's
   own visual review is now durably `agent_diagnostic`, never authoritative,
   never silently reviewed/exported/training-eligible truth), *provided* the

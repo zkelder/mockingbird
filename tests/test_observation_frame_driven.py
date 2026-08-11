@@ -257,6 +257,46 @@ async def test_evidence_ring_roles_bounds_proposal_idempotency_and_reset() -> No
     assert provider.active_track_count == 0
 
 
+async def test_evidence_geometry_attribution_distinguishes_pretrigger_from_same_frame_roles() -> None:
+    """Localization Attribution / Detection Geometry Lineage v1 (see
+    docs/localization-attribution-contract.md): `pretrigger` evidence is the
+    one role in this provider whose image comes from an *earlier* retained
+    frame than the `TrackUpdate` supplying its box (`_seed_evidence` reads
+    `prior[-1]`, an older frame, while `update` is the track's current,
+    just-started state) -- its own `geometry_attribution` must honestly
+    report `same_frame=False` and a nonzero, exactly-derivable gap. Every
+    other role's `frame`/`update` pair is the same per-frame processing
+    step, so its `geometry_attribution` must report `same_frame=True` and a
+    `0` gap -- proven, not merely asserted, by tracing frame identity."""
+    frames = _frames(12)
+    detector = FakeDetector({frames[2].frame_id or "": (_animal(frames[2], (0.2, 0.2, 0.5, 0.5)),)})
+    provider = FrameDrivenObservationProvider(
+        detector=detector, settings=_settings(evidence_ring_size=4, baseline_detector_fps=5.0),
+        tracker_support=lambda frame, track: track.bounding_box,
+    )
+    provider.load()
+    results = await provider.replay_frames(frames)
+    evidence = {item.role: item for result in results for item in result.evidence_candidates}
+
+    pretrigger = evidence["pretrigger"]
+    assert pretrigger.frame_id == frames[1].frame_id  # the retained frame *before* the detection frame
+    attribution = pretrigger.geometry_attribution
+    assert attribution is not None
+    assert attribution.same_frame is False
+    assert attribution.geometry_evidence_gap_ms == abs(frames[1].source_offset_ms - frames[2].source_offset_ms)
+    assert attribution.geometry_evidence_gap_ms == 200
+
+    for role in ("detector_confirmed", "tracked_best"):
+        candidate = evidence[role]
+        assert candidate.frame_id == frames[2].frame_id
+        aligned = candidate.geometry_attribution
+        assert aligned is not None
+        assert aligned.same_frame is True
+        assert aligned.geometry_evidence_gap_ms == 0
+        assert aligned.geometry_source == "detector"
+        assert aligned.geometry_source_confidence == 0.9  # FakeDetector/_animal's own default score
+
+
 # --------------------------------------------------------------------------
 # Stage 6.14: reviewed-to-replay evidence identity lineage
 # --------------------------------------------------------------------------

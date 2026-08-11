@@ -42,7 +42,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 32
+CURRENT_DATABASE_SCHEMA_VERSION = 33
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -803,6 +803,37 @@ def _migrate_to_review_decision_provenance(connection: Connection) -> None:
     )
 
 
+def _migrate_to_observation_geometry_lineage(connection: Connection) -> None:
+    """Add the Localization Attribution / Detection Geometry Lineage v1
+    diagnostic lineage column to the existing `media_assets` table (see
+    docs/localization-attribution-contract.md).
+
+    Nullable, no default: every row that already exists at migration time
+    reads back `geometry_attribution_json=None` -- the honest "this evidence
+    item predates geometry lineage" fact, never a fabricated attribution
+    (see "no fabricated confidence for legacy records" in
+    product-doctrine.md). This migration writes no data of its own,
+    mirroring `_migrate_to_observation_confidence_evidence`'s own
+    additive-column pattern. `media_assets` predates every numbered
+    migration (present since schema v1), so a real upgrading database
+    always already has it by the time this runs -- the existence check
+    below is defensive only, for the same reason
+    `_migrate_to_review_decision_provenance`'s own `has_table` check is.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Observation geometry-lineage migration requires local SQLite storage."
+        )
+    if not inspect(connection).has_table("media_assets"):
+        return
+    columns = {column["name"] for column in inspect(connection).get_columns("media_assets")}
+    if "geometry_attribution_json" not in columns:
+        connection.exec_driver_sql(
+            "ALTER TABLE media_assets ADD COLUMN geometry_attribution_json TEXT"
+        )
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -835,6 +866,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     30: _migrate_to_camera_node_pending_setup,
     31: _migrate_to_observation_confidence_evidence,
     32: _migrate_to_review_decision_provenance,
+    33: _migrate_to_observation_geometry_lineage,
 }
 
 

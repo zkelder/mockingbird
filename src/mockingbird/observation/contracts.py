@@ -89,6 +89,17 @@ class DetectionEvidenceSample:
     subset of every detection a track ever matched (see
     `ConfidenceEvidenceSummary.sample_truncated`); it is never fabricated
     for a detection that did not happen.
+
+    `bounding_box` (Localization Attribution / Detection Geometry Lineage v1
+    -- see docs/localization-attribution-contract.md) is the exact raw
+    source-coordinate box `DetectionObservation.bounding_box` reported for
+    this genuine matched detection -- the same fact `frame_tracker.
+    _evidence_sample` already had in scope when it built every other field
+    on this dataclass, simply not previously retained. Defaulted so every
+    pre-existing positional/keyword `DetectionEvidenceSample(...)` call site
+    (this module's own tests, and any legacy-reconstructed sample that
+    predates this contract) remains valid; `None` means "not known," never a
+    fabricated box -- see "Honesty rules" on `ConfidenceEvidenceSummary`.
     """
 
     confidence: float
@@ -96,6 +107,7 @@ class DetectionEvidenceSample:
     frame_id: str | None
     observation_id: str | None
     is_strong: bool
+    bounding_box: tuple[float, float, float, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -355,6 +367,85 @@ class TrackUpdate:
     # admission-policy evaluation (see `mockingbird.observation.
     # admission_policy`).
     max_consecutive_detector_confirmed_frames: int = 0
+    # Localization Attribution / Detection Geometry Lineage v1 (see
+    # docs/localization-attribution-contract.md): the `source_offset_ms` at
+    # which `bounding_box` was actually last (re)established by a genuine
+    # detector or tracker-support observation -- as opposed to this update's
+    # own `source_offset_ms`, which is merely when *this update* was
+    # emitted. The two differ exactly when a track is coasting on a bounded
+    # widened-tolerance gap (`frame_tracker._gap_bound`) with no fresh
+    # detector or tracker-support match this frame: `bounding_box` itself is
+    # unchanged (frozen at wherever it was last genuinely observed), but an
+    # ordinary `TrackUpdate` is still emitted every frame regardless. Mirrors
+    # `frame_tracker._Track.last_offset_ms`, which already carries exactly
+    # this fact internally (updated only inside `_observe_detection`/
+    # `_observe_tracker_support`, left untouched otherwise) -- this field
+    # only exposes it. Defaulted `None` so every pre-existing positional/
+    # keyword `TrackUpdate(...)` call site remains valid; `None` means "not
+    # known" (a legacy-reconstructed update), never "same as source_offset_ms".
+    bounding_box_source_offset_ms: int | None = None
+
+
+@dataclass(frozen=True)
+class GeometryAttribution:
+    """Where one `EvidenceCandidate`'s own `subject_geometry` box actually
+    came from, and whether it can be trusted to represent the same moment as
+    the evidence image/frame it is attached to (Localization Attribution /
+    Detection Geometry Lineage v1 -- see
+    docs/localization-attribution-contract.md).
+
+    This is diagnostic lineage, never observational truth: it answers "which
+    observation produced this box, and how stale is it relative to the image
+    it is drawn on," not "is an animal actually there" -- exactly the same
+    evidence-not-authority boundary `ConfidenceEvidenceSummary` already
+    documents. `None` on any field means "not known," never a guessed or
+    fabricated moment; a caller that cannot honestly compute a fact leaves it
+    `None` rather than defaulting it to something that looks measured.
+
+    `geometry_source` names what kind of observation actually established
+    `subject_geometry`:
+
+    - `"detector"`: a genuine matched detector observation this exact
+      moment (`TrackUpdate.support_state` was `strong_detector_supported`
+      or `weak_detector_supported` at `geometry_source_offset_ms`).
+    - `"tracker"`: a tracker-support (patch-match) observation with no
+      corresponding detection this exact moment
+      (`support_state == "tracker_supported"`).
+    - `"carried_forward"`: no fresh observation at all established this
+      geometry the moment it was read for evidence -- the box is simply
+      whatever a track's own bounded widened-tolerance gap tolerance last
+      left it at (see `TrackUpdate.bounding_box_source_offset_ms`).
+
+    `same_frame` is a structural fact, never a threshold judgment: `True`
+    only when the evidence image and the geometry's own source observation
+    are provably the identical captured frame (for example the frame-driven
+    provider's `tracked_best`/`detector_confirmed` evidence, which reads the
+    box from the exact frame it also captures). A high-resolution burst
+    capture -- a genuinely separate, later capture event by construction --
+    is always `False`, regardless of how small the measured gap turns out to
+    be. `geometry_evidence_gap_ms` is the separate, honest magnitude (always
+    `0` when `same_frame` is `True`; the real measured `|delta|` in
+    milliseconds between the evidence image's own moment and the geometry's
+    source moment when `False` and known).
+    """
+
+    geometry_source: Literal["detector", "tracker", "carried_forward"] | None
+    geometry_source_offset_ms: int | None
+    geometry_source_observation_id: str | None
+    geometry_source_confidence: float | None
+    same_frame: bool | None
+    geometry_evidence_gap_ms: int | None
+
+    def __post_init__(self) -> None:
+        if self.geometry_evidence_gap_ms is not None and self.geometry_evidence_gap_ms < 0:
+            raise ValueError("invalid_geometry_attribution")
+        if self.same_frame is True and self.geometry_evidence_gap_ms not in (0, None):
+            raise ValueError("invalid_geometry_attribution")
+        if (
+            self.geometry_source_confidence is not None
+            and not 0.0 <= self.geometry_source_confidence <= 1.0
+        ):
+            raise ValueError("invalid_geometry_attribution")
 
 
 @dataclass(frozen=True)
@@ -369,6 +460,13 @@ class EvidenceCandidate:
     explicit bridge a truth-joining consumer (for example the evidence
     benchmark) uses instead of assuming `frame_id` doubles as reviewed truth's
     identity.
+
+    `geometry_attribution` (Localization Attribution / Detection Geometry
+    Lineage v1) is additive, optional lineage explaining `subject_geometry`
+    -- see `GeometryAttribution`. `None` for any provider/call site that
+    predates this contract, or that has no basis to compute it (for example
+    the legacy timer-driven `SnapshotObservationProvider` path); never
+    fabricated.
     """
 
     media_asset_id: str
@@ -388,6 +486,7 @@ class EvidenceCandidate:
     shadow_only: bool = True
     source_capture_frame_id: str | None = None
     source_content_hash: str | None = None
+    geometry_attribution: GeometryAttribution | None = None
 
 
 @dataclass(frozen=True)

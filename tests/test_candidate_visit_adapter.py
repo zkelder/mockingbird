@@ -9,16 +9,23 @@ wires together.
 
 from __future__ import annotations
 
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
+import json
 from pathlib import Path
 
 import pytest
 
 from mockingbird.observation.candidate_visit_adapter import CandidateVisitAuthorityAdapter
 from mockingbird.observation.candidate_visit_authority import ObservationAuthorityMode
-from mockingbird.observation.contracts import EvidenceCandidate
+from mockingbird.observation.contracts import EvidenceCandidate, GeometryAttribution
 from mockingbird.observation.visit_episode_assembler import Tracklet, assemble_visit_episodes
-from mockingbird.repository.product_repository import ObservationCandidateVisitModel, ProductRepository, VisitModel
+from mockingbird.repository.product_repository import (
+    MediaAssetModel,
+    ObservationCandidateVisitModel,
+    ProductRepository,
+    VisitModel,
+)
 
 STREAM_ID = "stream-backyard-feeder"
 FEEDER_ZONE_ID = "zone-feeder"
@@ -131,6 +138,44 @@ def test_end_to_end_assembled_proposal_creates_one_candidate_visit(repository: P
         assert ledger.provider_key == "frame-driven-onnx-cuda"
         assert ledger.selected_identification_media_asset_id is not None
         assert ledger.selected_context_media_asset_id is not None
+
+
+def test_geometry_attribution_flows_from_evidence_candidate_to_persisted_media_asset(
+    repository: ProductRepository,
+) -> None:
+    """Localization Attribution / Detection Geometry Lineage v1 (see
+    docs/localization-attribution-contract.md): an `EvidenceCandidate`'s own
+    `geometry_attribution` -- computed upstream by the provider/live-session
+    layer, never recomputed here -- must survive the full adapter ->
+    repository path onto the persisted MediaAsset's own
+    `geometry_attribution_json`, verbatim."""
+    tracklet = _tracklet("gen-1", 0, 4500)
+    proposal = assemble_visit_episodes((tracklet,)).proposals[0]
+    _activate(repository)
+
+    attribution = GeometryAttribution(
+        geometry_source="detector", geometry_source_offset_ms=500, geometry_source_observation_id="obs-1",
+        geometry_source_confidence=0.66, same_frame=False, geometry_evidence_gap_ms=9_551,
+    )
+    identification, context = _evidence_candidates()
+    candidates = (replace(identification, geometry_attribution=attribution), context)
+    evidence_bytes = {"shadow-burst:hash-id": JPEG_BYTES, "shadow-burst:hash-ctx": JPEG_BYTES}
+    outcome = _adapter(repository).attempt_candidate(
+        proposal, evidence_candidates=candidates, evidence_bytes=evidence_bytes, observed_at=NOW,
+    )
+    assert outcome.created
+
+    with repository.session_factory() as session:
+        ledger = session.get(ObservationCandidateVisitModel, proposal.proposal_id)
+        assert ledger is not None
+        identification_media = session.get(MediaAssetModel, ledger.selected_identification_media_asset_id)
+        assert identification_media is not None
+        assert json.loads(identification_media.geometry_attribution_json) == asdict(attribution)
+        # The context candidate never had a `geometry_attribution` set --
+        # honestly `None`, never inherited from its sibling.
+        context_media = session.get(MediaAssetModel, ledger.selected_context_media_asset_id)
+        assert context_media is not None
+        assert context_media.geometry_attribution_json is None
 
 
 def test_shadow_mode_end_to_end_creates_nothing(repository: ProductRepository) -> None:

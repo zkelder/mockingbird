@@ -620,6 +620,22 @@ class MediaAssetModel(Base):
         String,
         nullable=True,
     )
+    # Localization Attribution / Detection Geometry Lineage v1 (schema 33,
+    # see docs/localization-attribution-contract.md): one serialized
+    # `contracts.GeometryAttribution` JSON object explaining where this
+    # asset's own `normalized_track_box_json` actually came from (a genuine
+    # detector hit, tracker-support patch match, or stale carried-forward
+    # box) and whether this image provably represents the same moment as
+    # that geometry's own source observation. Nullable with no default:
+    # every row created before this column existed, and every asset whose
+    # producer has no basis to compute it (for example the legacy
+    # `alignment_status`/`alignment_failure_code` motion-evidence path
+    # above, unrelated to the Observation Engine v2 candidate-Visit path
+    # this column serves), reads back `None` -- never a fabricated
+    # attribution (see "no fabricated confidence for legacy records" in
+    # product-doctrine.md). Diagnostic lineage only; nothing reads this
+    # column as species/animal-presence truth.
+    geometry_attribution_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class StorageRetentionSettingsModel(Base):

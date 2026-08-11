@@ -138,6 +138,14 @@ class TrackView:
     # backward-compatibility reason as the fields above.
     confidence_samples: tuple[DetectionEvidenceSample, ...] = ()
     max_consecutive_detector_confirmed_frames: int = 0
+    # Localization Attribution / Detection Geometry Lineage v1: mirrors
+    # `_Track.last_offset_ms` -- see docs/localization-attribution-contract.md
+    # and the identical field on `contracts.TrackUpdate`. Defaulted for the
+    # same backward-compatibility reason as the fields above; `None` for a
+    # `TrackView` reconstructed from something other than a live `_Track`
+    # (for example `frame_driven_provider._view_from_update`, which has no
+    # way to recover this fact from an already-emitted `TrackUpdate` alone).
+    bounding_box_source_offset_ms: int | None = None
 
 
 class TrackerSupportResolver(Protocol):
@@ -278,6 +286,7 @@ class _Track:
             self.ambiguous_start,
             tuple(self.confidence_samples),
             self.max_consecutive_detector_confirmed_frames,
+            self.last_offset_ms,
         )
 
 
@@ -944,6 +953,7 @@ class ProviderNeutralFrameTracker:
             ambiguous_start=track.ambiguous_start,
             confidence_samples=tuple(track.confidence_samples),
             max_consecutive_detector_confirmed_frames=track.max_consecutive_detector_confirmed_frames,
+            bounding_box_source_offset_ms=track.last_offset_ms,
         )
 
     def _terminal_update(
@@ -979,6 +989,7 @@ class ProviderNeutralFrameTracker:
             ambiguous_start=view.ambiguous_start,
             confidence_samples=view.confidence_samples,
             max_consecutive_detector_confirmed_frames=view.max_consecutive_detector_confirmed_frames,
+            bounding_box_source_offset_ms=view.bounding_box_source_offset_ms,
         )
 
 
@@ -990,13 +1001,19 @@ def _evidence_sample(
     docs/detection-quality-accounting-contract.md). `confidence` follows
     this module's own established `detection.confidence or 0.0` convention
     for treating an absent score as zero (matching the `animals` filter in
-    `observe()` and every other confidence read in this file)."""
+    `observe()` and every other confidence read in this file).
+
+    `bounding_box` (Localization Attribution / Detection Geometry Lineage v1
+    -- see docs/localization-attribution-contract.md) is the exact raw
+    source-coordinate box this genuine detection reported -- already in
+    scope here, simply not previously retained."""
     return DetectionEvidenceSample(
         confidence=detection.confidence if detection.confidence is not None else 0.0,
         source_offset_ms=frame.source_offset_ms,
         frame_id=frame.frame_id,
         observation_id=detection.observation_id,
         is_strong=is_strong,
+        bounding_box=detection.bounding_box,
     )
 
 

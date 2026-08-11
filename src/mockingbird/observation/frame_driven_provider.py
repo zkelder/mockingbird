@@ -30,6 +30,7 @@ from mockingbird.observation.frame_tracker import (
     TrackerConfiguration,
     TrackerSupportResolver,
 )
+from mockingbird.observation.localization_attribution import geometry_attribution_for_update
 from mockingbird.observation.reconnect_continuity import (
     CONTINUE_ACROSS_TRANSPORT_RECONNECT,
     RESET_SOURCE_GENERATION,
@@ -717,6 +718,23 @@ class FrameDrivenObservationProvider:
     def _candidate(self, frame: FramePacket, update: TrackUpdate, role: str) -> EvidenceCandidate:
         box = update.bounding_box
         area = 0.0 if box is None else (box[2] - box[0]) * (box[3] - box[1])
+        # Localization Attribution / Detection Geometry Lineage v1 (see
+        # docs/localization-attribution-contract.md): a structural fact, not
+        # a guess -- `pretrigger` is the one role here whose image comes
+        # from an *earlier* retained frame than the `update` supplying
+        # `box` (see `_seed_evidence`), so it alone is genuinely a different
+        # moment. Every other role's own `frame`/`update` pair is already
+        # the same per-frame processing step (`_seed_evidence`/`_update_
+        # evidence` are always called together for the current frame), so
+        # `frame_id` equality both proves and explains the pre-existing
+        # `temporal_alignment` quality fact below rather than merely
+        # asserting it.
+        same_frame = (
+            frame.frame_id is not None and update.frame_id is not None and frame.frame_id == update.frame_id
+        )
+        geometry_attribution = geometry_attribution_for_update(
+            update, same_frame=same_frame, evidence_source_offset_ms=frame.source_offset_ms,
+        )
         return EvidenceCandidate(
             frame.media_asset_id,
             frame.stream_id,
@@ -744,6 +762,7 @@ class FrameDrivenObservationProvider:
             True,
             source_capture_frame_id=frame.source_capture_frame_id,
             source_content_hash=frame.source_content_hash,
+            geometry_attribution=geometry_attribution,
         )
 
     def _finalize_terminal(self, terminal: TerminalTrack) -> tuple[tuple[EvidenceCandidate, ...], VisitProposal | None]:

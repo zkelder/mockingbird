@@ -1808,6 +1808,16 @@ class CandidateEvidenceItem:
     height: int | None
     captured_at: datetime | None
     subject_geometry: tuple[float, float, float, float] | None
+    # Localization Attribution / Detection Geometry Lineage v1 (see
+    # docs/localization-attribution-contract.md): a pre-serialized JSON
+    # `contracts.GeometryAttribution` explaining where `subject_geometry`
+    # came from, serialized by the caller (`candidate_visit_adapter`, the
+    # one place that already imports the engine-side `EvidenceCandidate`)
+    # rather than this repository-level dataclass importing an
+    # observation-engine type -- the same boundary `CandidateVisitProposalFacts.
+    # confidence_evidence_json` already establishes. `None` for a caller that
+    # predates this field; never fabricated for a legacy record.
+    geometry_attribution_json: str | None = None
 
 
 @dataclass(frozen=True)
@@ -2789,6 +2799,7 @@ class ProductRepository:
                     json.dumps(list(item.subject_geometry)) if item.subject_geometry else None
                 ),
                 derivation_source="observation_engine_candidate",
+                geometry_attribution_json=item.geometry_attribution_json,
             )
             session.add(media_model)
             # `_next_id` computes the next candidate from already-flushed

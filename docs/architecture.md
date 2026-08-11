@@ -201,7 +201,8 @@ stage's full contract:
 [reconnect-continuity-contract.md](reconnect-continuity-contract.md),
 [observation-engine-product-control-contract.md](observation-engine-product-control-contract.md),
 [unified-observation-panel-contract.md](unified-observation-panel-contract.md),
-[detection-quality-accounting-contract.md](detection-quality-accounting-contract.md).
+[detection-quality-accounting-contract.md](detection-quality-accounting-contract.md),
+[localization-attribution-contract.md](localization-attribution-contract.md).
 
 ### Detection Quality Accounting
 
@@ -270,6 +271,34 @@ already-recorded facts, run via `scripts/run_detection_quality_accounting.py`);
 representative difficult-case slices as a standing benchmark structure; and
 the promotion decision this contract's "Production authority gate" describes
 but does not itself make.
+
+Localization Attribution / Detection Geometry Lineage v1 (see
+[localization-attribution-contract.md](localization-attribution-contract.md))
+answers stage 5's own open question after two independent real Camera Node
+sessions each showed a genuine, visible bird with a persisted evidence box
+that missed it entirely: bounded, model-neutral geometry lineage -- the raw
+box behind every retained confidence sample
+(`contracts.DetectionEvidenceSample.bounding_box`), the exact source offset
+a track's current box was last genuinely established at
+(`contracts.TrackUpdate.bounding_box_source_offset_ms`), and a small,
+per-evidence-item fact naming which kind of observation supplied one
+persisted candidate's box and whether that box's own image provably
+represents the same moment (`contracts.GeometryAttribution`) -- now flows
+from detection through to the persisted `MediaAsset`
+(`geometry_attribution_json`, schema 33). A pure, deterministic diagnostic
+(`localization_attribution.classify_localization_attribution`) classifies a
+localization failure into `detector_off_target`, `tracker_drift`,
+`evidence_geometry_misaligned`, `detector_hit_then_lost`, or (never
+guessed) `insufficient_geometry_lineage`, using only already-retained
+lineage facts -- never pixel content. Tracing this path found the box a
+reviewer actually sees, for any real live Camera Node candidate, always
+comes from a high-resolution evidence burst captured measurably later than
+the analysis-frame detection that triggered it (`camera_node_live.py`), and
+that the transport's own already-computed capture latency
+(`request_to_capture_ms`) was previously discarded before persistence
+rather than retained as this diagnostic fact. This is measurement only:
+no detector, tracker-policy, evidence-selection, or admission-gate behavior
+changed.
 
 ### Review Decision Provenance
 

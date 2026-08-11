@@ -313,6 +313,43 @@ async def test_live_shadow_requests_one_burst_and_never_writes_product_truth() -
 
 
 @pytest.mark.anyio
+async def test_live_shadow_burst_evidence_carries_geometry_attribution_with_real_measured_gap() -> None:
+    """Localization Attribution / Detection Geometry Lineage v1 (see
+    docs/localization-attribution-contract.md): a high-resolution burst
+    capture is a genuinely separate, later real capture event -- its own
+    `geometry_attribution` must honestly say so (`same_frame=False`) and
+    carry the transport's own real measured round-trip
+    (`request_to_capture_ms`), never a fabricated zero, and must attribute
+    the geometry to the genuine strong detector hit that actually supplied
+    it (`_LiveDetector` always reports confidence 0.95, above `_live_
+    provider`'s own `strong_detection_threshold` of 0.8 -- a brand-new
+    generation's very first observation is always a genuine, non-`None`
+    source, see `frame_tracker._start`)."""
+    transport = _BurstTransport()
+    session = LiveCameraNodeShadowSession(
+        source=CameraNodeAnalysisSource("stream-yard", maximum_frame_bytes=1024),
+        transport=transport, provider=_live_provider(), evidence_profile_id="evidence-large",
+    )
+    session.start()
+    result = await session.process_envelope(_frame(1), received_at=datetime(2026, 8, 4, tzinfo=UTC))
+    assert result is not None
+    assert len(result.evidence_candidates) == 1
+    candidate = result.evidence_candidates[0]
+    assert candidate.role == "high_resolution_burst"
+    attribution = candidate.geometry_attribution
+    assert attribution is not None
+    assert attribution.same_frame is False
+    # `_BurstTransport.request_evidence_burst` always reports a fixed 5ms
+    # `request_to_capture_ms` -- the exact, real transport-measured delta,
+    # reused verbatim rather than re-derived from offsets.
+    assert attribution.geometry_evidence_gap_ms == 5
+    assert attribution.geometry_source == "detector"
+    assert attribution.geometry_source_confidence == 0.95
+    assert attribution.geometry_source_offset_ms == candidate.source_offset_ms
+    session.stop()
+
+
+@pytest.mark.anyio
 async def test_live_shadow_reports_one_pending_operation_and_clears_generation_on_stop() -> None:
     provider = _live_provider()
     entered = asyncio.Event()

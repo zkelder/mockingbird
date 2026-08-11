@@ -26,6 +26,7 @@ from mockingbird.observation.frame_driven_provider import (
     FRAME_DRIVEN_PROVIDER_VERSION,
     FrameDrivenObservationProvider,
 )
+from mockingbird.observation.localization_attribution import geometry_attribution_for_burst
 from mockingbird.observation.media_contracts import (
     AnalysisFrameEnvelope,
     EvidenceBurstFrame,
@@ -867,6 +868,18 @@ class LiveCameraNodeShadowSession:
                 ),
                 temporary=True,
                 shadow_only=True,
+                # Localization Attribution / Detection Geometry Lineage v1
+                # (see docs/localization-attribution-contract.md): `request.
+                # subject_geometry` above is `update.bounding_box` at the
+                # moment this burst was *requested* -- a genuinely separate,
+                # later real capture (`item`, timed by the transport itself)
+                # is what actually gets persisted as this candidate's image.
+                # `request_to_capture_ms` is the exact, already-measured
+                # round-trip the transport computed from two real
+                # timestamps; reused here rather than re-derived.
+                geometry_attribution=geometry_attribution_for_burst(
+                    update, request_to_capture_ms=item.request_to_capture_ms,
+                ),
             ))
         return replace(
             result, evidence_candidates=result.evidence_candidates + tuple(burst_evidence)

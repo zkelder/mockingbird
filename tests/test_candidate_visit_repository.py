@@ -74,7 +74,12 @@ def _facts(
     )
 
 
-def _evidence(role: str = "identification", engine_media_id: str = "shadow-burst:hash-1") -> CandidateEvidenceItem:
+def _evidence(
+    role: str = "identification",
+    engine_media_id: str = "shadow-burst:hash-1",
+    *,
+    geometry_attribution_json: str | None = None,
+) -> CandidateEvidenceItem:
     return CandidateEvidenceItem(
         engine_media_id=engine_media_id,
         role=role,
@@ -84,6 +89,7 @@ def _evidence(role: str = "identification", engine_media_id: str = "shadow-burst
         height=1080,
         captured_at=NOW,
         subject_geometry=(0.4, 0.4, 0.6, 0.6),
+        geometry_attribution_json=geometry_attribution_json,
     )
 
 
@@ -126,7 +132,12 @@ def test_schema_v31_adds_confidence_evidence_column_without_fabricating_legacy_d
 
     db_path = tmp_path / "schema-v31.sqlite3"
     repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 32
+    # This pin intentionally tracks whatever the latest schema version is
+    # (33 as of Localization Attribution / Detection Geometry Lineage v1) --
+    # the migration path below always exercises "roll back to just before
+    # this column existed, then migrate all the way forward to current,"
+    # regardless of how many later schema versions have been added since.
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 33
     _activate(repository)
     pre_migration_outcome = repository.create_candidate_visit_from_proposal(
         CreateCandidateVisitRequest(
@@ -149,7 +160,7 @@ def test_schema_v31_adds_confidence_evidence_column_without_fabricating_legacy_d
 
     migrated = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
     try:
-        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 32
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 33
         with migrated.session_factory() as session:
             pre_ledger = session.get(ObservationCandidateVisitModel, "visit-episode:pre-migration")
             assert pre_ledger is not None
@@ -481,6 +492,110 @@ def test_candidate_ledger_confidence_evidence_defaults_to_none_when_not_supplied
         ledger = session.get(ObservationCandidateVisitModel, "visit-episode:fixture-1")
         assert ledger is not None
         assert ledger.confidence_evidence_json is None
+
+
+def test_candidate_evidence_retains_geometry_attribution_when_supplied(repository: ProductRepository) -> None:
+    """Localization Attribution / Detection Geometry Lineage v1 (see
+    docs/localization-attribution-contract.md): the persisted `MediaAsset`
+    row for one evidence item carries whatever `GeometryAttribution` JSON
+    the caller supplies verbatim -- this repository layer never inspects,
+    recomputes, or validates its content, mirroring exactly how the ledger
+    already treats `confidence_evidence_json`."""
+    _activate(repository)
+    payload = json.dumps({
+        "geometry_source": "detector", "geometry_source_offset_ms": 760_843,
+        "geometry_source_observation_id": "obs-1", "geometry_source_confidence": 0.66,
+        "same_frame": False, "geometry_evidence_gap_ms": 9_551,
+    })
+    outcome = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=_facts(),
+            observed_at=NOW,
+            evidence_items=(_evidence(geometry_attribution_json=payload),),
+        )
+    )
+    assert outcome.outcome == "created"
+    with repository.session_factory() as session:
+        media = session.get(MediaAssetModel, outcome.persisted_media_asset_ids[0])
+        assert media is not None
+        assert json.loads(media.geometry_attribution_json) == json.loads(payload)
+
+
+def test_candidate_evidence_geometry_attribution_defaults_to_none_when_not_supplied(
+    repository: ProductRepository,
+) -> None:
+    """A caller that never populates `geometry_attribution_json` (for
+    example an evidence item built before this contract existed) gets an
+    honest `None`, never a fabricated attribution."""
+    _activate(repository)
+    outcome = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(proposal=_facts(), observed_at=NOW, evidence_items=(_evidence(),))
+    )
+    assert outcome.outcome == "created"
+    with repository.session_factory() as session:
+        media = session.get(MediaAssetModel, outcome.persisted_media_asset_ids[0])
+        assert media is not None
+        assert media.geometry_attribution_json is None
+
+
+def test_schema_v33_adds_geometry_attribution_column_without_fabricating_legacy_data(
+    tmp_path: Path,
+) -> None:
+    """Localization Attribution / Detection Geometry Lineage v1 (see
+    docs/localization-attribution-contract.md): a MediaAsset created
+    *before* this column existed must read back `geometry_attribution_json
+    is None` after migrating forward -- never a fabricated attribution --
+    while a MediaAsset created *after* migration genuinely persists one.
+    Mirrors `test_schema_v31_adds_confidence_evidence_column_without_
+    fabricating_legacy_data` exactly, one column and one table over."""
+
+    db_path = tmp_path / "schema-v33.sqlite3"
+    repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 33
+    _activate(repository)
+    pre_migration_outcome = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=_facts(proposal_id="visit-episode:pre-migration-geometry"),
+            observed_at=NOW,
+            evidence_items=(_evidence(),),
+        )
+    )
+    assert pre_migration_outcome.outcome == "created"
+    pre_migration_media_id = pre_migration_outcome.persisted_media_asset_ids[0]
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        # Simulate "a database that predates this column": drop it and roll
+        # the recorded schema version back to the last version that never
+        # had it.
+        connection.exec_driver_sql("ALTER TABLE media_assets DROP COLUMN geometry_attribution_json")
+        connection.exec_driver_sql("UPDATE mockingbird_schema SET version = 32 WHERE singleton_id = 1")
+    engine.dispose()
+
+    migrated = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
+    try:
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 33
+        with migrated.session_factory() as session:
+            pre_media = session.get(MediaAssetModel, pre_migration_media_id)
+            assert pre_media is not None
+            assert pre_media.geometry_attribution_json is None  # no fabricated attribution for a legacy record
+
+        payload = json.dumps({"geometry_source": "tracker", "same_frame": True, "geometry_evidence_gap_ms": 0})
+        post_migration_outcome = migrated.create_candidate_visit_from_proposal(
+            CreateCandidateVisitRequest(
+                proposal=_facts(proposal_id="visit-episode:post-migration-geometry"),
+                observed_at=NOW,
+                evidence_items=(_evidence(geometry_attribution_json=payload),),
+            )
+        )
+        assert post_migration_outcome.outcome == "created"
+        with migrated.session_factory() as session:
+            post_media = session.get(MediaAssetModel, post_migration_outcome.persisted_media_asset_ids[0])
+            assert post_media is not None
+            assert json.loads(post_media.geometry_attribution_json) == json.loads(payload)
+    finally:
+        migrated.close()
 
 
 # --- 21. Missing evidence fails safely --------------------------------------

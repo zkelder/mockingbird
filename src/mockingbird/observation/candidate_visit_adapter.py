@@ -185,6 +185,19 @@ def _build_evidence_items(
                 height=candidate.height,
                 captured_at=candidate.captured_at,
                 subject_geometry=candidate.subject_geometry,
+                # Localization Attribution / Detection Geometry Lineage v1
+                # (see docs/localization-attribution-contract.md): serialized
+                # here, the one place this module already imports the
+                # engine-side `EvidenceCandidate` -- mirrors exactly how
+                # `attempt_candidate` below already serializes `proposal.
+                # confidence_evidence` before it crosses into repository-level
+                # vocabulary. `None` when the candidate predates this field
+                # (never fabricated).
+                geometry_attribution_json=(
+                    json.dumps(asdict(candidate.geometry_attribution), sort_keys=True)
+                    if candidate.geometry_attribution is not None
+                    else None
+                ),
             )
         )
     return tuple(items)
