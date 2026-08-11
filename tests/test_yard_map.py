@@ -66,7 +66,7 @@ def test_current_schema_creates_no_map_or_placements(tmp_path: Path) -> None:
         db_url=f"sqlite:///{tmp_path / 'migration.sqlite3'}",
         media_root=tmp_path / "media",
     )
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 31
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 32
     table_names = set(inspect(repository.engine).get_table_names())
     assert {"yard_maps", "yard_map_stream_placements", "yard_map_zone_placements"}.issubset(table_names)
     with repository.session_factory() as session:
@@ -274,7 +274,7 @@ async def test_yard_map_activity_is_stream_scoped_and_uses_reviewed_truth_only(
 
     corrected = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": "visit-bird-feeder-001",
             "label": "northern_cardinal",

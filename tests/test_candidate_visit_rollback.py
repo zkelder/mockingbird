@@ -72,7 +72,7 @@ def test_full_rollback_drill(repository: ProductRepository) -> None:
     # producing real reviewed truth before rollback -- proving rollback
     # must not touch it.
     repository.create_review_label(
-        ReviewCorrectionCreate(target_type="visit", target_id=first.visit_id, label="false_positive"),
+        ReviewCorrectionCreate(target_type="visit", target_id=first.visit_id, label="false_positive", review_origin="human"),
     )
     reviewed_snapshot_before = repository.get_visit(first.visit_id)
     assert reviewed_snapshot_before.review_status.value == "reviewed"
@@ -125,7 +125,7 @@ def test_full_rollback_drill(repository: ProductRepository) -> None:
     # even with authority disabled -- the review path is independent of
     # Stage 7 authority state entirely.
     repository.create_review_label(
-        ReviewCorrectionCreate(target_type="visit", target_id=second.visit_id, label="squirrel"),
+        ReviewCorrectionCreate(target_type="visit", target_id=second.visit_id, label="squirrel", review_origin="human"),
     )
     assert repository.get_visit(second.visit_id).review_status.value == "reviewed"
 

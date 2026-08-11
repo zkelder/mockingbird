@@ -166,6 +166,7 @@ from mockingbird.api.schemas import (
     ReviewLabel,
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
+    ReviewLabelProvenanceReclassifyRequest,
     ReviewStatus,
     VisitEvidenceCurationRequest,
     VisitEvidenceCurationResponse,
@@ -404,10 +405,12 @@ from mockingbird.repository.product_repository import (
     FastReviewConflictError,
     MonitoringOperationConflictError,
     ProductRepository,
+    ReviewProvenanceConflictError,
     ReviewRevisionConflictError,
     VisitCurationConflictError,
     StreamLivePlaybackConfig,
 )
+from mockingbird.review_provenance import ReviewProvenanceError
 from mockingbird.sampler import (
     SamplerConfig,
     SamplerContext,
@@ -12363,6 +12366,12 @@ async def revise_visit_review(
     try:
         return get_repository().revise_visit_review(visit_id, payload)
     except ReviewRevisionConflictError as error:
+        if str(error) == "review_revision_requires_authority":
+            raise HTTPException(
+                status_code=400,
+                detail="A revision must be an authoritative Review Decision (human review or "
+                "explicitly governed imported truth), not a diagnostic assessment.",
+            ) from error
         raise HTTPException(
             status_code=409,
             detail="This reviewed Visit changed. Refresh it before saving a revision.",
@@ -12384,6 +12393,12 @@ async def reopen_visit_review(
     try:
         return get_repository().reopen_visit_review(visit_id, payload)
     except ReviewRevisionConflictError as error:
+        if str(error) == "review_reopen_requires_authority":
+            raise HTTPException(
+                status_code=400,
+                detail="Reopening a Visit must be an authoritative Review Decision (human review "
+                "or explicitly governed imported truth), not a diagnostic assessment.",
+            ) from error
         raise HTTPException(
             status_code=409,
             detail="This reviewed Visit changed. Refresh it before reopening it.",
@@ -13066,6 +13081,45 @@ async def create_review_label(
         return repository.create_review_label(payload)
 
     raise _unsupported_target(payload.target_type)
+
+
+@app.post(
+    "/api/review-labels/{review_label_id}/reclassify-provenance",
+    response_model=ReviewLabel,
+)
+async def reclassify_review_label_provenance(
+    review_label_id: str,
+    payload: ReviewLabelProvenanceReclassifyRequest,
+) -> ReviewLabel:
+    """Bounded maintenance endpoint (see
+    docs/review-decision-provenance-contract.md Part 8 and
+    scripts/repair_review_label_provenance.py). Not part of the normal
+    interactive review flow and not called by the frontend -- it exists so
+    a bounded, auditable maintenance script can durably repair a specific,
+    already-identified ReviewLabel's provenance (for example a row created
+    through this exact gap before it was closed) without direct database
+    surgery."""
+
+    try:
+        return get_repository().reclassify_review_label_provenance(
+            review_label_id,
+            review_origin=payload.review_origin,
+            reviewer_identity=payload.reviewer_identity,
+            expected_current_review_origin=payload.expected_current_review_origin,
+        )
+    except ReviewProvenanceConflictError as error:
+        raise HTTPException(
+            status_code=409,
+            detail="This ReviewLabel's provenance already changed since it was last inspected.",
+        ) from error
+    except ReviewProvenanceError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except ValueError as error:
+        if str(error) == "missing_review_label":
+            raise _not_found("Review label", review_label_id) from error
+        raise HTTPException(
+            status_code=400, detail="The ReviewLabel provenance could not be reclassified."
+        ) from error
 
 
 @app.get("/api/dataset-exports", response_model=list[DatasetExport])

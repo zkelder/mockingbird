@@ -177,7 +177,7 @@ async def test_reviewed_visit_analysis_does_not_change_existing_truth(
     visit_id = imported["visit"]["id"]
     correction = await client.post(
         "/api/review-labels",
-        json={"target_type": "visit", "target_id": visit_id, "label": "northern_cardinal"},
+        json={"review_origin": "human", "target_type": "visit", "target_id": visit_id, "label": "northern_cardinal"},
     )
     assert correction.status_code == 201
 

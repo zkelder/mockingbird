@@ -40,7 +40,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 31
+CURRENT_DATABASE_SCHEMA_VERSION = 32
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -723,6 +723,62 @@ def _migrate_to_camera_node_pending_setup(connection: Connection) -> None:
     Base.metadata.tables["camera_node_pending_setups"].create(bind=connection, checkfirst=True)
 
 
+def _migrate_to_review_decision_provenance(connection: Connection) -> None:
+    """Add the Review Decision Provenance / Truth Boundary v1 columns to the
+    existing `review_labels` table (see
+    docs/review-decision-provenance-contract.md).
+
+    Every row that already exists at migration time is backfilled to the
+    explicit `"legacy_unattributed"` sentinel (`mockingbird.
+    review_provenance.LEGACY_UNATTRIBUTED_ORIGIN`) -- never a fabricated
+    `"human"`, and never left `NULL`. This is a deliberate, honest fact
+    ("reviewer origin cannot be proven for this pre-existing row"), not a
+    claim about who reviewed it; `review_provenance.is_authority_eligible`
+    separately, deliberately treats that sentinel as still authoritative so
+    existing users' reviewed history, exports, and training eligibility do
+    not silently regress on upgrade (see "Avoid breaking existing users'
+    history unnecessarily" in this milestone's own instructions). Crucially,
+    backfilling away from `NULL` here means `review_origin IS NULL` can
+    only mean one thing from this point forward -- a create request made
+    after this migration existed that omitted the field -- so
+    `is_authority_eligible` needs no activation-boundary timestamp to tell
+    a genuinely legacy row apart from a new one that simply didn't send
+    the field; see that function's own docstring. This migration does not
+    touch any existing row's `review_status`/`reviewed_label` -- truth a
+    pre-existing row already established is preserved exactly as it was.
+
+    `review_labels` predates every numbered migration (present since
+    schema v1), so a real upgrading database always already has it by the
+    time this runs. The existence check below is defensive only, for the
+    same reason `_read_recorded_schema_version` checks
+    `has_table(...)` -- `initialize_database` runs every numbered
+    migration *before* `Base.metadata.create_all`, so a database that
+    somehow reaches this migration without the table yet (for example a
+    minimal synthetic fixture in a migration-chain test that only creates
+    the tables its own scenario touches) safely does nothing here; the
+    table is created immediately afterward already carrying these columns
+    from the current model definition.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Review Decision provenance migration requires local SQLite storage."
+        )
+    if not inspect(connection).has_table("review_labels"):
+        return
+    columns = {
+        column["name"] for column in inspect(connection).get_columns("review_labels")
+    }
+    for column in ("review_origin", "reviewer_identity"):
+        if column not in columns:
+            connection.exec_driver_sql(
+                f"ALTER TABLE review_labels ADD COLUMN {column} TEXT"
+            )
+    connection.exec_driver_sql(
+        "UPDATE review_labels SET review_origin = 'legacy_unattributed' WHERE review_origin IS NULL"
+    )
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -754,6 +810,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     29: _migrate_to_app_setup_state,
     30: _migrate_to_camera_node_pending_setup,
     31: _migrate_to_observation_confidence_evidence,
+    32: _migrate_to_review_decision_provenance,
 }
 
 

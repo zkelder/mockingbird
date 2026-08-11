@@ -190,7 +190,7 @@ async def test_species_suggestion_batch_preflight_skips_ineligible_targets_witho
     reviewed_visit_id = str(reviewed["visit"]["id"])
     correction = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": reviewed_visit_id,
             "label": "northern_cardinal",

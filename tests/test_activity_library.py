@@ -160,7 +160,7 @@ def add_visit(
 async def review_visit(client: httpx.AsyncClient, visit_id: str, label: str) -> None:
     response = await client.post(
         "/api/review-labels",
-        json={"target_type": "visit", "target_id": visit_id, "label": label},
+        json={"review_origin": "human", "target_type": "visit", "target_id": visit_id, "label": label},
     )
     assert response.status_code == 201
 
@@ -199,7 +199,7 @@ async def test_activity_search_resolves_active_current_truth_and_evidence_only_s
     old_detail = (await client.get("/api/visits/visit-old/detail")).json()
     revised = await client.post(
         "/api/visits/visit-old/revision",
-        json={
+        json={"review_origin": "human", 
             "label": "blank",
             "expected_state_token": old_detail["review_state_token"],
             "idempotency_key": "activity-library-revise-old",

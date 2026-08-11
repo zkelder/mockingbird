@@ -71,6 +71,7 @@ def test_review_alert_is_deduplicated_resolved_and_reopened(repository: ProductR
 
     repository.create_review_label(ReviewCorrectionCreate(
         target_type="visit", target_id="visit-alert", label="northern_cardinal", notes=None,
+        review_origin="human",
     ))
     assert _alerts(repository, "review")[0].resolved_at is not None
     assert len(_alerts(repository, "journal")) == 1

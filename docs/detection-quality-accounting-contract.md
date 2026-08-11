@@ -146,26 +146,39 @@ example even have review provenance," checked before that larger governed
 decision would ever apply.
 
 Defense in depth (Visit Continuity / Provisional Admission Fix v1, Part 7
-audit): the product's own `ReviewLabel` schema has no reviewer-identity
+audit): the product's own `ReviewLabel` schema had no reviewer-identity
 field at all -- a real `ReviewLabel` an agent writes through the genuine
 `POST /api/review-labels` path (as this milestone's own fresh-cohort
-candidate-004/005/006 labels, and the original three, were) is only
-distinguishable from a genuine human correction by free-text prose in
-`notes`, which nothing enforces. A future manifest-generation script could
-therefore carelessly (never maliciously) copy that same self-disclosure
-straight into `reviewed_by`/`source` while still claiming `status=
-"reviewed_truth"`. `EvaluationExample.__post_init__` now also rejects that
-combination outright (`reviewed_truth_requires_human_reviewer`) whenever
-`reviewed_by`/`source` contains an already-established self-disclosure
-marker (`agent`, `claude`, `language model`, ...) -- a bounded, documented
-vocabulary, not a content classifier, and not the only safeguard: the
-load-bearing rule remains procedural (only a human-run script, over
-material a human actually reviewed, constructs a `reviewed_truth`
-example). No committed evaluation tooling reads live `ReviewLabel` rows at
-all today (`scripts/run_detection_quality_accounting.py` sources reviewed
-truth only from already-exported, human-vetted Stage 6.17 manifests), so
-this closes a real but previously-latent gap rather than a currently
--exploited one.
+candidate-004/005/006 labels were) was only distinguishable from a genuine
+human correction by free-text prose in `notes`, which nothing enforced.
+**Correction (Review Decision Provenance / Truth Boundary v1, see
+[review-decision-provenance-contract.md](review-decision-provenance-contract.md)):**
+the sentence above originally also claimed "the original three" (the
+25.3-minute smoke's candidate-001/002/003) were written the same way.
+Direct evidence from the actual reachable product database (`GET
+/api/review-labels`) found exactly three real `ReviewLabel` rows total,
+matching only the fresh-cohort candidates -- no rows exist for the original
+three. That claim was most likely conflating this real product write with
+the separate, offline `DIAGNOSTIC_EXAMPLES` manifest registration in
+`scripts/run_detection_quality_accounting.py`, which does register all six
+candidate ids but only as an evaluation-manifest entry, never a product
+`ReviewLabel`. A future manifest-generation script could still carelessly
+(never maliciously) copy an agent's self-disclosure straight into
+`reviewed_by`/`source` while claiming `status="reviewed_truth"`.
+`EvaluationExample.__post_init__` rejects that combination outright
+(`reviewed_truth_requires_human_reviewer`) whenever `reviewed_by`/`source`
+contains an already-established self-disclosure marker (`agent`, `claude`,
+`language model`, ... -- now the one canonical
+`mockingbird.review_provenance.NON_HUMAN_DISCLOSURE_MARKERS` vocabulary,
+reused rather than duplicated) -- a bounded, documented vocabulary, not a
+content classifier, and not the only safeguard: the load-bearing rule
+remains procedural (only a human-run script, over material a human
+actually reviewed, constructs a `reviewed_truth` example). No committed
+evaluation tooling reads live `ReviewLabel` rows at all today
+(`scripts/run_detection_quality_accounting.py` sources reviewed truth only
+from already-exported, human-vetted Stage 6.17 manifests); the live product
+`ReviewLabel` boundary itself is now closed independently, at the schema/
+repository layer, by `review-decision-provenance-contract.md`.
 
 The three 2026-08-10 false candidates are registered `diagnostic_only`
 (`source="agent-visual-inspection-2026-08-10"`) -- valuable hard negatives,

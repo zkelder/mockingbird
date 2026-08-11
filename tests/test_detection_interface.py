@@ -194,7 +194,7 @@ async def test_demo_detection_run_can_convert_and_export_corrected_truth(
     )
     correction_response = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": visit["id"],
             "label": "blue_jay",
@@ -463,7 +463,7 @@ async def test_converted_proposal_uses_correction_as_dataset_truth(
     )
     correction_response = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": visit["id"],
             "label": "blue_jay",

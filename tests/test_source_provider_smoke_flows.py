@@ -352,7 +352,7 @@ async def promote_and_correct(
 
     correction_response = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": visit_id,
             "label": "Northern Cardinal",

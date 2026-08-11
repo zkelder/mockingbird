@@ -84,7 +84,7 @@ async def test_unknown_bird_issue_decreases_after_species_correction(
 
     correction_response = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": imported["visit"]["id"],
             "label": "Northern Cardinal",
@@ -104,7 +104,7 @@ async def test_freeform_label_creates_low_priority_quality_issue(
 ) -> None:
     correction_response = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": VISIT_ID,
             "label": "mystery feeder guest",
@@ -123,7 +123,7 @@ async def test_freeform_label_creates_low_priority_quality_issue(
 async def test_conflicting_corrections_are_reported(client: httpx.AsyncClient) -> None:
     first = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": VISIT_ID,
             "label": "Northern Cardinal",
@@ -132,7 +132,7 @@ async def test_conflicting_corrections_are_reported(client: httpx.AsyncClient) -
     )
     second = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": VISIT_ID,
             "label": "Blue Jay",
@@ -156,7 +156,7 @@ async def test_missing_zone_context_is_reported_for_export_ready_record(
 
     correction_response = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": imported["visit"]["id"],
             "label": "Northern Cardinal",
@@ -178,7 +178,7 @@ async def test_missing_zone_context_is_reported_for_export_ready_record(
 async def test_false_positive_is_counted_but_not_species_truth(client: httpx.AsyncClient) -> None:
     correction_response = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": VISIT_ID,
             "label": "false_positive",

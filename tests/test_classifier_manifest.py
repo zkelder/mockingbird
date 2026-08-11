@@ -68,7 +68,7 @@ async def import_bird_media(
 async def correct_visit(client: httpx.AsyncClient, visit_id: str, label: str) -> dict:
     response = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": visit_id,
             "label": label,

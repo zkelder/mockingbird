@@ -383,7 +383,7 @@ def test_unknown_event_and_visit_detail_return_404() -> None:
 def test_correcting_visit_makes_visit_detail_dataset_ready() -> None:
     client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": BIRD_VISIT_ID,
             "label": "carolina_wren",
@@ -404,7 +404,7 @@ def test_correcting_visit_makes_visit_detail_dataset_ready() -> None:
 def test_correcting_visit_adds_event_detail_correction_history() -> None:
     client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": BIRD_VISIT_ID,
             "label": "northern_cardinal",
@@ -464,7 +464,7 @@ def test_review_queue_excludes_reviewed_squirrel_visit() -> None:
 def test_post_review_labels_creates_correction_label() -> None:
     response = client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": "visit-bird-feeder-001",
             "label": "northern_cardinal",
@@ -497,7 +497,7 @@ def test_visit_correction_updates_queue_and_analytics() -> None:
 
     response = client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": BIRD_VISIT_ID,
             "label": "carolina_wren",
@@ -532,7 +532,7 @@ def test_visit_correction_updates_queue_and_analytics() -> None:
 def test_unsupported_review_target_type_returns_400() -> None:
     response = client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "stream",
             "target_id": STREAM_ID,
             "label": "not_a_review_target",
@@ -546,7 +546,7 @@ def test_unsupported_review_target_type_returns_400() -> None:
 def test_missing_review_target_returns_404() -> None:
     response = client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": "visit-missing",
             "label": "carolina_wren",
@@ -625,7 +625,7 @@ def test_dataset_export_manifest_skips_visit_still_needing_review() -> None:
 def test_corrected_visit_appears_in_new_dataset_export_manifest() -> None:
     client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": BIRD_VISIT_ID,
             "label": "northern_cardinal",
@@ -759,7 +759,7 @@ def test_reset_demo_data_restores_seed_state_after_mutations() -> None:
     ).json()["zone"]
     client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": BIRD_VISIT_ID,
             "label": "carolina_wren",

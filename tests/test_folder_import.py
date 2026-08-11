@@ -117,7 +117,7 @@ def test_folder_imported_visits_flow_through_review_and_export(import_folder: Pa
     queue_response = client.get("/api/review-queue")
     correction_response = client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": visit["id"],
             "label": "blue_jay",

@@ -174,6 +174,13 @@ REVIEW_LABELS: list[ReviewLabel] = [
         label="squirrel",
         notes="Confirmed squirrel activity under the feeder.",
         created_at=datetime(2026, 1, 15, 14, 10, tzinfo=UTC),
+        # Illustrative first-run demo content, not a live human review --
+        # see docs/review-decision-provenance-contract.md and the matching
+        # `review_origin="imported_curated"` this exact label is persisted
+        # with in `ProductRepository._seed_session`.
+        review_origin="imported_curated",
+        reviewer_identity="mockingbird_demo_seed_data",
+        is_authoritative=True,
     )
 ]
 

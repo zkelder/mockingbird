@@ -1062,6 +1062,19 @@ class ReviewLabelModel(Base):
     supersedes_review_label_id: Mapped[str | None] = mapped_column(String, nullable=True)
     review_action: Mapped[str | None] = mapped_column(String, nullable=True)
     revision_idempotency_key: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Review Decision Provenance / Truth Boundary v1 (see
+    # docs/review-decision-provenance-contract.md and
+    # mockingbird.review_provenance): `NULL` means "no explicit origin was
+    # recorded" -- either a legacy row that predates this column, or a
+    # create request that omitted the field. It never means "human" by
+    # default; `mockingbird.review_provenance.is_authority_eligible` is the
+    # only place that decides whether a given origin may establish or
+    # correct durable reviewed truth.
+    review_origin: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Free-text "who/what" -- required by application-layer validation for
+    # `imported_curated`/`agent_diagnostic` origins, optional otherwise
+    # (there is no reviewer identity/account system).
+    reviewer_identity: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class DatasetExportModel(Base):

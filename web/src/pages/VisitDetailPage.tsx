@@ -2052,6 +2052,19 @@ function CorrectionHistoryItem({
         {entry.action} - {formatDateTime(entry.created_at)}
         {entry.is_current ? " - Current" : ""}
       </span>
+      {/* An agent/automation diagnostic assessment is visible history, but
+          must never read as if a person reviewed/confirmed it (Part 6,
+          docs/review-decision-provenance-contract.md). */}
+      {!entry.is_authoritative ? (
+        <StatusPill
+          label={
+            entry.review_origin === "agent_diagnostic"
+              ? "Diagnostic assessment (non-human, not reviewed truth)"
+              : "Unattributed origin (not reviewed truth)"
+          }
+          tone="review"
+        />
+      ) : null}
       {entry.notes ? <p>{entry.notes}</p> : null}
     </div>
   );

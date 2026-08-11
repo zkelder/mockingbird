@@ -98,7 +98,7 @@ async def convert_proposal(client: httpx.AsyncClient, proposal_id: str):
 async def correct_visit(client: httpx.AsyncClient, visit_id: str, label: str):
     response = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": visit_id,
             "label": label,

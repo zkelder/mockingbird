@@ -103,7 +103,7 @@ async def test_review_correction_normalizes_taxonomy_display_name(
 ) -> None:
     response = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": VISIT_ID,
             "label": "Northern Cardinal",
@@ -123,7 +123,7 @@ async def test_review_correction_normalizes_taxonomy_display_name(
 async def test_review_correction_allows_freeform_labels(client: httpx.AsyncClient) -> None:
     response = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": VISIT_ID,
             "label": "mystery feeder guest",
@@ -143,7 +143,7 @@ async def test_normalized_correction_appears_in_export_manifest(
 ) -> None:
     correction_response = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": VISIT_ID,
             "label": "Northern Cardinal",

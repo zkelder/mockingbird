@@ -364,7 +364,23 @@ The user process of confirming, correcting, merging, hiding, or rejecting events
 A user-provided truth label, correction, or explicit abstention that improves
 the local dataset. `product-doctrine.md` names this concept "Review
 Decision"; `ReviewLabelModel` remains the implementation name. This is the
-only dataset-grade truth write in the system.
+only dataset-grade truth write in the system -- but only when its own
+provenance is authority-eligible; see Review Decision Provenance, below.
+
+## Review Decision Provenance
+
+The structured, model-neutral fact recorded on every `ReviewLabel` row
+answering "who or what produced this Review Decision, and is it
+observationally authoritative?" (`review_origin`/`reviewer_identity`,
+`mockingbird.review_provenance`). Distinguishes human review, imported
+curated truth (explicitly governed, provenance-known imports such as this
+product's own demo seed content), agent/model diagnostic assessment (an
+LLM, model, automation, or test harness -- never authoritative), and
+legacy/unattributed (a pre-migration row of unprovable origin, deliberately
+still treated as authoritative for backward compatibility). Only an
+authority-eligible Review Decision can establish or correct durable
+reviewed Observation truth; see
+[review-decision-provenance-contract.md](review-decision-provenance-contract.md).
 
 ## Dataset Export
 

@@ -2304,7 +2304,7 @@ async def test_live_motion_review_handoff_creates_needs_review_candidate(
 
     correction_response = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": result["visit_id"],
             "label": "northern_cardinal",
@@ -4283,7 +4283,7 @@ async def test_stored_live_activity_review_handoff_keeps_camera_running_and_trut
 
     correction_response = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": created["visit_id"],
             "label": "northern_cardinal",
@@ -4617,7 +4617,7 @@ async def test_unattended_monitoring_auto_creates_review_candidate_after_quiet_o
 
     correction_response = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": auto_status["activity_visit_id"],
             "label": "northern_cardinal",
@@ -5365,7 +5365,7 @@ async def test_live_activity_session_groups_hits_and_promotes_one_best_frame(
 
     false_positive_response = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": created["visit_id"],
             "label": "false_positive",
@@ -5529,7 +5529,7 @@ async def test_small_feeder_activity_capture_and_review_handoff_keep_monitor_run
 
     correction_response = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": created["visit_id"],
             "label": "northern_cardinal",

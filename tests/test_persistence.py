@@ -95,6 +95,7 @@ def test_review_correction_persists_after_repository_reload(tmp_path: Path) -> N
             target_id=BIRD_VISIT_ID,
             label="carolina_wren",
             notes="Persisted correction.",
+            review_origin="human",
         )
     )
 
@@ -116,6 +117,7 @@ def test_review_queue_reflects_persisted_correction_state(tmp_path: Path) -> Non
             target_type="visit",
             target_id=BIRD_VISIT_ID,
             label="northern_cardinal",
+            review_origin="human",
         )
     )
 
@@ -154,6 +156,7 @@ def test_analytics_summary_reflects_persisted_correction_state(tmp_path: Path) -
             target_type="visit",
             target_id=BIRD_VISIT_ID,
             label="carolina_wren",
+            review_origin="human",
         )
     )
 
@@ -421,6 +424,7 @@ def test_schema_three_adds_empty_bioclip_attempt_evidence_without_data_loss(
             target_id=BIRD_VISIT_ID,
             label="northern_cardinal",
             notes="Preserved across the attempt-evidence migration.",
+            review_origin="human",
         )
     ).review_label
     repository.close()

@@ -463,7 +463,7 @@ async def test_external_url_to_correction_truth_smoke_flow(
 
     correction_response = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": visit_id,
             "label": "Northern Cardinal",

@@ -121,7 +121,7 @@ async def fast_save(
 ) -> httpx.Response:
     return await client.post(
         "/api/review-queue/fast/correct",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": item["target_id"],
             "label": label,
@@ -237,6 +237,7 @@ async def test_fast_save_is_explicit_idempotent_and_updates_reviewed_exports(
         "review_session_id": "session-save",
         "idempotency_key": "fast-save-idempotency",
         "expected_state_token": item["review_state_token"],
+        "review_origin": "human",
     }
 
     before = active_review_label_count(isolated_repository)
@@ -317,7 +318,7 @@ async def test_fast_undo_rejects_a_correction_replaced_elsewhere(
     body = saved.json()
     replacement = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": "visit-bird-feeder-001",
             "label": "northern_cardinal",

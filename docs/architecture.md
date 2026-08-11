@@ -30,7 +30,9 @@ ReviewLabel correction is the dataset-grade truth boundary. Reviewed-only Bird
 Log, analytics, classifier readiness, and exports derive from corrections, not
 raw model/provider output. Unknown and abstained outcomes are valid; nothing
 in this flow may quietly convert a proposal, ecological prior, or
-language-model output into truth.
+language-model output into truth. A ReviewLabel's own provenance decides
+whether it is eligible to *be* that truth boundary at all -- see "Review
+Decision Provenance," below.
 
 ## Conceptual layers
 
@@ -268,6 +270,34 @@ already-recorded facts, run via `scripts/run_detection_quality_accounting.py`);
 representative difficult-case slices as a standing benchmark structure; and
 the promotion decision this contract's "Production authority gate" describes
 but does not itself make.
+
+### Review Decision Provenance
+
+`ReviewLabel` had no durable reviewer-origin identity at all before this
+milestone (see
+[review-decision-provenance-contract.md](review-decision-provenance-contract.md)):
+a real `ReviewLabel` an LLM/agent wrote through the genuine `POST
+/api/review-labels` path -- exactly what the 2026-08-10 fresh-cohort
+candidates were -- was structurally indistinguishable anywhere downstream
+from a genuine human correction. `mockingbird.review_provenance` (pure,
+dependency-free) now names four provenance states -- `human`,
+`imported_curated` (this product's own demo-seed content), `agent_diagnostic`
+(an LLM/model/automation assessment), and `legacy_unattributed` (a
+pre-migration row, backfilled by schema v32, deliberately still treated as
+authoritative for backward compatibility) -- and the one function,
+`is_authority_eligible`, that decides whether a given origin may establish
+or correct durable reviewed truth. `ProductRepository.
+_create_review_label_in_session` is the sole place that ever flips a
+Visit/Event to `"reviewed"`; it now does so only for an authority-eligible
+origin, which is sufficient to keep Bird Log, Wildlife Insights, Dataset
+Export, and classifier training manifests correct without touching their
+own read paths, since all of them key off `review_status`/`reviewed_label`
+rather than raw `ReviewLabel` existence. Omitting provenance at the API
+boundary never defaults to `"human"`; the product's own interactive frontend
+is the one place that explicitly stamps it. A future agent-assisted field
+cohort uses the same `POST /api/review-labels` endpoint with an explicit
+`agent_diagnostic` origin -- no second review system -- durably recorded but
+never authoritative.
 
 ### Formal model lifecycle
 

@@ -219,7 +219,7 @@ async def test_retention_risk_tracks_motion_promotion_and_review_truth(
 
     correction_response = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": promoted["visit_id"],
             "label": "Northern Cardinal",

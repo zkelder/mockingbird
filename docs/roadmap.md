@@ -37,9 +37,16 @@ analytics; unknown and abstained outcomes are valid.
   restart/recovery and durable monitoring lifecycle; admission/rejection
   observability (the July 30 cohort measured 10/10 promoted Visits as real
   birds); source-resolution evidence lineage; a self-contained Windows
-  install bundle (Phase 27A); and two real-hardware defects found and fixed
-  in the most recent field session (Camera Node pairing repair, and an
-  Observation/live-view capture-ownership collision).
+  install bundle (Phase 27A); two real-hardware defects found and fixed in
+  an earlier field session (Camera Node pairing repair, and an
+  Observation/live-view capture-ownership collision); the Visit Continuity
+  fix for the candidate-004/005 fragmentation defect; and Review Decision
+  Provenance / Truth Boundary v1 (see
+  [review-decision-provenance-contract.md](review-decision-provenance-contract.md)),
+  which closed the real truth-boundary gap that same defect's own audit
+  found -- `ReviewLabel` now carries durable, model-neutral provenance, and
+  a non-human diagnostic assessment can no longer silently become reviewed
+  Observation truth, reviewed-only export truth, or training-eligible truth.
 - **Remains for this phase:** a 2026-08-10 real end-to-end Camera Node
   session (25.3 minutes, the two just-fixed paths holding up cleanly)
   proved the structural path but found admission *precision* is not yet
@@ -66,7 +73,18 @@ analytics; unknown and abstained outcomes are valid.
   4-session corpus is real but too concentrated to promote a confidence-
   aware admission policy) -- see [detection-quality-accounting-contract.md](detection-quality-accounting-contract.md)'s
   "Production authority gate" and this milestone's final report for the
-  specific numbers a promotion decision would need.
+  specific numbers a promotion decision would need. Agent-assisted field-
+  cohort collection is safe to resume for this: Review Decision Provenance /
+  Truth Boundary v1 closed the gap that made that unsafe before (an agent's
+  own visual review is now durably `agent_diagnostic`, never authoritative,
+  never silently reviewed/exported/training-eligible truth), *provided* the
+  agent explicitly identifies itself (`review_origin: "agent_diagnostic"` and
+  a named `reviewer_identity`) exactly as
+  [review-decision-provenance-contract.md](review-decision-provenance-contract.md)'s
+  "Agent-assisted field-testing workflow" describes -- a future cohort's own
+  candidate assessments remain `diagnostic_only`, not a `reviewed_truth`
+  denominator, until a human reviews them through the normal product Review
+  Queue.
 
 ## Phase sequencing
 

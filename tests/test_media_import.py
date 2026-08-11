@@ -104,7 +104,7 @@ def test_imported_visit_can_be_corrected_and_exported() -> None:
 
     correction_response = client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": result["visit"]["id"],
             "label": "northern_cardinal",

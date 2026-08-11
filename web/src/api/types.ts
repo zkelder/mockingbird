@@ -2873,6 +2873,16 @@ export interface ReviewQueueItem {
   is_legacy_activity: boolean;
 }
 
+// Review Decision Provenance / Truth Boundary v1 (see
+// docs/review-decision-provenance-contract.md). `undefined`/omitted never
+// means "human" -- see `apiClient`'s review-correction functions, which are
+// the only place this frontend explicitly stamps "human". `ReviewOrigin`
+// types what a *create* request may claim; a real stored row can also read
+// back the migration-backfilled `"legacy_unattributed"` sentinel, which a
+// create request can never legitimately claim -- see `ReviewOriginStored`.
+export type ReviewOrigin = "human" | "imported_curated" | "agent_diagnostic";
+export type ReviewOriginStored = ReviewOrigin | "legacy_unattributed";
+
 export interface ReviewLabel {
   id: string;
   target_type: string;
@@ -2880,6 +2890,11 @@ export interface ReviewLabel {
   label: string;
   notes?: string | null;
   created_at: string;
+  review_origin?: ReviewOriginStored | null;
+  reviewer_identity?: string | null;
+  // Server-computed; only a human review or explicitly governed imported
+  // truth is eligible to establish or correct durable reviewed truth.
+  is_authoritative: boolean;
 }
 
 export interface ReviewLabelCreate {
@@ -2894,6 +2909,8 @@ export interface ReviewCorrectionCreate {
   target_id: string;
   label: string;
   notes?: string | null;
+  review_origin?: ReviewOrigin | null;
+  reviewer_identity?: string | null;
 }
 
 export interface ReviewCorrectionResult {
@@ -2909,12 +2926,16 @@ export interface VisitReviewRevisionCreate {
   notes?: string | null;
   expected_state_token: string;
   idempotency_key: string;
+  review_origin?: ReviewOrigin | null;
+  reviewer_identity?: string | null;
 }
 
 export interface VisitReviewReopenCreate {
   notes?: string | null;
   expected_state_token: string;
   idempotency_key: string;
+  review_origin?: ReviewOrigin | null;
+  reviewer_identity?: string | null;
 }
 
 export interface VisitReviewRevisionResponse {
@@ -2939,6 +2960,8 @@ export interface VisitReviewHistoryEntry {
   notes?: string | null;
   created_at: string;
   is_current: boolean;
+  review_origin?: ReviewOriginStored | null;
+  is_authoritative: boolean;
 }
 
 export interface VisitReviewHistory {
@@ -3108,6 +3131,8 @@ export interface FastReviewCorrectionCreate {
   review_session_id: string;
   idempotency_key: string;
   expected_state_token: string;
+  review_origin?: ReviewOrigin | null;
+  reviewer_identity?: string | null;
 }
 
 export interface FastReviewCorrectionResponse {
@@ -3274,6 +3299,8 @@ export interface ReviewQueueBulkCorrectionRequest {
   target_type: ReviewQueueBulkCorrectionTargetType;
   label: string;
   notes?: string | null;
+  review_origin?: ReviewOrigin | null;
+  reviewer_identity?: string | null;
 }
 
 export interface ReviewQueueBulkCorrectionResult {

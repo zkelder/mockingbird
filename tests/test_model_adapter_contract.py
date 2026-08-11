@@ -179,7 +179,7 @@ async def test_corrected_adapter_visit_exports_user_truth_not_adapter_label(
     )
     correction_response = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": visit["id"],
             "label": "blue_jay",

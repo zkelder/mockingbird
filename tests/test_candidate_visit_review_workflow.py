@@ -124,7 +124,7 @@ def test_existing_review_endpoint_can_review_a_candidate_visit(repository: Produ
 
     # The exact existing, unmodified correction path -- no Stage 7 involvement.
     result = repository.create_review_label(
-        ReviewCorrectionCreate(target_type="visit", target_id=visit_id, label="false_positive"),
+        ReviewCorrectionCreate(target_type="visit", target_id=visit_id, label="false_positive", review_origin="human"),
     )
     assert result is not None
 
@@ -205,7 +205,7 @@ def test_false_positive_review_removes_candidate_from_wildlife_presentation(
 ) -> None:
     visit_id = _create_real_candidate(repository)
     repository.create_review_label(
-        ReviewCorrectionCreate(target_type="visit", target_id=visit_id, label="false_positive"),
+        ReviewCorrectionCreate(target_type="visit", target_id=visit_id, label="false_positive", review_origin="human"),
     )
     summary = repository.dashboard_summary(now=NOW)
     assert summary.today.detector_qualified_animal_visit_count == 0
@@ -218,7 +218,7 @@ def test_unknown_bird_review_remains_valid_wildlife_without_invented_species(
 ) -> None:
     visit_id = _create_real_candidate(repository)
     repository.create_review_label(
-        ReviewCorrectionCreate(target_type="visit", target_id=visit_id, label="unknown_bird"),
+        ReviewCorrectionCreate(target_type="visit", target_id=visit_id, label="unknown_bird", review_origin="human"),
     )
     summary = repository.dashboard_summary(now=NOW)
     # Still a countable, real wildlife moment...
@@ -232,7 +232,7 @@ def test_unknown_bird_review_remains_valid_wildlife_without_invented_species(
 def test_confirmed_species_review_closes_the_loop_into_today(repository: ProductRepository) -> None:
     visit_id = _create_real_candidate(repository)
     repository.create_review_label(
-        ReviewCorrectionCreate(target_type="visit", target_id=visit_id, label="northern_cardinal"),
+        ReviewCorrectionCreate(target_type="visit", target_id=visit_id, label="northern_cardinal", review_origin="human"),
     )
     summary = repository.dashboard_summary(now=NOW)
     assert summary.today.confirmed_bird_visit_count == 1
@@ -244,7 +244,7 @@ def test_confirmed_species_review_closes_the_loop_into_today(repository: Product
 def test_reviewed_candidate_moves_to_the_reviewed_review_queue_tab(repository: ProductRepository) -> None:
     visit_id = _create_real_candidate(repository)
     repository.create_review_label(
-        ReviewCorrectionCreate(target_type="visit", target_id=visit_id, label="false_positive"),
+        ReviewCorrectionCreate(target_type="visit", target_id=visit_id, label="false_positive", review_origin="human"),
     )
     unreviewed = [item.visit_id for item in repository.review_queue_items()]
     assert visit_id not in unreviewed

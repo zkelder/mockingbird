@@ -75,6 +75,7 @@ from mockingbird.observation.candidate_visit_authority import (
     evaluate_candidate_authority,
 )
 from mockingbird.observation.candidate_quality_gate import evaluate_evidence_admission
+from mockingbird import review_provenance
 from mockingbird.species.bioclip_adapter import (
     BIOCLIP_ADAPTER_ID,
     BIOCLIP_ADAPTER_NAME,
@@ -633,6 +634,12 @@ class FastReviewConflictError(ValueError):
 
 class ReviewRevisionConflictError(ValueError):
     """A reviewed Visit changed before an append-only revision could be applied."""
+
+
+class ReviewProvenanceConflictError(ValueError):
+    """A ReviewLabel's provenance already changed before a bounded repair
+    (see docs/review-decision-provenance-contract.md Part 8 and
+    scripts/repair_review_label_provenance.py) could be applied."""
 
 
 class VisitCurationConflictError(ValueError):
@@ -3237,6 +3244,15 @@ class ProductRepository:
                     label=label.label,
                     notes=label.notes,
                     created_at=label.created_at,
+                    # First-run demo/walkthrough content is illustrative,
+                    # product-authored fixture data, not a live claim about
+                    # a real animal at a real site -- but its provenance is
+                    # fully known and explicitly governed by this seeding
+                    # code, so it is eligible "imported curated truth"
+                    # (Part 2/5, docs/review-decision-provenance-
+                    # contract.md), not a human review.
+                    review_origin="imported_curated",
+                    reviewer_identity="mockingbird_demo_seed_data",
                 )
                 for label in review_labels
             ]
@@ -16758,6 +16774,8 @@ class ProductRepository:
                     session,
                     payload,
                     created_at,
+                    review_origin=payload.review_origin,
+                    reviewer_identity=payload.reviewer_identity,
                 )
 
     def revise_visit_review(
@@ -16802,6 +16820,15 @@ class ProductRepository:
                 current = self._current_effective_review_label_model_for_visit(session, visit.id)
                 if visit.review_status != ReviewStatus.reviewed.value or current is None:
                     raise ReviewRevisionConflictError("review_revision_unavailable")
+                if not review_provenance.is_authority_eligible(payload.review_origin):
+                    # Unlike plain correction, a revision has no meaningful
+                    # "recorded but not applied" behavior -- its only
+                    # purpose is to replace existing reviewed truth, so a
+                    # non-authoritative attempt fails loudly rather than
+                    # silently no-op'ing (see Part 11: only an
+                    # authority-eligible Review Decision may correct
+                    # durable reviewed truth).
+                    raise ReviewRevisionConflictError("review_revision_requires_authority")
 
                 # A revision is a new explicit truth row. It never changes the prior label.
                 result = self._create_review_label_result_in_session(
@@ -16815,6 +16842,8 @@ class ProductRepository:
                     supersedes_review_label_id=current.id,
                     review_action="revision",
                     revision_idempotency_key=payload.idempotency_key,
+                    review_origin=payload.review_origin,
+                    reviewer_identity=payload.reviewer_identity,
                 )
                 return VisitReviewRevisionResponse(
                     result=result,
@@ -16857,6 +16886,12 @@ class ProductRepository:
                 current = self._current_effective_review_label_model_for_visit(session, visit.id)
                 if visit.review_status != ReviewStatus.reviewed.value or current is None:
                     raise ReviewRevisionConflictError("review_reopen_unavailable")
+                if not review_provenance.is_authority_eligible(payload.review_origin):
+                    # Same reasoning as revise_visit_review above: reopening
+                    # is purely a truth mutation with no non-authoritative
+                    # equivalent, so it fails loudly instead of silently
+                    # doing nothing.
+                    raise ReviewRevisionConflictError("review_reopen_requires_authority")
 
                 # Reopen replaces effective truth with an append-only transition; media and evidence stay put.
                 session.add(
@@ -16870,6 +16905,8 @@ class ProductRepository:
                         supersedes_review_label_id=current.id,
                         review_action="reopen",
                         revision_idempotency_key=payload.idempotency_key,
+                        review_origin=payload.review_origin,
+                        reviewer_identity=_clean_optional_text(payload.reviewer_identity),
                     )
                 )
                 visit.reviewed_label = None
@@ -16878,6 +16915,127 @@ class ProductRepository:
                 self._sync_review_alert(session, visit, datetime.now(UTC))
                 session.flush()
                 return self._visit_review_reopen_response(session, visit.id)
+
+    def reclassify_review_label_provenance(
+        self,
+        review_label_id: str,
+        *,
+        review_origin: str,
+        reviewer_identity: str,
+        expected_current_review_origin: str | None = None,
+    ) -> ReviewLabel:
+        """Bounded maintenance operation (Review Decision Provenance / Truth
+        Boundary v1, Part 8; see docs/review-decision-provenance-contract.md
+        and scripts/repair_review_label_provenance.py): durably repair
+        exactly one existing ReviewLabel row's provenance, then recompute
+        the resulting Visit/Event truth state from scratch.
+
+        This exists for a narrow, real, already-identified situation: a
+        row that was written through this exact `agent_diagnostic`-shaped
+        gap before it was closed (an LLM/agent's own visual inspection,
+        submitted through the real `POST /api/review-labels` path,
+        indistinguishable at the time from a genuine human correction) and
+        therefore incorrectly flipped its target to `review_status=
+        "reviewed"`. It never deletes the row, its `label`, or its
+        `notes` -- "Do not delete or pretend they never happened" applies
+        to a maintenance repair exactly as it does to a live product
+        action. `expected_current_review_origin` is an optional safety
+        check (mirrors the idempotency-key convention used elsewhere in
+        this file) so a repair script can assert the row is still in the
+        state it already inspected before mutating it, and so re-running
+        the same repair twice fails loudly on the second attempt instead
+        of silently re-deriving state from an already-repaired row.
+        """
+
+        review_provenance.validate_review_origin(review_origin, reviewer_identity)
+        with self.session_factory() as session:
+            with session.begin():
+                label_model = session.get(ReviewLabelModel, review_label_id)
+                if label_model is None:
+                    raise ValueError("missing_review_label")
+                if (
+                    expected_current_review_origin is not None
+                    and label_model.review_origin != expected_current_review_origin
+                ):
+                    raise ReviewProvenanceConflictError("review_label_provenance_already_changed")
+
+                label_model.review_origin = review_origin
+                label_model.reviewer_identity = _clean_optional_text(reviewer_identity)
+                session.flush()
+
+                if label_model.target_type == "visit":
+                    self._recompute_visit_review_truth(session, label_model.target_id)
+                    now = datetime.now(UTC)
+                    visit_model = session.get(VisitModel, label_model.target_id)
+                    if visit_model is not None:
+                        # Reconcile the "ready for review"/journal-milestone
+                        # alerts the same way a live correction would --
+                        # `_sync_review_alert` is fully reconciling in both
+                        # directions (creates/refreshes when needs_review,
+                        # resolves when reviewed), so this is safe to call
+                        # unconditionally after either a promotion or a
+                        # demotion.
+                        self._sync_review_alert(session, visit_model, now)
+                        self._sync_journal_milestone_alert(session, visit_model, now)
+                elif label_model.target_type == "event":
+                    self._recompute_event_only_review_truth(session, label_model.target_id)
+
+                session.flush()
+                return _review_label_from_model(label_model)
+
+    def _recompute_visit_review_truth(self, session: Session, visit_id: str) -> None:
+        """Re-derive `VisitModel.review_status`/`reviewed_label` (and its
+        parent Event's rollup) from the Visit's own current *authoritative*
+        ReviewLabel rows, from scratch -- used only by the bounded
+        provenance-repair path above. A repaired row that turns out
+        non-authoritative can no longer justify a "reviewed" status it
+        previously (incorrectly) established; if some other authoritative
+        row already exists for this Visit, that one becomes effective
+        instead, exactly as `_create_review_label_in_session` would have
+        left it had the repaired row never been authoritative in the
+        first place."""
+
+        visit_model = session.get(VisitModel, visit_id)
+        if visit_model is None or visit_model.is_superseded:
+            return
+        effective = self._current_effective_review_label_model_for_visit(session, visit_id)
+        if effective is None:
+            visit_model.reviewed_label = None
+            visit_model.review_status = ReviewStatus.needs_review.value
+        else:
+            visit_model.reviewed_label = self._normalize_label_from_session(session, effective.label)
+            visit_model.review_status = ReviewStatus.reviewed.value
+
+        event_model = session.get(EventModel, visit_model.event_id)
+        if event_model is None:
+            return
+        child_visits = self._visit_models_for_event(session, event_model.id)
+        if child_visits and all(
+            child_visit.review_status != ReviewStatus.needs_review.value for child_visit in child_visits
+        ):
+            event_model.review_status = ReviewStatus.reviewed.value
+        elif child_visits:
+            # At least one child Visit is not reviewed -- unlike the
+            # create path (which only ever *promotes* an Event to
+            # reviewed), a repair can also legitimately *demote* one: a
+            # sibling Visit's only reviewed status may itself have come
+            # from the very row just repaired.
+            event_model.review_status = ReviewStatus.needs_review.value
+
+    def _recompute_event_only_review_truth(self, session: Session, event_id: str) -> None:
+        """Event-level equivalent of `_recompute_visit_review_truth` for a
+        Visit-less Event (mirrors `_event_is_dataset_ready`'s event-only
+        branch)."""
+
+        event_model = session.get(EventModel, event_id)
+        if event_model is None:
+            return
+        if self._visit_models_for_event(session, event_id):
+            return
+        effective = self._latest_label(self._review_labels_for_event(session, event_id))
+        event_model.review_status = (
+            ReviewStatus.reviewed.value if effective is not None else ReviewStatus.needs_review.value
+        )
 
     def _create_review_label_result_in_session(
         self,
@@ -16890,6 +17048,8 @@ class ProductRepository:
         supersedes_review_label_id: str | None = None,
         review_action: str | None = None,
         revision_idempotency_key: str | None = None,
+        review_origin: str | None = None,
+        reviewer_identity: str | None = None,
     ) -> ReviewCorrectionResult:
         review_label, visit, event = self._create_review_label_in_session(
             session,
@@ -16900,6 +17060,8 @@ class ProductRepository:
             supersedes_review_label_id=supersedes_review_label_id,
             review_action=review_action,
             revision_idempotency_key=revision_idempotency_key,
+            review_origin=review_origin,
+            reviewer_identity=reviewer_identity,
         )
         return ReviewCorrectionResult(
             review_label=review_label,
@@ -16973,6 +17135,8 @@ class ProductRepository:
                                 label=correction_label,
                                 notes=notes,
                             ),
+                            review_origin=payload.review_origin,
+                            reviewer_identity=payload.reviewer_identity,
                         )
                     except ValueError as error:
                         results.append(
@@ -17916,6 +18080,8 @@ class ProductRepository:
                     ),
                     fast_review_session_id=payload.review_session_id,
                     fast_review_idempotency_key=payload.idempotency_key,
+                    review_origin=payload.review_origin,
+                    reviewer_identity=payload.reviewer_identity,
                 )
                 return FastReviewCorrectionResponse(
                     result=result,
@@ -22107,7 +22273,16 @@ class ProductRepository:
         self,
         labels: list[ReviewLabelModel],
     ) -> list[ReviewLabelModel]:
-        """Resolve exactly one current truth row per target from append-only history."""
+        """Resolve exactly one current *authoritative* truth row per target
+        from append-only history.
+
+        A non-authoritative row (diagnostic assessment, or an omitted
+        origin) never becomes "the effective row" here, regardless of how
+        recent it is -- it must never shadow a genuine prior human/
+        imported-curated correction, and a target with only non-
+        authoritative rows correctly has no effective truth at all yet.
+        See docs/review-decision-provenance-contract.md.
+        """
 
         reversed_label_ids = {
             label.reversal_of_review_label_id
@@ -22126,6 +22301,7 @@ class ProductRepository:
                 or label.id in reversed_label_ids
                 or label.id in superseded_label_ids
                 or label.review_action == "reopen"
+                or not review_provenance.is_authority_eligible(label.review_origin)
             ):
                 continue
             target_key = (label.target_type, label.target_id)
@@ -22142,8 +22318,17 @@ class ProductRepository:
         session: Session,
         visit_id: str,
     ) -> ReviewLabelModel | None:
+        """The latest *authoritative* row for this Visit, used to find what
+        a revise/reopen action would act on. A later non-authoritative
+        diagnostic row must never be treated as the thing being revised or
+        reopened -- see docs/review-decision-provenance-contract.md."""
+
         return max(
-            self._review_label_models_for_visit(session, visit_id),
+            (
+                label
+                for label in self._review_label_models_for_visit(session, visit_id)
+                if review_provenance.is_authority_eligible(label.review_origin)
+            ),
             key=lambda label: (label.created_at, label.id),
             default=None,
         )
@@ -22161,6 +22346,8 @@ class ProductRepository:
                 notes=label.notes,
                 created_at=_as_utc(label.created_at),
                 is_current=current is not None and label.id == current.id,
+                review_origin=label.review_origin,
+                is_authoritative=review_provenance.is_authority_eligible(label.review_origin),
             )
             for label in self._review_label_history_models_for_visit(session, visit.id)
         ]
@@ -22294,7 +22481,25 @@ class ProductRepository:
         supersedes_review_label_id: str | None = None,
         review_action: str | None = None,
         revision_idempotency_key: str | None = None,
+        review_origin: str | None = None,
+        reviewer_identity: str | None = None,
     ) -> tuple[ReviewLabel, Visit | None, Event | None]:
+        # Review Decision Provenance / Truth Boundary v1 (see
+        # docs/review-decision-provenance-contract.md): `review_origin` is an
+        # explicit caller-supplied fact, never inferred, and never defaults
+        # to "human" merely because it was omitted. `is_authoritative`
+        # gates every mutation below -- a non-authoritative Review Decision
+        # (an omitted origin, or an explicit `agent_diagnostic`) is still
+        # durably persisted for transparency, but it can never establish or
+        # correct `VisitModel`/`EventModel` reviewed truth. This is the one
+        # place in the product that flips a Visit/Event to "reviewed", so
+        # gating here is sufficient to also keep Bird Log, Wildlife
+        # Insights, Dataset Export, and classifier manifests correct
+        # without touching any of their own read paths (they all key off
+        # `review_status`/`reviewed_label`, set only here).
+        review_provenance.validate_review_origin(review_origin, reviewer_identity, notes=payload.notes)
+        is_authoritative = review_provenance.is_authority_eligible(review_origin)
+
         normalized_label = self._normalize_label_from_session(session, payload.label)
         label_model = ReviewLabelModel(
             id=self._next_id(session, ReviewLabelModel, "review-label"),
@@ -22308,6 +22513,8 @@ class ProductRepository:
             supersedes_review_label_id=supersedes_review_label_id,
             review_action=review_action,
             revision_idempotency_key=revision_idempotency_key,
+            review_origin=review_origin,
+            reviewer_identity=_clean_optional_text(reviewer_identity),
         )
 
         visit: Visit | None = None
@@ -22326,6 +22533,21 @@ class ProductRepository:
                 session.add(label_model)
                 session.flush()
                 return _review_label_from_model(label_model), _visit_from_model(visit_model), None
+
+            if not is_authoritative:
+                # A non-authoritative Review Decision (diagnostic assessment,
+                # or a request that omitted provenance) is recorded as an
+                # auditable, visible row attached to this Visit, but it must
+                # never silently become "this Visit was reviewed" -- leave
+                # the Visit/Event exactly as they already were.
+                session.add(label_model)
+                session.flush()
+                return (
+                    _review_label_from_model(label_model),
+                    _visit_from_model(visit_model),
+                    self._event_from_model(session, event_model) if event_model is not None else None,
+                )
+
             if fast_review_session_id is not None:
                 label_model.prior_review_status = visit_model.review_status
                 label_model.prior_reviewed_label = visit_model.reviewed_label
@@ -22354,13 +22576,14 @@ class ProductRepository:
                 raise ValueError("missing_event")
 
             session.add(label_model)
-            event_model.review_status = ReviewStatus.reviewed.value
+            if is_authoritative:
+                event_model.review_status = ReviewStatus.reviewed.value
             event = self._event_from_model(session, event_model)
         else:
             raise ValueError("unsupported_target")
 
         session.flush()
-        if payload.target_type == "visit":
+        if payload.target_type == "visit" and is_authoritative:
             current_visit = session.get(VisitModel, payload.target_id)
             if current_visit is not None:
                 now = created_at or datetime.now(UTC)
@@ -22416,14 +22639,25 @@ class ProductRepository:
             detections=[_detection_from_model(detection) for detection in detections],
         )
 
+    def _has_authoritative_review_label(self, labels: list[ReviewLabelModel]) -> bool:
+        return any(review_provenance.is_authority_eligible(label.review_origin) for label in labels)
+
     def _visit_is_dataset_ready(self, session: Session, visit: Visit) -> bool:
+        # Defense in depth (Part 7 hardening, docs/review-decision-
+        # provenance-contract.md): `review_status`/`reviewed_label` should
+        # only ever be set together by an authoritative write (see
+        # `_create_review_label_in_session`), so this condition is expected
+        # to be structurally redundant with the fallback existence checks
+        # below -- but a reviewed-only Dataset Export promises human-
+        # reviewed truth, so this function re-verifies the fallback
+        # against actual origin rather than trusting bare row existence.
         visit_model = session.get(VisitModel, visit.id)
         if visit_model is None or visit_model.is_superseded:
             return False
         return visit.review_status == ReviewStatus.reviewed and (
             visit.reviewed_label is not None
-            or bool(self._review_label_models_for_visit(session, visit.id))
-            or bool(self._review_label_models_for_event(session, visit.event_id))
+            or self._has_authoritative_review_label(self._review_label_models_for_visit(session, visit.id))
+            or self._has_authoritative_review_label(self._review_label_models_for_event(session, visit.event_id))
         )
 
     def _event_is_dataset_ready(self, session: Session, event: Event) -> bool:
@@ -22436,14 +22670,21 @@ class ProductRepository:
         ):
             return False
 
-        return event.review_status == ReviewStatus.reviewed and bool(
+        return event.review_status == ReviewStatus.reviewed and self._has_authoritative_review_label(
             self._review_label_models_for_event(session, event.id)
         )
 
     def _latest_label(self, labels: list[ReviewLabel]) -> str | None:
-        if not labels:
+        """The latest *authoritative* label among the given ReviewLabels --
+        every caller uses this to resolve an effective truth label (export,
+        classifier manifests, dataset quality), so a non-authoritative
+        diagnostic assessment must never win here even if it is the most
+        recent row. See docs/review-decision-provenance-contract.md."""
+
+        eligible = [label for label in labels if label.is_authoritative]
+        if not eligible:
             return None
-        return max(labels, key=lambda label: label.created_at).label
+        return max(eligible, key=lambda label: label.created_at).label
 
     def _adapter_evaluation_item(
         self,
@@ -23016,9 +23257,15 @@ class ProductRepository:
             )
 
         def has_conflicting_corrections(labels: list[ReviewLabelModel]) -> bool:
+            # Only authoritative corrections can conflict with each other in
+            # a way that needs human cleanup attention -- a diagnostic
+            # assessment honestly disagreeing with the actual reviewed
+            # label is expected, not a data-quality problem. See
+            # docs/review-decision-provenance-contract.md.
             normalized_labels = {
                 self._normalize_label_from_session(session, label.label)
                 for label in labels
+                if review_provenance.is_authority_eligible(label.review_origin)
             }
             return len(normalized_labels) > 1
 
@@ -23199,14 +23446,20 @@ class ProductRepository:
                 session,
                 visit.representative_media_path,
             )
+            visit_dataset_ready = self._visit_is_dataset_ready(session, visit)
             add_record_issues(
                 target_type="visit",
                 target_id=visit.id,
                 event=event,
                 visit_id=visit.id,
                 label=label,
-                has_review_truth=bool(visit.reviewed_label or visit_labels or event_labels),
-                dataset_ready=self._visit_is_dataset_ready(session, visit),
+                # `dataset_ready` already means "review_status is reviewed
+                # AND an authoritative label backs it" -- reuse it rather
+                # than recomputing a second, looser existence check that a
+                # non-authoritative diagnostic row alone could satisfy. See
+                # docs/review-decision-provenance-contract.md.
+                has_review_truth=visit_dataset_ready,
+                dataset_ready=visit_dataset_ready,
                 media_path=visit.representative_media_path,
                 media_asset_id=media_asset.id if media_asset else None,
                 review_label_models=visit_labels,
@@ -23224,14 +23477,15 @@ class ProductRepository:
             label = self._latest_label([_review_label_from_model(label) for label in event_labels]) or (
                 event.detections[0].label if event.detections else event.event_type
             )
+            event_dataset_ready = self._event_is_dataset_ready(session, event)
             add_record_issues(
                 target_type="event",
                 target_id=event.id,
                 event=event,
                 visit_id=None,
                 label=label,
-                has_review_truth=bool(event_labels),
-                dataset_ready=self._event_is_dataset_ready(session, event),
+                has_review_truth=event_dataset_ready,
+                dataset_ready=event_dataset_ready,
                 media_path=None,
                 media_asset_id=None,
                 review_label_models=event_labels,
@@ -23518,9 +23772,15 @@ class ProductRepository:
             return self._latest_label([_review_label_from_model(label) for label in labels])
 
         def has_conflicting_corrections(labels: list[ReviewLabelModel]) -> bool:
+            # Only authoritative corrections can conflict with each other in
+            # a way that needs human cleanup attention -- a diagnostic
+            # assessment honestly disagreeing with the actual reviewed
+            # label is expected, not a data-quality problem. See
+            # docs/review-decision-provenance-contract.md.
             normalized_labels = {
                 self._normalize_label_from_session(session, label.label)
                 for label in labels
+                if review_provenance.is_authority_eligible(label.review_origin)
             }
             return len(normalized_labels) > 1
 
@@ -23728,14 +23988,25 @@ class ProductRepository:
         skipped_records: list[ClassifierManifestSkippedRecord] = []
 
         def latest_label_model(labels: list[ReviewLabelModel]) -> ReviewLabelModel | None:
-            if not labels:
+            # Authoritative-only: this resolves the effective reviewed
+            # label for classifier training eligibility, so a
+            # non-authoritative diagnostic row must never win. See
+            # docs/review-decision-provenance-contract.md.
+            eligible = [label for label in labels if review_provenance.is_authority_eligible(label.review_origin)]
+            if not eligible:
                 return None
-            return max(labels, key=lambda label: (_as_utc(label.created_at), label.id))
+            return max(eligible, key=lambda label: (_as_utc(label.created_at), label.id))
 
         def has_conflicting_corrections(labels: list[ReviewLabelModel]) -> bool:
+            # Only authoritative corrections can conflict with each other in
+            # a way that needs human cleanup attention -- a diagnostic
+            # assessment honestly disagreeing with the actual reviewed
+            # label is expected, not a data-quality problem. See
+            # docs/review-decision-provenance-contract.md.
             normalized_labels = {
                 self._normalize_label_from_session(session, label.label)
                 for label in labels
+                if review_provenance.is_authority_eligible(label.review_origin)
             }
             return len(normalized_labels) > 1
 
@@ -28227,6 +28498,9 @@ def _review_label_from_model(label: ReviewLabelModel) -> ReviewLabel:
         label=label.label,
         notes=label.notes,
         created_at=_as_utc(label.created_at),
+        review_origin=label.review_origin,
+        reviewer_identity=label.reviewer_identity,
+        is_authoritative=review_provenance.is_authority_eligible(label.review_origin),
     )
 
 

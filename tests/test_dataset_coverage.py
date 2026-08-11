@@ -89,7 +89,7 @@ async def test_correcting_unknown_bird_updates_species_coverage(
 
     correction_response = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": imported["visit"]["id"],
             "label": "Northern Cardinal",
@@ -113,7 +113,7 @@ async def test_freeform_custom_labels_appear_in_dataset_coverage(
 ) -> None:
     response = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": VISIT_ID,
             "label": "mystery feeder guest",

@@ -1245,10 +1245,22 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify({ confirm: true }),
     }),
+  // Review Decision Provenance / Truth Boundary v1 (see
+  // docs/review-decision-provenance-contract.md): every one of these
+  // functions is only ever reachable from this product's own interactive
+  // browser UI (Review Queue, Fast Review, Visit Detail correction/
+  // revision/reopen, bulk correction) -- a real person clicked something to
+  // reach this call. Each one explicitly stamps `review_origin: "human"`
+  // here, at this one client boundary, rather than leaving it to every
+  // page component to remember. This is an explicit assertion by the
+  // product's own review UI, not a default the backend applies for a
+  // caller that omits the field -- any other HTTP caller (a script, a
+  // future automation, an LLM agent) that calls the underlying API
+  // directly gets no such stamp and is never treated as human.
   createReviewLabel: (payload: ReviewCorrectionCreate) =>
     request<ReviewCorrectionResult>("/api/review-labels", {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, review_origin: "human" }),
     }),
   getVisitReviewHistory: (visitId: string) =>
     request<VisitReviewHistory>(
@@ -1259,7 +1271,7 @@ export const apiClient = {
       `/api/visits/${encodeURIComponent(visitId)}/revision`,
       {
         method: "POST",
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...payload, review_origin: "human" }),
       },
     ),
   reopenVisitReview: (visitId: string, payload: VisitReviewReopenCreate) =>
@@ -1267,7 +1279,7 @@ export const apiClient = {
       `/api/visits/${encodeURIComponent(visitId)}/reopen`,
       {
         method: "POST",
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...payload, review_origin: "human" }),
       },
     ),
   navigateFastReviewQueue: (payload: FastReviewQueueNavigationRequest) =>
@@ -1278,7 +1290,7 @@ export const apiClient = {
   createFastReviewCorrection: (payload: FastReviewCorrectionCreate) =>
     request<FastReviewCorrectionResponse>("/api/review-queue/fast/correct", {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, review_origin: "human" }),
     }),
   undoFastReviewCorrection: (payload: FastReviewUndoRequest) =>
     request<FastReviewUndoResponse>("/api/review-queue/fast/undo", {
@@ -1307,7 +1319,7 @@ export const apiClient = {
   bulkCorrectReviewQueueItems: (payload: ReviewQueueBulkCorrectionRequest) =>
     request<ReviewQueueBulkCorrectionResponse>("/api/review-queue/bulk-correct", {
       method: "POST",
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, review_origin: "human" }),
     }),
   getAlertUnread: () => request<ProductAlertUnreadResponse>("/api/alerts/unread"),
   getAlerts: (category?: AlertCategory, offset = 0) => {

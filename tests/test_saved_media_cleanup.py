@@ -315,7 +315,7 @@ async def test_cleanup_rejects_linked_and_reviewed_saved_preview_media(
     assert protected_promote_response.status_code == 200
     correction_response = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": protected_promote_response.json()["visit_id"],
             "label": "Northern Cardinal",

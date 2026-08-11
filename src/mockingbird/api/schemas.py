@@ -9,6 +9,17 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+# `ReviewOrigin`/`ReviewOriginStored` are the canonical provenance-value
+# types (see docs/review-decision-provenance-contract.md): defined once in
+# the small, dependency-free `review_provenance` module and reused here
+# rather than a second, possibly-drifting Enum duplicating the same values.
+# `ReviewOrigin` (3 values) types every *create* request field: a stored
+# row can never be freshly claimed as `legacy_unattributed`.
+# `ReviewOriginStored` (4 values) types every *response* field: a real
+# backfilled legacy row must round-trip through the API without a
+# validation error.
+from mockingbird.review_provenance import ReviewOrigin, ReviewOriginStored
+
 
 class SourceKind(str, Enum):
     demo = "demo"
@@ -3486,13 +3497,28 @@ class ReviewQueueItem(BaseModel):
 
 
 class ReviewLabel(BaseModel):
-    # Review labels are dataset-grade user truth that can override detections.
+    # Review labels are dataset-grade truth candidates that can override
+    # detections -- but see `is_authoritative` below: only some origins are
+    # actually eligible to establish or correct durable reviewed truth (see
+    # docs/review-decision-provenance-contract.md).
     id: str
     target_type: str
     target_id: str
     label: str
     notes: str | None = None
     created_at: datetime
+    # `None` means a create request made after this field existed omitted
+    # it. A row that predates this field entirely reads back the explicit
+    # `"legacy_unattributed"` sentinel instead (backfilled once by the
+    # schema migration) -- never `None` and never a fabricated "human".
+    review_origin: ReviewOriginStored | None = None
+    reviewer_identity: str | None = None
+    # Server-computed from `review_origin` via `mockingbird.review_
+    # provenance.is_authority_eligible` -- never client-supplied directly,
+    # so a caller cannot simply assert authority without an eligible
+    # origin. This is the one field API/frontend consumers should check
+    # before treating a Review Decision as reviewed observational truth.
+    is_authoritative: bool
 
 
 class ReviewLabelCreate(BaseModel):
@@ -3507,6 +3533,14 @@ class ReviewCorrectionCreate(BaseModel):
     target_id: str
     label: str
     notes: str | None = None
+    # Explicit provenance at the creation boundary (Part 4): omitting this
+    # field NEVER defaults to "human" -- it is recorded as no-explicit-
+    # origin and is not authority-eligible for this new row. The product's
+    # own interactive review UI sets this explicitly to "human" on every
+    # request it issues; it is not inferred from the absence of any other
+    # signal. See docs/review-decision-provenance-contract.md.
+    review_origin: ReviewOrigin | None = None
+    reviewer_identity: str | None = Field(default=None, max_length=256)
 
 
 class VisitReviewRevisionCreate(BaseModel):
@@ -3518,6 +3552,8 @@ class VisitReviewRevisionCreate(BaseModel):
     notes: str | None = Field(default=None, max_length=4000)
     expected_state_token: str = Field(min_length=1, max_length=256)
     idempotency_key: str = Field(min_length=1, max_length=128)
+    review_origin: ReviewOrigin | None = None
+    reviewer_identity: str | None = Field(default=None, max_length=256)
 
 
 class VisitReviewReopenCreate(BaseModel):
@@ -3528,6 +3564,8 @@ class VisitReviewReopenCreate(BaseModel):
     notes: str | None = Field(default=None, max_length=4000)
     expected_state_token: str = Field(min_length=1, max_length=256)
     idempotency_key: str = Field(min_length=1, max_length=128)
+    review_origin: ReviewOrigin | None = None
+    reviewer_identity: str | None = Field(default=None, max_length=256)
 
 
 class FastReviewQueueTarget(BaseModel):
@@ -3565,6 +3603,8 @@ class FastReviewCorrectionCreate(BaseModel):
     review_session_id: str = Field(min_length=1, max_length=128)
     idempotency_key: str = Field(min_length=1, max_length=128)
     expected_state_token: str = Field(min_length=1, max_length=256)
+    review_origin: ReviewOrigin | None = None
+    reviewer_identity: str | None = Field(default=None, max_length=256)
 
 
 class ReviewQueueBulkCorrectionRequest(BaseModel):
@@ -3572,6 +3612,8 @@ class ReviewQueueBulkCorrectionRequest(BaseModel):
     target_type: ReviewQueueBulkCorrectionTargetType
     label: str
     notes: str | None = None
+    review_origin: ReviewOrigin | None = None
+    reviewer_identity: str | None = Field(default=None, max_length=256)
 
 
 class ReviewQueueBulkCorrectionResult(BaseModel):
@@ -4847,6 +4889,19 @@ class ReviewCorrectionResult(BaseModel):
     analytics: AnalyticsSummary
 
 
+class ReviewLabelProvenanceReclassifyRequest(BaseModel):
+    """A bounded maintenance request (see
+    docs/review-decision-provenance-contract.md Part 8 and
+    scripts/repair_review_label_provenance.py) -- not part of the normal
+    interactive product review flow, and not exposed by the frontend."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    review_origin: ReviewOrigin
+    reviewer_identity: str = Field(min_length=1, max_length=256)
+    expected_current_review_origin: ReviewOriginStored | None = None
+
+
 class VisitReviewRevisionResponse(BaseModel):
     result: ReviewCorrectionResult
     review_state_token: str
@@ -4871,6 +4926,12 @@ class VisitReviewHistoryEntry(BaseModel):
     notes: str | None = None
     created_at: datetime
     is_current: bool = False
+    review_origin: ReviewOriginStored | None = None
+    # Fail-safe default: every real construction site sets this explicitly
+    # from `mockingbird.review_provenance.is_authority_eligible`, but a
+    # missing/forgotten value should read as "not authoritative" rather
+    # than silently implying a human confirmed it.
+    is_authoritative: bool = False
 
 
 class VisitReviewHistory(BaseModel):

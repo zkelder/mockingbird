@@ -184,7 +184,7 @@ def add_visit(
 async def review_visit(client: httpx.AsyncClient, visit_id: str, label: str) -> None:
     response = await client.post(
         "/api/review-labels",
-        json={"target_type": "visit", "target_id": visit_id, "label": label},
+        json={"review_origin": "human", "target_type": "visit", "target_id": visit_id, "label": label},
     )
     assert response.status_code == 201
 
@@ -280,7 +280,7 @@ async def test_wildlife_insights_aggregate_only_current_active_reviewed_truth(
 
     revised = await client.post(
         "/api/visits/revised-blue-jay/revision",
-        json={
+        json={"review_origin": "human", 
             "label": "blue_jay",
             "expected_state_token": await review_state_token(client, "revised-blue-jay"),
             "idempotency_key": "insights-revise-blue-jay",
@@ -292,6 +292,7 @@ async def test_wildlife_insights_aggregate_only_current_active_reviewed_truth(
         json={
             "expected_state_token": await review_state_token(client, "reopened"),
             "idempotency_key": "insights-reopen",
+            "review_origin": "human",
         },
     )
     assert reopened.status_code == 200

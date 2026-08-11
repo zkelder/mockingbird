@@ -974,7 +974,7 @@ async def test_review_identification_available_detection_adapter_then_correction
 
     correction_response = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": visit_id,
             "label": "northern_cardinal",

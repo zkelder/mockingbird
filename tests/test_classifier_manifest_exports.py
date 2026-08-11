@@ -74,6 +74,7 @@ async def create_reviewed_bird_example(
             "target_id": imported["visit"]["id"],
             "label": label,
             "notes": "Classifier export correction truth.",
+            "review_origin": "human",
         },
     )
     assert correction_response.status_code == 201

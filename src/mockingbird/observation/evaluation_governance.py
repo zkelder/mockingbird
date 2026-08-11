@@ -29,6 +29,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from mockingbird import review_provenance
+
 MANIFEST_SCHEMA_VERSION = 1
 
 EvaluationExampleStatus = Literal[
@@ -83,20 +85,18 @@ class EvaluationGovernanceError(ValueError):
 # silently entering a training/evaluation corpus. Bounded and explicit by
 # design -- this is not a content-moderation classifier, only a known,
 # documented vocabulary already used *by this codebase's own convention*.
-_NON_HUMAN_REVIEW_MARKERS: tuple[str, ...] = (
-    "agent", "claude", "language model", "llm", "autonomous", "chatbot",
-    "ai visual", "ai-visual", "machine visual", "model visual",
-)
-
-
-def _discloses_non_human_review(*texts: str | None) -> bool:
-    for text in texts:
-        if not text:
-            continue
-        lowered = text.lower()
-        if any(marker in lowered for marker in _NON_HUMAN_REVIEW_MARKERS):
-            return True
-    return False
+#
+# Review Decision Provenance / Truth Boundary v1 (see
+# docs/review-decision-provenance-contract.md) named this exact vocabulary
+# explicitly and gave it one canonical home, `mockingbird.review_
+# provenance.NON_HUMAN_DISCLOSURE_MARKERS` -- reused here rather than
+# duplicated, so this module's offline-manifest boundary and the live
+# product `ReviewLabel` boundary can never quietly disagree about what
+# counts as a self-disclosed non-human review. That module is exactly as
+# dependency-free as this one (no SQLAlchemy, no product-repository
+# import), so importing it does not compromise this module's own "no
+# product database" discipline.
+_discloses_non_human_review = review_provenance.discloses_non_human_review
 
 
 @dataclass(frozen=True)

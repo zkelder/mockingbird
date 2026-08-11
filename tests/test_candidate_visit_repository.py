@@ -126,7 +126,7 @@ def test_schema_v31_adds_confidence_evidence_column_without_fabricating_legacy_d
 
     db_path = tmp_path / "schema-v31.sqlite3"
     repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 31
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 32
     _activate(repository)
     pre_migration_outcome = repository.create_candidate_visit_from_proposal(
         CreateCandidateVisitRequest(
@@ -149,7 +149,7 @@ def test_schema_v31_adds_confidence_evidence_column_without_fabricating_legacy_d
 
     migrated = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
     try:
-        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 31
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 32
         with migrated.session_factory() as session:
             pre_ledger = session.get(ObservationCandidateVisitModel, "visit-episode:pre-migration")
             assert pre_ledger is not None

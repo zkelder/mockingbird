@@ -75,7 +75,7 @@ def add_reviewable_visit(repository: ProductRepository) -> None:
 async def initial_correction(client: httpx.AsyncClient, label: str = "northern_cardinal") -> None:
     response = await client.post(
         "/api/review-labels",
-        json={"target_type": "visit", "target_id": VISIT_ID, "label": label},
+        json={"review_origin": "human", "target_type": "visit", "target_id": VISIT_ID, "label": label},
     )
     assert response.status_code == 201
 
@@ -98,6 +98,7 @@ async def test_revision_keeps_one_effective_truth_for_bird_log_dashboard_analyti
         "notes": "Wing markings are clearer in the supporting frame.",
         "expected_state_token": before["review_state_token"],
         "idempotency_key": "revision-house-finch",
+        "review_origin": "human",
     }
 
     revised = await client.post(f"/api/visits/{VISIT_ID}/revision", json=revision_payload)
@@ -159,7 +160,7 @@ async def test_outcome_revisions_change_only_current_truth_and_reject_stale_writ
 
     blank = await client.post(
         f"/api/visits/{VISIT_ID}/revision",
-        json={
+        json={"review_origin": "human", 
             "label": "blank",
             "expected_state_token": first_detail["review_state_token"],
             "idempotency_key": "revision-blank",
@@ -172,7 +173,7 @@ async def test_outcome_revisions_change_only_current_truth_and_reject_stale_writ
 
     stale = await client.post(
         f"/api/visits/{VISIT_ID}/revision",
-        json={
+        json={"review_origin": "human", 
             "label": "blue_jay",
             "expected_state_token": first_detail["review_state_token"],
             "idempotency_key": "revision-stale",
@@ -183,7 +184,7 @@ async def test_outcome_revisions_change_only_current_truth_and_reject_stale_writ
     blank_detail = await detail(client)
     bird = await client.post(
         f"/api/visits/{VISIT_ID}/revision",
-        json={
+        json={"review_origin": "human", 
             "label": "blue_jay",
             "expected_state_token": blank_detail["review_state_token"],
             "idempotency_key": "revision-blue-jay",
@@ -193,7 +194,7 @@ async def test_outcome_revisions_change_only_current_truth_and_reject_stale_writ
     bird_detail = await detail(client)
     non_bird = await client.post(
         f"/api/visits/{VISIT_ID}/revision",
-        json={
+        json={"review_origin": "human", 
             "label": "non_bird",
             "expected_state_token": bird_detail["review_state_token"],
             "idempotency_key": "revision-non-bird",
@@ -223,6 +224,7 @@ async def test_reopen_preserves_evidence_history_and_suggestions_without_duplica
         "notes": "Need another look at the evidence.",
         "expected_state_token": before["review_state_token"],
         "idempotency_key": "reopen-for-review",
+        "review_origin": "human",
     }
     reopened = await client.post(f"/api/visits/{VISIT_ID}/reopen", json=reopen_payload)
     assert reopened.status_code == 200

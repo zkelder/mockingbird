@@ -172,7 +172,7 @@ async def test_bulk_corrects_multiple_review_queue_visits_as_user_truth(
 
     response = await client.post(
         "/api/review-queue/bulk-correct",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_ids": ["visit-bulk-review-001", "visit-bulk-review-002"],
             "label": "blue_jay",
@@ -234,7 +234,7 @@ async def test_bulk_correction_skips_duplicate_unknown_and_already_reviewed_visi
     )
     reviewed_response = await client.post(
         "/api/review-labels",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_id": "visit-bulk-review-reviewed",
             "label": "northern_cardinal",
@@ -246,7 +246,7 @@ async def test_bulk_correction_skips_duplicate_unknown_and_already_reviewed_visi
 
     response = await client.post(
         "/api/review-queue/bulk-correct",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_ids": [
                 "visit-bulk-review-eligible",
@@ -292,7 +292,7 @@ async def test_bulk_correction_handles_event_targets_and_ineligible_events(
 
     response = await client.post(
         "/api/review-queue/bulk-correct",
-        json={
+        json={"review_origin": "human", 
             "target_type": "event",
             "target_ids": [
                 "event-bulk-review-event-only",
@@ -330,7 +330,7 @@ async def test_bulk_correction_requires_explicit_label(
 
     response = await client.post(
         "/api/review-queue/bulk-correct",
-        json={
+        json={"review_origin": "human", 
             "target_type": "visit",
             "target_ids": [BIRD_VISIT_ID],
             "label": " ",

@@ -134,7 +134,7 @@ async def visit_detail(client: httpx.AsyncClient, visit_id: str) -> dict:
 async def review_visit(client: httpx.AsyncClient, visit_id: str, label: str) -> None:
     response = await client.post(
         "/api/review-labels",
-        json={"target_type": "visit", "target_id": visit_id, "label": label},
+        json={"review_origin": "human", "target_type": "visit", "target_id": visit_id, "label": label},
     )
     assert response.status_code == 201
 
