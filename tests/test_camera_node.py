@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import func, select
 
 from mockingbird.api import main as api_main
-from mockingbird.api.main import app, configure_repository
+from mockingbird.api.main import app, configure_repository, drain_background_tasks
 from mockingbird.playback.camera_node_bridge import CameraNodeSnapshotProcess
 from mockingbird.repository.product_repository import ProductRepository, SourceProviderConfigurationModel
 from mockingbird.source_providers.camera_node import (
@@ -1732,6 +1732,14 @@ async def test_pairing_guided_setup_keeps_credential_masked_and_creates_no_truth
                 assert config["node_credential"] == "never-echo-node-credential"
                 assert config["node_pairing_state"] == "paired"
     finally:
+        # A successful `/pair` call fires a detached pairing-profile-refresh
+        # background task (`_refresh_camera_node_pairing_profiles`) that
+        # calls `get_repository()` again after its own first `await`. Drain
+        # it *before* clearing the repository below, or it can wake up and
+        # resolve the singleton's now-unconfigured default instead of this
+        # test's own isolated repository (Test / Development Repository
+        # Isolation v1, Part 6).
+        await drain_background_tasks()
         configure_repository(None)
         api_main._camera_node_client = None
 
@@ -1760,6 +1768,14 @@ async def test_timed_out_node_preview_creates_no_product_records_or_truth(tmp_pa
             assert "never-echo-node-credential" not in preview.text
             assert _counts(repository) == before
     finally:
+        # A successful `/pair` call fires a detached pairing-profile-refresh
+        # background task (`_refresh_camera_node_pairing_profiles`) that
+        # calls `get_repository()` again after its own first `await`. Drain
+        # it *before* clearing the repository below, or it can wake up and
+        # resolve the singleton's now-unconfigured default instead of this
+        # test's own isolated repository (Test / Development Repository
+        # Isolation v1, Part 6).
+        await drain_background_tasks()
         configure_repository(None)
         api_main._camera_node_client = None
 
@@ -1789,6 +1805,14 @@ async def test_disappeared_camera_cannot_complete_node_setup(tmp_path) -> None:
             assert completed.status_code == 400
             assert _counts(repository) == before
     finally:
+        # A successful `/pair` call fires a detached pairing-profile-refresh
+        # background task (`_refresh_camera_node_pairing_profiles`) that
+        # calls `get_repository()` again after its own first `await`. Drain
+        # it *before* clearing the repository below, or it can wake up and
+        # resolve the singleton's now-unconfigured default instead of this
+        # test's own isolated repository (Test / Development Repository
+        # Isolation v1, Part 6).
+        await drain_background_tasks()
         configure_repository(None)
         api_main._camera_node_client = None
 
@@ -1839,6 +1863,14 @@ async def test_node_repair_uses_in_place_preview_and_explicit_revocation(tmp_pat
             assert after.json()["field_states"]["node_credential"] == "not_configured"
             assert "never-echo-node-credential" not in after.text
     finally:
+        # A successful `/pair` call fires a detached pairing-profile-refresh
+        # background task (`_refresh_camera_node_pairing_profiles`) that
+        # calls `get_repository()` again after its own first `await`. Drain
+        # it *before* clearing the repository below, or it can wake up and
+        # resolve the singleton's now-unconfigured default instead of this
+        # test's own isolated repository (Test / Development Repository
+        # Isolation v1, Part 6).
+        await drain_background_tasks()
         configure_repository(None)
         api_main._camera_node_client = None
 

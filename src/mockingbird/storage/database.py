@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 import os
 from pathlib import Path
 import shutil
+import sys
+import tempfile
 from typing import Callable
 
 from sqlalchemy import (
@@ -54,6 +56,28 @@ _SCHEMA_VERSION_TABLE = Table(
 
 class DatabaseSchemaCompatibilityError(RuntimeError):
     """Raised before startup can modify a database with an unsupported version."""
+
+
+class UnsafeDefaultStorageAccessError(RuntimeError):
+    """Raised when a test process is about to fall back to MockingBird's
+    persistent default *database* path with no isolation configured (see
+    docs/test-repository-isolation-contract.md, "Test / Development
+    Repository Isolation v1"). Only `database_url_from_env` raises this
+    today -- see its own docstring, and `media_root_from_env`'s, for why the
+    identical-looking media-root default is deliberately not guarded the
+    same way.
+
+    This is a test-only fail-closed guard, not a product behavior change:
+    it only ever fires while running under pytest (see
+    `_running_under_pytest`), so ordinary local development and the
+    packaged Windows runtime -- neither of which ever imports pytest --
+    resolve `DEFAULT_DB_URL` exactly as before. An explicit `db_url`
+    argument or `MOCKINGBIRD_DB_URL` environment variable is never
+    second-guessed by this check, no matter where it points, so a test that
+    deliberately wants a real, on-disk, persistent-format integration
+    repository remains fully able to construct one (see
+    `tests/conftest.py`).
+    """
 
 
 @dataclass(frozen=True)
@@ -825,8 +849,68 @@ def database_schema_version_is_compatible(version: int) -> bool:
     )
 
 
+def _running_under_pytest() -> bool:
+    """Detect a test process, not real product startup.
+
+    Mirrors the exact convention `mockingbird.api.main._patch_testclient_
+    for_pytest` already established for the same purpose: true for the
+    whole pytest session (collection through teardown, regardless of which
+    test is currently running), never true for the packaged Windows
+    runtime or an ordinary `python -m mockingbird` launch -- pytest is a
+    `[project.optional-dependencies] test` extra that no runtime import
+    path ever pulls in, so `sys.modules` only contains it when something
+    (virtually always pytest's own bootstrap) explicitly imported it.
+    """
+
+    return "pytest" in sys.modules
+
+
+def _reject_unconfigured_default_outside_test_temp(path: Path, *, what: str) -> None:
+    """Fail closed rather than silently open a persistent default path.
+
+    Test / Development Repository Isolation v1: called only on the
+    *fallback* branch of `database_url_from_env` (see that function's own
+    docstring for why `media_root_from_env` deliberately does not call
+    this), after confirming neither an explicit constructor argument nor
+    the environment variable was supplied. An explicit choice is never
+    second-guessed here, no matter where it points -- this only stops the
+    silent, nobody-decided-anything default from resolving outside the
+    test process's own temp root (exactly what pytest's `tmp_path` already
+    builds under) while running under pytest. See
+    docs/test-repository-isolation-contract.md.
+    """
+
+    if not _running_under_pytest():
+        return
+    resolved = path.resolve()
+    safe_root = Path(tempfile.gettempdir()).resolve()
+    if resolved == safe_root or safe_root in resolved.parents:
+        return
+    raise UnsafeDefaultStorageAccessError(
+        f"Refusing to let a test fall back to MockingBird's default {what} "
+        f"path ({resolved}) with no repository explicitly configured. "
+        "Inject an isolated ProductRepository(db_url=...), call "
+        "configure_repository(...), or rely on the autouse "
+        "tests/conftest.py fixture. A test that deliberately needs the "
+        "real default-resolution behavior itself (for example "
+        "runtime.run_preflight()) must point MOCKINGBIRD_HOME at an "
+        "isolated directory first, exactly like the existing "
+        "test_single_app_runtime.py coverage does."
+    )
+
+
 def database_url_from_env() -> str:
-    return os.getenv(DB_URL_ENV_VAR, DEFAULT_DB_URL)
+    """Explicit `MOCKINGBIRD_DB_URL` wins unconditionally; otherwise fail
+    closed under pytest (see `_reject_unconfigured_default_outside_test_
+    temp`) instead of silently returning `DEFAULT_DB_URL`."""
+
+    configured = os.getenv(DB_URL_ENV_VAR)
+    if configured:
+        return configured
+    _reject_unconfigured_default_outside_test_temp(
+        sqlite_database_path(DEFAULT_DB_URL), what="database"
+    )
+    return DEFAULT_DB_URL
 
 
 def resolve_database_url(db_url: str | None = None) -> str:
@@ -834,6 +918,20 @@ def resolve_database_url(db_url: str | None = None) -> str:
 
 
 def media_root_from_env() -> str:
+    # Deliberately *not* guarded like `database_url_from_env` below: every
+    # `ProductRepository(db_url=...)` construction across the test suite
+    # already passes an explicit, isolated `db_url` (confirmed by an
+    # exhaustive Part 1 sweep of this milestone), but roughly a sixth of
+    # them never pass `media_root` because they never touch media at all --
+    # merely resolving this default does not write anything (unlike
+    # `database_url_from_env`, whose result `ProductRepository.__init__`
+    # unconditionally opens/migrates/seeds). Guarding it identically would
+    # reject those existing, already-safe tests for no matching safety gain
+    # -- confirmed against `data/media/imports`'s own last-modified time,
+    # which shows no test-run pollution. A test that *does* deliberately
+    # write media without configuring `media_root` remains exactly as
+    # responsible for that as it was before this milestone; see
+    # docs/test-repository-isolation-contract.md's "Scope boundary".
     return os.getenv(MEDIA_ROOT_ENV_VAR, DEFAULT_MEDIA_ROOT)
 
 

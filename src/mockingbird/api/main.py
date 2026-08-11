@@ -633,6 +633,44 @@ _CAMERA_NODE_PAIRING_REFRESH_INTERVAL_SECONDS = 1.0
 _live_object_detector_manager: LiveObjectDetectorManager | None = None
 _backup_operation_lock = threading.Lock()
 _repository_access_lock = threading.RLock()
+# `asyncio.create_task`'s own docs warn the event loop only holds a *weak*
+# reference to a task -- without a strong reference elsewhere, a detached
+# background task (currently only `_refresh_camera_node_pairing_profiles`,
+# fired-and-forgotten by `pair_camera_node`) can be garbage-collected
+# mid-execution. Tracking it here also lets `drain_background_tasks` (Test
+# / Development Repository Isolation v1, Part 6) give a test's own teardown
+# a deterministic way to wait for it to finish *before* an isolated
+# repository is torn down, instead of racing it: this exact task calls
+# `get_repository()` again after its first `await`, so a test that resets
+# the repository singleton while it is still sleeping would otherwise hand
+# it the unconfigured default the moment it wakes up.
+_pending_background_tasks: set[asyncio.Task] = set()
+
+
+def _track_background_task(task: asyncio.Task) -> None:
+    _pending_background_tasks.add(task)
+    task.add_done_callback(_pending_background_tasks.discard)
+
+
+async def drain_background_tasks() -> None:
+    """Wait for every currently-tracked detached background task to finish.
+
+    Deliberately does *not* pass `return_exceptions=True`: a genuine
+    failure inside a drained task (for example this exact isolation
+    guard's own `UnsafeDefaultStorageAccessError`, if a caller drains too
+    late) must still surface loudly, never be silently absorbed -- the same
+    fail-closed principle the guard itself exists for.
+
+    Test-only concern in practice (see `tests/conftest.py`): production
+    shutdown already stops durable/worker lifecycles explicitly through
+    `_stop_runtime_activity`, and this process only ever creates the one
+    short-lived, bounded task named above. Snapshotting before awaiting is
+    enough for that -- it does not need to loop until the set is empty.
+    """
+
+    pending = tuple(_pending_background_tasks)
+    if pending:
+        await asyncio.gather(*pending)
 
 
 def get_repository() -> ProductRepository:
@@ -8847,10 +8885,12 @@ async def pair_camera_node(payload: CameraNodePairRequest) -> CameraNodePairResp
     pending = get_repository().create_camera_node_pending_setup(
         pairing, renews_pairing_token=payload.renews_pairing_token
     )
-    asyncio.create_task(
-        _refresh_camera_node_pairing_profiles(
-            pairing_token=pending.pairing_token,
-            pairing=pairing,
+    _track_background_task(
+        asyncio.create_task(
+            _refresh_camera_node_pairing_profiles(
+                pairing_token=pending.pairing_token,
+                pairing=pairing,
+            )
         )
     )
     return CameraNodePairResponse(
