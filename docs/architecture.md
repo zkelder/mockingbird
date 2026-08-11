@@ -203,7 +203,8 @@ stage's full contract:
 [unified-observation-panel-contract.md](unified-observation-panel-contract.md),
 [detection-quality-accounting-contract.md](detection-quality-accounting-contract.md),
 [localization-attribution-contract.md](localization-attribution-contract.md),
-[rejected-detection-attribution-contract.md](rejected-detection-attribution-contract.md).
+[rejected-detection-attribution-contract.md](rejected-detection-attribution-contract.md),
+[detector-promotion-benchmark-contract.md](detector-promotion-benchmark-contract.md).
 
 ### Detection Quality Accounting
 
@@ -377,21 +378,25 @@ difficult-case evaluation → incumbent comparison → shadow processing →
 calibration → resource-cost evaluation → promotion decision → versioned
 deployment → monitoring → rollback/retirement
 
-Current prior art covers the early-to-middle stages for the detector: a
-candidate (for example the evaluated `spruce` MegaDetector build) is scored
-against a reproducible reviewed cohort
+Current prior art now covers a deeper detector path: checksum-pinned
+candidates are scored against a reproducible reviewed cohort
 ([detector-calibration-benchmark-contract.md](detector-calibration-benchmark-contract.md)),
 compared against the MDv5 incumbent on identical data
 ([detector-candidate-comparison-contract.md](detector-candidate-comparison-contract.md)),
-and evaluated through the shadow-only Observation Engine pipeline before any
-live change. Difficult-case evaluation exists narrowly today (a small-subject
-cohort for the multi-scale benchmark); representative slices for common
-species, uncommon species, unknown/unrepresented species, partial/occluded
-animals, multiple animals, small/distant subjects, feeder obstruction, motion
-blur, poor lighting/dawn/dusk, non-birds, and empty backgrounds do not yet
-exist as a standing benchmark structure. A formal promotion-decision rule,
-versioned deployment/monitoring, and rollback/retirement policy do not yet
-exist; see [roadmap.md](roadmap.md) Phase 2.
+exercised through accepted full-frame and bounded tile strategies, and
+evaluated through the shadow-only Observation Engine before any live change.
+Detection and Localization Model Benchmark / Promotion v1
+([detector-promotion-benchmark-contract.md](detector-promotion-benchmark-contract.md))
+added provider-neutral candidate provenance/output normalization,
+reviewed-vs-diagnostic governance, wildlife-specific MDV6-C/E and general
+RF-DETR-S comparisons on the same preserved evidence, explicit A-E terminal
+states, and a Windows-hosted GPU resource pass. It selected state A -- MDv5
+native retained -- without changing production authority: tiling raised
+reviewed recall but produced unacceptable false positives/runtime, and no
+challenger dominated the incumbent. Representative multi-scene difficult-case
+slices remain incomplete, exact live analysis-frame retention is still
+missing, and versioned deployment, monitoring, and rollback/retirement policy
+remain open; see [roadmap.md](roadmap.md) Phase 2.
 
 Reviewed truth may become valuable training data, but a reviewed
 Visit/Observation does not automatically enter a training dataset.

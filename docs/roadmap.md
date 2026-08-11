@@ -121,46 +121,27 @@ analytics; unknown and abstained outcomes are valid.
   motivated Detection Quality Accounting v1 / Localization Attribution v1 /
   Rejected / Suppressed Detection Attribution v1 infrastructure made
   opportunistic progress -- see "Phase sequencing."
-- **Next recommended implementation milestone:** run one bounded real
-  Camera Node session (comparable in length to the 2026-08-10/2026-08-11
-  sessions, not the large multi-session cohort described below) whose
-  specific purpose is capturing a fresh genuine-animal encounter, now with
-  both Localization Attribution v1's lineage *and* Rejected / Suppressed
-  Detection Attribution v1's counterfactual ledger active, so
-  `localization_attribution.classify_localization_attribution` can run
-  against real per-observation geometry for an admitted candidate, and --
-  new this milestone -- `counterfactual_lineage.classify_rejection_
-  attribution` can be queried directly against the animal's own observed
-  screen region/time window even if no candidate is ever admitted for it,
-  rather than the honestly-`insufficient_geometry_lineage`/`insufficient_
-  counterfactual_lineage` retrospective reads every session before this one
-  produced. That result is what decides Phase 2's actual next step: if it
-  shows a genuine, temporally-aligned detector hit still missing the animal
-  (`detector_off_target`/`detector_hit_then_suppressed`), detector-candidate
-  evaluation (below) is justified; if it shows the box came from stale/
-  tracker-support geometry or an evidence-image timing gap
-  (`detector_hit_then_lost`/`evidence_geometry_misaligned`/`tracker_drift`),
-  the fix belongs in tracker/evidence-timing work instead, not a detector
-  swap; if it shows a true `detector_miss` over a fully-covered window, that
-  is itself new, actionable evidence a detector-candidate evaluation would
-  also want. Separately, and not blocking the above, collect a larger, less
-  session-concentrated reviewed
-  field-truth cohort (the current 51-example/4-session corpus is real but
-  too concentrated to promote a confidence-aware admission policy) -- see
-  [detection-quality-accounting-contract.md](detection-quality-accounting-contract.md)'s
-  "Production authority gate" and that milestone's final report for the
-  specific numbers a promotion decision would need. Agent-assisted field-
-  cohort collection is safe to resume for either: Review Decision Provenance /
-  Truth Boundary v1 closed the gap that made that unsafe before (an agent's
-  own visual review is now durably `agent_diagnostic`, never authoritative,
-  never silently reviewed/exported/training-eligible truth), *provided* the
-  agent explicitly identifies itself (`review_origin: "agent_diagnostic"` and
-  a named `reviewer_identity`) exactly as
-  [review-decision-provenance-contract.md](review-decision-provenance-contract.md)'s
-  "Agent-assisted field-testing workflow" describes -- a future cohort's own
-  candidate assessments remain `diagnostic_only`, not a `reviewed_truth`
-  denominator, until a human reviews them through the normal product Review
-  Queue.
+- **Most recent detector decision:** the 36m11s combined-attribution session
+  produced four genuine bird encounters, three with proof-complete raw MDv5
+  misses. Detection and Localization Model Benchmark / Promotion v1
+  ([contract](detector-promotion-benchmark-contract.md),
+  [report](detector-promotion-benchmark-report.md)) then ran exact production
+  MDv5, accepted MDv5 tiling, MDV6-C/E, and RF-DETR Small against 70
+  human-reviewed localization frames plus five strictly diagnostic images on
+  the Windows-hosted RTX 4060 Ti. It selected state A -- MDv5 native retained
+  -- because no challenger dominated the incumbent and tiling created
+  unacceptable false positives/runtime. The live misses remain valid;
+  production and threshold 0.1 are unchanged.
+- **Next recommended implementation milestone:** have a human independently
+  review and box the four latest attributed birds; add a new multi-scene,
+  non-session-concentrated holdout with deliberate small/distant birds and
+  surviving environmental confusors; and retain exact live analysis-frame
+  bytes plus raw detector output in future field capture. Then rerun calibrated
+  MDV6-C/E comparison on that frozen holdout and proceed to a bounded,
+  default-off live shadow only if a challenger clearly dominates. This is the
+  exact next gate recorded by
+  [detector-promotion-benchmark-report.md](detector-promotion-benchmark-report.md);
+  the holdout remains prohibited from training.
 
 ## Phase sequencing
 
@@ -187,8 +168,9 @@ Observation/live-view capture-ownership collision.
 Still open: representative field acceptance has been mixed -- the first
 campaign failed on admission precision, a later cohort passed precision with
 insufficient recall, and tracker fragmentation took several real rounds of
-fixes to bring under control. The two most recent fixes have not yet been
-exercised against a real end-to-end bird Visit. Truthful capability
+fixes to bring under control. The combined-attribution session exercised current continuity and lineage on
+four coherent genuine-bird Visits, but three proof-complete raw-detector
+localization/recall failures leave animal detection quality unresolved. Truthful capability
 reporting covers only a narrow "no runtime available" case today (see
 "Capability-aware UX" in [architecture.md](architecture.md)). Bounded
 CPU/RAM/storage behavior is declared (see the former Gate E budgets, below)
@@ -221,8 +203,15 @@ benchmark, a shadow-only incumbent-vs-candidate comparison tool (already used
 to reject the `spruce` MegaDetector candidate on measured precision/recall
 and licensing grounds), multi-scale and adaptive motion-proposal benchmarks,
 an evidence-usefulness benchmark, and the shadow-evaluation discipline the
-whole Observation Engine migration was built on. Detection Quality
-Accounting v1 (2026-08-10, see
+whole Observation Engine migration was built on. Detection and Localization
+Model Benchmark / Promotion v1 then added a checksum-pinned provider-neutral
+candidate runner, a 75-image provenance-aware corpus (70 reviewed plus five
+diagnostic-only), exact MDv5 native/tile controls, MDV6-C/E and RF-DETR-S
+challengers, a Windows GPU resource pass, and A-E promotion states. It selected
+state A without changing production; see
+[detector-promotion-benchmark-contract.md](detector-promotion-benchmark-contract.md)
+and [detector-promotion-benchmark-report.md](detector-promotion-benchmark-report.md).
+Detection Quality Accounting v1 (2026-08-10, see
 [detection-quality-accounting-contract.md](detection-quality-accounting-contract.md)),
 motivated by that day's real-field finding that all 3 candidate Visits one
 Camera Node session produced were false positives, added confidence/evidence
@@ -247,7 +236,7 @@ Rejected / Suppressed Detection Attribution v1's counterfactual ledger
 collect a larger, more representative (not
 session-concentrated) reviewed cohort before any confidence-aware admission
 policy could satisfy detection-quality-accounting-contract.md's "Production
-authority gate"; define an explicit promotion-decision rule, versioned
+authority gate"; extend the v1 promotion-state rule into versioned
 deployment, monitoring, and rollback/retirement policy; and collect the
 representative (30-100 example) species-level correction truth needed to
 actually validate BioCLIP -- never completed under the earlier "visual
