@@ -22,7 +22,10 @@ from PIL import Image
 
 REGISTRY_FILENAME = "wildlife_source_registry_v0_1.json"
 REGISTRY_ID = "north-american-backyard-wildlife-sources-v0.1"
+STAGE2_REGISTRY_FILENAME = "wildlife_source_registry_v0_2.json"
+STAGE2_REGISTRY_ID = "north-american-backyard-wildlife-sources-v0.2"
 STAGE1_CORPUS_ID = "north-american-backyard-wildlife-stage1-v0.1"
+STAGE2_CORPUS_ID = "north-american-backyard-wildlife-stage2-v0.2"
 FROZEN_BENCHMARK_SEMANTIC_FINGERPRINT = (
     "24bef2dabb37cff8dd4ae984135721aa90647294e2bded0a6e7f83fbdf6bacec"
 )
@@ -33,9 +36,14 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 SizeBucket = Literal["very_small", "small", "medium", "large"]
 TruthAuthority = Literal[
-    "public_human_bbox", "public_curated_empty", "human_localization"
+    "public_human_bbox",
+    "public_curated_empty",
+    "human_localization",
+    "human_reviewed_empty",
 ]
 Split = Literal["train", "valid"]
+DomainRole = Literal["target_domain", "transfer_only"]
+AugmentationKind = Literal["full_scene", "context_crop"]
 _SIZE_ORDER: dict[SizeBucket, int] = {
     "very_small": 0,
     "small": 1,
@@ -50,6 +58,7 @@ _ELIGIBLE_AUTHORITIES = {
     "public_human_bbox",
     "public_curated_empty",
     "human_localization",
+    "human_reviewed_empty",
 }
 
 
@@ -123,6 +132,61 @@ def load_source_registry(path: Path | None = None) -> dict[str, Any]:
             for token in ("unverified", "unclear", "requires review")
         ):
             raise WildlifeTrainingError("accepted_source_license_unclear")
+    payload["fingerprint"] = canonical_fingerprint(
+        {key: value for key, value in payload.items() if key != "fingerprint"}
+    )
+    return payload
+
+
+def load_stage2_source_registry(path: Path | None = None) -> dict[str, Any]:
+    """Load the separately versioned Stage-2 source decisions fail-closed."""
+
+    registry_path = path or Path(__file__).with_name(STAGE2_REGISTRY_FILENAME)
+    try:
+        payload = json.loads(registry_path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise WildlifeTrainingError("stage2_source_registry_unreadable") from error
+    if (
+        payload.get("schema_version") != 2
+        or payload.get("registry_id") != STAGE2_REGISTRY_ID
+    ):
+        raise WildlifeTrainingError("stage2_source_registry_identity_invalid")
+    sources = payload.get("sources")
+    if not isinstance(sources, list) or len(sources) < 8:
+        raise WildlifeTrainingError("stage2_source_registry_incomplete")
+    required = {
+        "source_id",
+        "version",
+        "status",
+        "domain_role",
+        "canonical_url",
+        "license",
+        "geography",
+        "annotation_type",
+        "site_camera_metadata",
+        "taxonomic_distribution",
+        "negative_availability",
+        "download_mechanism",
+        "known_biases",
+        "decision_evidence",
+    }
+    identities: set[str] = set()
+    for source in sources:
+        if not isinstance(source, dict) or not required.issubset(source):
+            raise WildlifeTrainingError("stage2_source_registry_entry_incomplete")
+        source_id = source["source_id"]
+        if not isinstance(source_id, str) or not source_id or source_id in identities:
+            raise WildlifeTrainingError("stage2_source_registry_identity_invalid")
+        identities.add(source_id)
+        if source["domain_role"] not in ("target_domain", "transfer_only"):
+            raise WildlifeTrainingError("stage2_source_domain_role_invalid")
+        if source["status"] in _ELIGIBLE_SOURCE_STATUSES:
+            if source["domain_role"] == "transfer_only" and not (
+                0 < source.get("max_sampling_weight", 0) <= 0.25
+            ):
+                raise WildlifeTrainingError("transfer_only_registry_weight_invalid")
+        elif not source.get("block_reason"):
+            raise WildlifeTrainingError("stage2_blocked_source_requires_reason")
     payload["fingerprint"] = canonical_fingerprint(
         {key: value for key, value in payload.items() if key != "fingerprint"}
     )
@@ -235,6 +299,10 @@ class CorpusExample:
     dhash64: str | None = None
     phash64: str | None = None
     negative_kind: str | None = None
+    domain_role: DomainRole = "target_domain"
+    sampling_weight: float = 1.0
+    taxon_group: str | None = None
+    augmentation_kind: AugmentationKind = "full_scene"
 
     def __post_init__(self) -> None:
         text = (
@@ -253,12 +321,26 @@ class CorpusExample:
             raise WildlifeTrainingError("invalid_source_dimensions")
         if self.truth_authority not in _ELIGIBLE_AUTHORITIES:
             raise WildlifeTrainingError("non_human_training_authority")
-        if self.boxes and self.truth_authority == "public_curated_empty":
+        negative_authorities = {"public_curated_empty", "human_reviewed_empty"}
+        if self.boxes and self.truth_authority in negative_authorities:
             raise WildlifeTrainingError("negative_example_has_boxes")
-        if not self.boxes and self.truth_authority != "public_curated_empty":
+        if not self.boxes and self.truth_authority not in negative_authorities:
             raise WildlifeTrainingError("positive_example_requires_human_boxes")
         if not self.boxes and not self.negative_kind:
             raise WildlifeTrainingError("negative_example_requires_composition")
+        if self.domain_role not in ("target_domain", "transfer_only"):
+            raise WildlifeTrainingError("domain_role_invalid")
+        if not math.isfinite(self.sampling_weight) or not 0 < self.sampling_weight <= 1:
+            raise WildlifeTrainingError("sampling_weight_invalid")
+        if self.domain_role == "transfer_only":
+            if self.sampling_weight > 0.25:
+                raise WildlifeTrainingError("transfer_only_weight_exceeds_cap")
+            if self.split == "valid":
+                raise WildlifeTrainingError("transfer_only_validation_prohibited")
+        if self.augmentation_kind not in ("full_scene", "context_crop"):
+            raise WildlifeTrainingError("augmentation_kind_invalid")
+        if self.augmentation_kind == "context_crop" and self.split != "train":
+            raise WildlifeTrainingError("context_crop_validation_prohibited")
         for box in self.boxes:
             box.normalized_xyxy(self.width, self.height)
         if self.sha256 is not None and not _SHA256.fullmatch(self.sha256):
@@ -297,6 +379,71 @@ class CorpusExample:
         payload["primary_size_bucket"] = self.size_bucket
         payload["strongest_group"] = self.strongest_group
         return payload
+
+
+def context_crop_bounds(
+    *,
+    image_width: int,
+    image_height: int,
+    boxes: Sequence[PixelBox],
+    context_scale: float = 5.0,
+    minimum_side: int = 256,
+) -> tuple[tuple[int, int, int, int], tuple[PixelBox, ...]]:
+    """Return a square context crop and source-pixel boxes rebased into it.
+
+    The crop is deterministic, includes every supplied box, and never fabricates
+    localization. Callers should pass all human boxes that intersect the crop.
+    """
+
+    if image_width <= 0 or image_height <= 0 or not boxes:
+        raise WildlifeTrainingError("context_crop_input_invalid")
+    if not math.isfinite(context_scale) or context_scale < 1 or minimum_side <= 0:
+        raise WildlifeTrainingError("context_crop_policy_invalid")
+    for box in boxes:
+        box.normalized_xyxy(image_width, image_height)
+    left = min(box.x for box in boxes)
+    top = min(box.y for box in boxes)
+    right = max(box.x + box.width for box in boxes)
+    bottom = max(box.y + box.height for box in boxes)
+    center_x = (left + right) / 2
+    center_y = (top + bottom) / 2
+    side = min(
+        max(image_width, image_height),
+        max(
+            float(minimum_side),
+            (right - left) * context_scale,
+            (bottom - top) * context_scale,
+        ),
+    )
+    crop_width = min(image_width, int(round(side)))
+    crop_height = min(image_height, int(round(side)))
+    crop_left = min(
+        max(0, int(round(center_x - crop_width / 2))),
+        image_width - crop_width,
+    )
+    crop_top = min(
+        max(0, int(round(center_y - crop_height / 2))),
+        image_height - crop_height,
+    )
+    crop_right = crop_left + crop_width
+    crop_bottom = crop_top + crop_height
+    rebased = tuple(
+        PixelBox(
+            box.x - crop_left,
+            box.y - crop_top,
+            box.width,
+            box.height,
+            box.taxon,
+        )
+        for box in boxes
+        if box.x >= crop_left
+        and box.y >= crop_top
+        and box.x + box.width <= crop_right + 1e-6
+        and box.y + box.height <= crop_bottom + 1e-6
+    )
+    if len(rebased) != len(boxes):
+        raise WildlifeTrainingError("context_crop_dropped_box")
+    return (crop_left, crop_top, crop_right, crop_bottom), rebased
 
 
 def assert_no_group_leakage(examples: Iterable[CorpusExample]) -> None:
@@ -525,6 +672,17 @@ def corpus_summary(examples: Sequence[CorpusExample]) -> dict[str, Any]:
     taxon = Counter(box.taxon for example in positives for box in example.boxes)
     sizes = Counter(example.size_bucket for example in positives)
     negative_kinds = Counter(example.negative_kind for example in negatives)
+    domain_roles = Counter(example.domain_role for example in examples)
+    augmentation_kinds = Counter(example.augmentation_kind for example in examples)
+    taxon_groups = Counter(
+        example.taxon_group for example in positives if example.taxon_group
+    )
+    validation_groups = {
+        example.strongest_group for example in examples if example.split == "valid"
+    }
+    small_positives = sum(
+        example.size_bucket in ("very_small", "small") for example in positives
+    )
     return {
         "images": len(examples),
         "positive_images": len(positives),
@@ -536,6 +694,28 @@ def corpus_summary(examples: Sequence[CorpusExample]) -> dict[str, Any]:
         "primary_size_distribution": {key: sizes.get(key, 0) for key in _SIZE_ORDER},
         "negative_composition": dict(sorted(negative_kinds.items())),
         "strongest_group_count": len({example.strongest_group for example in examples}),
+        "validation_group_count": len(validation_groups),
+        "by_domain_role": dict(sorted(domain_roles.items())),
+        "effective_sampling_mass_by_domain_role": dict(
+            sorted(
+                {
+                    role: round(
+                        sum(
+                            example.sampling_weight
+                            for example in examples
+                            if example.domain_role == role
+                        ),
+                        6,
+                    )
+                    for role in domain_roles
+                }.items()
+            )
+        ),
+        "augmentation_distribution": dict(sorted(augmentation_kinds.items())),
+        "taxonomic_group_distribution": dict(sorted(taxon_groups.items())),
+        "small_positive_fraction": (
+            small_positives / len(positives) if positives else 0.0
+        ),
     }
 
 
@@ -554,6 +734,124 @@ def build_corpus_manifest(
     sizes = summary["primary_size_distribution"]
     if sizes["very_small"] < 200 or sizes["small"] < 250:
         raise WildlifeTrainingError("stage1_small_object_quota_unmet")
+
+
+@dataclass(frozen=True)
+class Stage2CorpusRequirements:
+    total_min: int = 5_000
+    total_max: int = 15_000
+    min_positive_images: int = 3_500
+    min_negative_images: int = 1_000
+    min_small_positive_fraction: float = 0.30
+    min_target_domain_fraction: float = 0.90
+    min_distinct_groups: int = 100
+    min_validation_groups: int = 30
+    min_hard_negative_images: int = 1_000
+
+    def __post_init__(self) -> None:
+        counts = (
+            self.total_min,
+            self.total_max,
+            self.min_positive_images,
+            self.min_negative_images,
+            self.min_distinct_groups,
+            self.min_validation_groups,
+            self.min_hard_negative_images,
+        )
+        if any(value < 0 for value in counts) or self.total_min > self.total_max:
+            raise WildlifeTrainingError("stage2_requirements_invalid")
+        if not 0 <= self.min_small_positive_fraction <= 1 or not (
+            0 <= self.min_target_domain_fraction <= 1
+        ):
+            raise WildlifeTrainingError("stage2_requirements_invalid")
+
+
+def build_stage2_corpus_manifest(
+    examples: Sequence[CorpusExample],
+    *,
+    registry_fingerprint: str,
+    contamination: Mapping[str, Any],
+    internal_split_contamination: Mapping[str, Any],
+    selection_policy: Mapping[str, Any],
+    requirements: Stage2CorpusRequirements = Stage2CorpusRequirements(),
+) -> dict[str, Any]:
+    """Build the governed Stage-2 manifest after all quota/leakage gates pass."""
+
+    if not _SHA256.fullmatch(registry_fingerprint):
+        raise WildlifeTrainingError("stage2_registry_fingerprint_invalid")
+    summary = corpus_summary(examples)
+    if not requirements.total_min <= summary["images"] <= requirements.total_max:
+        raise WildlifeTrainingError("stage2_corpus_size_invalid")
+    if summary["positive_images"] < requirements.min_positive_images:
+        raise WildlifeTrainingError("stage2_positive_quota_unmet")
+    if summary["negative_images"] < requirements.min_negative_images:
+        raise WildlifeTrainingError("stage2_negative_quota_unmet")
+    if summary["small_positive_fraction"] < requirements.min_small_positive_fraction:
+        raise WildlifeTrainingError("stage2_small_object_quota_unmet")
+    target_count = summary["by_domain_role"].get("target_domain", 0)
+    if target_count / summary["images"] < requirements.min_target_domain_fraction:
+        raise WildlifeTrainingError("stage2_target_domain_fraction_unmet")
+    if summary["strongest_group_count"] < requirements.min_distinct_groups:
+        raise WildlifeTrainingError("stage2_source_site_diversity_unmet")
+    if summary["validation_group_count"] < requirements.min_validation_groups:
+        raise WildlifeTrainingError("stage2_validation_group_diversity_unmet")
+    hard_negative_count = sum(
+        not example.is_positive and bool(example.negative_kind) for example in examples
+    )
+    if hard_negative_count < requirements.min_hard_negative_images:
+        raise WildlifeTrainingError("stage2_hard_negative_quota_unmet")
+    if any(example.is_positive and not example.taxon_group for example in examples):
+        raise WildlifeTrainingError("stage2_positive_taxon_group_missing")
+    if not contamination.get("passed"):
+        raise WildlifeTrainingError("frozen_benchmark_contamination")
+    if not internal_split_contamination.get("passed"):
+        raise WildlifeTrainingError("internal_train_validation_contamination")
+    rows = [
+        example.to_dict()
+        for example in sorted(examples, key=lambda item: item.example_id)
+    ]
+    semantic: dict[str, Any] = {
+        "schema_version": 2,
+        "corpus_id": STAGE2_CORPUS_ID,
+        "detector_ontology": ["animal"],
+        "taxonomy_policy": (
+            "preserve source taxon and governed taxon group as metadata; "
+            "train one detector class"
+        ),
+        "domain_policy": (
+            "target-domain examples are canonical; transfer-only examples are "
+            "train-only, capped at 0.25 sampling weight, and require ablation"
+        ),
+        "size_policy": (
+            "source-pixel box area: very_small <32^2; small <96^2; "
+            "medium <256^2; large otherwise"
+        ),
+        "registry_fingerprint": registry_fingerprint,
+        "selection_policy": dict(selection_policy),
+        "requirements": asdict(requirements),
+        "examples": rows,
+        "summary": summary,
+        "hard_negative_images": hard_negative_count,
+        "contamination": dict(contamination),
+        "internal_split_contamination": dict(internal_split_contamination),
+        "creates_product_truth": False,
+    }
+    semantic["semantic_fingerprint"] = canonical_fingerprint(semantic)
+    semantic["split_fingerprint"] = canonical_fingerprint(
+        [
+            {
+                "example_id": row["example_id"],
+                "split": row["split"],
+                "strongest_group": row["strongest_group"],
+                "sha256": row["sha256"],
+                "domain_role": row["domain_role"],
+                "sampling_weight": row["sampling_weight"],
+                "augmentation_kind": row["augmentation_kind"],
+            }
+            for row in rows
+        ]
+    )
+    return semantic
     if summary["strongest_group_count"] < 8:
         raise WildlifeTrainingError("stage1_source_site_diversity_unmet")
     if not contamination.get("passed"):
@@ -644,12 +942,19 @@ class EvaluationBox:
 
     def __post_init__(self) -> None:
         left, top, right, bottom = self.box
+        # Truth boxes normalized as (pixel + pixel) / image_dimension can land
+        # a few ULPs past an exact 0/1 boundary purely from float summation
+        # (e.g. a box touching the image's right edge); tolerate that with the
+        # same 1e-6 slack `PixelBox.normalized_xyxy`/`context_crop_bounds`
+        # already use for the identical source-pixel boundary case, without
+        # weakening the check against an actually out-of-bounds box.
+        tolerance = 1e-6
         if (
             not all(math.isfinite(value) for value in self.box)
-            or left < 0
-            or top < 0
-            or right > 1
-            or bottom > 1
+            or left < -tolerance
+            or top < -tolerance
+            or right > 1 + tolerance
+            or bottom > 1 + tolerance
             or right <= left
             or bottom <= top
         ):

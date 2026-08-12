@@ -251,6 +251,29 @@ def test_evaluation_reports_localization_sizes_taxa_and_hard_negatives() -> None
     assert metrics["creates_product_truth"] is False
 
 
+def test_evaluation_box_tolerates_float_boundary_noise_but_rejects_real_overflow() -> None:
+    """A truth box built as `(pixel + pixel) / image_dimension` can land a few
+    ULPs past an exact 0/1 boundary from float summation alone -- this is
+    exactly what a real Stage-2 validation frame produced (a box touching an
+    image's right edge normalized to `1.0000000000000018`). That must not
+    fail closed the same way an actually out-of-bounds box should."""
+
+    boundary_noise = 5e-15
+    accepted = EvaluationBox(
+        (-boundary_noise, 0.1, 1 + boundary_noise, 1 + boundary_noise)
+    )
+    assert accepted.box == (-boundary_noise, 0.1, 1 + boundary_noise, 1 + boundary_noise)
+
+    for box in (
+        (1.01, 0.1, 1.5, 0.5),  # right well past 1
+        (0.1, -0.02, 0.5, 0.5),  # top well past 0
+        (0.1, 0.1, 0.5, 1.5),  # bottom well past 1
+        (-0.02, 0.1, 0.5, 0.5),  # left well past 0
+    ):
+        with pytest.raises(WildlifeTrainingError, match="evaluation_box_invalid"):
+            EvaluationBox(box)
+
+
 def test_registry_file_stays_next_to_module() -> None:
     assert (
         Path(__file__)

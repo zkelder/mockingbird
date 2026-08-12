@@ -1,6 +1,6 @@
 # Wildlife Detector Training Contract
 
-Status: Stage-1 implementation, version 0.1 (2026-08-11)
+Status: Stage-2 implementation, version 0.2 (2026-08-12)
 
 This contract governs detector-training inputs and experiments. It does not
 grant Observation truth, change deployed detector authority, or redefine the
@@ -9,9 +9,11 @@ metadata used for coverage accounting.
 
 ## Source and truth gate
 
-Every candidate source belongs in
-`src/mockingbird/training/wildlife_source_registry_v0_1.json` before pixels
-are selected. Materialization is fail-closed unless the registry establishes:
+Every candidate source belongs in the versioned wildlife source registry
+before pixels are selected. Stage 1 is preserved in
+`src/mockingbird/training/wildlife_source_registry_v0_1.json`; Stage 2 is
+governed by `src/mockingbird/training/wildlife_source_registry_v0_2.json`.
+Materialization is fail-closed unless the active registry establishes:
 
 - a canonical source and immutable version;
 - compatible image and annotation rights;
@@ -31,6 +33,16 @@ The Stage-1 accepted sources are Caltech Camera Traps 20200316/20210113
 (CC BY 4.0 annotations). COCO geography is unknown/mixed and must never be
 reported as North American provenance.
 
+Stage 2 accepts Oregon Critters, Channel Islands Camera Traps, ENA24-detection,
+the human-corrected NACTI boxed subset, Caltech Camera Traps, and independently
+human-reviewed local empties. COCO is `transfer_only`, train-only, capped at
+0.25 sampling weight, and excluded from the canonical Stage-2 materialization.
+Missouri Camera Traps remains rejected because its available boxes and
+geographic/taxonomic coverage do not establish the requested target-domain
+corpus; other sources remain rejected when box authority, rights, download
+coverage, or lineage is insufficient. Technical inconvenience alone is not a
+license rejection.
+
 ## Pixel, size, and split semantics
 
 Boxes use source-pixel geometry. Size buckets are computed before any training
@@ -48,6 +60,13 @@ Neighboring camera frames may not be randomly split. Caltech uses its official
 camera-level train/validation partition. COCO retains its official split and
 records that site lineage is unavailable. Corpus and split projections each
 receive independent SHA-256 semantic fingerprints.
+
+Stage 2 derives deterministic unseen-site/camera validation for Oregon and
+Channel Islands and preserves the official location-grouped Caltech split.
+ENA24 and NACTI boxes are train-only because their published bbox subsets do
+not expose sufficiently complete camera/sequence lineage for an independent
+validation claim. Context crops inherit their source identity and strongest
+group, are train-only, and never replace the full-scene example.
 
 ## Leakage and frozen evaluation
 
@@ -80,6 +99,12 @@ deployment candidates, not resume proof.
 All training artifacts stay under ignored `data/training/`; only contracts,
 registries, scripts, tests, and reports enter version control.
 
+Stage-2 RF-DETR Small runs for at least ten completed epochs. Early stopping
+may operate only after that floor and only on EMA Stage-2-validation metrics.
+The required proof first completes epoch 0, then resumes the optimizer-bearing
+`checkpoint_0.ckpt`. Best EMA and total checkpoints are retained, and the
+metrics CSV is checksum-bound in evaluation evidence.
+
 ## Evaluation and decision
 
 Threshold selection uses Stage validation only. Report precision, recall, F1,
@@ -89,15 +114,17 @@ to the frozen MockingBird benchmark and compare with production MDv5 at its
 unchanged 0.1 operating point. Agent-reviewed diagnostic birds remain outside
 population denominators.
 
-The Stage-1 decision vocabulary is:
+The Stage-2 decision vocabulary is exactly:
 
-- `PIPELINE_FAILED`: corpus or training integration is invalid;
-- `PIPELINE_PROVEN_MODEL_WEAK`: the pipeline works but the candidate lacks
-  useful target-domain signal; or
-- `PIPELINE_PROVEN_PROMISING`: valid training shows meaningful target-domain
-  improvement worth scaling.
+- `PIPELINE_PROVEN_MODEL_WEAK`: target-domain training still lacks useful
+  target-domain recall;
+- `DOMAIN_TRAINING_PROMISING`: improvement over Stage 1 is large and credible,
+  but more corpus or reviewed-local work is required; or
+- `SHADOW_VALIDATION_READY`: the candidate beats MDv5 across enough supported
+  target-domain, small-animal, and hard-negative strata to justify a bounded
+  shadow validation, never direct promotion.
 
-No Stage-1 result changes production. Promotion still requires the repository's
+No training result changes production. Promotion still requires the repository's
 detector-promotion contract and a larger, independently reviewed corpus.
 
 ## Exact-frame and localization-review boundary
@@ -115,3 +142,8 @@ human reviewer can mark Animal, No animal, or Ambiguous and draw broad-animal
 boxes. The downloaded annotation records `full_frame_inspection` provenance and
 must pass `temporal-review-validate`. This workflow intentionally has no species
 review.
+
+The deterministic Stage-2 local-correction queue is prioritization only. It
+may use model outputs and agent diagnostics to rank exact local frames, but
+those signals never become labels. Only named human full-frame review can add
+positive boxes or whole-frame negative truth to a future materialization.

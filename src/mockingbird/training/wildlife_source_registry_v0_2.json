@@ -1,0 +1,249 @@
+{
+  "schema_version": 2,
+  "registry_id": "north-american-backyard-wildlife-sources-v0.2",
+  "reviewed_at": "2026-08-12",
+  "policy": {
+    "accepted_requires": [
+      "canonical_source",
+      "compatible_image_and_annotation_license",
+      "human_boxes_or_curated_empty_truth",
+      "stable_image_identity",
+      "documented_download_mechanism"
+    ],
+    "target_domain": "North American outdoor wildlife, camera-trap, and backyard-adjacent scenes",
+    "unclear_license_action": "block",
+    "image_label_only_positive_action": "human_localization_review_required",
+    "model_or_agent_box_action": "training_ineligible",
+    "transfer_only_action": "train split only; sampling weight <=0.25; report ablation",
+    "frozen_75_action": "evaluation only; never train, select, tune, or prioritize from labels"
+  },
+  "sources": [
+    {
+      "source_id": "oregon-critters-20260304",
+      "version": "2026.03.04",
+      "status": "accepted",
+      "domain_role": "target_domain",
+      "canonical_url": "https://lila.science/datasets/oregon-critters/",
+      "license": "CDLA-Permissive-2.0",
+      "license_url": "https://cdla.dev/permissive-2-0/",
+      "geography": "Western Oregon, United States",
+      "annotation_type": "human bounding boxes for animal images and manually reviewed empty images",
+      "site_camera_metadata": "location and capture datetime; Stage-2 creates its own location-grouped split because published splits share locations",
+      "taxonomic_distribution": "birds, small mammals, mesocarnivores, ungulates, bats, reptiles, amphibians, and invertebrates",
+      "negative_availability": "8,864 manually reviewed false-trigger empty images",
+      "download_mechanism": "official LILA metadata plus bounded per-image GCP, Azure, or AWS objects",
+      "known_biases": [
+        "western Oregon only",
+        "camera-trap viewpoint",
+        "large-mammal class imbalance",
+        "some source locations contribute many frames"
+      ],
+      "decision_evidence": {
+        "images": 99909,
+        "images_with_manual_boxes": 91045,
+        "curated_empty_images": 8864,
+        "metadata_sha256": "0b649fc7ffc90df9c7dc9a8a79dadd3a387e9b7dae9be9ad189beb3ec5dcc5ac",
+        "published_split_location_overlap_count": 1357
+      }
+    },
+    {
+      "source_id": "channel-islands-camera-traps-2020",
+      "version": "2020 public non-human export",
+      "status": "accepted",
+      "domain_role": "target_domain",
+      "canonical_url": "https://lila.science/datasets/channel-islands-camera-traps/",
+      "license": "CDLA-Permissive-2.0",
+      "license_url": "https://cdla.dev/permissive-2-0/",
+      "geography": "California Channel Islands, United States",
+      "annotation_type": "human animal bounding boxes and curated empty images",
+      "site_camera_metadata": "73 camera locations, sequence id, sequence frame count, and frame number",
+      "taxonomic_distribution": "island fox, rodents, birds, skunks, and other animals",
+      "negative_availability": "114,949 curated empty camera-trap images",
+      "download_mechanism": "official LILA metadata plus bounded per-image GCP, Azure, or AWS objects",
+      "known_biases": [
+        "island ecology",
+        "fox and rodent dominance",
+        "camera-trap viewpoint",
+        "many near-neighbor sequence frames"
+      ],
+      "decision_evidence": {
+        "public_non_human_images": 245529,
+        "camera_locations": 73,
+        "metadata_sha256": "9bdf2bfe330ad5917cf3abaa46d3f03dcebc1c5f959033631c4fd57a5be88cc4"
+      }
+    },
+    {
+      "source_id": "ena24-detection-public-2016",
+      "version": "2016 public non-human detection export",
+      "status": "accepted",
+      "domain_role": "target_domain",
+      "canonical_url": "https://lila.science/datasets/ena24detection/",
+      "license": "CDLA-Permissive-2.0",
+      "license_url": "https://cdla.dev/permissive-2-0/",
+      "geography": "Eastern North America",
+      "annotation_type": "human bounding boxes",
+      "site_camera_metadata": "no stable camera or sequence fields; source is training-only in Stage-2",
+      "taxonomic_distribution": "birds, squirrels, chipmunks, woodchucks, deer, opossums, rabbits, skunks, foxes, raccoons, cats, dogs, coyotes, bobcats, and bears",
+      "negative_availability": "none in the public non-human bounding-box export",
+      "download_mechanism": "official LILA metadata plus bounded per-image Azure or AWS objects",
+      "known_biases": [
+        "no camera lineage",
+        "training-only",
+        "medium and large boxes dominate"
+      ],
+      "decision_evidence": {
+        "images": 8789,
+        "annotations": 9772,
+        "metadata_sha256": "77a35cbf44716557105c205a2d274c234884bf7913bcb1c90d265671b0c836f2"
+      }
+    },
+    {
+      "source_id": "nacti-human-corrected-boxes-20230920",
+      "version": "bbox export 2023-09-20 joined to metadata 1.14",
+      "status": "accepted",
+      "domain_role": "target_domain",
+      "canonical_url": "https://lila.science/datasets/nacti/",
+      "license": "CDLA-Permissive-1.0",
+      "license_url": "https://cdla.dev/permissive-1-0/",
+      "geography": "Five study regions in the United States",
+      "annotation_type": "human-corrected bounding boxes; Stage-2 includes category animal only",
+      "site_camera_metadata": "study plus camera token parsed from stable image id; full metadata supplies source location and species label",
+      "taxonomic_distribution": "North American wildlife; the bounded box export is enriched for birds and vehicles",
+      "negative_availability": "not used from the box export",
+      "download_mechanism": "official LILA bbox and full metadata plus bounded per-image Azure, GCP, or AWS objects",
+      "known_biases": [
+        "box subset is enriched for birds and vehicles",
+        "animal boxes are fewer than image-level labels",
+        "some study species are not backyard-adjacent"
+      ],
+      "decision_evidence": {
+        "boxed_images": 8892,
+        "animal_boxes": 3660,
+        "bbox_metadata_sha256": "e95ef551f8a4b2bad2ad73f7ecccc40acabf4139ecda61522aa5d583fbfbec34",
+        "full_metadata_sha256": "3cafe98ef9ed9302411113f91c264f409706f4d9bc215ada74bfdb6c916d3648"
+      }
+    },
+    {
+      "source_id": "caltech-camera-traps-20200316",
+      "version": "bounding boxes 20200316; image labels 20210113",
+      "status": "accepted",
+      "domain_role": "target_domain",
+      "canonical_url": "https://lila.science/datasets/caltech-camera-traps/",
+      "license": "CDLA-Permissive-2.0",
+      "license_url": "https://cdla.dev/permissive-2-0/",
+      "geography": "Southwestern United States",
+      "annotation_type": "human bounding boxes plus curated image-level empty labels",
+      "site_camera_metadata": "location, sequence id, frame number, and capture timestamp",
+      "taxonomic_distribution": "mammals, birds, lizards, bats, and insects",
+      "negative_availability": "abundant curated empty camera-trap frames",
+      "download_mechanism": "official LILA metadata and bounded per-image Azure objects",
+      "known_biases": [
+        "Southwestern United States only",
+        "camera-trap viewpoint",
+        "class imbalance",
+        "many near-neighbor sequence frames"
+      ],
+      "decision_evidence": {
+        "stage1_status": "successfully materialized with governed human box and empty authority"
+      }
+    },
+    {
+      "source_id": "coco-2017-target-animal-transfer",
+      "version": "2017 train instances with per-image permissive-license filter",
+      "status": "accepted_with_per_image_license_filter",
+      "domain_role": "transfer_only",
+      "max_sampling_weight": 0.25,
+      "canonical_url": "https://cocodataset.org/#download",
+      "license": "annotations CC-BY-4.0; images restricted to Attribution, no-known-restrictions, or U.S. Government Work",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "geography": "unknown or mixed; no North American relevance claim",
+      "annotation_type": "human instance bounding boxes",
+      "site_camera_metadata": "none; individual image identity only; training-only",
+      "taxonomic_distribution": "Stage-2 allowlist is bird, cat, dog, bear, horse, cow, and sheep; zebra, elephant, and giraffe are excluded",
+      "negative_availability": "not used",
+      "download_mechanism": "official COCO annotations and bounded per-image image host",
+      "known_biases": [
+        "web photography",
+        "unknown geography",
+        "non-camera-trap composition",
+        "per-image licensing must be checked"
+      ],
+      "decision_evidence": {
+        "stage2_action": "bounded train-only bridge, capped sampling weight, explicit ablation required"
+      }
+    },
+    {
+      "source_id": "mockingbird-local-human-corrections-20260812",
+      "version": "reviewed local exports through 2026-08-12",
+      "status": "accepted",
+      "domain_role": "target_domain",
+      "canonical_url": "local://mockingbird/reviewed-corrections",
+      "license": "user-owned local data; no redistribution",
+      "geography": "deployment-local North American backyard",
+      "annotation_type": "independently human-reviewed whole-frame negatives and human localization boxes only",
+      "site_camera_metadata": "session, exact frame, camera/source provenance, and capture time where present",
+      "taxonomic_distribution": "deployment-local; current eligible set has no boxed positives",
+      "negative_availability": "18 human-reviewed negative frames in one session before sequence deduplication",
+      "download_mechanism": "existing local reviewed export; no network",
+      "known_biases": [
+        "single deployment",
+        "single human reviewer",
+        "near-neighbor burst duplication",
+        "no currently eligible boxed positives"
+      ],
+      "decision_evidence": {
+        "eligible_human_reviewer": "zkelder",
+        "eligible_reviewed_negative_frames": 18,
+        "eligible_human_boxed_positive_frames": 0,
+        "agent_diagnostic_exports_training_eligible": false
+      }
+    },
+    {
+      "source_id": "missouri-camera-traps-1.21",
+      "version": "1.21",
+      "status": "rejected",
+      "domain_role": "target_domain",
+      "canonical_url": "https://lila.science/datasets/missouri-camera-traps/",
+      "license": "CDLA-Permissive",
+      "geography": "dataset name is not sufficient provenance; observed taxa and source study are not a safe North American target-domain match",
+      "annotation_type": "mostly sequence-level image labels; only 956 bounding boxes",
+      "site_camera_metadata": "sequence id but generic location in the reviewed export",
+      "taxonomic_distribution": "paca, coati, agouti, red deer, wild boar, and other mixed-region taxa",
+      "negative_availability": "image-level empty labels exist but are not needed given stronger accepted sources",
+      "download_mechanism": "official LILA metadata",
+      "known_biases": [
+        "name can be mistaken for Missouri, United States provenance",
+        "79 multi-animal boxed images have incomplete box coverage",
+        "most positives are image-label-only"
+      ],
+      "decision_evidence": {
+        "images": 24673,
+        "bbox_annotations": 956,
+        "metadata_sha256": "2cbfba348a813df778b474dddfe4a63fe81f70b3b0e8e84d021259fb7c1fdab3"
+      },
+      "block_reason": "target geography and complete human localization authority are insufficient for Stage-2"
+    },
+    {
+      "source_id": "seattleish-camera-traps",
+      "version": "candidate reviewed 2026-08-12",
+      "status": "rejected",
+      "domain_role": "target_domain",
+      "canonical_url": "https://lila.science/datasets/seattleish-camera-traps/",
+      "license": "CDLA-Permissive",
+      "geography": "Seattle metropolitan region, Washington, United States",
+      "annotation_type": "image-level camera-trap labels; no verified human boxes",
+      "site_camera_metadata": "camera-trap lineage available",
+      "taxonomic_distribution": "backyard-adjacent Pacific Northwest wildlife",
+      "negative_availability": "camera-trap blanks may be available",
+      "download_mechanism": "official LILA",
+      "known_biases": [
+        "image-label-only positives",
+        "no verified human localization boxes"
+      ],
+      "decision_evidence": {
+        "stage2_action": "defer until human localization review exists"
+      },
+      "block_reason": "no verified human localization boxes for positive training truth"
+    }
+  ]
+}
