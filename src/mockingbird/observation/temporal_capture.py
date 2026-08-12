@@ -453,6 +453,16 @@ class RetainedFrameRecord:
     high_resolution: bool = False
     privacy_ignore_interaction: bool = False
     operator_marker_ids: tuple[str, ...] = ()
+    # Stage-3 Holdout v2 groundwork: an explicit, capture-time-only reservation
+    # that this frame belongs to a future evaluation-only holdout, never a
+    # training-correction pool. Set once, by the operator, before capture
+    # (`temporal-capture --holdout-v2-session`) -- never inferred from trigger
+    # reasons or detector output, and never flipped after the fact by any
+    # downstream selector. A Stage-3 (or later) tranche builder must treat
+    # `True` here as a hard exclusion; see `wildlife_stage3_tranche.py`. This
+    # milestone only adds the capability and its downstream guard -- it does
+    # not collect or label a real Holdout v2 corpus.
+    holdout_v2_candidate: bool = False
     # Raw animal-class detector observations at the low review-capture
     # threshold, retained so the review packet can draw real detector-box
     # crops and so active-learning classification can IoU-match against

@@ -8,6 +8,7 @@ the product database and never imports the product repository.
 from __future__ import annotations
 
 from dataclasses import asdict
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -36,7 +37,9 @@ __all__ = [
     "CONTACT_SHEET_FILENAME",
     "CROPS_DIRECTORY_NAME",
     "INDEX_FILENAME",
+    "STAGE3_MANIFEST_VERSION",
     "build_review_packet",
+    "build_stage3_tranche_review_packet",
     "load_annotation_set",
     "load_capture_manifest",
     "safe_review_directory",
@@ -129,6 +132,9 @@ def load_annotation_set(review_directory: Path) -> AnnotationSet:
             provenance=_provenance(item.get("provenance")),
             privacy_ignore_override=item.get("privacy_ignore_override", False),
             reviewer_note=item.get("reviewer_note", ""),
+            # Stage-3: absent on any pre-Stage-3 annotation.json, exactly
+            # like `AppearanceInterval.zone_id` was for Stage 6.17.
+            difficulty_tags=tuple(item.get("difficulty_tags", ())),
         )
         for item in payload.get("frames", [])
     )
@@ -321,6 +327,161 @@ def build_review_packet(capture_directory: Path, review_directory: Path) -> dict
         "session_id": manifest.get("session_id"), "frame_count": len(frames),
         "crop_count": len(crop_paths), "contact_sheet": CONTACT_SHEET_FILENAME,
         "index": INDEX_FILENAME, "annotation_skeleton": ANNOTATION_FILENAME,
+    }
+
+
+STAGE3_MANIFEST_VERSION = "stage3-tranche-review-composite-v1"
+
+
+def build_stage3_tranche_review_packet(tranche_path: Path, review_directory: Path) -> dict[str, Any]:
+    """Build a self-contained Stage-3 correction-tranche review packet from
+    `scripts/build_wildlife_stage3_correction_tranche.py`'s output.
+
+    Deliberately reuses the same `AnnotationSet`/`FrameAnnotation` truth
+    schema, `validate_annotations`, and `render_review_ui` the single-session
+    Stage 6.6 reviewer already uses (see docs/wildlife-detector-training-
+    contract.md and the module docstring on `wildlife_stage3_tranche`) --
+    this is not a second review system. It does *not* go through
+    `CaptureSessionManifest`/session-timeline derivation: those model one
+    continuous reconnect-safe camera connection, appearance intervals, and
+    replay/detector-calibration export, none of which apply to a curated,
+    already-deduplicated, cross-session whole-frame-truth tranche. The
+    composite manifest this writes carries only what `validate_annotations`
+    and `render_review_ui` actually read (`frames[].frame_id`/`content_hash`,
+    `config.privacy_ignore_regions`, `semantic_fingerprint`) plus honest,
+    additive Stage-3 provenance (`stage3_target_lane`, `priority_tier`,
+    `split_candidate`, `source_session_id`, `source_frame_id`, real decoded
+    `original_width`/`original_height`) -- so `temporal-review-validate`
+    still works unmodified against the directory this produces.
+    """
+
+    from PIL import Image
+    import shutil
+
+    from mockingbird.observation.replay import semantic_fingerprint
+    from mockingbird.observation.temporal_capture_io import write_capture_manifest
+    from mockingbird.web_app import find_workspace_root
+
+    workspace_root = find_workspace_root()
+
+    def _portable_session_id(value: object) -> str:
+        """The source queue's own `capture_session_id` is a real filesystem
+        path (the originating capture-out directory), not a synthetic id --
+        this manifest, like every other in this pipeline, never carries an
+        absolute path. Relativized to the workspace root when possible;
+        falls back to just the final path segments otherwise (still
+        traceable, never a raw absolute path)."""
+
+        text = str(value)
+        path = Path(text)
+        if workspace_root is not None:
+            try:
+                return str(path.resolve().relative_to(workspace_root.resolve()))
+            except ValueError:
+                pass
+        return "/".join(path.parts[-3:]) if path.is_absolute() else text
+
+    payload = json.loads(Path(tranche_path).read_text(encoding="utf-8"))
+    review_directory = safe_capture_output_directory(review_directory, allow_existing=True)
+    crops_directory = review_directory / CROPS_DIRECTORY_NAME
+    crops_directory.mkdir(parents=True, exist_ok=True)
+
+    composite_frames: list[dict[str, Any]] = []
+    thumbnails = []
+    crop_paths: list[str] = []
+    for sequence, row in enumerate(payload["frames"]):
+        source_path = Path(row["image"])
+        actual_sha256 = sha256(source_path.read_bytes()).hexdigest()
+        if actual_sha256 != row["content_hash"]:
+            raise TemporalAnnotationError("stage3_tranche_source_image_integrity_mismatch")
+        high_resolution = bool(row.get("high_resolution"))
+        subdirectory = HIGH_RESOLUTION_DIRECTORY_NAME if high_resolution else FRAMES_DIRECTORY_NAME
+        destination_subdirectory = review_directory / subdirectory
+        destination_subdirectory.mkdir(parents=True, exist_ok=True)
+        destination = destination_subdirectory / f"{row['frame_id']}.jpg"
+        if not destination.is_file():
+            shutil.copyfile(source_path, destination)
+        with Image.open(source_path) as opened:
+            original_width, original_height = opened.size
+
+        record = {
+            "frame_id": row["frame_id"],
+            "sequence": sequence,
+            "session_sequence": sequence,
+            "source_offset_ms": sequence * 1000,
+            "provider_generation": "stage3-tranche-composite",
+            "content_hash": row["content_hash"],
+            "byte_size": source_path.stat().st_size,
+            "trigger_reasons": [row["priority_tier"], *row.get("trigger_reasons", [])],
+            "detector_observation_count": int(row.get("detector_observation_count") or 0),
+            "animal_detection_count": int(row.get("animal_detection_count") or 0),
+            "max_animal_score": row.get("max_animal_score"),
+            "active_track_count": 0,
+            "motion_proposal_count": int(row.get("motion_proposal_count") or 0),
+            "high_resolution": high_resolution,
+            "privacy_ignore_interaction": False,
+            "detection_boxes": [],
+            "motion_proposal_boxes": [],
+            # Stage-3 provenance, additive and honest: never fabricated, and
+            # never required by `validate_annotations`/`render_review_ui`
+            # (both already treat these as optional per-record context).
+            "stage3_target_lane": row["stage3_target_lane"],
+            "priority_tier": row["priority_tier"],
+            "split_candidate": row.get("split_candidate"),
+            "tranche_id": payload.get("tranche_id"),
+            "source_session_id": _portable_session_id(row.get("capture_session_id")),
+            "source_frame_id": row.get("frame_id"),
+            "original_width": original_width,
+            "original_height": original_height,
+        }
+        composite_frames.append(record)
+        overlay = _frame_overlay(source_path, record)
+        crop_name = f"{row['frame_id']}.jpg"
+        overlay.save(crops_directory / crop_name, quality=88)
+        crop_paths.append(crop_name)
+        thumbnails.append(overlay)
+
+    sheet = _contact_sheet(thumbnails)
+    sheet.save(review_directory / CONTACT_SHEET_FILENAME, quality=85)
+
+    manifest: dict[str, Any] = {
+        "schema_version": 1,
+        "capture_version": STAGE3_MANIFEST_VERSION,
+        "session_id": payload["tranche_id"],
+        "composite_source": True,
+        "source_tranche_id": payload.get("tranche_id"),
+        "source_tranche_fingerprint": payload.get("semantic_fingerprint"),
+        "source_queue_id": payload.get("source_queue_id"),
+        "config": {"stream_id": payload.get("tranche_id"), "privacy_ignore_regions": []},
+        "frames": composite_frames,
+        "stop_condition": "not_applicable_synthetic_composite",
+        "creates_truth": False,
+        "shadow_only": True,
+        "production_proposal_authority": False,
+    }
+    manifest["semantic_fingerprint"] = semantic_fingerprint(manifest)
+    write_capture_manifest(review_directory, manifest)
+
+    frame_ids = tuple(item["frame_id"] for item in composite_frames)
+    annotation_path = review_directory / ANNOTATION_FILENAME
+    if not annotation_path.is_file():
+        skeleton = annotation_skeleton(
+            frame_ids, capture_session_id=str(manifest["session_id"]),
+            capture_manifest_fingerprint=str(manifest["semantic_fingerprint"]),
+        )
+        write_annotation_set(review_directory, skeleton)
+
+    annotation_payload = json.loads(annotation_path.read_text(encoding="utf-8"))
+    from mockingbird.observation.temporal_review_ui import render_review_ui
+
+    html = render_review_ui(manifest, composite_frames, crop_paths, annotation_payload)
+    _atomic_write_bytes(review_directory / INDEX_FILENAME, html.encode("utf-8"))
+
+    return {
+        "tranche_id": payload.get("tranche_id"), "frame_count": len(composite_frames),
+        "crop_count": len(crop_paths), "contact_sheet": CONTACT_SHEET_FILENAME,
+        "index": INDEX_FILENAME, "annotation_skeleton": ANNOTATION_FILENAME,
+        "capture_manifest_fingerprint": manifest["semantic_fingerprint"],
     }
 
 

@@ -1,6 +1,6 @@
 # Wildlife Detector Training Contract
 
-Status: Stage-2 implementation, version 0.2 (2026-08-12)
+Status: Stage-3 tranche-construction implementation, version 0.3 (2026-08-12)
 
 This contract governs detector-training inputs and experiments. It does not
 grant Observation truth, change deployed detector authority, or redefine the
@@ -147,3 +147,80 @@ The deterministic Stage-2 local-correction queue is prioritization only. It
 may use model outputs and agent diagnostics to rank exact local frames, but
 those signals never become labels. Only named human full-frame review can add
 positive boxes or whole-frame negative truth to a future materialization.
+
+## Stage-3 correction Tranche A
+
+`scripts/build_wildlife_stage3_correction_tranche.py`
+(`mockingbird.training.wildlife_stage3_tranche`) selects a ~700-frame,
+non-redundant, contamination-checked subset of the existing 2,000-frame
+Stage-2 local-correction queue for the first high-information human review
+pass. Like the Stage-2 queue itself, this is prioritization only: every
+selected row keeps `review_status: "unreviewed"`/`training_eligible: False`
+until a named human completes full-frame review.
+
+**Lanes and priority tiers.** Three target lanes -- `small_far_positive_
+opportunity` (~325), `local_hard_negative_confusor` (~275), `night_weather_
+edge_condition` (~100) -- are filled from nine task-specified priority
+categories, honestly merged to seven tiers where this queue's own metadata
+cannot distinguish two categories from each other (see the module docstring
+and `PRIORITY_TIER_ORDER`): a raw detector-miss/off-target-localization
+signal is approximated from agent full-frame diagnostic review plus
+detector engagement, since no frame in the current queue was ever retained
+with `--retain-exact-analysis`'s Geometry Attribution/Counterfactual
+Lineage envelope; branches/vegetation and shadows/pavement confusors are
+not machine-distinguishable and are left to the human reviewer's own
+difficulty tags. These are disclosed proxies, never claimed as pixel-verified
+fact -- see docs/localization-attribution-contract.md and
+docs/rejected-detection-attribution-contract.md for what a real envelope
+would add automatically, with no caller change, once a future capture
+retains one.
+
+**Redundancy reduction.** Two layers, both bounded by each lane's own
+target (`deduplicate`'s `min_keep`, never removing a real, distinct example
+merely to reach a nominal count): same-session/same-time-bucket collapse
+(cheap, catches the dominant "50 neighboring frames of one encounter" case),
+then a dual-hash (dHash+pHash) near-duplicate pass strict enough not to
+merge visually distinct frames that merely share a background (calibrated
+against this real corpus: the frozen-benchmark contamination thresholds
+below are deliberately looser and would over-merge here -- see
+`INTRA_CORPUS_NEAR_DUPLICATE_DHASH_DISTANCE`'s docstring).
+
+**Contamination.** Because the frozen 75-image benchmark and this local
+queue share the same physical camera/scene, a real (not merely coincidental)
+near-duplicate rate exists between them -- confirmed by direct visual
+inspection, not assumed. `frozen_contamination_content_hashes` excludes any
+exact or dual-hash near-duplicate match against the real, checksum-verified
+frozen benchmark (`wildlife.verify_frozen_benchmark`) *before*
+prioritization, so an excluded lane slot naturally backfills from the
+next-best real candidate; `check_frozen_contamination` re-verifies the
+final selection as an honest proof step. The frozen 75 remain evaluation-
+only, exactly as every earlier stage requires.
+
+**Split.** Selected frames are assigned `local_train_candidate`/
+`local_validation_candidate` at whole-`capture_session_id` granularity
+(never frame-randomized within a session), searching every possible
+whole-session grouping for the one closest to the 75/25 target when the
+session count is small enough to search exhaustively
+(`_EXHAUSTIVE_SPLIT_SEARCH_SESSION_LIMIT`). This local validation split is
+separate from, and never a substitute for, the frozen 75-image benchmark.
+
+**Holdout v2 groundwork.** `temporal-capture --holdout-v2-session` marks
+every frame a capture session retains with `RetainedFrameRecord.
+holdout_v2_candidate=True`; `select_tranche` excludes any such frame from
+Tranche A before prioritization. This milestone only adds the capability
+and its downstream guard -- no Holdout v2 corpus is collected here.
+
+**Reviewer.** `stage3-tranche-review-build --tranche <tranche.json> --output
+<dir>` builds a self-contained review packet reusing the exact same
+`AnnotationSet`/`FrameAnnotation`/`validate_annotations` truth schema and
+`temporal-review-validate` command the single-session Stage 6.6 reviewer
+already uses -- not a second review system. The rendered page adds one-
+frame-focused navigation, a progress count, an optional non-authoritative
+suggestion-overlay toggle, per-box select+delete, optional difficulty tags
+(`temporal_annotation.DIFFICULTY_TAGS`; frame-level, localization-only,
+never a species taxonomy), and localStorage-based autosave/resume plus an
+explicit fingerprint-checked "Load annotation.json" import, on top of the
+original download-based export. `scripts/report_wildlife_stage3_
+readiness.py` is a read-only accounting report that derives a Stage-3
+readiness recommendation from the tranche's own lane/split composition,
+never from a bare total-review count.

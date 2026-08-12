@@ -43,6 +43,34 @@ MAX_BOXES_PER_FRAME = 64
 MAX_FRAMES = 20_000
 MAX_APPEARANCES = 2_000
 
+# Stage-3 correction-tranche difficulty tags: optional, quick, frame-level
+# reviewer hints for stratified analysis. Deliberately a flat set, not a
+# taxonomy, and never a species label -- this is localization-review truth
+# only (see docs/wildlife-detector-training-contract.md). A tag is advisory
+# review context, exactly like `BoxAnnotation.distance`/`occluded`/`blurred`;
+# it never substitutes for `whole_frame_truth` or a reviewed box.
+DIFFICULTY_TAG_VERY_SMALL = "very_small"
+DIFFICULTY_TAG_SMALL = "small"
+DIFFICULTY_TAG_FAR = "far"
+DIFFICULTY_TAG_PARTIAL_OCCLUSION = "partial_occlusion"
+DIFFICULTY_TAG_MOTION_BLUR = "motion_blur"
+DIFFICULTY_TAG_LOW_CONTRAST = "low_contrast"
+DIFFICULTY_TAG_DIFFICULT_LIGHTING = "difficult_lighting"
+DIFFICULTY_TAG_NIGHT = "night"
+DIFFICULTY_TAG_WEATHER = "weather"
+DIFFICULTY_TAG_FEEDER_OVERLAP = "feeder_overlap"
+DIFFICULTY_TAG_BRANCH_OR_VEGETATION = "branch_or_vegetation"
+DIFFICULTY_TAG_STATIC_CLUTTER = "static_clutter"
+DIFFICULTY_TAG_OTHER_CONFUSOR = "other_confusor"
+
+DIFFICULTY_TAGS: tuple[str, ...] = (
+    DIFFICULTY_TAG_VERY_SMALL, DIFFICULTY_TAG_SMALL, DIFFICULTY_TAG_FAR,
+    DIFFICULTY_TAG_PARTIAL_OCCLUSION, DIFFICULTY_TAG_MOTION_BLUR, DIFFICULTY_TAG_LOW_CONTRAST,
+    DIFFICULTY_TAG_DIFFICULT_LIGHTING, DIFFICULTY_TAG_NIGHT, DIFFICULTY_TAG_WEATHER,
+    DIFFICULTY_TAG_FEEDER_OVERLAP, DIFFICULTY_TAG_BRANCH_OR_VEGETATION, DIFFICULTY_TAG_STATIC_CLUTTER,
+    DIFFICULTY_TAG_OTHER_CONFUSOR,
+)
+
 
 class TemporalAnnotationError(ValueError):
     """A bounded annotation schema validation or execution failure code."""
@@ -141,6 +169,10 @@ class FrameAnnotation:
     provenance: Provenance | None = None
     privacy_ignore_override: bool = False
     reviewer_note: str = ""
+    # Stage-3: optional, quick reviewer hints -- see `DIFFICULTY_TAGS`. Never
+    # required, never authoritative on their own, and never a substitute for
+    # `whole_frame_truth`/a reviewed box.
+    difficulty_tags: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.frame_id:
@@ -151,6 +183,10 @@ class FrameAnnotation:
             raise TemporalAnnotationError("frame_box_limit")
         if len(self.reviewer_note) > 2000:
             raise TemporalAnnotationError("invalid_reviewer_note")
+        if len(self.difficulty_tags) != len(set(self.difficulty_tags)) or any(
+            tag not in DIFFICULTY_TAGS for tag in self.difficulty_tags
+        ):
+            raise TemporalAnnotationError("invalid_difficulty_tags")
 
     @property
     def is_reviewed(self) -> bool:
@@ -1281,6 +1317,20 @@ __all__ = [
     "compute_dataset_statistics",
     "ANNOTATION_CONTRACT_VERSION",
     "ANNOTATION_SCHEMA_VERSION",
+    "DIFFICULTY_TAGS",
+    "DIFFICULTY_TAG_BRANCH_OR_VEGETATION",
+    "DIFFICULTY_TAG_DIFFICULT_LIGHTING",
+    "DIFFICULTY_TAG_FAR",
+    "DIFFICULTY_TAG_FEEDER_OVERLAP",
+    "DIFFICULTY_TAG_LOW_CONTRAST",
+    "DIFFICULTY_TAG_MOTION_BLUR",
+    "DIFFICULTY_TAG_NIGHT",
+    "DIFFICULTY_TAG_OTHER_CONFUSOR",
+    "DIFFICULTY_TAG_PARTIAL_OCCLUSION",
+    "DIFFICULTY_TAG_SMALL",
+    "DIFFICULTY_TAG_STATIC_CLUTTER",
+    "DIFFICULTY_TAG_VERY_SMALL",
+    "DIFFICULTY_TAG_WEATHER",
     "MATCH_IOU_THRESHOLD",
     "MAX_CROSS_SEGMENT_SPAN_MS_WITHOUT_UNCERTAINTY",
     "TRUTH_SOURCES",

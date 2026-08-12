@@ -452,3 +452,21 @@ def test_review_floor_cannot_exceed_shadow_operating_point() -> None:
 def test_review_score_threshold_must_stay_at_or_below_review_floor() -> None:
     with pytest.raises(TemporalCaptureError):
         _config(review_score_threshold=0.2, review_floor=0.1)
+
+
+# --------------------------------------------------------------------------
+# Stage-3 Holdout v2 groundwork
+# --------------------------------------------------------------------------
+
+
+def test_holdout_v2_candidate_defaults_false() -> None:
+    record = _frame_record("f1", 0, 0)
+    assert record.holdout_v2_candidate is False
+
+
+def test_holdout_v2_candidate_can_be_set_and_round_trips_through_asdict() -> None:
+    from dataclasses import asdict
+
+    record = _frame_record("f1", 0, 0, holdout_v2_candidate=True)
+    assert record.holdout_v2_candidate is True
+    assert asdict(record)["holdout_v2_candidate"] is True

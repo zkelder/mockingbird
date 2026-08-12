@@ -18,6 +18,9 @@ from mockingbird.observation.temporal_annotation import (
     AL_TRUE_POSITIVE,
     AL_USEFUL_TRAINING_NEGATIVE,
     AL_USEFUL_TRAINING_POSITIVE,
+    DIFFICULTY_TAGS,
+    DIFFICULTY_TAG_FAR,
+    DIFFICULTY_TAG_VERY_SMALL,
     V_APPEARANCE_INTERVAL_REVERSED,
     V_CAPTURE_FINGERPRINT_MISMATCH,
     V_EXCESSIVE_DISCONTINUITY_UNMARKED,
@@ -1254,3 +1257,40 @@ def test_sufficiency_passes_only_once_every_bound_clears() -> None:
     result = classify_export_sufficiency(25, 25, scene_groups=3, sequences=5)
     assert result["sufficient"] is True
     assert result["reasons"] == []
+
+
+# --------------------------------------------------------------------------
+# Stage-3: difficulty tags
+# --------------------------------------------------------------------------
+
+
+def test_difficulty_tags_default_empty_and_round_trip() -> None:
+    frame = FrameAnnotation("f1", whole_frame_truth="no")
+    assert frame.difficulty_tags == ()
+    tagged = FrameAnnotation("f1", whole_frame_truth="no", difficulty_tags=(DIFFICULTY_TAG_VERY_SMALL, DIFFICULTY_TAG_FAR))
+    assert tagged.difficulty_tags == (DIFFICULTY_TAG_VERY_SMALL, DIFFICULTY_TAG_FAR)
+
+
+def test_difficulty_tags_reject_unknown_value() -> None:
+    with pytest.raises(TemporalAnnotationError):
+        FrameAnnotation("f1", whole_frame_truth="no", difficulty_tags=("not_a_real_tag",))
+
+
+def test_difficulty_tags_reject_duplicates() -> None:
+    with pytest.raises(TemporalAnnotationError):
+        FrameAnnotation("f1", whole_frame_truth="no", difficulty_tags=(DIFFICULTY_TAG_FAR, DIFFICULTY_TAG_FAR))
+
+
+def test_every_documented_difficulty_tag_is_individually_accepted() -> None:
+    for tag in DIFFICULTY_TAGS:
+        FrameAnnotation("f1", whole_frame_truth="no", difficulty_tags=(tag,))
+
+
+def test_difficulty_tags_are_advisory_never_required_for_a_valid_negative() -> None:
+    """A tag is optional review context, never a substitute for whole_frame_truth."""
+
+    frame = FrameAnnotation("f1", whole_frame_truth="no")
+    manifest = {"frames": [{"frame_id": "f1", "content_hash": "a" * 64}], "semantic_fingerprint": "fp"}
+    annotations = AnnotationSet(1, "session-1", "fp", (frame,))
+    report = validate_annotations(manifest, annotations)
+    assert report.ok

@@ -138,6 +138,12 @@ def _capture_parser() -> argparse.ArgumentParser:
         help="Explicitly request one labeled engineering high-resolution burst at session start to validate the "
              "burst endpoint end-to-end, independent of any real detector/tracker trigger. Never represents wildlife.",
     )
+    parser.add_argument(
+        "--holdout-v2-session", action="store_true",
+        help="Stage-3 Holdout v2 groundwork: reserve every frame this session retains as holdout_v2_candidate "
+             "so a future tranche/correction builder must structurally exclude it from training/local-validation "
+             "selection. Default off; does not by itself collect or label a holdout -- it only marks provenance.",
+    )
     return parser
 
 
@@ -197,7 +203,8 @@ class _CaptureLoop:
     def __init__(self, *, session: LiveCameraNodeShadowSession, output_directory: Path, bounds: CaptureBounds,
                  shadow_operating_point: float, review_floor: float, privacy_regions: tuple[tuple[float, float, float, float], ...],
                  retain_exact_analysis: bool = False, model_fingerprint: str = "unknown",
-                 provider_id: str = "unknown", capture_score_threshold: float = 0.02) -> None:
+                 provider_id: str = "unknown", capture_score_threshold: float = 0.02,
+                 holdout_v2_session: bool = False) -> None:
         self.session = session
         self.output_directory = output_directory
         self.bounds = bounds
@@ -208,6 +215,9 @@ class _CaptureLoop:
         self.model_fingerprint = model_fingerprint
         self.provider_id = provider_id
         self.capture_score_threshold = capture_score_threshold
+        # Stage-3 Holdout v2 groundwork: session-level, operator-set, and
+        # otherwise inert -- see `RetainedFrameRecord.holdout_v2_candidate`.
+        self.holdout_v2_session = holdout_v2_session
         self.retained: list[RetainedFrameRecord] = []
         self.markers_seen: dict[str, OperatorMarker] = {}
         self.pretrigger: deque = deque(maxlen=max(1, bounds.pretrigger_frame_count))
@@ -551,6 +561,10 @@ class _CaptureLoop:
             operator_marker_ids=marker_ids, detection_boxes=detection_boxes,
             motion_proposal_boxes=proposal_boxes, track_generation_ids=track_generation_ids,
             exact_analysis=exact_analysis,
+            # Session-level, operator-set constant -- every frame this loop
+            # retains inherits the same reservation; see `RetainedFrameRecord.
+            # holdout_v2_candidate` and `--holdout-v2-session`.
+            holdout_v2_candidate=self.holdout_v2_session,
             # Stage 6.8 source-local provenance the reconnect-safe session
             # timeline is derived from: the real per-connection Node session
             # id (already flowing through on every analysis-stream frame,
@@ -606,6 +620,7 @@ class _CaptureLoop:
             host_received_at=frame.received_at.isoformat() if frame.received_at is not None else "",
             source_capture_timestamp=candidate.captured_at.isoformat() if candidate.captured_at is not None else None,
             connection_segment_id=frame.node_session_id or "",
+            holdout_v2_candidate=self.holdout_v2_session,
         ))
 
 
@@ -725,6 +740,7 @@ async def _run_capture(args: argparse.Namespace) -> int:
         shadow_operating_point=args.shadow_operating_point, review_floor=args.review_floor, privacy_regions=privacy_regions,
         retain_exact_analysis=args.retain_exact_analysis, model_fingerprint=bundle.fingerprint,
         provider_id=provider.provider_id, capture_score_threshold=args.review_score_threshold,
+        holdout_v2_session=args.holdout_v2_session,
     )
     started_wall = datetime.now(UTC)
     node_session_id = f"temporal-capture:{uuid4().hex[:16]}"
@@ -789,7 +805,10 @@ async def _run_capture(args: argparse.Namespace) -> int:
     semantic = manifest.to_semantic_dict()
     semantic["semantic_fingerprint"] = manifest.fingerprint
     write_capture_manifest(output_directory, semantic)
-    print(f"Capture session written to {output_directory}; {len(loop.retained)} frames retained; stop_condition={stop_condition}.")
+    print(
+        f"Capture session written to {output_directory}; {len(loop.retained)} frames retained; "
+        f"stop_condition={stop_condition}; holdout_v2_session={args.holdout_v2_session}."
+    )
     return 0
 
 

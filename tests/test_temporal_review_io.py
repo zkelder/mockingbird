@@ -12,6 +12,7 @@ from io import BytesIO
 from pathlib import Path
 
 from PIL import Image
+import pytest
 
 from mockingbird.observation.temporal_capture import (
     CAPTURE_MANIFEST_SCHEMA_VERSION,
@@ -383,3 +384,198 @@ def test_repeated_full_session_replay_export_has_an_identical_fingerprint(tmp_pa
     first = json.loads((first_output / "temporal-review-replay-manifest.json").read_text())
     second = json.loads((second_output / "temporal-review-replay-manifest.json").read_text())
     assert first["input_fingerprint"] == second["input_fingerprint"]
+
+
+# --------------------------------------------------------------------------
+# Stage-3 correction-tranche review packet
+# --------------------------------------------------------------------------
+
+
+def _stage3_tranche(tmp_path: Path, *, frame_count: int = 2) -> Path:
+    from hashlib import sha256
+
+    from mockingbird.training.wildlife import canonical_fingerprint
+
+    images_dir = tmp_path / "source-images"
+    images_dir.mkdir(exist_ok=True)
+    frames = []
+    for index in range(frame_count):
+        image_path = images_dir / f"frame-{index}.jpg"
+        image_path.write_bytes(_jpeg((10 + index * 30, 20, 30)))
+        content_hash = sha256(image_path.read_bytes()).hexdigest()
+        frames.append({
+            "frame_id": content_hash,
+            "content_hash": content_hash,
+            "image": str(image_path),
+            "capture_session_id": f"session-{index}",
+            "high_resolution": False,
+            "trigger_reasons": ["animal_above_operating_point"],
+            "detector_observation_count": 1,
+            "animal_detection_count": 1,
+            "max_animal_score": 0.7,
+            "motion_proposal_count": 0,
+            "stage3_target_lane": "small_far_positive_opportunity",
+            "priority_tier": "small_far_opportunity",
+            "split_candidate": "local_train_candidate" if index == 0 else "local_validation_candidate",
+        })
+    payload = {
+        "schema_version": 1,
+        "tranche_id": "test-tranche-a",
+        "source_queue_id": "mockingbird-local-wildlife-correction-v0.2",
+        "seed": 1,
+        "frames": frames,
+    }
+    payload["semantic_fingerprint"] = canonical_fingerprint(payload)
+    tranche_path = tmp_path / "tranche-a.json"
+    tranche_path.write_text(json.dumps(payload))
+    return tranche_path
+
+
+def test_stage3_packet_creates_self_contained_directory(tmp_path: Path) -> None:
+    from mockingbird.observation.temporal_review_io import build_stage3_tranche_review_packet
+
+    tranche_path = _stage3_tranche(tmp_path)
+    review_dir = tmp_path / "review"
+    summary = build_stage3_tranche_review_packet(tranche_path, review_dir)
+    assert summary["frame_count"] == 2
+    assert summary["crop_count"] == 2
+    assert (review_dir / "annotation.json").is_file()
+    assert (review_dir / "capture-session-manifest.json").is_file()
+    assert (review_dir / "index.html").is_file()
+    assert (review_dir / "contact-sheet.jpg").is_file()
+
+    annotation = json.loads((review_dir / "annotation.json").read_text())
+    assert len(annotation["frames"]) == 2
+    assert all(frame["whole_frame_truth"] == "unreviewed" for frame in annotation["frames"])
+
+
+def test_stage3_packet_never_overwrites_in_progress_annotation(tmp_path: Path) -> None:
+    from mockingbird.observation.temporal_review_io import build_stage3_tranche_review_packet
+
+    tranche_path = _stage3_tranche(tmp_path)
+    review_dir = tmp_path / "review"
+    build_stage3_tranche_review_packet(tranche_path, review_dir)
+    annotation_path = review_dir / "annotation.json"
+    payload = json.loads(annotation_path.read_text())
+    payload["frames"][0]["whole_frame_truth"] = "no"
+    annotation_path.write_text(json.dumps(payload))
+
+    build_stage3_tranche_review_packet(tranche_path, review_dir)  # simulated restart
+
+    reloaded = json.loads(annotation_path.read_text())
+    assert reloaded["frames"][0]["whole_frame_truth"] == "no"
+
+
+def test_stage3_packet_validates_through_the_existing_review_validate_command(tmp_path: Path) -> None:
+    """The composite manifest is deliberately generic enough that the
+    *existing*, unmodified `temporal-review-validate` command works against
+    it -- no second validation code path for Stage-3."""
+
+    from mockingbird.observation.temporal_review_io import build_stage3_tranche_review_packet
+
+    tranche_path = _stage3_tranche(tmp_path)
+    review_dir = tmp_path / "review"
+    build_stage3_tranche_review_packet(tranche_path, review_dir)
+    assert run_validate(["--review", str(review_dir)]) == 0
+
+    annotation_path = review_dir / "annotation.json"
+    payload = json.loads(annotation_path.read_text())
+    payload["frames"][0].update({
+        "whole_frame_truth": "yes",
+        "boxes": [{"box": [0.2, 0.2, 0.4, 0.4], "broad_class": "animal"}],
+        "difficulty_tags": ["very_small", "far"],
+        "provenance": {
+            "reviewer": "smoke", "reviewed_at_iso": datetime.now(UTC).isoformat(),
+            "source_capture_session": payload["capture_session_id"], "truth_source": "full_frame_inspection",
+        },
+    })
+    payload["frames"][1]["whole_frame_truth"] = "no"
+    payload["frames"][1]["provenance"] = {
+        "reviewer": "smoke", "reviewed_at_iso": datetime.now(UTC).isoformat(),
+        "source_capture_session": payload["capture_session_id"], "truth_source": "full_frame_inspection",
+    }
+    annotation_path.write_text(json.dumps(payload))
+    assert run_validate(["--review", str(review_dir)]) == 0
+
+
+def test_stage3_packet_rejects_source_image_integrity_mismatch(tmp_path: Path) -> None:
+    from mockingbird.observation.temporal_annotation import TemporalAnnotationError
+    from mockingbird.observation.temporal_review_io import build_stage3_tranche_review_packet
+
+    tranche_path = _stage3_tranche(tmp_path)
+    payload = json.loads(tranche_path.read_text())
+    payload["frames"][0]["content_hash"] = "0" * 64  # no longer matches the real file's sha256
+    tranche_path.write_text(json.dumps(payload))
+    with pytest.raises(TemporalAnnotationError):
+        build_stage3_tranche_review_packet(tranche_path, tmp_path / "review")
+
+
+def test_stage3_packet_index_shows_tranche_lane_and_split_context(tmp_path: Path) -> None:
+    from mockingbird.observation.temporal_review_io import build_stage3_tranche_review_packet
+
+    tranche_path = _stage3_tranche(tmp_path)
+    review_dir = tmp_path / "review"
+    build_stage3_tranche_review_packet(tranche_path, review_dir)
+    index_html = (review_dir / "index.html").read_text()
+    assert "small_far_positive_opportunity" in index_html
+    assert "local_train_candidate" in index_html or "local_validation_candidate" in index_html
+    assert "test-tranche-a" in index_html
+    assert "species" not in index_html.lower()
+
+
+def test_stage3_packet_never_contains_an_absolute_path(tmp_path: Path) -> None:
+    """The source queue's own `capture_session_id` is a real filesystem path
+    (the originating capture-out directory) -- confirmed against the real
+    local-correction queue, e.g. ".../field-acceptance/.../capture-out" --
+    not a synthetic id, so it must be relativized/trimmed before landing in
+    a manifest this pipeline promises never leaks an absolute path."""
+
+    from mockingbird.observation.temporal_review_io import build_stage3_tranche_review_packet
+
+    tranche_path = _stage3_tranche(tmp_path)
+    payload = json.loads(tranche_path.read_text())
+    realistic_absolute_session_path = str(tmp_path / "field-acceptance" / "2026-08-07-example" / "capture-out")
+    for frame in payload["frames"]:
+        frame["capture_session_id"] = realistic_absolute_session_path
+    tranche_path.write_text(json.dumps(payload))
+
+    review_dir = tmp_path / "review"
+    build_stage3_tranche_review_packet(tranche_path, review_dir)
+    manifest_text = (review_dir / "capture-session-manifest.json").read_text()
+    assert str(tmp_path) not in manifest_text
+    assert realistic_absolute_session_path not in manifest_text
+    assert "capture-out" in manifest_text  # trailing context preserved, not silently dropped
+
+
+def test_review_ui_renders_navigation_progress_and_durability_features(tmp_path: Path) -> None:
+    """Task-required ergonomics: progress count, next/previous navigation,
+    suggestion-overlay toggle, keyboard shortcuts, difficulty tags, and
+    localStorage-based autosave/resume + explicit load -- all in the shared
+    template, so this also covers the original single-session reviewer."""
+
+    capture_dir = _write_capture_directory(tmp_path, frame_specs=[("f0", 0), ("f1", 1)])
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    build_review_packet(capture_dir, review_dir)
+    index_html = (review_dir / "index.html").read_text()
+
+    assert "id='progress'" in index_html
+    assert "id='frame-counter'" in index_html
+    assert "goTo(currentIndex" in index_html  # next/previous navigation
+    assert "toggleSuggestions" in index_html
+    assert "id='load-file'" in index_html  # explicit "Load annotation.json"
+    assert "localStorage.setItem(storageKey()" in index_html  # autosave
+    assert "loadPersistedState()" in index_html  # resume on load
+    assert "jumpToNextUnreviewed" in index_html
+    assert "deleteSelectedBox" in index_html  # per-box delete, not only undo-last
+    assert "'Delete': case 'Backspace'" in index_html
+    assert "case 'a':" in index_html and "case 'n':" in index_html and "case 'm':" in index_html
+    assert "tag-chip" in index_html  # difficulty tags
+    # Still preserves every existing golden assertion this template must not break.
+    assert ">Animal</button>" in index_html
+    assert ">No animal</button>" in index_html
+    assert ">Ambiguous</button>" in index_html
+    assert "Download annotation.json" in index_html
+    assert "truth_source:'full_frame_inspection'" in index_html
+    assert "broad_class:'animal'" in index_html
+    assert "species" not in index_html.lower()

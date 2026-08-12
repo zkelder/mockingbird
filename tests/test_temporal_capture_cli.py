@@ -1073,3 +1073,48 @@ def test_marker_backfill_pool_never_exceeds_its_bound(tmp_path: Path) -> None:
         ))
     assert len(loop.recent_retained_identities) <= 3
     assert [frame_id for frame_id, _ in loop.recent_retained_identities] == ["f7", "f8", "f9"]
+
+
+# --------------------------------------------------------------------------
+# Stage-3 Holdout v2 groundwork: --holdout-v2-session threading
+# --------------------------------------------------------------------------
+
+
+def test_holdout_v2_session_marks_every_retained_frame(tmp_path: Path) -> None:
+    fake_session = _FakeBurstSession()
+    loop = _CaptureLoop(
+        session=fake_session, output_directory=tmp_path, bounds=CaptureBounds(),
+        shadow_operating_point=0.5, review_floor=0.1, privacy_regions=(), holdout_v2_session=True,
+    )
+    blank = _jpeg((30, 30, 30))
+    loop._process_result(_result(
+        _packet("f0", payload=blank, offset_ms=0, sequence=0),
+        detections=(_det((0.1, 0.1, 0.2, 0.2), 0.9),),
+    ))
+    assert len(loop.retained) == 1
+    assert loop.retained[0].holdout_v2_candidate is True
+
+
+def test_holdout_v2_session_defaults_off(tmp_path: Path) -> None:
+    loop = _loop(tmp_path)
+    blank = _jpeg((30, 30, 30))
+    loop._process_result(_result(
+        _packet("f0", payload=blank, offset_ms=0, sequence=0),
+        detections=(_det((0.1, 0.1, 0.2, 0.2), 0.9),),
+    ))
+    assert loop.retained[0].holdout_v2_candidate is False
+
+
+def test_holdout_v2_argument_parses_as_a_store_true_flag() -> None:
+    from mockingbird.observation.temporal_capture_cli import _capture_parser
+
+    default_args = _capture_parser().parse_args([
+        "--camera-node-config", "c.json", "--provider", "frame-driven-onnx-cuda",
+        "--provider-config", "p.json", "--output", "o",
+    ])
+    assert default_args.holdout_v2_session is False
+    flagged_args = _capture_parser().parse_args([
+        "--camera-node-config", "c.json", "--provider", "frame-driven-onnx-cuda",
+        "--provider-config", "p.json", "--output", "o", "--holdout-v2-session",
+    ])
+    assert flagged_args.holdout_v2_session is True
