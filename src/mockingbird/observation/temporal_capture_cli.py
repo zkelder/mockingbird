@@ -125,6 +125,15 @@ def _capture_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-high-resolution-frames", type=int, default=CaptureBounds().max_high_resolution_frames)
     parser.add_argument("--privacy-ignore-region", action="append", default=[], metavar="LEFT,TOP,RIGHT,BOTTOM", help="Repeatable normalized Privacy/Ignore box.")
     parser.add_argument(
+        "--retain-exact-analysis",
+        action="store_true",
+        help=(
+            "Retain a bounded diagnostic envelope binding each retained analysis frame to "
+            "its detector outputs, model provenance, geometry attribution, and lineage. "
+            "Default off; creates neither truth nor a product record."
+        ),
+    )
+    parser.add_argument(
         "--validation-burst", action="store_true",
         help="Explicitly request one labeled engineering high-resolution burst at session start to validate the "
              "burst endpoint end-to-end, independent of any real detector/tracker trigger. Never represents wildlife.",
@@ -186,13 +195,19 @@ class _CaptureLoop:
     the Node transport, detector, or tracker."""
 
     def __init__(self, *, session: LiveCameraNodeShadowSession, output_directory: Path, bounds: CaptureBounds,
-                 shadow_operating_point: float, review_floor: float, privacy_regions: tuple[tuple[float, float, float, float], ...]) -> None:
+                 shadow_operating_point: float, review_floor: float, privacy_regions: tuple[tuple[float, float, float, float], ...],
+                 retain_exact_analysis: bool = False, model_fingerprint: str = "unknown",
+                 provider_id: str = "unknown", capture_score_threshold: float = 0.02) -> None:
         self.session = session
         self.output_directory = output_directory
         self.bounds = bounds
         self.shadow_operating_point = shadow_operating_point
         self.review_floor = review_floor
         self.privacy_regions = privacy_regions
+        self.retain_exact_analysis = retain_exact_analysis
+        self.model_fingerprint = model_fingerprint
+        self.provider_id = provider_id
+        self.capture_score_threshold = capture_score_threshold
         self.retained: list[RetainedFrameRecord] = []
         self.markers_seen: dict[str, OperatorMarker] = {}
         self.pretrigger: deque = deque(maxlen=max(1, bounds.pretrigger_frame_count))
@@ -281,7 +296,7 @@ class _CaptureLoop:
         # `recent_frames` from earlier, undertriggered batches. Rescan them
         # now that the marker is known.
         markers = tuple(self.markers_seen.values())
-        for frame, detection_boxes, track_generation_ids, proposal_boxes in list(self.recent_frames):
+        for frame, detection_boxes, track_generation_ids, proposal_boxes, exact_analysis in list(self.recent_frames):
             if frame.received_at is None:
                 continue
             near = markers_near(markers, host_time_iso=frame.received_at.isoformat(), default_lookback_seconds=20)
@@ -290,6 +305,7 @@ class _CaptureLoop:
             self._retain(
                 frame, [TRIGGER_OPERATOR_MARKER], detection_boxes, track_generation_ids, proposal_boxes,
                 marker_ids=tuple(item.marker_id for item in near),
+                exact_analysis=exact_analysis,
             )
             self.post_trigger_remaining = self.bounds.post_trigger_frame_count
 
@@ -455,8 +471,27 @@ class _CaptureLoop:
         detection_boxes = tuple(
             (*item.bounding_box, round(item.confidence or 0.0, 3)) for item in detections if item.bounding_box is not None
         )
-        for context_frame, context_triggers in pretrigger_flush:
-            self._retain(context_frame, list(context_triggers) + [TRIGGER_PRETRIGGER_CONTEXT], (), (), ())
+        exact_analysis = None
+        if self.retain_exact_analysis:
+            from mockingbird.observation.exact_frame_capture import build_exact_analysis_frame
+
+            exact_analysis = build_exact_analysis_frame(
+                frame,
+                result.detection_observations,
+                result.track_updates,
+                model_fingerprint=self.model_fingerprint,
+                provider_id=self.provider_id,
+                capture_score_threshold=self.capture_score_threshold,
+            ).to_semantic_dict()
+        for context_frame, context_triggers, context_exact_analysis in pretrigger_flush:
+            self._retain(
+                context_frame,
+                list(context_triggers) + [TRIGGER_PRETRIGGER_CONTEXT],
+                (),
+                (),
+                (),
+                exact_analysis=context_exact_analysis,
+            )
         if retained_now:
             self._retain(
                 frame, triggers, detection_boxes, track_generation_ids,
@@ -469,18 +504,19 @@ class _CaptureLoop:
                 # real high-resolution evidence is retained separately below,
                 # once per captured burst, by `_retain_high_resolution_evidence`.
                 high_resolution=False, privacy_interaction=privacy_interaction,
+                exact_analysis=exact_analysis,
             )
             if frame.frame_id is not None and frame.received_at is not None:
                 self.recent_retained_identities.append((frame.frame_id, frame.received_at))
         else:
-            self.pretrigger.append((frame, tuple(triggers)))
+            self.pretrigger.append((frame, tuple(triggers), exact_analysis))
             # No trigger fired for this frame yet -- but an operator marker
             # written moments from now, correlating backward to right about
             # this frame's own received_at, would only ever be discovered
             # at the *next* batch boundary (see `_refresh_markers`), by
             # which point new frames are already in the future relative to
             # that marker. Keep it rescue-eligible until it ages out.
-            self.recent_frames.append((frame, detection_boxes, track_generation_ids, proposal_boxes))
+            self.recent_frames.append((frame, detection_boxes, track_generation_ids, proposal_boxes, exact_analysis))
 
         # One dedicated high-resolution record per captured burst, never
         # collapsed onto the single low-resolution trigger frame above: two
@@ -496,7 +532,7 @@ class _CaptureLoop:
             self.last_frame_id = frame.frame_id
             self.last_source_offset_ms = frame.source_offset_ms
 
-    def _retain(self, frame, triggers, detection_boxes, track_generation_ids, proposal_boxes, *, marker_ids=(), high_resolution=False, privacy_interaction=False) -> None:
+    def _retain(self, frame, triggers, detection_boxes, track_generation_ids, proposal_boxes, *, marker_ids=(), high_resolution=False, privacy_interaction=False, exact_analysis=None) -> None:
         if frame.frame_id is None or frame.payload is None or frame.source_offset_ms is None:
             return
         if any(item.frame_id == frame.frame_id for item in self.retained):
@@ -514,6 +550,7 @@ class _CaptureLoop:
             high_resolution=high_resolution, privacy_ignore_interaction=privacy_interaction,
             operator_marker_ids=marker_ids, detection_boxes=detection_boxes,
             motion_proposal_boxes=proposal_boxes, track_generation_ids=track_generation_ids,
+            exact_analysis=exact_analysis,
             # Stage 6.8 source-local provenance the reconnect-safe session
             # timeline is derived from: the real per-connection Node session
             # id (already flowing through on every analysis-stream frame,
@@ -686,6 +723,8 @@ async def _run_capture(args: argparse.Namespace) -> int:
     loop = _CaptureLoop(
         session=session, output_directory=output_directory, bounds=bounds,
         shadow_operating_point=args.shadow_operating_point, review_floor=args.review_floor, privacy_regions=privacy_regions,
+        retain_exact_analysis=args.retain_exact_analysis, model_fingerprint=bundle.fingerprint,
+        provider_id=provider.provider_id, capture_score_threshold=args.review_score_threshold,
     )
     started_wall = datetime.now(UTC)
     node_session_id = f"temporal-capture:{uuid4().hex[:16]}"
@@ -706,6 +745,7 @@ async def _run_capture(args: argparse.Namespace) -> int:
         review_score_threshold=args.review_score_threshold, shadow_operating_point=args.shadow_operating_point,
         review_floor=args.review_floor, evidence_profile_id=connection.evidence_profile_id, bounds=bounds,
         privacy_ignore_regions=privacy_regions,
+        exact_analysis_capture_enabled=args.retain_exact_analysis,
     )
     session_id = f"temporal-capture-{started_wall.strftime('%Y%m%dT%H%M%SZ')}"
 

@@ -92,6 +92,25 @@ def test_review_packet_orders_frames_chronologically_regardless_of_write_order(t
     assert index_html.index("f0") < index_html.index("f1") < index_html.index("f2")
 
 
+def test_review_ui_uses_actual_image_and_human_only_broad_animal_boxes(tmp_path: Path) -> None:
+    capture_dir = _write_capture_directory(tmp_path, frame_specs=[("f0", 0)])
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    build_review_packet(capture_dir, review_dir)
+
+    index_html = (review_dir / "index.html").read_text()
+    assert "frames/f0.jpg" in index_html
+    assert "Actual retained image" in index_html
+    assert ">Animal</button>" in index_html
+    assert ">No animal</button>" in index_html
+    assert ">Ambiguous</button>" in index_html
+    assert "<canvas" in index_html
+    assert "Download annotation.json" in index_html
+    assert "truth_source:'full_frame_inspection'" in index_html
+    assert "broad_class:'animal'" in index_html
+    assert "species" not in index_html.lower()
+
+
 def test_contact_sheet_is_generated_and_bounded_in_size(tmp_path: Path) -> None:
     capture_dir = _write_capture_directory(tmp_path, frame_specs=[("f0", 0), ("f1", 1)])
     review_dir = tmp_path / "review"

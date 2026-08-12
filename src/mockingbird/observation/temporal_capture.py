@@ -190,6 +190,7 @@ class CaptureSessionConfig:
     evidence_profile_id: str
     bounds: CaptureBounds
     privacy_ignore_regions: tuple[tuple[float, float, float, float], ...] = ()
+    exact_analysis_capture_enabled: bool = False
     limitations: tuple[str, ...] = (
         "engineering acquisition tool only; creates no product record or reviewed truth",
         "analysis/host clock alignment is uncertain unless externally synchronized",
@@ -464,6 +465,10 @@ class RetainedFrameRecord:
     # Track generation ids with any support on this frame, for tracker-
     # failure/episode-boundary active-learning classification.
     track_generation_ids: tuple[str, ...] = ()
+    # Optional, explicit exact-analysis-frame diagnostic envelope. The exact
+    # payload itself is the same bounded JPEG named by frame_id; this adds
+    # provider outputs and lineage without creating truth or a product record.
+    exact_analysis: dict[str, object] | None = None
     # Original per-frame provenance the live capture always has available
     # but the pre-Stage-6.8 schema never persisted: the host wall-clock
     # instant this frame was actually received (the anchor a reconnect-safe
@@ -492,6 +497,18 @@ class RetainedFrameRecord:
             raise TemporalCaptureError("invalid_retained_frame_trigger")
         if len(self.detection_boxes) > 500 or len(self.motion_proposal_boxes) > 32:
             raise TemporalCaptureError("retained_frame_detection_limit")
+        if self.exact_analysis is not None:
+            detector_input = self.exact_analysis.get("detector_input")
+            if (
+                self.high_resolution
+                or self.exact_analysis.get("frame_id") != self.frame_id
+                or self.exact_analysis.get("creates_truth") is not False
+                or self.exact_analysis.get("creates_product_record") is not False
+                or not isinstance(detector_input, dict)
+                or detector_input.get("sha256") != self.content_hash
+                or detector_input.get("byte_size") != self.byte_size
+            ):
+                raise TemporalCaptureError("invalid_exact_analysis_envelope")
         if self.session_sequence < 0 or self.session_offset_ms < 0 or self.temporal_uncertainty_ms < 0:
             raise TemporalCaptureError("invalid_session_timeline_fields")
 

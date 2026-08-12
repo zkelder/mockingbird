@@ -311,7 +311,10 @@ def build_review_packet(capture_directory: Path, review_directory: Path) -> dict
         )
         write_annotation_set(review_directory, skeleton)
 
-    html = _render_index(manifest, frames, crop_paths)
+    annotation_payload = json.loads(annotation_path.read_text(encoding="utf-8"))
+    from mockingbird.observation.temporal_review_ui import render_review_ui
+
+    html = render_review_ui(manifest, frames, crop_paths, annotation_payload)
     _atomic_write_bytes(review_directory / INDEX_FILENAME, html.encode("utf-8"))
 
     return {
