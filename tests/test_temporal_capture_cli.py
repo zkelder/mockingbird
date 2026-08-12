@@ -532,7 +532,7 @@ def test_run_capture_end_to_end_stops_cleanly_and_writes_no_credential(tmp_path:
     exit_code = run_capture([
         "--camera-node-config", str(camera_node_config), "--provider", "frame-driven-onnx-cuda",
         "--provider-config", str(config_dir / "frame-driven-config.json"), "--output", str(destination),
-        "--duration", "5",
+        "--duration", "5", "--scene-id", "test-scene",
     ])
     assert exit_code == 0
     assert fake_transport.closed is True  # clean stop releases the transport
@@ -581,7 +581,7 @@ def test_validation_burst_retains_one_explicitly_labeled_high_resolution_frame_w
     exit_code = run_capture([
         "--camera-node-config", str(camera_node_config), "--provider", "frame-driven-onnx-cuda",
         "--provider-config", str(config_dir / "frame-driven-config.json"), "--output", str(destination),
-        "--duration", "5", "--validation-burst",
+        "--duration", "5", "--validation-burst", "--scene-id", "test-scene",
     ])
     assert exit_code == 0
     assert len(fake_transport.burst_requests) == 1
@@ -742,7 +742,7 @@ def test_run_capture_end_to_end_reconnect_produces_a_native_session_timeline(
     exit_code = run_capture([
         "--camera-node-config", str(camera_node_config), "--provider", "frame-driven-onnx-cuda",
         "--provider-config", str(config_dir / "frame-driven-config.json"), "--output", str(destination),
-        "--duration", "5",
+        "--duration", "5", "--scene-id", "test-scene",
     ])
     assert exit_code == 0
     manifest = json.loads((destination / "capture-session-manifest.json").read_text())
@@ -793,7 +793,7 @@ def test_run_capture_holds_its_frame_bound_across_multiple_reconnects(
     exit_code = run_capture([
         "--camera-node-config", str(camera_node_config), "--provider", "frame-driven-onnx-cuda",
         "--provider-config", str(config_dir / "frame-driven-config.json"), "--output", str(destination),
-        "--duration", "5", "--max-analysis-frames", "4",
+        "--duration", "5", "--max-analysis-frames", "4", "--scene-id", "test-scene",
     ])
     assert exit_code == 0
     manifest = json.loads((destination / "capture-session-manifest.json").read_text())
@@ -852,7 +852,7 @@ def test_run_capture_operator_marker_correlates_to_a_frame_across_a_reconnect(
     exit_code = run_capture([
         "--camera-node-config", str(camera_node_config), "--provider", "frame-driven-onnx-cuda",
         "--provider-config", str(config_dir / "frame-driven-config.json"), "--output", str(destination),
-        "--duration", "5",
+        "--duration", "5", "--scene-id", "test-scene",
     ])
     assert exit_code == 0
     manifest = json.loads((destination / "capture-session-manifest.json").read_text())
@@ -1105,16 +1105,133 @@ def test_holdout_v2_session_defaults_off(tmp_path: Path) -> None:
     assert loop.retained[0].holdout_v2_candidate is False
 
 
-def test_holdout_v2_argument_parses_as_a_store_true_flag() -> None:
+# --------------------------------------------------------------------------
+# Multi-Scene Backyard Domain Acquisition v1: --scene-id threading and
+# manual (SIGINT/SIGTERM) early stop.
+# --------------------------------------------------------------------------
+
+
+def test_scene_id_marks_every_retained_frame(tmp_path: Path) -> None:
+    fake_session = _FakeBurstSession()
+    loop = _CaptureLoop(
+        session=fake_session, output_directory=tmp_path, bounds=CaptureBounds(),
+        shadow_operating_point=0.5, review_floor=0.1, privacy_regions=(), scene_id="lawn-north",
+    )
+    blank = _jpeg((30, 30, 30))
+    loop._process_result(_result(
+        _packet("f0", payload=blank, offset_ms=0, sequence=0),
+        detections=(_det((0.1, 0.1, 0.2, 0.2), 0.9),),
+    ))
+    assert len(loop.retained) == 1
+    assert loop.retained[0].scene_id == "lawn-north"
+
+
+def test_scene_id_defaults_to_empty_not_a_fabricated_value(tmp_path: Path) -> None:
+    loop = _loop(tmp_path)
+    blank = _jpeg((30, 30, 30))
+    loop._process_result(_result(
+        _packet("f0", payload=blank, offset_ms=0, sequence=0),
+        detections=(_det((0.1, 0.1, 0.2, 0.2), 0.9),),
+    ))
+    assert loop.retained[0].scene_id == ""
+
+
+def test_request_stop_returns_manual_stop_before_duration_elapses(tmp_path: Path) -> None:
+    """A signal handler (or any other external caller) requesting a stop is
+    honored at the loop's own next checkpoint, not only when --duration
+    elapses or a resource bound is hit."""
+
+    import asyncio
+
+    fake_provider = SimpleNamespace(active_track_count=0)
+
+    class _NeverEndingSession:
+        provider = fake_provider
+
+        async def run(self, *, maximum_frames: int):
+            return []  # STOP_STREAM_ENDED if ever reached -- the test asserts it never is
+
+    loop = _CaptureLoop(
+        session=_NeverEndingSession(), output_directory=tmp_path, bounds=CaptureBounds(),
+        shadow_operating_point=0.5, review_floor=0.1, privacy_regions=(),
+    )
+    loop.request_stop()
+    from mockingbird.observation.temporal_capture import STOP_MANUAL
+    result = asyncio.run(loop.run(started_wall=datetime.now(UTC), duration_seconds=600))
+    assert result == STOP_MANUAL
+
+
+def test_run_capture_end_to_end_writes_scene_id_and_capture_purpose(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import mockingbird.observation.onnx_provider as onnx_provider_module
+    import mockingbird.observation.temporal_capture_cli as cli_module
+
+    monkeypatch.setattr(onnx_provider_module, "OptionalOrtCudaRuntime", lambda: FakeRuntime(lambda: FakeSession([_no_detections_output()])))
+
+    config_dir = _bundle_dir(tmp_path)
+    camera_node_config = _camera_node_config(tmp_path)
+    fake_transport = FakeTransport([])
+    monkeypatch.setattr(cli_module, "CameraNodeHttpTransport", lambda **kwargs: fake_transport)
+
+    destination = tmp_path / "capture-out-scene"
+    exit_code = run_capture([
+        "--camera-node-config", str(camera_node_config), "--provider", "frame-driven-onnx-cuda",
+        "--provider-config", str(config_dir / "frame-driven-config.json"), "--output", str(destination),
+        "--duration", "5", "--scene-id", "deck-patio-01", "--capture-purpose", "holdout_v2_candidate",
+    ])
+    assert exit_code == 0
+    manifest = json.loads((destination / "capture-session-manifest.json").read_text())
+    assert manifest["config"]["scene_id"] == "deck-patio-01"
+    assert manifest["config"]["capture_purpose"] == "holdout_v2_candidate"
+
+
+def test_capture_purpose_argument_defaults_to_training_candidate() -> None:
     from mockingbird.observation.temporal_capture_cli import _capture_parser
 
     default_args = _capture_parser().parse_args([
         "--camera-node-config", "c.json", "--provider", "frame-driven-onnx-cuda",
-        "--provider-config", "p.json", "--output", "o",
+        "--provider-config", "p.json", "--output", "o", "--scene-id", "lawn-north",
     ])
-    assert default_args.holdout_v2_session is False
+    assert default_args.capture_purpose == "training_candidate"
+    assert default_args.scene_id == "lawn-north"
     flagged_args = _capture_parser().parse_args([
         "--camera-node-config", "c.json", "--provider", "frame-driven-onnx-cuda",
-        "--provider-config", "p.json", "--output", "o", "--holdout-v2-session",
+        "--provider-config", "p.json", "--output", "o", "--scene-id", "lawn-north",
+        "--capture-purpose", "holdout_v2_candidate",
     ])
-    assert flagged_args.holdout_v2_session is True
+    assert flagged_args.capture_purpose == "holdout_v2_candidate"
+
+
+def test_capture_purpose_argument_rejects_an_unknown_value() -> None:
+    from mockingbird.observation.temporal_capture_cli import _capture_parser
+
+    with pytest.raises(SystemExit):
+        _capture_parser().parse_args([
+            "--camera-node-config", "c.json", "--provider", "frame-driven-onnx-cuda",
+            "--provider-config", "p.json", "--output", "o", "--scene-id", "lawn-north",
+            "--capture-purpose", "not_a_real_purpose",
+        ])
+
+
+def test_scene_id_argument_is_required() -> None:
+    from mockingbird.observation.temporal_capture_cli import _capture_parser
+
+    with pytest.raises(SystemExit):
+        _capture_parser().parse_args([
+            "--camera-node-config", "c.json", "--provider", "frame-driven-onnx-cuda",
+            "--provider-config", "p.json", "--output", "o",
+        ])
+
+
+def test_run_capture_rejects_an_invalid_scene_id(tmp_path: Path) -> None:
+    """Fails fast, before opening any Camera Node connection -- see the
+    early validation at the top of `_run_capture`."""
+
+    config_dir = _bundle_dir(tmp_path)
+    camera_node_config = _camera_node_config(tmp_path)
+    exit_code = run_capture([
+        "--camera-node-config", str(camera_node_config), "--provider", "frame-driven-onnx-cuda",
+        "--provider-config", str(config_dir / "frame-driven-config.json"), "--output", str(tmp_path / "capture-out-bad-scene"),
+        "--duration", "5", "--scene-id", "Not A Valid Scene!",
+    ])
+    assert exit_code != 0
+    assert not (tmp_path / "capture-out-bad-scene" / "capture-session-manifest.json").exists()

@@ -4,7 +4,9 @@ against a paired Camera Node.
 python -m mockingbird temporal-capture \\
   --camera-node-config <ignored-config.json> \\
   --provider frame-driven-onnx-cuda --provider-config <ignored-model-config.json> \\
-  --output <ignored-output-directory> --duration <bounded-seconds>
+  --output <ignored-output-directory> --duration <bounded-seconds> \\
+  --scene-id <stable-physical-scene-id> \\
+  --capture-purpose training_candidate|holdout_v2_candidate
 
 python -m mockingbird temporal-capture-mark \\
   --capture <capture-directory> --kind wildlife_visible_now [--note "..."]
@@ -13,6 +15,16 @@ python -m mockingbird temporal-capture-mark \\
 retains only bounded-trigger frames, and writes an ignored, local capture
 directory (frames + `capture-session-manifest.json`). It creates no product
 record. See docs/temporal-review-capture-contract.md.
+
+`--scene-id` is required and names the stable physical scene/camera-view
+this session belongs to (see docs/wildlife-detector-training-contract.md
+"Scene identity and multi-scene acquisition"); `--capture-purpose` (default
+`training_candidate`) declares whether this session's frames are ever
+eligible for training or reserved as Holdout v2 -- see
+`mockingbird.training.wildlife_multiscene`. A running capture stops early
+and finalizes its manifest cleanly (`stop_condition=manual_stop`) on one
+Ctrl-C (SIGINT) or SIGTERM, in addition to its normal `--duration`/resource
+bounds.
 """
 from __future__ import annotations
 
@@ -22,6 +34,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
+import signal
 import sys
 from uuid import uuid4
 
@@ -44,11 +57,16 @@ from mockingbird.observation.onnx_provider import OnnxCudaObservationProvider, O
 from mockingbird.source_providers.camera_node import CameraNodeClientError
 from mockingbird.observation.temporal_capture import (
     CAPTURE_MANIFEST_SCHEMA_VERSION,
+    CAPTURE_PURPOSE_HOLDOUT_V2_CANDIDATE,
+    CAPTURE_PURPOSE_TRAINING_CANDIDATE,
+    CAPTURE_PURPOSES,
+    SCENE_ID_PATTERN,
     STOP_ACTIVE_TRACK_LIMIT,
     STOP_BYTE_LIMIT,
     STOP_DURATION_ELAPSED,
     STOP_FRAME_LIMIT,
     STOP_HIGH_RESOLUTION_LIMIT,
+    STOP_MANUAL,
     STOP_MARKER_LIMIT,
     STOP_STREAM_ENDED,
     STOP_TRANSPORT_ERROR,
@@ -139,10 +157,18 @@ def _capture_parser() -> argparse.ArgumentParser:
              "burst endpoint end-to-end, independent of any real detector/tracker trigger. Never represents wildlife.",
     )
     parser.add_argument(
-        "--holdout-v2-session", action="store_true",
-        help="Stage-3 Holdout v2 groundwork: reserve every frame this session retains as holdout_v2_candidate "
-             "so a future tranche/correction builder must structurally exclude it from training/local-validation "
-             "selection. Default off; does not by itself collect or label a holdout -- it only marks provenance.",
+        "--scene-id", required=True,
+        help="Stable physical-scene identity this session belongs to (e.g. 'feeder-close', 'lawn-north', "
+             "'woods-tree-line'). One materially distinct camera view/environment -- never inferred from a small "
+             "camera nudge. Lowercase letters/digits/hyphens only. See docs/wildlife-detector-training-contract.md.",
+    )
+    parser.add_argument(
+        "--capture-purpose", choices=CAPTURE_PURPOSES, default=CAPTURE_PURPOSE_TRAINING_CANDIDATE,
+        help="training_candidate (default): this session's frames may later become training/local-validation "
+             "candidates. holdout_v2_candidate: reserve every frame this session retains -- structurally excluding "
+             "it from training/local-validation selection (see mockingbird.training.wildlife_multiscene) -- for "
+             "genuinely independent future promotion-quality evaluation. Does not by itself label anything; it "
+             "only marks provenance.",
     )
     return parser
 
@@ -204,7 +230,7 @@ class _CaptureLoop:
                  shadow_operating_point: float, review_floor: float, privacy_regions: tuple[tuple[float, float, float, float], ...],
                  retain_exact_analysis: bool = False, model_fingerprint: str = "unknown",
                  provider_id: str = "unknown", capture_score_threshold: float = 0.02,
-                 holdout_v2_session: bool = False) -> None:
+                 holdout_v2_session: bool = False, scene_id: str = "") -> None:
         self.session = session
         self.output_directory = output_directory
         self.bounds = bounds
@@ -218,6 +244,16 @@ class _CaptureLoop:
         # Stage-3 Holdout v2 groundwork: session-level, operator-set, and
         # otherwise inert -- see `RetainedFrameRecord.holdout_v2_candidate`.
         self.holdout_v2_session = holdout_v2_session
+        # Multi-Scene Backyard Domain Acquisition v1: session-level,
+        # operator-set physical-scene identity -- see `RetainedFrameRecord.
+        # scene_id`. Every frame this loop retains inherits the same value.
+        self.scene_id = scene_id
+        # Set from outside this loop's own async `run()` (a signal handler
+        # registered by `_run_capture`) to request a clean early stop -- see
+        # `request_stop`. Checked first, every iteration of `run()`'s own
+        # while loop, so it takes effect at the next natural checkpoint
+        # rather than interrupting an in-flight batch mid-frame.
+        self.stop_requested = False
         self.retained: list[RetainedFrameRecord] = []
         self.markers_seen: dict[str, OperatorMarker] = {}
         self.pretrigger: deque = deque(maxlen=max(1, bounds.pretrigger_frame_count))
@@ -339,8 +375,18 @@ class _CaptureLoop:
                 self.retained[index] = replace(record, operator_marker_ids=merged_marker_ids, trigger_reasons=merged_triggers)
                 break
 
+    def request_stop(self) -> None:
+        """Request a clean early stop at the next loop checkpoint (see
+        `run`'s first check below). Safe to call from a signal handler:
+        this only ever sets a plain attribute, never touches the network,
+        filesystem, or any asyncio primitive directly."""
+
+        self.stop_requested = True
+
     async def run(self, *, started_wall: datetime, duration_seconds: int) -> str:
         while True:
+            if self.stop_requested:
+                return STOP_MANUAL
             elapsed = (datetime.now(UTC) - started_wall).total_seconds()
             if elapsed >= duration_seconds:
                 return STOP_DURATION_ELAPSED
@@ -563,8 +609,9 @@ class _CaptureLoop:
             exact_analysis=exact_analysis,
             # Session-level, operator-set constant -- every frame this loop
             # retains inherits the same reservation; see `RetainedFrameRecord.
-            # holdout_v2_candidate` and `--holdout-v2-session`.
+            # holdout_v2_candidate` and `--capture-purpose`.
             holdout_v2_candidate=self.holdout_v2_session,
+            scene_id=self.scene_id,
             # Stage 6.8 source-local provenance the reconnect-safe session
             # timeline is derived from: the real per-connection Node session
             # id (already flowing through on every analysis-stream frame,
@@ -621,6 +668,7 @@ class _CaptureLoop:
             source_capture_timestamp=candidate.captured_at.isoformat() if candidate.captured_at is not None else None,
             connection_segment_id=frame.node_session_id or "",
             holdout_v2_candidate=self.holdout_v2_session,
+            scene_id=self.scene_id,
         ))
 
 
@@ -709,10 +757,15 @@ def _request_validation_burst(session: LiveCameraNodeShadowSession, loop: "_Capt
         host_received_at=datetime.now(UTC).isoformat(),
         source_capture_timestamp=frame.captured_at.isoformat(),
         connection_segment_id="validation-burst",
+        scene_id=loop.scene_id,
     ))
 
 
 async def _run_capture(args: argparse.Namespace) -> int:
+    # Fail fast, before opening any Camera Node connection: an operator
+    # typo in --scene-id should never cost a real bounded field session.
+    if not args.scene_id or not SCENE_ID_PATTERN.fullmatch(args.scene_id):
+        raise TemporalCaptureError("invalid_scene_id")
     connection = load_camera_node_connection_config(args.camera_node_config)
     configuration = FrameDrivenProviderConfiguration.load(args.provider_config)
     bundle = OnnxModelBundle.load(configuration.model_bundle_path)
@@ -740,16 +793,40 @@ async def _run_capture(args: argparse.Namespace) -> int:
         shadow_operating_point=args.shadow_operating_point, review_floor=args.review_floor, privacy_regions=privacy_regions,
         retain_exact_analysis=args.retain_exact_analysis, model_fingerprint=bundle.fingerprint,
         provider_id=provider.provider_id, capture_score_threshold=args.review_score_threshold,
-        holdout_v2_session=args.holdout_v2_session,
+        holdout_v2_session=(args.capture_purpose == CAPTURE_PURPOSE_HOLDOUT_V2_CANDIDATE),
+        scene_id=args.scene_id,
     )
     started_wall = datetime.now(UTC)
     node_session_id = f"temporal-capture:{uuid4().hex[:16]}"
+
+    # A running capture is a bounded foreground command, not a daemon -- but
+    # an operator doing real multi-scene fieldwork legitimately wants to end
+    # a session early once a scene has been covered, without losing the
+    # manifest for whatever was already retained. One Ctrl-C (SIGINT) or
+    # SIGTERM now requests a clean stop at the loop's own next checkpoint
+    # (`STOP_MANUAL`, already a validated stop condition -- see
+    # `_CaptureLoop.request_stop`) instead of raising KeyboardInterrupt
+    # straight through this function and skipping manifest assembly below
+    # entirely. Falls back to duration/resource bounds only, unchanged,
+    # wherever the running event loop cannot register a signal handler.
+    import asyncio
+
+    running_loop = asyncio.get_running_loop()
+    registered_signals: list[signal.Signals] = []
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            running_loop.add_signal_handler(sig, loop.request_stop)
+            registered_signals.append(sig)
+        except (NotImplementedError, RuntimeError):
+            pass
     try:
         session.start()
         if args.validation_burst:
             _request_validation_burst(session, loop, connection, started_wall=started_wall)
         stop_condition = await loop.run(started_wall=started_wall, duration_seconds=args.duration)
     finally:
+        for sig in registered_signals:
+            running_loop.remove_signal_handler(sig)
         session.stop()
         provider.close()
     ended_wall = datetime.now(UTC)
@@ -762,6 +839,7 @@ async def _run_capture(args: argparse.Namespace) -> int:
         review_floor=args.review_floor, evidence_profile_id=connection.evidence_profile_id, bounds=bounds,
         privacy_ignore_regions=privacy_regions,
         exact_analysis_capture_enabled=args.retain_exact_analysis,
+        scene_id=args.scene_id, capture_purpose=args.capture_purpose,
     )
     session_id = f"temporal-capture-{started_wall.strftime('%Y%m%dT%H%M%SZ')}"
 
@@ -807,7 +885,7 @@ async def _run_capture(args: argparse.Namespace) -> int:
     write_capture_manifest(output_directory, semantic)
     print(
         f"Capture session written to {output_directory}; {len(loop.retained)} frames retained; "
-        f"stop_condition={stop_condition}; holdout_v2_session={args.holdout_v2_session}."
+        f"stop_condition={stop_condition}; scene_id={args.scene_id}; capture_purpose={args.capture_purpose}."
     )
     return 0
 

@@ -30,6 +30,7 @@ See docs/temporal-review-capture-contract.md.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 
 from mockingbird.observation.contracts import DetectionObservation, TrackUpdate
 from mockingbird.observation.replay import semantic_fingerprint
@@ -107,6 +108,25 @@ OPERATOR_MARKER_KINDS: tuple[str, ...] = (
     OPERATOR_MARKER_UNCERTAIN_POSSIBLE,
     OPERATOR_MARKER_KNOWN_EMPTY,
     OPERATOR_MARKER_ENVIRONMENTAL_CHANGE,
+)
+
+# --------------------------------------------------------------------------
+# Multi-Scene Backyard Domain Acquisition v1: stable physical-scene identity
+# and explicit capture purpose. A scene names one materially distinct
+# camera view/environment (feeder close view, lawn, woods/tree line,
+# deck/patio, ...) -- never inferred from a session id, a stream id, or a
+# small camera nudge; always operator-supplied. Empty string means "not
+# recorded" (every capture before this field existed, or a hand-built test
+# fixture), never a fabricated scene -- see `RetainedFrameRecord.scene_id`/
+# `CaptureSessionConfig.scene_id`. See docs/wildlife-detector-training-contract.md
+# "Scene identity and multi-scene acquisition".
+SCENE_ID_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$")
+
+CAPTURE_PURPOSE_TRAINING_CANDIDATE = "training_candidate"
+CAPTURE_PURPOSE_HOLDOUT_V2_CANDIDATE = "holdout_v2_candidate"
+CAPTURE_PURPOSES: tuple[str, ...] = (
+    CAPTURE_PURPOSE_TRAINING_CANDIDATE,
+    CAPTURE_PURPOSE_HOLDOUT_V2_CANDIDATE,
 )
 
 
@@ -191,6 +211,16 @@ class CaptureSessionConfig:
     bounds: CaptureBounds
     privacy_ignore_regions: tuple[tuple[float, float, float, float], ...] = ()
     exact_analysis_capture_enabled: bool = False
+    # Multi-Scene Backyard Domain Acquisition v1: the physical scene this
+    # whole session was captured for, and why (see `CAPTURE_PURPOSES`).
+    # Recorded at the session level -- not only per-frame (`RetainedFrameRecord.
+    # scene_id`) -- so a session that retains zero frames (a genuinely quiet
+    # scene, still a useful signal) never loses which scene was checked.
+    # Default empty/"training_candidate" preserves every pre-existing
+    # hand-built `CaptureSessionConfig` fixture and any capture predating
+    # this field; a real `temporal-capture` invocation always supplies both.
+    scene_id: str = ""
+    capture_purpose: str = CAPTURE_PURPOSE_TRAINING_CANDIDATE
     limitations: tuple[str, ...] = (
         "engineering acquisition tool only; creates no product record or reviewed truth",
         "analysis/host clock alignment is uncertain unless externally synchronized",
@@ -212,6 +242,10 @@ class CaptureSessionConfig:
             raise TemporalCaptureError("invalid_operating_point_bounds")
         if self.review_score_threshold > self.review_floor:
             raise TemporalCaptureError("review_threshold_above_review_floor")
+        if self.scene_id and not SCENE_ID_PATTERN.fullmatch(self.scene_id):
+            raise TemporalCaptureError("invalid_scene_id")
+        if self.capture_purpose not in CAPTURE_PURPOSES:
+            raise TemporalCaptureError("invalid_capture_purpose")
 
 
 # --------------------------------------------------------------------------
@@ -463,6 +497,14 @@ class RetainedFrameRecord:
     # milestone only adds the capability and its downstream guard -- it does
     # not collect or label a real Holdout v2 corpus.
     holdout_v2_candidate: bool = False
+    # Multi-Scene Backyard Domain Acquisition v1: the stable physical-scene
+    # identity this frame belongs to (see `SCENE_ID_PATTERN`), inherited
+    # unchanged from the session-level `--scene-id` every frame in one
+    # capture session shares -- never inferred per-frame, never re-derived
+    # from pixels. Empty string means "not recorded" (every capture before
+    # this field existed) -- honest absence, not a fabricated scene. See
+    # `mockingbird.training.wildlife_multiscene`.
+    scene_id: str = ""
     # Raw animal-class detector observations at the low review-capture
     # threshold, retained so the review packet can draw real detector-box
     # crops and so active-learning classification can IoU-match against
@@ -521,6 +563,8 @@ class RetainedFrameRecord:
                 raise TemporalCaptureError("invalid_exact_analysis_envelope")
         if self.session_sequence < 0 or self.session_offset_ms < 0 or self.temporal_uncertainty_ms < 0:
             raise TemporalCaptureError("invalid_session_timeline_fields")
+        if self.scene_id and not SCENE_ID_PATTERN.fullmatch(self.scene_id):
+            raise TemporalCaptureError("invalid_scene_id")
 
 
 def attach_session_timeline(
@@ -740,6 +784,24 @@ class CaptureSessionManifest:
             raise TemporalCaptureError("operator_marker_limit_exceeded")
         if self.session_timeline_classification not in SESSION_TIMELINE_CLASSIFICATIONS:
             raise TemporalCaptureError("invalid_session_timeline_classification")
+        # Defense-in-depth honesty check, mirroring `duplicate_frame_identity`
+        # above: a frame that does carry its own explicit scene_id must agree
+        # with the session's own declared scene -- never silently divergent.
+        # A frame with an empty scene_id (predating this field, or a
+        # hand-built fixture) is always compatible with any session value.
+        if self.config.scene_id and any(
+            item.scene_id and item.scene_id != self.config.scene_id for item in self.frames
+        ):
+            raise TemporalCaptureError("scene_id_mismatch_between_config_and_frame")
+        # Same discipline for capture purpose: a session declared
+        # `holdout_v2_candidate` must never persist a frame whose own
+        # `holdout_v2_candidate` flag disagrees (see `_CaptureLoop._retain`,
+        # which always derives both from the same session-level setting, so
+        # this can only fire if a caller builds a manifest by hand incorrectly).
+        if self.config.capture_purpose == CAPTURE_PURPOSE_HOLDOUT_V2_CANDIDATE and any(
+            not item.holdout_v2_candidate for item in self.frames
+        ):
+            raise TemporalCaptureError("capture_purpose_mismatch_between_config_and_frame")
 
     def to_semantic_dict(self) -> dict[str, object]:
         """The versioned, fingerprintable manifest payload. Absolute paths,
@@ -796,6 +858,10 @@ class CaptureSessionManifest:
 __all__ = [
     "CAPTURE_MANIFEST_SCHEMA_VERSION",
     "CAPTURE_MANIFEST_VERSION",
+    "CAPTURE_PURPOSES",
+    "CAPTURE_PURPOSE_HOLDOUT_V2_CANDIDATE",
+    "CAPTURE_PURPOSE_TRAINING_CANDIDATE",
+    "SCENE_ID_PATTERN",
     "OPERATOR_MARKER_ENVIRONMENTAL_CHANGE",
     "OPERATOR_MARKER_KINDS",
     "OPERATOR_MARKER_KNOWN_EMPTY",
