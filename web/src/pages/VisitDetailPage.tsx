@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
 import type {
+  EffectivePrimaryEvidence,
   MediaAsset,
   MotionEvidence,
   SpeciesSuggestion,
@@ -673,6 +674,19 @@ export function VisitDetailPage({
     effectiveCropFrame?.normalized_crop_box ??
     detail.crop_history.find((entry) => entry.is_primary)?.normalized_crop_box ??
     null;
+  // Presentation-only hint: which already-saved frame to show first when the
+  // persisted primary crop is a poor default (e.g. an off-target, birdless
+  // activity crop). Backed by `mockingbird.motion.effective_primary`, a
+  // bounded/deterministic read of this Visit's own saved evidence -- never
+  // model inference, never written back as a new `is_primary`. Null for
+  // every Visit where the persisted primary is already the useful choice
+  // (including every single-evidence-frame Visit), so this changes nothing
+  // about what most Visits look like.
+  const recommendedMediaAssetId =
+    detail.effective_primary?.is_useful && detail.effective_primary.would_change_automatically
+      ? detail.effective_primary.recommended_effective_primary_media_asset_id ?? null
+      : null;
+  const recommendationNote = recommendedEvidenceCopy(detail.effective_primary, recommendedMediaAssetId);
 
   async function refreshCropEvidence(messageText: string) {
     setMessage(messageText);
@@ -764,7 +778,11 @@ export function VisitDetailPage({
           </span>
         </div>
         {detail.evidence_frames.length > 0 ? (
-          <VisitEvidenceSequence frames={detail.evidence_frames} />
+          <VisitEvidenceSequence
+            frames={detail.evidence_frames}
+            recommendedMediaAssetId={recommendedMediaAssetId}
+            recommendationNote={recommendationNote}
+          />
         ) : detail.media_asset ? (
           <MediaAssetPreview asset={detail.media_asset} />
         ) : (
@@ -784,7 +802,13 @@ export function VisitDetailPage({
             </div>
             <EvidenceBadge label="Evidence only" tone="evidence" />
           </div>
-          {detail.evidence_frames.length > 0 ? <VisitEvidenceSequence frames={detail.evidence_frames} /> : null}
+          {detail.evidence_frames.length > 0 ? (
+            <VisitEvidenceSequence
+              frames={detail.evidence_frames}
+              recommendedMediaAssetId={recommendedMediaAssetId}
+              recommendationNote={recommendationNote}
+            />
+          ) : null}
           <div className="detail-actions">
             <RefinedCropEditor
               fullFrame={fullResolutionFrame}
@@ -1475,7 +1499,11 @@ export function VisitDetailPage({
                 />
               </div>
               {detail.evidence_frames.length > 0 ? (
-                <VisitEvidenceSequence frames={detail.evidence_frames} />
+                <VisitEvidenceSequence
+                  frames={detail.evidence_frames}
+                  recommendedMediaAssetId={recommendedMediaAssetId}
+                  recommendationNote={recommendationNote}
+                />
               ) : detail.media_asset ? (
                 <MediaAssetPreview asset={detail.media_asset} />
               ) : (
@@ -2328,4 +2356,35 @@ function formatConfidence(value?: number | null): string {
     return "Unavailable";
   }
   return `${Math.round(value * 100)}%`;
+}
+
+// Plain-language reasons for `EffectivePrimaryEvidence.selection_reason`
+// (see mockingbird.motion.effective_primary). Only reasons that can win over
+// an already-persisted primary crop need copy here; `no_useful_primary_evidence`
+// never reaches this function because it always leaves `is_useful: false`.
+const recommendedEvidenceReasonCopy: Record<string, string> = {
+  tracked_best_frame_preferred: "the saved primary crop did not clearly contain the tracked subject",
+  pretrigger_frame_preferred: "the saved primary crop did not clearly contain the tracked subject",
+  context_evidence_preferred: "the saved primary crop was not confirmed to contain the tracked subject",
+  identification_evidence_preferred: "it is the evidence engine's own best identification frame",
+  high_resolution_temporally_aligned: "it is a temporally aligned high-resolution frame",
+};
+
+/**
+ * Plain-language explanation for defaulting the gallery to a frame other
+ * than the persisted primary. Returns null whenever there is nothing to
+ * explain -- no recommendation, or the recommendation already agrees with
+ * the persisted primary -- so ordinary Visits render no extra copy at all.
+ */
+function recommendedEvidenceCopy(
+  effectivePrimary: EffectivePrimaryEvidence | null | undefined,
+  recommendedMediaAssetId: string | null,
+): string | null {
+  if (!recommendedMediaAssetId || !effectivePrimary) {
+    return null;
+  }
+  const reason =
+    recommendedEvidenceReasonCopy[effectivePrimary.selection_reason] ??
+    "it looks like a clearer view of this Visit's saved evidence";
+  return `MockingBird suggests viewing this frame first because ${reason}. The saved primary crop is unchanged and still available below.`;
 }

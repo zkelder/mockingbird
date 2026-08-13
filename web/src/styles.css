@@ -3180,6 +3180,24 @@ a.secondary-action {
   text-align: center;
 }
 
+.review-evidence-recommendation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #bcd6dd;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #eef5f6;
+  color: #254d5a;
+  font-size: 0.82rem;
+}
+
+.review-evidence-recommendation .text-action {
+  padding: 3px 8px;
+  font-size: 0.78rem;
+}
+
 .review-evidence-sequence-meta,
 .review-evidence-sequence-controls,
 .review-evidence-thumbnail-strip {

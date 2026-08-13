@@ -1524,6 +1524,32 @@ export interface VisitEvidenceFrame {
   normalized_crop_box?: number[] | null;
 }
 
+/**
+ * Read-only, bounded recommendation over a Visit's already-saved evidence
+ * frames (see `mockingbird.motion.effective_primary`). Never model
+ * inference and never written back to the Visit -- `is_primary` in
+ * `VisitEvidenceFrame` above stays the actual persisted evidence-selection
+ * fact regardless of what this recommends.
+ */
+export interface EffectivePrimaryEvidence {
+  selected_media_asset_id?: string | null;
+  persisted_primary_media_asset_id?: string | null;
+  recommended_effective_primary_media_asset_id?: string | null;
+  evidence_role?: string | null;
+  selection_reason: string;
+  is_useful: boolean;
+  is_user_controlled: boolean;
+  temporally_supported?: boolean | null;
+  temporal_status: "supported" | "uncertain" | "rejected";
+  containment_status?: boolean | null;
+  edge_clipped?: boolean | null;
+  width?: number | null;
+  height?: number | null;
+  candidate_count: number;
+  historical_preview_only: boolean;
+  would_change_automatically: boolean;
+}
+
 export interface StreamVisitSummary {
   id: string;
   event_id: string;
@@ -3341,6 +3367,7 @@ export interface VisitDetail {
   motion_evidence?: MotionEvidence | null;
   media_asset?: MediaAsset | null;
   evidence_frames: VisitEvidenceFrame[];
+  effective_primary?: EffectivePrimaryEvidence | null;
   crop_history: VisitCropHistoryEntry[];
   stale_species_suggestions: boolean;
   detection_proposals: DetectionProposal[];

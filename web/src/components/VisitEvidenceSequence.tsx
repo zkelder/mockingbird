@@ -1,12 +1,23 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { apiClient } from "../api/client";
 import type { VisitEvidenceFrame } from "../api/types";
+import { EvidenceBadge } from "./EvidenceBadge";
 import { formatDateTime } from "../utils";
 
 interface VisitEvidenceSequenceProps {
   frames: VisitEvidenceFrame[];
   surfaceOverlay?: ReactNode;
   keyboardControls?: boolean;
+  /**
+   * A different already-saved frame (by media_asset_id) worth showing first,
+   * e.g. because the auto-selected primary crop is empty or off-target. Pure
+   * presentation: never sent back to the server, never changes `is_primary`
+   * or any other persisted evidence-selection state. Ignored if it does not
+   * match one of `frames`.
+   */
+  recommendedMediaAssetId?: string | null;
+  /** Plain-language reason shown alongside the recommendation, if any. */
+  recommendationNote?: string | null;
 }
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -45,8 +56,16 @@ export function VisitEvidenceSequence({
   frames,
   surfaceOverlay,
   keyboardControls = false,
+  recommendedMediaAssetId,
+  recommendationNote,
 }: VisitEvidenceSequenceProps) {
-  const initialFrameIndex = Math.max(0, frames.findIndex((frame) => frame.is_primary));
+  const persistedPrimaryIndex = Math.max(0, frames.findIndex((frame) => frame.is_primary));
+  const recommendedIndex = recommendedMediaAssetId
+    ? frames.findIndex((frame) => frame.media_asset_id === recommendedMediaAssetId)
+    : -1;
+  // The persisted primary is still what the detector/tracker selected; a
+  // recommendation only changes which frame opens first, never that fact.
+  const initialFrameIndex = recommendedIndex >= 0 ? recommendedIndex : persistedPrimaryIndex;
   const [selectedIndex, setSelectedIndex] = useState(initialFrameIndex);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
@@ -101,7 +120,8 @@ export function VisitEvidenceSequence({
     return null;
   }
 
-  const primaryFrameIndex = Math.max(0, frames.findIndex((frame) => frame.is_primary));
+  const isViewingRecommended =
+    recommendedIndex >= 0 && selectedIndex === recommendedIndex && recommendedIndex !== persistedPrimaryIndex;
   const previewUrl = (frame: VisitEvidenceFrame) => `${apiClient.baseUrl}${frame.preview_url}`;
   const fullResolutionUrl = (frame: VisitEvidenceFrame) =>
     `${apiClient.baseUrl}/api/media/${frame.media_asset_id}/full-resolution`;
@@ -119,8 +139,32 @@ export function VisitEvidenceSequence({
         )}
         {selectedFrame.is_primary ? surfaceOverlay : null}
       </div>
+      {recommendedIndex >= 0 && recommendedIndex !== persistedPrimaryIndex ? (
+        <div className="review-evidence-recommendation">
+          <EvidenceBadge label="Recommended view" tone="evidence" />
+          <span>
+            {recommendationNote ??
+              "A different saved frame from this Visit may show the subject more clearly than the auto-selected primary crop."}
+          </span>
+          {selectedIndex !== recommendedIndex ? (
+            <button
+              className="text-action"
+              onClick={() => { setSelectedIndex(recommendedIndex); setIsPlaying(false); }}
+              type="button"
+            >
+              View recommended frame
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <div className="review-evidence-sequence-meta">
-        <strong>{selectedFrame.is_primary ? "Primary evidence" : "Supporting evidence"}</strong>
+        <strong>
+          {selectedFrame.is_primary
+            ? "Primary evidence"
+            : isViewingRecommended
+              ? "Recommended view (supporting evidence)"
+              : "Supporting evidence"}
+        </strong>
         <span>{formatDateTime(selectedFrame.captured_at)}</span>
         <span>{relativeLabel(selectedFrame)}</span>
         <span>{evidenceRoleLabel(selectedFrame)}</span>
@@ -165,8 +209,8 @@ export function VisitEvidenceSequence({
         </button>
         <button
           className="text-action"
-          disabled={selectedIndex === primaryFrameIndex}
-          onClick={() => setSelectedIndex(primaryFrameIndex)}
+          disabled={selectedIndex === persistedPrimaryIndex}
+          onClick={() => setSelectedIndex(persistedPrimaryIndex)}
           type="button"
         >
           Primary
@@ -200,7 +244,13 @@ export function VisitEvidenceSequence({
               type="button"
             >
               <img alt="" src={previewUrl(frame)} />
-              <span>{frame.is_primary ? "Primary" : evidenceRoleLabel(frame)}</span>
+              <span>
+                {frame.is_primary
+                  ? "Primary"
+                  : recommendedMediaAssetId && frame.media_asset_id === recommendedMediaAssetId
+                    ? "Recommended"
+                    : evidenceRoleLabel(frame)}
+              </span>
             </button>
           ))}
         </div>
