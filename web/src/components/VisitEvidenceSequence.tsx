@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { apiClient } from "../api/client";
 import type { VisitEvidenceFrame } from "../api/types";
 import { EvidenceBadge } from "./EvidenceBadge";
+import { EvidenceZoomControls, EvidenceZoomViewport, useEvidenceZoom } from "./EvidenceImageViewer";
 import { formatDateTime } from "../utils";
 
 interface VisitEvidenceSequenceProps {
@@ -125,20 +126,30 @@ export function VisitEvidenceSequence({
   const previewUrl = (frame: VisitEvidenceFrame) => `${apiClient.baseUrl}${frame.preview_url}`;
   const fullResolutionUrl = (frame: VisitEvidenceFrame) =>
     `${apiClient.baseUrl}/api/media/${frame.media_asset_id}/full-resolution`;
+  // One shared zoom/pan/focus state for the currently-selected frame. The
+  // viewport (pannable image) and controls (toolbar) render from it in two
+  // different places below -- see the module comment in EvidenceImageViewer.
+  const zoom = useEvidenceZoom({
+    alt: `Visit evidence captured ${formatDateTime(selectedFrame.captured_at)}`,
+    frameKey: selectedFrame.media_asset_id,
+    fullResolutionSrc: fullResolutionUrl(selectedFrame),
+    naturalHeight: selectedFrame.height,
+    naturalWidth: selectedFrame.width,
+    onPreviewError: () => setIsPreviewUnavailable(true),
+    previewSrc: previewUrl(selectedFrame),
+    subjectBox: selectedFrame.normalized_track_box,
+  });
   return (
     <div className="review-evidence-sequence">
       <div className="review-evidence-sequence-image">
         {isPreviewUnavailable ? (
           <span className="review-evidence-preview-unavailable">Saved preview is unavailable.</span>
         ) : (
-          <img
-            alt={`Visit evidence captured ${formatDateTime(selectedFrame.captured_at)}`}
-            onError={() => setIsPreviewUnavailable(true)}
-            src={previewUrl(selectedFrame)}
-          />
+          <EvidenceZoomViewport zoom={zoom} />
         )}
         {selectedFrame.is_primary ? surfaceOverlay : null}
       </div>
+      {isPreviewUnavailable ? null : <EvidenceZoomControls zoom={zoom} />}
       {recommendedIndex >= 0 && recommendedIndex !== persistedPrimaryIndex ? (
         <div className="review-evidence-recommendation">
           <EvidenceBadge label="Recommended view" tone="evidence" />
@@ -170,11 +181,6 @@ export function VisitEvidenceSequence({
         <span>{evidenceRoleLabel(selectedFrame)}</span>
         {selectedFrame.width && selectedFrame.height ? (
           <span>{selectedFrame.width} × {selectedFrame.height}</span>
-        ) : null}
-        {selectedFrame.evidence_role === "high_resolution_original" ? (
-          <a href={fullResolutionUrl(selectedFrame)} rel="noreferrer" target="_blank">
-            Open full-resolution original
-          </a>
         ) : null}
       </div>
       <div className="review-evidence-sequence-controls">

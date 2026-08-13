@@ -1522,6 +1522,15 @@ export interface VisitEvidenceFrame {
   height?: number | null;
   evidence_role: string;
   normalized_crop_box?: number[] | null;
+  /**
+   * Only present when this exact frame still spans the camera's full field
+   * of view and an already-proven alignment transform vouches for it (see
+   * `_frame_local_subject_box` in product_repository.py). A derived/cropped
+   * frame (e.g. `activity_crop`) never carries one -- treat absence as "no
+   * trustworthy box for this frame", never as a reason to reuse another
+   * frame's box.
+   */
+  normalized_track_box?: number[] | null;
 }
 
 /**

@@ -2133,6 +2133,12 @@ class VisitEvidenceFrame(BaseModel):
     height: int | None = Field(default=None, ge=1)
     evidence_role: str = "monitoring_frame"
     normalized_crop_box: list[float] | None = None
+    # Only populated when this exact frame still spans the camera's full
+    # field of view and an already-proven alignment transform vouches for
+    # the fraction (see `_frame_local_subject_box` in product_repository.py).
+    # A derived/cropped frame (e.g. `activity_crop`) omits this rather than
+    # reprojecting a box computed for a different frame's own pixels.
+    normalized_track_box: list[float] | None = None
 
 class EffectivePrimaryEvidence(BaseModel):
     selected_media_asset_id: str | None = None

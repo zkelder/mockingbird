@@ -13855,6 +13855,11 @@ class ProductRepository:
                     _normalized_box_from_json(asset.normalized_crop_box_json)
                     or _normalized_box_from_json(asset.normalized_padded_crop_box_json)
                 ),
+                normalized_track_box=_frame_local_subject_box(
+                    _normalized_box_from_json(asset.normalized_track_box_json),
+                    alignment_status=asset.alignment_status,
+                    parent_media_asset_id=asset.parent_media_asset_id,
+                ),
             )
             for link, asset in parsed
         ]
@@ -13912,6 +13917,11 @@ class ProductRepository:
                 evidence_role=asset.evidence_role or "monitoring_frame",
                 normalized_crop_box=(
                     asset.normalized_crop_box or asset.normalized_padded_crop_box
+                ),
+                normalized_track_box=_frame_local_subject_box(
+                    asset.normalized_track_box,
+                    alignment_status=asset.alignment_status,
+                    parent_media_asset_id=asset.parent_media_asset_id,
                 ),
             )
         ]
@@ -15259,7 +15269,17 @@ class ProductRepository:
             return []
 
         parsed: list[
-            tuple[datetime, int | None, str, bool, str, int | None, int | None, str]
+            tuple[
+                datetime,
+                int | None,
+                str,
+                bool,
+                str,
+                int | None,
+                int | None,
+                str,
+                list[float] | None,
+            ]
         ] = []
         seen_media_ids: set[str] = set()
         for raw_frame in raw_frames[:MAX_LIVE_VISIT_EVIDENCE_FRAMES]:
@@ -15289,6 +15309,11 @@ class ProductRepository:
                     _optional_string(raw_frame.get("evidence_role"))
                     or asset.evidence_role
                     or "monitoring_frame",
+                    _frame_local_subject_box(
+                        _normalized_box_from_json(asset.normalized_track_box_json),
+                        alignment_status=asset.alignment_status,
+                        parent_media_asset_id=asset.parent_media_asset_id,
+                    ),
                 )
             )
 
@@ -15330,6 +15355,7 @@ class ProductRepository:
                 width=width if width and width > 0 else None,
                 height=height if height and height > 0 else None,
                 evidence_role=evidence_role,
+                normalized_track_box=normalized_track_box,
             )
             for (
                 captured_at,
@@ -15340,6 +15366,7 @@ class ProductRepository:
                 width,
                 height,
                 evidence_role,
+                normalized_track_box,
             ) in parsed
         ]
 
@@ -28589,6 +28616,34 @@ def _normalized_box_from_json(value: str | None) -> list[float] | None:
         return [float(item) for item in parsed]
     except (TypeError, ValueError):
         return None
+
+
+def _frame_local_subject_box(
+    normalized_track_box: list[float] | None,
+    *,
+    alignment_status: str | None,
+    parent_media_asset_id: str | None,
+) -> list[float] | None:
+    """The subject box for exactly one saved evidence frame, or None.
+
+    `normalized_track_box` (see `create_live_motion_frame_media_asset` and
+    `mockingbird.motion.high_resolution_evidence.resolve_alignment`) is a
+    fraction of the camera's full field of view, not of any one saved
+    image's own pixel crop -- it is only meaningful against a frame that
+    itself still spans that full field of view, and only once
+    `resolve_alignment` has already proven the monitoring/evidence profiles
+    share it (``alignment_status == "aligned"``, the same signal
+    `local_activity_diagnostic` already trusts elsewhere). A frame derived
+    from another asset (`parent_media_asset_id` set -- an `activity_crop` or
+    `user_refined_crop`) no longer spans the full field of view, so the
+    identical fraction would land on the wrong pixels there; this omits the
+    box for that frame rather than reprojecting it into a coordinate space
+    no already-proven transform covers.
+    """
+
+    if parent_media_asset_id is not None or alignment_status != "aligned":
+        return None
+    return normalized_track_box
 
 
 def _detector_bbox_to_json(bbox) -> str | None:

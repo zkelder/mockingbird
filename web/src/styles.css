@@ -3180,6 +3180,93 @@ a.secondary-action {
   text-align: center;
 }
 
+/* Manual zoom/pan viewer -- fills the existing .review-evidence-sequence-image
+   box exactly (see EvidenceImageViewer.tsx for why the toolbar below renders
+   outside that box instead of inside it). */
+.evidence-zoom-viewport {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  cursor: zoom-in;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.evidence-zoom-viewport.is-zoomed {
+  cursor: grab;
+}
+
+.evidence-zoom-viewport.is-zoomed:active {
+  cursor: grabbing;
+}
+
+.evidence-zoom-stage {
+  position: absolute;
+}
+
+.evidence-zoom-stage img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.evidence-zoom-subject-box {
+  position: absolute;
+  box-sizing: border-box;
+  z-index: 1;
+  border: 2px solid #e8a53d;
+  border-radius: 4px;
+  background: rgb(232 165 61 / 12%);
+  box-shadow: 0 0 0 1px rgb(17 29 24 / 55%);
+  pointer-events: none;
+}
+
+.evidence-zoom-subject-box span {
+  position: absolute;
+  bottom: calc(100% + 2px);
+  left: -2px;
+  border-radius: 5px;
+  padding: 2px 5px;
+  background: rgb(17 29 24 / 88%);
+  color: #ffffff;
+  font-size: 0.68rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.evidence-zoom-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.evidence-zoom-controls .secondary-action,
+.evidence-zoom-controls .text-action {
+  padding: 5px 8px;
+  font-size: 0.78rem;
+}
+
+.evidence-zoom-level {
+  min-width: 3.4em;
+  text-align: center;
+  color: #56665c;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.evidence-zoom-overlay-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #56665c;
+  font-size: 0.78rem;
+}
+
 .review-evidence-recommendation {
   display: flex;
   flex-wrap: wrap;

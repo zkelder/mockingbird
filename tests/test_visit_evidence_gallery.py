@@ -423,3 +423,86 @@ def test_missing_media_file_is_reported_unavailable_without_losing_other_frames(
     healthy_preview = client.get(f"/api/media/{ids['crop']}/preview")
     assert healthy_preview.status_code == 200
     assert healthy_preview.headers["content-type"].startswith("image/jpeg")
+
+
+def test_subject_box_is_exposed_only_on_the_frame_it_actually_belongs_to(
+    evidence_repository: ProductRepository,
+) -> None:
+    """WORKING APP v1 -- Evidence Zoom + Focus.
+
+    `_build_off_target_visit` seeds the exact real visit-motion-204/211
+    shape: the same raw `normalized_track_box` value stamped onto both the
+    full `high_resolution_original` still (where it is a fraction of that
+    frame's own full field of view) and the `activity_crop` derived from it
+    (where the identical fraction would land on the wrong pixels, since the
+    crop no longer spans the full field of view). Only the frame the box is
+    actually valid for may expose it.
+    """
+
+    ids = _build_off_target_visit(evidence_repository, "visit-gallery-subject-box")
+
+    response = client.get("/api/visits/visit-gallery-subject-box/detail")
+    assert response.status_code == 200
+    frames_by_role = {
+        frame["media_asset_id"]: frame for frame in response.json()["evidence_frames"]
+    }
+
+    full_frame = frames_by_role[ids["full"]]
+    assert full_frame["evidence_role"] == "high_resolution_original"
+    assert full_frame["normalized_track_box"] == pytest.approx([0.4593, 0.6218, 0.4889, 0.6676])
+
+    # The derived crop carries the identical raw value in its own saved
+    # row (see product_repository.create_live_motion_frame_media_asset),
+    # but must never surface it as if it were this frame's own box.
+    crop_frame = frames_by_role[ids["crop"]]
+    assert crop_frame["evidence_role"] == "activity_crop"
+    assert crop_frame["normalized_track_box"] is None
+
+    # Frames with no captured geometry at all stay honestly empty too.
+    assert frames_by_role[ids["pretrigger"]]["normalized_track_box"] is None
+    assert frames_by_role[ids["tracked"]]["normalized_track_box"] is None
+
+
+def test_unaligned_root_frame_omits_subject_box_even_without_a_parent(
+    evidence_repository: ProductRepository,
+) -> None:
+    """A root (non-derived) frame still must not expose a box unless
+    `resolve_alignment` actually proved it -- `alignment_status` other than
+    `"aligned"` means no already-proven transform vouches for the fraction,
+    even though nothing derived it from another asset."""
+
+    visit_id = "visit-gallery-unaligned-root"
+    _seed_visit(evidence_repository, visit_id, zone_id="zone-feeder")
+    captured_at = datetime.now(UTC)
+    unaligned = evidence_repository.create_live_motion_frame_media_asset(
+        source_id=SOURCE_ID,
+        stream_id=STREAM_ID,
+        content=_jpeg(1600, 1200, 70),
+        captured_at=captured_at,
+        frame_sequence=1,
+        evidence_role="high_resolution_original",
+        image_width=1600,
+        image_height=1200,
+        normalized_track_box=(0.3, 0.3, 0.4, 0.4),
+        alignment_status="full_only",
+        alignment_failure_code="geometry_unproven",
+    )
+    _attach_links_directly(
+        evidence_repository,
+        visit_id,
+        [
+            {
+                "media_asset_id": unaligned.id,
+                "captured_at": unaligned.created_at,
+                "frame_sequence": 1,
+                "is_primary": True,
+                "evidence_role": "high_resolution_original",
+            },
+        ],
+    )
+
+    response = client.get(f"/api/visits/{visit_id}/detail")
+    assert response.status_code == 200
+    frame = response.json()["evidence_frames"][0]
+    assert frame["media_asset_id"] == unaligned.id
+    assert frame["normalized_track_box"] is None
