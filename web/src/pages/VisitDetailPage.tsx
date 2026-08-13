@@ -721,6 +721,60 @@ export function VisitDetailPage({
 
       {message ? <div className="notice-panel">{message}</div> : null}
 
+      {/*
+        Primary evidence hero: the one place on this page that always shows
+        the actual saved image, for every Visit provenance. The panels below
+        (high-resolution crop, promoted evidence context, attached media)
+        each only render for one specific creation path -- legacy manual-crop
+        Visits, motion_evidence promotion, or a resolvable representative_
+        media_path -- and a Stage 7 Observation Engine candidate Visit
+        (event_type "observation_engine_candidate", evidence carried only
+        through visit_evidence_links/evidence_frames) matches none of them.
+        Before this section existed, opening one of those Visits rendered no
+        image anywhere on the page even though real evidence bytes were
+        already saved and already served correctly by the backend -- the
+        real defect this section fixes. `evidence_frames` (falling back to
+        `media_asset` for older single-frame Visits) is the one source that
+        is populated for every provenance; an explicit "Evidence unavailable"
+        state stands in only when a Visit genuinely has nothing saved, never
+        a silent blank.
+      */}
+      <section className="panel visit-evidence-panel">
+        <div className="section-heading">
+          <div>
+            <h2>Visit evidence</h2>
+            <span className="meta-text">What your camera captured for this Visit.</span>
+          </div>
+          <EvidenceBadge label="Evidence only" tone="evidence" />
+        </div>
+        <div className="visit-evidence-context-line">
+          <span>{formatDateTime(detail.event.started_at)}</span>
+          <span>
+            {detail.stream.name}
+            {detail.primary_zone
+              ? ` · ${detail.primary_zone.name} (${formatLabel(detail.primary_zone.zone_type)})`
+              : ""}
+          </span>
+          <span>
+            {detail.visit.reviewed_label
+              ? displayTaxonomyLabel(detail.visit.reviewed_label, taxonomyLabels)
+              : detail.visit.species_guess
+                ? displayTaxonomyLabel(detail.visit.species_guess, taxonomyLabels)
+                : "Unknown"}
+          </span>
+        </div>
+        {detail.evidence_frames.length > 0 ? (
+          <VisitEvidenceSequence frames={detail.evidence_frames} />
+        ) : detail.media_asset ? (
+          <MediaAssetPreview asset={detail.media_asset} />
+        ) : (
+          <div className="notice-panel compact-notice">
+            <strong>Evidence unavailable</strong>
+            <span>No saved evidence image could be found for this Visit.</span>
+          </div>
+        )}
+      </section>
+
       {fullResolutionFrame ? (
         <section className="panel high-resolution-crop-panel">
           <div className="section-heading">

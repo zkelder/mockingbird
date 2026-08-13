@@ -12,8 +12,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import cv2
+import numpy as np
 import pytest
+from fastapi.testclient import TestClient
 
+from mockingbird.api.main import app, configure_repository
 from mockingbird.api.schemas import ReviewCorrectionCreate
 from mockingbird.observation.candidate_visit_authority import ObservationAuthorityMode
 from mockingbird.repository.product_repository import (
@@ -80,6 +84,7 @@ def _create_candidate(
     stream_id: str = STREAM_ID,
     zone_id: str | None = FEEDER_ZONE_ID,
     proposal_id: str = "visit-episode:review-workflow-fixture",
+    content: bytes = JPEG_BYTES,
 ) -> str:
     repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, now=NOW)
     facts = CandidateVisitProposalFacts(
@@ -98,7 +103,7 @@ def _create_candidate(
         assembler_version="tracklet-visit-assembler-v1",
     )
     item = CandidateEvidenceItem(
-        engine_media_id="shadow-burst:hash-1", role="identification", content=JPEG_BYTES,
+        engine_media_id="shadow-burst:hash-1", role="identification", content=content,
         content_type="image/jpeg", width=1920, height=1080, captured_at=NOW, subject_geometry=(0.4, 0.4, 0.6, 0.6),
     )
     outcome = repository.create_candidate_visit_from_proposal(
@@ -108,9 +113,16 @@ def _create_candidate(
     return outcome.visit_id
 
 
-def _create_real_candidate(repository: ProductRepository, *, proposal_id: str = "visit-episode:real-fixture") -> str:
+def _create_real_candidate(
+    repository: ProductRepository,
+    *,
+    proposal_id: str = "visit-episode:real-fixture",
+    content: bytes = JPEG_BYTES,
+) -> str:
     _use_real_stream(repository)
-    return _create_candidate(repository, stream_id=REAL_STREAM_ID, zone_id=REAL_ZONE_ID, proposal_id=proposal_id)
+    return _create_candidate(
+        repository, stream_id=REAL_STREAM_ID, zone_id=REAL_ZONE_ID, proposal_id=proposal_id, content=content,
+    )
 
 
 def test_existing_review_endpoint_can_review_a_candidate_visit(repository: ProductRepository) -> None:
@@ -252,3 +264,63 @@ def test_reviewed_candidate_moves_to_the_reviewed_review_queue_tab(repository: P
     assert visit_id in reviewed
     reviewed_item = next(item for item in repository.review_queue_items(include_reviewed=True) if item.visit_id == visit_id)
     assert reviewed_item.product_category == "reviewed"
+
+
+# --- Working App v1: Visit detail API evidence-reference contract ---------
+#
+# Real regression, found live against the real development database and
+# fixed on the frontend (web/src/pages/VisitDetailPage.tsx): every image-
+# rendering section on Visit Detail was gated on a provenance fact a Stage 7
+# candidate never carries -- `motion_evidence` (legacy MotionEvidence-
+# promotion Visits only), `media_asset` (resolved only from
+# `representative_media_path`, which Stage 7 creation deliberately never
+# sets -- evidence lives only in `visit_evidence_links`), or an evidence
+# frame with role `high_resolution_original` (the manual-crop workflow's own
+# role, never one Stage 7 evidence-scoring produces: `identification`/
+# `context`/`alternate`). A real reviewer opening a real Stage 7 candidate
+# Visit therefore saw no image anywhere on the page, despite the backend
+# already correctly persisting and serving the real evidence bytes. This
+# test pins the API contract the frontend fix now depends on -- a Stage 7
+# candidate's `evidence_frames` must carry a usable, populated evidence
+# reference through the exact same "no media_asset, no motion_evidence" gap
+# that caused the defect -- so a future change to evidence-frame population
+# cannot silently reopen it.
+def test_visit_detail_api_serves_a_usable_evidence_reference_for_a_candidate_visit(
+    repository: ProductRepository,
+) -> None:
+    # A genuine, decodable JPEG (not the shared fake `JPEG_BYTES` header/
+    # trailer soup every other fixture in this file uses) so the final
+    # assertion below proves the same cv2-decode path `/api/media/{id}
+    # /preview` actually uses in production, matching what real Stage 7
+    # burst evidence always is -- a real encoded camera frame.
+    real_jpeg = cv2.imencode(".jpg", np.zeros((8, 8, 3), dtype=np.uint8))[1].tobytes()
+
+    visit_id = _create_real_candidate(repository, content=real_jpeg)
+    configure_repository(repository)
+    try:
+        client = TestClient(app)
+        response = client.get(f"/api/visits/{visit_id}/detail")
+        assert response.status_code == 200
+        body = response.json()
+
+        # The exact gap every gated Visit Detail panel fell through.
+        assert body["media_asset"] is None
+        assert body["motion_evidence"] is None
+        assert body["event"]["event_type"] == "observation_engine_candidate"
+        assert not any(
+            frame["evidence_role"] == "high_resolution_original" for frame in body["evidence_frames"]
+        )
+
+        # The one source every image-rendering section must fall back to.
+        assert len(body["evidence_frames"]) == 1
+        frame = body["evidence_frames"][0]
+        assert frame["is_primary"] is True
+        assert frame["preview_url"] == f"/api/media/{frame['media_asset_id']}/preview"
+
+        # The referenced media is real and actually servable, not a dangling id.
+        media_response = client.get(frame["preview_url"])
+        assert media_response.status_code == 200
+        assert media_response.headers["content-type"] == "image/jpeg"
+        assert len(media_response.content) > 0
+    finally:
+        configure_repository(None)
