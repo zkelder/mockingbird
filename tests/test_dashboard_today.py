@@ -377,3 +377,169 @@ def test_today_summary_bounds_moments_and_help_with_honest_deterministic_media(
     assert [visit.id for visit in first.today.needs_help] == [
         visit.id for visit in second.today.needs_help
     ]
+
+
+# --- Automatic Species Suggestion v1: `likely_today` provisional grouping --
+
+
+def _add_species_suggestion(
+    repository: ProductRepository,
+    *,
+    visit_id: str,
+    event_id: str,
+    label: str,
+) -> None:
+    from mockingbird.api.schemas import SpeciesSuggestionCreateRequest
+
+    repository.create_species_suggestion(
+        SpeciesSuggestionCreateRequest(
+            stream_id=STREAM_ID,
+            event_id=event_id,
+            visit_id=visit_id,
+            adapter_id="fixture_bioclip",
+            adapter_name="Fixture BioCLIP",
+            suggested_label=label,
+        )
+    )
+
+
+def _confirm_visit(
+    repository: ProductRepository,
+    *,
+    visit_id: str,
+    label: str,
+    at: datetime,
+) -> None:
+    """Simulate what the real correction endpoint does: set the Visit's own
+    reviewed fields and append an authoritative ReviewLabel row."""
+
+    with repository.session_factory() as session:
+        with session.begin():
+            visit = session.get(VisitModel, visit_id)
+            assert visit is not None
+            visit.reviewed_label = label
+            visit.review_status = "reviewed"
+            session.add(
+                ReviewLabelModel(
+                    id=f"review-label-confirm-{visit_id}",
+                    target_type="visit",
+                    target_id=visit_id,
+                    label=label,
+                    notes=None,
+                    created_at=at,
+                )
+            )
+
+
+def test_today_summary_likely_today_groups_unreviewed_suggested_species(
+    repository: ProductRepository,
+) -> None:
+    noon = datetime(2026, 7, 29, 12, tzinfo=LOCAL_TIMEZONE)
+    _add_visit(repository, visit_id="likely-house-finch", observed_at=_utc(noon))
+    _add_species_suggestion(
+        repository,
+        visit_id="likely-house-finch",
+        event_id="event-likely-house-finch",
+        label="house_finch",
+    )
+
+    summary = repository.dashboard_summary(now=LOCAL_NOW, local_date=SELECTED_DAY)
+
+    assert [species.label for species in summary.today.likely_today] == ["house_finch"]
+    likely = summary.today.likely_today[0]
+    assert likely.is_confirmed is False
+    assert likely.latest_visit.id == "likely-house-finch"
+    # A provisional suggestion is useful in Today, but it is never counted
+    # as, or mixed into, confirmed reviewed truth.
+    assert "house_finch" not in {species.label for species in summary.today.new_today}
+    assert "house_finch" not in {species.label for species in summary.today.recent_regulars}
+    assert summary.today.confirmed_species_count == 0
+
+
+def test_today_summary_likely_today_excludes_reviewed_and_non_species_suggestions(
+    repository: ProductRepository,
+) -> None:
+    noon = datetime(2026, 7, 29, 12, tzinfo=LOCAL_TIMEZONE)
+    # Confirmed truth always wins and is never duplicated into likely_today,
+    # even when a stale suggestion also exists for the same Visit.
+    _add_visit(
+        repository,
+        visit_id="confirmed-cardinal",
+        observed_at=_utc(noon),
+        reviewed_label="northern_cardinal",
+    )
+    _add_species_suggestion(
+        repository,
+        visit_id="confirmed-cardinal",
+        event_id="event-confirmed-cardinal",
+        label="house_finch",
+    )
+    # "Not Animal" removes provisional wildlife interpretation even though a
+    # species suggestion exists for the same Visit.
+    _add_visit(
+        repository,
+        visit_id="false-positive-with-guess",
+        observed_at=_utc(noon),
+        reviewed_label="false_positive",
+    )
+    _add_species_suggestion(
+        repository,
+        visit_id="false-positive-with-guess",
+        event_id="event-false-positive-with-guess",
+        label="house_finch",
+    )
+    # A generic (non-species) suggested label must never create a fake
+    # species tile.
+    _add_visit(repository, visit_id="generic-bird-guess", observed_at=_utc(noon))
+    _add_species_suggestion(
+        repository,
+        visit_id="generic-bird-guess",
+        event_id="event-generic-bird-guess",
+        label="bird",
+    )
+
+    summary = repository.dashboard_summary(now=LOCAL_NOW, local_date=SELECTED_DAY)
+
+    assert summary.today.likely_today == []
+
+
+def test_today_summary_moves_from_likely_to_confirmed_without_duplication(
+    repository: ProductRepository,
+) -> None:
+    """Model suggests House Finch; human later confirms Northern Cardinal.
+    The same Visit must resolve to exactly one species entry -- the human
+    correction -- never both, and never the stale suggestion."""
+
+    noon = datetime(2026, 7, 29, 12, tzinfo=LOCAL_TIMEZONE)
+    _add_visit(repository, visit_id="finch-then-confirmed", observed_at=_utc(noon))
+    _add_species_suggestion(
+        repository,
+        visit_id="finch-then-confirmed",
+        event_id="event-finch-then-confirmed",
+        label="house_finch",
+    )
+
+    before = repository.dashboard_summary(now=LOCAL_NOW, local_date=SELECTED_DAY)
+    assert [species.label for species in before.today.likely_today] == ["house_finch"]
+    assert before.today.new_today == []
+
+    _confirm_visit(
+        repository,
+        visit_id="finch-then-confirmed",
+        label="northern_cardinal",
+        at=_utc(noon) + timedelta(minutes=5),
+    )
+
+    after = repository.dashboard_summary(now=LOCAL_NOW, local_date=SELECTED_DAY)
+    assert after.today.likely_today == []
+    assert [species.label for species in after.today.new_today] == ["northern_cardinal"]
+    all_entries_for_visit = [
+        species.label
+        for species in [
+            *after.today.new_today,
+            *after.today.recent_regulars,
+            *after.today.likely_today,
+        ]
+        if species.latest_visit.id == "finch-then-confirmed"
+    ]
+    assert all_entries_for_visit == ["northern_cardinal"]

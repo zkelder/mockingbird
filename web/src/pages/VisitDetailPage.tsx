@@ -621,6 +621,15 @@ export function VisitDetailPage({
     isBirdReviewLabel(detail.visit.reviewed_label, taxonomyLabels) ||
     isBirdReviewLabel(detail.visit.species_guess, taxonomyLabels) ||
     isBirdReviewLabel(detail.visit.subject_label, taxonomyLabels);
+  // Lightweight Likely/Confirmed distinction (Automatic Species Suggestion
+  // v1): human-reviewed truth always wins, so a reviewed_label present here
+  // is always Confirmed; an automatic species_guess with no reviewed_label
+  // yet is a provisional AI suggestion, never truth.
+  const identificationBadge = detail.visit.reviewed_label
+    ? { label: "Confirmed", tone: "good" as const }
+    : detail.visit.species_guess
+      ? { label: "Likely — AI suggestion", tone: "quiet" as const }
+      : null;
   const isMotionEvidenceVisit = detail.event.event_type === "motion_evidence";
   const webhookProvenance = detail.motion_evidence
     ? getWebhookEvidenceProvenance(detail.motion_evidence)
@@ -666,6 +675,21 @@ export function VisitDetailPage({
       )
     : "";
   const sortedSpeciesSuggestions = [...speciesSuggestions].sort(compareSpeciesSuggestions);
+  // A lightweight "Other possibilities" hint next to the headline itself
+  // (item 6 of the Automatic Species Suggestion v1 milestone): the current
+  // top suggestion's own alternatives, never the full ranked-table detail
+  // already available lower on the page in Species Suggestions.
+  const headlineAlternativeNames = !detail.visit.reviewed_label
+    ? (sortedSpeciesSuggestions[0]?.alternatives ?? [])
+        .slice(0, 2)
+        .map((alternative) => {
+          const rawLabel = alternative["suggested_label"] ?? alternative["label"];
+          return typeof rawLabel === "string" && rawLabel
+            ? displayTaxonomyLabel(rawLabel, taxonomyLabels)
+            : null;
+        })
+        .filter((name): name is string => name !== null)
+    : [];
   const fullResolutionFrame = detail.evidence_frames.find(
     (frame) => frame.evidence_role === "high_resolution_original",
   ) ?? null;
@@ -716,8 +740,14 @@ export function VisitDetailPage({
             label={formatLabel(detail.visit.review_status)}
             tone={detail.visit.review_status === "needs_review" ? "review" : "good"}
           />
+          {identificationBadge ? (
+            <StatusPill label={identificationBadge.label} tone={identificationBadge.tone} />
+          ) : null}
           <h1>{displayTaxonomyLabel(visitLabel, taxonomyLabels)} visit</h1>
           <p>{detail.review_summary}</p>
+          {headlineAlternativeNames.length > 0 ? (
+            <p className="meta-text">Other possibilities: {headlineAlternativeNames.join(", ")}</p>
+          ) : null}
         </div>
         <StatusPill
           label={

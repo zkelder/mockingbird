@@ -112,6 +112,7 @@ import type {
   MotionEvidenceListResponse,
   MotionEvidencePromoteRequest,
   MotionEvidencePromoteResponse,
+  LikelySpeciesOverviewResponse,
   MotionEvidenceStatus,
   MotionEvaluateSavedMediaRequest,
   MotionEvaluateSavedMediaResponse,
@@ -1146,6 +1147,8 @@ export const apiClient = {
     request<WildlifeJournalOverviewResponse>(
       `/api/bird-log/journal?${new URLSearchParams({ order }).toString()}`,
     ),
+  getLikelySpeciesOverview: () =>
+    request<LikelySpeciesOverviewResponse>("/api/bird-log/likely"),
   getWildlifeJournalHistory: (label: string, params: WildlifeJournalHistoryRequest = {}) => {
     const searchParams = new URLSearchParams();
     if (params.preset) searchParams.set("preset", params.preset);

@@ -1715,6 +1715,7 @@ export interface DashboardTodaySpecies {
   display_name: string;
   distinct_days_seen: number;
   latest_visit: DashboardVisitSummary;
+  is_confirmed: boolean;
 }
 
 export interface DashboardTodayZoneActivity {
@@ -1736,6 +1737,7 @@ export interface DashboardTodaySummary {
   best_moments: DashboardVisitSummary[];
   new_today: DashboardTodaySpecies[];
   recent_regulars: DashboardTodaySpecies[];
+  likely_today: DashboardTodaySpecies[];
   activity_by_zone: DashboardTodayZoneActivity[];
   activity_by_hour: DashboardTodayHourActivity[];
   needs_help: DashboardVisitSummary[];
@@ -3967,6 +3969,14 @@ export interface WildlifeJournalLabelSummary {
 export interface WildlifeJournalOverviewResponse {
   order: WildlifeJournalOrder;
   labels: WildlifeJournalLabelSummary[];
+}
+
+// Bird Log's provisional counterpart to the confirmed-only Wildlife Journal
+// overview above: currently-unreviewed Visits grouped by an automatic
+// top-1 BioCLIP suggestion. `DashboardTodaySpecies.is_confirmed` is always
+// false here -- see the Automatic Species Suggestion v1 milestone.
+export interface LikelySpeciesOverviewResponse {
+  species: DashboardTodaySpecies[];
 }
 
 export interface WildlifeJournalBreakdown {

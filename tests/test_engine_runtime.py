@@ -573,6 +573,79 @@ def test_end_to_end_creates_one_candidate_and_activates_authority(repository: Pr
     assert repository.get_observation_authority_state().mode == "shadow"
 
 
+class _RecordingAutomaticIdentificationAssist:
+    """A bounded double for `AutomaticReviewIdentificationAssist`: records
+    every `.schedule()` call without running any real BioCLIP inference.
+    The real assist class already has its own dedicated test coverage
+    (tests/test_automatic_review_identification.py); this only proves the
+    engine-session integration boundary -- correct visit_id, correct
+    repository type, and (see the failure test below) that a raising assist
+    can never take down candidate admission."""
+
+    def __init__(self, *, raises: bool = False) -> None:
+        self.raises = raises
+        self.calls: list[tuple[object, str]] = []
+
+    def schedule(self, repository: object, *, visit_id: str, on_update: object) -> bool:
+        self.calls.append((repository, visit_id))
+        if self.raises:
+            raise RuntimeError("fixture_automatic_identification_failure")
+        return True
+
+
+def test_end_to_end_schedules_automatic_identification_for_the_created_visit(
+    repository: ProductRepository,
+) -> None:
+    """Automatic Species Suggestion v1: a durably-created candidate Visit is
+    handed to the bounded automatic identification assist, non-blocking and
+    without altering ordinary candidate creation."""
+
+    assist = _RecordingAutomaticIdentificationAssist()
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: _FixtureTransport(),
+        automatic_identification_assist=assist,
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "stopped", timeout=10.0)
+
+    status = manager.status(STREAM_ID)
+    assert status.counts.candidates_created == 1
+    assert assist.calls == [(repository, status.last_candidate_visit_id)]
+
+
+def test_end_to_end_survives_automatic_identification_assist_raising(
+    repository: ProductRepository,
+) -> None:
+    """A species-model problem must never take down candidate admission or
+    this Stream's own tick loop (species inference MUST NOT block Visit
+    creation)."""
+
+    assist = _RecordingAutomaticIdentificationAssist(raises=True)
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: _FixtureTransport(),
+        automatic_identification_assist=assist,
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "stopped", timeout=10.0)
+
+    status = manager.status(STREAM_ID)
+    assert status.state == "stopped"
+    assert status.counts.candidates_created == 1
+    assert status.last_candidate_visit_id is not None
+    assert len(assist.calls) == 1
+
+    with repository.session_factory() as session:
+        from mockingbird.repository.product_repository import VisitModel
+
+        visit = session.get(VisitModel, status.last_candidate_visit_id)
+        assert visit is not None
+        assert visit.review_status == "needs_review"
+
+
 def test_end_to_end_suppresses_insufficient_evidence_without_creating_a_visit(
     repository: ProductRepository,
 ) -> None:

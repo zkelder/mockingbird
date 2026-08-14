@@ -5,6 +5,28 @@ export function formatLabel(value: string): string {
     .join(" ");
 }
 
+/**
+ * The normal-consumer species answer for one Visit summary: human-confirmed
+ * truth first, otherwise an automatic AI suggestion prefixed "Likely" so it
+ * is never mistaken for reviewed truth, otherwise null (caller falls back
+ * to its own "not confirmed" copy). Mirrors the resolution rule the backend
+ * already applies everywhere `reviewed_label ?? species_guess` is read --
+ * see the Automatic Species Suggestion v1 milestone.
+ */
+export function effectiveSpeciesText(visit: {
+  reviewed_label?: string | null;
+  has_suggestion?: boolean;
+  suggested_label?: string | null;
+}): string | null {
+  if (visit.reviewed_label) {
+    return formatLabel(visit.reviewed_label);
+  }
+  if (visit.has_suggestion && visit.suggested_label) {
+    return `Likely ${formatLabel(visit.suggested_label)}`;
+  }
+  return null;
+}
+
 export function formatDateTime(value: string): string {
   return new Intl.DateTimeFormat(undefined, {
     month: "short",

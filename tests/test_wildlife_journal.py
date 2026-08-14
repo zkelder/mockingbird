@@ -120,6 +120,7 @@ def add_visit(
     zone_id: str = ZONE_A,
     is_superseded: bool = False,
     with_media: bool = False,
+    species_guess: str | None = "unknown_bird",
 ) -> None:
     event_id = f"event-{visit_id}"
     with repository.session_factory() as session:
@@ -141,7 +142,7 @@ def add_visit(
                     id=visit_id,
                     event_id=event_id,
                     subject_label="bird",
-                    species_guess="unknown_bird",
+                    species_guess=species_guess,
                     confidence=None,
                     reviewed_label=None,
                     review_status="needs_review",
@@ -518,3 +519,138 @@ async def test_journal_handles_empty_valid_and_malformed_labels_safely(
     assert malformed.status_code == 404
     invalid_range = await client.get("/api/bird-log/journal/northern_cardinal?preset=custom")
     assert invalid_range.status_code == 422
+
+
+# --- Automatic Species Suggestion v1: Bird Log's provisional section -------
+
+
+def add_species_suggestion(
+    repository: ProductRepository,
+    *,
+    visit_id: str,
+    event_id: str,
+    stream_id: str,
+    label: str,
+) -> None:
+    from mockingbird.api.schemas import SpeciesSuggestionCreateRequest
+
+    repository.create_species_suggestion(
+        SpeciesSuggestionCreateRequest(
+            stream_id=stream_id,
+            event_id=event_id,
+            visit_id=visit_id,
+            adapter_id="fixture_bioclip",
+            adapter_name="Fixture BioCLIP",
+            suggested_label=label,
+        )
+    )
+
+
+async def test_likely_species_overview_shows_unreviewed_suggestions_only(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    add_graph(isolated_repository)
+    started_at = datetime(2026, 7, 20, 9, 0, tzinfo=UTC)
+
+    add_visit(isolated_repository, visit_id="visit-likely-1", started_at=started_at)
+    add_species_suggestion(
+        isolated_repository,
+        visit_id="visit-likely-1",
+        event_id="event-visit-likely-1",
+        stream_id=STREAM_A,
+        label="house_finch",
+    )
+
+    # A second, later Visit suggested and reviewed as a real species: must
+    # appear in the confirmed Journal, never in the provisional endpoint.
+    add_visit(isolated_repository, visit_id="visit-confirmed", started_at=started_at + timedelta(minutes=5))
+    add_species_suggestion(
+        isolated_repository,
+        visit_id="visit-confirmed",
+        event_id="event-visit-confirmed",
+        stream_id=STREAM_A,
+        label="blue_jay",
+    )
+    await review(client, "visit-confirmed", "blue_jay")
+
+    # A suggestion whose label is not a real species must never fabricate a tile.
+    add_visit(isolated_repository, visit_id="visit-generic", started_at=started_at + timedelta(minutes=10))
+    add_species_suggestion(
+        isolated_repository,
+        visit_id="visit-generic",
+        event_id="event-visit-generic",
+        stream_id=STREAM_A,
+        label="bird",
+    )
+
+    likely = await client.get("/api/bird-log/likely")
+    assert likely.status_code == 200
+    species = likely.json()["species"]
+    assert [item["label"] for item in species] == ["house_finch"]
+    assert species[0]["is_confirmed"] is False
+    assert species[0]["latest_visit"]["id"] == "visit-likely-1"
+
+    journal = await client.get("/api/bird-log/journal")
+    assert [item["label"] for item in journal.json()["labels"]] == ["blue_jay"]
+
+
+async def test_likely_species_overview_moves_to_journal_after_confirmation(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    add_graph(isolated_repository)
+    started_at = datetime(2026, 7, 21, 9, 0, tzinfo=UTC)
+    add_visit(isolated_repository, visit_id="visit-flip", started_at=started_at)
+    add_species_suggestion(
+        isolated_repository,
+        visit_id="visit-flip",
+        event_id="event-visit-flip",
+        stream_id=STREAM_A,
+        label="house_finch",
+    )
+
+    before = await client.get("/api/bird-log/likely")
+    assert [item["label"] for item in before.json()["species"]] == ["house_finch"]
+
+    # The human corrects the AI suggestion outright.
+    await review(client, "visit-flip", "northern_cardinal")
+
+    after = await client.get("/api/bird-log/likely")
+    assert after.json()["species"] == []
+    journal = await client.get("/api/bird-log/journal")
+    assert [item["label"] for item in journal.json()["labels"]] == ["northern_cardinal"]
+
+
+async def test_likely_species_overview_finds_a_suggestion_even_without_species_guess(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    """`species_guess` is a convenience write from the automatic BioCLIP
+    path only (see `_apply_species_guess_from_suggestion`); the provisional
+    Bird Log grouping itself must still recognize a current SpeciesSuggestion
+    for a Visit that never got that convenience write -- for example a
+    Stage 7 Observation Engine candidate Visit (`species_guess=None` at
+    creation) whose suggestion came from a manual/batch/non-BioCLIP route."""
+
+    add_graph(isolated_repository)
+    started_at = datetime(2026, 7, 22, 9, 0, tzinfo=UTC)
+    add_visit(
+        isolated_repository,
+        visit_id="visit-no-species-guess",
+        started_at=started_at,
+        species_guess=None,
+    )
+    add_species_suggestion(
+        isolated_repository,
+        visit_id="visit-no-species-guess",
+        event_id="event-visit-no-species-guess",
+        stream_id=STREAM_A,
+        label="house_finch",
+    )
+
+    likely = await client.get("/api/bird-log/likely")
+    assert likely.status_code == 200
+    species = likely.json()["species"]
+    assert [item["label"] for item in species] == ["house_finch"]
+    assert species[0]["latest_visit"]["id"] == "visit-no-species-guess"

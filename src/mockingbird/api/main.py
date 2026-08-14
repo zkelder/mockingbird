@@ -92,6 +92,7 @@ from mockingbird.api.schemas import (
     FastReviewQueueNavigationResponse,
     FastReviewUndoRequest,
     FastReviewUndoResponse,
+    LikelySpeciesOverviewResponse,
     LocalCameraFrameCaptureResponse,
     LiveCameraSessionDiagnosticsResponse,
     LiveCameraSessionStatusResponse,
@@ -1435,6 +1436,13 @@ def get_observation_engine_session_manager() -> ObservationEngineSessionManager:
             # same physical Camera Node camera (see live_camera_session.
             # LiveCameraSessionManager.pause_for_observation).
             live_camera_sessions=get_live_camera_session_manager(),
+            # Automatic Species Suggestion v1: the same app-wide, bounded
+            # single-worker BioCLIP assist the legacy motion-review path
+            # already uses (see `_maybe_schedule_automatic_review_
+            # identification` below), so at most one automatic
+            # identification ever runs at a time regardless of how many
+            # Streams/paths triggered it.
+            automatic_identification_assist=get_automatic_review_identification_assist(),
         )
     return _observation_engine_session_manager
 
@@ -13466,6 +13474,15 @@ async def get_wildlife_journal(
     """Read bounded current reviewed-wildlife label summaries for Bird Log."""
 
     return get_repository().wildlife_journal_overview(WildlifeJournalOverviewRequest(order=order))
+
+
+@app.get("/api/bird-log/likely", response_model=LikelySpeciesOverviewResponse)
+async def get_likely_species_overview() -> LikelySpeciesOverviewResponse:
+    """Read bounded, currently-unreviewed automatic species suggestions for
+    Bird Log's provisional section. Never reviewed truth; see
+    `list_likely_species_overview`."""
+
+    return get_repository().list_likely_species_overview()
 
 
 @app.get(

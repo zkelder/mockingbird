@@ -92,6 +92,7 @@ from mockingbird.observation.onnx_provider import OnnxCudaObservationProvider, O
 from mockingbird.observation.visit_episode_assembler import assemble_visit_episodes, build_tracklets
 from mockingbird.repository.product_repository import ProductRepository, StreamLivePlaybackConfig
 from mockingbird.source_providers.camera_node import CameraNodeClientError
+from mockingbird.species.automatic_identification import AutomaticReviewIdentificationAssist
 from mockingbird.web_app import find_workspace_root
 
 PROVIDER_CONFIG_PATH_ENV = "MOCKINGBIRD_OBSERVATION_PROVIDER_CONFIG_PATH"
@@ -324,6 +325,7 @@ class _EngineSession:
         provider_loader: ProviderLoader = _load_real_provider,
         transport_factory: TransportFactory = _default_transport_factory,
         live_camera_sessions: LiveCameraSessionCoordinator | None = None,
+        automatic_identification_assist: AutomaticReviewIdentificationAssist | None = None,
     ) -> None:
         self.stream_id = stream_id
         self._playback_config = playback_config
@@ -333,6 +335,7 @@ class _EngineSession:
         self._provider_loader = provider_loader
         self._transport_factory = transport_factory
         self._live_camera_sessions = live_camera_sessions
+        self._automatic_identification_assist = automatic_identification_assist
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._state_lock = threading.RLock()
@@ -751,6 +754,48 @@ class _EngineSession:
         except Exception:  # pragma: no cover - defensive: must never break Stop
             pass
 
+    def _schedule_automatic_identification(self, visit_id: str) -> None:
+        """Best-effort hand-off to the bounded, single-worker automatic
+        BioCLIP assist for one freshly-created candidate Visit. Matches
+        `_pause_live_camera_session`'s own defensive convention: a bug here,
+        an unavailable local model, or a repository failure must never
+        break this Stream's own tick loop or Visit admission. Uses a fresh
+        repository handle (not the one this session already holds open for
+        its own tick loop) so the assist's own background thread never
+        shares a repository call in flight with this thread -- the same
+        separation the existing legacy-motion automatic-identification call
+        site (`api.main._maybe_schedule_automatic_review_identification`)
+        already relies on."""
+
+        if self._automatic_identification_assist is None:
+            return
+        try:
+            repository = self._repository_factory()
+        except Exception:  # pragma: no cover - defensive: must never break admission
+            return
+        try:
+            self._automatic_identification_assist.schedule(
+                repository,
+                visit_id=visit_id,
+                on_update=self._record_automatic_identification_update,
+            )
+        except Exception:  # pragma: no cover - defensive: must never break admission
+            pass
+
+    def _record_automatic_identification_update(self, update: object) -> None:
+        """Bounded, best-effort diagnostics only -- the latest automatic
+        identification status, alongside the other free-form `_advanced`
+        facts this session already exposes. Never grows unboundedly over a
+        long session, and a formatting bug here must never surface as a
+        tick-loop failure."""
+
+        try:
+            as_dict = update.as_dict()  # type: ignore[attr-defined]
+        except Exception:  # pragma: no cover - defensive: diagnostics must never raise
+            return
+        with self._state_lock:
+            self._advanced["automatic_identification"] = as_dict
+
     def _run_assembly_tick(
         self,
         *,
@@ -852,6 +897,17 @@ class _EngineSession:
                     self._last_candidate_visit_id = outcome.visit_id
                 elif outcome.outcome in BLOCKED_OUTCOMES or outcome.outcome in REJECTED_OUTCOMES or outcome.outcome in {"blocked_privacy_zone", "blocked_missing_evidence", "failed"}:
                     self._suppressed[outcome.outcome] = self._suppressed.get(outcome.outcome, 0) + 1
+            # Automatic Species Suggestion v1: a durably-created candidate
+            # Visit (evidence already committed by `create_candidate_visit_
+            # from_proposal` before `attempt_candidate` returned above) is
+            # offered to the existing bounded, single-worker BioCLIP assist
+            # -- never run inline here. Species inference must not add any
+            # latency to this tick loop, which is also this Stream's only
+            # path for observing new frames; a slow or unavailable local
+            # model can only ever leave a Visit at its honest Animal/Unknown
+            # default; it can never block or fail candidate admission.
+            if outcome.created and outcome.visit_id:
+                self._schedule_automatic_identification(outcome.visit_id)
 
 
 _MAX_CACHED_BURST_BYTES = 8
@@ -894,11 +950,13 @@ class ObservationEngineSessionManager:
         provider_loader: ProviderLoader = _load_real_provider,
         transport_factory: TransportFactory = _default_transport_factory,
         live_camera_sessions: LiveCameraSessionCoordinator | None = None,
+        automatic_identification_assist: AutomaticReviewIdentificationAssist | None = None,
     ) -> None:
         self._repository_factory = repository_factory
         self._provider_loader = provider_loader
         self._transport_factory = transport_factory
         self._live_camera_sessions = live_camera_sessions
+        self._automatic_identification_assist = automatic_identification_assist
         self._lock = threading.RLock()
         self._sessions: dict[str, _EngineSession] = {}
 
@@ -925,6 +983,7 @@ class ObservationEngineSessionManager:
                 provider_loader=self._provider_loader,
                 transport_factory=self._transport_factory,
                 live_camera_sessions=self._live_camera_sessions,
+                automatic_identification_assist=self._automatic_identification_assist,
             )
             self._sessions[stream_id] = session
             session.start()

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { apiClient } from "../api/client";
 import type {
   CameraSource,
+  DashboardTodaySpecies,
   Stream,
   WildlifeJournalGalleryOrder,
   WildlifeJournalHistoryRequest,
@@ -201,6 +202,23 @@ function JournalThumbnail({
   );
 }
 
+function LikelySpeciesThumbnail({ species }: { species: DashboardTodaySpecies }) {
+  const [failed, setFailed] = useState(false);
+  const evidence = species.latest_visit.primary_evidence;
+  useEffect(() => setFailed(false), [evidence?.media_asset_id]);
+  if (!evidence || failed) {
+    return <div className="journal-thumbnail-fallback">No saved thumbnail</div>;
+  }
+  return (
+    <img
+      alt={`Likely ${species.display_name}, awaiting confirmation`}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      src={`${apiClient.baseUrl}${evidence.preview_url}`}
+    />
+  );
+}
+
 function Sparkline({ activity }: { activity: WildlifeJournalLabelSummary["recent_activity"] }) {
   const maximum = Math.max(...activity.map((day) => day.count), 1);
   return (
@@ -259,6 +277,24 @@ export function BirdLogPage({
   const [tags, setTags] = useState<VisitTagSummary[]>([]);
   const [selectedTagId, setSelectedTagId] = useState("");
   const [tagMessage, setTagMessage] = useState<string | null>(null);
+  const [likelySpecies, setLikelySpecies] = useState<DashboardTodaySpecies[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    void apiClient
+      .getLikelySpeciesOverview()
+      .then((next) => {
+        if (active) setLikelySpecies(next.species);
+      })
+      .catch(() => {
+        // Best-effort only: Bird Log's confirmed history remains fully
+        // usable without provisional suggestions.
+        if (active) setLikelySpecies([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -450,6 +486,34 @@ export function BirdLogPage({
             </select>
           </label>
         </section>
+        {likelySpecies.length > 0 ? (
+          <section className="panel journal-likely-panel" aria-label="Likely sightings awaiting confirmation">
+            <div className="section-heading">
+              <div>
+                <h2>Likely sightings</h2>
+                <span className="meta-text">
+                  Automatic AI species suggestions, not yet confirmed. Open a Visit to confirm or correct it.
+                </span>
+              </div>
+              <StatusPill label="AI suggestion" tone="quiet" />
+            </div>
+            <section className="journal-label-grid" aria-label="Likely species awaiting confirmation">
+              {likelySpecies.map((species) => (
+                <article className="journal-label-card" key={species.label}>
+                  <button className="journal-label-image" onClick={() => onOpenVisit(species.latest_visit.id)} type="button">
+                    <LikelySpeciesThumbnail species={species} />
+                  </button>
+                  <div className="journal-label-card-body">
+                    <div className="section-heading">
+                      <div><h2>Likely {species.display_name}</h2><span className="meta-text">Not yet confirmed</span></div>
+                    </div>
+                    <button className="secondary-action" onClick={() => onOpenVisit(species.latest_visit.id)} type="button">Confirm or correct</button>
+                  </div>
+                </article>
+              ))}
+            </section>
+          </section>
+        ) : null}
         {error ? <div className="error-panel">{error}</div> : null}
         {isLoading && !overview ? <div className="panel">Loading Wildlife Journal…</div> : null}
         {overview?.labels.length === 0 && !isLoading ? (

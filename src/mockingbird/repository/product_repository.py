@@ -237,6 +237,7 @@ from mockingbird.api.schemas import (
     FastReviewUndoResponse,
     FolderImportSkippedFile,
     LabelCategory,
+    LikelySpeciesOverviewResponse,
     LocalDataStatus,
     MediaAsset,
     MediaImportResult,
@@ -9968,6 +9969,7 @@ class ProductRepository:
         truncated = len(rows) > 500
         qualified: list[DashboardVisitSummary] = []
         confirmed_species: dict[str, list[DashboardVisitSummary]] = {}
+        likely_species: dict[str, list[DashboardVisitSummary]] = {}
         zone_counts: Counter[tuple[str | None, str]] = Counter()
         hour_counts: Counter[int] = Counter()
         unresolved: list[DashboardVisitSummary] = []
@@ -10009,6 +10011,11 @@ class ProductRepository:
                 assert summary.reviewed_label is not None
                 confirmed_species.setdefault(
                     self._normalize_label_from_session(session, summary.reviewed_label), []
+                ).append(summary)
+            elif self._dashboard_today_is_likely_species(session, summary):
+                assert summary.suggested_label is not None
+                likely_species.setdefault(
+                    self._normalize_label_from_session(session, summary.suggested_label), []
                 ).append(summary)
 
         detector_qualified_animal_visit_count = 0
@@ -10136,6 +10143,12 @@ class ProductRepository:
             ) >= 3
         ]
         order = lambda item: (item.latest_visit.activity_started_at, item.label)
+        likely_today = [
+            self._dashboard_today_species(
+                session, label, summaries, distinct_days=1, is_confirmed=False,
+            )
+            for label, summaries in likely_species.items()
+        ]
         best_moments = sorted(
             qualified,
             key=lambda item: (
@@ -10158,6 +10171,7 @@ class ProductRepository:
             best_moments=best_moments,
             new_today=sorted(new_today, key=order, reverse=True)[:12],
             recent_regulars=sorted(regulars, key=order, reverse=True)[:12],
+            likely_today=sorted(likely_today, key=order, reverse=True)[:12],
             activity_by_zone=[
                 DashboardTodayZoneActivity(
                     zone_id=zone_id,
@@ -10230,6 +10244,24 @@ class ProductRepository:
         taxonomy = self._taxonomy_label_model_for_input(session, summary.reviewed_label)
         return bool(taxonomy is not None and taxonomy.is_species)
 
+    def _dashboard_today_is_likely_species(
+        self,
+        session: Session,
+        summary: DashboardVisitSummary,
+    ) -> bool:
+        """A provisional (unreviewed) counterpart to `_dashboard_today_is_
+        confirmed_species`: true only for a Visit that still needs review
+        but already carries an automatic top-1 BioCLIP species suggestion.
+        Human truth always wins first -- this only ever applies once
+        `_dashboard_today_is_confirmed_species` has already returned False
+        for the same summary (see the caller), so a reviewed Visit can
+        never also be counted as "likely"."""
+
+        if summary.review_status != ReviewStatus.needs_review or not summary.suggested_label:
+            return False
+        taxonomy = self._taxonomy_label_model_for_input(session, summary.suggested_label)
+        return bool(taxonomy is not None and taxonomy.is_species)
+
     def _dashboard_today_species(
         self,
         session: Session,
@@ -10237,6 +10269,7 @@ class ProductRepository:
         summaries: list[DashboardVisitSummary],
         *,
         distinct_days: int,
+        is_confirmed: bool = True,
     ) -> DashboardTodaySpecies:
         taxonomy = self._taxonomy_label_model_for_input(session, label)
         latest = max(summaries, key=lambda item: (item.activity_started_at, item.id))
@@ -10245,6 +10278,7 @@ class ProductRepository:
             display_name=taxonomy.display_name if taxonomy is not None else label,
             distinct_days_seen=distinct_days,
             latest_visit=latest,
+            is_confirmed=is_confirmed,
         )
 
     @staticmethod
@@ -18711,6 +18745,36 @@ class ProductRepository:
                 return _species_suggestion_from_model(candidate)
         return None
 
+    def _apply_species_guess_from_suggestion(
+        self,
+        session: Session,
+        *,
+        target_type: str,
+        target_id: str,
+        suggestion: SpeciesSuggestionResponse,
+    ) -> None:
+        """Surface a fresh top-1 BioCLIP suggestion through the Visit's
+        existing `species_guess` fallback -- already read everywhere
+        `reviewed_label` is absent (Visit Detail, Dashboard Today,
+        Stream/Event summaries) -- so an automatic suggestion is useful
+        immediately, without a human review step first (Automatic Species
+        Suggestion v1: docs/species-suggestion-adapter-design.md).
+
+        Never touches a Visit that already carries authoritative reviewed
+        truth: human confirmation/correction permanently wins, and a later
+        automatic suggestion -- whether from the background engine hook or
+        a manual "Identify again" -- must never overwrite it. This is a
+        display convenience only; it creates no `ReviewLabel` and never
+        marks a Visit reviewed, so training/export eligibility
+        (`_visit_is_dataset_ready`) is unaffected.
+        """
+
+        if target_type != "visit":
+            return
+        visit_model = session.get(VisitModel, target_id)
+        if visit_model is None or visit_model.review_status == ReviewStatus.reviewed.value:
+            return
+        visit_model.species_guess = suggestion.suggested_label
 
     def _identify_review_queue_with_bioclip(
         self,
@@ -18891,6 +18955,12 @@ class ProductRepository:
                     suggestion = self._create_species_suggestion_in_session(
                         session,
                         suggestion_payload,
+                    )
+                    self._apply_species_guess_from_suggestion(
+                        session,
+                        target_type=target_type,
+                        target_id=target_id,
+                        suggestion=suggestion,
                     )
                     self._complete_bioclip_identification_attempt_in_session(
                         session,
@@ -21238,6 +21308,56 @@ class ProductRepository:
             observed_at=record["observed_at"],
             primary_evidence=summary.primary_evidence,
         )
+
+    def list_likely_species_overview(self, *, limit: int = 20) -> LikelySpeciesOverviewResponse:
+        """Bird Log's provisional counterpart to `wildlife_journal_overview`
+        below: currently-unreviewed Visits grouped by their top-1 automatic
+        species suggestion (`_dashboard_today_is_likely_species`, the same
+        day-agnostic check `_dashboard_today_summary`'s own `likely_today`
+        uses). Confirmed reviewed truth never appears here; it stays in the
+        Wildlife Journal overview. Bounded to a most-recent slice, matching
+        every other dashboard-style read in this class -- never a full
+        table scan. Deliberately not pre-filtered on `species_guess`: that
+        convenience field is only ever set by the automatic BioCLIP write
+        path, while the grouping itself must recognize any current
+        SpeciesSuggestion evidence, including one created through a
+        different adapter or route."""
+
+        bounded_limit = max(1, min(limit, 50))
+        with self.session_factory() as session:
+            rows = session.execute(
+                select(VisitModel, EventModel, StreamModel, CameraSourceModel)
+                .join(EventModel, VisitModel.event_id == EventModel.id)
+                .join(StreamModel, EventModel.stream_id == StreamModel.id)
+                .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+                .where(
+                    VisitModel.is_superseded.is_(False),
+                    VisitModel.review_status == ReviewStatus.needs_review.value,
+                    CameraSourceModel.status != SourceStatus.archived.value,
+                )
+                .order_by(EventModel.started_at.desc(), EventModel.id.desc(), VisitModel.id.desc())
+                .limit(501)
+            ).all()
+            grouped: dict[str, list[DashboardVisitSummary]] = {}
+            for visit, event, _stream, _source in rows[:500]:
+                if not self._dashboard_today_is_nature_event(event.event_type):
+                    continue
+                summary = self._dashboard_visit_summary_from_models(session, visit, event)
+                if not self._dashboard_today_is_likely_species(session, summary):
+                    continue
+                assert summary.suggested_label is not None
+                grouped.setdefault(
+                    self._normalize_label_from_session(session, summary.suggested_label), []
+                ).append(summary)
+
+            species = [
+                self._dashboard_today_species(
+                    session, label, summaries, distinct_days=1, is_confirmed=False,
+                )
+                for label, summaries in grouped.items()
+            ]
+            species.sort(key=lambda item: item.latest_visit.activity_started_at, reverse=True)
+            return LikelySpeciesOverviewResponse(species=species[:bounded_limit])
 
     def wildlife_journal_overview(
         self,

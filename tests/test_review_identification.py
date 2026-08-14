@@ -2479,3 +2479,183 @@ async def test_review_identification_adapter_failure_is_clean_and_truth_safe(
     assert result["creates_review_label"] is False
     assert await truth_snapshot(client) == before_truth
     assert await detector_counts(client) == before_detection
+
+
+# --- Automatic Species Suggestion v1: species_guess resolution -------------
+#
+# `species_guess` already powers the existing `reviewed_label ?? species_
+# guess ?? subject_label` fallback used throughout Visit Detail, Dashboard
+# Today, and Stream/Event summaries (see docs/species-suggestion-adapter
+# -design.md). These tests prove the one new write path
+# (`_apply_species_guess_from_suggestion`) is wired correctly: it fills that
+# existing fallback for an unreviewed Visit, and never overwrites a Visit
+# that already carries authoritative reviewed truth -- human confirmation
+# permanently wins, even from a later automatic re-run.
+
+
+async def test_review_identification_bioclip_success_sets_species_guess_for_unreviewed_visit(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    isolated_repository: ProductRepository,
+) -> None:
+    from mockingbird.storage.models import VisitModel
+
+    imported = await import_review_image(client, title="Automatic species_guess image")
+    visit_id, _evidence_id = await create_activity_review_item(
+        client, media_asset_id=imported["media_asset"]["id"],
+    )
+    mark_bioclip_available(monkeypatch, tmp_path)
+    prediction = bioclip_prediction(
+        ("house finch (Haemorhous mexicanus)", None, None, 0.71),
+        ("purple finch (Haemorhous purpureus)", None, None, 0.18),
+        ("pine siskin (Spinus pinus)", None, None, 0.06),
+    )
+    monkeypatch.setattr(
+        product_repository,
+        "prepare_bioclip_run",
+        lambda _config: bioclip_prepared_run(prediction),
+    )
+    mock_bioclip_run(monkeypatch, prediction)
+    before_truth = await truth_snapshot(client)
+
+    with isolated_repository.session_factory() as session:
+        before_visit = session.get(VisitModel, visit_id)
+        assert before_visit is not None
+        assert before_visit.species_guess is None
+
+    response = await client.post(f"/api/review-queue/visit/{visit_id}/identify", json={})
+
+    assert response.status_code == 200
+    assert response.json()["identification"]["status"] == "suggestion_created"
+    suggestion = response.json()["species_suggestion"]
+    assert suggestion["suggested_label"] == "house_finch"
+
+    with isolated_repository.session_factory() as session:
+        visit = session.get(VisitModel, visit_id)
+        assert visit is not None
+        assert visit.species_guess == "house_finch"
+        assert visit.review_status == "needs_review"
+        assert visit.reviewed_label is None  # a suggestion is never reviewed truth
+
+    # A provisional AI suggestion creates no reviewed truth and is not
+    # export/training-ready -- only an explicit correction is.
+    assert await truth_snapshot(client) == before_truth
+
+    refetched_visit = (await client.get(f"/api/visits/{visit_id}")).json()
+    assert refetched_visit["species_guess"] == "house_finch"
+    assert refetched_visit["reviewed_label"] is None
+
+
+async def test_review_identification_bioclip_never_overwrites_a_confirmed_visit(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    """Human correction permanently wins: a later automatic (or manual
+    re-run) BioCLIP suggestion must never touch `species_guess` again once a
+    Visit is confirmed, even when it disagrees with the confirmed label.
+
+    The Review Queue `/identify` endpoint itself already cannot target an
+    already-reviewed Visit -- confirming one removes it from the Review
+    Queue, so `_review_identification_item_for_visit` correctly reports
+    `missing_review_candidate` -- and the automatic assist only ever
+    schedules one attempt per Visit, before any review has happened. This
+    calls the one write path (`_apply_species_guess_from_suggestion`)
+    directly, so the guard is proven even if a future code path ever
+    manages to construct a suggestion for an already-reviewed Visit.
+    """
+
+    from mockingbird.api.schemas import SpeciesSuggestionCreateRequest
+    from mockingbird.storage.models import VisitModel
+
+    imported = await import_review_image(client, title="Confirmed visit re-identification image")
+    visit_id, _evidence_id = await create_activity_review_item(
+        client, media_asset_id=imported["media_asset"]["id"],
+    )
+    event_id = imported["event"]["id"]
+
+    confirmed = await client.post(
+        "/api/review-labels",
+        json={
+            "review_origin": "human",
+            "target_type": "visit",
+            "target_id": visit_id,
+            "label": "purple_finch",
+            "notes": "Confirmed before any automatic suggestion ran.",
+        },
+    )
+    assert confirmed.status_code == 201
+
+    suggestion = isolated_repository.create_species_suggestion(
+        SpeciesSuggestionCreateRequest(
+            stream_id=STREAM_ID,
+            event_id=event_id,
+            visit_id=visit_id,
+            adapter_id=BIOCLIP_ADAPTER_ID,
+            adapter_name=BIOCLIP_ADAPTER_NAME,
+            suggested_label="house_finch",
+        )
+    )
+
+    with isolated_repository.session_factory() as session:
+        with session.begin():
+            isolated_repository._apply_species_guess_from_suggestion(
+                session, target_type="visit", target_id=visit_id, suggestion=suggestion,
+            )
+
+    with isolated_repository.session_factory() as session:
+        visit = session.get(VisitModel, visit_id)
+        assert visit is not None
+        assert visit.species_guess is None  # never set: the Visit was already reviewed
+        assert visit.reviewed_label == "purple_finch"
+        assert visit.review_status == "reviewed"
+
+    refetched_visit = (await client.get(f"/api/visits/{visit_id}")).json()
+    assert refetched_visit["reviewed_label"] == "purple_finch"
+    assert refetched_visit["species_guess"] is None
+
+
+async def test_review_identification_bioclip_no_result_never_sets_species_guess(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    isolated_repository: ProductRepository,
+) -> None:
+    """A species-model problem must degrade honestly: the Visit, its
+    evidence, and review stay fully usable, and no partial species_guess is
+    ever written."""
+
+    from mockingbird.storage.models import VisitModel
+
+    imported = await import_review_image(client, title="No-result species_guess image")
+    visit_id, _evidence_id = await create_activity_review_item(
+        client, media_asset_id=imported["media_asset"]["id"],
+    )
+    mark_bioclip_available(monkeypatch, tmp_path)
+    empty_prediction = bioclip_prediction()  # no candidates at all -> no usable result
+    monkeypatch.setattr(
+        product_repository,
+        "prepare_bioclip_run",
+        lambda _config: bioclip_prepared_run(empty_prediction),
+    )
+    mock_bioclip_run(monkeypatch, empty_prediction)
+
+    response = await client.post(f"/api/review-queue/visit/{visit_id}/identify", json={})
+
+    assert response.status_code == 200
+    # The exact status vocabulary for "the model produced nothing usable" is
+    # covered by the dedicated BioCLIP error-taxonomy tests above; what
+    # matters here is that it is never a success status and never sets a
+    # species guess.
+    assert response.json()["identification"]["status"] != "suggestion_created"
+    assert response.json().get("species_suggestion") is None
+
+    with isolated_repository.session_factory() as session:
+        visit = session.get(VisitModel, visit_id)
+        assert visit is not None
+        assert visit.species_guess is None
+        assert visit.review_status == "needs_review"
+
+    # The Visit remains fully visible/reviewable despite the model failure.
+    queue_item = await review_queue_item_for_visit(client, visit_id)
+    assert queue_item["visit_id"] == visit_id

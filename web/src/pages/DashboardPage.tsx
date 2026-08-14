@@ -13,7 +13,7 @@ import { EmptyState } from "../components/EmptyState";
 import { LiveCameraOverview } from "../components/LiveCameraOverview";
 import { ProductHealthPanel } from "../components/ProductHealthPanel";
 import { StatusPill } from "../components/StatusPill";
-import { formatDateTime, formatLabel } from "../utils";
+import { effectiveSpeciesText, formatDateTime, formatLabel } from "../utils";
 
 interface ReviewQueueFocus {
   source: "live-motion";
@@ -319,7 +319,7 @@ export function DashboardPage({
                 <article className="dashboard-visit-row" key={visit.id}>
                   <VisitPreview visit={visit} />
                   <div>
-                    <strong>{visit.reviewed_label ? formatLabel(visit.reviewed_label) : "Animal detected — species not confirmed"}</strong>
+                    <strong>{effectiveSpeciesText(visit) ?? "Animal detected — species not confirmed"}</strong>
                     <VisitContext visit={visit} />
                     <span className="meta-text">{formatDateTime(visit.captured_at)}</span>
                   </div>
@@ -329,6 +329,32 @@ export function DashboardPage({
             </div>
           ) : (
             <EmptyState title="No animal Visits yet today" description="New evidence-backed animal activity will appear here." />
+          )}
+        </section>
+
+        <section className="panel dashboard-likely-today">
+          <div className="section-heading">
+            <div>
+              <h2>Likely today</h2>
+              <span className="meta-text">Automatic AI species suggestions, awaiting your confirmation</span>
+            </div>
+            <StatusPill label="AI suggestion" tone="quiet" />
+          </div>
+          {today.likely_today.length > 0 ? (
+            <div className="dashboard-observation-list">
+              {today.likely_today.map((species) => (
+                <article className="dashboard-observation-row" key={species.label}>
+                  <VisitPreview visit={species.latest_visit} />
+                  <div>
+                    <strong>Likely {species.display_name}</strong>
+                    <span>Not yet confirmed</span>
+                  </div>
+                  <button className="primary-action" onClick={() => openVisitReview(species.latest_visit)} type="button">Confirm</button>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <EmptyState title="No pending AI suggestions" description="Automatic species suggestions appear here as soon as MockingBird finishes identifying a fresh Visit." />
           )}
         </section>
 
@@ -365,7 +391,7 @@ export function DashboardPage({
 
         <section className="panel dashboard-needs-review">
           <div className="section-heading"><div><h2>Needs your help</h2><span className="meta-text">The newest animal Visits without a reviewed correction</span></div><button className="secondary-action" onClick={() => onOpenReview()} type="button">Open Review Queue</button></div>
-          {today.needs_help.length > 0 ? <div className="dashboard-visit-list">{today.needs_help.map((visit) => <article className="dashboard-visit-row" key={visit.id}><VisitPreview visit={visit} /><div><strong>Animal detected — species not confirmed</strong><VisitContext visit={visit} /><span className="meta-text">{formatDateTime(visit.captured_at)}</span></div><button className="primary-action" onClick={() => openVisitReview(visit)} type="button">Confirm</button></article>)}</div> : <EmptyState title="No animal Visits need confirmation" description="Reviewed corrections stay separate from detector and suggestion evidence." />}
+          {today.needs_help.length > 0 ? <div className="dashboard-visit-list">{today.needs_help.map((visit) => <article className="dashboard-visit-row" key={visit.id}><VisitPreview visit={visit} /><div><strong>{effectiveSpeciesText(visit) ?? "Animal detected — species not confirmed"}</strong><VisitContext visit={visit} /><span className="meta-text">{formatDateTime(visit.captured_at)}</span></div><button className="primary-action" onClick={() => openVisitReview(visit)} type="button">Confirm</button></article>)}</div> : <EmptyState title="No animal Visits need confirmation" description="Reviewed corrections stay separate from detector and suggestion evidence." />}
         </section>
       </section>
 

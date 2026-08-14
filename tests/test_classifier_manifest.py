@@ -262,6 +262,53 @@ async def test_accepted_species_suggestion_alone_does_not_create_manifest_exampl
     assert after == before
 
 
+async def test_automatic_species_guess_alone_does_not_create_manifest_example(
+    client: httpx.AsyncClient,
+) -> None:
+    """Automatic Species Suggestion v1: `species_guess` now gets populated
+    automatically from a fresh BioCLIP suggestion (see
+    `_apply_species_guess_from_suggestion`), and the existing `reviewed_
+    label ?? species_guess ?? subject_label` fallback already displays it
+    across Visit Detail, Dashboard Today, and Bird Log. This proves that
+    convenience display field can never, by itself, grant classifier
+    training eligibility -- only genuine reviewed truth can."""
+
+    from mockingbird.api.main import get_repository
+    from mockingbird.storage.models import VisitModel
+
+    imported = await import_bird_media(client)
+    visit_id = imported["visit"]["id"]
+    before = await classifier_manifest(client)
+
+    with get_repository().session_factory() as session:
+        with session.begin():
+            visit = session.get(VisitModel, visit_id)
+            assert visit is not None
+            visit.species_guess = "northern_cardinal"
+
+    manifest = await classifier_manifest(client)
+
+    # No new training example was created by the guess -- only its own
+    # skip-diagnostic display label may change (it now shows the current
+    # best guess instead of the generic import placeholder).
+    assert manifest["examples"] == before["examples"]
+    assert manifest["summary"] == before["summary"]
+    assert all(example["visit_id"] != visit_id for example in manifest["examples"])
+    skipped = skipped_by_visit(manifest, visit_id)
+    assert skipped["reason"] == "unreviewed"
+    assert skipped["label"] == "northern_cardinal"  # diagnostic only, not truth
+
+    # A genuine correction still works normally and is never shadowed by the
+    # stale (and, here, deliberately disagreeing) automatic guess.
+    correction = await correct_visit(client, visit_id, "Blue Jay")
+    corrected_manifest = await classifier_manifest(client)
+    example = next(
+        record for record in corrected_manifest["examples"] if record["visit_id"] == visit_id
+    )
+    assert example["label"] == "blue_jay"
+    assert example["reviewed_label_id"] == correction["review_label"]["id"]
+
+
 async def test_motion_evidence_alone_does_not_create_manifest_example(
     client: httpx.AsyncClient,
 ) -> None:

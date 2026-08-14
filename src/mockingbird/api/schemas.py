@@ -2479,12 +2479,21 @@ class DashboardHeadline(BaseModel):
 
 
 class DashboardTodaySpecies(BaseModel):
-    """A reviewed species occurrence grouped for the selected local day."""
+    """A species occurrence grouped for the selected local day.
+
+    `is_confirmed=True` (the default, and the only value `new_today`/
+    `recent_regulars` ever use) means every Visit behind this group carries
+    authoritative human-reviewed truth. `is_confirmed=False` marks a
+    provisional group (`likely_today`) built entirely from an automatic,
+    unreviewed BioCLIP suggestion -- useful and shown by default, but never
+    reviewed truth; see the Automatic Species Suggestion v1 milestone.
+    """
 
     label: str
     display_name: str
     distinct_days_seen: int = Field(default=1, ge=1, le=14)
     latest_visit: DashboardVisitSummary
+    is_confirmed: bool = True
 
 
 class DashboardTodayZoneActivity(BaseModel):
@@ -2508,6 +2517,12 @@ class DashboardTodaySummary(BaseModel):
     best_moments: list[DashboardVisitSummary] = Field(default_factory=list, max_length=6)
     new_today: list[DashboardTodaySpecies] = Field(default_factory=list, max_length=12)
     recent_regulars: list[DashboardTodaySpecies] = Field(default_factory=list, max_length=12)
+    # Automatic Species Suggestion v1: unreviewed today's Visits grouped by
+    # their top-1 BioCLIP suggestion. Additive and separate from
+    # `new_today`/`recent_regulars`, which stay confirmed-truth-only exactly
+    # as before -- Today is useful without requiring review first, while
+    # "new species this year"-style history stays tied to real truth.
+    likely_today: list[DashboardTodaySpecies] = Field(default_factory=list, max_length=12)
     activity_by_zone: list[DashboardTodayZoneActivity] = Field(default_factory=list, max_length=50)
     activity_by_hour: list[DashboardTodayHourActivity] = Field(default_factory=list, max_length=24)
     needs_help: list[DashboardVisitSummary] = Field(default_factory=list, max_length=3)
@@ -4501,6 +4516,17 @@ class WildlifeJournalLabelSummary(BaseModel):
 class WildlifeJournalOverviewResponse(BaseModel):
     order: WildlifeJournalOrder
     labels: list[WildlifeJournalLabelSummary] = Field(default_factory=list, max_length=100)
+
+
+class LikelySpeciesOverviewResponse(BaseModel):
+    """Bird Log's provisional counterpart to the confirmed-only Wildlife
+    Journal overview above: currently-unreviewed Visits grouped by an
+    automatic top-1 BioCLIP suggestion (`DashboardTodaySpecies.is_confirmed`
+    is always False here). Automatic Species Suggestion v1: these groups
+    let Bird Log stay useful before review, while confirmed Journal labels
+    remain the only current reviewed truth."""
+
+    species: list[DashboardTodaySpecies] = Field(default_factory=list, max_length=50)
 
 
 class WildlifeJournalBreakdown(BaseModel):
