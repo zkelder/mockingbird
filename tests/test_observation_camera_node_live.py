@@ -25,7 +25,13 @@ from mockingbird.observation.camera_node_live import (
     _analysis_envelope,
     _jpeg_dimensions,
 )
-from mockingbird.observation.contracts import DetectionObservation, FramePacket
+from mockingbird.observation.contracts import (
+    CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE,
+    DetectionObservation,
+    FramePacket,
+    ObservationResult,
+    TrackUpdate,
+)
 from mockingbird.observation.frame_driven_provider import FrameDrivenObservationProvider, FrameDrivenSettings
 from mockingbird.observation.media_contracts import (
     AnalysisFrameEnvelope,
@@ -304,7 +310,9 @@ async def test_live_shadow_requests_one_burst_and_never_writes_product_truth() -
     second = await session.process_envelope(_frame(2), received_at=received + timedelta(milliseconds=200))
     assert first is not None and second is not None
     assert len(transport.requests) == 1
-    assert [item.role for item in first.evidence_candidates] == ["high_resolution_burst"]
+    assert [item.role for item in first.evidence_candidates] == [
+        "high_resolution_burst", "classifier_same_frame",
+    ]
     assert first.creates_truth is False
     assert session.status().production_proposal_authority is False
     session.stop()
@@ -333,7 +341,7 @@ async def test_live_shadow_burst_evidence_carries_geometry_attribution_with_real
     session.start()
     result = await session.process_envelope(_frame(1), received_at=datetime(2026, 8, 4, tzinfo=UTC))
     assert result is not None
-    assert len(result.evidence_candidates) == 1
+    assert len(result.evidence_candidates) == 2
     candidate = result.evidence_candidates[0]
     assert candidate.role == "high_resolution_burst"
     attribution = candidate.geometry_attribution
@@ -346,6 +354,25 @@ async def test_live_shadow_burst_evidence_carries_geometry_attribution_with_real
     assert attribution.geometry_source == "detector"
     assert attribution.geometry_source_confidence == 0.95
     assert attribution.geometry_source_offset_ms == candidate.source_offset_ms
+
+    # Same-Frame Species Evidence v1: the exact analysis-stream frame that
+    # produced this same track update's subject box is persisted alongside
+    # the burst above, and -- unlike the burst -- its own geometry
+    # attribution honestly proves `same_frame=True` with a zero gap, because
+    # its pixels and `subject_geometry` really do come from the identical
+    # captured frame (`_frame(1)`), not a later, separate capture.
+    same_frame_candidate = result.evidence_candidates[1]
+    assert same_frame_candidate.role == "classifier_same_frame"
+    assert same_frame_candidate.media_asset_id.startswith("shadow-same-frame:")
+    assert same_frame_candidate.frame_id == candidate.frame_id
+    assert same_frame_candidate.subject_geometry == candidate.subject_geometry
+    assert same_frame_candidate.width == 640 and same_frame_candidate.height == 480
+    same_frame_attribution = same_frame_candidate.geometry_attribution
+    assert same_frame_attribution is not None
+    assert same_frame_attribution.same_frame is True
+    assert same_frame_attribution.geometry_evidence_gap_ms == 0
+    assert same_frame_attribution.geometry_source == "detector"
+    assert same_frame_attribution.geometry_source_confidence == 0.95
     session.stop()
 
 
@@ -411,6 +438,235 @@ def test_live_shadow_module_has_structural_no_write_boundary() -> None:
     source = __import__("pathlib").Path("src/mockingbird/observation/camera_node_live.py").read_text()
     forbidden = ("mockingbird.db", "mockingbird.repositories", "ReviewLabel", "MotionEvidence", "StreamMonitoringPolicy")
     assert not any(token in source for token in forbidden)
+
+
+# --------------------------------------------------------------------------
+# Same-Frame Species Evidence v1: precise control over `TrackUpdate.
+# support_state`/`frame_id`, which the real tracker fixture cannot reliably
+# manufacture (a stale/carried-forward update with a still-high leftover
+# confidence is an edge case the real tracker rarely produces on demand).
+# `_FakeSameFrameProvider` implements exactly the surface
+# `LiveCameraNodeShadowSession` touches on `self.provider`, nothing more.
+# --------------------------------------------------------------------------
+
+
+class _FakeSettings:
+    def __init__(self, *, strong_detection_threshold: float = 0.8) -> None:
+        self.strong_detection_threshold = strong_detection_threshold
+
+
+class _FakeSameFrameProvider:
+    def __init__(self, updates_by_frame_id: dict[str, tuple[TrackUpdate, ...]]) -> None:
+        self._updates_by_frame_id = updates_by_frame_id
+        self.settings = _FakeSettings()
+        self.live_reset_count = 0
+        # Set by a test right before `process_envelope` to simulate the real
+        # provider having internally reset its tracking generation for the
+        # frame about to be processed (see `LiveCameraNodeShadowSession.
+        # _process_frame`'s before/after `live_reset_count` comparison).
+        self.pending_reset = False
+
+    def start_live(self, stream_id: str) -> None:
+        pass
+
+    async def observe_live_frame(self, frame: FramePacket) -> ObservationResult:
+        if self.pending_reset:
+            self.live_reset_count += 1
+            self.pending_reset = False
+        updates = self._updates_by_frame_id.get(frame.frame_id, ())
+        return ObservationResult(
+            "fake-same-frame-provider", "live_shadow", frame.stream_id, frame.captured_at,
+            frame_packets=(frame,), track_updates=updates, detector_ran=True,
+        )
+
+    def stop_live(self, reason: str = "provider_reset") -> tuple[ObservationResult, ...]:
+        return ()
+
+
+def _confirmed_update(
+    *, generation_id: str, frame_id: str, source_offset_ms: int,
+    box: tuple[float, float, float, float] = (0.2, 0.2, 0.4, 0.4),
+    support_state: str = "strong_detector_supported",
+    lifecycle_state: str = "confirmed",
+    confidence: float = 0.9,
+) -> TrackUpdate:
+    return TrackUpdate(
+        track_id=generation_id, generation_id=generation_id,
+        captured_at=datetime(2026, 8, 4, tzinfo=UTC) + timedelta(milliseconds=source_offset_ms),
+        status="updated", lifecycle_state=lifecycle_state, frame_id=frame_id,
+        source_offset_ms=source_offset_ms, broad_class="animal", bounding_box=box,
+        confidence=confidence, support_state=support_state,
+        bounding_box_source_offset_ms=source_offset_ms,
+    )
+
+
+def _generous_scheduler() -> BurstScheduler:
+    return BurstScheduler(
+        session_id="same-frame-test",
+        config=BurstSchedulerConfig(
+            minimum_burst_interval_ms=0, recurrence_group_cooldown_ms=0,
+            novelty_reserve_capacity=8, max_bursts_per_session=8,
+        ),
+    )
+
+
+@pytest.mark.anyio
+async def test_same_frame_evidence_persisted_once_per_generation_with_proven_geometry() -> None:
+    """Exactly one `classifier_same_frame` candidate is ever produced for one
+    track generation, even across multiple later meaningful updates -- "at
+    most one same-frame evidence image per Visit/candidate", not one per
+    detector frame."""
+
+    frame_one = _frame(1)
+    frame_two = _frame(2, payload=b"\xff\xd8second-frame\xff\xd9")
+    provider = _FakeSameFrameProvider({
+        frame_one.frame_id: (_confirmed_update(
+            generation_id="gen-1", frame_id=frame_one.frame_id, source_offset_ms=0,
+        ),),
+        frame_two.frame_id: (_confirmed_update(
+            generation_id="gen-1", frame_id=frame_two.frame_id, source_offset_ms=200,
+            box=(0.5, 0.5, 0.7, 0.7),
+        ),),
+    })
+    session = LiveCameraNodeShadowSession(
+        source=CameraNodeAnalysisSource("stream-yard", maximum_frame_bytes=4096),
+        transport=_BurstTransport(), provider=provider, evidence_profile_id="evidence-large",
+        scheduler=_generous_scheduler(),
+    )
+    session.start()
+    received = datetime(2026, 8, 4, tzinfo=UTC)
+    first = await session.process_envelope(frame_one, received_at=received)
+    second = await session.process_envelope(frame_two, received_at=received + timedelta(milliseconds=200))
+    assert first is not None and second is not None
+    first_same_frame = [item for item in first.evidence_candidates if item.role == CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE]
+    second_same_frame = [item for item in second.evidence_candidates if item.role == CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE]
+    assert len(first_same_frame) == 1
+    assert second_same_frame == []
+    candidate = first_same_frame[0]
+    assert candidate.geometry_attribution is not None
+    assert candidate.geometry_attribution.same_frame is True
+    assert candidate.subject_geometry == (0.2, 0.2, 0.4, 0.4)
+    session.stop()
+
+
+@pytest.mark.anyio
+async def test_same_frame_payload_matches_exact_analysis_frame_bytes() -> None:
+    """The persisted same-frame payload is the exact analysis-stream frame's
+    own bytes -- never the (different, larger) burst payload -- recoverable
+    through `temporary_same_frame_payload` exactly like a burst payload is
+    through `temporary_burst_payload`."""
+
+    frame_one = _frame(1)
+    provider = _FakeSameFrameProvider({
+        frame_one.frame_id: (_confirmed_update(
+            generation_id="gen-1", frame_id=frame_one.frame_id, source_offset_ms=0,
+        ),),
+    })
+    transport = _BurstTransport()
+    session = LiveCameraNodeShadowSession(
+        source=CameraNodeAnalysisSource("stream-yard", maximum_frame_bytes=4096),
+        transport=transport, provider=provider, evidence_profile_id="evidence-large",
+        scheduler=_generous_scheduler(),
+    )
+    session.start()
+    result = await session.process_envelope(frame_one, received_at=datetime(2026, 8, 4, tzinfo=UTC))
+    assert result is not None
+    candidate = next(item for item in result.evidence_candidates if item.role == CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE)
+    content_hash = candidate.media_asset_id.removeprefix("shadow-same-frame:")
+    recovered = session.temporary_same_frame_payload(content_hash)
+    assert recovered == frame_one.payload
+    assert recovered != transport.payload
+    assert content_hash == hashlib.sha256(frame_one.payload).hexdigest()
+    session.stop()
+
+
+@pytest.mark.anyio
+async def test_same_frame_evidence_rejects_stale_carried_forward_geometry() -> None:
+    """A `temporarily_lost` update -- the geometry tracker's own "no fresh
+    observation this frame, box simply carried forward" state -- must never
+    become same-frame evidence even if it happens to still carry a leftover
+    high confidence from an earlier genuine detection (the "meaningful"
+    burst-opportunity check in `_process_frame` reads `confidence`, not
+    `support_state`). `frame.frame_id == update.frame_id` alone is not
+    proof of fresh geometry; this is the concrete scenario that distinction
+    exists for."""
+
+    frame_one = _frame(1)
+    provider = _FakeSameFrameProvider({
+        frame_one.frame_id: (_confirmed_update(
+            generation_id="gen-1", frame_id=frame_one.frame_id, source_offset_ms=0,
+            support_state="temporarily_lost", lifecycle_state="temporarily_lost", confidence=0.95,
+        ),),
+    })
+    session = LiveCameraNodeShadowSession(
+        source=CameraNodeAnalysisSource("stream-yard", maximum_frame_bytes=4096),
+        transport=_BurstTransport(), provider=provider, evidence_profile_id="evidence-large",
+        scheduler=_generous_scheduler(),
+    )
+    session.start()
+    result = await session.process_envelope(frame_one, received_at=datetime(2026, 8, 4, tzinfo=UTC))
+    assert result is not None
+    # The burst itself still fires (a stale-but-high-confidence update is
+    # still a real, if imperfect, "meaningful" burst opportunity today --
+    # unrelated, pre-existing behavior this milestone leaves untouched).
+    assert any(item.role == "high_resolution_burst" for item in result.evidence_candidates)
+    assert not any(item.role == CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE for item in result.evidence_candidates)
+    session.stop()
+
+
+@pytest.mark.anyio
+async def test_same_frame_evidence_requires_matching_frame_id() -> None:
+    """Defense in depth: even a fresh, strongly-supported update is never
+    treated as same-frame evidence if its own `frame_id` does not match the
+    frame actually being processed -- `same_frame` must be earned, never
+    assumed from role/timing alone."""
+
+    frame_one = _frame(1)
+    provider = _FakeSameFrameProvider({
+        frame_one.frame_id: (_confirmed_update(
+            generation_id="gen-1", frame_id="a-different-frame-id", source_offset_ms=0,
+        ),),
+    })
+    session = LiveCameraNodeShadowSession(
+        source=CameraNodeAnalysisSource("stream-yard", maximum_frame_bytes=4096),
+        transport=_BurstTransport(), provider=provider, evidence_profile_id="evidence-large",
+        scheduler=_generous_scheduler(),
+    )
+    session.start()
+    result = await session.process_envelope(frame_one, received_at=datetime(2026, 8, 4, tzinfo=UTC))
+    assert result is not None
+    assert not any(item.role == CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE for item in result.evidence_candidates)
+    session.stop()
+
+
+@pytest.mark.anyio
+async def test_same_frame_evidence_cache_cleared_on_generation_reset() -> None:
+    """The bounded same-frame payload cache and per-generation capture set
+    are cleared on a genuine provider reset, mirroring `_temporary_payloads`
+    exactly -- a stale cross-generation entry must never survive a reset."""
+
+    frame_one = _frame(1)
+    provider = _FakeSameFrameProvider({
+        frame_one.frame_id: (_confirmed_update(
+            generation_id="gen-1", frame_id=frame_one.frame_id, source_offset_ms=0,
+        ),),
+    })
+    session = LiveCameraNodeShadowSession(
+        source=CameraNodeAnalysisSource("stream-yard", maximum_frame_bytes=4096),
+        transport=_BurstTransport(), provider=provider, evidence_profile_id="evidence-large",
+        scheduler=_generous_scheduler(),
+    )
+    session.start()
+    await session.process_envelope(frame_one, received_at=datetime(2026, 8, 4, tzinfo=UTC))
+    assert session._same_frame_captured_generations == {"gen-1"}
+    assert len(session._same_frame_temporary_payloads) == 1
+    provider.pending_reset = True  # simulate the provider resetting internally on the next frame
+    await session.process_envelope(
+        _frame(2, generation="generation-b"), received_at=datetime(2026, 8, 4, tzinfo=UTC) + timedelta(seconds=1),
+    )
+    assert session._same_frame_captured_generations == set()
+    assert len(session._same_frame_temporary_payloads) == 0
+    session.stop()
 
 
 class _RapidTransport(_BurstTransport):

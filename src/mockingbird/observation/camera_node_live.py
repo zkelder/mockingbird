@@ -21,12 +21,21 @@ from mockingbird.observation.burst_scheduler import (
     BurstSchedulerDiagnostics,
     BurstSchedulerHealth,
 )
-from mockingbird.observation.contracts import EvidenceCandidate, FramePacket, ObservationResult
+from mockingbird.observation.contracts import (
+    CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE,
+    EvidenceCandidate,
+    FramePacket,
+    ObservationResult,
+)
 from mockingbird.observation.frame_driven_provider import (
     FRAME_DRIVEN_PROVIDER_VERSION,
     FrameDrivenObservationProvider,
 )
-from mockingbird.observation.localization_attribution import geometry_attribution_for_burst
+from mockingbird.observation.localization_attribution import (
+    geometry_attribution_for_burst,
+    geometry_attribution_for_update,
+    geometry_source_from_support_state,
+)
 from mockingbird.observation.media_contracts import (
     AnalysisFrameEnvelope,
     EvidenceBurstFrame,
@@ -678,6 +687,18 @@ class LiveCameraNodeShadowSession:
         )
         self._generation: str | None = None
         self._temporary_payloads: OrderedDict[str, bytes] = OrderedDict()
+        # Same-Frame Species Evidence v1 (see docs/same-frame-species-
+        # evidence-contract.md): a second, independently-bounded temporary
+        # cache mirroring `_temporary_payloads` exactly, but for the exact
+        # analysis-stream frame that produced a burst-triggering track
+        # update's own subject box -- the one place those real bytes are
+        # ever seen before this method returns and the `FramePacket` goes
+        # out of scope (see `_process_frame` below). `_same_frame_captured_
+        # generations` bounds capture to at most once per track generation,
+        # cleared alongside the payload cache on every generation reset so
+        # neither grows across a genuine source-generation change.
+        self._same_frame_temporary_payloads: OrderedDict[str, bytes] = OrderedDict()
+        self._same_frame_captured_generations: set[str] = set()
         self._burst_latencies_ms: deque[int] = deque(maxlen=128)
         self._frames_processed = 0
         self._burst_requests = 0
@@ -716,6 +737,15 @@ class LiveCameraNodeShadowSession:
         when that happens."""
 
         return self._temporary_payloads.get(content_hash)
+
+    def temporary_same_frame_payload(self, content_hash: str) -> bytes | None:
+        """Bounded, read-only lookup into this session's own most-recent-8
+        captured same-frame classifier-evidence payloads (Same-Frame Species
+        Evidence v1), mirroring `temporary_burst_payload` exactly -- the one
+        other bounded temporary cache this session already exposes for the
+        identical reason (`EvidenceCandidate` carries no payload field)."""
+
+        return self._same_frame_temporary_payloads.get(content_hash)
 
     async def process_envelope(
         self, envelope: AnalysisFrameEnvelope, *, received_at: datetime | None = None
@@ -759,6 +789,8 @@ class LiveCameraNodeShadowSession:
             # it on every ordinary reconnect would defeat that stage's own
             # fix the same way the pre-6.11B tracker reset did.
             self._temporary_payloads.clear()
+            self._same_frame_temporary_payloads.clear()
+            self._same_frame_captured_generations.clear()
             self.scheduler.reset(RESET_GENERATION_REPLACEMENT)
             self._generation_segments.clear()
         self._frames_processed += 1
@@ -881,6 +913,79 @@ class LiveCameraNodeShadowSession:
                     update, request_to_capture_ms=item.request_to_capture_ms,
                 ),
             ))
+            # Same-Frame Species Evidence v1 (see docs/same-frame-species-
+            # evidence-contract.md): persist at most one exact analysis-
+            # stream frame per track generation, alongside -- never instead
+            # of -- the high-resolution burst above. Gated on the burst's
+            # own success: a generation whose burst never captures cannot
+            # be admitted as a Visit anyway (no `CandidateEvidenceItem` is
+            # ever built without real backing bytes for an `identification`/
+            # `context` pick -- see `candidate_visit_adapter.
+            # _build_evidence_items`), so a same-frame asset would only ever
+            # be orphaned evidence for a Visit that does not exist.
+            #
+            # `frame` here is the exact, real, already-decoded analysis
+            # frame this loop iteration's `update` was itself produced from
+            # this same `_process_frame` call -- never re-fetched, never a
+            # different capture. Eligibility is proven, not assumed:
+            # `geometry_source_from_support_state` returns `"detector"`/
+            # `"tracker"` only for a support_state freshly (re)established
+            # THIS exact frame, never `"carried_forward"` (a stale, coasting
+            # box) -- `frame.frame_id == update.frame_id` alone is not
+            # sufficient proof, because `frame_tracker._update` stamps the
+            # current frame's own id onto every `TrackUpdate` regardless of
+            # support_state (including a carried-forward one); the
+            # support_state check is the actual freshness proof.
+            if (
+                update.generation_id not in self._same_frame_captured_generations
+                and update.bounding_box is not None
+                and frame.payload is not None
+                and frame.frame_id is not None
+                and frame.width is not None
+                and frame.height is not None
+                and update.frame_id == frame.frame_id
+                and geometry_source_from_support_state(update.support_state) in ("detector", "tracker")
+            ):
+                same_frame_hash = sha256(frame.payload).hexdigest()
+                self._same_frame_temporary_payloads[same_frame_hash] = frame.payload
+                self._same_frame_temporary_payloads.move_to_end(same_frame_hash)
+                while len(self._same_frame_temporary_payloads) > 8:
+                    self._same_frame_temporary_payloads.popitem(last=False)
+                self._same_frame_captured_generations.add(update.generation_id)
+                burst_evidence.append(EvidenceCandidate(
+                    media_asset_id=f"shadow-same-frame:{same_frame_hash}",
+                    stream_id=frame.stream_id,
+                    role=CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE,
+                    captured_at=frame.captured_at,
+                    frame_id=frame.frame_id,
+                    source_offset_ms=frame.source_offset_ms,
+                    width=frame.width,
+                    height=frame.height,
+                    subject_geometry=update.bounding_box,
+                    track_generation_id=update.generation_id,
+                    detector_provenance="onnx-cuda",
+                    tracker_provenance=FRAME_DRIVEN_PROVIDER_VERSION,
+                    quality_facts=(
+                        ("content_hash", same_frame_hash),
+                        ("temporal_alignment", "same_frame"),
+                        ("track_supported", True),
+                        ("track_active_at_capture", True),
+                        ("subject_supported", None),
+                        ("supporting_frame_count", len(update.supporting_frame_ids)),
+                    ),
+                    temporary=True,
+                    shadow_only=True,
+                    source_capture_frame_id=frame.source_capture_frame_id,
+                    source_content_hash=frame.source_content_hash,
+                    # This is the one place in the live pipeline where the
+                    # evidence image and the geometry's own source
+                    # observation are provably the same captured frame --
+                    # `same_frame=True` is earned by the eligibility check
+                    # above, never assumed from a small measured gap.
+                    geometry_attribution=geometry_attribution_for_update(
+                        update, same_frame=True, evidence_source_offset_ms=frame.source_offset_ms,
+                    ),
+                ))
         return replace(
             result, evidence_candidates=result.evidence_candidates + tuple(burst_evidence)
         )
@@ -989,6 +1094,8 @@ class LiveCameraNodeShadowSession:
             self.transport.close()
             self.source.stop()
             self._temporary_payloads.clear()
+            self._same_frame_temporary_payloads.clear()
+            self._same_frame_captured_generations.clear()
             self._burst_latencies_ms.clear()
             self._generation = None
             self._pending_inference = 0

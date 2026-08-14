@@ -12,6 +12,7 @@ from mockingbird.api.schemas import (
     StorageRetentionFrequency,
     StorageRetentionSettingsUpdate,
 )
+from mockingbird.observation.contracts import CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.storage.backup import LocalBackupManager
 from mockingbird.storage.models import (
@@ -92,8 +93,10 @@ def _add_active_visit_with_evidence(
     evidence: list[tuple[str, bool]],
     review_status: str,
     reviewed_label: str | None,
+    evidence_roles: dict[str, str] | None = None,
 ) -> None:
     now = datetime.now(UTC)
+    roles = evidence_roles or {}
     with repository.session_factory() as session:
         with session.begin():
             assets = [session.get(MediaAssetModel, media_id) for media_id, _primary in evidence]
@@ -138,6 +141,7 @@ def _add_active_visit_with_evidence(
                         frame_sequence=index,
                         sort_order=index,
                         is_primary=is_primary,
+                        evidence_role=roles.get(media_id, "monitoring_frame"),
                         created_at=now,
                     )
                 )
@@ -730,3 +734,85 @@ def test_complete_backup_includes_recoverable_media_and_metadata(
     with ZipFile(verification.backup.archive_path) as archive:
         names = archive.namelist()
     assert any(name.startswith(f"media/.recovery/{cleanup.batch_id}/") for name in names)
+
+
+# --------------------------------------------------------------------------
+# Same-Frame Species Evidence v1 (see docs/same-frame-species-evidence-
+# contract.md): "Use existing media retention rules... do not create
+# immortal classifier evidence accidentally."
+# --------------------------------------------------------------------------
+
+
+def test_same_frame_evidence_is_ordinary_secondary_evidence_not_immortal(
+    repository: ProductRepository,
+) -> None:
+    """A `classifier_same_frame` asset gets no special protection beyond the
+    ordinary non-primary-evidence rules every other secondary role already
+    follows -- it is not permanently retained, and not silently deleted
+    before those rules allow it either."""
+
+    primary_path = _add_media(repository, media_id="retention-same-frame-primary", age_days=365)
+    same_frame_path = _add_media(repository, media_id="retention-same-frame-secondary", age_days=365)
+    _add_active_visit_with_evidence(
+        repository,
+        visit_id="retention-same-frame-visit",
+        evidence=[
+            ("retention-same-frame-primary", True),
+            ("retention-same-frame-secondary", False),
+        ],
+        review_status="reviewed",
+        reviewed_label="bird",
+        evidence_roles={"retention-same-frame-secondary": CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE},
+    )
+
+    # Reviewed-wildlife protection ON (the conservative default): the
+    # same-frame asset is protected for exactly the same "explicit policy"
+    # reason a `context`/`alternate` secondary role already is -- not
+    # because of anything role-specific to it.
+    repository.update_storage_retention_settings(
+        _settings_payload("retention-same-frame-protected", reviewed_non_bird_age_days=30)
+    )
+    protected_preview = repository.preview_storage_cleanup()
+    assert protected_preview.eligible_media_count == 0
+    assert any(
+        item.category == "reviewed_bird_wildlife_evidence"
+        for item in protected_preview.protected_counts
+    )
+    assert same_frame_path.exists()
+
+    # Once that explicit policy is relaxed, the same-frame asset becomes an
+    # ordinary cleanup candidate -- proving it is not accidentally immortal.
+    repository.update_storage_retention_settings(
+        _settings_payload(
+            "retention-same-frame-explicit-permission",
+            retain_reviewed_bird_wildlife_evidence=False,
+            reviewed_non_bird_age_days=30,
+        )
+    )
+    preview = repository.preview_storage_cleanup()
+    assert preview.eligible_media_count == 1
+    result = repository.execute_storage_cleanup(
+        StorageCleanupExecuteRequest(
+            preview_token=preview.preview_token,
+            confirm=True,
+            idempotency_key="retention-same-frame-cleanup",
+        )
+    )
+    assert result.state == "quarantined"
+    # Deletion preserves referential integrity: the primary evidence and the
+    # Visit's own reviewed truth are both untouched by removing the
+    # secondary classifier asset.
+    assert primary_path.exists()
+    assert not same_frame_path.exists()
+    with repository.session_factory() as session:
+        visit = session.get(VisitModel, "retention-same-frame-visit")
+        assert visit is not None
+        assert visit.review_status == "reviewed"
+        assert visit.reviewed_label == "bird"
+        remaining_links = session.scalars(
+            select(VisitEvidenceLinkModel).where(
+                VisitEvidenceLinkModel.visit_id == visit.id
+            )
+        ).all()
+        assert len(remaining_links) == 1
+        assert remaining_links[0].media_asset_id == "retention-same-frame-primary"

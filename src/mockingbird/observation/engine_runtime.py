@@ -78,7 +78,11 @@ from mockingbird.observation.candidate_visit_authority import (
     RETRYABLE_OUTCOMES,
     ObservationAuthorityMode,
 )
-from mockingbird.observation.contracts import EvidenceCandidate, TrackUpdate
+from mockingbird.observation.contracts import (
+    CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE,
+    EvidenceCandidate,
+    TrackUpdate,
+)
 from mockingbird.observation.counterfactual_lineage import (
     BoundingBox,
     CounterfactualLedger,
@@ -615,6 +619,13 @@ class _EngineSession:
             # session.stop() call that makes the proposal assembleable in the
             # first place.
             burst_bytes_cache: dict[str, bytes] = {}
+            # Same-Frame Species Evidence v1 (see docs/same-frame-species-
+            # evidence-contract.md): mirrors `burst_bytes_cache` exactly,
+            # for the same reason and on the same timing -- harvested from
+            # the still-live session's own bounded temporary cache the
+            # moment each `classifier_same_frame` candidate is first
+            # observed, not lazily at assembly-tick time.
+            same_frame_bytes_cache: dict[str, bytes] = {}
 
             try:
                 # Right before this session starts actually pulling frames
@@ -649,6 +660,7 @@ class _EngineSession:
                         all_track_updates.extend(result.track_updates)
                         all_evidence_candidates.extend(result.evidence_candidates)
                         _harvest_burst_bytes(session, result.evidence_candidates, burst_bytes_cache)
+                        _harvest_same_frame_bytes(session, result.evidence_candidates, same_frame_bytes_cache)
                         # Rejected / Suppressed Detection Attribution v1: the
                         # one place this session previously discarded
                         # `result.detection_observations`/`detector_ran`
@@ -676,6 +688,7 @@ class _EngineSession:
                             all_evidence_candidates=all_evidence_candidates,
                             attempted_proposal_ids=attempted_proposal_ids,
                             burst_bytes_cache=burst_bytes_cache,
+                            same_frame_bytes_cache=same_frame_bytes_cache,
                             adapter=adapter,
                             known_horizon_ms=latest_known_offset_ms,
                         )
@@ -685,6 +698,7 @@ class _EngineSession:
                     all_track_updates.extend(result.track_updates)
                     all_evidence_candidates.extend(result.evidence_candidates)
                     _harvest_burst_bytes(session, result.evidence_candidates, burst_bytes_cache)
+                    _harvest_same_frame_bytes(session, result.evidence_candidates, same_frame_bytes_cache)
                     self._counterfactual.observe_result(result)
                     for packet in result.frame_packets:
                         if packet.source_offset_ms is not None:
@@ -701,6 +715,7 @@ class _EngineSession:
                     all_evidence_candidates=all_evidence_candidates,
                     attempted_proposal_ids=attempted_proposal_ids,
                     burst_bytes_cache=burst_bytes_cache,
+                    same_frame_bytes_cache=same_frame_bytes_cache,
                     adapter=adapter,
                     known_horizon_ms=latest_known_offset_ms,
                     finalize=True,
@@ -803,6 +818,7 @@ class _EngineSession:
         all_evidence_candidates: list[EvidenceCandidate],
         attempted_proposal_ids: set[str],
         burst_bytes_cache: dict[str, bytes],
+        same_frame_bytes_cache: dict[str, bytes] | None = None,
         adapter: CandidateVisitAuthorityAdapter,
         known_horizon_ms: int | None = None,
         finalize: bool = False,
@@ -841,16 +857,26 @@ class _EngineSession:
             return
 
         candidates_by_id = {item.media_asset_id: item for item in all_evidence_candidates}
+        same_frame_cache = same_frame_bytes_cache or {}
         for proposal in new_proposals:
             relevant = tuple(
                 candidates_by_id[media_id]
                 for media_id in proposal.evidence_candidate_ids
                 if media_id in candidates_by_id
             )
+            # Same-Frame Species Evidence v1: `same_frame_cache` is keyed by
+            # its own distinct `"shadow-same-frame:..."` media_asset_id
+            # namespace (see `camera_node_live.py`), so this union can never
+            # collide with a burst payload -- both are simply looked up by
+            # whatever id `relevant` actually names.
             evidence_bytes = {
                 candidate.media_asset_id: burst_bytes_cache[candidate.media_asset_id]
                 for candidate in relevant
                 if candidate.media_asset_id in burst_bytes_cache
+            } | {
+                candidate.media_asset_id: same_frame_cache[candidate.media_asset_id]
+                for candidate in relevant
+                if candidate.media_asset_id in same_frame_cache
             }
             decided_at = datetime.now(UTC)
             outcome = adapter.attempt_candidate(
@@ -911,6 +937,7 @@ class _EngineSession:
 
 
 _MAX_CACHED_BURST_BYTES = 8
+_MAX_CACHED_SAME_FRAME_BYTES = 8
 
 
 def _harvest_burst_bytes(
@@ -935,6 +962,29 @@ def _harvest_burst_bytes(
             continue
         cache[candidate.media_asset_id] = payload
         while len(cache) > _MAX_CACHED_BURST_BYTES:
+            cache.pop(next(iter(cache)))
+
+
+def _harvest_same_frame_bytes(
+    session: LiveCameraNodeShadowSession,
+    candidates: tuple[EvidenceCandidate, ...],
+    cache: dict[str, bytes],
+) -> None:
+    """Same-Frame Species Evidence v1: mirrors `_harvest_burst_bytes` exactly
+    for the `classifier_same_frame` role and `session.
+    temporary_same_frame_payload`'s own independently-bounded cache."""
+
+    for candidate in candidates:
+        if candidate.role != CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE or candidate.media_asset_id in cache:
+            continue
+        content_hash = dict(candidate.quality_facts).get("content_hash")
+        if not isinstance(content_hash, str):
+            continue
+        payload = session.temporary_same_frame_payload(content_hash)
+        if not payload:
+            continue
+        cache[candidate.media_asset_id] = payload
+        while len(cache) > _MAX_CACHED_SAME_FRAME_BYTES:
             cache.pop(next(iter(cache)))
 
 

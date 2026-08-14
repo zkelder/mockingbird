@@ -21,7 +21,7 @@ from datetime import datetime
 import json
 from typing import Mapping
 
-from mockingbird.observation.contracts import EvidenceCandidate
+from mockingbird.observation.contracts import CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE, EvidenceCandidate
 from mockingbird.observation.evidence_scoring import EvidenceScoringBounds, score_proposal_evidence
 from mockingbird.observation.visit_episode_assembler import ASSEMBLER_VERSION, AssembledVisitProposal, project_to_visit_proposal
 from mockingbird.repository.product_repository import (
@@ -97,8 +97,20 @@ class CandidateVisitAuthorityAdapter:
         continue to the next frame/proposal."""
 
         visit_proposal = project_to_visit_proposal(proposal)
+        # Same-Frame Species Evidence v1 (see docs/same-frame-species-
+        # evidence-contract.md): a `classifier_same_frame` candidate is
+        # deliberately excluded from the ordinary identification/context/
+        # alternate scoring competition below -- it must never displace the
+        # human-facing high-resolution burst as "identification", and it is
+        # not context/alternate evidence either. `_build_evidence_items`
+        # gives it its own small, guaranteed, non-competitive slot instead
+        # (still reading from the full, unfiltered `candidates_by_id`).
+        scoring_candidates = tuple(
+            candidate for candidate in evidence_candidates
+            if candidate.role != CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE
+        )
         selection = score_proposal_evidence(
-            visit_proposal, evidence_candidates, media=evidence_bytes, bounds=self._scoring_bounds,
+            visit_proposal, scoring_candidates, media=evidence_bytes, bounds=self._scoring_bounds,
         )
         candidates_by_id = {candidate.media_asset_id: candidate for candidate in evidence_candidates}
         evidence_items = _build_evidence_items(candidates_by_id, selection, evidence_bytes)
@@ -161,9 +173,27 @@ def _build_evidence_items(
 
     items: list[CandidateEvidenceItem] = []
     seen: set[str] = set()
+    # Same-Frame Species Evidence v1: a guaranteed, non-competitive slot --
+    # never chosen by the scorer (see `attempt_candidate`'s `scoring_
+    # candidates` filter), so at most one exists here, deterministically
+    # (dict iteration order mirrors `evidence_candidates`' own arrival
+    # order). Placed right after `context`, ahead of `alternate`s, so it
+    # reliably survives the repository's own bounded `max_evidence_items_
+    # per_candidate` truncation (default 4) even when 3 alternates are also
+    # present -- persisting this asset is the point of this milestone, an
+    # extra alternate is not.
+    same_frame_candidate_id = next(
+        (
+            candidate_id
+            for candidate_id, candidate in candidates_by_id.items()
+            if candidate.role == CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE
+        ),
+        None,
+    )
     picks = (
         (selection.identification_candidate_id, "identification"),
         (selection.context_candidate_id, "context"),
+        (same_frame_candidate_id, CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE),
         *((candidate_id, "alternate") for candidate_id in selection.alternate_candidate_ids),
     )
     for candidate_id, role in picks:

@@ -75,6 +75,14 @@ from mockingbird.observation.candidate_visit_authority import (
     evaluate_candidate_authority,
 )
 from mockingbird.observation.candidate_quality_gate import evaluate_evidence_admission
+from mockingbird.observation.contracts import CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE
+from mockingbird.observation.localization_attribution import geometry_attribution_from_json
+from mockingbird.species.classifier_input import (
+    ClassifierInputCropAsset,
+    ClassifierInputSubjectFrame,
+    PERSISTED_CROP_EVIDENCE_ROLES,
+    resolve_classifier_input,
+)
 from mockingbird import review_provenance
 from mockingbird.species.bioclip_adapter import (
     BIOCLIP_ADAPTER_ID,
@@ -1543,6 +1551,38 @@ class _ReviewSpeciesCropContext:
     box_normalized: BoundingBox
     label: str
     detection_proposal_id: str | None = None
+    # Same-Frame Species Evidence v1 (see docs/same-frame-species-evidence-
+    # contract.md): set only when `mockingbird.species.classifier_input.
+    # resolve_classifier_input` chose a tier that reads pixels from a
+    # *different* persisted MediaAsset than the Review Queue item's own
+    # `best_media_asset_id` -- a same-frame exact-box crop, or an already-
+    # persisted subject crop. `source` above stays one of the three DB-
+    # constrained `crop_source` values (`ck_bioclip_attempt_crop_source`
+    # only allows `'megadetector'/'activity'/'full_frame'`); `"activity"` is
+    # reused for both new tiers there (closest existing meaning: a crop
+    # derived from detected/tracked subject activity, not a raw MegaDetector
+    # box, not the bare full frame) -- the precise distinction
+    # (`classifier_input_type`/`classifier_input_same_frame` below) lives in
+    # the unconstrained `crop_provenance_json`/`evidence_region_json`
+    # instead, never invented as a new narrow DB enum value for this
+    # milestone alone. `None` for every existing tier (megadetector/
+    # activity/full_frame) -- the ordinary, unchanged single-asset path.
+    classifier_input_media_asset_id: str | None = None
+    classifier_input_local_path: str | None = None
+    classifier_input_size_bytes: int | None = None
+    classifier_input_mtime_ns: int | None = None
+    classifier_input_content_type: str | None = None
+    classifier_input_source_width: int | None = None
+    classifier_input_source_height: int | None = None
+    classifier_input_width: int | None = None
+    classifier_input_height: int | None = None
+    # `"same_frame_crop"` (resolver tier `exact_frame_subject_box`) or
+    # `"persisted_crop"` (resolver tier `persisted_subject_crop`) -- the
+    # exact vocabulary this milestone's own provenance list names.
+    classifier_input_type: str | None = None
+    classifier_input_same_frame: bool | None = None
+    classifier_input_crop_method: str | None = None
+    classifier_input_selection_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -13598,7 +13638,17 @@ class ProductRepository:
     ) -> dict[str, Any] | None:
         """Build a bounded presentation preview inside an existing read session."""
 
-        links = self._visit_evidence_link_models(session, visit.id)[:4]
+        # Same-Frame Species Evidence v1 (see docs/same-frame-species-
+        # evidence-contract.md): a `classifier_same_frame` asset is
+        # diagnostic/classifier-input evidence only -- excluded here before
+        # the bounded top-4 truncation below so it can neither occupy one of
+        # those 4 slots nor ever be recommended as the effective primary
+        # (see "Do not promote the classifier crop to canonical Visit
+        # image").
+        links = [
+            link for link in self._visit_evidence_link_models(session, visit.id)
+            if link.evidence_role != CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE
+        ][:4]
         if not links:
             return None
         dimensions = self._visit_evidence_dimensions_from_motion_evidence(session, visit.id)
@@ -13837,6 +13887,16 @@ class ProductRepository:
     ) -> list[VisitEvidenceFrame]:
         parsed: list[tuple[VisitEvidenceLinkModel, MediaAssetModel]] = []
         seen_media_ids: set[str] = set()
+        # Same-Frame Species Evidence v1 (see docs/same-frame-species-
+        # evidence-contract.md): excluded from every human-facing evidence
+        # gallery/API listing this shared function serves, before the
+        # bounded `MAX_LIVE_VISIT_EVIDENCE_FRAMES` truncation below -- it is
+        # supporting classifier/diagnostic evidence, never a browsable Visit
+        # image (see "Do not promote the classifier crop to canonical Visit
+        # image"). Still fully queryable directly by evidence_role for
+        # diagnostics/species inference (see `_classifier_same_frame_asset_
+        # for_visit`), just never surfaced here.
+        links = [link for link in links if link.evidence_role != CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE]
         for link in links[:MAX_LIVE_VISIT_EVIDENCE_FRAMES]:
             if link.media_asset_id in seen_media_ids:
                 continue
@@ -18929,6 +18989,18 @@ class ProductRepository:
                         raise ValueError("missing_review_candidate")
                     if session.get(MediaAssetModel, run_context.media_asset_id) is None:
                         raise ValueError("missing_media_asset")
+                    # Same-Frame Species Evidence v1: the classifier-input
+                    # override asset (if any) is re-validated too -- the same
+                    # "nothing was silently removed underneath this read"
+                    # discipline the primary review asset already gets above.
+                    if (
+                        run_context.crop.classifier_input_media_asset_id is not None
+                        and session.get(
+                            MediaAssetModel, run_context.crop.classifier_input_media_asset_id,
+                        )
+                        is None
+                    ):
+                        raise ValueError("missing_media_asset")
                     current_media_asset_id = current_item.best_media_asset_id or (
                         current_item.media_asset.id
                         if current_item.media_asset is not None
@@ -19115,13 +19187,35 @@ class ProductRepository:
         )
         candidate_pack = self._species_candidate_pack_from_model(session, pack_model)
 
+        # Same-Frame Species Evidence v1 (see docs/same-frame-species-
+        # evidence-contract.md): when `crop` resolved to a *different*
+        # persisted MediaAsset (a same-frame exact-box crop or a reused
+        # persisted crop), the bytes BioCLIP actually reads come from THAT
+        # asset's own file -- never the Visit's ordinary review frame -- so
+        # the anti-TOCTOU identity this context carries must describe the
+        # file that is actually opened, not `media_asset`. `media_asset_id`
+        # itself deliberately stays the Visit's own review frame throughout
+        # (every concurrency re-check keyed on it elsewhere is unaffected);
+        # only the physical file identity changes here.
+        local_path = crop.classifier_input_local_path or media_asset.local_path
+        file_size_bytes = (
+            crop.classifier_input_size_bytes
+            if crop.classifier_input_size_bytes is not None
+            else media_stat.st_size
+        )
+        file_mtime_ns = (
+            crop.classifier_input_mtime_ns
+            if crop.classifier_input_mtime_ns is not None
+            else media_stat.st_mtime_ns
+        )
+        content_type = crop.classifier_input_content_type or media_asset.content_type
         return _ReviewSpeciesRunContext(
             target_type=target_type,
             target_id=target_id,
-            local_path=media_asset.local_path,
-            media_file_size_bytes=media_stat.st_size,
-            media_file_mtime_ns=media_stat.st_mtime_ns,
-            content_type=media_asset.content_type,
+            local_path=local_path,
+            media_file_size_bytes=file_size_bytes,
+            media_file_mtime_ns=file_mtime_ns,
+            content_type=content_type,
             source_id=item.source_id,
             stream_id=item.stream_id,
             event_id=item.event_id,
@@ -19519,6 +19613,135 @@ class ProductRepository:
             ).all()
             return [_bioclip_attempt_record(attempt) for attempt in attempts]
 
+    def _classifier_same_frame_asset_for_visit(
+        self, session: Session, visit_id: str,
+    ) -> MediaAssetModel | None:
+        """The (at most one, by construction -- see `candidate_visit_adapter.
+        _build_evidence_items`) `classifier_same_frame`-role MediaAsset
+        linked to this Visit, if any. Deterministic when, contrary to that
+        construction guarantee, more than one somehow exists: earliest
+        `VisitEvidenceLinkModel.created_at`, then link id."""
+
+        link = session.scalars(
+            select(VisitEvidenceLinkModel)
+            .where(
+                VisitEvidenceLinkModel.visit_id == visit_id,
+                VisitEvidenceLinkModel.evidence_role == CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE,
+            )
+            .order_by(VisitEvidenceLinkModel.created_at, VisitEvidenceLinkModel.id)
+        ).first()
+        return session.get(MediaAssetModel, link.media_asset_id) if link is not None else None
+
+    def _persisted_subject_crop_assets_for_visit(
+        self, session: Session, visit_id: str,
+    ) -> list[MediaAssetModel]:
+        """Every already-persisted derived-crop MediaAsset
+        (`classifier_input.PERSISTED_CROP_EVIDENCE_ROLES`) linked to this
+        Visit -- reused as-is by the resolver's own tier 1, never re-derived
+        here. Today this is always empty (see project memory: 0/24 real
+        MediaAssets have ever had a derived crop); kept real and queried
+        honestly rather than skipped, so a future reviewer-refinement/
+        activity-crop feature activates this tier for free."""
+
+        links = session.scalars(
+            select(VisitEvidenceLinkModel).where(
+                VisitEvidenceLinkModel.visit_id == visit_id,
+                VisitEvidenceLinkModel.evidence_role.in_(PERSISTED_CROP_EVIDENCE_ROLES),
+            )
+        ).all()
+        assets = [session.get(MediaAssetModel, link.media_asset_id) for link in links]
+        return [asset for asset in assets if asset is not None]
+
+    def _classifier_input_override(
+        self,
+        session: Session,
+        item: ReviewQueueItem,
+        *,
+        media_asset_id: str,
+    ) -> _ReviewSpeciesCropContext | None:
+        """Same-Frame Species Evidence v1 (see docs/same-frame-species-
+        evidence-contract.md): prefer `classifier_input.
+        resolve_classifier_input`'s own subject-centric classifier input
+        over this Visit's ordinary review frame, when a genuinely safer
+        input actually exists.
+
+        Returns `None` -- never raises -- the instant anything about the
+        same-frame/persisted-crop evidence is missing, malformed, or merely
+        "not better than full frame": the caller (`_review_species_crop_
+        context`) falls through to the existing megadetector/activity/
+        full_frame tiers completely unchanged in every one of those cases.
+        This is the concrete "missing asset fallback" / "species inference
+        must remain non-blocking" guarantee, enforced structurally rather
+        than by convention.
+
+        Only ever consulted for a Visit (`item.visit_id`): both new resolver
+        tiers need a Visit-linked MediaAsset only the Observation Engine's
+        candidate-Visit path can ever produce -- a legacy Event-only Review
+        Queue item safely short-circuits on the very first check below.
+        """
+        if item.visit_id is None:
+            return None
+        try:
+            same_frame_asset = self._classifier_same_frame_asset_for_visit(session, item.visit_id)
+            persisted_crop_assets = self._persisted_subject_crop_assets_for_visit(session, item.visit_id)
+            if same_frame_asset is None and not persisted_crop_assets:
+                return None
+            subject_asset = same_frame_asset or session.get(MediaAssetModel, media_asset_id)
+            if subject_asset is None:
+                return None
+            subject_frame = _classifier_input_subject_frame_from_asset(subject_asset)
+            if subject_frame is None:
+                return None
+            persisted_candidates = tuple(
+                _classifier_input_crop_asset_from_model(asset) for asset in persisted_crop_assets
+            )
+            plan = resolve_classifier_input(
+                subject_frame=subject_frame, persisted_crop_candidates=persisted_candidates,
+            )
+            if plan.used_full_frame_fallback:
+                return None
+            override_asset = session.get(MediaAssetModel, plan.media_asset_id)
+            if override_asset is None:
+                return None
+            override_path = Path(override_asset.local_path)
+            if not override_path.is_file():
+                return None
+            override_stat = override_path.stat()
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return None
+        box_normalized = (
+            _bounding_box_from_crop_box(plan.crop_box_normalized)
+            if plan.crop_box_normalized is not None
+            else BoundingBox(x=0.0, y=0.0, width=1.0, height=1.0)
+        )
+        input_type = "same_frame_crop" if plan.source == "exact_frame_subject_box" else "persisted_crop"
+        return _ReviewSpeciesCropContext(
+            source="activity",
+            box_normalized=box_normalized,
+            label=(
+                "Same-frame subject crop (classifier evidence)"
+                if input_type == "same_frame_crop"
+                else "Reused persisted subject crop (classifier evidence)"
+            ),
+            classifier_input_media_asset_id=override_asset.id,
+            classifier_input_local_path=str(override_path),
+            classifier_input_size_bytes=override_stat.st_size,
+            classifier_input_mtime_ns=override_stat.st_mtime_ns,
+            classifier_input_content_type=override_asset.content_type,
+            classifier_input_source_width=plan.original_width,
+            classifier_input_source_height=plan.original_height,
+            classifier_input_width=plan.input_width,
+            classifier_input_height=plan.input_height,
+            classifier_input_type=input_type,
+            # Honest "not applicable" (`None`), never a fabricated `False`,
+            # for a reused persisted crop -- `same_frame` is a fact about
+            # *this* resolution's own tier 2 proof, not a property a reused
+            # tier-1 crop asset is being asked to re-prove here.
+            classifier_input_same_frame=(True if input_type == "same_frame_crop" else None),
+            classifier_input_crop_method=plan.crop_method,
+            classifier_input_selection_reason=plan.selection_reason,
+        )
+
     def _review_species_crop_context(
         self,
         session: Session,
@@ -19526,6 +19749,9 @@ class ProductRepository:
         *,
         media_asset_id: str,
     ) -> _ReviewSpeciesCropContext:
+        override = self._classifier_input_override(session, item, media_asset_id=media_asset_id)
+        if override is not None:
+            return override
         proposal = self._credible_megadetector_animal_proposal(
             session,
             item,
@@ -27580,6 +27806,25 @@ def _initial_bioclip_crop_provenance(
     }
     if crop.detection_proposal_id is not None:
         value["detection_proposal_id"] = crop.detection_proposal_id
+    if crop.classifier_input_media_asset_id is not None:
+        # Same-Frame Species Evidence v1 (see docs/same-frame-species-
+        # evidence-contract.md): the full classifier-input provenance this
+        # milestone requires -- which real persisted MediaAsset the pixels
+        # actually came from (distinct from the Visit's own review/primary
+        # asset, recorded separately as `media_asset_id` on this same
+        # attempt/suggestion row), the resolver's own input-type vocabulary,
+        # source vs. classifier-input dimensions, and whether that source
+        # geometry was *proven* same_frame -- never merely assumed close.
+        value["classifier_input"] = {
+            "source_media_asset_id": crop.classifier_input_media_asset_id,
+            "input_type": crop.classifier_input_type,
+            "same_frame": crop.classifier_input_same_frame,
+            "crop_method": crop.classifier_input_crop_method,
+            "source_width": crop.classifier_input_source_width,
+            "source_height": crop.classifier_input_source_height,
+            "classifier_input_width": crop.classifier_input_width,
+            "classifier_input_height": crop.classifier_input_height,
+        }
     return value
 
 
@@ -28180,6 +28425,14 @@ def _bioclip_species_suggestion_payload(
         evidence_region["detection_proposal_id"] = (
             run_context.crop.detection_proposal_id
         )
+    # Same-Frame Species Evidence v1: reuse the identical `classifier_input`
+    # block `_initial_bioclip_crop_provenance` already built (and
+    # `crop_provenance` already carries here) rather than re-deriving it a
+    # second time from `run_context.crop` -- one source of truth for this
+    # suggestion's own classifier-input provenance.
+    classifier_input = crop_provenance.get("classifier_input")
+    if isinstance(classifier_input, dict):
+        evidence_region["classifier_input"] = classifier_input
     generated_notes = (
         "BioCLIP 2 Review Queue shadow suggestion; scores are candidate-relative "
         "and uncalibrated, not reviewed truth or calibrated probability. "
@@ -28491,6 +28744,38 @@ def _bounding_box_from_crop_box(box: CropBoxNormalized) -> BoundingBox:
         y=box.top,
         width=box.right - box.left,
         height=box.bottom - box.top,
+    )
+
+
+def _classifier_input_subject_frame_from_asset(asset: MediaAssetModel) -> ClassifierInputSubjectFrame | None:
+    """Project a persisted `MediaAssetModel` into the pure resolver's own
+    input shape -- reconstructing, never re-measuring, exactly the facts
+    already recorded on the row (Same-Frame Species Evidence v1, see
+    docs/same-frame-species-evidence-contract.md). `None` when the asset
+    lacks recorded dimensions (a legacy/degenerate row) -- the resolver's
+    own `ClassifierInputSubjectFrame` requires real, positive dimensions,
+    and this module never fabricates one to satisfy that."""
+
+    if not asset.image_width or not asset.image_height:
+        return None
+    box = _normalized_box_from_json(asset.normalized_track_box_json)
+    return ClassifierInputSubjectFrame(
+        media_asset_id=asset.id,
+        image_width=asset.image_width,
+        image_height=asset.image_height,
+        parent_media_asset_id=asset.parent_media_asset_id,
+        normalized_track_box=tuple(box) if box is not None else None,
+        geometry_attribution=geometry_attribution_from_json(asset.geometry_attribution_json),
+    )
+
+
+def _classifier_input_crop_asset_from_model(asset: MediaAssetModel) -> ClassifierInputCropAsset:
+    return ClassifierInputCropAsset(
+        media_asset_id=asset.id,
+        evidence_role=asset.evidence_role,
+        parent_media_asset_id=asset.parent_media_asset_id,
+        image_width=asset.image_width,
+        image_height=asset.image_height,
     )
 
 

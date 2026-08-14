@@ -18,12 +18,17 @@ import pytest
 
 from mockingbird.observation.candidate_visit_adapter import CandidateVisitAuthorityAdapter
 from mockingbird.observation.candidate_visit_authority import ObservationAuthorityMode
-from mockingbird.observation.contracts import EvidenceCandidate, GeometryAttribution
+from mockingbird.observation.contracts import (
+    CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE,
+    EvidenceCandidate,
+    GeometryAttribution,
+)
 from mockingbird.observation.visit_episode_assembler import Tracklet, assemble_visit_episodes
 from mockingbird.repository.product_repository import (
     MediaAssetModel,
     ObservationCandidateVisitModel,
     ProductRepository,
+    VisitEvidenceLinkModel,
     VisitModel,
 )
 
@@ -309,3 +314,145 @@ def test_repository_failure_is_caught_and_recorded_not_raised(
 
     status = repository.get_observation_authority_state()
     assert status.failure_count == 1
+
+
+# --------------------------------------------------------------------------
+# Same-Frame Species Evidence v1 (see docs/same-frame-species-evidence-
+# contract.md)
+# --------------------------------------------------------------------------
+
+
+def _same_frame_candidate(
+    media_asset_id: str = "shadow-same-frame:hash-sf", *, generation_id: str = "gen-1",
+) -> EvidenceCandidate:
+    return EvidenceCandidate(
+        media_asset_id=media_asset_id,
+        stream_id=STREAM_ID,
+        role=CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE,
+        captured_at=NOW,
+        frame_id=f"{generation_id}-frame-1",
+        source_offset_ms=500,
+        width=640,
+        height=480,
+        subject_geometry=(0.4, 0.4, 0.5, 0.5),
+        track_generation_id=generation_id,
+        quality_facts=(("content_hash", media_asset_id.split(":")[-1]), ("temporal_alignment", "same_frame")),
+        geometry_attribution=GeometryAttribution(
+            geometry_source="detector", geometry_source_offset_ms=500, geometry_source_observation_id="obs-1",
+            geometry_source_confidence=0.9, same_frame=True, geometry_evidence_gap_ms=0,
+        ),
+    )
+
+
+def test_same_frame_evidence_persisted_alongside_identification_without_displacing_it(
+    repository: ProductRepository,
+) -> None:
+    """A `classifier_same_frame` candidate becomes its own persisted
+    MediaAsset/VisitEvidenceLink, but never wins the `identification`/
+    `context` slot -- the human-facing burst/context selections are
+    unaffected by its mere presence."""
+
+    tracklet = _tracklet(
+        "gen-1", 0, 4500,
+        evidence_candidate_ids=("shadow-burst:hash-id", "shadow-burst:hash-ctx", "shadow-same-frame:hash-sf"),
+    )
+    proposal = assemble_visit_episodes((tracklet,)).proposals[0]
+    _activate(repository)
+    candidates = _evidence_candidates() + (_same_frame_candidate(),)
+    evidence_bytes = {
+        "shadow-burst:hash-id": JPEG_BYTES,
+        "shadow-burst:hash-ctx": JPEG_BYTES,
+        "shadow-same-frame:hash-sf": JPEG_BYTES,
+    }
+    outcome = _adapter(repository).attempt_candidate(
+        proposal, evidence_candidates=candidates, evidence_bytes=evidence_bytes, observed_at=NOW,
+    )
+    assert outcome.created
+
+    with repository.session_factory() as session:
+        ledger = session.get(ObservationCandidateVisitModel, proposal.proposal_id)
+        assert ledger is not None
+        # Unchanged from the no-same-frame case: still the burst/context
+        # picks, never displaced by the new role.
+        identification_media = session.get(MediaAssetModel, ledger.selected_identification_media_asset_id)
+        assert identification_media is not None and identification_media.evidence_role == "identification"
+        context_media = session.get(MediaAssetModel, ledger.selected_context_media_asset_id)
+        assert context_media is not None and context_media.evidence_role == "context"
+
+        links = session.query(VisitEvidenceLinkModel).filter_by(visit_id=ledger.visit_id).all()
+        same_frame_links = [link for link in links if link.evidence_role == CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE]
+        assert len(same_frame_links) == 1
+        same_frame_media = session.get(MediaAssetModel, same_frame_links[0].media_asset_id)
+        assert same_frame_media is not None
+        assert same_frame_media.evidence_role == CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE
+        assert same_frame_media.image_width == 640 and same_frame_media.image_height == 480
+        assert not same_frame_links[0].is_primary
+        attribution = json.loads(same_frame_media.geometry_attribution_json)
+        assert attribution["same_frame"] is True
+        assert attribution["geometry_evidence_gap_ms"] == 0
+
+
+def test_same_frame_evidence_missing_bytes_degrades_without_blocking_candidate(
+    repository: ProductRepository,
+) -> None:
+    """Species inference safety net proven one layer down: a same-frame
+    candidate this adapter has no real bytes for is honestly skipped --
+    never fabricated -- and never blocks identification/context admission."""
+
+    tracklet = _tracklet(
+        "gen-1", 0, 4500,
+        evidence_candidate_ids=("shadow-burst:hash-id", "shadow-burst:hash-ctx", "shadow-same-frame:hash-sf"),
+    )
+    proposal = assemble_visit_episodes((tracklet,)).proposals[0]
+    _activate(repository)
+    candidates = _evidence_candidates() + (_same_frame_candidate(),)
+    evidence_bytes = {"shadow-burst:hash-id": JPEG_BYTES, "shadow-burst:hash-ctx": JPEG_BYTES}
+    outcome = _adapter(repository).attempt_candidate(
+        proposal, evidence_candidates=candidates, evidence_bytes=evidence_bytes, observed_at=NOW,
+    )
+    assert outcome.created
+    with repository.session_factory() as session:
+        ledger = session.get(ObservationCandidateVisitModel, proposal.proposal_id)
+        links = session.query(VisitEvidenceLinkModel).filter_by(visit_id=ledger.visit_id).all()
+        assert not any(link.evidence_role == CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE for link in links)
+
+
+def test_at_most_one_same_frame_evidence_persisted_when_multiple_generations_merge(
+    repository: ProductRepository,
+) -> None:
+    """A multi-tracklet-merged Visit could in principle carry a same-frame
+    candidate from each constituent generation; the milestone's "at most
+    ONE same-frame evidence image per Visit/candidate" bound is enforced
+    deterministically here, not left to chance."""
+
+    first = _tracklet(
+        "gen-1", 0, 1500,
+        evidence_candidate_ids=("shadow-burst:hash-id", "shadow-burst:hash-ctx", "shadow-same-frame:hash-sf-1"),
+    )
+    second = _tracklet(
+        "gen-2", 6000, 7500,
+        evidence_candidate_ids=("shadow-same-frame:hash-sf-2",),
+    )
+    proposal = assemble_visit_episodes((first, second)).proposals[0]
+    assert proposal.constituent_generation_ids == ("gen-1", "gen-2")
+
+    _activate(repository)
+    candidates = _evidence_candidates() + (
+        _same_frame_candidate("shadow-same-frame:hash-sf-1", generation_id="gen-1"),
+        _same_frame_candidate("shadow-same-frame:hash-sf-2", generation_id="gen-2"),
+    )
+    evidence_bytes = {
+        "shadow-burst:hash-id": JPEG_BYTES,
+        "shadow-burst:hash-ctx": JPEG_BYTES,
+        "shadow-same-frame:hash-sf-1": JPEG_BYTES,
+        "shadow-same-frame:hash-sf-2": JPEG_BYTES,
+    }
+    outcome = _adapter(repository).attempt_candidate(
+        proposal, evidence_candidates=candidates, evidence_bytes=evidence_bytes, observed_at=NOW,
+    )
+    assert outcome.created
+    with repository.session_factory() as session:
+        ledger = session.get(ObservationCandidateVisitModel, proposal.proposal_id)
+        links = session.query(VisitEvidenceLinkModel).filter_by(visit_id=ledger.visit_id).all()
+        same_frame_links = [link for link in links if link.evidence_role == CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE]
+        assert len(same_frame_links) == 1

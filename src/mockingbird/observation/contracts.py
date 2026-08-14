@@ -11,6 +11,19 @@ from datetime import datetime
 from statistics import median
 from typing import Literal, Protocol, Sequence
 
+# Same-Frame Species Evidence v1 (see docs/same-frame-species-evidence-
+# contract.md): the `EvidenceCandidate.role`/`MediaAssetModel.evidence_role`
+# used for the exact detector/tracker analysis frame that produced a
+# proposal's subject box, persisted alongside (never instead of) the later
+# `"high_resolution_burst"` capture -- see `camera_node_live.py`. Named once
+# here, the one module every producer/consumer of this role already imports,
+# so the string is never silently retyped across `camera_node_live.py`,
+# `candidate_visit_adapter.py`, and `product_repository.py`. This is
+# diagnostic/classifier evidence only, never the canonical human-facing
+# Visit image -- see `GeometryAttribution.same_frame` for the proof
+# obligation attached to it.
+CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE = "classifier_same_frame"
+
 
 @dataclass(frozen=True)
 class FramePacket:
