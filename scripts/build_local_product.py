@@ -103,6 +103,35 @@ reuses the verified local wheel cache (`--wheel-cache-dir`, defaulting to
 --no-index` when present, so a build no longer depends on re-fetching ~1.3 GB
 over the network -- including that same ~400 MB `cublasLt64_13.dll`-bearing
 wheel -- every single time.
+
+## BioCLIP species-suggestion runtime packaging
+
+`package_bioclip_runtime_assets` copies the already-accepted local BioCLIP 2
+artifact (docs/model-selection.md's "Supported local BioCLIP 2 artifact":
+Imageomics `imageomics/bioclip-2`, MIT-licensed) into the bundle the same
+way `package_observation_runtime_assets` does for the Observation Engine's
+MDv5 bundle -- verifying every file's SHA-256 against the exact hashes this
+project has actually accepted before ever including anything. `install_
+windows_bioclip_runtime_dependencies` pre-installs the adapter's complete
+optional runtime closure (`WINDOWS_BIOCLIP_RUNTIME_REQUIREMENTS`: torch/
+open_clip/safetensors/timm/huggingface_hub/... -- every package actually
+reached transitively from `open-clip-torch`, determined by really running
+this cross-platform install rather than reading package metadata by eye)
+into the same flat site-packages layout, exact-pinned for the same
+reproducibility reason as the CUDA stack above. `verify_no_duplicate_site_
+packages_metadata` closes a real, empirically-found gap this exact-pinning
+guards against: a second `pip install --target` call into an
+already-populated site-packages can independently resolve one of its own
+loosely-bounded transitive dependencies (observed for real: `Pillow`) to a
+different version than an earlier call already installed there, leaving the
+old code on disk untouched while still writing a second, differently
+-versioned `.dist-info/` next to it -- an ambiguous, corrupted install this
+check now fails the whole build on rather than ever shipping silently. Like
+the Observation model bundle, a build with no local BioCLIP source
+available is not a failure -- the produced artifact still boots and
+honestly reports species suggestions as unavailable/setup-required until an
+operator supplies a bundle and rebuilds (`--skip-bioclip-runtime`/
+`--bioclip-bundle-source`).
 """
 
 from __future__ import annotations
@@ -114,6 +143,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+import re
 import secrets
 import shutil
 import subprocess
@@ -266,6 +296,170 @@ ACCEPTED_ONNX_MODEL_SHA256 = "b03ef7968a54be1ae15e6987d520be0fa3cd71d8d229ec3aeb
 # `--model-bundle-source` explicitly.
 DEFAULT_MODEL_BUNDLE_SOURCE = ROOT / "data" / "models" / "observation-onnx-cuda"
 
+# --- BioCLIP species-suggestion runtime packaging ---------------------------
+#
+# Mirrors the Observation Engine's own model-bundle/GPU-runtime packaging
+# immediately above, for the separate optional BioCLIP species-suggestion
+# adapter (`mockingbird.species.bioclip_adapter`). See "BioCLIP runtime
+# packaging" in docs/local-product-packaging-design.md for the full design
+# this implements, and docs/model-selection.md's "Supported local BioCLIP 2
+# artifact" for the accepted model's own provenance record.
+#
+# Mirrors `mockingbird.species.bioclip_runtime.PACKAGED_BIOCLIP_RUNTIME_
+# DIRNAME` exactly -- duplicated as a literal (the same convention
+# `PACKAGED_OBSERVATION_RUNTIME_DIRNAME` above already uses) so this build
+# script never depends on `mockingbird` itself being importable from the
+# build host's ambient environment. Keep both copies in sync.
+PACKAGED_BIOCLIP_RUNTIME_DIRNAME = "bioclip_runtime"
+# Mirrors `mockingbird.species.bioclip_runtime`'s own three fixed filenames
+# exactly -- keep all three copies in sync.
+BIOCLIP_MODEL_CONFIG_FILENAME = "open_clip_config.json"
+BIOCLIP_LABELS_FILENAME = "mockingbird-bird-candidates.txt"
+BIOCLIP_EMBEDDING_CACHE_FILENAME = "mockingbird-bird-candidates.npz"
+# `bioclip_adapter._SAFE_MODEL_WEIGHT_NAMES` -- the filename the accepted
+# local bundle actually uses (the model's official artifact name, unchanged
+# from upstream). A build refuses to package a bundle under any other name
+# rather than guessing which file is the real weights file.
+BIOCLIP_MODEL_WEIGHTS_FILENAME = "open_clip_model.safetensors"
+
+# Doctrine-recorded provenance for the one accepted local BioCLIP 2 artifact
+# (docs/model-selection.md's "Supported local BioCLIP 2 artifact": Imageomics
+# `imageomics/bioclip-2`, model-card version 1.0.0, immutable revision
+# `2957b322090f9cb17ae72c71981c7218a28d81e0`, MIT-licensed). A build must
+# never silently ship a *different* model than the one this project has
+# actually accepted -- these are the only fingerprints a packaged bundle is
+# allowed to match; anything else is refused (not packaged, never crashes
+# the build) with an honest, logged reason, the same "refuse, don't guess"
+# contract `package_observation_runtime_assets` already established.
+ACCEPTED_BIOCLIP_MODEL_WEIGHTS_SHA256 = "b7b2bf6fbc95799e42630e394cf95803892ab447c1a8ab629dbc82fbeaf7dfef"
+ACCEPTED_BIOCLIP_MODEL_CONFIG_SHA256 = "1bf947e96e943fe50efd5c3e26c37f843a2fa3c358967719a68c8a6d17ce68c8"
+# The bounded 14-species "backyard-core" candidate pack (`mockingbird.
+# repository.product_repository.BUILTIN_SPECIES_CANDIDATE_TAXONOMY_IDS`) and
+# its matching precomputed OpenCLIP text-embedding cache -- both frozen
+# together, never regenerated at build or run time (bioclip_adapter never
+# downloads or rebuilds a cache; a mismatch fails the adapter's own bound
+# -cache validation, not this build).
+ACCEPTED_BIOCLIP_LABELS_SHA256 = "b90cea20b5d4ac992fdfc170bcca4b346de0e23ee8d25e78900d4800ae7fa442"
+ACCEPTED_BIOCLIP_EMBEDDING_CACHE_SHA256 = "0260d5bb59e9878f7789018dbc56e85513abcd799801d010041f375f6913b23f"
+
+# Same local-artifact convention as `DEFAULT_MODEL_BUNDLE_SOURCE` above
+# (never a repository-tracked path); this is the actual existing developer
+# convention already in use (`data/models/bioclip-2/`), holding the four
+# files above plus this project's own local BioCLIP evaluation scratch
+# files (ignored by this build -- see `package_bioclip_runtime_assets`,
+# which looks up each of the four expected filenames individually rather
+# than copying the directory wholesale).
+DEFAULT_BIOCLIP_BUNDLE_SOURCE = ROOT / "data" / "models" / "bioclip-2"
+
+# PyPI's default index has no CPU-only Windows wheel for `torch`/
+# `torchvision` under the plain, unsuffixed `torch`/`torchvision` package
+# names (a bare cross-platform install from it would otherwise also pull a
+# very large bundled-CUDA variant, or -- worse, from this Linux build host
+# -- pip resolving `torch`'s own Linux-only CUDA-toolkit extras during
+# dependency backtracking, observed wasting several hundred MB of
+# irrelevant downloads before settling). PyTorch's own package index
+# publishes the smaller `+cpu`-suffixed wheels actually used here (see
+# `WINDOWS_BIOCLIP_RUNTIME_REQUIREMENTS`'s exact pins below) under this
+# separate URL; passed as `--extra-index-url` (additive, never replacing
+# the default PyPI index every *other* requirement below still resolves
+# against).
+BIOCLIP_PYTORCH_CPU_INDEX_URL = "https://download.pytorch.org/whl/cpu"
+
+# The optional BioCLIP species-suggestion adapter's complete, real,
+# non-guessed win_amd64/cp312 dependency closure -- every package actually
+# reached transitively from `open-clip-torch` (the sole `classifier-bioclip`
+# extra in pyproject.toml) plus `torch` itself, determined by running this
+# exact cross-platform `pip install --target ... --platform win_amd64`
+# technique for real (never inferred from reading package metadata by eye)
+# and inspecting the result, then exact-pinning every single resolved
+# package -- the same "proven-together combination, not any recent version"
+# philosophy `WINDOWS_CUDA_REDISTRIBUTABLE_REQUIREMENTS` already uses, and
+# for the same practical reason: an unpinned/ranged resolution here
+# genuinely backtracks and wastes bandwidth (see `BIOCLIP_PYTORCH_CPU_
+# INDEX_URL` above), where a fully-pinned one resolves in seconds with zero
+# backtracking.
+#
+# `Pillow`/`numpy` are included here even though they are also core/GPU
+# -tier requirements above: `open-clip-torch`'s own dependency chain
+# (`torchvision`, `huggingface_hub`) declares each with only a loose lower
+# bound, and a real, empirically-reproduced defect found while validating
+# this list is that a *second*, separate `pip install --target` call into
+# the same already-populated `site_packages` resolves such a loose
+# dependency **independently of what already exists on disk there** --
+# pip's cross-platform `--target` resolution never consults the target
+# directory's own contents during dependency resolution, only at the final
+# per-file unpack step, where a *different* resolved version merely leaves
+# the old package's real code untouched while still writing a second,
+# newer-versioned `.dist-info/` alongside it (observed for real: `Pillow`
+# resolved to a freshly-released 12.3.0 here while the actual `PIL/` code
+# on disk silently remained the core tier's already-installed 11.3.0 --
+# a corrupted, ambiguous-version site-packages that
+# `verify_no_duplicate_site_packages_metadata` below now fails the build
+# on, rather than shipping it silently). Exact-pinning `Pillow`/`numpy`
+# here to precisely the same versions the core/GPU tiers above already
+# resolve is what keeps this call a genuine no-op for them instead of a
+# silent duplicate -- if a future change to `WINDOWS_RUNTIME_REQUIREMENTS`/
+# `WINDOWS_GPU_RUNTIME_REQUIREMENTS`'s own ranges drifts these two pins out
+# of sync, `verify_no_duplicate_site_packages_metadata` fails the build
+# outright rather than shipping the same silent corruption again.
+WINDOWS_BIOCLIP_RUNTIME_REQUIREMENTS: tuple[str, ...] = (
+    "torch==2.11.0+cpu",
+    "torchvision==0.26.0+cpu",
+    "open_clip_torch==3.3.0",
+    "safetensors==0.8.0",
+    "timm==1.0.28",
+    "huggingface_hub==1.27.0",
+    "ftfy==6.3.1",
+    "regex==2026.7.19",
+    "tqdm==4.70.0",
+    "pyyaml==6.0.3",
+    "sympy==1.14.0",
+    "mpmath==1.3.0",
+    "networkx==3.6.1",
+    "jinja2==3.1.6",
+    "markupsafe==3.0.3",
+    "filelock==3.32.3",
+    "fsspec==2026.7.0",
+    "typing_extensions==4.16.0",
+    "packaging==26.3",
+    "certifi==2026.7.22",
+    "httpx==0.28.1",
+    "httpcore==1.0.9",
+    "h11==0.16.0",
+    "idna==3.18",
+    "click==8.4.2",
+    "hf_xet==1.6.0",
+    "wcwidth==0.8.2",
+    "setuptools==81.0.0",
+    # `anyio`'s own dependency -- not otherwise reached by anything else in
+    # this list. A real, empirically-found gap: an *online* resolution of
+    # `httpx`/`anyio` pulls this in automatically without needing to name
+    # it, but the offline `--find-links ... --no-index` path (this list's
+    # whole point) only ever considers exactly the wheels named here or
+    # already present in the cache directory -- omitting it here fails the
+    # offline install outright ("No matching distribution found for
+    # sniffio") the moment `--wheel-cache-dir` is actually used, even
+    # though a plain network install of the very same pinned list silently
+    # papers over the gap. Every package this closure needs must be named
+    # here explicitly for that reason, regardless of "conceptual"
+    # ownership.
+    "sniffio==1.3.1",
+    # Must stay exactly equal to what WINDOWS_RUNTIME_REQUIREMENTS/
+    # WINDOWS_GPU_RUNTIME_REQUIREMENTS above actually resolve -- see this
+    # list's own docstring paragraph above.
+    "anyio==3.7.1",
+    "Pillow==11.3.0",
+    "numpy==2.5.2",
+)
+# The verified, already-downloaded win_amd64/cp312 BioCLIP wheel cache,
+# reused via `pip install --find-links ... --no-index` whenever present --
+# same convention and same reason as `DEFAULT_WHEEL_CACHE_DIR` above (a
+# build never re-fetches this closure, roughly 150-200 MB, over the network
+# on every run). Falls back to a normal network install through
+# `BIOCLIP_PYTORCH_CPU_INDEX_URL` untouched when a build host has no local
+# cache yet.
+DEFAULT_BIOCLIP_WHEEL_CACHE_DIR = DEFAULT_BUILD_CACHE_DIR / "wheels-win_amd64-cp312-bioclip"
+
 # `pip wheel .`'s actual inputs: the wheel's own package content plus the
 # two files hatchling/PEP 621 reads directly (`pyproject.toml`, and the
 # `readme` it points at). Scoped precisely to what is packaged, not the
@@ -375,6 +569,33 @@ class ModelBundleProvenance:
             "license": self.license_name,
             "source_model_sha256": self.source_model_sha256,
             "onnx_model_sha256": self.onnx_model_sha256,
+        }
+
+
+@dataclass(frozen=True)
+class BioClipBundleProvenance:
+    """What `package_bioclip_runtime_assets` actually did, recorded in
+    `manifest.json` like `ModelBundleProvenance` -- inclusion is never
+    silent, and neither is its absence. A missing/invalid/mismatched local
+    bundle is an honestly reported, explicitly supported state (the species
+    -suggestion adapter is optional and remains unavailable-safe), never a
+    failed release build."""
+
+    included: bool
+    reason: str | None = None
+    model_weights_sha256: str | None = None
+    model_config_sha256: str | None = None
+    labels_sha256: str | None = None
+    embedding_cache_sha256: str | None = None
+
+    def as_manifest_dict(self) -> dict[str, object]:
+        return {
+            "included": self.included,
+            "reason": self.reason,
+            "model_weights_sha256": self.model_weights_sha256,
+            "model_config_sha256": self.model_config_sha256,
+            "labels_sha256": self.labels_sha256,
+            "embedding_cache_sha256": self.embedding_cache_sha256,
         }
 
 
@@ -705,6 +926,70 @@ def install_windows_gpu_runtime_dependencies(
     )
 
 
+def install_windows_bioclip_runtime_dependencies(
+    *,
+    site_packages: Path,
+    requirements: Sequence[str] = WINDOWS_BIOCLIP_RUNTIME_REQUIREMENTS,
+    wheel_cache_dir: Path | None = DEFAULT_BIOCLIP_WHEEL_CACHE_DIR,
+    extra_index_url: str = BIOCLIP_PYTORCH_CPU_INDEX_URL,
+) -> None:
+    """Pre-install the optional BioCLIP species-suggestion adapter's
+    complete runtime dependency closure (torch/open_clip/safetensors/timm/
+    huggingface_hub/... -- see `WINDOWS_BIOCLIP_RUNTIME_REQUIREMENTS`), same
+    cross-platform `pip install --target` technique as `install_windows_
+    runtime_dependencies`/`install_windows_gpu_runtime_dependencies`. Kept
+    as its own function/requirement list -- optional (`--skip-bioclip-
+    runtime`) and independently versioned from both the core app and the
+    Observation Engine's GPU stack -- rather than folded into either;
+    tests inject a fake installer here too, for the same hermetic/fast
+    reason those two already do.
+
+    `mockingbird.species.bioclip_adapter` only ever imports this closure
+    inside its own isolated local worker subprocess (never at app import or
+    status-check time -- see `_bioclip_worker_loop`), so installing it here
+    can never slow down or destabilize ordinary MockingBird startup, with
+    or without BioCLIP configured.
+
+    Same offline-cache-reuse behavior as `install_windows_gpu_runtime_
+    dependencies`: `--find-links <dir> --no-index` when `wheel_cache_dir`
+    (default: the verified local cache documented in docs/local-product
+    -packaging-design.md) exists, else a normal network install through
+    `extra_index_url` (PyTorch's own CPU-wheel index -- see
+    `BIOCLIP_PYTORCH_CPU_INDEX_URL`'s own docstring for why this is
+    necessary rather than the default PyPI index alone).
+    """
+
+    find_links_arguments: list[str] = []
+    if wheel_cache_dir is not None and wheel_cache_dir.is_dir():
+        find_links_arguments = ["--find-links", str(wheel_cache_dir), "--no-index"]
+
+    _run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--target",
+            str(site_packages),
+            "--platform",
+            "win_amd64",
+            "--python-version",
+            "3.12",
+            "--implementation",
+            "cp",
+            "--abi",
+            "cp312",
+            "--only-binary=:all:",
+            "--no-compile",
+            "--extra-index-url",
+            extra_index_url,
+            *find_links_arguments,
+            *requirements,
+        ],
+        cwd=ROOT,
+    )
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -818,6 +1103,79 @@ def package_observation_runtime_assets(
         license_name=bundle_manifest.get("license"),
         source_model_sha256=source_sha256,
         onnx_model_sha256=onnx_sha256,
+    )
+
+
+def package_bioclip_runtime_assets(
+    *,
+    site_packages: Path,
+    bioclip_bundle_source: Path | None = DEFAULT_BIOCLIP_BUNDLE_SOURCE,
+) -> BioClipBundleProvenance:
+    """Copy the accepted local BioCLIP 2 artifact into
+    `<site_packages>/mockingbird/bioclip_runtime/` -- the path
+    `mockingbird.species.bioclip_runtime.packaged_bioclip_runtime_root`
+    resolves at app startup, so a normal packaged install needs no
+    `MOCKINGBIRD_BIOCLIP_*` environment variable.
+
+    `bioclip_bundle_source` is a local, ignored, developer/CI-supplied
+    directory holding the existing `data/models/bioclip-2/` layout (model
+    config, weights, frozen labels, precomputed embedding cache, by their
+    existing fixed filenames -- `BIOCLIP_MODEL_CONFIG_FILENAME` and
+    friends -- looked up individually, so any *other* file this directory
+    happens to also hold, such as this project's own local evaluation
+    scratch artifacts, is simply ignored rather than accidentally packaged).
+    Every fingerprint is independently re-verified against the four
+    `ACCEPTED_BIOCLIP_*_SHA256` constants before anything is copied: this
+    build can only ever ship the one model/label/cache set this project has
+    actually accepted, never a substitute, and never a corrupted file that
+    merely claims to match.
+
+    Never raises: a missing/invalid/mismatched source is reported (not
+    packaged) rather than failing the whole release build, because "missing
+    BioCLIP bundle" is an explicitly supported, honestly-reported species
+    -suggestion state (the adapter remains optional and unavailable-safe),
+    exactly the same contract `package_observation_runtime_assets`
+    established for the Observation Engine's model bundle. The caller is
+    responsible for surfacing `BioClipBundleProvenance.reason` (`main`
+    does, as a warning).
+    """
+
+    if bioclip_bundle_source is None or not bioclip_bundle_source.is_dir():
+        return BioClipBundleProvenance(included=False, reason="no_bioclip_bundle_source_supplied")
+
+    expected = {
+        "model_config": (BIOCLIP_MODEL_CONFIG_FILENAME, ACCEPTED_BIOCLIP_MODEL_CONFIG_SHA256),
+        "model_weights": (BIOCLIP_MODEL_WEIGHTS_FILENAME, ACCEPTED_BIOCLIP_MODEL_WEIGHTS_SHA256),
+        "labels": (BIOCLIP_LABELS_FILENAME, ACCEPTED_BIOCLIP_LABELS_SHA256),
+        "embedding_cache": (BIOCLIP_EMBEDDING_CACHE_FILENAME, ACCEPTED_BIOCLIP_EMBEDDING_CACHE_SHA256),
+    }
+
+    sources: dict[str, Path] = {}
+    for key, (filename, _accepted_sha256) in expected.items():
+        source = bioclip_bundle_source / filename
+        if source.is_symlink() or not source.is_file():
+            return BioClipBundleProvenance(included=False, reason=f"bioclip_{key}_missing")
+        sources[key] = source
+
+    hashes: dict[str, str] = {key: _sha256(path) for key, path in sources.items()}
+    for key, (_filename, accepted_sha256) in expected.items():
+        if hashes[key] != accepted_sha256:
+            return BioClipBundleProvenance(
+                included=False,
+                reason=f"bioclip_{key}_does_not_match_accepted_provenance:sha256={hashes[key]}",
+            )
+
+    destination = site_packages / "mockingbird" / PACKAGED_BIOCLIP_RUNTIME_DIRNAME
+    destination.mkdir(parents=True, exist_ok=True)
+    for key, (filename, _accepted_sha256) in expected.items():
+        shutil.copy2(sources[key], destination / filename)
+
+    return BioClipBundleProvenance(
+        included=True,
+        model_weights_sha256=hashes["model_weights"],
+        model_config_sha256=hashes["model_config"],
+        labels_sha256=hashes["labels"],
+        embedding_cache_sha256=hashes["embedding_cache"],
     )
 
 
@@ -974,6 +1332,76 @@ def verify_windows_gpu_runtime_dll_closure(*, site_packages: Path) -> NativeRunt
     )
 
 
+def _normalized_distribution_name(dist_info_dirname: str) -> str | None:
+    """PEP 503 normalization of a `*.dist-info` directory's own package
+    name (the part before the version -- `pillow-11.3.0.dist-info` ->
+    `pillow`), or `None` for anything not shaped like a real distribution
+    -info directory. Case-folded and every run of `-`/`_`/`.` collapsed to
+    a single `-`, matching pip/PyPI's own package-name-equality rule, so
+    `Pillow` and `pillow_extra` variants are compared the same way pip
+    itself would treat them as the same or different packages."""
+
+    name = dist_info_dirname[: -len(".dist-info")]
+    name = re.sub(r"-[^-]*$", "", name)  # drop the trailing "-<version>"
+    if not name:
+        return None
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def verify_no_duplicate_site_packages_metadata(*, site_packages: Path) -> None:
+    """Fail the build outright if `site_packages` ever ends up with more
+    than one `*.dist-info/` directory for the same normalized package name.
+
+    A real, empirically-reproduced defect found while validating
+    `WINDOWS_BIOCLIP_RUNTIME_REQUIREMENTS` (see that constant's own
+    docstring): a *second*, separate `pip install --target` call into an
+    already-populated `site_packages` can resolve one of its own loosely
+    -bounded transitive dependencies to a version different from what an
+    earlier call already installed there. pip then leaves the first
+    version's actual code untouched (an existing file/directory is never
+    silently overwritten by `--target`) while still writing a *second*,
+    differently-versioned `.dist-info/` alongside it -- a site-packages
+    that now unambiguously claims two different versions of the same
+    package are both installed, with only one of them corresponding to the
+    code that is actually there. `importlib.metadata.version(...)` (which
+    both `mockingbird.species.bioclip_adapter._missing_runtime_packages`
+    -style checks and ordinary third-party library version probing use) has
+    no defined tie-breaker for this -- it is a genuinely ambiguous,
+    corrupted install, not merely an untidy one.
+
+    This is a pure, cheap directory-listing check (every `install_windows_
+    *_dependencies` call already ran; nothing here imports or executes
+    anything) -- run once, after every dependency-installing step, so it
+    catches this defect shape regardless of which pair of calls produced
+    it, not only the specific BioCLIP/core overlap that first surfaced it.
+    Raises `LocalProductBuildError` (failing the release build, never a
+    warning) naming every duplicated package and every version found for
+    it, so a real recurrence is immediately actionable rather than a
+    mysterious later runtime version mismatch.
+    """
+
+    versions_by_name: dict[str, list[str]] = {}
+    for dist_info_dir in sorted(site_packages.glob("*.dist-info")):
+        if not dist_info_dir.is_dir():
+            continue
+        normalized = _normalized_distribution_name(dist_info_dir.name)
+        if normalized is None:
+            continue
+        versions_by_name.setdefault(normalized, []).append(dist_info_dir.name)
+
+    duplicates = {name: dirs for name, dirs in versions_by_name.items() if len(dirs) > 1}
+    if duplicates:
+        details = "; ".join(f"{name}: {', '.join(sorted(dirs))}" for name, dirs in sorted(duplicates.items()))
+        raise LocalProductBuildError(
+            "Windows dependency verification failed: site-packages has more than one "
+            f"installed version of the same package -- {details}. This shape means an "
+            "earlier install's real code was left untouched while a later install still wrote "
+            "a second, different-versioned .dist-info -- pin the offending package(s) to "
+            "matching exact versions across every install_windows_*_dependencies call so a "
+            "later call resolves to a genuine no-op instead of a second version."
+        )
+
+
 def _patch_pth_file(python_dir: Path) -> None:
     """Point the embeddable interpreter at `site-packages` -- no venv, no pip.
 
@@ -1004,12 +1432,17 @@ def assemble_windows_bundle(
     embed_zip_path: Path,
     install_dependencies: Callable[[Path], None] | None = None,
     install_gpu_dependencies: Callable[[Path], None] | None = None,
+    install_bioclip_dependencies: Callable[[Path], None] | None = None,
     include_gpu_runtime: bool = True,
+    include_bioclip_runtime: bool = True,
     model_bundle_source: Path | None = DEFAULT_MODEL_BUNDLE_SOURCE,
+    bioclip_bundle_source: Path | None = DEFAULT_BIOCLIP_BUNDLE_SOURCE,
     wheel_cache_dir: Path | None = DEFAULT_WHEEL_CACHE_DIR,
-) -> tuple[Path, ModelBundleProvenance, NativeRuntimeVerification]:
+    bioclip_wheel_cache_dir: Path | None = DEFAULT_BIOCLIP_WHEEL_CACHE_DIR,
+) -> tuple[Path, ModelBundleProvenance, NativeRuntimeVerification, BioClipBundleProvenance]:
     """Assemble the unpack-and-run Windows folder. Returns `(bundle_dir,
-    model_bundle_provenance, native_runtime_verification)`."""
+    model_bundle_provenance, native_runtime_verification,
+    bioclip_bundle_provenance)`."""
 
     if bundle_dir.exists():
         shutil.rmtree(bundle_dir)
@@ -1041,6 +1474,22 @@ def assemble_windows_bundle(
         native_runtime_verification = verify_windows_gpu_runtime_dll_closure(site_packages=site_packages)
     else:
         native_runtime_verification = NativeRuntimeVerification(checked=False, reason="gpu_runtime_skipped")
+
+    if include_bioclip_runtime:
+        bioclip_installer = install_bioclip_dependencies or (
+            lambda target: install_windows_bioclip_runtime_dependencies(
+                site_packages=target, wheel_cache_dir=bioclip_wheel_cache_dir,
+            )
+        )
+        bioclip_installer(site_packages)
+
+    # Fails the whole build the moment site-packages ends up with two
+    # `.dist-info/` directories for the same normalized package name --
+    # the exact real corruption shape found while validating
+    # `WINDOWS_BIOCLIP_RUNTIME_REQUIREMENTS`. Runs after every dependency
+    # -installing step above (core, GPU, BioCLIP) so it catches this defect
+    # regardless of which pair of calls produced it.
+    verify_no_duplicate_site_packages_metadata(site_packages=site_packages)
 
     _run(
         [
@@ -1077,9 +1526,21 @@ def assemble_windows_bundle(
             file=sys.stderr,
         )
 
+    bioclip_provenance = package_bioclip_runtime_assets(
+        site_packages=site_packages, bioclip_bundle_source=bioclip_bundle_source,
+    )
+    if not bioclip_provenance.included:
+        print(
+            f"WARNING: BioCLIP species-suggestion model bundle not packaged ({bioclip_provenance.reason}). "
+            "The produced artifact still boots; species suggestions will honestly report a "
+            "missing model/runtime state until a bundle is supplied and this build is re-run "
+            "with --bioclip-bundle-source.",
+            file=sys.stderr,
+        )
+
     (bundle_dir / "Start MockingBird.vbs").write_text(LAUNCHER_VBS, encoding="utf-8")
     (bundle_dir / "README-FIRST.txt").write_text(README_FIRST, encoding="utf-8")
-    return bundle_dir, model_provenance, native_runtime_verification
+    return bundle_dir, model_provenance, native_runtime_verification, bioclip_provenance
 
 
 def _iter_files_sorted(directory: Path) -> list[Path]:
@@ -1119,6 +1580,8 @@ def write_manifest(
     model_bundle_provenance: ModelBundleProvenance | None = None,
     gpu_runtime_included: bool | None = None,
     native_runtime_verification: NativeRuntimeVerification | None = None,
+    bioclip_bundle_provenance: BioClipBundleProvenance | None = None,
+    bioclip_runtime_included: bool | None = None,
     build_identity: BuildIdentity | None = None,
 ) -> tuple[Path, Path]:
     version = _source_version()
@@ -1145,6 +1608,15 @@ def write_manifest(
             native_runtime_verification.as_manifest_dict()
             if native_runtime_verification is not None
             else NativeRuntimeVerification(checked=False, reason="not_evaluated").as_manifest_dict()
+        ),
+        "bioclip_runtime_included": bioclip_runtime_included,
+        "bioclip_runtime_requirements": (
+            list(WINDOWS_BIOCLIP_RUNTIME_REQUIREMENTS) if bioclip_runtime_included else []
+        ),
+        "bioclip_model_bundle": (
+            bioclip_bundle_provenance.as_manifest_dict()
+            if bioclip_bundle_provenance is not None
+            else BioClipBundleProvenance(included=False, reason="not_evaluated").as_manifest_dict()
         ),
         # `None` (never a fabricated placeholder) when the caller did not
         # supply one -- `build_local_product` always does; only a caller
@@ -1183,9 +1655,13 @@ def build_local_product(
     embed_zip_override: Path | None = None,
     install_dependencies: Callable[[Path], None] | None = None,
     install_gpu_dependencies: Callable[[Path], None] | None = None,
+    install_bioclip_dependencies: Callable[[Path], None] | None = None,
     include_gpu_runtime: bool = True,
+    include_bioclip_runtime: bool = True,
     model_bundle_source: Path | None = DEFAULT_MODEL_BUNDLE_SOURCE,
+    bioclip_bundle_source: Path | None = DEFAULT_BIOCLIP_BUNDLE_SOURCE,
     wheel_cache_dir: Path | None = DEFAULT_WHEEL_CACHE_DIR,
+    bioclip_wheel_cache_dir: Path | None = DEFAULT_BIOCLIP_WHEEL_CACHE_DIR,
     allow_dirty_source: bool = False,
 ) -> LocalProductArtifact:
     """Run the complete build: frontend -> clean source snapshot -> wheel ->
@@ -1233,15 +1709,19 @@ def build_local_product(
     embed_zip_path = fetch_embeddable_python(override_zip_path=embed_zip_override)
 
     bundle_dir = output_dir / "MockingBird-windows-x64"
-    _, model_provenance, native_runtime_verification = assemble_windows_bundle(
+    _, model_provenance, native_runtime_verification, bioclip_provenance = assemble_windows_bundle(
         bundle_dir=bundle_dir,
         wheel_path=wheel_path,
         embed_zip_path=embed_zip_path,
         install_dependencies=install_dependencies,
         install_gpu_dependencies=install_gpu_dependencies,
+        install_bioclip_dependencies=install_bioclip_dependencies,
         include_gpu_runtime=include_gpu_runtime,
+        include_bioclip_runtime=include_bioclip_runtime,
         model_bundle_source=model_bundle_source,
+        bioclip_bundle_source=bioclip_bundle_source,
         wheel_cache_dir=wheel_cache_dir,
+        bioclip_wheel_cache_dir=bioclip_wheel_cache_dir,
     )
 
     build_identity = BuildIdentity(
@@ -1263,6 +1743,8 @@ def build_local_product(
         model_bundle_provenance=model_provenance,
         gpu_runtime_included=include_gpu_runtime,
         native_runtime_verification=native_runtime_verification,
+        bioclip_bundle_provenance=bioclip_provenance,
+        bioclip_runtime_included=include_bioclip_runtime,
         build_identity=build_identity,
     )
     return LocalProductArtifact(
@@ -1329,14 +1811,48 @@ def main() -> None:
             "Falls back to a normal network install if this directory does not exist."
         ),
     )
+    parser.add_argument(
+        "--skip-bioclip-runtime",
+        action="store_true",
+        help=(
+            "omit the optional BioCLIP species-suggestion runtime dependency closure "
+            "(torch/open_clip/... roughly 150-200 MB); the produced artifact will honestly "
+            "report species suggestions as unavailable/setup-required instead of ever "
+            "crashing or degrading detection"
+        ),
+    )
+    parser.add_argument(
+        "--bioclip-bundle-source",
+        type=Path,
+        default=DEFAULT_BIOCLIP_BUNDLE_SOURCE,
+        help=(
+            "local directory holding the accepted BioCLIP model config/weights/labels/"
+            "embedding-cache files to package (never a repository-tracked path); defaults "
+            f"to the existing {DEFAULT_BIOCLIP_BUNDLE_SOURCE} convention"
+        ),
+    )
+    parser.add_argument(
+        "--bioclip-wheel-cache-dir",
+        type=Path,
+        default=DEFAULT_BIOCLIP_WHEEL_CACHE_DIR,
+        help=(
+            "local directory of pre-downloaded win_amd64/cp312 BioCLIP-stack wheels to "
+            "install offline (`pip --find-links ... --no-index`); defaults to the existing "
+            f"{DEFAULT_BIOCLIP_WHEEL_CACHE_DIR} convention. Falls back to a normal network "
+            "install (via BIOCLIP_PYTORCH_CPU_INDEX_URL) if this directory does not exist."
+        ),
+    )
     arguments = parser.parse_args()
     artifact = build_local_product(
         arguments.output_dir,
         source_state=arguments.source_state,
         skip_frontend_build=arguments.skip_frontend_build,
         include_gpu_runtime=not arguments.skip_gpu_runtime,
+        include_bioclip_runtime=not arguments.skip_bioclip_runtime,
         model_bundle_source=arguments.model_bundle_source,
+        bioclip_bundle_source=arguments.bioclip_bundle_source,
         wheel_cache_dir=arguments.wheel_cache_dir,
+        bioclip_wheel_cache_dir=arguments.bioclip_wheel_cache_dir,
         allow_dirty_source=arguments.allow_dirty_source,
     )
     print(artifact.zip_path)

@@ -322,6 +322,124 @@ any of their internals, thresholds, or authority semantics.
   fails the build by default; `--allow-dirty-source` opts out for local
   iteration on the build script itself, never for a release artifact.
 
+## BioCLIP runtime packaging (Automatic Species Suggestion v1.2)
+
+Same problem, same solution, for the separate optional BioCLIP species
+-suggestion adapter (`mockingbird.species.bioclip_adapter`): the adapter
+already worked correctly once manually installed, but a normal packaged
+deploy installed neither its ~150 MB Python runtime dependency closure nor
+its ~1.6 GB local model bundle, and a real acceptance pass needed a one-shot
+`MOCKINGBIRD_BIOCLIP_MODEL_PATH`/`_LABELS_PATH`/`_EMBEDDING_CACHE_PATH`
+environment-variable injection at every single launch to work at all. This
+milestone makes that installation/configuration durable without touching
+BioCLIP inference logic, the crop resolver, or same-frame evidence at all.
+
+- **Path resolution.** New `mockingbird.species.bioclip_runtime.
+  packaged_bioclip_runtime_root` resolves `<installed package>/
+  bioclip_runtime/` from `Path(__file__)`, mirroring `engine_runtime.
+  packaged_observation_runtime_root`'s identical convention exactly. Three
+  new `resolve_bioclip_{model_dir,labels_path,embedding_cache_path}`
+  functions each resolve with the same order: explicit override -> the
+  existing `MOCKINGBIRD_BIOCLIP_*` environment variable (still honored,
+  never required) -> the packaged root's own fixed file for it, only when
+  that file genuinely exists. `product_repository._bioclip_config` now
+  calls these instead of a bare `os.getenv`. Deliberately **no** third
+  "development checkout convention" fallback the way the Observation Engine
+  has (`data/models/observation-frame-driven/...`, resolved against
+  `find_workspace_root()`): that convention's own path does not exist in a
+  normal checkout, so it is a safe no-op there, but the real local BioCLIP
+  evaluation bundle this project actually uses during development
+  (`data/models/bioclip-2/`) *does* exist on disk in this checkout --
+  auto-discovering it would have silently changed "no environment variable
+  set" behavior from the existing, widely-relied-on "not configured" test
+  contract to "configured". A bare development checkout keeps using the
+  unchanged, explicit environment variables exactly as before; only an
+  actual packaged build gets the new automatic default.
+- **Model bundle provenance.** `scripts/build_local_product.py`'s new
+  `package_bioclip_runtime_assets` copies the already-accepted local
+  BioCLIP 2 artifact (docs/model-selection.md's "Supported local BioCLIP 2
+  artifact": Imageomics `imageomics/bioclip-2`, MIT-licensed) from a local,
+  ignored, developer/CI-supplied directory (`--bioclip-bundle-source`,
+  defaulting to the existing `data/models/bioclip-2/` convention) into
+  `<site-packages>/mockingbird/bioclip_runtime/`, independently
+  re-verifying each of the four expected files' SHA-256 against the
+  `ACCEPTED_BIOCLIP_*_SHA256` constants this project has actually accepted
+  before copying anything -- looked up by fixed filename individually, so
+  the other local evaluation-scratch files this same source directory also
+  holds are never accidentally packaged. Exactly the same "missing bundle
+  is an honest, non-fatal state" contract as the Observation model.
+- **Dependency closure.** `install_windows_bioclip_runtime_dependencies`
+  pre-installs `WINDOWS_BIOCLIP_RUNTIME_REQUIREMENTS` -- the adapter's
+  complete win_amd64/cp312 runtime closure (`torch`/`open_clip_torch`/
+  `safetensors`/`timm`/`huggingface_hub`/... -- every package actually
+  reached transitively from `open-clip-torch`, `pyproject.toml`'s existing
+  `classifier-bioclip` extra) -- into the same flat site-packages layout,
+  via `--extra-index-url https://download.pytorch.org/whl/cpu` (PyPI alone
+  has no CPU-only Windows `torch` wheel under the plain name; a bare
+  cross-platform resolution from this Linux build host was also observed to
+  waste several hundred MB speculatively evaluating `torch`'s Linux-only
+  CUDA-toolkit extras during backtracking). Every package is exact-pinned,
+  determined by really running this exact install rather than reading
+  package metadata by eye -- not merely for the usual reproducibility
+  reason, but because a real, empirically-reproduced defect makes it a
+  correctness requirement: a *second*, independent `pip install --target`
+  call into an already-populated site-packages (this is the third such call
+  in the pipeline, after the core and GPU tiers) resolves any loosely
+  -bounded dependency shared with an earlier tier (`Pillow`, `numpy`,
+  `anyio`) *independently of what already exists on disk* -- observed for
+  real: `Pillow` resolved to a freshly-released 12.3.0 here while the
+  actual `PIL/` code on disk silently remained the core tier's
+  already-installed 11.3.0, because `pip install --target` never overwrites
+  an already-existing file but still writes a second, differently
+  -versioned `.dist-info/` next to it. New `verify_no_duplicate_site_
+  packages_metadata` (run once, after all three dependency-installing
+  steps) fails the whole build outright the moment it finds two
+  `.dist-info/` directories for the same PEP 503-normalized package name,
+  closing this exact corruption class regardless of which pair of installs
+  produces it in the future. The adapter itself never imports this closure
+  outside its own isolated worker subprocess (`bioclip_adapter.
+  _bioclip_worker_loop`), so packaging it cannot slow down or destabilize
+  ordinary MockingBird startup, with or without BioCLIP configured.
+- **Runtime/model cache.** `scripts/deploy_windows_dev.py`'s existing
+  three-tier runtime/model cache (see "Runtime/model cache" in
+  docs/windows-dev-deployment-design.md) gains a second, fully independent
+  model tier for `bioclip_runtime/` -- its own content hash
+  (`compute_bioclip_model_hash`), its own cache root
+  (`BIOCLIP_MODEL_CACHE_DIRNAME`, a sibling of the Observation model's own
+  `models/`), and its own junction into each release
+  (`ensure_bioclip_model_cache`/`materialize_release`). A change to either
+  model can never force an unnecessary re-copy of the other, and an
+  ordinary app-only redeploy reuses both existing model caches untouched,
+  never re-copying either ~1.6 GB or ~500 MB bundle.
+- **Deployment-time verification.** New `verify_bioclip_runtime` (called by
+  `deploy()` after every successful deployment, never fatal to it) runs the
+  *deployed release's own* `python.exe` against a small embedded script
+  (`BIOCLIP_RUNTIME_CHECK_SCRIPT`) that really `import`s every module the
+  adapter needs and calls the existing, side-effect-free `get_bioclip_
+  status`. This is deliberately a *real* import, not the adapter's own
+  cheap `importlib.util.find_spec`-based status check
+  (`_missing_runtime_packages`): `find_spec` succeeds the moment a
+  package's directory/metadata exists, even when actually importing it
+  would fail deep inside its own `__init__.py` for a missing transitive
+  dependency -- the exact real incident (`sympy` missing for `torch`) a
+  previous manual acceptance pass hit, invisible to the app's own status
+  page until an actual local run was attempted. Reported in `DeployReport`
+  (`bioclip_verification`), never raised -- BioCLIP remaining optional and
+  unavailable-safe is a product requirement, not just a build nicety.
+- **No one-shot environment injection.** The ad hoc workaround this
+  milestone removes: a previous manual acceptance pass launched the
+  packaged release with the three `MOCKINGBIRD_BIOCLIP_*` variables
+  injected by hand into `launch_release`'s `extra_env` on every single
+  start, and a separate, non-junctioned `PYTHONPATH` directory of manually
+  copied `torch`/`open_clip` files. Neither survives a restart or redeploy
+  on their own; both are gone. `launch_release` itself is completely
+  unchanged (still only ever sets `MOCKINGBIRD_HOME`/
+  `PYTHONDONTWRITEBYTECODE`) -- BioCLIP configuration now comes entirely
+  from files on disk (the packaged `bioclip_runtime/` bundle, resolved by
+  `packaged_bioclip_runtime_root`), which is what makes it durable across a
+  restart or a redeploy by construction rather than by remembering to
+  reinject anything.
+
 ## Files allowed
 
 - `src/mockingbird/storage/models.py`, `storage/database.py` (schema 29);
@@ -342,6 +460,17 @@ any of their internals, thresholds, or authority semantics.
   ObservationControlPanel.tsx` (one additive status line), and
   `scripts/build_local_product.py` (model bundle/GPU runtime packaging,
   clean-source-snapshot release integrity);
+- BioCLIP runtime packaging (Automatic Species Suggestion v1.2)
+  additionally touched new `src/mockingbird/species/bioclip_runtime.py`
+  (packaged-root path resolution only -- `bioclip_adapter.py` itself is
+  untouched), `repository/product_repository.py` (`_bioclip_config` now
+  calls the new resolvers instead of a bare `os.getenv`, one function
+  body only), `scripts/build_local_product.py` (BioCLIP dependency
+  closure/model bundle packaging, duplicate-site-packages-metadata
+  verification), and `scripts/deploy_windows_dev.py` (a second,
+  independent BioCLIP model cache tier; deployment-time runtime
+  verification; no packaging/deploy mechanism invented, the existing one
+  reused a second time);
 - tests, and this document plus the linked normal-user guide.
 
 ## Non-goals

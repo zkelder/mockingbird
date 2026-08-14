@@ -61,11 +61,16 @@ build_release_source = _MODULE["build_release_source"]
 is_app_tier_entry = _MODULE["is_app_tier_entry"]
 compute_runtime_hash = _MODULE["compute_runtime_hash"]
 compute_model_hash = _MODULE["compute_model_hash"]
+compute_bioclip_model_hash = _MODULE["compute_bioclip_model_hash"]
 NO_MODEL_BUNDLE_HASH = _MODULE["NO_MODEL_BUNDLE_HASH"]
+BIOCLIP_MODEL_CACHE_DIRNAME = _MODULE["BIOCLIP_MODEL_CACHE_DIRNAME"]
+BioClipRuntimeVerification = _MODULE["BioClipRuntimeVerification"]
+BIOCLIP_RUNTIME_CHECK_MODULES = _MODULE["BIOCLIP_RUNTIME_CHECK_MODULES"]
 
 ensure_cache = _MODULE["ensure_cache"]
 ensure_runtime_cache = _MODULE["ensure_runtime_cache"]
 ensure_model_cache = _MODULE["ensure_model_cache"]
+ensure_bioclip_model_cache = _MODULE["ensure_bioclip_model_cache"]
 materialize_release = _MODULE["materialize_release"]
 remove_release_directory = _MODULE["remove_release_directory"]
 cleanup_releases = _MODULE["cleanup_releases"]
@@ -82,6 +87,7 @@ launch_release = _MODULE["launch_release"]
 probe_port = _MODULE["probe_port"]
 verified_owning_release = _MODULE["verified_owning_release"]
 verify_deployment = _MODULE["verify_deployment"]
+verify_bioclip_runtime = _MODULE["verify_bioclip_runtime"]
 stop_verified_deployment = _MODULE["stop_verified_deployment"]
 
 deploy = _MODULE["deploy"]
@@ -103,6 +109,11 @@ DEFAULT_KEEP = _MODULE["DEFAULT_KEEP"]
 _BLP = runpy.run_path(str(ROOT / "scripts" / "build_local_product.py"))
 PACKAGED_BUILD_INFO_FILENAME = _BLP["PACKAGED_BUILD_INFO_FILENAME"]
 PACKAGED_OBSERVATION_RUNTIME_DIRNAME = _BLP["PACKAGED_OBSERVATION_RUNTIME_DIRNAME"]
+PACKAGED_BIOCLIP_RUNTIME_DIRNAME = _BLP["PACKAGED_BIOCLIP_RUNTIME_DIRNAME"]
+BIOCLIP_MODEL_CONFIG_FILENAME = _BLP["BIOCLIP_MODEL_CONFIG_FILENAME"]
+BIOCLIP_MODEL_WEIGHTS_FILENAME = _BLP["BIOCLIP_MODEL_WEIGHTS_FILENAME"]
+BIOCLIP_LABELS_FILENAME = _BLP["BIOCLIP_LABELS_FILENAME"]
+BIOCLIP_EMBEDDING_CACHE_FILENAME = _BLP["BIOCLIP_EMBEDDING_CACHE_FILENAME"]
 
 
 _NO_SLEEP = lambda _seconds: None  # noqa: E731 -- every test drives bounded polling instantly
@@ -123,13 +134,18 @@ def make_bundle(
     third_party_packages: tuple[str, ...] = ("fastapi", "uvicorn"),
     include_model: bool = True,
     model_content: bytes = b"fake-onnx-model-bytes",
+    include_bioclip_model: bool = False,
+    bioclip_weights_content: bytes = b"fake-bioclip-weights-bytes",
 ) -> Path:
     """A tiny, hand-built stand-in for what `build_local_product.py`
     actually produces -- exactly the directory shape `deploy_windows_dev.py`
     inspects (`python/`, `python/site-packages/<third-party packages>`,
     `python/site-packages/mockingbird/` with a nested `observation_runtime/`
     model bundle and a `build_info.json`, `Start MockingBird.vbs`), never a
-    real ~1.9 GB artifact."""
+    real ~1.9 GB artifact. `include_bioclip_model` additionally packages a
+    fake `bioclip_runtime/` model bundle -- a second, fully independent
+    model tier, `False` by default so existing callers/tests keep their
+    exact prior bundle shape and hashes unless they opt in."""
 
     bundle = root / "MockingBird-windows-x64"
     python_dir = bundle / "python"
@@ -170,6 +186,14 @@ def make_bundle(
         (model_dir / "provider-config.json").write_text('{"model_bundle": "model-bundle.json"}', encoding="utf-8")
         (model_dir / "model-bundle.json").write_text('{"model_file": "model.onnx"}', encoding="utf-8")
         (model_dir / "model.onnx").write_bytes(model_content)
+
+    if include_bioclip_model:
+        bioclip_dir = mockingbird_dir / PACKAGED_BIOCLIP_RUNTIME_DIRNAME
+        bioclip_dir.mkdir()
+        (bioclip_dir / BIOCLIP_MODEL_CONFIG_FILENAME).write_text('{"fake": "config"}', encoding="utf-8")
+        (bioclip_dir / BIOCLIP_MODEL_WEIGHTS_FILENAME).write_bytes(bioclip_weights_content)
+        (bioclip_dir / BIOCLIP_LABELS_FILENAME).write_text("House Finch\n", encoding="utf-8")
+        (bioclip_dir / BIOCLIP_EMBEDDING_CACHE_FILENAME).write_bytes(b"fake-embedding-cache-bytes")
 
     (bundle / "Start MockingBird.vbs").write_text("' fake launcher\r\n", encoding="utf-8")
     (bundle / "README-FIRST.txt").write_text("readme\n", encoding="utf-8")
@@ -292,6 +316,35 @@ def make_fake_windows_host(os_sim: FakeWindowsOS, *, local_appdata: Path) -> Win
         elif path.exists():
             shutil.rmtree(path)
 
+    def run_bioclip_runtime_check(release_dir: Path, _timeout: float) -> BioClipRuntimeVerification:
+        """Default fake: never actually runs a real `python.exe` (this
+        fake `WindowsHost` has none) -- inspects the materialized release
+        directory the same way a real check's *outcome* would depend on
+        (does this release's own site-packages have a real, resolvable
+        `bioclip_runtime/` bundle) and reports a plausible, deterministic
+        result. Individual tests that care about a *specific* verification
+        outcome override this field directly via `dataclasses.replace`
+        (see the "BioCLIP runtime verification" test section) rather than
+        relying on this default."""
+
+        bioclip_dir = (
+            release_dir / "python" / "site-packages" / "mockingbird" / PACKAGED_BIOCLIP_RUNTIME_DIRNAME
+        )
+        if bioclip_dir.is_dir() and (bioclip_dir / BIOCLIP_MODEL_CONFIG_FILENAME).is_file():
+            return BioClipRuntimeVerification(
+                checked=True,
+                available=True,
+                detail="fake host: bioclip bundle present",
+                imported_modules=BIOCLIP_RUNTIME_CHECK_MODULES,
+                adapter_status="available",
+            )
+        return BioClipRuntimeVerification(
+            checked=True,
+            available=False,
+            detail="fake host: no bioclip bundle packaged",
+            adapter_status="not_configured",
+        )
+
     return WindowsHost(
         local_appdata=lambda: local_appdata,
         to_windows_path=lambda path: str(path),
@@ -307,6 +360,7 @@ def make_fake_windows_host(os_sim: FakeWindowsOS, *, local_appdata: Path) -> Win
         process_alive=process_alive,
         process_image_path=process_image_path,
         kill_process=kill_process,
+        run_bioclip_runtime_check=run_bioclip_runtime_check,
     )
 
 
@@ -507,6 +561,57 @@ def test_compute_model_hash_is_an_explicit_sentinel_when_no_model_packaged(tmp_p
     assert compute_model_hash(bundle) == NO_MODEL_BUNDLE_HASH
 
 
+# --- BioCLIP model tier: fully independent from the Observation model tier -
+
+
+def test_compute_bioclip_model_hash_changes_when_the_bioclip_model_changes(tmp_path: Path) -> None:
+    bundle1 = make_bundle(
+        tmp_path / "b1", git_commit="a" * 40, build_id="id1",
+        include_bioclip_model=True, bioclip_weights_content=b"bioclip-v1",
+    )
+    bundle2 = make_bundle(
+        tmp_path / "b2", git_commit="a" * 40, build_id="id1",
+        include_bioclip_model=True, bioclip_weights_content=b"bioclip-v2",
+    )
+
+    assert compute_bioclip_model_hash(bundle1) != compute_bioclip_model_hash(bundle2)
+
+
+def test_compute_bioclip_model_hash_is_independent_of_the_observation_model(tmp_path: Path) -> None:
+    """The real point of splitting these into two tiers: changing one
+    model must never change the other's hash -- each is cached, reused, and
+    invalidated completely independently."""
+
+    bundle1 = make_bundle(
+        tmp_path / "b1", git_commit="a" * 40, build_id="id1",
+        model_content=b"observation-v1", include_bioclip_model=True, bioclip_weights_content=b"bioclip-v1",
+    )
+    bundle2 = make_bundle(
+        tmp_path / "b2", git_commit="b" * 40, build_id="id2",
+        model_content=b"observation-v2-different", include_bioclip_model=True, bioclip_weights_content=b"bioclip-v1",
+    )
+
+    assert compute_model_hash(bundle1) != compute_model_hash(bundle2)
+    assert compute_bioclip_model_hash(bundle1) == compute_bioclip_model_hash(bundle2)
+
+
+def test_compute_bioclip_model_hash_ignores_app_tier_changes(tmp_path: Path) -> None:
+    bundle1 = make_bundle(
+        tmp_path / "b1", git_commit="a" * 40, build_id="id1", app_content="APP=1\n", include_bioclip_model=True,
+    )
+    bundle2 = make_bundle(
+        tmp_path / "b2", git_commit="b" * 40, build_id="id2", app_content="APP=2\n", include_bioclip_model=True,
+    )
+
+    assert compute_bioclip_model_hash(bundle1) == compute_bioclip_model_hash(bundle2)
+
+
+def test_compute_bioclip_model_hash_is_an_explicit_sentinel_when_no_bioclip_model_packaged(tmp_path: Path) -> None:
+    bundle = make_bundle(tmp_path / "b1", git_commit="a" * 40, build_id="id1", include_bioclip_model=False)
+
+    assert compute_bioclip_model_hash(bundle) == NO_MODEL_BUNDLE_HASH
+
+
 # ---------------------------------------------------------------------------
 # Immutable, versioned, content-addressed cache population
 # ---------------------------------------------------------------------------
@@ -551,6 +656,61 @@ def test_ensure_model_cache_returns_none_when_no_model_packaged(tmp_path: Path, 
     bundle = make_bundle(tmp_path / "build", git_commit="a" * 40, build_id="id1", include_model=False)
 
     assert ensure_model_cache(bundle, cache_root=tmp_path / "cache" / "models", windows_host=fake_host) is None
+
+
+def test_ensure_bioclip_model_cache_returns_none_when_no_bundle_packaged(
+    tmp_path: Path, fake_host: WindowsHost,
+) -> None:
+    bundle = make_bundle(tmp_path / "build", git_commit="a" * 40, build_id="id1", include_bioclip_model=False)
+
+    assert (
+        ensure_bioclip_model_cache(bundle, cache_root=tmp_path / "cache" / "bioclip-models", windows_host=fake_host)
+        is None
+    )
+
+
+def test_ensure_bioclip_model_cache_populates_then_reuses(tmp_path: Path, fake_host: WindowsHost) -> None:
+    """Mirrors `test_ensure_runtime_cache_populates_then_reuses` -- the
+    same content-addressed reuse guarantee, for the BioCLIP model tier."""
+
+    bundle = make_bundle(tmp_path / "build", git_commit="a" * 40, build_id="id1", include_bioclip_model=True)
+    cache_root = tmp_path / "cache" / "bioclip-models"
+
+    first = ensure_bioclip_model_cache(bundle, cache_root=cache_root, windows_host=fake_host)
+    assert first is not None
+    assert first.reused is False
+    assert (first.cache_dir / BIOCLIP_MODEL_WEIGHTS_FILENAME).is_file()
+
+    second = ensure_bioclip_model_cache(bundle, cache_root=cache_root, windows_host=fake_host)
+    assert second is not None
+    assert second.reused is True
+    assert second.content_hash == first.content_hash
+    assert second.cache_dir == first.cache_dir
+
+
+def test_two_releases_of_different_commits_share_the_same_bioclip_model_cache(
+    tmp_path: Path, fake_host: WindowsHost,
+) -> None:
+    """The actual point of this tier: two builds with identical BioCLIP
+    content (a normal app-only redeploy) must link to the *same* cache
+    directory, never a second copy of the ~1.6 GB bundle -- "no duplicate
+    model copy" / "existing bundle reuse", proven directly at the cache
+    -population layer."""
+
+    bundle1 = make_bundle(
+        tmp_path / "b1", git_commit="a" * 40, build_id="id1", app_content="APP=1\n", include_bioclip_model=True,
+    )
+    bundle2 = make_bundle(
+        tmp_path / "b2", git_commit="b" * 40, build_id="id2", app_content="APP=2\n", include_bioclip_model=True,
+    )
+    cache_root = tmp_path / "cache" / "bioclip-models"
+
+    first = ensure_bioclip_model_cache(bundle1, cache_root=cache_root, windows_host=fake_host)
+    second = ensure_bioclip_model_cache(bundle2, cache_root=cache_root, windows_host=fake_host)
+
+    assert first is not None and second is not None
+    assert second.reused is True
+    assert second.cache_dir == first.cache_dir
 
 
 def test_ensure_cache_detects_and_rebuilds_a_corrupted_entry(tmp_path: Path, fake_host: WindowsHost) -> None:
@@ -658,12 +818,19 @@ def test_ensure_cache_population_is_atomic_no_partial_entry_left_on_a_failed_pop
 def _materialize(bundle: Path, release_dir: Path, *, tmp_path: Path, fake_host: WindowsHost):
     runtime_root = tmp_path / "cache" / "runtime"
     model_root = tmp_path / "cache" / "models"
+    bioclip_model_root = tmp_path / "cache" / BIOCLIP_MODEL_CACHE_DIRNAME
     runtime_cache = ensure_runtime_cache(bundle, cache_root=runtime_root, windows_host=fake_host)
     model_cache = ensure_model_cache(bundle, cache_root=model_root, windows_host=fake_host)
     model_hash = model_cache.content_hash if model_cache is not None else NO_MODEL_BUNDLE_HASH
+    bioclip_model_cache = ensure_bioclip_model_cache(bundle, cache_root=bioclip_model_root, windows_host=fake_host)
+    bioclip_model_hash = (
+        bioclip_model_cache.content_hash if bioclip_model_cache is not None else NO_MODEL_BUNDLE_HASH
+    )
     return materialize_release(
         bundle_dir=bundle, release_dir=release_dir, runtime_hash=runtime_cache.content_hash, model_hash=model_hash,
-        runtime_cache_root=runtime_root, model_cache_root=model_root, windows_host=fake_host,
+        bioclip_model_hash=bioclip_model_hash,
+        runtime_cache_root=runtime_root, model_cache_root=model_root,
+        bioclip_model_cache_root=bioclip_model_root, windows_host=fake_host,
     )
 
 
@@ -748,6 +915,53 @@ def test_materialize_release_without_a_model_bundle_links_nothing_for_the_model_
     assert materialized.model_hash == NO_MODEL_BUNDLE_HASH
     model_path = release_dir / "python" / "site-packages" / "mockingbird" / PACKAGED_OBSERVATION_RUNTIME_DIRNAME
     assert not model_path.exists()
+
+
+def test_materialize_release_without_a_bioclip_bundle_links_nothing_for_that_tier(
+    tmp_path: Path, fake_host: WindowsHost,
+) -> None:
+    bundle = make_bundle(tmp_path / "build", git_commit="a" * 40, build_id="id1", include_bioclip_model=False)
+    release_dir = tmp_path / "releases" / "aaaaaaa"
+
+    materialized = _materialize(bundle, release_dir, tmp_path=tmp_path, fake_host=fake_host)
+
+    assert materialized.bioclip_model_hash == NO_MODEL_BUNDLE_HASH
+    bioclip_path = release_dir / "python" / "site-packages" / "mockingbird" / PACKAGED_BIOCLIP_RUNTIME_DIRNAME
+    assert not bioclip_path.exists()
+
+
+def test_materialize_release_links_both_model_tiers_independently(tmp_path: Path, fake_host: WindowsHost) -> None:
+    """The real point of two independent model tiers: both the Observation
+    Engine model and the BioCLIP model are packaged together in the same
+    release, each linked to its *own* separate cache directory -- neither
+    is skipped, duplicated, or confused for the other."""
+
+    bundle = make_bundle(
+        tmp_path / "build", git_commit="a" * 40, build_id="id1", include_model=True, include_bioclip_model=True,
+    )
+    release_dir = tmp_path / "releases" / "aaaaaaa"
+
+    materialized = _materialize(bundle, release_dir, tmp_path=tmp_path, fake_host=fake_host)
+
+    assert materialized.model_hash != NO_MODEL_BUNDLE_HASH
+    assert materialized.bioclip_model_hash != NO_MODEL_BUNDLE_HASH
+    assert materialized.model_hash != materialized.bioclip_model_hash
+
+    mockingbird_dir = release_dir / "python" / "site-packages" / "mockingbird"
+    observation_path = mockingbird_dir / PACKAGED_OBSERVATION_RUNTIME_DIRNAME
+    bioclip_path = mockingbird_dir / PACKAGED_BIOCLIP_RUNTIME_DIRNAME
+    assert observation_path.is_dir() and bioclip_path.is_dir()
+    assert observation_path.is_symlink() and bioclip_path.is_symlink()
+    # Each links to its own, independent cache directory -- never the same
+    # target, never nested one inside the other.
+    assert observation_path.resolve() != bioclip_path.resolve()
+    assert (bioclip_path / BIOCLIP_MODEL_WEIGHTS_FILENAME).is_file()
+
+    both_relative = {
+        str(observation_path.relative_to(release_dir)),
+        str(bioclip_path.relative_to(release_dir)),
+    }
+    assert both_relative <= set(materialized.junctioned_relative_paths)
 
 
 def test_two_releases_of_different_commits_share_the_same_runtime_cache(tmp_path: Path, fake_host: WindowsHost) -> None:
@@ -917,6 +1131,34 @@ def test_launch_release_points_mockingbird_home_at_the_shared_dev_userdata_dir(
     # Never the real product default (%LOCALAPPDATA%\MockingBird, sibling
     # of %LOCALAPPDATA%\MockingBirdDev) -- structurally a different path.
     assert calls[0]["extra_env"]["MOCKINGBIRD_HOME"] != str(tmp_path / "LOCALAPPDATA" / "MockingBird")
+
+
+def test_launch_release_never_injects_one_shot_bioclip_environment_variables(
+    tmp_path: Path, fake_host: WindowsHost,
+) -> None:
+    """Regression test for the exact ad hoc workaround this milestone
+    removes: an earlier manual BioCLIP acceptance pass launched the app
+    with `MOCKINGBIRD_BIOCLIP_MODEL_PATH`/`_LABELS_PATH`/`_EMBEDDING_CACHE_
+    PATH` injected by hand into `extra_env` on every single launch. A
+    normal `launch_release` call must never do this -- BioCLIP
+    configuration now comes entirely from the packaged `bioclip_runtime/`
+    bundle (`species/bioclip_runtime.py`'s packaged-root resolution),
+    which survives a restart precisely *because* it is a file on disk, not
+    a per-process environment variable that has to be reinjected by hand
+    every time the app starts."""
+
+    bundle = make_bundle(tmp_path / "build", git_commit="a" * 40, build_id="id1", include_bioclip_model=True)
+    release_dir = tmp_path / "releases" / "aaaaaaa"
+    shutil.copytree(bundle, release_dir)
+    userdata_dir = tmp_path / "LOCALAPPDATA" / DEV_ROOT_DIRNAME / USERDATA_DIRNAME
+
+    launch_release(release_dir, host=DEFAULT_HOST, port=DEFAULT_PORT, userdata_dir=userdata_dir, windows_host=fake_host)
+
+    calls = fake_host.launch_release.calls  # type: ignore[attr-defined]
+    injected_keys = set(calls[0]["extra_env"])
+    assert injected_keys.isdisjoint(
+        {"MOCKINGBIRD_BIOCLIP_MODEL_PATH", "MOCKINGBIRD_BIOCLIP_LABELS_PATH", "MOCKINGBIRD_BIOCLIP_EMBEDDING_CACHE_PATH"}
+    )
 
 
 def test_launch_release_suppresses_bytecode_writes_into_the_shared_runtime_cache(
@@ -1361,6 +1603,71 @@ def test_verify_deployment_does_not_require_ready_true(os_sim: FakeWindowsOS, fa
 
 
 # ---------------------------------------------------------------------------
+# BioCLIP runtime verification: `verify_bioclip_runtime` is a thin,
+# side-effect-free wrapper around `WindowsHost.run_bioclip_runtime_check` --
+# the real `_run_bioclip_runtime_check_real` implementation (which shells
+# out to the deployed release's own real `python.exe`) is deliberately
+# untested here, matching this file's own established convention that every
+# `_real`-suffixed WindowsHost implementation is validated only by an actual
+# run against real Windows (see the module docstring, and
+# docs/windows-dev-deployment-design.md's "Real end-to-end findings") --
+# never faked as a hermetic unit test that could give false confidence.
+# ---------------------------------------------------------------------------
+
+
+def test_verify_bioclip_runtime_reports_available(tmp_path: Path, fake_host: WindowsHost) -> None:
+    result = verify_bioclip_runtime(tmp_path / "release", windows_host=fake_host)
+
+    assert result.checked is True
+    assert result.available is False  # this fake host's default: no bioclip bundle in an empty release dir
+
+
+def test_verify_bioclip_runtime_reports_a_missing_transitive_dependency(tmp_path: Path, fake_host: WindowsHost) -> None:
+    """The exact real failure shape this feature exists to catch: the
+    packaged dependency closure is present but a real `import` of one of
+    them fails deep inside its own `__init__.py` (the real incident:
+    `sympy` missing for `torch`) -- invisible to a cheap `find_spec`-only
+    status check, but caught here."""
+
+    missing_dependency_host = dataclasses.replace(
+        fake_host,
+        run_bioclip_runtime_check=lambda _release_dir, _timeout: BioClipRuntimeVerification(
+            checked=True,
+            available=False,
+            detail="BioCLIP runtime dependencies failed to import: torch: ModuleNotFoundError(\"No module named 'sympy'\")",
+            imported_modules=("PIL", "numpy", "open_clip"),
+            missing_modules=("torch: ModuleNotFoundError(\"No module named 'sympy'\")",),
+        ),
+    )
+
+    result = verify_bioclip_runtime(tmp_path / "release", windows_host=missing_dependency_host)
+
+    assert result.available is False
+    assert "sympy" in result.detail
+    assert "torch" in " ".join(result.missing_modules)
+
+
+def test_verify_bioclip_runtime_reports_available_when_adapter_status_is_available(
+    tmp_path: Path, fake_host: WindowsHost,
+) -> None:
+    fully_configured_host = dataclasses.replace(
+        fake_host,
+        run_bioclip_runtime_check=lambda _release_dir, _timeout: BioClipRuntimeVerification(
+            checked=True,
+            available=True,
+            detail="Explicit local BioCLIP artifacts are configured.",
+            imported_modules=BIOCLIP_RUNTIME_CHECK_MODULES,
+            adapter_status="available",
+        ),
+    )
+
+    result = verify_bioclip_runtime(tmp_path / "release", windows_host=fully_configured_host)
+
+    assert result.available is True
+    assert result.adapter_status == "available"
+
+
+# ---------------------------------------------------------------------------
 # deploy(): the one-command deployment, end to end (via --artifact
 # acceptance -- no real git/build needed; build_release_source's git
 # wiring is covered separately above).
@@ -1430,6 +1737,84 @@ def test_deploy_reuses_the_runtime_cache_across_an_app_only_redeploy(
 
     runtime_cache_dirs = list((dev_root / "runtime").iterdir())
     assert len(runtime_cache_dirs) == 1  # one shared runtime cache entry, not two
+
+
+def test_deploy_reuses_the_bioclip_model_cache_across_an_app_only_redeploy(
+    tmp_path: Path, dev_root: Path, fake_host: WindowsHost,
+) -> None:
+    """"No duplicate model copy" / "existing bundle reuse", proven at the
+    real `deploy()` orchestration layer: redeploying an app-only change
+    (identical BioCLIP model content) must reuse the one existing BioCLIP
+    model cache entry, never populate a second ~1.6 GB copy."""
+
+    bundle_a = make_bundle(
+        tmp_path / "build-a", git_commit="a" * 40, build_id="id-a", app_content="APP=1\n", include_bioclip_model=True,
+    )
+    bundle_b = make_bundle(
+        tmp_path / "build-b", git_commit="b" * 40, build_id="id-b", app_content="APP=2\n", include_bioclip_model=True,
+    )
+
+    deploy(repo_root=ROOT, dev_root=dev_root, windows_host=fake_host, artifact_path=bundle_a, verify_timeout_seconds=5.0, sleep=_NO_SLEEP)
+    deploy(repo_root=ROOT, dev_root=dev_root, windows_host=fake_host, artifact_path=bundle_b, verify_timeout_seconds=5.0, sleep=_NO_SLEEP)
+
+    bioclip_cache_dirs = list((dev_root / BIOCLIP_MODEL_CACHE_DIRNAME).iterdir())
+    assert len(bioclip_cache_dirs) == 1  # one shared BioCLIP model cache entry, not two
+    # And it is genuinely a different cache root from the Observation
+    # model's own -- never sharing (or colliding with) that namespace.
+    assert (dev_root / BIOCLIP_MODEL_CACHE_DIRNAME) != (dev_root / "models")
+
+
+def test_deploy_reports_bioclip_verification_when_available(
+    tmp_path: Path, dev_root: Path, fake_host: WindowsHost,
+) -> None:
+    """Deploy-time verification (milestone requirement 6/10): a deploy
+    whose release genuinely has a BioCLIP bundle reports it as available
+    in the returned `DeployReport` -- never silently omitted."""
+
+    bundle = make_bundle(tmp_path / "build-a", git_commit="a" * 40, build_id="id-a", include_bioclip_model=True)
+
+    report = deploy(
+        repo_root=ROOT, dev_root=dev_root, windows_host=fake_host, artifact_path=bundle,
+        verify_timeout_seconds=5.0, sleep=_NO_SLEEP,
+    )
+
+    assert report.bioclip_verification is not None
+    assert report.bioclip_verification.checked is True
+    assert report.bioclip_verification.available is True
+    assert "BioCLIP" in report.render()
+    assert "available" in report.render()
+
+
+def test_deploy_never_fails_when_bioclip_runtime_is_unavailable(
+    tmp_path: Path, dev_root: Path, fake_host: WindowsHost,
+) -> None:
+    """Graceful degradation (milestone requirement 5): BioCLIP being
+    unavailable/misconfigured on the deployed machine must never fail the
+    deploy itself -- MockingBird, Camera Node, and detection all remain
+    unaffected, exactly the same "unavailable-safe" contract the app's own
+    status endpoint already provides."""
+
+    unavailable_host = dataclasses.replace(
+        fake_host,
+        run_bioclip_runtime_check=lambda _release_dir, _timeout: BioClipRuntimeVerification(
+            checked=True,
+            available=False,
+            detail="BioCLIP runtime dependencies failed to import: torch: ModuleNotFoundError",
+            missing_modules=("torch: ModuleNotFoundError",),
+        ),
+    )
+    bundle = make_bundle(tmp_path / "build-a", git_commit="a" * 40, build_id="id-a")
+
+    report = deploy(
+        repo_root=ROOT, dev_root=dev_root, windows_host=unavailable_host, artifact_path=bundle,
+        verify_timeout_seconds=5.0, sleep=_NO_SLEEP,
+    )
+
+    assert report.verification.ok is True  # the deploy itself still succeeded
+    assert report.bioclip_verification is not None
+    assert report.bioclip_verification.available is False
+    assert "torch" in report.bioclip_verification.detail
+    assert "unavailable" in report.render()
 
 
 def test_deploy_never_overwrites_an_existing_release_for_a_different_commit(

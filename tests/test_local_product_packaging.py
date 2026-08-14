@@ -15,8 +15,12 @@ Every call into `assemble_windows_bundle`/`build_local_product` below passes
 an explicit fake `install_gpu_dependencies` (or `include_gpu_runtime=False`)
 and a `model_bundle_source` under the test's own `tmp_path` -- never the real
 ~1.1 GB CUDA/cuDNN download or this repository's own real ~500 MB model file.
-Two exceptions, clearly marked and skipped when unavailable:
-`test_real_local_model_bundle_matches_accepted_provenance_when_present`
+Every such call also passes `include_bioclip_runtime=False` unless it is
+specifically testing BioCLIP packaging (see "BioCLIP species-suggestion
+runtime packaging" below), for the identical reason: never the real ~150 MB
+BioCLIP dependency download or this repository's own real ~1.6 GB local
+BioCLIP model file. Two exceptions, clearly marked and skipped when
+unavailable: `test_real_local_model_bundle_matches_accepted_provenance_when_present`
 reads (never writes/downloads) whatever real bundle already sits at
 `DEFAULT_MODEL_BUNDLE_SOURCE` on *this* machine, the same real,
 GPU-validated MDv5 artifact `build_local_product.py`'s own module docstring
@@ -25,7 +29,9 @@ wheel_cache` really installs (offline, from this machine's own local wheel
 cache -- never the network) the pinned win_amd64 CUDA/cuDNN stack and runs
 the real `verify_windows_gpu_runtime_dll_closure` against it. Both are
 genuine, not-faked proofs, skipped rather than failed on a build host that
-does not have the real asset they need.
+does not have the real asset they need. "BioCLIP species-suggestion runtime
+packaging" below adds the identical pair of genuine, skip-when-unavailable
+proofs for the BioCLIP bundle/wheel cache.
 
 The full pipeline (frontend build, real wheel build, real win_amd64
 dependency resolution including the GPU/CUDA stack, real model-bundle
@@ -54,11 +60,15 @@ _MODULE = runpy.run_path(ROOT / "scripts" / "build_local_product.py")
 assemble_windows_bundle = _MODULE["assemble_windows_bundle"]
 build_local_product = _MODULE["build_local_product"]
 export_clean_source_tree = _MODULE["export_clean_source_tree"]
+install_windows_runtime_dependencies = _MODULE["install_windows_runtime_dependencies"]
 install_windows_gpu_runtime_dependencies = _MODULE["install_windows_gpu_runtime_dependencies"]
+install_windows_bioclip_runtime_dependencies = _MODULE["install_windows_bioclip_runtime_dependencies"]
 package_observation_runtime_assets = _MODULE["package_observation_runtime_assets"]
+package_bioclip_runtime_assets = _MODULE["package_bioclip_runtime_assets"]
 sync_packaged_web_dist = _MODULE["sync_packaged_web_dist"]
 verify_clean_tracked_source = _MODULE["verify_clean_tracked_source"]
 verify_windows_gpu_runtime_dll_closure = _MODULE["verify_windows_gpu_runtime_dll_closure"]
+verify_no_duplicate_site_packages_metadata = _MODULE["verify_no_duplicate_site_packages_metadata"]
 write_build_identity = _MODULE["write_build_identity"]
 write_deterministic_zip = _MODULE["write_deterministic_zip"]
 write_manifest = _MODULE["write_manifest"]
@@ -66,16 +76,29 @@ BuildIdentity = _MODULE["BuildIdentity"]
 LocalProductBuildError = _MODULE["LocalProductBuildError"]
 ModelBundleProvenance = _MODULE["ModelBundleProvenance"]
 NativeRuntimeVerification = _MODULE["NativeRuntimeVerification"]
+BioClipBundleProvenance = _MODULE["BioClipBundleProvenance"]
 ACCEPTED_ONNX_MODEL_SHA256 = _MODULE["ACCEPTED_ONNX_MODEL_SHA256"]
 ACCEPTED_SOURCE_MODEL_SHA256 = _MODULE["ACCEPTED_SOURCE_MODEL_SHA256"]
 ACCEPTED_MODEL_KEY = _MODULE["ACCEPTED_MODEL_KEY"]
 ACCEPTED_MODEL_DECODER = _MODULE["ACCEPTED_MODEL_DECODER"]
 ACCEPTED_MODEL_LICENSE = _MODULE["ACCEPTED_MODEL_LICENSE"]
+ACCEPTED_BIOCLIP_MODEL_WEIGHTS_SHA256 = _MODULE["ACCEPTED_BIOCLIP_MODEL_WEIGHTS_SHA256"]
+ACCEPTED_BIOCLIP_MODEL_CONFIG_SHA256 = _MODULE["ACCEPTED_BIOCLIP_MODEL_CONFIG_SHA256"]
+ACCEPTED_BIOCLIP_LABELS_SHA256 = _MODULE["ACCEPTED_BIOCLIP_LABELS_SHA256"]
+ACCEPTED_BIOCLIP_EMBEDDING_CACHE_SHA256 = _MODULE["ACCEPTED_BIOCLIP_EMBEDDING_CACHE_SHA256"]
 PACKAGED_BUILD_INFO_FILENAME = _MODULE["PACKAGED_BUILD_INFO_FILENAME"]
 PACKAGED_OBSERVATION_RUNTIME_DIRNAME = _MODULE["PACKAGED_OBSERVATION_RUNTIME_DIRNAME"]
 PACKAGED_PROVIDER_CONFIG_FILENAME = _MODULE["PACKAGED_PROVIDER_CONFIG_FILENAME"]
+PACKAGED_BIOCLIP_RUNTIME_DIRNAME = _MODULE["PACKAGED_BIOCLIP_RUNTIME_DIRNAME"]
+BIOCLIP_MODEL_CONFIG_FILENAME = _MODULE["BIOCLIP_MODEL_CONFIG_FILENAME"]
+BIOCLIP_MODEL_WEIGHTS_FILENAME = _MODULE["BIOCLIP_MODEL_WEIGHTS_FILENAME"]
+BIOCLIP_LABELS_FILENAME = _MODULE["BIOCLIP_LABELS_FILENAME"]
+BIOCLIP_EMBEDDING_CACHE_FILENAME = _MODULE["BIOCLIP_EMBEDDING_CACHE_FILENAME"]
 DEFAULT_MODEL_BUNDLE_SOURCE = _MODULE["DEFAULT_MODEL_BUNDLE_SOURCE"]
+DEFAULT_BIOCLIP_BUNDLE_SOURCE = _MODULE["DEFAULT_BIOCLIP_BUNDLE_SOURCE"]
 DEFAULT_WHEEL_CACHE_DIR = _MODULE["DEFAULT_WHEEL_CACHE_DIR"]
+DEFAULT_BIOCLIP_WHEEL_CACHE_DIR = _MODULE["DEFAULT_BIOCLIP_WHEEL_CACHE_DIR"]
+WINDOWS_BIOCLIP_RUNTIME_REQUIREMENTS = _MODULE["WINDOWS_BIOCLIP_RUNTIME_REQUIREMENTS"]
 REQUIRED_CUDA_RUNTIME_DLL_BASENAMES = _MODULE["REQUIRED_CUDA_RUNTIME_DLL_BASENAMES"]
 REQUIRED_ORT_CUDA_PROVIDER_DLL_BASENAMES = _MODULE["REQUIRED_ORT_CUDA_PROVIDER_DLL_BASENAMES"]
 
@@ -83,6 +106,11 @@ REQUIRED_ORT_CUDA_PROVIDER_DLL_BASENAMES = _MODULE["REQUIRED_ORT_CUDA_PROVIDER_D
 def _noop_gpu_installer(_site_packages: Path) -> None:
     """Explicit no-op fake -- never installs anything -- for tests that must
     never trigger the real ~1.1 GB CUDA/cuDNN download."""
+
+
+def _noop_bioclip_installer(_site_packages: Path) -> None:
+    """Explicit no-op fake -- never installs anything -- for tests that must
+    never trigger the real ~150 MB BioCLIP dependency download."""
 
 
 def _fake_embeddable_zip(directory: Path) -> Path:
@@ -243,7 +271,7 @@ def test_assemble_windows_bundle_produces_a_python_and_pip_free_user_experience(
         (site_packages / "fastapi_stub").mkdir()
         (site_packages / "fastapi_stub" / "__init__.py").write_text("", encoding="utf-8")
 
-    bundle_dir_result, model_provenance, native_runtime_verification = assemble_windows_bundle(
+    bundle_dir_result, model_provenance, native_runtime_verification, bioclip_provenance = assemble_windows_bundle(
         bundle_dir=bundle_dir,
         wheel_path=wheel_path,
         embed_zip_path=embed_zip,
@@ -252,9 +280,13 @@ def test_assemble_windows_bundle_produces_a_python_and_pip_free_user_experience(
         # GPU/CUDA stack -- `include_gpu_runtime=False` keeps it that way
         # rather than coupling it to a fake DLL closure it does not care
         # about (see the "Windows GPU/CUDA native runtime" section below for
-        # that verification's own dedicated tests).
+        # that verification's own dedicated tests). Same reasoning for
+        # `include_bioclip_runtime=False` and the BioCLIP dependency/model
+        # download (see "BioCLIP species-suggestion runtime packaging").
         include_gpu_runtime=False,
         model_bundle_source=None,
+        include_bioclip_runtime=False,
+        bioclip_bundle_source=None,
     )
 
     assert bundle_dir_result == bundle_dir
@@ -263,6 +295,8 @@ def test_assemble_windows_bundle_produces_a_python_and_pip_free_user_experience(
     assert model_provenance.reason == "no_model_bundle_source_supplied"
     assert native_runtime_verification.checked is False
     assert native_runtime_verification.reason == "gpu_runtime_skipped"
+    assert bioclip_provenance.included is False
+    assert bioclip_provenance.reason == "no_bioclip_bundle_source_supplied"
 
     # No Python/pip/npm knowledge needed: one launcher, no visible interpreter
     # concept, no console window (`pythonw.exe`, window style 0).
@@ -307,13 +341,15 @@ def test_assemble_windows_bundle_includes_gpu_runtime_by_default_via_injected_in
         gpu_installed_targets.append(site_packages)
         _write_fake_complete_gpu_runtime(site_packages)
 
-    _, _provenance, native_runtime_verification = assemble_windows_bundle(
+    _, _provenance, native_runtime_verification, _bioclip_provenance = assemble_windows_bundle(
         bundle_dir=tmp_path / "bundle",
         wheel_path=wheel_path,
         embed_zip_path=embed_zip,
         install_dependencies=lambda _target: None,
         install_gpu_dependencies=fake_gpu_installer,
         model_bundle_source=None,
+        include_bioclip_runtime=False,
+        bioclip_bundle_source=None,
     )
 
     assert gpu_installed_targets == [tmp_path / "bundle" / "python" / "site-packages"]
@@ -325,7 +361,7 @@ def test_assemble_windows_bundle_skip_gpu_runtime_never_calls_installer(tmp_path
     wheel_path = _fake_wheel(tmp_path, package_name="mockingbird")
     calls: list[Path] = []
 
-    _, _provenance, native_runtime_verification = assemble_windows_bundle(
+    _, _provenance, native_runtime_verification, _bioclip_provenance = assemble_windows_bundle(
         bundle_dir=tmp_path / "bundle",
         wheel_path=wheel_path,
         embed_zip_path=embed_zip,
@@ -333,6 +369,8 @@ def test_assemble_windows_bundle_skip_gpu_runtime_never_calls_installer(tmp_path
         install_gpu_dependencies=calls.append,
         include_gpu_runtime=False,
         model_bundle_source=None,
+        include_bioclip_runtime=False,
+        bioclip_bundle_source=None,
     )
 
     assert calls == []
@@ -516,13 +554,15 @@ def test_assemble_windows_bundle_records_native_runtime_verification(tmp_path: P
     embed_zip = _fake_embeddable_zip(tmp_path)
     wheel_path = _fake_wheel(tmp_path, package_name="mockingbird")
 
-    _, _provenance, native_runtime_verification = assemble_windows_bundle(
+    _, _provenance, native_runtime_verification, _bioclip_provenance = assemble_windows_bundle(
         bundle_dir=tmp_path / "bundle",
         wheel_path=wheel_path,
         embed_zip_path=embed_zip,
         install_dependencies=lambda _target: None,
         install_gpu_dependencies=lambda target: _write_fake_complete_gpu_runtime(target),
         model_bundle_source=None,
+        include_bioclip_runtime=False,
+        bioclip_bundle_source=None,
     )
 
     assert native_runtime_verification.checked is True
@@ -877,6 +917,396 @@ def test_package_observation_runtime_assets_none_source_is_honest_not_fatal(tmp_
     assert provenance.reason == "no_model_bundle_source_supplied"
 
 
+# --- BioCLIP species-suggestion runtime packaging ---------------------------
+
+
+def _valid_bioclip_bundle_source(
+    directory: Path,
+    *,
+    weights_bytes: bytes = b"fixture-bioclip-weights",
+    config_bytes: bytes = b'{"fixture": "config"}',
+    labels_bytes: bytes = b"House Finch\n",
+    cache_bytes: bytes = b"fixture-embedding-cache-bytes",
+) -> Path:
+    """A source directory shaped exactly like the real, already-accepted
+    `data/models/bioclip-2/` convention, but with tiny fixture content --
+    tests must never depend on this repository's real ~1.6 GB weights file.
+    Also writes an unrelated scratch file, proving `package_bioclip_
+    runtime_assets` looks up its four expected files individually rather
+    than copying the source directory wholesale."""
+
+    source = directory / "bioclip-2"
+    source.mkdir()
+    (source / BIOCLIP_MODEL_WEIGHTS_FILENAME).write_bytes(weights_bytes)
+    (source / BIOCLIP_MODEL_CONFIG_FILENAME).write_bytes(config_bytes)
+    (source / BIOCLIP_LABELS_FILENAME).write_bytes(labels_bytes)
+    (source / BIOCLIP_EMBEDDING_CACHE_FILENAME).write_bytes(cache_bytes)
+    (source / "bioclip-batch-1.txt").write_text("scratch evaluation artifact\n", encoding="utf-8")
+    return source
+
+
+def _monkeypatch_accepted_bioclip_hashes(monkeypatch: pytest.MonkeyPatch, *, weights: bytes, config: bytes, labels: bytes, cache: bytes) -> None:
+    for name, content in (
+        ("ACCEPTED_BIOCLIP_MODEL_WEIGHTS_SHA256", weights),
+        ("ACCEPTED_BIOCLIP_MODEL_CONFIG_SHA256", config),
+        ("ACCEPTED_BIOCLIP_LABELS_SHA256", labels),
+        ("ACCEPTED_BIOCLIP_EMBEDDING_CACHE_SHA256", cache),
+    ):
+        monkeypatch.setitem(
+            package_bioclip_runtime_assets.__globals__, name, hashlib.sha256(content).hexdigest(),
+        )
+
+
+def test_package_bioclip_runtime_assets_accepts_the_exact_accepted_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Uses tiny fixture files whose SHA-256s are monkeypatched in as the
+    "accepted" hashes -- proves the verification/copy logic without
+    shipping (or requiring) the real ~1.6 GB model in the test suite."""
+
+    weights, config, labels, cache = b"w" * 32, b'{"c":1}', b"House Finch\n", b"cache-bytes"
+    source = _valid_bioclip_bundle_source(
+        tmp_path, weights_bytes=weights, config_bytes=config, labels_bytes=labels, cache_bytes=cache,
+    )
+    _monkeypatch_accepted_bioclip_hashes(monkeypatch, weights=weights, config=config, labels=labels, cache=cache)
+    site_packages = tmp_path / "site-packages"
+    (site_packages / "mockingbird").mkdir(parents=True)
+
+    provenance = package_bioclip_runtime_assets(site_packages=site_packages, bioclip_bundle_source=source)
+
+    assert provenance.included is True
+    assert provenance.reason is None
+    assert provenance.model_weights_sha256 == hashlib.sha256(weights).hexdigest()
+    assert provenance.model_config_sha256 == hashlib.sha256(config).hexdigest()
+    assert provenance.labels_sha256 == hashlib.sha256(labels).hexdigest()
+    assert provenance.embedding_cache_sha256 == hashlib.sha256(cache).hexdigest()
+
+    destination = site_packages / "mockingbird" / PACKAGED_BIOCLIP_RUNTIME_DIRNAME
+    assert (destination / BIOCLIP_MODEL_WEIGHTS_FILENAME).read_bytes() == weights
+    assert (destination / BIOCLIP_MODEL_CONFIG_FILENAME).read_bytes() == config
+    assert (destination / BIOCLIP_LABELS_FILENAME).read_bytes() == labels
+    assert (destination / BIOCLIP_EMBEDDING_CACHE_FILENAME).read_bytes() == cache
+    # The unrelated scratch file sitting in the same source directory is
+    # never packaged -- each expected file is looked up individually.
+    assert not (destination / "bioclip-batch-1.txt").exists()
+
+
+def test_package_bioclip_runtime_assets_rejects_a_bundle_that_does_not_match_accepted_provenance(
+    tmp_path: Path,
+) -> None:
+    """A bundle whose SHA-256s do not match the real, doctrine-recorded
+    `ACCEPTED_BIOCLIP_*_SHA256` constants (never monkeypatched in this
+    test) is refused, not silently packaged as if it were the accepted
+    model."""
+
+    source = _valid_bioclip_bundle_source(tmp_path, weights_bytes=b"a-different-unapproved-model-file")
+    site_packages = tmp_path / "site-packages"
+    (site_packages / "mockingbird").mkdir(parents=True)
+
+    provenance = package_bioclip_runtime_assets(site_packages=site_packages, bioclip_bundle_source=source)
+
+    assert provenance.included is False
+    assert provenance.reason is not None and "does_not_match_accepted_provenance" in provenance.reason
+    assert not (site_packages / "mockingbird" / PACKAGED_BIOCLIP_RUNTIME_DIRNAME).exists()
+
+
+def test_package_bioclip_runtime_assets_rejects_a_bundle_missing_one_expected_file(tmp_path: Path) -> None:
+    """A bundle missing even one of the four expected files (labels,
+    here) is refused with a specific, actionable reason -- never silently
+    packages a partial/inconsistent bundle."""
+
+    source = _valid_bioclip_bundle_source(tmp_path)
+    (source / BIOCLIP_LABELS_FILENAME).unlink()
+    site_packages = tmp_path / "site-packages"
+    (site_packages / "mockingbird").mkdir(parents=True)
+
+    provenance = package_bioclip_runtime_assets(site_packages=site_packages, bioclip_bundle_source=source)
+
+    assert provenance.included is False
+    assert provenance.reason == "bioclip_labels_missing"
+
+
+def test_package_bioclip_runtime_assets_missing_source_is_honest_not_fatal(tmp_path: Path) -> None:
+    site_packages = tmp_path / "site-packages"
+    (site_packages / "mockingbird").mkdir(parents=True)
+
+    provenance = package_bioclip_runtime_assets(
+        site_packages=site_packages, bioclip_bundle_source=tmp_path / "no-such-directory",
+    )
+
+    assert provenance.included is False
+    assert provenance.reason == "no_bioclip_bundle_source_supplied"
+
+
+def test_package_bioclip_runtime_assets_none_source_is_honest_not_fatal(tmp_path: Path) -> None:
+    site_packages = tmp_path / "site-packages"
+    (site_packages / "mockingbird").mkdir(parents=True)
+
+    provenance = package_bioclip_runtime_assets(site_packages=site_packages, bioclip_bundle_source=None)
+
+    assert provenance.included is False
+    assert provenance.reason == "no_bioclip_bundle_source_supplied"
+
+
+def test_install_windows_bioclip_runtime_dependencies_uses_the_pinned_wheel_cache_when_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_commands: list[list[str]] = []
+    monkeypatch.setitem(
+        install_windows_bioclip_runtime_dependencies.__globals__,
+        "_run",
+        lambda command, *, cwd: captured_commands.append(list(command)),
+    )
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+
+    install_windows_bioclip_runtime_dependencies(
+        site_packages=tmp_path / "site-packages", requirements=("fake-pkg==1.0",), wheel_cache_dir=cache_dir,
+    )
+
+    [command] = captured_commands
+    assert "--find-links" in command
+    assert str(cache_dir) in command
+    assert "--no-index" in command
+    assert "--extra-index-url" in command
+    assert "fake-pkg==1.0" in command
+
+
+def test_install_windows_bioclip_runtime_dependencies_falls_back_to_network_when_cache_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_commands: list[list[str]] = []
+    monkeypatch.setitem(
+        install_windows_bioclip_runtime_dependencies.__globals__,
+        "_run",
+        lambda command, *, cwd: captured_commands.append(list(command)),
+    )
+
+    install_windows_bioclip_runtime_dependencies(
+        site_packages=tmp_path / "site-packages",
+        requirements=("fake-pkg==1.0",),
+        wheel_cache_dir=tmp_path / "no-such-cache-directory",
+    )
+
+    [command] = captured_commands
+    assert "--find-links" not in command
+    assert "--no-index" not in command
+    assert "--extra-index-url" in command
+    assert "fake-pkg==1.0" in command
+
+
+def test_assemble_windows_bundle_includes_bioclip_runtime_by_default_via_injected_installer(
+    tmp_path: Path,
+) -> None:
+    embed_zip = _fake_embeddable_zip(tmp_path)
+    wheel_path = _fake_wheel(tmp_path, package_name="mockingbird")
+    bioclip_installed_targets: list[Path] = []
+
+    _, _model_provenance, _native_verification, bioclip_provenance = assemble_windows_bundle(
+        bundle_dir=tmp_path / "bundle",
+        wheel_path=wheel_path,
+        embed_zip_path=embed_zip,
+        install_dependencies=lambda _target: None,
+        install_bioclip_dependencies=bioclip_installed_targets.append,
+        include_gpu_runtime=False,
+        model_bundle_source=None,
+        bioclip_bundle_source=None,
+    )
+
+    assert bioclip_installed_targets == [tmp_path / "bundle" / "python" / "site-packages"]
+    assert bioclip_provenance.included is False  # no bioclip_bundle_source supplied in this test
+
+
+def test_assemble_windows_bundle_skip_bioclip_runtime_never_calls_installer(tmp_path: Path) -> None:
+    embed_zip = _fake_embeddable_zip(tmp_path)
+    wheel_path = _fake_wheel(tmp_path, package_name="mockingbird")
+    calls: list[Path] = []
+
+    assemble_windows_bundle(
+        bundle_dir=tmp_path / "bundle",
+        wheel_path=wheel_path,
+        embed_zip_path=embed_zip,
+        install_dependencies=lambda _target: None,
+        install_bioclip_dependencies=calls.append,
+        include_gpu_runtime=False,
+        model_bundle_source=None,
+        include_bioclip_runtime=False,
+        bioclip_bundle_source=None,
+    )
+
+    assert calls == []
+
+
+def test_write_manifest_records_bioclip_bundle_provenance(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "bundle"
+    bundle_dir.mkdir()
+    zip_path = write_deterministic_zip(bundle_dir, tmp_path / "out.zip")
+    provenance = BioClipBundleProvenance(
+        included=True,
+        model_weights_sha256=ACCEPTED_BIOCLIP_MODEL_WEIGHTS_SHA256,
+        model_config_sha256=ACCEPTED_BIOCLIP_MODEL_CONFIG_SHA256,
+        labels_sha256=ACCEPTED_BIOCLIP_LABELS_SHA256,
+        embedding_cache_sha256=ACCEPTED_BIOCLIP_EMBEDDING_CACHE_SHA256,
+    )
+
+    manifest_path, _ = write_manifest(
+        output_dir=tmp_path, bundle_dir=bundle_dir, zip_path=zip_path,
+        source_state="git:deadbeef", bioclip_bundle_provenance=provenance, bioclip_runtime_included=True,
+    )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["bioclip_runtime_included"] is True
+    assert manifest["bioclip_runtime_requirements"]  # non-empty
+    assert manifest["bioclip_model_bundle"]["included"] is True
+    assert manifest["bioclip_model_bundle"]["model_weights_sha256"] == ACCEPTED_BIOCLIP_MODEL_WEIGHTS_SHA256
+
+
+def test_write_manifest_records_missing_bioclip_bundle_honestly(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "bundle"
+    bundle_dir.mkdir()
+    zip_path = write_deterministic_zip(bundle_dir, tmp_path / "out.zip")
+
+    manifest_path, _ = write_manifest(
+        output_dir=tmp_path, bundle_dir=bundle_dir, zip_path=zip_path, source_state="git:deadbeef",
+        bioclip_bundle_provenance=BioClipBundleProvenance(included=False, reason="no_bioclip_bundle_source_supplied"),
+        bioclip_runtime_included=False,
+    )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["bioclip_model_bundle"]["included"] is False
+    assert manifest["bioclip_model_bundle"]["reason"] == "no_bioclip_bundle_source_supplied"
+    assert manifest["bioclip_runtime_included"] is False
+    assert manifest["bioclip_runtime_requirements"] == []
+
+
+# --- Duplicate site-packages metadata: the real corruption class found -----
+# while validating WINDOWS_BIOCLIP_RUNTIME_REQUIREMENTS (see that constant's
+# own docstring): a second `pip install --target` call resolving a loosely
+# -bounded transitive dependency to a different version than an earlier
+# call already installed leaves stale code on disk next to a second,
+# newer-versioned `.dist-info/` -- an ambiguous, corrupted install.
+
+
+def test_verify_no_duplicate_site_packages_metadata_passes_when_clean(tmp_path: Path) -> None:
+    site_packages = tmp_path / "site-packages"
+    for name in ("pillow-11.3.0.dist-info", "numpy-2.5.2.dist-info", "mockingbird-0.1.0.dist-info"):
+        (site_packages / name).mkdir(parents=True)
+
+    verify_no_duplicate_site_packages_metadata(site_packages=site_packages)  # must not raise
+
+
+def test_verify_no_duplicate_site_packages_metadata_fails_on_a_real_duplicate_shape(tmp_path: Path) -> None:
+    """Exact real shape found for real: `pillow-11.3.0.dist-info` (already
+    installed by the core tier) sitting next to a freshly-resolved
+    `pillow-12.3.0.dist-info` from a later, independent install call."""
+
+    site_packages = tmp_path / "site-packages"
+    for name in ("pillow-11.3.0.dist-info", "pillow-12.3.0.dist-info"):
+        (site_packages / name).mkdir(parents=True)
+
+    with pytest.raises(LocalProductBuildError, match="pillow"):
+        verify_no_duplicate_site_packages_metadata(site_packages=site_packages)
+
+
+def test_verify_no_duplicate_site_packages_metadata_normalizes_dashes_and_underscores(tmp_path: Path) -> None:
+    """`open_clip_torch` and a hypothetical `open-clip-torch` (or
+    `Open.Clip.Torch`) name the *same* PyPI distribution -- PEP 503
+    normalization must catch this even though the literal directory names
+    differ."""
+
+    site_packages = tmp_path / "site-packages"
+    for name in ("open_clip_torch-3.3.0.dist-info", "open-clip-torch-3.4.0.dist-info"):
+        (site_packages / name).mkdir(parents=True)
+
+    with pytest.raises(LocalProductBuildError, match="open-clip-torch"):
+        verify_no_duplicate_site_packages_metadata(site_packages=site_packages)
+
+
+def test_assemble_windows_bundle_fails_the_whole_build_on_a_duplicate_dependency(
+    tmp_path: Path,
+) -> None:
+    """Integration proof this is actually wired into the real build path:
+    an installer that leaves a duplicated `.dist-info/` behind fails the
+    whole build, never silently ships it."""
+
+    embed_zip = _fake_embeddable_zip(tmp_path)
+    wheel_path = _fake_wheel(tmp_path, package_name="mockingbird")
+
+    def duplicate_leaving_installer(site_packages: Path) -> None:
+        (site_packages / "pillow-11.3.0.dist-info").mkdir(parents=True, exist_ok=True)
+        (site_packages / "pillow-12.3.0.dist-info").mkdir(parents=True, exist_ok=True)
+
+    with pytest.raises(LocalProductBuildError, match="pillow"):
+        assemble_windows_bundle(
+            bundle_dir=tmp_path / "bundle",
+            wheel_path=wheel_path,
+            embed_zip_path=embed_zip,
+            install_dependencies=duplicate_leaving_installer,
+            include_gpu_runtime=False,
+            model_bundle_source=None,
+            include_bioclip_runtime=False,
+            bioclip_bundle_source=None,
+        )
+
+
+@pytest.mark.skipif(
+    not DEFAULT_BIOCLIP_BUNDLE_SOURCE.is_dir(),
+    reason="real local BioCLIP evaluation bundle not present on this build host",
+)
+def test_real_local_bioclip_bundle_matches_accepted_provenance_when_present(tmp_path: Path) -> None:
+    """Not a fixture: reads the real local `data/models/bioclip-2/` bundle
+    when this build host has one (this repository's own real, already
+    -validated BioCLIP 2 artifact) and proves it packages cleanly with the
+    exact accepted provenance -- skipped (never failed) on a host without
+    it rather than requiring every contributor to have a ~1.6 GB model
+    file locally."""
+
+    site_packages = tmp_path / "site-packages"
+    (site_packages / "mockingbird").mkdir(parents=True)
+
+    provenance = package_bioclip_runtime_assets(
+        site_packages=site_packages, bioclip_bundle_source=DEFAULT_BIOCLIP_BUNDLE_SOURCE,
+    )
+
+    assert provenance.included is True, provenance.reason
+    assert provenance.model_weights_sha256 == ACCEPTED_BIOCLIP_MODEL_WEIGHTS_SHA256
+    assert provenance.model_config_sha256 == ACCEPTED_BIOCLIP_MODEL_CONFIG_SHA256
+    assert provenance.labels_sha256 == ACCEPTED_BIOCLIP_LABELS_SHA256
+    assert provenance.embedding_cache_sha256 == ACCEPTED_BIOCLIP_EMBEDDING_CACHE_SHA256
+
+
+@pytest.mark.skipif(
+    not DEFAULT_BIOCLIP_WHEEL_CACHE_DIR.is_dir(),
+    reason="real win_amd64 BioCLIP wheel cache not present on this build host",
+)
+def test_real_windows_bioclip_dependency_closure_installs_offline_with_no_duplicates(tmp_path: Path) -> None:
+    """Not a fixture: really installs the pinned win_amd64/cp312 BioCLIP
+    dependency closure from this build host's own local wheel cache
+    (offline, real torch/open_clip/... wheels, no network -- see
+    `DEFAULT_BIOCLIP_WHEEL_CACHE_DIR`), on top of the real core+GPU tiers,
+    and proves `verify_no_duplicate_site_packages_metadata` finds the
+    result clean -- the genuine "the pinned closure actually installs
+    together with no duplication" proof, skipped (never failed) on a build
+    host that does not have this cache locally."""
+
+    site_packages = tmp_path / "site-packages"
+    site_packages.mkdir()
+
+    install_windows_runtime_dependencies(site_packages=site_packages)
+    install_windows_gpu_runtime_dependencies(site_packages=site_packages, wheel_cache_dir=DEFAULT_WHEEL_CACHE_DIR)
+    install_windows_bioclip_runtime_dependencies(
+        site_packages=site_packages, wheel_cache_dir=DEFAULT_BIOCLIP_WHEEL_CACHE_DIR,
+    )
+
+    verify_no_duplicate_site_packages_metadata(site_packages=site_packages)  # must not raise
+
+    for name in ("torch", "open_clip_torch", "safetensors", "timm", "sympy"):
+        assert any(
+            entry.name.lower().startswith(f"{name}-") and entry.name.endswith(".dist-info")
+            for entry in site_packages.iterdir()
+        ), f"{name} not installed"
+
+
 # --- Release-build source integrity (git archive, not the live checkout) ---
 
 
@@ -1193,6 +1623,8 @@ def test_build_local_product_end_to_end_records_a_verified_build_identity(
         install_dependencies=lambda _target: None,
         include_gpu_runtime=False,
         model_bundle_source=None,
+        include_bioclip_runtime=False,
+        bioclip_bundle_source=None,
     )
 
     assert artifact.build_identity.git_commit == fake_commit
@@ -1251,6 +1683,8 @@ def test_build_local_product_dirty_source_records_a_best_effort_commit(
         install_dependencies=lambda _target: None,
         include_gpu_runtime=False,
         model_bundle_source=None,
+        include_bioclip_runtime=False,
+        bioclip_bundle_source=None,
         allow_dirty_source=True,
     )
 

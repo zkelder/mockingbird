@@ -116,6 +116,14 @@ DEV_ROOT_DIRNAME = "MockingBirdDev"
 RELEASES_DIRNAME = "releases"
 RUNTIME_CACHE_DIRNAME = "runtime"
 MODEL_CACHE_DIRNAME = "models"
+# The BioCLIP species-suggestion model bundle's own cache root -- a
+# separate, sibling content-addressed cache from `MODEL_CACHE_DIRNAME`
+# (never the same directory namespace), so it is trivially distinguishable
+# on disk and one bundle's content hash can never collide with the other's
+# even in principle. Same `ensure_cache` mechanism, same safety guarantees,
+# just a second independently-versioned tier -- see `ensure_bioclip_model_
+# cache`/`_bioclip_bundle_dir`.
+BIOCLIP_MODEL_CACHE_DIRNAME = "bioclip-models"
 # One directory, shared and reused by *every* dev deployment and rollback
 # regardless of git sha -- never per-release. This is what makes "never
 # reset/re-pair Camera Nodes" and "never modify Visits/reviews/truth" true
@@ -187,6 +195,7 @@ class MaterializedRelease:
     release_dir: Path
     runtime_hash: str
     model_hash: str
+    bioclip_model_hash: str
     junctioned_relative_paths: tuple[str, ...]
     bytes_copied: int
 
@@ -206,6 +215,13 @@ class ReleaseRecord:
     model_hash: str
     deployed_at: str
     junctioned_relative_paths: tuple[str, ...] = ()
+    # Defaulted (unlike the fields above) so a ledger entry written before
+    # this field existed still reads back cleanly via `from_dict` below --
+    # `NO_MODEL_BUNDLE_HASH` is the same honest "nothing packaged" sentinel
+    # `model_hash` already uses, correct either for a genuinely bioclip-free
+    # old build or for a pre-existing ledger entry this field simply did not
+    # exist for yet.
+    bioclip_model_hash: str = NO_MODEL_BUNDLE_HASH
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -217,6 +233,7 @@ class ReleaseRecord:
             "model_hash": self.model_hash,
             "deployed_at": self.deployed_at,
             "junctioned_relative_paths": list(self.junctioned_relative_paths),
+            "bioclip_model_hash": self.bioclip_model_hash,
         }
 
     @staticmethod
@@ -227,6 +244,7 @@ class ReleaseRecord:
             build_id=payload.get("build_id"),  # type: ignore[arg-type]
             app_version=payload.get("app_version"),  # type: ignore[arg-type]
             runtime_hash=str(payload.get("runtime_hash", "")),
+            bioclip_model_hash=str(payload.get("bioclip_model_hash", NO_MODEL_BUNDLE_HASH)),
             model_hash=str(payload.get("model_hash", "")),
             deployed_at=str(payload.get("deployed_at", "")),
             junctioned_relative_paths=tuple(payload.get("junctioned_relative_paths", []) or []),  # type: ignore[arg-type]
@@ -269,6 +287,28 @@ class VerificationResult:
 
 
 @dataclass(frozen=True)
+class BioClipRuntimeVerification:
+    """What `verify_bioclip_runtime` actually found by running the deployed
+    release's own `python.exe` against the real BioCLIP import/adapter
+    path -- never a build-time guess about whether the packaged dependency
+    closure is really importable on the target machine, and never fatal to
+    a deploy (BioCLIP remains an optional, unavailable-safe species
+    -suggestion feature; see `deploy`'s own docstring).
+
+    `checked=False` only for an explicit opt-out; any real attempt --
+    successful or not -- sets `checked=True`, mirroring `build_local_
+    product.NativeRuntimeVerification`'s identical convention for the
+    GPU/CUDA DLL closure."""
+
+    checked: bool
+    available: bool
+    detail: str
+    imported_modules: tuple[str, ...] = ()
+    missing_modules: tuple[str, ...] = ()
+    adapter_status: str | None = None
+
+
+@dataclass(frozen=True)
 class DeployReport:
     sha: str
     release_dir_windows: str
@@ -276,6 +316,7 @@ class DeployReport:
     url: str
     previous_release_sha: str | None
     verification: VerificationResult
+    bioclip_verification: BioClipRuntimeVerification | None = None
 
     def render(self) -> str:
         lines = [
@@ -286,6 +327,9 @@ class DeployReport:
         ]
         if self.previous_release_sha:
             lines.append(f"Previous release: {self.previous_release_sha}")
+        if self.bioclip_verification is not None:
+            state = "available" if self.bioclip_verification.available else "unavailable"
+            lines.append(f"BioCLIP species suggestions: {state} ({self.bioclip_verification.detail})")
         return "\n".join(lines)
 
 
@@ -339,6 +383,9 @@ def build_release_source(
     skip_gpu_runtime: bool = False,
     model_bundle_source: Path | None = None,
     wheel_cache_dir: Path | None = None,
+    skip_bioclip_runtime: bool = False,
+    bioclip_bundle_source: Path | None = None,
+    bioclip_wheel_cache_dir: Path | None = None,
 ) -> ReleaseSource:
     """Build a fresh artifact for `commit_ref` via `build_local_product.py`,
     never bypassing its clean-source-snapshot requirement, model
@@ -379,6 +426,17 @@ def build_release_source(
         ),
         wheel_cache_dir=(
             wheel_cache_dir if wheel_cache_dir is not None else module["DEFAULT_WHEEL_CACHE_DIR"]
+        ),
+        include_bioclip_runtime=not skip_bioclip_runtime,
+        bioclip_bundle_source=(
+            bioclip_bundle_source
+            if bioclip_bundle_source is not None
+            else module["DEFAULT_BIOCLIP_BUNDLE_SOURCE"]
+        ),
+        bioclip_wheel_cache_dir=(
+            bioclip_wheel_cache_dir
+            if bioclip_wheel_cache_dir is not None
+            else module["DEFAULT_BIOCLIP_WHEEL_CACHE_DIR"]
         ),
         allow_dirty_source=False,
     )
@@ -484,6 +542,22 @@ def _model_bundle_dir(bundle_dir: Path) -> Path:
     )
 
 
+def _bioclip_bundle_dir(bundle_dir: Path) -> Path:
+    """`_model_bundle_dir`'s exact counterpart for the separate, optional
+    BioCLIP species-suggestion model bundle
+    (`mockingbird/bioclip_runtime/`) -- an independent tier from the
+    Observation Engine's `observation_runtime/`, with its own hash, its own
+    cache root (`BIOCLIP_MODEL_CACHE_DIRNAME`), and its own junction, so a
+    change to one model can never force an unnecessary re-copy of the
+    other."""
+
+    module = _blp()
+    return (
+        bundle_dir / "python" / "site-packages" / APP_TIER_PACKAGE_NAME
+        / module["PACKAGED_BIOCLIP_RUNTIME_DIRNAME"]
+    )
+
+
 def _hash_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -563,6 +637,32 @@ def compute_model_hash(bundle_dir: Path) -> str:
     return _combined_hash((f.relative_to(model_dir).as_posix(), _hash_file(f), f.stat().st_size) for f in files)
 
 
+def _bioclip_tier_files(bundle_dir: Path) -> list[Path]:
+    """`_model_tier_files`'s exact counterpart for `mockingbird/
+    bioclip_runtime/`, or `[]` if this build did not package a BioCLIP
+    bundle at all."""
+
+    bioclip_dir = _bioclip_bundle_dir(bundle_dir)
+    if not bioclip_dir.is_dir():
+        return []
+    return sorted(path for path in bioclip_dir.rglob("*") if path.is_file())
+
+
+def compute_bioclip_model_hash(bundle_dir: Path) -> str:
+    """`compute_model_hash`'s exact counterpart for the BioCLIP model tier
+    (`mockingbird/bioclip_runtime/`), or `NO_MODEL_BUNDLE_HASH` if this
+    build did not package a BioCLIP bundle at all -- the same explicit,
+    honest sentinel, shared across both independent model tiers."""
+
+    bioclip_dir = _bioclip_bundle_dir(bundle_dir)
+    files = _bioclip_tier_files(bundle_dir)
+    if not files:
+        return NO_MODEL_BUNDLE_HASH
+    return _combined_hash(
+        (f.relative_to(bioclip_dir).as_posix(), _hash_file(f), f.stat().st_size) for f in files
+    )
+
+
 @dataclass(frozen=True)
 class HttpProbe:
     """The result of one bounded HTTP GET against the Windows-deployed
@@ -606,6 +706,14 @@ class WindowsHost:
     process_alive: Callable[[int], bool]
     process_image_path: Callable[[int], "str | None"]
     kill_process: Callable[[int], None]
+    # `(release_dir, timeout_seconds) -> BioClipRuntimeVerification`: runs
+    # the deployed release's *own* `python.exe` against the real BioCLIP
+    # import/adapter path -- see `verify_bioclip_runtime`. Never raises (a
+    # real failure is reported *in* the returned dataclass, `detail`
+    # explaining exactly why); this is what makes it safe to call
+    # unconditionally after every successful deploy without risking the
+    # deploy itself on an optional, unavailable-safe feature.
+    run_bioclip_runtime_check: Callable[[Path, float], BioClipRuntimeVerification]
 
 
 # ---------------------------------------------------------------------------
@@ -869,20 +977,50 @@ def ensure_model_cache(bundle_dir: Path, *, cache_root: Path, windows_host: Wind
     )
 
 
+def ensure_bioclip_model_cache(
+    bundle_dir: Path, *, cache_root: Path, windows_host: WindowsHost,
+) -> CachePopulationResult | None:
+    """`ensure_model_cache`'s exact counterpart for the BioCLIP model tier,
+    or `None` if this build did not package a BioCLIP bundle at all (an
+    explicitly supported, honestly reported state -- nothing to cache, and
+    `materialize_release` links nothing for this tier in that case
+    either)."""
+
+    bioclip_dir = _bioclip_bundle_dir(bundle_dir)
+    files = _bioclip_tier_files(bundle_dir)
+    if not files:
+        return None
+    content_hash = _combined_hash(
+        (f.relative_to(bioclip_dir).as_posix(), _hash_file(f), f.stat().st_size) for f in files
+    )
+    file_count, total_bytes = len(files), sum(f.stat().st_size for f in files)
+    return ensure_cache(
+        populate=lambda staging: _copy_files_preserving_structure(
+            files, relative_root=bioclip_dir, destination=staging, windows_host=windows_host,
+        ),
+        content_hash=content_hash,
+        expected_file_count=file_count,
+        expected_total_bytes=total_bytes,
+        cache_root=cache_root,
+        windows_host=windows_host,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Release materialization: junctions for runtime/model, fresh copy for app
 # ---------------------------------------------------------------------------
 
 
 def _copy_app_tier_entry(
-    source: Path, destination: Path, *, skip_relative: Path | None, windows_host: WindowsHost,
+    source: Path, destination: Path, *, skip_relatives: frozenset[Path], windows_host: WindowsHost,
 ) -> int:
     """Copy `source` (a file, or a real directory such as the installed
-    `mockingbird` package itself) to `destination`, except for
-    `skip_relative` -- the nested model-bundle directory, materialized
-    separately as its own cache junction so copying "the app" never means
-    also copying the much larger, much less frequently changing model.
-    Returns bytes copied."""
+    `mockingbird` package itself) to `destination`, except for anything in
+    `skip_relatives` -- the nested model-bundle directories (Observation
+    Engine, BioCLIP, each an independent tier), materialized separately as
+    their own cache junctions so copying "the app" never means also copying
+    the much larger, much less frequently changing models. Returns bytes
+    copied."""
 
     if source.is_file():
         windows_host.copy_file(source, destination)
@@ -891,10 +1029,10 @@ def _copy_app_tier_entry(
     windows_host.ensure_dir(destination)
     bytes_copied = 0
     for child in sorted(source.iterdir()):
-        if skip_relative is not None and child.relative_to(source) == skip_relative:
+        if child.relative_to(source) in skip_relatives:
             continue
         bytes_copied += _copy_app_tier_entry(
-            child, destination / child.name, skip_relative=None, windows_host=windows_host,
+            child, destination / child.name, skip_relatives=frozenset(), windows_host=windows_host,
         )
     return bytes_copied
 
@@ -905,8 +1043,10 @@ def materialize_release(
     release_dir: Path,
     runtime_hash: str,
     model_hash: str,
+    bioclip_model_hash: str,
     runtime_cache_root: Path,
     model_cache_root: Path,
+    bioclip_model_cache_root: Path,
     windows_host: WindowsHost,
 ) -> MaterializedRelease:
     """Build `release_dir` (must not already exist -- requirement: never
@@ -922,9 +1062,12 @@ def materialize_release(
     parts backed by shared, immutable, hash-verified cache directories via
     NTFS junctions instead of separate copies.
 
-    `ensure_cache` for both tiers must already have been called (this
-    raises if the expected cache directory is missing) -- this function
-    only ever links to or copies from what is already verified-present.
+    `ensure_cache` for all three tiers (runtime, Observation model, BioCLIP
+    model) must already have been called (this raises if an expected cache
+    directory is missing) -- this function only ever links to or copies
+    from what is already verified-present. The two model tiers are fully
+    independent: a build with only one, both, or neither present is every
+    one of them an explicitly supported shape (see `NO_MODEL_BUNDLE_HASH`).
     """
 
     if release_dir.exists():
@@ -933,11 +1076,17 @@ def materialize_release(
     runtime_cache_dir = runtime_cache_root / runtime_hash
     if not runtime_cache_dir.is_dir():
         raise DeploymentError(f"Runtime cache {runtime_cache_dir} does not exist -- call ensure_cache first.")
-    model_cache_dir: Path | None = None
-    if model_hash != NO_MODEL_BUNDLE_HASH:
-        model_cache_dir = model_cache_root / model_hash
-        if not model_cache_dir.is_dir():
-            raise DeploymentError(f"Model cache {model_cache_dir} does not exist -- call ensure_cache first.")
+
+    def _resolve_model_cache_dir(hash_value: str, cache_root: Path) -> Path | None:
+        if hash_value == NO_MODEL_BUNDLE_HASH:
+            return None
+        cache_dir = cache_root / hash_value
+        if not cache_dir.is_dir():
+            raise DeploymentError(f"Model cache {cache_dir} does not exist -- call ensure_cache first.")
+        return cache_dir
+
+    model_cache_dir = _resolve_model_cache_dir(model_hash, model_cache_root)
+    bioclip_model_cache_dir = _resolve_model_cache_dir(bioclip_model_hash, bioclip_model_cache_root)
 
     windows_host.ensure_dir(release_dir)
     junctioned: list[str] = []
@@ -965,26 +1114,42 @@ def materialize_release(
     cached_site_packages = cached_python_dir / "site-packages"
 
     module = _blp()
-    model_relative = Path(module["PACKAGED_OBSERVATION_RUNTIME_DIRNAME"])
+    # (human-readable tier name, its dirname inside mockingbird/, its
+    # already-verified cache dir or None) -- both model tiers are peeled
+    # out of the app-tier copy and linked separately, identically, below.
+    model_tiers = (
+        ("observation_runtime", Path(module["PACKAGED_OBSERVATION_RUNTIME_DIRNAME"]), model_cache_dir),
+        ("bioclip_runtime", Path(module["PACKAGED_BIOCLIP_RUNTIME_DIRNAME"]), bioclip_model_cache_dir),
+    )
 
     for entry in sorted(bundle_site_packages.iterdir()):
         target = release_site_packages / entry.name
         if is_app_tier_entry(entry.name):
             # Always a fresh, real copy -- the small, every-commit-changes
-            # tier. The model bundle nested inside it (if any) is peeled
-            # out and linked to the model cache instead of copied.
-            skip = model_relative if entry.name == APP_TIER_PACKAGE_NAME else None
-            bytes_copied += _copy_app_tier_entry(entry, target, skip_relative=skip, windows_host=windows_host)
-            if skip is not None and (entry / skip).is_dir():
-                if model_cache_dir is None:
-                    raise DeploymentError(
-                        "Bundle packages an observation_runtime model bundle, but model_hash is "
-                        f"{NO_MODEL_BUNDLE_HASH!r} (no model cache to link to). This should be "
-                        "unreachable: compute_model_hash inspects the same directory."
-                    )
-                model_target = target / skip
-                windows_host.make_junction(model_target, model_cache_dir)
-                junctioned.append(str(model_target.relative_to(release_dir)))
+            # tier. Each model bundle nested inside it (if any) is peeled
+            # out and linked to its own model cache instead of copied.
+            skip_relatives = (
+                frozenset(relative for _name, relative, _cache_dir in model_tiers)
+                if entry.name == APP_TIER_PACKAGE_NAME
+                else frozenset()
+            )
+            bytes_copied += _copy_app_tier_entry(
+                entry, target, skip_relatives=skip_relatives, windows_host=windows_host,
+            )
+            if entry.name == APP_TIER_PACKAGE_NAME:
+                for tier_name, relative, cache_dir in model_tiers:
+                    if not (entry / relative).is_dir():
+                        continue
+                    if cache_dir is None:
+                        raise DeploymentError(
+                            f"Bundle packages a {relative} model bundle, but its {tier_name} hash is "
+                            f"{NO_MODEL_BUNDLE_HASH!r} (no model cache to link to). This should be "
+                            "unreachable: compute_model_hash/compute_bioclip_model_hash inspect the "
+                            "same directory."
+                        )
+                    model_target = target / relative
+                    windows_host.make_junction(model_target, cache_dir)
+                    junctioned.append(str(model_target.relative_to(release_dir)))
         else:
             # Every third-party dependency -- the large, rarely-changing
             # runtime tier, linked (not copied) to the shared cache. A
@@ -1018,6 +1183,7 @@ def materialize_release(
         release_dir=release_dir,
         runtime_hash=runtime_hash,
         model_hash=model_hash,
+        bioclip_model_hash=bioclip_model_hash,
         junctioned_relative_paths=tuple(junctioned),
         bytes_copied=bytes_copied,
     )
@@ -1519,6 +1685,104 @@ def verify_deployment(
 
 
 # ---------------------------------------------------------------------------
+# BioCLIP runtime verification: prove the deployed dependency closure
+# actually imports, on the deployed release's *own* python.exe -- not
+# merely that the app's own status check (which only does a cheap
+# `importlib.util.find_spec`, never a real import -- see
+# `mockingbird.species.bioclip_adapter._missing_runtime_packages`) reports
+# "available". A real, empirically-reproduced gap this closes: `find_spec`
+# succeeds as soon as a package's directory/metadata exists, even when
+# importing it would actually fail deep inside its own `__init__.py` for a
+# missing transitive dependency (`sympy`, for the exact real incident this
+# guards against) -- invisible to the app's own cheap status check until an
+# actual local run is attempted, by which point it fails inside the
+# adapter's isolated worker subprocess instead of at deploy time.
+# ---------------------------------------------------------------------------
+
+# Every module `mockingbird.species.bioclip_adapter` actually imports,
+# either directly (`_RUNTIME_PACKAGES`) or transitively through
+# `open-clip-torch` (`scripts/build_local_product.py`'s own `WINDOWS_
+# BIOCLIP_RUNTIME_REQUIREMENTS`) -- a real top-level `import` of each,
+# which (unlike `find_spec`) genuinely executes every one of these
+# packages' own `__init__.py`, so a missing transitive dependency fails
+# exactly here instead of silently passing a metadata-only check.
+BIOCLIP_RUNTIME_CHECK_MODULES: tuple[str, ...] = (
+    "PIL",
+    "numpy",
+    "torch",
+    "open_clip",
+    "torchvision",
+    "safetensors",
+    "timm",
+    "huggingface_hub",
+    "sympy",
+    "ftfy",
+    "regex",
+    "tqdm",
+)
+
+# Run by the deployed release's own `python.exe` (see
+# `_run_bioclip_runtime_check_real`) -- deliberately only ever *imports*
+# and calls the adapter's side-effect-free `get_bioclip_status` (never
+# `run_bioclip_on_image`/`prepare_bioclip_run`): a real, full model load is
+# unnecessary to catch the failure shapes this exists for (a missing
+# transitive dependency, a missing/corrupt packaged bundle) and this
+# milestone explicitly does not need a full ~1.6 GB inference on every
+# deploy. Prints exactly one line of JSON to stdout; never raises on its
+# own (every failure is caught and reported as data), so a real crash in
+# this script always means something unexpected -- surfaced by
+# `_run_bioclip_runtime_check_real` as a non-zero exit instead of a parsed
+# result.
+BIOCLIP_RUNTIME_CHECK_SCRIPT = """
+import json
+
+result = {"missing_modules": [], "imported_modules": [], "adapter_status": None, "adapter_detail": None}
+for name in %(modules)r:
+    try:
+        __import__(name)
+        result["imported_modules"].append(name)
+    except Exception as error:
+        result["missing_modules"].append(f"{name}: {error!r}")
+
+try:
+    from mockingbird.species.bioclip_adapter import build_bioclip_config, get_bioclip_status
+    from mockingbird.species.bioclip_runtime import (
+        resolve_bioclip_embedding_cache_path,
+        resolve_bioclip_labels_path,
+        resolve_bioclip_model_dir,
+    )
+
+    config = build_bioclip_config(
+        model_dir=resolve_bioclip_model_dir(),
+        labels_path=resolve_bioclip_labels_path(),
+        embedding_cache_path=resolve_bioclip_embedding_cache_path(),
+        device="cpu",
+    )
+    status = get_bioclip_status(config)
+    result["adapter_status"] = status.status
+    result["adapter_detail"] = status.detail
+except Exception as error:
+    result["adapter_detail"] = f"adapter status check raised: {error!r}"
+
+print(json.dumps(result))
+""" % {"modules": BIOCLIP_RUNTIME_CHECK_MODULES}
+
+
+def verify_bioclip_runtime(
+    release_dir: Path, *, windows_host: WindowsHost, timeout: float = 60.0,
+) -> BioClipRuntimeVerification:
+    """Thin, side-effect-free wrapper around `windows_host.run_bioclip_
+    runtime_check` -- the one seam every caller (`deploy`, a future
+    `--status` extension, tests) goes through, matching every other
+    `verify_*`/`probe_*` function's own shape in this file. Never raises:
+    `run_bioclip_runtime_check` itself is documented to always return a
+    result, never propagate an exception (see `WindowsHost`'s own
+    docstring for that field)."""
+
+    return windows_host.run_bioclip_runtime_check(release_dir, timeout)
+
+
+# ---------------------------------------------------------------------------
 # Process/port safety: stop only a provably-owned dev deployment.
 # ---------------------------------------------------------------------------
 
@@ -1619,6 +1883,9 @@ def deploy(
     skip_gpu_runtime: bool = False,
     model_bundle_source: Path | None = None,
     wheel_cache_dir: Path | None = None,
+    skip_bioclip_runtime: bool = False,
+    bioclip_bundle_source: Path | None = None,
+    bioclip_wheel_cache_dir: Path | None = None,
     poll_interval_seconds: float = 1.0,
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], float] = time.monotonic,
@@ -1643,6 +1910,7 @@ def deploy(
     windows_host.ensure_dir(userdata_dir)
     runtime_cache_root = dev_root / RUNTIME_CACHE_DIRNAME
     model_cache_root = dev_root / MODEL_CACHE_DIRNAME
+    bioclip_model_cache_root = dev_root / BIOCLIP_MODEL_CACHE_DIRNAME
     windows_host.ensure_dir(_releases_root(dev_root))
 
     if artifact_path is not None:
@@ -1656,6 +1924,9 @@ def deploy(
             skip_gpu_runtime=skip_gpu_runtime,
             model_bundle_source=model_bundle_source,
             wheel_cache_dir=wheel_cache_dir,
+            skip_bioclip_runtime=skip_bioclip_runtime,
+            bioclip_bundle_source=bioclip_bundle_source,
+            bioclip_wheel_cache_dir=bioclip_wheel_cache_dir,
         )
     if source.git_commit is None:
         raise DeploymentError("The build/accepted artifact has no verified git commit -- refusing to deploy it.")
@@ -1679,14 +1950,22 @@ def deploy(
         runtime_cache = ensure_runtime_cache(source.bundle_dir, cache_root=runtime_cache_root, windows_host=windows_host)
         model_cache = ensure_model_cache(source.bundle_dir, cache_root=model_cache_root, windows_host=windows_host)
         model_hash = model_cache.content_hash if model_cache is not None else NO_MODEL_BUNDLE_HASH
+        bioclip_model_cache = ensure_bioclip_model_cache(
+            source.bundle_dir, cache_root=bioclip_model_cache_root, windows_host=windows_host,
+        )
+        bioclip_model_hash = (
+            bioclip_model_cache.content_hash if bioclip_model_cache is not None else NO_MODEL_BUNDLE_HASH
+        )
 
         materialized = materialize_release(
             bundle_dir=source.bundle_dir,
             release_dir=release_dir,
             runtime_hash=runtime_cache.content_hash,
             model_hash=model_hash,
+            bioclip_model_hash=bioclip_model_hash,
             runtime_cache_root=runtime_cache_root,
             model_cache_root=model_cache_root,
+            bioclip_model_cache_root=bioclip_model_cache_root,
             windows_host=windows_host,
         )
         record = ReleaseRecord(
@@ -1696,6 +1975,7 @@ def deploy(
             app_version=source.app_version,
             runtime_hash=materialized.runtime_hash,
             model_hash=materialized.model_hash,
+            bioclip_model_hash=materialized.bioclip_model_hash,
             deployed_at=datetime.now(timezone.utc).isoformat(timespec="microseconds"),
             junctioned_relative_paths=materialized.junctioned_relative_paths,
         )
@@ -1769,6 +2049,14 @@ def deploy(
             protected.add(previous_sha)
         cleanup_releases(dev_root=dev_root, keep=keep_after_deploy, protected_shas=protected, windows_host=windows_host)
 
+    # Never fatal to the deploy (see `BioClipRuntimeVerification`'s own
+    # docstring): a real deployment must succeed regardless of whether the
+    # optional BioCLIP species-suggestion runtime happens to be present or
+    # importable. Attempted after `write_current`/cleanup so a slow or
+    # oddly-behaving check can never leave the deployment's own bookkeeping
+    # (current pointer, retained-release cleanup) undone.
+    bioclip_verification = verify_bioclip_runtime(release_dir, windows_host=windows_host)
+
     return DeployReport(
         sha=sha,
         release_dir_windows=windows_host.to_windows_path(release_dir),
@@ -1776,6 +2064,7 @@ def deploy(
         url=_local_base_url(host, port),
         previous_release_sha=previous_sha,
         verification=verification,
+        bioclip_verification=bioclip_verification,
     )
 
 
@@ -2268,6 +2557,89 @@ def _kill_process_real(pid: int) -> None:
     _run_powershell(f"Stop-Process -Id {int(pid)} -Force -ErrorAction SilentlyContinue\n", timeout=15)
 
 
+def _run_bioclip_runtime_check_real(release_dir: Path, timeout: float) -> BioClipRuntimeVerification:
+    """Real implementation of `WindowsHost.run_bioclip_runtime_check`:
+    writes `BIOCLIP_RUNTIME_CHECK_SCRIPT` to a real Windows temp file (see
+    `_windows_temp_root`'s own docstring for why -- `python.exe`, like
+    `powershell.exe`, is a genuine Windows-native process that cannot read
+    a bare WSL path) and runs the *deployed release's own* `python.exe`
+    against it -- never this WSL host's Python, never a system/venv Python,
+    and never a different release's interpreter, exactly proving the
+    packaged dependency closure this specific release shipped is really
+    importable on the target machine. Never raises: every failure shape
+    (missing `python.exe`, a non-zero exit, a timeout, unparsable output)
+    is caught and reported *in* the returned dataclass instead, matching
+    this field's own documented "never fails the deploy" contract.
+    """
+
+    python_exe = release_dir / "python" / "python.exe"
+    if not python_exe.is_file():
+        return BioClipRuntimeVerification(
+            checked=True, available=False, detail=f"{python_exe} does not exist -- is this a real release directory?",
+        )
+
+    work_dir = _windows_temp_root() / f"mockingbird-bioclip-check-{secrets.token_hex(4)}"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    script_path = work_dir / "check_bioclip_runtime.py"
+    try:
+        script_path.write_text(BIOCLIP_RUNTIME_CHECK_SCRIPT, encoding="utf-8")
+        python_exe_windows = _to_windows_path_real(python_exe)
+        script_windows = _to_windows_path_real(script_path)
+        wrapper = (
+            "$ErrorActionPreference = 'Stop'\n"
+            # `PYTHONDONTWRITEBYTECODE`: this check is a diagnostic read,
+            # never a reason to write a `.pyc` into the release's own
+            # (junctioned, shared-cache-backed) site-packages -- same
+            # reasoning as `launch_release`'s own identical setting.
+            "$env:PYTHONDONTWRITEBYTECODE = '1'\n"
+            f"& '{_ps_quote(python_exe_windows)}' '{_ps_quote(script_windows)}'\n"
+        )
+        try:
+            output = _run_powershell(wrapper, timeout=timeout)
+        except DeploymentError as error:
+            return BioClipRuntimeVerification(
+                checked=True, available=False, detail=f"BioCLIP runtime check failed to run: {error}",
+            )
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+    lines = [line for line in output.splitlines() if line.strip()]
+    if not lines:
+        return BioClipRuntimeVerification(
+            checked=True, available=False, detail="BioCLIP runtime check produced no output.",
+        )
+    try:
+        payload = json.loads(lines[-1])
+    except ValueError:
+        return BioClipRuntimeVerification(
+            checked=True, available=False, detail=f"BioCLIP runtime check produced unparsable output: {lines[-1]!r}",
+        )
+
+    missing_modules = tuple(str(entry) for entry in payload.get("missing_modules", []) or [])
+    imported_modules = tuple(str(entry) for entry in payload.get("imported_modules", []) or [])
+    adapter_status = payload.get("adapter_status")
+    adapter_detail = payload.get("adapter_detail")
+
+    if missing_modules:
+        return BioClipRuntimeVerification(
+            checked=True,
+            available=False,
+            detail=f"BioCLIP runtime dependencies failed to import: {'; '.join(missing_modules)}",
+            imported_modules=imported_modules,
+            missing_modules=missing_modules,
+            adapter_status=adapter_status if isinstance(adapter_status, str) else None,
+        )
+
+    return BioClipRuntimeVerification(
+        checked=True,
+        available=adapter_status == "available",
+        detail=str(adapter_detail) if adapter_detail is not None else "no adapter status returned",
+        imported_modules=imported_modules,
+        missing_modules=missing_modules,
+        adapter_status=adapter_status if isinstance(adapter_status, str) else None,
+    )
+
+
 def real_windows_host() -> WindowsHost:
     """The only production `WindowsHost`. Every field either shells out to
     a genuine Windows-native `powershell.exe`/`wslpath` process (see the
@@ -2293,6 +2665,7 @@ def real_windows_host() -> WindowsHost:
         process_alive=_process_alive_real,
         process_image_path=_process_image_path_real,
         kill_process=_kill_process_real,
+        run_bioclip_runtime_check=_run_bioclip_runtime_check_real,
     )
 
 
@@ -2350,6 +2723,17 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-bundle-source", type=Path, default=None, help="passthrough to build_local_product.py")
     parser.add_argument("--wheel-cache-dir", type=Path, default=None, help="passthrough to build_local_product.py")
     parser.add_argument(
+        "--skip-bioclip-runtime", action="store_true",
+        help="passthrough to build_local_product.py: omit the optional BioCLIP species-suggestion "
+        "runtime dependency closure for a faster build",
+    )
+    parser.add_argument(
+        "--bioclip-bundle-source", type=Path, default=None, help="passthrough to build_local_product.py",
+    )
+    parser.add_argument(
+        "--bioclip-wheel-cache-dir", type=Path, default=None, help="passthrough to build_local_product.py",
+    )
+    parser.add_argument(
         "--build-output-dir", type=Path, default=None,
         help="staging directory for the build (default: a fresh temp directory)",
     )
@@ -2395,6 +2779,9 @@ def main(argv: list[str] | None = None) -> int:
             skip_gpu_runtime=args.skip_gpu_runtime,
             model_bundle_source=args.model_bundle_source,
             wheel_cache_dir=args.wheel_cache_dir,
+            skip_bioclip_runtime=args.skip_bioclip_runtime,
+            bioclip_bundle_source=args.bioclip_bundle_source,
+            bioclip_wheel_cache_dir=args.bioclip_wheel_cache_dir,
         )
         print(report.render())
         return 0

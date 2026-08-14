@@ -73,20 +73,31 @@ individually) is always a real, fresh copy.
 
 ## Runtime/model cache
 
-Three tiers, split purely by *where* a file lives inside the bundle
+Four tiers, split purely by *where* a file lives inside the bundle
 `build_local_product.py` already produces -- packaging itself is completely
 unchanged:
 
 - **app tier** -- `python/site-packages/mockingbird` (minus the nested
-  `observation_runtime/` model bundle) and `mockingbird-*.dist-info`. Small,
-  changes on every commit, always copied fresh into each release, never
-  cached or shared.
-- **model tier** -- `python/site-packages/mockingbird/observation_runtime/`,
-  the packaged MDv5 ONNX model + provider config. Changes only when the
-  accepted model changes.
+  `observation_runtime/` and `bioclip_runtime/` model bundles) and
+  `mockingbird-*.dist-info`. Small, changes on every commit, always copied
+  fresh into each release, never cached or shared.
+- **Observation model tier** -- `python/site-packages/mockingbird/
+  observation_runtime/`, the packaged MDv5 ONNX model + provider config.
+  Changes only when the accepted model changes.
+- **BioCLIP model tier** (Automatic Species Suggestion v1.2) --
+  `python/site-packages/mockingbird/bioclip_runtime/`, the packaged BioCLIP
+  2 model config/weights/labels/embedding cache. A second, fully
+  independent model tier: its own content hash
+  (`compute_bioclip_model_hash`), its own cache root
+  (`BIOCLIP_MODEL_CACHE_DIRNAME`, a sibling of the Observation model's
+  `models/` -- never the same directory namespace), its own junction into
+  each release (`ensure_bioclip_model_cache`). A change to either model can
+  never force an unnecessary re-copy of the other. Changes only when the
+  accepted BioCLIP bundle changes.
 - **runtime tier** -- everything else under `python/`: the embeddable
   CPython distribution plus every third-party dependency, including the
-  ~1.3 GB ONNX Runtime GPU/CUDA/cuDNN stack. Changes only when
+  ~1.3 GB ONNX Runtime GPU/CUDA/cuDNN stack and the ~150 MB optional
+  BioCLIP dependency closure (torch/open_clip/...). Changes only when
   `EMBED_PYTHON_VERSION` or a pinned dependency version changes.
 
 Each tier's cache key is a real SHA-256 over every file's own content
@@ -513,6 +524,55 @@ two real separate commits) that ended healthy, correctly identified, and
 correctly rooted at `%LOCALAPPDATA%\MockingBirdDev\userdata` only after all
 eight were fixed together.
 
+### BioCLIP durable-deployment findings (Automatic Species Suggestion v1.2)
+
+Two further real, empirically-reproduced findings, from actually building
+the closure `WINDOWS_BIOCLIP_RUNTIME_REQUIREMENTS` needs rather than
+inferring it from package metadata by eye -- see "BioCLIP runtime
+packaging" in docs/local-product-packaging-design.md for the full design
+these two closed:
+
+9. **A second `pip install --target` call into an already-populated
+   site-packages does not consult what is already on disk.** Its
+   dependency *resolution* step always resolves purely against the
+   index/`--find-links` source, independent of the target directory's
+   current contents -- the target is only consulted, file-by-file, at the
+   final unpack step, where an already-existing file is left untouched
+   (never overwritten) but a *new*, differently-named `.dist-info/`
+   directory is still written unconditionally. Reproduced for real:
+   installing the exact `WINDOWS_BIOCLIP_RUNTIME_REQUIREMENTS` closure (via
+   `torchvision`'s own loosely-bounded `pillow` dependency) into a
+   site-packages that already had the core tier's `Pillow==11.3.0`
+   installed resulted in *both* `pillow-11.3.0.dist-info/` (real, matching
+   the actual `PIL/` code on disk) and a freshly-resolved
+   `pillow-12.3.0.dist-info/` (metadata only, no matching code) sitting
+   side by side -- an ambiguous, indeterminate-which-version-wins install
+   that `importlib.metadata.version(...)` has no defined tiebreak for.
+   Fixed two ways: every package the BioCLIP closure shares with an earlier
+   tier is now exact-pinned to precisely that tier's own resolved version
+   (turning the later call into a genuine no-op for it), and new
+   `verify_no_duplicate_site_packages_metadata` fails the whole build
+   outright if this shape ever recurs regardless of cause, scanning for any
+   PEP 503-normalized package name with more than one `.dist-info/`.
+10. **Offline `--find-links ... --no-index` resolution requires every
+    package to be named explicitly, even ones "owned" only transitively.**
+    A plain online resolution of the pinned closure silently resolves
+    `anyio==3.7.1`'s own `sniffio>=1.1` dependency without it being named
+    anywhere -- but the exact same pinned list, installed offline against a
+    local wheel cache that does not happen to also contain a `sniffio`
+    wheel, fails outright ("No matching distribution found for sniffio"),
+    reproduced for real while validating `DEFAULT_BIOCLIP_WHEEL_CACHE_DIR`.
+    Every package the offline path needs -- including ones no line in
+    `WINDOWS_BIOCLIP_RUNTIME_REQUIREMENTS` "conceptually" owns -- must be
+    named in that same list for the cache to be self-sufficient; `sniffio`
+    is now pinned there explicitly for exactly this reason.
+
+Both were caught by (and are the reason for) `test_real_windows_bioclip_
+dependency_closure_installs_offline_with_no_duplicates` in
+tests/test_local_product_packaging.py, which really installs the full
+pinned closure from the local wheel cache and asserts zero duplicates --
+skipped, never failed, on a build host without that cache.
+
 ## Left for follow-up (deliberately out of scope here)
 
 - **Cache garbage collection.** `--keep` bounds *release* directories only;
@@ -567,6 +627,18 @@ development machine.
 - `tests/test_deploy_windows_dev.py` (new), `tests/test_local_product_
   packaging.py`, `tests/test_windows_launcher_instance_identity.py`.
 - This document.
+
+BioCLIP durable-deployment (Automatic Species Suggestion v1.2) additionally
+touched: `scripts/deploy_windows_dev.py` (second, independent BioCLIP model
+cache tier; `WindowsHost.run_bioclip_runtime_check`/`verify_bioclip_
+runtime`/`BioClipRuntimeVerification`; CLI passthrough flags),
+`scripts/build_local_product.py` (BioCLIP dependency closure/model bundle
+packaging, `verify_no_duplicate_site_packages_metadata`), new
+`src/mockingbird/species/bioclip_runtime.py`, `repository/product_
+repository.py` (`_bioclip_config` only), `tests/test_deploy_windows_dev.py`,
+`tests/test_local_product_packaging.py`, new `tests/test_bioclip_
+runtime.py`, and this document plus docs/local-product-packaging-design.md's
+own "BioCLIP runtime packaging" section.
 
 ## Validation tier
 

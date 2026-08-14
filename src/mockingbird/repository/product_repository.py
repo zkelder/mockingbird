@@ -107,6 +107,11 @@ from mockingbird.species.bioclip_adapter import (
     prepare_bioclip_run,
     run_bioclip_from_image_loader,
 )
+from mockingbird.species.bioclip_runtime import (
+    resolve_bioclip_embedding_cache_path,
+    resolve_bioclip_labels_path,
+    resolve_bioclip_model_dir,
+)
 from mockingbird.source_providers.camera_node import (
     CAMERA_NODE_RUNTIME_FAILURE_CODES,
     CameraNodeCamera,
@@ -26819,10 +26824,17 @@ def _bioclip_adapter() -> ModelAdapter:
 def _bioclip_config(
     candidate_labels: tuple[str, ...] | None = None,
 ) -> BioClipAdapterConfig:
+    # `resolve_bioclip_*` each already honor the explicit
+    # MOCKINGBIRD_BIOCLIP_* environment variable first, exactly as before,
+    # and only fall back to the packaged runtime root (a normal packaged
+    # Windows install's own `bioclip_runtime/`, populated by
+    # scripts/build_local_product.py) when no environment variable is set
+    # -- see species/bioclip_runtime.py. A bare development checkout with
+    # neither set still resolves to `None`/"not configured", unchanged.
     return build_bioclip_config(
-        model_dir=os.getenv(BIOCLIP_MODEL_PATH_ENV),
-        labels_path=os.getenv(BIOCLIP_LABELS_PATH_ENV),
-        embedding_cache_path=os.getenv(BIOCLIP_EMBEDDING_CACHE_PATH_ENV),
+        model_dir=resolve_bioclip_model_dir(),
+        labels_path=resolve_bioclip_labels_path(),
+        embedding_cache_path=resolve_bioclip_embedding_cache_path(),
         device=os.getenv(BIOCLIP_DEVICE_ENV, "cpu"),
         candidate_labels=candidate_labels,
     )

@@ -273,6 +273,18 @@ is the app-owned, bounded, explicitly-activated production path. See the
 
 The current BioCLIP 2 path is a local reviewer-assistance action inside the
 existing Review Queue, not an automatically enabled production classifier.
+
+**A normal packaged Windows build (`scripts/build_local_product.py`) needs
+none of this setup.** It already installs the complete BioCLIP runtime
+dependency closure and, when a local bundle is available at build time
+(`--bioclip-bundle-source`, defaulting to `data/models/bioclip-2/`), the
+model/labels/embedding-cache bundle itself -- both durably, inside the
+release, surviving a restart or an ordinary redeploy with no environment
+variable to set by hand. See "BioCLIP runtime packaging" in
+docs/local-product-packaging-design.md for the full design. The setup below
+is for a development checkout running directly from source instead of a
+packaged build.
+
 Install its optional runtime with:
 
 ```sh
