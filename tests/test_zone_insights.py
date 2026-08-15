@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 
 from mockingbird.analytics.zone_insights import (
     TimeInterval,
@@ -459,3 +459,56 @@ def test_zone_insights_unions_overlapping_durable_intervals(
     feeder = next(zone for zone in summary.zones if zone.zone_id == FEEDER_ZONE_ID)
     assert feeder.metrics.exposure_interval_count == 2
     assert feeder.metrics.healthy_monitored_hours == 3
+
+
+def test_taxonomy_resolution_costs_exactly_one_query_regardless_of_visit_count(
+    repository: ProductRepository,
+) -> None:
+    """Place Intelligence Backend Hardening v1: `zone_insights` used to cost
+    *two* `taxonomy_labels` full-table-scan queries per reviewed Visit with
+    a real species label -- one inside the canonical resolver's own
+    `_visit_review_outcome`, and a second, independent one this method
+    issued directly for its own `taxonomy` field -- so it scaled strictly
+    worse than `place_activity_report`'s pre-hardening O(N) shape. Both are
+    now served by one `_taxonomy_label_index` preload per call, reused for
+    both lookups, so the total stays at exactly one query regardless of how
+    many reviewed Visits are in range."""
+
+    for index in range(30):
+        _add_visit(
+            repository,
+            visit_id=f"taxonomy-query-{index}",
+            zone_id=FEEDER_ZONE_ID,
+            started_at=RANGE_START + timedelta(minutes=index),
+            reviewed_label="northern_cardinal",
+            review_status="reviewed",
+        )
+
+    def _generate(*, visit_count: int) -> int:
+        statements: list[str] = []
+
+        def _record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+            if "taxonomy_labels" in statement:
+                statements.append(statement)
+
+        event.listen(repository.engine, "before_cursor_execute", _record)
+        try:
+            summary = repository.zone_insights(
+                ZoneInsightsRequest(
+                    start_at=RANGE_START,
+                    end_at=RANGE_START + timedelta(minutes=visit_count),
+                    source_id=SOURCE_ID,
+                    zone_type="feeder",
+                )
+            )
+        finally:
+            event.remove(repository.engine, "before_cursor_execute", _record)
+        feeder = next(zone for zone in summary.zones if zone.zone_id == FEEDER_ZONE_ID)
+        assert feeder.metrics.confirmed_bird_visit_count == visit_count
+        return len(statements)
+
+    small = _generate(visit_count=5)
+    large = _generate(visit_count=30)
+
+    assert small == 1
+    assert large == 1

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 import csv
 from dataclasses import asdict, dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo
 import hashlib
 import json
 import math
@@ -133,7 +133,7 @@ from mockingbird.source_providers.camera_node import (
     CameraNodePairing,
     normalize_camera_node_address,
 )
-from mockingbird.time_utils import normalize_optional_utc, normalize_utc
+from mockingbird.time_utils import normalize_optional_utc, normalize_utc, resolve_host_local_timezone
 from mockingbird.motion.activity_crop import (
     CropBoxNormalized,
     plan_activity_crop,
@@ -9538,7 +9538,24 @@ class ProductRepository:
         session: Session,
         visit: VisitModel,
         event: EventModel,
+        *,
+        taxonomy_index: dict[str, TaxonomyLabelModel] | None = None,
     ) -> StreamVisitSummary:
+        """Build the canonical per-Visit summary. `taxonomy_index` is an
+        optional, purely additive performance parameter: a caller that
+        already preloaded the whole (small, bounded) taxonomy table once
+        per report call (`_taxonomy_label_index`) can pass it here so this
+        resolver's own `_visit_review_outcome` taxonomy lookup reuses that
+        preload instead of issuing a fresh full-table scan for every
+        reviewed Visit with a real species label. Omitting it (the
+        default, used by every caller that does not opt in) preserves this
+        method's original per-Visit query behavior exactly -- this never
+        changes `review_outcome`'s *result*, only how many queries produce
+        it. See `ProductRepository.place_activity_report` and
+        `zone_insights` for the two callers that opt in today, and
+        docs/place-activity-report-contract.md's "Taxonomy query behavior
+        (hardened)" section."""
+
         evidence = self._motion_evidence_model_for_visit(session, visit.id)
         evidence_frames = self._visit_evidence_frames_from_visit(session, visit, event)
         primary_evidence = next(
@@ -9593,6 +9610,7 @@ class ProductRepository:
                 session,
                 review_status=ReviewStatus(visit.review_status),
                 reviewed_label=reviewed_label,
+                taxonomy_index=taxonomy_index,
             ),
             suggested_label=suggestion.suggested_label if suggestion is not None else None,
             has_suggestion=suggestion is not None,
@@ -9656,7 +9674,14 @@ class ProductRepository:
         *,
         review_status: ReviewStatus,
         reviewed_label: str | None,
+        taxonomy_index: dict[str, TaxonomyLabelModel] | None = None,
     ) -> VisitReviewOutcome:
+        """`taxonomy_index`, when supplied, is forwarded to
+        `_taxonomy_label_model_for_input` so a report-scoped caller
+        resolving many Visits pays for one preloaded table scan instead of
+        one fresh scan per reviewed Visit with a real species label. See
+        `_stream_visit_summary_from_models`'s docstring."""
+
         if review_status == ReviewStatus.needs_review:
             return VisitReviewOutcome.needs_review
         if review_status == ReviewStatus.rejected:
@@ -9674,7 +9699,9 @@ class ProductRepository:
         if key in {"non_bird", "non_bird_activity"}:
             return VisitReviewOutcome.non_bird
 
-        taxonomy = self._taxonomy_label_model_for_input(session, reviewed_label)
+        taxonomy = self._taxonomy_label_model_for_input(
+            session, reviewed_label, taxonomy_index=taxonomy_index
+        )
         if taxonomy is not None:
             if taxonomy.category == LabelCategory.bird.value:
                 return VisitReviewOutcome.confirmed_bird
@@ -20737,6 +20764,15 @@ class ProductRepository:
             zone_ids = {zone.id for zone, _stream, _source in zone_rows}
             records_by_zone: dict[str, list[dict[str, Any]]] = {zone.id: [] for zone, _stream, _source in zone_rows}
             if zone_ids:
+                # Preloaded once per call and reused for both this method's
+                # own `taxonomy` lookup below and the canonical resolver's
+                # internal one (`_stream_visit_summary_from_models` ->
+                # `_visit_review_outcome`) -- the same optimization
+                # `place_activity_report` uses, applied here because Zone
+                # Insights can iterate just as many Visits across just as
+                # wide a date range. See `_taxonomy_label_index`'s and
+                # `_stream_visit_summary_from_models`'s docstrings.
+                taxonomy_index = self._taxonomy_label_index(session)
                 effective_zone_id = func.coalesce(VisitModel.zone_id, EventModel.primary_zone_id)
                 visit_rows = session.execute(
                     select(VisitModel, EventModel, StreamModel, CameraSourceModel)
@@ -20753,11 +20789,15 @@ class ProductRepository:
                     .order_by(EventModel.started_at, EventModel.id, VisitModel.id)
                 ).all()
                 for visit, event, stream, source in visit_rows:
-                    summary = self._stream_visit_summary_from_models(session, visit, event)
+                    summary = self._stream_visit_summary_from_models(
+                        session, visit, event, taxonomy_index=taxonomy_index
+                    )
                     if summary.zone_id not in records_by_zone:
                         continue
                     taxonomy = (
-                        self._taxonomy_label_model_for_input(session, summary.reviewed_label)
+                        self._taxonomy_label_model_for_input(
+                            session, summary.reviewed_label, taxonomy_index=taxonomy_index
+                        )
                         if summary.reviewed_label
                         else None
                     )
@@ -21559,6 +21599,7 @@ class ProductRepository:
         payload: PlaceActivityReportRequest,
         *,
         now: datetime | None = None,
+        local_timezone: tzinfo | None = None,
     ) -> PlaceActivityReportResponse:
         """Build one deterministic Place activity report for the explicit
         `[payload.start_at, payload.end_at)` period (see
@@ -21571,25 +21612,31 @@ class ProductRepository:
         `mockingbird.analytics.place_activity_report` module; this method
         performs none of its own.
 
-        `now` is a test-only override for the local-timezone resolution
-        below, mirroring `zone_insights`/`wildlife_insights`'s own
-        convention -- production callers never pass it.
+        `now` is a test-only override for the report's generation moment
+        (used for `generated_at` and the display `timezone_name`), mirroring
+        `zone_insights`/`wildlife_insights`'s own convention. `local_timezone`
+        is a test-only override for the IANA zone used to bucket each
+        Visit's local hour, so DST-transition tests stay deterministic
+        regardless of the host's own configured zone. Production callers
+        never pass either.
         """
 
         period_start_at = _as_utc(payload.start_at)
         period_end_at = _as_utc(payload.end_at)
-        generated_at = _as_utc(now or datetime.now(UTC))
-        # Place-local timezone resolution matches every other local-time
-        # analytics surface in the product (zone_insights, wildlife_insights,
-        # dashboard_summary): MockingBird is a single-site, local-first
-        # product with no per-Place timezone setting today, so the host's
-        # own current UTC offset *is* the product's notion of "local" here.
-        # This is a fixed-offset snapshot captured once per call, not a
-        # DST-aware zoneinfo zone -- see docs/place-activity-report-contract.md
-        # and this milestone's final report for the known limitation this
-        # implies for a period that itself spans a DST transition.
-        local_now = (now or datetime.now().astimezone()).astimezone()
-        local_timezone = local_now.tzinfo
+        generation_moment = now or datetime.now(UTC)
+        generated_at = _as_utc(generation_moment)
+        # Each Visit is converted to local time using the host's actual IANA
+        # timezone rules (mockingbird.time_utils.resolve_host_local_timezone),
+        # so a report period spanning a real DST transition buckets each
+        # Visit by the offset that genuinely applied at its own timestamp --
+        # never one fixed offset resolved once from the generation moment
+        # and reused for the whole period. See "Local time and DST
+        # correctness" in docs/place-activity-report-contract.md. This can
+        # fall back to a fixed-offset snapshot (the product's original
+        # behavior) only when no IANA zone can be discovered on this host --
+        # see `resolve_host_local_timezone`'s own docstring.
+        resolved_local_timezone = local_timezone or resolve_host_local_timezone(generation_moment)
+        local_now = generation_moment.astimezone(resolved_local_timezone)
         timezone_name = local_now.tzname() or "local time"
 
         with self.session_factory() as session:
@@ -21632,7 +21679,18 @@ class ProductRepository:
                 ).all()
 
                 for visit, event in visit_rows:
-                    summary = self._stream_visit_summary_from_models(session, visit, event)
+                    # Reuses the same preloaded `taxonomy_index` this method
+                    # already built for its own confirmed_taxon/
+                    # provisional_taxon resolution just above, so the
+                    # resolver's own internal taxonomy lookup
+                    # (`_visit_review_outcome`) no longer costs a second,
+                    # per-Visit full-table scan on top of it -- see
+                    # `_stream_visit_summary_from_models`'s docstring and
+                    # `test_taxonomy_resolution_adds_no_second_per_visit_
+                    # query` in tests/test_place_activity_report_repository.py.
+                    summary = self._stream_visit_summary_from_models(
+                        session, visit, event, taxonomy_index=taxonomy_index
+                    )
                     visit_facts.append(
                         visit_fact_from_stream_visit_summary(
                             summary,
@@ -21641,7 +21699,7 @@ class ProductRepository:
                         )
                     )
 
-            coverage = self._place_activity_coverage_summary(
+            coverage, streams_without_history = self._place_activity_coverage_summary(
                 session,
                 stream_ids=stream_ids,
                 period_start_at=period_start_at,
@@ -21652,7 +21710,7 @@ class ProductRepository:
             visit_facts,
             period_start_at=period_start_at,
             period_end_at=period_end_at,
-            local_timezone=local_timezone,
+            local_timezone=resolved_local_timezone,
             coverage=coverage,
             generated_at=generated_at,
         )
@@ -21665,15 +21723,24 @@ class ProductRepository:
             warnings.append("No Streams are configured yet.")
         elif coverage.history_available_from is None:
             warnings.append(
-                "No durable monitoring exposure has been recorded for every Stream yet, "
+                "No durable monitoring exposure has been recorded for any Stream yet, "
                 "so coverage is withheld."
             )
-        elif coverage.history_is_partial:
-            warnings.append(
-                "Durable monitoring exposure is available from "
-                f"{coverage.history_available_from.strftime('%B %d, %Y').replace(' 0', ' ')}. "
-                "Earlier time in this period is excluded from coverage."
-            )
+        else:
+            if coverage.history_is_partial:
+                warnings.append(
+                    "Durable monitoring exposure is available from "
+                    f"{coverage.history_available_from.strftime('%B %d, %Y').replace(' 0', ' ')}. "
+                    "Earlier time in this period is excluded from coverage."
+                )
+            if streams_without_history:
+                # A honest, additive disclosure -- not a withholding --
+                # see the coverage-policy audit in
+                # `_place_activity_coverage_summary`'s own docstring.
+                warnings.append(
+                    "One or more Streams have no durable monitoring exposure recorded yet; "
+                    "coverage reflects only Streams with recorded history."
+                )
 
         return place_activity_report_response(
             report,
@@ -21753,7 +21820,7 @@ class ProductRepository:
         stream_ids: list[str],
         period_start_at: datetime,
         period_end_at: datetime,
-    ) -> CoverageSummary:
+    ) -> tuple[CoverageSummary, bool]:
         """Place-wide monitoring coverage from durable
         `MonitoringExposureIntervalModel` history only (see
         `compute_coverage_summary` and "Monitoring coverage" in
@@ -21770,14 +21837,38 @@ class ProductRepository:
         relied on by `zone_insights`, and this report needs the raw
         intervals so the pure `compute_coverage_summary` can compute gaps
         itself rather than this method re-deriving them.
+
+        Coverage policy (Place Intelligence Backend Hardening v1's
+        coverage-policy audit; see "Monitoring coverage" in
+        docs/place-activity-report-contract.md): unlike `zone_insights`'
+        own aggregate exposure -- which *sums* independent per-Stream
+        camera-hours and therefore cannot honestly represent a Stream with
+        zero history any way other than all-or-nothing -- this report's
+        coverage is a *union*: "was this Place being watched by any camera
+        at this moment." A Stream with no durable exposure history at all
+        (for example one just added, mid-period, that has not yet recorded
+        its first healthy frame) contributes nothing to that union either
+        way, so excluding it from the coverage figure loses no honest
+        information -- it only stops one not-yet-reporting Stream from
+        retroactively blanking out years of otherwise-trustworthy coverage
+        from every *other* Stream. The figure is therefore withheld
+        (`history_available_from=None`) only when *no* in-scope Stream has
+        ever recorded any durable history -- not merely when one of several
+        does not. The second return value reports whether any in-scope
+        Stream lacks durable history at all, so the caller's own
+        `warnings` can disclose that honestly without inventing a
+        materiality judgment here.
         """
 
         if not stream_ids:
-            return compute_coverage_summary(
-                period_start_at=period_start_at,
-                period_end_at=period_end_at,
-                monitored_intervals=[],
-                history_available_from=None,
+            return (
+                compute_coverage_summary(
+                    period_start_at=period_start_at,
+                    period_end_at=period_end_at,
+                    monitored_intervals=[],
+                    history_available_from=None,
+                ),
+                False,
             )
 
         history_starts = dict(
@@ -21790,19 +21881,24 @@ class ProductRepository:
                 .group_by(MonitoringExposureIntervalModel.stream_id)
             ).all()
         )
-        # All-or-nothing honesty policy (see "Monitoring coverage" in
-        # docs/place-activity-report-contract.md), matching
-        # ProductRepository.zone_insights' own aggregate-exposure
-        # construction: a Place-wide figure is only ever reported when
-        # *every* in-scope Stream has durable exposure history -- never
-        # silently averaged against a Stream that has none at all.
-        if len(history_starts) < len(stream_ids):
-            return compute_coverage_summary(
-                period_start_at=period_start_at,
-                period_end_at=period_end_at,
-                monitored_intervals=[],
-                history_available_from=None,
+        streams_without_history = len(history_starts) < len(stream_ids)
+        if not history_starts:
+            # No in-scope Stream has ever recorded any durable exposure --
+            # an honest, full "not yet computable," not a partial figure
+            # with nothing durable behind it at all.
+            return (
+                compute_coverage_summary(
+                    period_start_at=period_start_at,
+                    period_end_at=period_end_at,
+                    monitored_intervals=[],
+                    history_available_from=None,
+                ),
+                streams_without_history,
             )
+        # The earliest durable history among Streams that have any --
+        # a Stream with none contributes nothing here either way (see the
+        # docstring above), so it is simply excluded from this min() rather
+        # than forcing the whole figure to None.
         history_available_from = _as_utc(min(history_starts.values()))
 
         rows = session.scalars(
@@ -21825,11 +21921,14 @@ class ProductRepository:
             )
             for row in rows
         ]
-        return compute_coverage_summary(
-            period_start_at=period_start_at,
-            period_end_at=period_end_at,
-            monitored_intervals=monitored_intervals,
-            history_available_from=history_available_from,
+        return (
+            compute_coverage_summary(
+                period_start_at=period_start_at,
+                period_end_at=period_end_at,
+                monitored_intervals=monitored_intervals,
+                history_available_from=history_available_from,
+            ),
+            streams_without_history,
         )
 
     def list_likely_species_overview(self, *, limit: int = 20) -> LikelySpeciesOverviewResponse:
@@ -22498,10 +22597,31 @@ class ProductRepository:
         self,
         session: Session,
         input_label: str,
+        *,
+        taxonomy_index: dict[str, TaxonomyLabelModel] | None = None,
     ) -> TaxonomyLabelModel | None:
+        """Resolve one input label/id/alias to its `TaxonomyLabelModel`.
+
+        `taxonomy_index` is an optional performance escape hatch: a
+        report-scoped caller that already preloaded the whole table once
+        (`_taxonomy_label_index`, same key construction/id-ordered
+        tie-break) can pass it here to turn what would otherwise be a fresh
+        full-table scan on every call into an O(1) dict lookup. Omitting it
+        (the default) preserves this method's original per-call query
+        exactly, unchanged, for every one of its many existing callers --
+        several of which back truth-writing paths
+        (`_normalize_label_from_session` alone underlies every review-
+        correction creation path) where a stale/report-scoped snapshot
+        would be the wrong tool. See `_stream_visit_summary_from_models`'s
+        own docstring for where the index is threaded from.
+        """
+
         lookup_key = _taxonomy_key(input_label)
         if not lookup_key:
             return None
+
+        if taxonomy_index is not None:
+            return taxonomy_index.get(lookup_key)
 
         labels = session.scalars(select(TaxonomyLabelModel).order_by(TaxonomyLabelModel.id)).all()
         for label in labels:

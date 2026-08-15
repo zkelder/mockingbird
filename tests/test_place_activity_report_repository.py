@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from time import perf_counter
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -271,10 +272,18 @@ def _counts(repository: ProductRepository) -> dict[str, int]:
         }
 
 
-def _report(repository: ProductRepository, *, start_at=PERIOD_START, end_at=PERIOD_END, now=None):
+def _report(
+    repository: ProductRepository,
+    *,
+    start_at=PERIOD_START,
+    end_at=PERIOD_END,
+    now=None,
+    local_timezone=None,
+):
     return repository.place_activity_report(
         PlaceActivityReportRequest(start_at=start_at, end_at=end_at),
         now=now,
+        local_timezone=local_timezone,
     )
 
 
@@ -555,14 +564,20 @@ def test_coverage_marks_history_partial_when_period_predates_it(
     )
 
 
-def test_coverage_withheld_when_any_in_scope_stream_lacks_history(
+def test_coverage_reflects_established_streams_when_one_stream_has_no_history(
     repository: ProductRepository,
 ) -> None:
-    """All-or-nothing honesty policy (see "Monitoring coverage" in
-    docs/place-activity-report-contract.md): Stream A has durable exposure
-    history, Stream B has none at all -- the Place-wide figure must be
-    withheld entirely, never silently averaged as if Stream B had zero
-    healthy time."""
+    """Coverage-policy audit (Place Intelligence Backend Hardening v1):
+    Stream A has full, trustworthy durable exposure history for the whole
+    period; Stream B (a newly-added, not-yet-reporting camera) has none at
+    all. The Place-wide figure is a *union* -- "was this Place being
+    watched by any camera" -- and Stream B contributes nothing to that
+    union either way, so it must not retroactively blank out Stream A's
+    real, trustworthy coverage. This replaces the previous all-or-nothing
+    policy this same scenario used to test (see git history for
+    `test_coverage_withheld_when_any_in_scope_stream_lacks_history`); the
+    fully-withheld case is still covered separately below when *no* Stream
+    has any history at all."""
 
     _add_exposure(
         repository,
@@ -574,9 +589,67 @@ def test_coverage_withheld_when_any_in_scope_stream_lacks_history(
 
     report = _report(repository)
 
+    assert report.coverage.monitored_seconds == pytest.approx(
+        (PERIOD_END - PERIOD_START).total_seconds()
+    )
+    assert report.coverage.coverage_ratio == pytest.approx(1.0)
+    assert report.coverage.history_available_from == PERIOD_START
+    # Never silently hidden: the caveat is disclosed as an honest warning,
+    # not folded into a fabricated number or a full withdrawal.
+    assert any(
+        "Stream" in warning and "no durable monitoring exposure" in warning
+        for warning in report.warnings
+    )
+
+
+def test_coverage_fully_withheld_only_when_no_in_scope_stream_has_any_history(
+    repository: ProductRepository,
+) -> None:
+    """The genuinely honest "not yet computable" case is preserved: when
+    *no* in-scope Stream has ever recorded durable exposure history (both
+    Stream A and Stream B here), the figure is withheld entirely rather
+    than reporting a fabricated zero or full coverage."""
+
+    report = _report(repository)
+
     assert report.coverage.monitored_seconds is None
     assert report.coverage.coverage_ratio is None
     assert report.coverage.history_available_from is None
+    assert any(
+        "No durable monitoring exposure has been recorded for any Stream yet"
+        in warning
+        for warning in report.warnings
+    )
+
+
+def test_coverage_survives_a_new_stream_added_midway_through_a_long_period(
+    repository: ProductRepository,
+) -> None:
+    """The concrete scenario the coverage-policy audit was about: a Place
+    with a full year of trustworthy history on Stream A must not have that
+    entire year become "coverage unavailable" the moment a second camera
+    (Stream B) is added late in the period and has not reported any
+    durable exposure yet."""
+
+    year_start = datetime(2025, 1, 1, tzinfo=UTC)
+    year_end = year_start + timedelta(days=365)
+    _add_exposure(
+        repository,
+        interval_id="exposure-full-year-a",
+        stream_id=STREAM_A,
+        started_at=year_start,
+        ended_at=year_end,
+    )
+    # Stream B was added on day 300 but has not yet recorded a single
+    # healthy frame -- no MonitoringExposureIntervalModel row at all.
+
+    report = _report(repository, start_at=year_start, end_at=year_end)
+
+    assert report.coverage.monitored_seconds == pytest.approx(
+        (year_end - year_start).total_seconds()
+    )
+    assert report.coverage.coverage_ratio == pytest.approx(1.0)
+    assert report.coverage.history_is_partial is False
 
 
 # 14. Report period excludes out-of-window Visits -----------------------------------
@@ -748,19 +821,20 @@ def test_invalid_reporting_window_inputs_are_rejected(repository: ProductReposit
 
 
 def test_local_offset_resolves_correctly_for_the_generation_moment(tmp_path: Path) -> None:
-    """The product's existing local-time convention (zone_insights,
-    wildlife_insights, dashboard_summary, and now this report) resolves
-    "local" from the host's own current UTC offset at generation time --
-    see the comment on `ProductRepository.place_activity_report`. That
-    resolution genuinely is DST-correct *for the instant `now` represents*
-    (Python's `astimezone()` consults the system zone database), proven
-    here with a January (EST) and a July (EDT) `now`. The one real, honest
-    limitation -- shared by every existing local-time analytics surface in
-    the product, not new here -- is that a single report call resolves one
-    fixed offset from its own generation moment and applies it uniformly
-    across the whole requested period, so a period that itself straddles a
-    real DST transition is bucketed with one offset throughout rather than
-    the historically-correct offset per day."""
+    """`timezone_name` (a display label, e.g. "EST"/"EDT") reflects the
+    resolved local zone's abbreviation *at the report's generation moment*
+    -- proven here with a January (EST) and a July (EDT) `now`, both
+    correctly distinct. This is a narrower property than hour-bucketing
+    correctness: see tests/test_place_activity_report.py's "DST-correct
+    local-time bucketing" section and the `local_timezone=` cases below in
+    this file for proof that each *Visit* (not just the display label) is
+    now converted using the actual IANA zone rules applicable at its own
+    timestamp -- the real fix for the limitation this test used to
+    document here, before `ProductRepository.place_activity_report`
+    resolved a real `zoneinfo.ZoneInfo` (via
+    `mockingbird.time_utils.resolve_host_local_timezone`) instead of one
+    fixed offset snapshotted from the generation moment and reused for the
+    whole requested period."""
 
     winter_now = datetime(2026, 1, 15, 17, 0, tzinfo=UTC)  # noon EST
     summer_now = datetime(2026, 7, 15, 16, 0, tzinfo=UTC)  # noon EDT
@@ -791,59 +865,286 @@ def test_local_offset_resolves_correctly_for_the_generation_moment(tmp_path: Pat
     assert summer_report.timezone_name == "EDT"
 
 
+# 2026 US spring-forward: 01:59:59 EST -> 03:00:00 EDT at 07:00:00Z.
+# 2026 US fall-back: 01:59:59 EDT -> 01:00:00 EST at 06:00:00Z, so local
+# 01:00-01:59 occurs twice.
+_SPRING_FORWARD = datetime(2026, 3, 8, 7, 0, tzinfo=UTC)
+_FALL_BACK = datetime(2026, 11, 1, 6, 0, tzinfo=UTC)
+
+
+def test_repository_report_buckets_spring_forward_transition_correctly(
+    repository: ProductRepository,
+) -> None:
+    """End-to-end proof through the real write path and real SQLite storage
+    (not just the pure module `test_place_activity_report.py` already
+    covers) that the repository's DST fix is real: a Visit just before the
+    2026 US spring-forward jump and one just after must each land in the
+    local hour that genuinely applied to its own timestamp. Uses the
+    `local_timezone=` test-only override so this is fully deterministic
+    regardless of the host machine's own configured zone."""
+
+    before = _SPRING_FORWARD - timedelta(minutes=30)  # 01:30 EST
+    after = _SPRING_FORWARD + timedelta(minutes=30)  # 03:30 EDT
+    _add_visit(repository, visit_id="before-spring-forward", at=before, zone_id=ZONE_FEEDER)
+    _confirm(repository, visit_id="before-spring-forward", label="northern_cardinal")
+    _add_visit(repository, visit_id="after-spring-forward", at=after, zone_id=ZONE_FEEDER)
+    _confirm(repository, visit_id="after-spring-forward", label="house_finch")
+
+    report = _report(
+        repository,
+        start_at=_SPRING_FORWARD - timedelta(hours=2),
+        end_at=_SPRING_FORWARD + timedelta(hours=2),
+        local_timezone=ZoneInfo("America/New_York"),
+    )
+
+    by_hour = {entry.hour: entry.wildlife_visit_count for entry in report.activity_by_hour}
+    assert by_hour[1] == 1
+    assert by_hour[3] == 1
+    assert by_hour[2] == 0  # the local hour that never happened that day
+
+
+def test_repository_report_maps_fall_back_instants_to_the_repeated_local_hour(
+    repository: ProductRepository,
+) -> None:
+    """The defining fall-back case end-to-end: two distinct real Visits,
+    one before and one after the actual transition instant, both correctly
+    land in local hour 1 -- the hour the local calendar repeats -- rather
+    than one of them being misplaced by a full hour."""
+
+    first_1am = _FALL_BACK - timedelta(minutes=30)  # 01:30 EDT (first occurrence)
+    second_1am = _FALL_BACK + timedelta(minutes=30)  # 01:30 EST (second occurrence)
+    _add_visit(repository, visit_id="first-1am", at=first_1am, zone_id=ZONE_FEEDER)
+    _confirm(repository, visit_id="first-1am", label="northern_cardinal")
+    _add_visit(repository, visit_id="second-1am", at=second_1am, zone_id=ZONE_FEEDER)
+    _confirm(repository, visit_id="second-1am", label="house_finch")
+
+    report = _report(
+        repository,
+        start_at=_FALL_BACK - timedelta(hours=2),
+        end_at=_FALL_BACK + timedelta(hours=2),
+        local_timezone=ZoneInfo("America/New_York"),
+    )
+
+    by_hour = {entry.hour: entry.wildlife_visit_count for entry in report.activity_by_hour}
+    assert by_hour[1] == 2
+    assert report.total_visit_count == 2
+
+
+def test_repository_report_period_spanning_a_transition(repository: ProductRepository) -> None:
+    """A realistic "this week" report whose own requested boundaries
+    straddle a real DST transition -- not just a Visit timestamp inside an
+    unrelated period."""
+
+    period_start = _SPRING_FORWARD - timedelta(days=1)
+    period_end = _SPRING_FORWARD + timedelta(days=1)
+    day_before = _SPRING_FORWARD - timedelta(hours=20)  # 2026-03-07T11:00:00Z = 06:00 EST
+    just_after = _SPRING_FORWARD + timedelta(minutes=30)  # 2026-03-08T07:30:00Z = 03:30 EDT
+    _add_visit(repository, visit_id="day-before", at=day_before, zone_id=ZONE_FEEDER)
+    _confirm(repository, visit_id="day-before", label="northern_cardinal")
+    _add_visit(repository, visit_id="just-after", at=just_after, zone_id=ZONE_FEEDER)
+    _confirm(repository, visit_id="just-after", label="house_finch")
+
+    report = _report(
+        repository,
+        start_at=period_start,
+        end_at=period_end,
+        local_timezone=ZoneInfo("America/New_York"),
+    )
+
+    assert report.total_visit_count == 2
+    by_hour = {entry.hour: entry.wildlife_visit_count for entry in report.activity_by_hour}
+    assert by_hour[6] == 1
+    assert by_hour[3] == 1
+
+
+def test_production_default_resolves_a_real_zone_without_an_explicit_override(
+    repository: ProductRepository,
+) -> None:
+    """Without the test-only `local_timezone=` override, production
+    resolution (`resolve_host_local_timezone`) must still run and produce a
+    usable, non-crashing report -- proving the default path is wired, not
+    only the explicitly-overridden test path above."""
+
+    _add_visit(repository, visit_id="default-zone", at=PERIOD_START + timedelta(hours=8), zone_id=ZONE_FEEDER)
+    _confirm(repository, visit_id="default-zone", label="northern_cardinal")
+
+    report = _report(repository)
+
+    assert report.confirmed_wildlife_visit_count == 1
+    assert sum(entry.wildlife_visit_count for entry in report.activity_by_hour) == 1
+
+
 # Performance: taxonomy resolution must not scale one query per Visit -----------------
 
 
-def test_taxonomy_resolution_adds_no_second_per_visit_query(
+def _count_taxonomy_queries(repository: ProductRepository, fn) -> int:
+    statements: list[str] = []
+
+    def _record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+        if "taxonomy_labels" in statement:
+            statements.append(statement)
+
+    event.listen(repository.engine, "before_cursor_execute", _record)
+    try:
+        fn()
+    finally:
+        event.remove(repository.engine, "before_cursor_execute", _record)
+    return len(statements)
+
+
+def test_taxonomy_resolution_costs_exactly_one_query_regardless_of_visit_count(
     repository: ProductRepository,
 ) -> None:
-    """Real regression coverage for the N+1 shape this milestone's
-    performance review targeted -- refined by what a first version of this
-    test actually found: `_stream_visit_summary_from_models` (the canonical
-    per-Visit resolver this method is required to reuse unmodified) already
-    costs one `taxonomy_labels` query per reviewed Visit with a real species
-    label today, through its own `_visit_review_outcome` -- the same cost
-    `zone_insights`/`wildlife_insights` already pay in production, not
-    something this milestone introduces or is scoped to fix (see
-    `ProductRepository._taxonomy_label_index`'s docstring).
-
-    What this report's own taxonomy resolution (`confirmed_taxon`/
-    `provisional_taxon`) must not do is add a *second* per-Visit query on
-    top of that pre-existing one: `_taxonomy_label_index` preloads the whole
-    table exactly once regardless of Visit count, so going from 3 to 8
-    Visits must add exactly 5 taxonomy queries -- one per additional Visit,
-    from the pre-existing resolver alone -- never 10, which a naive
-    per-Visit `_taxonomy_label_model_for_input` call for both
-    `confirmed_taxon` and `provisional_taxon` would have cost on top of the
-    resolver's own existing query.
-    """
+    """Hardening v1 regression coverage: before this milestone,
+    `_stream_visit_summary_from_models`'s own `_visit_review_outcome` cost
+    one additional `taxonomy_labels` full-table-scan query *per reviewed
+    Visit with a real species label* (through `_taxonomy_label_model_for_
+    input`'s unbatched per-call scan), on top of this report's own
+    `_taxonomy_label_index` preload for `confirmed_taxon`/
+    `provisional_taxon` -- an O(N) shape that a first version of this test
+    only proved didn't get *worse* (see git history for the prior
+    `test_taxonomy_resolution_adds_no_second_per_visit_query`), not that it
+    was fixed. It is now fixed: `_stream_visit_summary_from_models` accepts
+    the same preloaded `taxonomy_index` this method already builds and
+    forwards it down to `_visit_review_outcome`/`_taxonomy_label_model_for_
+    input`, so the *entire* report's taxonomy resolution -- both its own
+    and the canonical resolver's internal one -- costs exactly one query
+    total, whether the report covers 3 Visits or 8."""
 
     for index in range(8):
         visit_id = f"batch-{index}"
         _add_visit(repository, visit_id=visit_id, at=PERIOD_START + timedelta(hours=index), zone_id=ZONE_FEEDER)
         _confirm(repository, visit_id=visit_id, label="northern_cardinal")
 
-    def _count_taxonomy_queries(*, visit_count: int) -> int:
-        statements: list[str] = []
-
-        def _record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
-            if "taxonomy_labels" in statement:
-                statements.append(statement)
-
-        event.listen(repository.engine, "before_cursor_execute", _record)
-        try:
+    def _generate(*, visit_count: int) -> int:
+        def _call() -> None:
             report = repository.place_activity_report(
                 PlaceActivityReportRequest(
                     start_at=PERIOD_START,
                     end_at=PERIOD_START + timedelta(hours=visit_count),
                 )
             )
+            assert report.confirmed_wildlife_visit_count == visit_count
+
+        return _count_taxonomy_queries(repository, _call)
+
+    small = _generate(visit_count=3)
+    large = _generate(visit_count=8)
+
+    assert small == 1
+    assert large == 1
+
+
+# Long-period performance sanity check ------------------------------------
+#
+# Not microbenchmarking (per this milestone's own instruction): the goal is
+# to catch an obvious query explosion or pathological pure-computation
+# behavior at day/week/month/year scale, not to chase a tight latency
+# budget. Visits are inserted directly, already reviewed, rather than
+# through the real `create_review_label` write path this file otherwise
+# prefers (see the module docstring) -- that write path's own performance
+# (alert sync, milestone checks, etc.) is a different, unrelated concern
+# from report *generation*, and conflating the two would measure the wrong
+# thing; tests/test_zone_insights.py's own `_add_visit` helper already
+# takes the same direct-construction shortcut for the identical reason.
+
+
+def _add_reviewed_visits(
+    repository: ProductRepository,
+    *,
+    count: int,
+    start_at: datetime,
+    id_prefix: str,
+) -> None:
+    labels = ("northern_cardinal", "house_finch", "blue_jay", "squirrel")
+    with repository.session_factory() as session:
+        with session.begin():
+            for index in range(count):
+                at = start_at + timedelta(hours=index * 6)  # spread across the year
+                event_id = f"{id_prefix}-event-{index}"
+                visit_id = f"{id_prefix}-visit-{index}"
+                session.add(
+                    EventModel(
+                        id=event_id,
+                        stream_id=STREAM_A,
+                        title=f"Benchmark visit {index}",
+                        event_type="manual_media_import",
+                        started_at=at,
+                        ended_at=at + timedelta(seconds=20),
+                        primary_zone_id=ZONE_FEEDER,
+                        review_status="reviewed",
+                    )
+                )
+                session.add(
+                    VisitModel(
+                        id=visit_id,
+                        event_id=event_id,
+                        subject_label="unknown_bird",
+                        species_guess=None,
+                        confidence=None,
+                        reviewed_label=labels[index % len(labels)],
+                        review_status="reviewed",
+                        representative_media_path=None,
+                        zone_id=ZONE_FEEDER,
+                        is_superseded=False,
+                    )
+                )
+
+
+def test_report_generation_query_shape_stays_bounded_at_a_materially_larger_cohort(
+    repository: ProductRepository,
+) -> None:
+    """A year-scale Place with a materially larger reviewed-Visit cohort
+    (150 Visits vs. a 25-Visit baseline, 6x) must not show query-count
+    growth worse than linear, and must still generate in a bounded,
+    reasonable time. This is the milestone's "long-period performance
+    sanity check," not a tight latency budget -- the wall-clock assertion
+    is deliberately generous so it does not become a flaky CI trip-wire."""
+
+    year_start = datetime(2025, 1, 1, tzinfo=UTC)
+    small_count = 25
+    large_count = 150
+    _add_reviewed_visits(repository, count=large_count, start_at=year_start, id_prefix="bench")
+
+    def _generate(*, visit_count: int) -> tuple[int, float]:
+        # The first `visit_count` Visits are 6h apart, so this end bound
+        # selects exactly that many without needing a second, separate
+        # data set -- matching the existing "reuse one larger fixture,
+        # vary the requested period" pattern already proven above.
+        end_at = year_start + timedelta(hours=visit_count * 6)
+        statements: list[str] = []
+
+        def _record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+            statements.append(statement)
+
+        event.listen(repository.engine, "before_cursor_execute", _record)
+        started = perf_counter()
+        try:
+            report = repository.place_activity_report(
+                PlaceActivityReportRequest(start_at=year_start, end_at=end_at)
+            )
         finally:
             event.remove(repository.engine, "before_cursor_execute", _record)
-        assert report.confirmed_wildlife_visit_count == visit_count
-        return len(statements)
+        elapsed = perf_counter() - started
+        assert report.total_visit_count == visit_count
+        return len(statements), elapsed
 
-    small = _count_taxonomy_queries(visit_count=3)
-    large = _count_taxonomy_queries(visit_count=8)
+    small_queries, _small_elapsed = _generate(visit_count=small_count)
+    large_queries, large_elapsed = _generate(visit_count=large_count)
 
-    assert large - small == 5
+    small_per_visit = small_queries / small_count
+    large_per_visit = large_queries / large_count
+    # Linear, not superlinear: the per-Visit query cost at 6x the cohort
+    # size must not meaningfully exceed the per-Visit cost at the smaller
+    # size (a generous 25% tolerance absorbs the small fixed/per-call
+    # overhead that dominates at the tiny end, without hiding a real
+    # O(N^2) shape, which would show a large multiple here, not a small
+    # one).
+    assert large_per_visit <= small_per_visit * 1.25, (
+        f"query count grew faster than linearly: {small_per_visit=:.2f} "
+        f"at n={small_count}, {large_per_visit=:.2f} at n={large_count}"
+    )
+    # Generous wall-clock ceiling for a full year, 150-Visit report against
+    # real SQLite on developer/CI hardware -- a sanity trip-wire against a
+    # gross pathological regression, not a performance target.
+    assert large_elapsed < 5.0, f"report generation took {large_elapsed:.2f}s for {large_count} Visits"

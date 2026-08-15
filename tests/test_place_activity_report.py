@@ -14,6 +14,7 @@ aggregation itself is correct.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -167,6 +168,31 @@ def test_non_species_taxon_counts_as_a_taxon_without_fabricating_a_species() -> 
     assert entry.label == "squirrel"
     assert entry.is_species is False
     assert report.confirmed_wildlife_visit_count == 1
+
+
+def test_a_taxonomy_category_outside_todays_bird_mammal_pair_still_counts_as_wildlife() -> None:
+    """MockingBird is bird-first but wildlife-native (product-doctrine.md):
+    a confirmed taxon in a category this report's fixture vocabulary has
+    never seen before (a stand-in for a future "reptile"/"amphibian"/"bat"
+    taxonomy category) must still be counted as real, confirmed wildlife
+    activity -- not silently dropped to non-wildlife -- proving the
+    wildlife boundary (`mockingbird.wildlife_taxonomy.is_wildlife_category`)
+    is not hardcoded to `{"bird", "mammal"}`. See
+    tests/test_wildlife_taxonomy.py for the predicate's own direct
+    coverage; this is the end-to-end proof through `compute_place_activity_
+    report` itself."""
+
+    future_category_taxon = TaxonFact("box_turtle", "Box Turtle", "reptile", True)
+
+    report = _report(
+        [_visit("v1", at=PERIOD_START + timedelta(hours=1), confirmed=future_category_taxon)]
+    )
+
+    assert report.confirmed_wildlife_visit_count == 1
+    assert report.non_wildlife_visit_count == 0
+    [entry] = report.taxa
+    assert entry.label == "box_turtle"
+    assert entry.category == "reptile"
 
 
 # 5. Multiple Zones ---------------------------------------------------------
@@ -596,3 +622,133 @@ def test_coverage_gaps_are_bounded_with_a_truncation_flag() -> None:
 
     assert len(summary.gaps) == 3
     assert summary.gaps_truncated is True
+
+
+# DST-correct local-time bucketing ---------------------------------------
+#
+# `compute_place_activity_report` converts each Visit with its own
+# `visit.activity_started_at.astimezone(local_timezone)` call, inside the
+# per-Visit loop -- never once for the whole batch. That means it is
+# already DST-correct *as long as it is given a real variable-offset
+# `tzinfo`* (a `zoneinfo.ZoneInfo`, which resolves the historically-correct
+# UTC offset independently for each timestamp) rather than a fixed-offset
+# `datetime.timezone` snapshot resolved once from a single moment (the
+# repository-layer bug `ProductRepository.place_activity_report` fixed --
+# see docs/place-activity-report-contract.md and
+# tests/test_place_activity_report_repository.py for the real end-to-end
+# proof). These tests lock in that per-Visit correctness directly against
+# the pure computation module, using a real US zone so a future refactor
+# that "simplifies" this into one offset resolved outside the loop fails
+# loudly here first.
+
+NY = ZoneInfo("America/New_York")
+
+# 2026 US spring-forward: clocks jump from 01:59:59 EST directly to
+# 03:00:00 EDT at 2026-03-08T07:00:00Z (2am local). 2026 US fall-back:
+# clocks fall from 01:59:59 EDT back to 01:00:00 EST at
+# 2026-11-01T06:00:00Z (2am EDT local), so local 01:00-01:59 occurs twice.
+SPRING_FORWARD_INSTANT = datetime(2026, 3, 8, 7, 0, tzinfo=UTC)
+FALL_BACK_INSTANT = datetime(2026, 11, 1, 6, 0, tzinfo=UTC)
+
+
+def test_ordinary_non_dst_period_buckets_by_the_real_zone() -> None:
+    """A period nowhere near a transition: the historically-correct EST
+    offset (UTC-5) applies uniformly, exactly like a fixed offset would --
+    this is the baseline every DST-transition test below is contrasted
+    against."""
+
+    period_start = datetime(2026, 1, 12, 0, 0, tzinfo=UTC)
+    period_end = period_start + timedelta(days=1)
+    # 2026-01-12T18:30:00Z is 13:30 EST (UTC-5), not UTC-4.
+    at = period_start + timedelta(hours=18, minutes=30)
+
+    report = _report(
+        [_visit("v1", at=at, confirmed=NORTHERN_CARDINAL)],
+        period_start_at=period_start,
+        period_end_at=period_end,
+        local_timezone=NY,
+    )
+
+    by_hour = {entry.hour: entry.wildlife_visit_count for entry in report.activity_by_hour}
+    assert by_hour[13] == 1
+    assert by_hour[18] == 0
+
+
+def test_us_spring_forward_transition_buckets_each_side_correctly() -> None:
+    """One Visit just before the jump (EST, UTC-5) and one just after (EDT,
+    UTC-4) must each resolve to the offset that genuinely applied at its
+    own timestamp, not a single offset borrowed from the other."""
+
+    before = SPRING_FORWARD_INSTANT - timedelta(minutes=30)  # 01:30 EST
+    after = SPRING_FORWARD_INSTANT + timedelta(minutes=30)  # 03:30 EDT
+
+    report = _report(
+        [
+            _visit("before", at=before, confirmed=NORTHERN_CARDINAL),
+            _visit("after", at=after, confirmed=HOUSE_FINCH),
+        ],
+        period_start_at=SPRING_FORWARD_INSTANT - timedelta(hours=2),
+        period_end_at=SPRING_FORWARD_INSTANT + timedelta(hours=2),
+        local_timezone=NY,
+    )
+
+    by_hour = {entry.hour: entry.wildlife_visit_count for entry in report.activity_by_hour}
+    assert by_hour[1] == 1  # the EST Visit, correctly not shifted to EDT
+    assert by_hour[3] == 1  # the EDT Visit, correctly not shifted to EST
+    assert by_hour[2] == 0  # the hour that never happened locally that day
+
+
+def test_us_fall_back_transition_maps_two_instants_to_the_repeated_local_hour() -> None:
+    """The defining fall-back case: two genuinely different UTC instants,
+    one before and one after the actual transition, both land in local
+    hour 1 -- the hour that happens twice. A fixed offset resolved from
+    only one of the two would misplace the other by a full hour."""
+
+    first_1am = FALL_BACK_INSTANT - timedelta(minutes=30)  # 01:30 EDT (first occurrence)
+    second_1am = FALL_BACK_INSTANT + timedelta(minutes=30)  # 01:30 EST (second occurrence)
+
+    report = _report(
+        [
+            _visit("first-1am", at=first_1am, confirmed=NORTHERN_CARDINAL),
+            _visit("second-1am", at=second_1am, confirmed=HOUSE_FINCH),
+        ],
+        period_start_at=FALL_BACK_INSTANT - timedelta(hours=2),
+        period_end_at=FALL_BACK_INSTANT + timedelta(hours=2),
+        local_timezone=NY,
+    )
+
+    by_hour = {entry.hour: entry.wildlife_visit_count for entry in report.activity_by_hour}
+    # Both real, distinct Visits count -- neither is dropped nor merged --
+    # they simply share one local-hour bucket, honestly reflecting that the
+    # local calendar itself repeats this hour once a year.
+    assert by_hour[1] == 2
+    assert report.total_visit_count == 2
+
+
+def test_report_period_spanning_the_spring_forward_transition() -> None:
+    """A period whose own boundaries straddle the transition (not just a
+    Visit timestamp within an unrelated period) -- the realistic "this
+    week" report shape. Every Visit across the two days must bucket by its
+    own historically-correct offset."""
+
+    period_start = SPRING_FORWARD_INSTANT - timedelta(days=1)
+    period_end = SPRING_FORWARD_INSTANT + timedelta(days=1)
+    day_before = SPRING_FORWARD_INSTANT - timedelta(hours=20)  # previous day, deep in EST
+    just_after = SPRING_FORWARD_INSTANT + timedelta(minutes=30)  # EDT, right after the jump
+
+    report = _report(
+        [
+            _visit("day-before", at=day_before, confirmed=NORTHERN_CARDINAL),
+            _visit("just-after", at=just_after, confirmed=HOUSE_FINCH),
+        ],
+        period_start_at=period_start,
+        period_end_at=period_end,
+        local_timezone=NY,
+    )
+
+    assert report.total_visit_count == 2
+    by_hour = {entry.hour: entry.wildlife_visit_count for entry in report.activity_by_hour}
+    # day_before = SPRING_FORWARD_INSTANT - 20h = 2026-03-07T11:00:00Z = 06:00 EST.
+    assert by_hour[6] == 1
+    # just_after = SPRING_FORWARD_INSTANT + 30m = 2026-03-08T07:30:00Z = 03:30 EDT.
+    assert by_hour[3] == 1

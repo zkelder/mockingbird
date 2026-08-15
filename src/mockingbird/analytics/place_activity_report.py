@@ -55,23 +55,13 @@ from mockingbird.analytics.zone_insights import (
     merge_intervals,
     subtract_intervals,
 )
+from mockingbird.wildlife_taxonomy import is_wildlife_category
 
 # Display bucket for a Visit with no Zone context, matching the exact label
 # the existing Dashboard Today aggregation already shows for the same case
 # (`DashboardTodayZoneActivity.zone_name` default) -- reused for continuity,
 # not reinvented.
 NO_ZONE_LABEL = "No Zone"
-
-# Taxonomy categories (`api.schemas.LabelCategory` values) this module
-# treats as wildlife. Deliberately excludes "pet": MockingBird's own seed
-# taxonomy (api/demo_data.py) already files "cat"/"dog" under the distinct
-# "pet" category rather than "mammal" -- that is an existing product
-# distinction this module reuses, not a new one it invents. "person" and
-# "vehicle" are excluded for the same reason. Any category this module does
-# not recognize (including a future one) safely falls through to
-# non-wildlife rather than silently being counted as wildlife -- see
-# `_classify`.
-WILDLIFE_CATEGORIES: frozenset[str] = frozenset({"bird", "mammal"})
 
 # `category == "unknown"` in the current taxonomy means exactly two rows,
 # "unknown_bird" and "unknown_animal" (see api/demo_data.py) -- a human
@@ -172,11 +162,12 @@ def _classify(visit: VisitFact) -> _Classification:
             # No resolvable taxon (data hygiene) or explicitly not activity
             # at all -- neither is a real Visit for reporting purposes.
             return _Classification.EXCLUDED
-        if taxon.category in WILDLIFE_CATEGORIES:
+        if is_wildlife_category(taxon.category):
             return _Classification.CONFIRMED_WILDLIFE
         if taxon.category == _UNKNOWN_CATEGORY:
             return _Classification.CONFIRMED_SPECIES_UNRESOLVED
-        # pet / person / vehicle / object / any future non-wildlife category.
+        # pet / person / vehicle / object / any other known non-wildlife
+        # category -- see mockingbird.wildlife_taxonomy for the boundary.
         return _Classification.NON_WILDLIFE
 
     # resolution == "needs_review": no reviewed truth yet. A provisional
@@ -184,7 +175,7 @@ def _classify(visit: VisitFact) -> _Classification:
     # doctrine's "provisional model interpretation" boundary, not a license
     # to promote any suggestion to a report fact.
     taxon = visit.provisional_taxon
-    if taxon is not None and taxon.category in WILDLIFE_CATEGORIES and taxon.is_species:
+    if taxon is not None and is_wildlife_category(taxon.category) and taxon.is_species:
         return _Classification.PROVISIONAL_WILDLIFE
     return _Classification.UNRESOLVED
 
