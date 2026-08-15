@@ -83,25 +83,54 @@ happen to coexist. If you touch either manager, re-read that contract
 section first; the failure mode this prevents (a live view falsely
 reporting "Camera Failed" while Observation runs) was a real, fixed defect.
 
-A second, different hazard in this same seam was found and fixed by this
-milestone: `LiveCameraSessionManager`'s own **durable** monitoring policy
+A second, different hazard in this same seam was found by the Runtime
+Simplification / Code Archaeology milestone and closed on both sides by the
+following one: `LiveCameraSessionManager`'s own **durable** monitoring policy
 (`StreamMonitoringPolicyModel`, the thing "Enable monitoring"/"Disable
-monitoring" arms) has no provider-type gate anywhere in the backend --
-`camera_node` remains in `playback.live_camera_session.SUPPORTED_SESSION_TYPES`
+monitoring" arms) has no provider-type gate in `playback.live_camera_session`
+itself -- `camera_node` deliberately remains in `SUPPORTED_SESSION_TYPES`
 because the legacy session still needs to serve plain Live view for a Camera
 Node Stream (above). Two frontend surfaces
 (`web/src/components/LiveCameraOverview.tsx`, embedded by both
-`DashboardPage.tsx` and `StreamsPage.tsx`) rendered that same toggle
+`DashboardPage.tsx` and `StreamsPage.tsx`) used to render that same toggle
 unconditionally for every camera tile, including a paired Camera Node one --
-so arming it there would durably start the legacy zone-motion path
-alongside the accepted engine on the same camera, with none of Stage 7's
-admission gate, and keep silently resuming every time Observation later
-stopped (`resume_after_observation`). The toggle is now hidden for
-`camera_node` tiles in that one shared component (matching the "Show/Stop
-live view" exclusion already beside it), closing the realistic accidental-
-click path. The backend itself still has no matching guard -- see
-"Remaining highest-risk architectural ambiguity" in this milestone's final
-report before assuming a raw API call is also safe.
+arming it there would durably start the legacy zone-motion path alongside
+the accepted engine on the same camera, with none of Stage 7's admission
+gate, and keep silently resuming every time Observation later stopped
+(`resume_after_observation`). The toggle is now hidden for `camera_node`
+tiles in that one shared component (matching the "Show/Stop live view"
+exclusion already beside it).
+
+**Camera Node monitoring-ownership rule** (CAMERA NODE LEGACY-MONITORING
+BACKEND GUARD v1, closing the gap the paragraph above left open -- "a raw
+API call is also safe" no longer needs an asterisk):
+
+```text
+Camera Node:
+  Live view              = supported (LiveCameraSessionManager, unchanged)
+  Observation Engine     = canonical monitoring
+  legacy durable monitoring = forbidden
+```
+
+The backend now enforces this at every place that can arm
+`StreamMonitoringPolicyModel.mode = "armed"`, not only the UI:
+`ProductRepository._reject_camera_node_legacy_monitoring_enable` is the one
+predicate shared by both authoritative mutation call sites --
+`set_stream_monitoring_enabled` (the Enable-monitoring toggle/API) and
+`complete_camera_setup` (Add Camera's own `enable_monitoring` flag, a second,
+independent arming path this milestone found by tracing rather than
+assuming the toggle was the only one) -- plus a narrower defensive filter in
+`list_enabled_monitoring_candidates` so the durable supervisor can never
+treat a stale pre-fix `armed` camera_node row as work (it would otherwise
+actually start a real session: `LiveCameraSessionManager` genuinely supports
+`camera_node`, so nothing else would stop it). Disabling stays unguarded and
+always safe/idempotent, including recovery from stale historical state. The
+one still-open surface is `CameraSetupPage.tsx`'s "Start watching" checkbox,
+which the guided setup wizard renders unconditionally for every provider,
+including `camera_node`; the backend now rejects that combination with a
+clear error instead of silently arming it, but the checkbox itself is not
+yet hidden for Camera Node the way `LiveCameraOverview.tsx`'s was -- a small
+follow-up UI fix, not a backend gap.
 
 ## Lane resolution: the one place that picks a runtime
 

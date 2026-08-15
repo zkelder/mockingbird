@@ -9111,6 +9111,11 @@ async def complete_camera_setup(
             "authentication_rejected": "Camera Node pairing is no longer accepted. Pair the Node again before completing setup.",
             "node_unavailable": "Camera Node is unavailable. Check the local Node before completing setup.",
             "camera_setup_idempotency_conflict": "That setup request cannot be safely repeated.",
+            "camera_node_legacy_monitoring_unsupported": (
+                "Camera Node streams use the Observation Engine, not legacy durable "
+                "monitoring. Finish setup with monitoring off, then use Start "
+                "observing afterward."
+            ),
         }
         status = 409 if str(error) in {"source_name_exists", "camera_setup_idempotency_conflict"} else 400
         raise HTTPException(status_code=status, detail=messages.get(str(error), "Camera setup could not be completed.")) from None
@@ -10480,6 +10485,17 @@ async def update_stream_monitoring_policy(
             status_code=409,
             detail="That monitoring request key was already used for a different action.",
         ) from None
+    except ValueError as error:
+        if str(error) == "camera_node_legacy_monitoring_unsupported":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This Stream is a paired Camera Node. Camera Node streams use "
+                    "the Observation Engine (Start observing) rather than legacy "
+                    "durable monitoring."
+                ),
+            ) from None
+        raise
     if idempotent is None:
         raise _not_found("Stream", stream_id)
 

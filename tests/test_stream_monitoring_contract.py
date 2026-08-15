@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import func, select
 
 from mockingbird.api import main as api_main
-from mockingbird.api.schemas import CameraSourceCreate
+from mockingbird.api.schemas import CameraSetupCompleteRequest, CameraSourceCreate, Point
 from mockingbird.repository.product_repository import (
     MonitoringOperationConflictError,
     ProductRepository,
@@ -17,6 +17,7 @@ from mockingbird.storage.database import (
     database_schema_version_is_compatible,
 )
 from mockingbird.storage.models import (
+    CameraSourceModel,
     EventModel,
     MediaAssetModel,
     MonitoringExposureIntervalModel,
@@ -25,9 +26,47 @@ from mockingbird.storage.models import (
     StreamMonitoringPolicyModel,
     StreamRuntimeCheckpointModel,
     VisitModel,
+    ZoneModel,
 )
 
 STREAM_ID = "stream-backyard-feeder"
+
+
+def _camera_node_stream(repository: ProductRepository, *, key: str) -> str:
+    """Create a real paired-looking Camera Node Stream through the same
+    completion path Add Camera uses, so the guard tests below exercise a
+    genuine `provider_key == "camera_node"` Source rather than a hand-built
+    row."""
+
+    result = repository.complete_camera_setup(
+        CameraSetupCompleteRequest(
+            camera_name=f"Camera Node {key}",
+            stream_name=f"Camera Node {key} view",
+            provider_key="camera_node",
+            config={
+                "node_base_address": "http://192.168.1.50:8787",
+                "node_credential": "test-credential",
+                "node_camera_id": "opaque-camera-1",
+                "node_id": "opaque-node-1",
+            },
+            zones=[
+                {
+                    "name": "Feeder",
+                    "zone_type": "feeder",
+                    "polygon": [
+                        Point(x=0.2, y=0.2),
+                        Point(x=0.8, y=0.2),
+                        Point(x=0.8, y=0.8),
+                        Point(x=0.2, y=0.8),
+                    ],
+                    "monitoring_policy": {"activity_sensitivity": "normal"},
+                }
+            ],
+            enable_monitoring=False,
+            idempotency_key=f"{key}-setup",
+        )
+    )
+    return result.stream.id
 
 
 class ASGITestClient:
@@ -409,6 +448,230 @@ def test_monitoring_api_exposes_idempotent_enable_and_bounded_status_read(
     assert statuses.json()["limit"] == 1
     assert len(statuses.json()["items"]) == 1
     assert retry.status_code == 200
+
+
+def test_camera_node_stream_cannot_enable_legacy_monitoring(
+    repository: ProductRepository,
+) -> None:
+    """Milestone: CAMERA NODE LEGACY-MONITORING BACKEND GUARD v1, scenarios 1-3.
+
+    A paired Camera Node Stream uses the Observation Engine; enabling the
+    legacy durable zone-motion policy for it must fail explicitly, leave the
+    policy/checkpoint untouched, and never appear as durable-supervisor work.
+    """
+
+    stream_id = _camera_node_stream(repository, key="guard-enable")
+    before = _persisted_contract_state(repository)
+
+    with pytest.raises(ValueError, match="camera_node_legacy_monitoring_unsupported"):
+        repository.set_stream_monitoring_enabled(
+            stream_id,
+            enabled=True,
+            idempotency_key="camera-node-enable-attempt",
+        )
+
+    policy = repository.get_stream_monitoring_policy(stream_id)
+    status = repository.get_stream_runtime_status(stream_id)
+    assert policy is not None and policy.mode == "off"
+    assert status is not None and status.actual_state == "stopped"
+    assert _persisted_contract_state(repository) == before
+    assert stream_id not in {
+        candidate.stream_id
+        for candidate in repository.list_enabled_monitoring_candidates(limit=50)
+    }
+    # The rejected attempt never consumed the idempotency key, so a genuine
+    # retry with the same key deterministically fails the same way rather
+    # than silently replaying a stale "success."
+    with pytest.raises(ValueError, match="camera_node_legacy_monitoring_unsupported"):
+        repository.set_stream_monitoring_enabled(
+            stream_id,
+            enabled=True,
+            idempotency_key="camera-node-enable-attempt",
+        )
+
+
+def test_camera_node_monitoring_disable_stays_safe_and_idempotent(
+    repository: ProductRepository,
+) -> None:
+    """Scenario 4: disabling must never be blocked, including recovery from a
+    stale pre-fix `armed` row (simulated here by writing the policy directly,
+    bypassing the now-guarded repository methods -- exactly the "historical
+    database" case the milestone calls out)."""
+
+    stream_id = _camera_node_stream(repository, key="guard-disable")
+    with repository.engine.begin() as connection:
+        connection.exec_driver_sql(
+            "UPDATE stream_monitoring_policies SET mode = 'armed' WHERE stream_id = ?",
+            (stream_id,),
+        )
+
+    assert (
+        repository.set_stream_monitoring_enabled(
+            stream_id,
+            enabled=False,
+            idempotency_key="camera-node-disable-stale",
+        )
+        is False
+    )
+    policy = repository.get_stream_monitoring_policy(stream_id)
+    assert policy is not None and policy.mode == "off"
+
+    # Idempotent: disabling an already-off camera_node policy is a no-op, not
+    # an error.
+    assert (
+        repository.set_stream_monitoring_enabled(
+            stream_id,
+            enabled=False,
+            idempotency_key="camera-node-disable-already-off",
+        )
+        is False
+    )
+
+
+def test_stale_armed_camera_node_policy_excluded_from_durable_supervisor(
+    repository: ProductRepository,
+) -> None:
+    """Runtime fail-safe: even if a stale/corrupt `armed` row for a
+    camera_node Stream exists (pre-fix data, or a direct database edit that
+    bypasses the repository guard), the durable supervisor must never see it
+    as work -- `LiveCameraSessionManager` genuinely supports `camera_node`
+    for Live view, so nothing else would stop a real legacy session from
+    starting against it."""
+
+    stream_id = _camera_node_stream(repository, key="guard-stale")
+    with repository.engine.begin() as connection:
+        connection.exec_driver_sql(
+            "UPDATE stream_monitoring_policies SET mode = 'armed' WHERE stream_id = ?",
+            (stream_id,),
+        )
+
+    candidates = repository.list_enabled_monitoring_candidates(limit=50)
+    assert stream_id not in {candidate.stream_id for candidate in candidates}
+
+
+def test_non_camera_node_provider_can_still_enable_legacy_monitoring(
+    repository: ProductRepository,
+) -> None:
+    """Scenario 5: the guard is provider-specific, not a general lockdown --
+    a supported non-camera_node provider (external_url) must keep arming
+    exactly as before, and must still appear as durable-supervisor work."""
+
+    result = repository.complete_camera_setup(
+        CameraSetupCompleteRequest(
+            camera_name="External still camera",
+            stream_name="External still camera view",
+            provider_key="external_url",
+            config={"url": "https://camera.local/still.jpg"},
+            zones=[
+                {
+                    "name": "Feeder",
+                    "zone_type": "feeder",
+                    "polygon": [
+                        Point(x=0.2, y=0.2),
+                        Point(x=0.8, y=0.2),
+                        Point(x=0.8, y=0.8),
+                        Point(x=0.2, y=0.8),
+                    ],
+                    "monitoring_policy": {"activity_sensitivity": "normal"},
+                }
+            ],
+            enable_monitoring=False,
+            idempotency_key="external-url-setup",
+        )
+    )
+    stream_id = result.stream.id
+
+    assert (
+        repository.set_stream_monitoring_enabled(
+            stream_id,
+            enabled=True,
+            idempotency_key="external-url-enable",
+        )
+        is False
+    )
+    policy = repository.get_stream_monitoring_policy(stream_id)
+    assert policy is not None and policy.mode == "armed"
+    assert stream_id in {
+        candidate.stream_id
+        for candidate in repository.list_enabled_monitoring_candidates(limit=50)
+    }
+
+
+def test_camera_node_setup_completion_rejects_enable_monitoring(
+    repository: ProductRepository,
+) -> None:
+    """The second authoritative mutation site: Add Camera's guided setup can
+    also request `enable_monitoring=True` in the same call that creates the
+    Stream. For camera_node that must fail before anything is persisted --
+    no Source, Stream, Zone, or policy row -- not just silently ignore the
+    flag."""
+
+    before = _persisted_contract_state(repository)
+    with repository.session_factory() as session:
+        counts_before = (
+            session.scalar(select(func.count(CameraSourceModel.id))),
+            session.scalar(select(func.count(StreamModel.id))),
+            session.scalar(select(func.count(ZoneModel.id))),
+        )
+
+    with pytest.raises(ValueError, match="camera_node_legacy_monitoring_unsupported"):
+        repository.complete_camera_setup(
+            CameraSetupCompleteRequest(
+                camera_name="Camera Node reject-me",
+                stream_name="Camera Node reject-me view",
+                provider_key="camera_node",
+                config={
+                    "node_base_address": "http://192.168.1.51:8787",
+                    "node_credential": "test-credential",
+                    "node_camera_id": "opaque-camera-2",
+                    "node_id": "opaque-node-2",
+                },
+                zones=[
+                    {
+                        "name": "Feeder",
+                        "zone_type": "feeder",
+                        "polygon": [
+                            Point(x=0.2, y=0.2),
+                            Point(x=0.8, y=0.2),
+                            Point(x=0.8, y=0.8),
+                            Point(x=0.2, y=0.8),
+                        ],
+                        "monitoring_policy": {"activity_sensitivity": "normal"},
+                    }
+                ],
+                enable_monitoring=True,
+                idempotency_key="camera-node-setup-reject",
+            )
+        )
+
+    assert _persisted_contract_state(repository) == before
+    with repository.session_factory() as session:
+        counts_after = (
+            session.scalar(select(func.count(CameraSourceModel.id))),
+            session.scalar(select(func.count(StreamModel.id))),
+            session.scalar(select(func.count(ZoneModel.id))),
+        )
+    assert counts_after == counts_before
+
+
+def test_camera_node_monitoring_guard_api_returns_stable_conflict(
+    repository: ProductRepository,
+) -> None:
+    """Scenario 8: the HTTP surface returns a clear 409 with an actionable
+    message, never an unhandled 500, for a raw API call bypassing the UI."""
+
+    stream_id = _camera_node_stream(repository, key="guard-api")
+    client = ASGITestClient()
+
+    response = client.put(
+        f"/api/streams/{stream_id}/monitoring-policy",
+        json={"enabled": True, "idempotency_key": "api-camera-node-enable"},
+    )
+
+    assert response.status_code == 409
+    assert "Observation Engine" in response.json()["detail"]
+    policy = repository.get_stream_monitoring_policy(stream_id)
+    assert policy is not None and policy.mode == "off"
 
 
 def test_backup_schema_compatibility_accepts_only_known_migration_paths() -> None:

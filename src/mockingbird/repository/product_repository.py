@@ -1988,6 +1988,21 @@ _DEFAULT_MAX_EVIDENCE_ITEMS_PER_CANDIDATE = 4
 _DEFAULT_MAX_EVIDENCE_BYTES_PER_CANDIDATE = 8_000_000
 
 
+def _reject_camera_node_legacy_monitoring_enable(provider_key: str | None) -> None:
+    """Camera Node Streams use the Observation Engine for monitoring; the
+    legacy durable zone-motion path (`StreamMonitoringPolicyModel` `armed`
+    mode) must never also be armed for one, or the two would silently run as
+    competing owners of the same camera with none of Stage 7's admission
+    gate (see "Camera ownership" in docs/runtime-map.md). This is the one
+    canonical predicate shared by every authoritative call site that can set
+    a policy's mode to `armed` -- `set_stream_monitoring_enabled` and
+    `complete_camera_setup` -- so the rule cannot drift between them.
+    Disabling remains unguarded and always safe/idempotent."""
+
+    if provider_key == "camera_node":
+        raise ValueError("camera_node_legacy_monitoring_unsupported")
+
+
 def _new_stream_monitoring_records(
     stream_id: str,
     *,
@@ -4089,6 +4104,8 @@ class ProductRepository:
             raise ValueError("camera_setup_validation_required")
         definition = _source_provider_definition(payload.provider_key)
         assert definition is not None
+        if payload.enable_monitoring:
+            _reject_camera_node_legacy_monitoring_enable(definition.provider_key)
         sanitized = _sanitize_source_provider_config(definition, payload.config)
         now = datetime.now(UTC)
         with self.session_factory() as session:
@@ -6776,6 +6793,13 @@ class ProductRepository:
                 stream = session.get(StreamModel, stream_id)
                 if stream is None:
                     return None
+                if enabled:
+                    provider_config = session.get(
+                        SourceProviderConfigurationModel, stream.source_id
+                    )
+                    _reject_camera_node_legacy_monitoring_enable(
+                        provider_config.provider_key if provider_config is not None else None
+                    )
                 existing = session.get(StreamMonitoringOperationModel, idempotency_key)
                 if existing is not None:
                     if (
@@ -7014,7 +7038,19 @@ class ProductRepository:
         *,
         limit: int,
     ) -> list[DurableMonitoringCandidate]:
-        """Read only explicit enabled intent; provider validation stays at start time."""
+        """Read only explicit enabled intent; full provider validation stays at
+        start time (`_supervisor_start_camera`).
+
+        The one narrow exception is a defensive fail-safe, not a validation
+        pass: `camera_node` Streams are excluded here too. Neither authoritative
+        mutation (`set_stream_monitoring_enabled`, `complete_camera_setup`) can
+        arm one any more, so this only guards a stale pre-fix row or a direct
+        database edit -- without it, such a row would not even fail at start
+        time, because `LiveCameraSessionManager` genuinely supports
+        `camera_node` for plain Live view. Left unfiltered, a stale row would
+        silently arm a real legacy zone-motion session competing with the
+        Observation Engine for the same camera. See "Camera ownership" in
+        docs/runtime-map.md."""
 
         bounded_limit = max(1, min(limit, 50))
         with self.session_factory() as session:
@@ -7025,8 +7061,20 @@ class ProductRepository:
                     StreamRuntimeCheckpointModel.stream_id
                     == StreamMonitoringPolicyModel.stream_id,
                 )
+                .join(
+                    StreamModel,
+                    StreamModel.id == StreamMonitoringPolicyModel.stream_id,
+                )
+                .outerjoin(
+                    SourceProviderConfigurationModel,
+                    SourceProviderConfigurationModel.source_id == StreamModel.source_id,
+                )
                 .where(
-                    StreamMonitoringPolicyModel.mode == StreamMonitoringMode.armed.value
+                    StreamMonitoringPolicyModel.mode == StreamMonitoringMode.armed.value,
+                    or_(
+                        SourceProviderConfigurationModel.provider_key.is_(None),
+                        SourceProviderConfigurationModel.provider_key != "camera_node",
+                    ),
                 )
                 .order_by(StreamMonitoringPolicyModel.stream_id)
                 .limit(bounded_limit)
