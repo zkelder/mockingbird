@@ -3,6 +3,7 @@ import { apiClient } from "../api/client";
 import type {
   DashboardStreamSummary,
   DashboardZoneOverlay,
+  LiveCameraSessionStatus,
   StreamRuntimeStatus,
 } from "../api/types";
 import { formatDateTime } from "../utils";
@@ -13,6 +14,11 @@ import { StatusPill } from "./StatusPill";
 const MAX_BROWSER_PREVIEWS = 4;
 const PREVIEW_RENEWAL_MS = 45_000;
 const OVERVIEW_OWNER_KEY = "mockingbird-live-overview-owner-v1";
+// How often to refresh the legacy live-session ownership signal below --
+// fast enough to un-mask a real ownership hand-off promptly, slow enough
+// (unlike CurrentFrameView's own 1s frame poll) to avoid multiplying
+// request volume across every configured camera_node tile.
+const OWNERSHIP_POLL_MS = 5_000;
 
 type PreviewState =
   | { state: "connecting"; backend: boolean; message: string }
@@ -101,7 +107,19 @@ function exposureDurationLabel(seconds?: number | null): string {
   return `${Math.floor(seconds / 60)} min`;
 }
 
-function monitoringState(stream: DashboardStreamSummary, runtime?: StreamRuntimeStatus): string {
+function monitoringState(
+  stream: DashboardStreamSummary,
+  runtime?: StreamRuntimeStatus,
+  pausedForObservation?: boolean,
+): string {
+  // Observation Engine deliberately pauses this Stream's legacy live
+  // session to take exclusive Camera Node ownership (see the ownership-poll
+  // effect in LiveCameraOverview below) -- a healthy, expected hand-off,
+  // never a camera failure. `camera_health` below is sourced entirely from
+  // the legacy monitoring-policy subsystem, which Observation Engine never
+  // touches, so it would otherwise keep reading "Monitoring stopped" the
+  // whole time Observation is actively, healthily watching this camera.
+  if (pausedForObservation) return "Observing";
   const health = stream.camera_health;
   if (health) {
     return {
@@ -124,7 +142,12 @@ function monitoringState(stream: DashboardStreamSummary, runtime?: StreamRuntime
   return "Monitoring disabled";
 }
 
-function monitoringTone(stream: DashboardStreamSummary, runtime?: StreamRuntimeStatus): "good" | "review" | "quiet" {
+function monitoringTone(
+  stream: DashboardStreamSummary,
+  runtime?: StreamRuntimeStatus,
+  pausedForObservation?: boolean,
+): "good" | "review" | "quiet" {
+  if (pausedForObservation) return "good";
   if (stream.camera_health?.state === "healthy") return "good";
   if (stream.camera_health?.state === "stopped" || stream.camera_health?.state === "starting") return "quiet";
   if (stream.camera_health) return "review";
@@ -165,6 +188,7 @@ export function LiveCameraOverview({
   const [showDemoData, setShowDemoData] = useState(false);
   const [showZonesByStream, setShowZonesByStream] = useState<Record<string, boolean>>({});
   const [previews, setPreviews] = useState<Record<string, PreviewState>>({});
+  const [liveSessionByStream, setLiveSessionByStream] = useState<Record<string, LiveCameraSessionStatus>>({});
   const previewsRef = useRef(previews);
   const isMountedRef = useRef(true);
   const ownerIdRef = useRef(previewOwnerId());
@@ -239,6 +263,50 @@ export function LiveCameraOverview({
     }, PREVIEW_RENEWAL_MS);
     return () => window.clearInterval(renewal);
   }, []);
+
+  // Legacy live-session ownership signal for every configured camera_node
+  // Stream (Pi Camera Node), refreshed independently of the parent's own
+  // ~30s dashboard summary refresh -- mirrors StreamDetailPage's own
+  // already-fixed `liveSessionPausedForObservation` gate (see below).
+  // `cameraNodeStreamIdsKey`, not `streams` itself (a new array reference
+  // on every parent refresh even when nothing changed), is the effect
+  // dependency so the poll interval is not torn down and rebuilt for no
+  // reason every time the parent refreshes.
+  const cameraNodeStreamIdsKey = streams
+    .filter((stream) => stream.playback_kind === "camera_node")
+    .map((stream) => stream.stream_id)
+    .join(",");
+
+  useEffect(() => {
+    const ids = cameraNodeStreamIdsKey ? cameraNodeStreamIdsKey.split(",") : [];
+    if (!ids.length) return;
+    let disposed = false;
+    const poll = async () => {
+      const entries = await Promise.all(
+        ids.map(async (streamId) => {
+          try {
+            return [streamId, await apiClient.getLiveCameraSessionStatus(streamId)] as const;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      if (disposed) return;
+      setLiveSessionByStream((existing) => {
+        const next = { ...existing };
+        for (const entry of entries) {
+          if (entry) next[entry[0]] = entry[1];
+        }
+        return next;
+      });
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), OWNERSHIP_POLL_MS);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [cameraNodeStreamIdsKey]);
 
   const showLiveView = useCallback(
     async (stream: DashboardStreamSummary) => {
@@ -408,6 +476,15 @@ export function LiveCameraOverview({
           const preview = previews[stream.stream_id];
           const showZones = Boolean(showZonesByStream[stream.stream_id]);
           const canShowLive = stream.live_preview.available;
+          const liveSession = liveSessionByStream[stream.stream_id];
+          // `status === "paused"` is set by Observation Engine's own
+          // `pause_for_observation` call path only, and unconditionally
+          // reverted (even on a real Camera Node failure -- see
+          // `_EngineSession._run`'s `finally` block) the moment Observation
+          // itself stops, so this cannot linger stale after a real outage:
+          // it is already authoritative for "Observation owns this camera
+          // right now," exactly like StreamDetailPage's identical gate.
+          const liveSessionPausedForObservation = liveSession?.status === "paused";
           return (
             <article className="camera-overview-tile" key={stream.stream_id}>
               <div className="item-title-row">
@@ -415,18 +492,40 @@ export function LiveCameraOverview({
                   <h3>{stream.stream_name}</h3>
                   <span className="meta-text">{stream.source_name}</span>
                 </div>
-                <StatusPill label={monitoringState(stream, runtime)} tone={monitoringTone(stream, runtime)} />
+                <StatusPill
+                  label={monitoringState(stream, runtime, liveSessionPausedForObservation)}
+                  tone={monitoringTone(stream, runtime, liveSessionPausedForObservation)}
+                />
               </div>
 
               {isVisualOverview ? (
                 <div className="camera-overview-frame">
                   {stream.playback_kind === "camera_node" ? (
-                    <CurrentFrameView
-                      active={isVisualOverview}
-                      alt={`Current view from ${stream.stream_name}`}
-                      className="camera-overview-media"
-                      streamId={stream.stream_id}
-                    />
+                    liveSessionPausedForObservation ? (
+                      // Observation owns the camera right now: the
+                      // current-frame endpoint deterministically 409s (see
+                      // `get_stream_live_camera_current_frame`), so mounting
+                      // CurrentFrameView here would only manufacture a
+                      // "Current camera frame unavailable" failure signal
+                      // out of a healthy, expected hand-off -- the same
+                      // masking bug already fixed on Stream Detail. Show the
+                      // backend's own honest paused message instead of
+                      // inventing a new preview (Observation exposes none).
+                      <div className="camera-overview-placeholder">
+                        <strong>Live preview paused</strong>
+                        <span>
+                          {liveSession?.message ??
+                            "Live preview is paused while MockingBird is monitoring this camera."}
+                        </span>
+                      </div>
+                    ) : (
+                      <CurrentFrameView
+                        active={isVisualOverview}
+                        alt={`Current view from ${stream.stream_name}`}
+                        className="camera-overview-media"
+                        streamId={stream.stream_id}
+                      />
+                    )
                   ) : preview?.state === "live" ? (
                     preview.mediaKind === "video" ? (
                       <video autoPlay className="camera-overview-media" muted onError={() => previewFailed(stream.stream_id)} playsInline src={preview.mediaUrl} />
@@ -444,7 +543,7 @@ export function LiveCameraOverview({
 
               <div className="camera-overview-facts">
                 <span>Desired: <strong>{(stream.camera_health?.desired_mode ?? runtime?.desired_mode) === "armed" ? "Monitoring enabled" : "Monitoring disabled"}</strong></span>
-                <span>Actual: <strong>{monitoringState(stream, runtime)}</strong></span>
+                <span>Actual: <strong>{monitoringState(stream, runtime, liveSessionPausedForObservation)}</strong></span>
                 <span>{activityState(stream)}</span>
                 <span>Open sessions: <strong>{stream.camera_health?.open_activity_session_count ?? stream.open_activity_session_count}</strong></span>
                 <span>Last good frame: <strong>{stream.camera_health?.last_good_frame_at ? formatDateTime(stream.camera_health.last_good_frame_at) : "Not yet received"}</strong></span>
