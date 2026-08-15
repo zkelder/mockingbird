@@ -5,7 +5,7 @@ import type {
   DashboardVisitSummary,
   CameraHealthSummary,
   HealthStatus,
-  ModelAdapter,
+  PlaceActivityReportResponse,
   StorageSummary,
   StreamRuntimeStatus,
 } from "../api/types";
@@ -13,6 +13,7 @@ import { EmptyState } from "../components/EmptyState";
 import { LiveCameraOverview } from "../components/LiveCameraOverview";
 import { ProductHealthPanel } from "../components/ProductHealthPanel";
 import { StatusPill } from "../components/StatusPill";
+import { TodayReportPanel } from "../components/TodayReportPanel";
 import { effectiveSpeciesText, formatDateTime, formatLabel } from "../utils";
 
 interface ReviewQueueFocus {
@@ -34,6 +35,21 @@ interface DashboardPageProps {
 }
 
 const DASHBOARD_REFRESH_INTERVAL_MS = 30_000;
+
+// The Place Activity Report is period-scoped; "today" is the browser's own
+// local midnight-to-midnight span, converted to the UTC instants the report
+// API expects. MockingBird has no per-Place timezone setting (see "Local
+// time and DST correctness" in docs/place-activity-report-contract.md), so
+// this mirrors what a normal user means by "today" on the device in front
+// of them; the report's own per-Visit hour bucketing still resolves this
+// single-site install's actual host timezone independently.
+function todayLocalRange(): { start_at: string; end_at: string } {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { start_at: start.toISOString(), end_at: end.toISOString() };
+}
 
 function cameraHealthLabel(state: CameraHealthSummary["state"]): string {
   return {
@@ -133,6 +149,7 @@ export function DashboardPage({
   onOpenVisit,
 }: DashboardPageProps) {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [report, setReport] = useState<PlaceActivityReportResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
@@ -141,7 +158,6 @@ export function DashboardPage({
     Record<string, StreamRuntimeStatus>
   >({});
   const [storageSummary, setStorageSummary] = useState<StorageSummary | null>(null);
-  const [detectorStatus, setDetectorStatus] = useState<ModelAdapter | null>(null);
 
   const refreshDashboard = useCallback(async (initialLoad = false) => {
     if (initialLoad) {
@@ -150,15 +166,15 @@ export function DashboardPage({
       setIsRefreshing(true);
     }
     try {
-      const [nextSummary, monitoringStatuses, nextStorageSummary, nextDetectorStatus] = await Promise.all([
+      const [nextSummary, monitoringStatuses, nextStorageSummary, nextReport] = await Promise.all([
         apiClient.getDashboardSummary(),
         apiClient.getStreamMonitoringStatuses().catch(() => null),
         apiClient.getStorageRetentionSummary().catch(() => null),
-        apiClient.getModelAdapter("megadetector").catch(() => null),
+        apiClient.getPlaceActivityReport(todayLocalRange()).catch(() => null),
       ]);
       setSummary(nextSummary);
       setStorageSummary(nextStorageSummary);
-      setDetectorStatus(nextDetectorStatus);
+      setReport(nextReport);
       if (monitoringStatuses) {
         setDurableStatusByStream(
           Object.fromEntries(
@@ -235,7 +251,7 @@ export function DashboardPage({
     );
   }
 
-  const { headline, today } = summary;
+  const { today } = summary;
   return (
     <div className="page-stack dashboard-operations-page">
       <section className="dashboard-hero dashboard-operations-hero">
@@ -246,7 +262,7 @@ export function DashboardPage({
           />
           <h1>Today in Your Yard</h1>
           <p>
-            Notice detector-qualified wildlife, reviewed discoveries, and the few Visits that need your help on {summary.local_day}.
+            What visited, how often, and where — for {summary.local_day}.
           </p>
         </div>
         <div className="hero-actions">
@@ -287,25 +303,18 @@ export function DashboardPage({
         </div>
       ) : null}
 
-      <section aria-label="Today in Your Yard" className="page-stack">
-        <section className="dashboard-operations-metrics">
-          <div className="dashboard-operation-card">
-            <span>Animal Visits today</span>
-            <strong>{today.detector_qualified_animal_visit_count}</strong>
-            <small>Detector-qualified activity</small>
-          </div>
-          <button className="dashboard-operation-card" onClick={onOpenBirdLog} type="button">
-            <span>Confirmed birds</span>
-            <strong>{today.confirmed_bird_visit_count}</strong>
-            <small>{today.confirmed_species_count} confirmed species</small>
-          </button>
-          <button className="dashboard-operation-card" onClick={() => onOpenReview()} type="button">
-            <span>Needs your help</span>
-            <strong>{today.unresolved_animal_visit_count}</strong>
-            <small>{today.unresolved_animal_visit_count === 0 ? "All clear for now" : `MockingBird needs help with ${today.unresolved_animal_visit_count} visits`}</small>
-          </button>
-        </section>
+      <TodayReportPanel
+        configuredStreamCount={summary.headline.configured_stream_count}
+        isLoading={isLoading}
+        monitoredStreamCount={summary.headline.monitored_stream_count}
+        onAddCamera={onAddCamera}
+        onOpenBirdLog={onOpenBirdLog}
+        onOpenReview={() => onOpenReview()}
+        onOpenStreams={onOpenStreams}
+        report={report}
+      />
 
+      <section aria-label="Recent highlights" className="page-stack">
         <section className="panel">
           <div className="section-heading">
             <div>
@@ -332,33 +341,7 @@ export function DashboardPage({
           )}
         </section>
 
-        <section className="panel dashboard-likely-today">
-          <div className="section-heading">
-            <div>
-              <h2>Likely today</h2>
-              <span className="meta-text">Automatic AI species suggestions, awaiting your confirmation</span>
-            </div>
-            <StatusPill label="AI suggestion" tone="quiet" />
-          </div>
-          {today.likely_today.length > 0 ? (
-            <div className="dashboard-observation-list">
-              {today.likely_today.map((species) => (
-                <article className="dashboard-observation-row" key={species.label}>
-                  <VisitPreview visit={species.latest_visit} />
-                  <div>
-                    <strong>Likely {species.display_name}</strong>
-                    <span>Not yet confirmed</span>
-                  </div>
-                  <button className="primary-action" onClick={() => openVisitReview(species.latest_visit)} type="button">Confirm</button>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <EmptyState title="No pending AI suggestions" description="Automatic species suggestions appear here as soon as MockingBird finishes identifying a fresh Visit." />
-          )}
-        </section>
-
-        <section className="dashboard-observation-grid">
+        <section className="dashboard-observation-grid dashboard-secondary-section">
           <section className="panel">
             <div className="section-heading"><div><h2>New today</h2><span className="meta-text">First confirmed here today</span></div></div>
             {today.new_today.length > 0 ? today.new_today.map((species) => (
@@ -378,54 +361,6 @@ export function DashboardPage({
             )) : <EmptyState title="No regular species yet" description="Regulars appear after reviewed occurrences on three different local days." />}
           </section>
         </section>
-
-        <section className="dashboard-observation-grid">
-          <section className="panel"><div className="section-heading"><div><h2>Activity by Zone</h2><span className="meta-text">Detector-qualified animal Visits</span></div><button className="text-action" onClick={onOpenInsights} type="button">Zone Insights</button></div>
-            {today.activity_by_zone.length > 0 ? <div className="dashboard-observation-list">{today.activity_by_zone.map((zone) => <div className="dashboard-observation-row" key={zone.zone_id ?? zone.zone_name}><strong>{zone.zone_name}</strong><span>{zone.animal_visit_count} animal Visit{zone.animal_visit_count === 1 ? "" : "s"}</span></div>)}</div> : <EmptyState title="No Zone activity yet" description="Activity will be grouped by its existing Zone context." />}
-          </section>
-          <section className="panel"><div className="section-heading"><div><h2>Activity by hour</h2><span className="meta-text">Today’s detector-qualified animal Visits</span></div></div>
-            <div className="dashboard-observation-list">{today.activity_by_hour.filter((hour) => hour.animal_visit_count > 0).map((hour) => <div className="dashboard-observation-row" key={hour.hour}><strong>{hour.hour === 0 ? "12 AM" : hour.hour < 12 ? `${hour.hour} AM` : hour.hour === 12 ? "12 PM" : `${hour.hour - 12} PM`}</strong><span>{hour.animal_visit_count} animal Visit{hour.animal_visit_count === 1 ? "" : "s"}</span></div>)}</div>
-            {today.activity_by_hour.every((hour) => hour.animal_visit_count === 0) ? <EmptyState title="No animal activity by hour yet" description="Today’s activity pattern will appear as Visits arrive." /> : null}
-          </section>
-        </section>
-
-        <section className="panel dashboard-needs-review">
-          <div className="section-heading"><div><h2>Needs your help</h2><span className="meta-text">The newest animal Visits without a reviewed correction</span></div><button className="secondary-action" onClick={() => onOpenReview()} type="button">Open Review Queue</button></div>
-          {today.needs_help.length > 0 ? <div className="dashboard-visit-list">{today.needs_help.map((visit) => <article className="dashboard-visit-row" key={visit.id}><VisitPreview visit={visit} /><div><strong>{effectiveSpeciesText(visit) ?? "Animal detected — species not confirmed"}</strong><VisitContext visit={visit} /><span className="meta-text">{formatDateTime(visit.captured_at)}</span></div><button className="primary-action" onClick={() => openVisitReview(visit)} type="button">Confirm</button></article>)}</div> : <EmptyState title="No animal Visits need confirmation" description="Reviewed corrections stay separate from detector and suggestion evidence." />}
-        </section>
-      </section>
-
-      <section aria-label="Current operations" className="dashboard-operations-metrics">
-        <button className="dashboard-operation-card" onClick={onOpenStreams} type="button">
-          <span>Configured Streams</span>
-          <strong>{headline.configured_stream_count}</strong>
-          <small>Open Cameras / Streams</small>
-        </button>
-        <button className="dashboard-operation-card" onClick={onOpenStreams} type="button">
-          <span>Monitoring now</span>
-          <strong>{headline.monitored_stream_count}</strong>
-          <small>Explicitly started only</small>
-        </button>
-        <button className="dashboard-operation-card" onClick={onOpenStreams} type="button">
-          <span>Open activity sessions</span>
-          <strong>{headline.open_activity_session_count}</strong>
-          <small>Zone activity still in progress</small>
-        </button>
-        <button className="dashboard-operation-card" onClick={() => onOpenReview()} type="button">
-          <span>Animal candidates</span>
-          <strong>{headline.actionable_animal_visit_count}</strong>
-          <small>{headline.legacy_activity_count > 0 ? `${headline.legacy_activity_count} legacy activity items are secondary` : "Open Product Mode"}</small>
-        </button>
-        <button className="dashboard-operation-card" onClick={onOpenBirdLog} type="button">
-          <span>Reviewed observations today</span>
-          <strong>{headline.reviewed_observation_count_today}</strong>
-          <small>Correction-derived bird truth</small>
-        </button>
-        <div className="dashboard-operation-card">
-          <span>Detector</span>
-          <strong>{detectorStatus?.status === "available" ? "Ready" : "Unavailable"}</strong>
-          <small>{detectorStatus?.status === "available" ? "MegaDetector is ready for evidence proposals" : "Monitoring stays safe without it"}</small>
-        </div>
       </section>
 
       {monitorActionError ? <div className="dashboard-action-error" role="alert">{monitorActionError}</div> : null}
@@ -478,111 +413,6 @@ export function DashboardPage({
         runtimeByStream={durableStatusByStream}
         streams={summary.streams}
       />
-
-      <section className="panel dashboard-needs-review">
-        <div className="section-heading">
-          <div>
-            <h2>Current animal candidates</h2>
-            <span className="meta-text">Detector-qualified animal Visits · legacy activity remains secondary</span>
-          </div>
-          <button className="secondary-action" onClick={() => onOpenReview()} type="button">
-            Open Review Queue
-          </button>
-        </div>
-        {summary.actionable_animal_visits.length > 0 ? (
-          <div className="dashboard-visit-list">
-            {summary.actionable_animal_visits.map((visit) => (
-              <article className="dashboard-visit-row" key={visit.id}>
-                <VisitPreview visit={visit} />
-                <div>
-                  <strong>{formatDateTime(visit.captured_at)}</strong>
-                  <VisitContext visit={visit} />
-                  <span className="meta-text">
-                    {visit.evidence_frame_count > 1 ? `${visit.evidence_frame_count} evidence frames` : "One evidence frame"}
-                    {visit.has_suggestion ? ` · Suggestion: ${visit.suggested_label ? formatLabel(visit.suggested_label) : "available"}` : ""}
-                  </span>
-                </div>
-                <button className="primary-action" onClick={() => openVisitReview(visit)} type="button">
-                  Review
-                </button>
-              </article>
-            ))}
-          </div>
-        ) : (
-          <EmptyState
-            title="No detector-qualified animal Visits need review"
-            description="New detector-qualified animal activity appears here; legacy activity stays in its secondary Review Queue tab."
-            action={<button className="secondary-action" onClick={() => onOpenReview()} type="button">Open Review Queue</button>}
-          />
-        )}
-      </section>
-
-      <section className="dashboard-observation-grid">
-        <section className="panel">
-          <div className="section-heading">
-            <div>
-              <h2>Today’s Observations</h2>
-              <span className="meta-text">Reviewed bird observations only</span>
-            </div>
-            <button className="text-action" onClick={onOpenBirdLog} type="button">Open Bird Log</button>
-          </div>
-          {summary.today_observations.length > 0 ? (
-            <div className="dashboard-observation-list">
-              {summary.today_observations.map((observation) => (
-                <article className="dashboard-observation-row" key={observation.label}>
-                  <VisitPreview visit={observation.latest_visit} />
-                  <div>
-                    <strong>{observation.display_name}</strong>
-                    <span>{observation.observation_count} observation{observation.observation_count === 1 ? "" : "s"}</span>
-                    <VisitContext visit={observation.latest_visit} />
-                    <span className="meta-text">Latest {formatDateTime(observation.latest_visit.captured_at)}</span>
-                  </div>
-                  <button className="text-action" onClick={() => onOpenVisit(observation.latest_visit.id)} type="button">
-                    View
-                  </button>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <EmptyState
-              title="No reviewed bird observations today"
-              description="Corrections for bird Visits appear here; suggestions never count as observations."
-            />
-          )}
-        </section>
-
-        <section className="panel">
-          <div className="section-heading">
-            <div>
-              <h2>Reviewed activity</h2>
-              <span className="meta-text">Non-bird activity, not bird observations</span>
-            </div>
-            <StatusPill label="Activity" tone="quiet" />
-          </div>
-          {summary.reviewed_non_bird_activity.length > 0 ? (
-            <div className="dashboard-observation-list">
-              {summary.reviewed_non_bird_activity.map((observation) => (
-                <article className="dashboard-observation-row" key={observation.label}>
-                  <VisitPreview visit={observation.latest_visit} />
-                  <div>
-                    <strong>{observation.display_name}</strong>
-                    <span>{observation.observation_count} reviewed activity case{observation.observation_count === 1 ? "" : "s"}</span>
-                    <VisitContext visit={observation.latest_visit} />
-                  </div>
-                  <button className="text-action" onClick={() => onOpenVisit(observation.latest_visit.id)} type="button">
-                    View
-                  </button>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <EmptyState
-              title="No reviewed non-bird activity today"
-              description="People, pets, mammals, vehicles, and other reviewed activity stay separate from Bird observations."
-            />
-          )}
-        </section>
-      </section>
 
       <section className="panel dashboard-recent-activity">
         <div className="section-heading">

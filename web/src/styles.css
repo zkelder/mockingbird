@@ -1287,6 +1287,134 @@ a.secondary-action {
   gap: 14px;
 }
 
+/* Secondary, lower-priority context (currently "New today"/"Recent
+   regulars") -- kept, just visually quieter than the report-first summary
+   and Best moments above it, matching the milestone's information
+   hierarchy rather than competing with it. */
+.dashboard-secondary-section .section-heading h2 {
+  font-size: 1.05rem;
+}
+
+/* Report-first Today summary (Product Experience / UI Cohesion v1 Phase 1):
+   the headline species/visit counts, top-visitor list, and when/where facts
+   computed entirely from the Place Activity Report backend. Kept visually
+   calm -- big numbers, quiet dividers, no gradients or confidence meters. */
+.today-report {
+  display: grid;
+  gap: 16px;
+}
+
+.today-report-headline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 36px;
+}
+
+.today-report-stat {
+  display: grid;
+  gap: 2px;
+}
+
+.today-report-stat strong {
+  color: #1f3329;
+  font-size: 2.6rem;
+  line-height: 1.15;
+}
+
+.today-report-stat span {
+  color: #47563d;
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.today-report-species {
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid #e1e7dd;
+}
+
+.today-report-species-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.today-report-species-list li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #e1e7dd;
+  border-radius: 7px;
+  padding: 9px 12px;
+  background: #ffffff;
+}
+
+.today-report-species-list li span {
+  min-width: 0;
+  overflow: hidden;
+  color: #24382d;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.today-report-species-list li strong {
+  flex: 0 0 auto;
+  color: #2e6f5e;
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.today-report-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e1e7dd;
+}
+
+.today-report-fact {
+  display: grid;
+  flex: 1 1 180px;
+  min-width: 180px;
+  gap: 3px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: #f5f8f1;
+}
+
+.today-report-fact > span:first-child {
+  color: #526159;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.today-report-fact strong {
+  color: #1f3329;
+  font-size: 1.2rem;
+}
+
+.today-report-coverage-note {
+  max-width: 640px;
+  margin: 0;
+}
+
+.today-report-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-top: 8px;
+  border-top: 1px solid #e1e7dd;
+}
+
 .split-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1344,6 +1472,7 @@ a.secondary-action {
 
 .section-heading h2,
 .section-heading h1,
+.section-heading h3,
 .item-title-row h2,
 .item-title-row h3 {
   margin: 0;

@@ -393,7 +393,15 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
               ? null
               : { activity_sensitivity: sensitivity },
           }],
-          enable_monitoring: monitoringEnabled,
+          // Camera Node uses the Observation Engine (Start observing on the
+          // Stream page), never this guided setup's legacy durable-
+          // monitoring checkbox -- the backend rejects enable_monitoring
+          // for camera_node (`_reject_camera_node_legacy_monitoring_
+          // enable`, see "Camera ownership" in docs/runtime-map.md), and
+          // the checkbox itself is hidden below for this provider. Forced
+          // false here too so a stale sessionStorage draft saved before
+          // switching providers can never submit the rejected combination.
+          enable_monitoring: selected.provider_key === "camera_node" ? false : monitoringEnabled,
           idempotency_key: setupKey(),
         }),
         COMPLETE_TIMEOUT_MS,
@@ -510,8 +518,37 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
         <label>Area type<select value={zoneType} onChange={(event) => { const value = event.target.value as ZoneType; setZoneType(value); saveNodeDraft({ zone_type: value }); }}>{["feeder", "birdbath", "ground", "perch", "yard", "driveway", "privacy", "ignore"].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
         {zoneType !== "privacy" && zoneType !== "ignore" ? <label>Sensitivity<select value={sensitivity} onChange={(event) => { const value = event.target.value as ZoneActivitySensitivity; setSensitivity(value); saveNodeDraft({ sensitivity: value }); }}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option></select></label> : <p className="meta-text">This area is never watched -- it only hides activity there.</p>}
       </section>
-      <section className="panel page-stack"><h2>3. Start watching</h2><p><strong>Start watching</strong> means MockingBird watches this area while it is running. You can turn this on or off any time after setup too.</p><label><input checked={monitoringEnabled} onChange={(event) => { setMonitoringEnabled(event.target.checked); saveNodeDraft({ monitoring_enabled: event.target.checked }); }} type="checkbox" /> Start watching once setup finishes</label><span className="meta-text">Off is the safe default. Checking the camera never turns watching on.</span>
-        <button className="primary-action" disabled={finishBlockers.length > 0 || isCompleting} onClick={() => void complete()} type="button">{isCompleting ? "Finishing…" : monitoringEnabled ? "Finish and start watching" : "Finish without watching yet"}</button>
+      <section className="panel page-stack">
+        <h2>3. Start watching</h2>
+        {selected?.provider_key === "camera_node" ? (
+          // Camera Node monitoring is exclusively the accepted Observation
+          // Engine, started per-camera from the Stream page -- never this
+          // guided setup's legacy durable-monitoring checkbox (see "Camera
+          // Node monitoring-ownership rule" in docs/runtime-map.md). No
+          // checkbox is offered here, so there is nothing this page could
+          // submit that the backend would reject.
+          <>
+            <p>MockingBird Camera Node monitoring starts from this camera’s own Observation panel, not from this checklist.</p>
+            <span className="meta-text">
+              After you finish, open this camera’s Stream page and use <strong>Start observing</strong> whenever you’re ready. Finishing setup never turns monitoring on by itself.
+            </span>
+          </>
+        ) : (
+          <>
+            <p><strong>Start watching</strong> means MockingBird watches this area while it is running. You can turn this on or off any time after setup too.</p>
+            <label><input checked={monitoringEnabled} onChange={(event) => { setMonitoringEnabled(event.target.checked); saveNodeDraft({ monitoring_enabled: event.target.checked }); }} type="checkbox" /> Start watching once setup finishes</label>
+            <span className="meta-text">Off is the safe default. Checking the camera never turns watching on.</span>
+          </>
+        )}
+        <button className="primary-action" disabled={finishBlockers.length > 0 || isCompleting} onClick={() => void complete()} type="button">
+          {isCompleting
+            ? "Finishing…"
+            : selected?.provider_key === "camera_node"
+              ? "Finish setup"
+              : monitoringEnabled
+                ? "Finish and start watching"
+                : "Finish without watching yet"}
+        </button>
         {finishBlockers.length > 0 ? <ul className="meta-text finish-blockers">{finishBlockers.map((reason) => <li key={reason}>{reason}</li>)}</ul> : null}
         {error ? <div className="error-panel">{error}</div> : null}
       </section>

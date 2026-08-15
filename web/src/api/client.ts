@@ -83,6 +83,8 @@ import type {
   LocalBackupRestoreResponse,
   LocalBackupVerificationResponse,
   LocalDataStatus,
+  PlaceActivityReportRequest,
+  PlaceActivityReportResponse,
   ProductHealthStatus,
   SetupState,
   SetupStateUpdate,
@@ -1140,6 +1142,11 @@ export const apiClient = {
     }),
   getZoneInsights: (payload: ZoneInsightsRequest) =>
     request<ZoneInsightsSummary>("/api/analytics/zone-insights", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  getPlaceActivityReport: (payload: PlaceActivityReportRequest) =>
+    request<PlaceActivityReportResponse>("/api/analytics/place-activity-report", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

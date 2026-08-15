@@ -3888,6 +3888,88 @@ export interface ZoneInsightsSummary {
   warnings: string[];
 }
 
+// Place Activity Report (Reporting Foundation v1, see
+// docs/place-activity-report-contract.md): one deterministic, read-only
+// current-period report -- what wildlife appeared, how often, when, and
+// where. Every count is a Visit count, never an individual-animal count.
+// Mirrors `api.schemas.PlaceActivityReport*` field-for-field; this is the
+// one report-truth path the Today dashboard consumes -- do not recompute
+// any of these facts from raw Visits in frontend code.
+export interface PlaceActivityReportRequest {
+  start_at: string;
+  end_at: string;
+}
+
+export interface PlaceActivityReportTaxonEntry {
+  label: string;
+  display_name: string;
+  category: LabelCategory;
+  is_species: boolean;
+  confirmed_visit_count: number;
+  provisional_visit_count: number;
+  total_visit_count: number;
+  first_activity_at: string;
+  last_activity_at: string;
+}
+
+export interface PlaceActivityReportZoneActivity {
+  zone_id?: string | null;
+  zone_name: string;
+  wildlife_visit_count: number;
+}
+
+export interface PlaceActivityReportHourActivity {
+  hour: number;
+  wildlife_visit_count: number;
+}
+
+export interface PlaceActivityReportCoverageGap {
+  start_at: string;
+  end_at: string;
+  duration_seconds: number;
+}
+
+export interface PlaceActivityReportCoverage {
+  period_seconds: number;
+  monitored_seconds?: number | null;
+  coverage_ratio?: number | null;
+  history_available_from?: string | null;
+  history_is_partial: boolean;
+  gaps: PlaceActivityReportCoverageGap[];
+  gaps_truncated: boolean;
+}
+
+export interface PlaceActivityReportResponse {
+  period_start_at: string;
+  period_end_at: string;
+  timezone_name: string;
+  generated_at: string;
+
+  total_visit_count: number;
+  confirmed_wildlife_visit_count: number;
+  provisional_wildlife_visit_count: number;
+  unresolved_visit_count: number;
+  non_wildlife_visit_count: number;
+  excluded_visit_count: number;
+
+  confirmed_species_unresolved_visit_count: number;
+  wildlife_visit_count: number;
+
+  distinct_taxa_count: number;
+  distinct_species_count: number;
+  taxa: PlaceActivityReportTaxonEntry[];
+
+  first_activity_at?: string | null;
+  last_activity_at?: string | null;
+
+  activity_by_zone: PlaceActivityReportZoneActivity[];
+  busiest_zone?: PlaceActivityReportZoneActivity | null;
+  activity_by_hour: PlaceActivityReportHourActivity[];
+
+  coverage: PlaceActivityReportCoverage;
+  warnings: string[];
+}
+
 export type WildlifeJournalOrder =
   | "most_recent"
   | "most_observed"
