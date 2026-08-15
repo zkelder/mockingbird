@@ -2060,6 +2060,15 @@ export function StreamDetailPage({
   const liveSessionRunning = liveSession?.status === "running";
   const liveSessionStarting = liveSession?.status === "starting";
   const liveSessionFailed = liveSession?.status === "failed";
+  // Observation Engine deliberately paused this Stream's legacy live
+  // session to take exclusive Camera Node ownership (see
+  // `LiveCameraSessionManager.pause_for_observation`) -- a healthy,
+  // expected hand-off, never a camera failure. Everywhere below that would
+  // otherwise read raw `liveSession.status`/frame facts as if they always
+  // meant "the camera itself is broken" needs this to stay honest once
+  // Observation owns the camera (see the Unified Observation Experience's
+  // own already-correct language at `ObservationControlPanel`).
+  const liveSessionPausedForObservation = liveSession?.status === "paused";
   const liveMonitorRunning = Boolean(liveSession?.monitor_running || isLiveMonitoring);
   const nativeCameraControlsBlocked =
     liveMonitorRunning ||
@@ -2069,8 +2078,15 @@ export function StreamDetailPage({
     ? apiClient.liveCameraCurrentFrameUrl(detail.stream.id)
     : liveStreamUrl(detail.playback, detail.stream.id);
   const liveElementKey = `${liveUrl ?? "no-live-url"}-${liveViewReloadToken}`;
-  const liveViewStatusLabel =
-    backendLiveSessionSupported && liveSessionRunning && !liveViewOpen
+  // Checked first and unconditionally: a deliberate ownership pause must
+  // always win over `liveViewState`, which a doomed current-frame poll
+  // (see `CurrentFrameView`'s `onFrameChange` below) may otherwise have
+  // already forced to the more alarming "no_frames"/"failed" -- the exact
+  // stale/misleading-UI failure mode this component previously had no
+  // protection against.
+  const liveViewStatusLabel = liveSessionPausedForObservation
+    ? "Paused (Observation running)"
+    : backendLiveSessionSupported && liveSessionRunning && !liveViewOpen
       ? "Session running"
       : liveViewState === "streaming"
       ? "Streaming"
@@ -2080,11 +2096,10 @@ export function StreamDetailPage({
           ? "Failed"
           : liveViewState === "no_frames"
             ? "No frames"
-            : liveViewState === "paused" || liveSession?.status === "paused"
-              ? "Paused (Observation running)"
-              : "Ready";
-  const liveViewTone =
-    liveSessionFailed || liveViewState === "failed" || liveViewState === "no_frames"
+            : "Ready";
+  const liveViewTone = liveSessionPausedForObservation
+    ? "quiet"
+    : liveSessionFailed || liveViewState === "failed" || liveViewState === "no_frames"
       ? "review"
       : liveViewState === "streaming" || liveSessionRunning
         ? "good"
@@ -2276,7 +2291,9 @@ export function StreamDetailPage({
         ? "Best frame saved from the strongest live activity area."
         : (liveMotionResult?.activity_session_id ?? liveSession?.current_activity_session_id)
           ? "Best frame selected for this visit session."
-          : "Best frame is unavailable.";
+          : liveSessionPausedForObservation
+            ? "Best frame is unavailable while Observation Engine is watching this camera."
+            : "Best frame is unavailable.";
   const liveBestFrameUrl = liveBestMediaAssetId
     ? apiClient.mediaFileUrl(liveBestMediaAssetId)
     : null;
@@ -2605,7 +2622,8 @@ export function StreamDetailPage({
                   <strong>Session</strong> {formatLabel(liveSession?.status ?? "stopped")}
                 </span>
                 <span>
-                  <strong>Frames</strong> {liveSessionFrameCount}
+                  <strong>Live preview frames</strong> {liveSessionFrameCount}
+                  {liveSessionPausedForObservation ? " (paused)" : ""}
                 </span>
                 <span>
                   <strong>Runtime</strong> {liveSessionRuntimeLimit}
@@ -2761,7 +2779,10 @@ export function StreamDetailPage({
             </div>
             <div className="stream-live-primary-status" aria-label="Camera and monitor status">
               <span>
-                <strong>Camera</strong> {formatLabel(liveSession?.status ?? "stopped")}
+                <strong>Camera</strong>{" "}
+                {liveSessionPausedForObservation
+                  ? "Observing"
+                  : formatLabel(liveSession?.status ?? "stopped")}
               </span>
               <span>
                 <strong>Live view</strong> {liveViewOpen ? "visible" : "hidden"}
@@ -2802,7 +2823,14 @@ export function StreamDetailPage({
                 </span>
               ) : null}
             </div>
-            {liveStatusNotice ? (
+            {liveSessionPausedForObservation ? (
+              <div className="stream-live-inline-status">
+                <strong>
+                  {liveSession?.message ??
+                    "Live view is paused while Observation Engine is watching this camera."}
+                </strong>
+              </div>
+            ) : liveStatusNotice ? (
               <div className="stream-live-inline-status">
                 <strong>{liveStatusNotice}</strong>
               </div>
@@ -3366,7 +3394,27 @@ export function StreamDetailPage({
 
           <div className={`stream-live-frame${drawMode ? " draw-mode" : ""}`}>
             <div className="stream-live-media-layer">
-              {cameraNodePlayback ? (
+              {cameraNodePlayback && liveSessionPausedForObservation && liveViewOpen ? (
+                // Observation owns the camera right now: the current-frame
+                // endpoint deterministically 409s (see
+                // `get_stream_live_camera_current_frame`), so polling it
+                // here would only ever manufacture a "no_frames" failure
+                // signal out of a healthy, expected hand-off. Only
+                // intervenes once the user actually asks to see live view
+                // (`liveViewOpen`) -- otherwise unchanged, `CurrentFrameView`
+                // already shows a calm "hidden" placeholder without polling
+                // anything. Never mount `CurrentFrameView` while paused *and
+                // requested* -- show the same honest, already-computed
+                // backend explanation instead of inventing a new preview
+                // pipeline (Observation does not expose one).
+                <div className="stream-live-placeholder current-frame-empty">
+                  <strong>Live preview paused</strong>
+                  <span>
+                    {liveSession?.message ??
+                      "Live view is paused while Observation Engine is watching this camera."}
+                  </span>
+                </div>
+              ) : cameraNodePlayback ? (
                 <CurrentFrameView
                   active={liveViewOpen}
                   alt={`${detail.stream.name} current camera frame`}

@@ -3844,6 +3844,77 @@ async def test_current_frame_endpoint_labels_stale_frames_without_starting_a_ses
     assert starts == []
 
 
+# --- Live-view / monitoring ownership projection (2026-08-14/15 live Camera
+# Node investigation): Observation Engine deliberately pauses this Stream's
+# legacy live session for exclusive Camera Node ownership before it starts
+# pulling frames (`LiveCameraSessionManager.pause_for_observation`, called
+# from `engine_runtime._EngineSession._run`). Proven live on real
+# Pi/Windows/CUDA hardware to be a healthy hand-off -- Camera Node capture,
+# Observation Engine's own heartbeat, and detector activity all stayed
+# continuously healthy for 13.6 minutes while only this legacy session and
+# its current-frame endpoint went quiet -- but no existing test proved the
+# current-frame endpoint's own reaction to that specific paused state at the
+# HTTP layer (tests/test_live_camera_session.py already covers
+# `pause_for_observation`'s call discipline in isolation; this is the
+# missing wire-contract link). Exercises the manager's real `pause()`
+# method -- only the underlying ffmpeg process is faked -- not a bare status
+# stand-in, so the ownership transition itself is not mocked away.
+async def test_current_frame_endpoint_returns_409_while_paused_for_observation(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    encoded, raw_frame = api_main.cv2.imencode(
+        ".jpg", np.zeros((8, 8, 3), dtype=np.uint8),
+    )
+    assert encoded is True
+    session_frame = raw_frame.tobytes()
+    fake_process = FakeFfmpegProcess([b"noise" + session_frame])
+    monkeypatch.setattr(
+        "mockingbird.playback.local_camera_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "mockingbird.api.main.local_camera_bridge.start_local_camera_mjpeg_process",
+        lambda device, **kwargs: fake_process,
+    )
+    await configure_local_usb_camera(client, device="/dev/video0")
+
+    start_response = await client.post(f"/api/streams/{STREAM_ID}/live-session/start")
+    assert start_response.status_code == 200
+    running_status = await wait_for_live_session_frame_count(client, STREAM_ID, minimum=1)
+    assert running_status["status"] == "running"
+
+    # A frame is genuinely available before the pause -- proves the 409
+    # asserted below is caused by the pause, not by an empty cache.
+    healthy_response = await client.get(f"/api/streams/{STREAM_ID}/live-session/current-frame")
+    assert healthy_response.status_code == 200
+
+    paused_snapshot = get_live_camera_session_manager().pause_for_observation(STREAM_ID)
+    assert paused_snapshot is not None
+    assert paused_snapshot.status == "paused"
+
+    paused_status = (
+        await client.get(f"/api/streams/{STREAM_ID}/live-session/status")
+    ).json()
+    assert paused_status["status"] == "paused"
+    # The same honest, ownership-aware message the product UI now surfaces
+    # directly (Stream Detail's live-view panel), not a generic failure.
+    assert paused_status["message"] == (
+        "Live view is paused while Observation Engine is watching this camera."
+    )
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/live-session/current-frame")
+
+    assert response.status_code == 409
+    # Honest about *why* -- never phrased as though the camera itself failed.
+    assert "not active" in response.json()["detail"]
+
+    # The pause is never silently undone by a normal viewing GET -- only
+    # `resume_after_observation` (or an explicit Stop) may restart it.
+    still_paused = (
+        await client.get(f"/api/streams/{STREAM_ID}/live-session/status")
+    ).json()
+    assert still_paused["status"] == "paused"
 
 
 async def test_live_camera_session_mjpeg_uses_existing_session_without_new_reader(
