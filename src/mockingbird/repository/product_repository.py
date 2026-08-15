@@ -96,6 +96,7 @@ from mockingbird.species.classifier_input import (
     resolve_classifier_input,
 )
 from mockingbird import review_provenance
+from mockingbird.wildlife_taxonomy import is_wildlife_category
 from mockingbird.species.bioclip_adapter import (
     BIOCLIP_ADAPTER_ID,
     BIOCLIP_ADAPTER_NAME,
@@ -11558,12 +11559,25 @@ class ProductRepository:
         return any(session.scalar(query.limit(1)) is not None for query in reference_queries)
 
     def _storage_visit_is_wildlife(self, session: Session, visit: VisitModel) -> bool:
+        """Fail-closed retention check: does this Visit's label mean wildlife?
+
+        Routes the taxonomy-matched branch through the shared
+        `wildlife_taxonomy.is_wildlife_category` denylist (also used by
+        `analytics.place_activity_report`) instead of a second local
+        `{"bird", "mammal"}` allowlist, so a future wildlife taxonomy
+        category (reptile, amphibian, ...) is protected from storage
+        cleanup automatically instead of silently falling outside this
+        retention guard until this method is separately updated. The
+        untaxonomized fallback below is unrelated (no taxonomy row to read
+        a category from) and is unchanged.
+        """
+
         label = (visit.reviewed_label or visit.subject_label or "").strip()
         taxonomy = session.scalar(
             select(TaxonomyLabelModel).where(TaxonomyLabelModel.label == label)
         )
         if taxonomy is not None:
-            return taxonomy.category in {LabelCategory.bird.value, LabelCategory.mammal.value}
+            return is_wildlife_category(taxonomy.category)
         return label in {"bird", "unknown_bird", "wildlife"}
 
     def _storage_visit_required_by_export(self, session: Session, visit: VisitModel) -> bool:

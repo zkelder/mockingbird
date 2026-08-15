@@ -434,6 +434,10 @@ paths and must not be committed.
   storage, and lifecycle boundaries
 - [docs/development-workflow.md](docs/development-workflow.md): validation tiers
   and change workflow
+- [docs/runtime-map.md](docs/runtime-map.md): concrete file-level ownership map
+  and the production-vs-research code boundary
+- [CONTRIBUTING.md](CONTRIBUTING.md): practical setup, test, and commit workflow
+  for a first-time contributor
 
 Focused feature contracts remain under `docs/` and are routed by `AGENTS.md`.
 

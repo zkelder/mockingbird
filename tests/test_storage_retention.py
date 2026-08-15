@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import func, select
 
 from mockingbird.api.schemas import (
+    LabelCategory,
     StorageCleanupExecuteRequest,
     StorageCleanupPurgeRequest,
     StorageCleanupRestoreRequest,
@@ -23,9 +24,11 @@ from mockingbird.storage.models import (
     StorageCleanupItemModel,
     StorageRetentionSettingsModel,
     StreamModel,
+    TaxonomyLabelModel,
     VisitEvidenceLinkModel,
     VisitModel,
 )
+from mockingbird.wildlife_taxonomy import is_wildlife_category
 
 
 @pytest.fixture
@@ -816,3 +819,117 @@ def test_same_frame_evidence_is_ordinary_secondary_evidence_not_immortal(
         ).all()
         assert len(remaining_links) == 1
         assert remaining_links[0].media_asset_id == "retention-same-frame-primary"
+
+
+def test_storage_visit_is_wildlife_matches_the_shared_wildlife_taxonomy_predicate(
+    repository: ProductRepository,
+) -> None:
+    """`_storage_visit_is_wildlife`'s taxonomy-matched branch now routes
+    through the shared `wildlife_taxonomy.is_wildlife_category` denylist
+    (see product_repository.py) instead of its own local
+    `{"bird", "mammal"}` allowlist. This proves the retention check agrees
+    with that shared predicate for every current `LabelCategory` -- not
+    only the two values the old inline set happened to hardcode -- so a
+    future wildlife category is protected from cleanup automatically
+    rather than silently falling outside this guard. The untaxonomized
+    fallback (no matching taxonomy row) is unrelated to this consolidation
+    and is checked unchanged at the end.
+    """
+
+    now = datetime.now(UTC)
+    with repository.session_factory() as session:
+        stream = session.scalar(select(StreamModel).order_by(StreamModel.id))
+        assert stream is not None
+        stream_id = stream.id
+
+    cases = [
+        ("test-wildlife-bird", LabelCategory.bird.value, True),
+        ("test-wildlife-mammal", LabelCategory.mammal.value, True),
+        ("test-wildlife-pet", LabelCategory.pet.value, False),
+        ("test-wildlife-person", LabelCategory.person.value, False),
+        ("test-wildlife-vehicle", LabelCategory.vehicle.value, False),
+        ("test-wildlife-object", LabelCategory.object.value, False),
+        ("test-wildlife-false-positive", LabelCategory.false_positive.value, False),
+        ("test-wildlife-unknown", LabelCategory.unknown.value, False),
+    ]
+    with repository.session_factory() as session:
+        with session.begin():
+            for label, category, _expected in cases:
+                session.add(
+                    TaxonomyLabelModel(
+                        id=f"{label}-taxon",
+                        label=label,
+                        display_name=label,
+                        category=category,
+                        aliases_json="[]",
+                        is_species=False,
+                        is_reviewable=True,
+                    )
+                )
+                session.add(
+                    EventModel(
+                        id=f"{label}-event",
+                        stream_id=stream_id,
+                        title="wildlife-taxonomy consolidation check",
+                        event_type="activity",
+                        started_at=now,
+                        ended_at=now,
+                        primary_zone_id=None,
+                        review_status="reviewed",
+                    )
+                )
+                session.add(
+                    VisitModel(
+                        id=f"{label}-visit",
+                        event_id=f"{label}-event",
+                        subject_label=label,
+                        species_guess=None,
+                        confidence=None,
+                        reviewed_label=label,
+                        review_status="reviewed",
+                        representative_media_path=None,
+                        zone_id=None,
+                        is_superseded=False,
+                    )
+                )
+
+    with repository.session_factory() as session:
+        for label, category, expected in cases:
+            visit = session.get(VisitModel, f"{label}-visit")
+            assert visit is not None
+            result = repository._storage_visit_is_wildlife(session, visit)
+            assert result is expected, f"category={category} expected wildlife={expected}"
+            assert result is is_wildlife_category(category)
+
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                EventModel(
+                    id="untaxonomized-event",
+                    stream_id=stream_id,
+                    title="untaxonomized fallback check",
+                    event_type="activity",
+                    started_at=now,
+                    ended_at=now,
+                    primary_zone_id=None,
+                    review_status="reviewed",
+                )
+            )
+            session.add(
+                VisitModel(
+                    id="untaxonomized-visit",
+                    event_id="untaxonomized-event",
+                    subject_label="wildlife",
+                    species_guess=None,
+                    confidence=None,
+                    reviewed_label="wildlife",
+                    review_status="reviewed",
+                    representative_media_path=None,
+                    zone_id=None,
+                    is_superseded=False,
+                )
+            )
+    with repository.session_factory() as session:
+        visit = session.get(VisitModel, "untaxonomized-visit")
+        assert visit is not None
+        assert repository._storage_visit_is_wildlife(session, visit) is True

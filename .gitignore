@@ -41,3 +41,11 @@ exports/
 # Logs
 *.log
 logs/
+
+# Local dev-checkout runtime markers (mockingbird/runtime_state.py). A
+# development checkout with no MOCKINGBIRD_HOME set resolves its runtime home
+# to the repository root itself (runtime.py:resolve_runtime_home), so a real
+# `python -m mockingbird` launch writes these small local lifecycle files
+# directly here rather than under the already-ignored data/ tree.
+/runtime_state.json
+/instance_identity.json

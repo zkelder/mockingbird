@@ -587,7 +587,24 @@ export function LiveCameraOverview({
                     Review this Stream
                   </button>
                 ) : null}
-                {onToggleMonitoring && runtime ? (
+                {/* `runtime` (StreamRuntimeStatus) always resolves from the
+                    *legacy* durable-monitoring-policy subsystem
+                    (list_stream_monitoring_statuses has no provider filter),
+                    so it is truthy even for a `camera_node` Stream that has
+                    never used that subsystem. A paired Camera Node is
+                    exclusively governed by the accepted Observation Engine's
+                    own Start/Stop control and its Stage 7 admission gate
+                    (see unified_status.resolve_observation_runtime); arming
+                    this legacy toggle here would durably start an
+                    ungated zone-motion session against the same camera --
+                    including auto-created Visits with none of that gate's
+                    quality checks -- and keep silently resuming it every
+                    time Observation later stops
+                    (LiveCameraSessionManager.resume_after_observation).
+                    Hidden here for camera_node, exactly like "Show/Stop live
+                    view" above, rather than routing this Stream type
+                    through a control it must never use. */}
+                {onToggleMonitoring && runtime && stream.playback_kind !== "camera_node" ? (
                   <button className="text-action" onClick={() => onToggleMonitoring(stream, runtime)} type="button">
                     {runtime.desired_mode === "armed" ? "Disable monitoring" : "Enable monitoring"}
                   </button>
