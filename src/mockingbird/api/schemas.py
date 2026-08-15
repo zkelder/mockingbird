@@ -4403,6 +4403,126 @@ class ZoneInsightsSummary(BaseModel):
     warnings: list[str] = Field(default_factory=list, max_length=16)
 
 
+class PlaceActivityReportRequest(BaseModel):
+    """An explicit, bounded reporting period for one Place Activity Report
+    (see docs/place-activity-report-contract.md). Timezone is resolved
+    server-side from the same existing product convention every other local-
+    time analytics surface uses (`ProductRepository.place_activity_report`);
+    it is not a caller-supplied field -- MockingBird is a single-site,
+    local-first product with no per-Place timezone setting today."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    start_at: datetime
+    end_at: datetime
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "PlaceActivityReportRequest":
+        if self.end_at <= self.start_at:
+            raise ValueError("place_activity_report_end_must_follow_start")
+        if self.end_at - self.start_at > timedelta(days=366):
+            raise ValueError("place_activity_report_range_must_not_exceed_366_days")
+        return self
+
+
+class PlaceActivityReportTaxonEntry(BaseModel):
+    """One represented taxon and its Visit-count backing. `confirmed_visit_
+    count`/`provisional_visit_count` are always kept separate -- see "Report
+    truth precedence" in docs/place-activity-report-contract.md."""
+
+    label: str
+    display_name: str
+    category: LabelCategory
+    is_species: bool
+    confirmed_visit_count: int = Field(ge=0)
+    provisional_visit_count: int = Field(ge=0)
+    total_visit_count: int = Field(ge=0)
+    first_activity_at: datetime
+    last_activity_at: datetime
+
+
+class PlaceActivityReportZoneActivity(BaseModel):
+    # `zone_id is None` is the "No Zone" bucket (see NO_ZONE_LABEL in
+    # place_activity_report.py); it can appear here but is never
+    # `busiest_zone`.
+    zone_id: str | None = None
+    zone_name: str
+    wildlife_visit_count: int = Field(ge=0)
+
+
+class PlaceActivityReportHourActivity(BaseModel):
+    hour: int = Field(ge=0, le=23)
+    wildlife_visit_count: int = Field(ge=0)
+
+
+class PlaceActivityReportCoverageGap(BaseModel):
+    start_at: datetime
+    end_at: datetime
+    duration_seconds: float = Field(ge=0)
+
+
+class PlaceActivityReportCoverage(BaseModel):
+    """Monitoring coverage for the reporting period, from durable exposure
+    history only -- never inferred from Visit timestamps, camera
+    configuration, or current runtime state. `monitored_seconds`/
+    `coverage_ratio` are `None` when no durable exposure history exists yet
+    for the reported scope; that is an honest "not yet computable" signal,
+    never a fabricated number. See "Monitoring coverage" in
+    docs/place-activity-report-contract.md."""
+
+    period_seconds: float = Field(ge=0)
+    monitored_seconds: float | None = Field(default=None, ge=0)
+    coverage_ratio: float | None = Field(default=None, ge=0, le=1)
+    history_available_from: datetime | None = None
+    history_is_partial: bool = False
+    gaps: list[PlaceActivityReportCoverageGap] = Field(default_factory=list, max_length=20)
+    gaps_truncated: bool = False
+
+
+class PlaceActivityReportResponse(BaseModel):
+    """One deterministic current-period activity report for a Place (see
+    docs/place-activity-report-contract.md). Every count is a Visit count,
+    never an individual-animal count -- the same bird can create several
+    Visits, and MockingBird has no individual-animal identity model."""
+
+    period_start_at: datetime
+    period_end_at: datetime
+    timezone_name: str
+    generated_at: datetime
+
+    # Honest accounting: these five buckets always sum to total_visit_count.
+    total_visit_count: int = Field(ge=0)
+    confirmed_wildlife_visit_count: int = Field(ge=0)
+    provisional_wildlife_visit_count: int = Field(ge=0)
+    unresolved_visit_count: int = Field(ge=0)
+    non_wildlife_visit_count: int = Field(ge=0)
+    excluded_visit_count: int = Field(ge=0)
+
+    # Subset of confirmed_wildlife_visit_count with no resolvable taxon -- a
+    # human confirmed real wildlife but abstained on species/kind (an
+    # "unknown_bird"/"unknown_animal" correction).
+    confirmed_species_unresolved_visit_count: int = Field(ge=0)
+    # Headline count: confirmed + provisional wildlife Visits together.
+    wildlife_visit_count: int = Field(ge=0)
+
+    distinct_taxa_count: int = Field(ge=0)
+    distinct_species_count: int = Field(ge=0)
+    taxa: list[PlaceActivityReportTaxonEntry] = Field(default_factory=list)
+
+    first_activity_at: datetime | None = None
+    last_activity_at: datetime | None = None
+
+    activity_by_zone: list[PlaceActivityReportZoneActivity] = Field(default_factory=list)
+    busiest_zone: PlaceActivityReportZoneActivity | None = None
+    # Always exactly 24 entries (hour 0-23), even when an hour had no activity.
+    activity_by_hour: list[PlaceActivityReportHourActivity] = Field(
+        default_factory=list, max_length=24
+    )
+
+    coverage: PlaceActivityReportCoverage
+    warnings: list[str] = Field(default_factory=list, max_length=10)
+
+
 class WildlifeJournalOrder(str, Enum):
     most_recent = "most_recent"
     most_observed = "most_observed"

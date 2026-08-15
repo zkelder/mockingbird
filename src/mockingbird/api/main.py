@@ -246,6 +246,8 @@ from mockingbird.api.schemas import (
     ObservationProviderHealthResponse,
     ObservationSessionCounts,
     ObservationSessionStatusResponse,
+    PlaceActivityReportRequest,
+    PlaceActivityReportResponse,
     SourceFolderImportPreviewRequest,
     SourceFolderImportPreviewResponse,
     SourceProviderConfiguration,
@@ -13427,6 +13429,21 @@ async def get_wildlife_insights(
     """Return bounded current reviewed-truth insights for the Analytics page."""
 
     return get_repository().wildlife_insights(payload)
+
+
+@app.post(
+    "/api/analytics/place-activity-report",
+    response_model=PlaceActivityReportResponse,
+)
+async def get_place_activity_report(
+    payload: PlaceActivityReportRequest,
+) -> PlaceActivityReportResponse:
+    """Return one deterministic, read-only Place activity report for an
+    explicit reporting period (see docs/place-activity-report-contract.md).
+    Reuses canonical reviewed-truth resolution and durable monitoring
+    exposure history; creates no review/Observation/product state."""
+
+    return get_repository().place_activity_report(payload)
 
 
 @app.get("/api/alerts/unread", response_model=ProductAlertUnreadResponse)

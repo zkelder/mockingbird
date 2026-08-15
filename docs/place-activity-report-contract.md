@@ -5,8 +5,9 @@ read-only reporting foundation the future "Today in Your Yard" and history
 dashboards build on: what wildlife appeared, how often it visited, when,
 and where, for one reporting period. It is a pure computation layer, the
 same shape as the existing `mockingbird.analytics.zone_insights` --
-`ProductRepository.zone_insights` is the precedent for how a future
-repository-side adapter is expected to feed it real data.
+`ProductRepository.zone_insights` was the precedent for the repository-side
+adapter that now feeds it real data, `ProductRepository.
+place_activity_report` (see "Integration," below).
 
 This is the **reporting foundation**, not "Place Intelligence" itself:
 [product-doctrine.md](product-doctrine.md) reserves that name for the
@@ -38,11 +39,12 @@ Every Visit resolves to exactly one state before it is counted, matching
    any known taxonomy row. Counted (`unresolved_visit_count`), never
    guessed into a species.
 
-This precedence is not re-derived here: a future adapter is expected to
-build `VisitFact` from `ProductRepository._stream_visit_summary_from_models`
-/ `_visit_review_outcome` output, the same canonical per-Visit resolver
-`zone_insights` already reuses. This module's own `_classify` only ever
-*sorts* an already-resolved fact into a report bucket.
+This precedence is not re-derived here: the repository-side adapter builds
+`VisitFact` from `ProductRepository._stream_visit_summary_from_models`
+output (`mockingbird.analytics.place_activity_report_adapter.
+visit_fact_from_stream_visit_summary`), the same canonical per-Visit
+resolver `zone_insights` already reuses. This module's own `_classify` only
+ever *sorts* an already-resolved fact into a report bucket.
 
 ## Wildlife classification boundary
 
@@ -131,24 +133,70 @@ audio, weather, eBird, iNaturalist, or any other external source -- see
 [product-doctrine.md](product-doctrine.md). Nothing in this module's shape
 currently prevents adding them later as their own extensions.
 
-## Integration (the one remaining step)
+## Integration (complete)
 
-This milestone deliberately stops at the pure computation layer plus its
-typed result -- no API route, no repository method, no schema/migration
-change (see the milestone's explicit freeze list). The one integration
-step for a future task: a `ProductRepository` method that
+Place Intelligence Repository/API Integration v1 wired this pure
+computation layer to durable product state. No schema/migration change was
+needed: every fact the report uses (`VisitModel`/`EventModel`/
+`ReviewLabelModel`/`SpeciesSuggestionModel`/`TaxonomyLabelModel`/
+`MonitoringExposureIntervalModel`) already existed and was already durable.
 
-1. fetches `StreamVisitSummary` rows the same way `zone_insights()`
-   already does (reusing `_stream_visit_summary_from_models`),
-2. adapts each into a `VisitFact` (`confirmed_taxon`/`provisional_taxon`
-   from a `_taxonomy_label_model_for_input` lookup on `reviewed_label`/
-   `suggested_label`),
-3. optionally fetches `MonitoringExposureIntervalModel` rows per in-scope
-   Stream and calls `compute_coverage_summary`, and
-4. calls `compute_place_activity_report` and returns the typed result
-   (via a new Pydantic response schema, the same pairing `ZoneInsightsSummary`
-   already provides for `zone_insights`).
+`ProductRepository.place_activity_report` (`product_repository.py`, next to
+`zone_insights`/`wildlife_insights`) is the one new repository method --
+exactly like `zone_insights` and `dashboard_summary`, no separate service
+was warranted. It:
 
-No new service is warranted for this: it is a natural new method on the
-existing `ProductRepository`, exactly like `zone_insights` and
-`dashboard_summary` already are.
+1. resolves an explicit, caller-supplied `[start_at, end_at)` UTC period
+   (`PlaceActivityReportRequest`, validated the same way
+   `ZoneInsightsRequest` is: `end_at` must follow `start_at`, span capped at
+   366 days) and the Place-local timezone the same way every other
+   local-time analytics surface already does --
+   `(now or datetime.now().astimezone()).astimezone()` -- rather than a
+   caller-supplied field, since MockingBird has no per-Place timezone
+   setting today. This is a fixed-offset snapshot resolved once per call
+   from the generation moment, DST-correct *for that moment* but not
+   per-day across a period that itself straddles a transition -- the same
+   known characteristic every existing local-time surface already has; see
+   `test_local_offset_resolves_correctly_for_the_generation_moment` in
+   tests/test_place_activity_report_repository.py.
+2. fetches every non-archived Stream's in-scope Visits and adapts each into
+   a `StreamVisitSummary` via `_stream_visit_summary_from_models`, the same
+   canonical per-Visit resolver `zone_insights`/`wildlife_insights` already
+   reuse, unmodified -- truth precedence can never diverge from either.
+3. resolves `confirmed_taxon`/`provisional_taxon` from `reviewed_label`/
+   `suggested_label` through a report-scoped taxonomy index
+   (`_taxonomy_label_index`) that preloads the whole (small, bounded)
+   taxonomy table once per report call instead of once per Visit.
+   `_taxonomy_label_model_for_input` itself is intentionally left
+   unmodified -- it backs many truth-writing paths
+   (`_normalize_label_from_session` alone underlies every review-correction
+   creation path), so a reporting-only performance concern is not a reason
+   to change its signature. This does not eliminate every `taxonomy_labels`
+   query the report issues: `_stream_visit_summary_from_models`'s own
+   `_visit_review_outcome` still costs one such query per reviewed Visit
+   with a real species label, exactly like it already costs
+   `zone_insights`/`wildlife_insights` in production today -- out of scope
+   to change here (see `_taxonomy_label_index`'s docstring and
+   `test_taxonomy_resolution_adds_no_second_per_visit_query`).
+4. resolves Place-wide monitoring coverage (`_place_activity_coverage_
+   summary`) from durable `MonitoringExposureIntervalModel` history across
+   every in-scope Stream in at most two queries total (a grouped `MIN` plus
+   a ranged interval fetch) rather than the O(Streams) round trips
+   `_zone_insights_exposure` costs by running once per Stream, applying the
+   same all-or-nothing honesty policy `zone_insights`' own aggregate-
+   exposure construction uses.
+5. calls `compute_place_activity_report`/`compute_coverage_summary` and
+   adapts the typed result into `PlaceActivityReportResponse` through a
+   new, deliberately small pure adapter module,
+   `mockingbird.analytics.place_activity_report_adapter` -- kept out of the
+   already-very-large `product_repository.py`/`api/schemas.py` pairing so
+   this translation stays independently readable, mirroring the `zone_
+   insights`/`ZoneInsightsSummary` pairing's shape without adding to either
+   file's bulk.
+
+`POST /api/analytics/place-activity-report` (`api/main.py`, next to
+`zone-insights`/`wildlife-insights`) is the one new read-only route,
+returning `PlaceActivityReportResponse`. It performs no independent report
+math and creates no review/Observation/product state -- see
+tests/test_place_activity_report_repository.py's read-only and API
+serialization coverage.
