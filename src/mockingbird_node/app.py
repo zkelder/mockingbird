@@ -406,17 +406,24 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
                     image, width, height = await asyncio.to_thread(
                         capture_analysis_frame, camera_id
                     )
-                except ValueError:
-                    # The physical camera is exclusively owned by one capture
-                    # at a time (see PiCamera2Provider.snapshot's bounded
-                    # lock). A concurrent evidence/high-resolution capture or
-                    # profile switch can legitimately hold it longer than one
-                    # analysis frame's budget, and this raises the same
-                    # ValueError capture_response already treats as a normal,
-                    # classifiable outcome (camera_busy and friends). Miss
-                    # this frame rather than fail the whole stream over an
-                    # expected, transient condition -- callers already treat
-                    # a sequence gap as a normal, non-fatal degraded signal
+                except ValueError as error:
+                    if str(error) != "camera_busy":
+                        # Only the specific, expected transient condition --
+                        # the physical camera being exclusively held by
+                        # another capture (see PiCamera2Provider.snapshot's
+                        # bounded lock) -- is safe to miss a frame over.
+                        # Anything else (analysis_profile_unavailable,
+                        # camera_permission_denied, provider_reset_required,
+                        # etc.) is a real configuration/programming failure
+                        # that would otherwise degrade every frame of every
+                        # stream forever with zero signal. Let it propagate.
+                        raise
+                    # A concurrent evidence/high-resolution capture or
+                    # profile switch can legitimately hold the lock longer
+                    # than one analysis frame's budget. Miss this frame
+                    # rather than fail the whole stream over an expected,
+                    # transient condition -- callers already treat a
+                    # sequence gap as a normal, non-fatal degraded signal
                     # (see CameraNodeAnalysisSource._offer).
                     if sequence < maximum_frames:
                         await asyncio.sleep(1.0 / _ANALYSIS_NOMINAL_FPS)

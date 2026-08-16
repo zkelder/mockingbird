@@ -311,9 +311,16 @@ class _ContendedProvider:
 
     CAMERA_ID = "contended-camera-1"
 
-    def __init__(self, *, fail_on: frozenset[int] = frozenset(), always_fail: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        fail_on: frozenset[int] = frozenset(),
+        always_fail: bool = False,
+        fail_value: str = "camera_busy",
+    ) -> None:
         self._fail_on = fail_on
         self._always_fail = always_fail
+        self._fail_value = fail_value
         self.calls = 0
 
     def cameras(self) -> list[NodeCamera]:
@@ -344,7 +351,7 @@ class _ContendedProvider:
     def snapshot(self, camera_id: str, *, profile_id: str | None = None) -> bytes:
         self.calls += 1
         if self._always_fail or self.calls in self._fail_on:
-            raise ValueError("camera_busy")
+            raise ValueError(self._fail_value)
         return _JPEG
 
     def close(self) -> None:
@@ -406,6 +413,34 @@ async def test_analysis_stream_ends_cleanly_when_camera_never_recovers(
     assert content.count(b"Content-Type: image/jpeg") == 0
     assert content == b"--mockingbird-analysis-frame--\r\n"
     assert provider.calls == 4
+
+
+@pytest.mark.anyio
+async def test_analysis_stream_does_not_swallow_unrelated_value_error(
+    tmp_path,
+) -> None:
+    """Only the specific, expected-transient ``camera_busy`` signal may miss
+    a frame and continue. Any other ValueError code -- e.g. a real
+    configuration failure such as ``analysis_profile_unavailable`` or
+    ``camera_permission_denied`` -- must still propagate out of the stream
+    instead of silently degrading every frame forever with zero signal."""
+
+    provider = _ContendedProvider(
+        fail_on=frozenset({2}), fail_value="camera_permission_denied"
+    )
+    app = create_node_app(_node_config(tmp_path), provider=provider)
+    endpoint = _analysis_endpoint(app)
+
+    stream = await endpoint(
+        _ContendedProvider.CAMERA_ID, _ConnectedRequest(), "5", "paired"
+    )
+    with pytest.raises(ValueError, match="camera_permission_denied"):
+        [part async for part in stream.body_iterator]
+    # The first frame (call 1) must have already been yielded before the
+    # second call's unrelated failure ends the stream -- this proves the
+    # propagation happens at the failing frame, not before the stream ever
+    # starts producing output.
+    assert provider.calls == 2
 
 
 @pytest.mark.anyio
