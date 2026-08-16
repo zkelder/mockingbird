@@ -191,6 +191,47 @@ test("Today's report shows species, visit counts, activity timing, and the busie
   await expect(reportPanel.getByText("Fully observed today")).toBeVisible();
 });
 
+test("a Stream with older exposure history but zero coverage this period shows Partial, never Fully observed", async ({
+  page,
+}) => {
+  // Regression for a real Working App v1 acceptance finding: a Stream that
+  // was monitored on an earlier day (so it has durable exposure history,
+  // and the backend's coverage policy correctly *reports* rather than
+  // withholds a figure -- see "Place-wide coverage policy" in
+  // docs/place-activity-report-contract.md) but was not observed at all
+  // during *today's* period. The backend has no cross-Stream warning to
+  // emit here (there is only one in-scope Stream, and it does have some
+  // history) -- deriving coveragePartial from that warning alone produced
+  // the "good"-toned "Fully observed today" pill for a literal 0%
+  // coverage_ratio. This must read as Partial, using the real ratio.
+  await completeSetup(page);
+  await mockPlaceActivityReport(page, {
+    coverage: {
+      period_seconds: 86_400,
+      monitored_seconds: 0,
+      coverage_ratio: 0,
+      history_available_from: new Date(Date.now() - 2 * 24 * 3600 * 1000).toISOString(),
+      history_is_partial: false,
+      gaps: [
+        {
+          start_at: new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
+          end_at: new Date().toISOString(),
+          duration_seconds: 86_400,
+        },
+      ],
+      gaps_truncated: false,
+    },
+  });
+
+  await page.goto("/");
+  const reportPanel = page.locator("section.today-report");
+  await expect(reportPanel).toBeVisible();
+
+  await expect(reportPanel.getByText("Partial coverage today")).toBeVisible();
+  await expect(reportPanel.getByText("Fully observed today")).toHaveCount(0);
+  await expect(reportPanel.getByText("about 0% of today", { exact: false })).toBeVisible();
+});
+
 test("unresolved and provisional activity stays a quiet affordance, never the center of the report", async ({
   page,
 }) => {

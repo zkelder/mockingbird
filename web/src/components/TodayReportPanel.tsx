@@ -110,7 +110,31 @@ export function TodayReportPanel({
   const coverageNotes = report.warnings.filter((warning) =>
     /coverage|monitoring exposure/i.test(warning),
   );
-  const coveragePartial = coverageNotes.length > 0;
+  // The cross-Stream warning above only ever fires for the multi-Stream
+  // "some but not all Streams have history" case (see "Place-wide coverage
+  // policy" in docs/place-activity-report-contract.md); it says nothing
+  // about *this period's own* measured coverage_ratio. A Stream can have
+  // durable exposure history from an earlier period yet zero coverage
+  // during the requested one (for example: monitored yesterday, not yet
+  // started today) -- the backend correctly reports that as a real
+  // coverage_ratio near/at 0, but deriving coveragePartial from warnings
+  // alone missed it entirely, showing the "good"-toned "Fully observed
+  // today" pill for a literal 0% ratio. The backend deliberately leaves
+  // "how much gap counts as partial" to the UI (it "does not invent a
+  // materiality threshold"); a small tolerance (99%) absorbs sub-minute
+  // restart/rollover gaps without diluting the pill's honesty for a
+  // materially incomplete day.
+  const coverageRatio = report.coverage.coverage_ratio;
+  const coverageRatioLow = coverageRatio != null && coverageRatio < 0.99;
+  const coveragePartial = coverageNotes.length > 0 || coverageRatioLow;
+  // Prefer the backend's own richer cross-Stream sentence when both signals
+  // fire; otherwise fall back to an honest sentence built only from the
+  // real, already-returned coverage_ratio -- never a fabricated claim.
+  const coverageNote =
+    coverageNotes[0] ??
+    (coverageRatioLow
+      ? `MockingBird was actively monitoring about ${Math.round(coverageRatio! * 100)}% of today so far.`
+      : null);
   // A confirmed Visit whose taxon never resolved to species level (a coarse
   // "Bird"/"Squirrel" group) still counts as wildlife; fall back to the
   // taxon count so the headline never reads "0 species" while wildlife
@@ -132,7 +156,9 @@ export function TodayReportPanel({
           />
         ) : null}
       </div>
-      {coveragePartial ? <p className="meta-text today-report-coverage-note">{coverageNotes[0]}</p> : null}
+      {coveragePartial && coverageNote ? (
+        <p className="meta-text today-report-coverage-note">{coverageNote}</p>
+      ) : null}
 
       {hasWildlife ? (
         <>
