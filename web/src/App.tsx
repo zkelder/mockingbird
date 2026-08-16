@@ -90,14 +90,25 @@ const productNavItems: Array<{ page: Page; label: string }> = [
   { page: "dashboard", label: "Dashboard" },
   { page: "streams", label: "Cameras" },
   { page: "review", label: "Review" },
+  { page: "bird-log", label: "Bird Log" },
   { page: "activity-library", label: "Activity" },
   { page: "analytics", label: "Insights" },
   { page: "settings", label: "Settings" },
 ];
 
+// Bird Log (the doctrine's "Remember" step -- product-doctrine.md's core
+// Observe -> Discover -> Understand -> Confirm -> Remember -> Improve loop,
+// and the durable home for confirmed wildlife truth) predates the
+// product/advanced nav split and was carried into advancedNavItems by that
+// split along with genuinely technical pages (Analyzers, Classifier
+// Readiness). Working App v1 acceptance found this left it unreachable
+// through ordinary navigation on any day with no wildlife visits so far
+// today (the Today report's own "Top visitors -> Bird Log" link only
+// renders once topTaxa is non-empty) -- a nontechnical user had no way to
+// browse their Wildlife Journal without first discovering and enabling
+// "Developer Mode." Promoted to the persistent primary nav above instead.
 const advancedNavItems: Array<{ page: Page; label: string }> = [
   { page: "yard-map", label: "Yard & Camera Map" },
-  { page: "bird-log", label: "Bird Log" },
   { page: "exports", label: "Exports / Data" },
   { page: "import", label: "Import Media" },
   { page: "folder-import", label: "Folder Import" },

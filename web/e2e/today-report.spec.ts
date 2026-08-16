@@ -390,3 +390,37 @@ test("Today's report stays readable and free of horizontal overflow at phone wid
     }
   }
 });
+
+test("Bird Log is reachable from the persistent nav without enabling Developer Mode", async ({
+  page,
+}) => {
+  // Regression for a real Working App v1 acceptance finding: the Today
+  // report's own "Top visitors -> Bird Log" link (above) only renders once
+  // topTaxa is non-empty, so on any day with no wildlife visits so far
+  // today -- most days, for most yards -- it was the *only* path to Bird
+  // Log anywhere in the UI, and Bird Log itself lived in advancedNavItems
+  // (predating the product/advanced nav split, carried over alongside
+  // genuinely technical pages like Analyzers and Classifier Readiness).
+  // A nontechnical user had no persistent, reliable way to reach their
+  // Wildlife Journal without first discovering and enabling "Developer
+  // Mode." Bird Log now lives in the always-visible primary nav.
+  await completeSetup(page);
+  await mockPlaceActivityReport(page, {}); // sparse: no taxa today, so the report's own link is absent
+
+  await page.goto("/");
+  await expect(page.locator("section.today-report")).toBeVisible();
+  await expect(page.locator(".today-report-species")).toHaveCount(0);
+
+  // Developer Mode is off by default -- "Developer tools" is not rendered.
+  await expect(page.getByRole("button", { name: /Developer Mode/ })).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  await expect(page.getByText("Developer tools")).toHaveCount(0);
+
+  const birdLogNavItem = page.getByRole("button", { name: "Bird Log", exact: true });
+  await expect(birdLogNavItem).toBeVisible();
+  await birdLogNavItem.click();
+  await expect(page).toHaveURL(/\/bird-log$/);
+  await expect(page.getByRole("heading", { name: "Wildlife Journal" })).toBeVisible();
+});
