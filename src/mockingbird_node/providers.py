@@ -638,39 +638,52 @@ class PiCamera2Provider:
         )
 
     def _prove_warm_profiles(self, module: Any, encoder: Any, camera_id: str) -> None:
-        profiles = list(self._profile_cache.get(camera_id, ()))
-        candidates = self._warm_candidates(profiles)
-        self._warm_candidate_statuses[camera_id] = tuple(
-            _WarmCandidateStatus(candidate.evidence.profile_id, "untested")
-            for candidate in candidates
-        )
-        warm = self._start_highest_warm_session(module, encoder, camera_id, candidates)
-        if warm is None:
-            # Cold monitoring remains usable, so failure to prove an optional
-            # warm pair is degraded rather than a terminal provider failure.
-            self._warm_readiness[camera_id] = "degraded"
-            return
-        warm_monitoring, warm_evidence, accepted_profile_id = warm
-        rejected_resource_profiles = {
-            status.profile_id
-            for status in self._warm_candidate_statuses.get(camera_id, ())
-            if status.state == "rejected_resource"
-        }
-        self._profile_cache[camera_id] = tuple(
-            [
-                warm_monitoring,
-                warm_evidence,
-                *[
-                    item
-                    for item in profiles
-                    if item.profile_id != accepted_profile_id
-                    and item.profile_id != warm_monitoring.profile_id
-                    and item.profile_id != warm_evidence.profile_id
-                    and item.profile_id not in rejected_resource_profiles
-                ],
-            ][:MAX_CAPTURE_PROFILES_PER_CAMERA]
-        )
-        self._warm_readiness[camera_id] = "ready"
+        # This background proof constructs and drives its own live Picamera2
+        # session (see _start_highest_warm_session/_initialize_warm_camera)
+        # entirely independently of snapshot()'s call path. Without the same
+        # exclusive lock, it could run concurrently with a snapshot() call
+        # that is also (re)constructing a camera session for this camera_id,
+        # putting two uncoordinated live sessions on the same physical
+        # hardware at once. Holding the lock for the whole bounded proof is
+        # safe here: this method only ever runs on its own dedicated
+        # background thread (see _schedule_warm_proof), so it never blocks a
+        # request-handling thread -- at worst it delays this best-effort
+        # upgrade, which callers already treat as a normal "warming" state.
+        with self._lock:
+            profiles = list(self._profile_cache.get(camera_id, ()))
+            candidates = self._warm_candidates(profiles)
+            self._warm_candidate_statuses[camera_id] = tuple(
+                _WarmCandidateStatus(candidate.evidence.profile_id, "untested")
+                for candidate in candidates
+            )
+            warm = self._start_highest_warm_session(module, encoder, camera_id, candidates)
+            if warm is None:
+                # Cold monitoring remains usable, so failure to prove an
+                # optional warm pair is degraded rather than a terminal
+                # provider failure.
+                self._warm_readiness[camera_id] = "degraded"
+                return
+            warm_monitoring, warm_evidence, accepted_profile_id = warm
+            rejected_resource_profiles = {
+                status.profile_id
+                for status in self._warm_candidate_statuses.get(camera_id, ())
+                if status.state == "rejected_resource"
+            }
+            self._profile_cache[camera_id] = tuple(
+                [
+                    warm_monitoring,
+                    warm_evidence,
+                    *[
+                        item
+                        for item in profiles
+                        if item.profile_id != accepted_profile_id
+                        and item.profile_id != warm_monitoring.profile_id
+                        and item.profile_id != warm_evidence.profile_id
+                        and item.profile_id not in rejected_resource_profiles
+                    ],
+                ][:MAX_CAPTURE_PROFILES_PER_CAMERA]
+            )
+            self._warm_readiness[camera_id] = "ready"
 
     def _start_highest_warm_session(
         self,
