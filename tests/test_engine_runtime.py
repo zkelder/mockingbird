@@ -35,6 +35,7 @@ from mockingbird.observation.media_contracts import (
 )
 from mockingbird.repository.product_repository import ProductRepository, StreamLivePlaybackConfig
 from mockingbird.source_providers.camera_node import CameraNodeClientError
+from mockingbird.storage.models import MonitoringExposureIntervalModel
 
 STREAM_ID = "stream-backyard-feeder"
 NOW = datetime(2026, 8, 8, 12, 0, 0, tzinfo=UTC)
@@ -77,6 +78,20 @@ def _wait_until(predicate, *, timeout: float = 5.0, interval: float = 0.02) -> b
             return True
         time.sleep(interval)
     return predicate()
+
+
+def _utc(value: datetime | None) -> datetime | None:
+    return value.replace(tzinfo=UTC) if value is not None and value.tzinfo is None else value
+
+
+def _intervals(repository: ProductRepository, stream_id: str) -> list[MonitoringExposureIntervalModel]:
+    with repository.session_factory() as session:
+        return (
+            session.query(MonitoringExposureIntervalModel)
+            .filter_by(stream_id=stream_id)
+            .order_by(MonitoringExposureIntervalModel.started_at, MonitoringExposureIntervalModel.id)
+            .all()
+        )
 
 
 # --- Product contract: Camera Node unavailable / engine unconfigured -------
@@ -1579,3 +1594,205 @@ def test_reconnect_retry_policy_validates_its_own_bounds() -> None:
         engine_runtime.AnalysisStreamRetryPolicy(maximum_consecutive_failures=0)
     with pytest.raises(ValueError):
         engine_runtime.AnalysisStreamRetryPolicy(backoff_seconds=-1.0)
+
+
+# =============================================================================
+# Today Coverage Truth v1 (see docs/todays-coverage-truth-contract.md):
+# lifecycle integration between `_EngineSession` and durable
+# `MonitoringExposureIntervalModel` history -- the fact `ProductRepository.
+# place_activity_report`'s coverage figure reads. Complements the pure
+# ledger-level tests in tests/test_monitoring_exposure_history.py with the
+# real session lifecycle (healthy run, user Stop, recoverable reconnect,
+# terminal failure) that actually drives those two repository calls.
+#
+# `_FakeClock` is this section's own test-only override of `_EngineSession
+# .clock` (mirroring `DurableMonitoringSupervisor`'s own established `clock`
+# parameter): every checkpoint/close call in this loop is already only ever
+# compared to *itself* (`now == healthy_at` at checkpoint time -- see
+# `_checkpoint_monitoring_exposure_interval`), so durable exposure's
+# bounded-cadence checkpoint bump (45s) and zero-length-interval discard
+# (`test_zero_length_interval_is_not_preserved...`) both depend on genuine
+# elapsed time *between* separate calls, not on how fast this fixture's own
+# frames are paced. Jumping 90 simulated seconds per call lets a fast,
+# millisecond-scale test still produce the same real, positive-duration,
+# correctly-checkpointed interval a real multi-minute session would.
+# =============================================================================
+
+
+class _FakeClock:
+    """Deterministic, monotonically-advancing clock: returns `start` on the
+    first call, then jumps forward by `step` (default 90s -- comfortably
+    past `DURABLE_EXPOSURE_CHECKPOINT_INTERVAL`'s 45s) on every subsequent
+    call. Never depends on real wall-clock time, so a test asserting on
+    exact recorded timestamps stays fully deterministic."""
+
+    def __init__(self, start: datetime, *, step: timedelta = timedelta(seconds=90)) -> None:
+        self._next = start
+        self._step = step
+
+    def __call__(self) -> datetime:
+        value = self._next
+        self._next = self._next + self._step
+        return value
+
+
+def test_healthy_observation_session_records_monitoring_exposure_with_no_legacy_state(
+    repository: ProductRepository,
+) -> None:
+    """The core "no longer depends on the legacy supervisor" proof at the
+    session-lifecycle level: this Stream is never enabled for legacy
+    monitoring, yet a real, correctly-attributed durable exposure interval
+    -- spanning two real checkpointed batches -- is still recorded."""
+
+    assert repository.list_enabled_monitoring_candidates(limit=10) == []
+    transport = _RenewingTransport([4, 4], generation="generation-a")
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: transport,
+        clock=_FakeClock(NOW),
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "stopped", timeout=10.0)
+
+    intervals = _intervals(repository, STREAM_ID)
+    assert len(intervals) == 1
+    interval = intervals[0]
+    assert interval.stream_id == STREAM_ID
+    assert interval.source_id == "source-backyard-demo"
+    assert _utc(interval.started_at) == NOW
+    assert interval.ended_at is not None
+    assert _utc(interval.ended_at) == NOW + timedelta(seconds=90)
+    # The script's own exhaustion falls back to a terminal rejection -- a
+    # real provider failure, not a clean stop.
+    assert interval.close_reason == "provider_failure"
+    assert interval.runtime_generation_id
+
+    assert repository.list_enabled_monitoring_candidates(limit=10) == []
+
+
+def test_user_stop_closes_monitoring_exposure_interval_as_session_stopped(
+    repository: ProductRepository,
+) -> None:
+    def _has_multi_checkpoint_interval() -> bool:
+        rows = _intervals(repository, STREAM_ID)
+        return bool(rows) and _utc(rows[0].last_confirmed_fresh_at) > _utc(rows[0].started_at)
+
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: _SlowIndefiniteTransport(),
+        clock=_FakeClock(NOW),
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "observing", timeout=10.0)
+    # Let at least two real checkpoints land -- a positive-duration open
+    # interval -- before Stop is requested.
+    assert _wait_until(_has_multi_checkpoint_interval, timeout=10.0)
+
+    status = manager.stop(STREAM_ID)
+    assert status is not None
+    assert status.state == "stopped"
+
+    intervals = _intervals(repository, STREAM_ID)
+    assert len(intervals) == 1
+    interval = intervals[0]
+    assert interval.close_reason == "session_stopped"
+    assert interval.ended_at is not None
+    assert _utc(interval.started_at) < _utc(interval.ended_at)
+
+
+def test_recoverable_reconnect_does_not_fragment_or_prematurely_close_monitoring_exposure(
+    repository: ProductRepository,
+) -> None:
+    """The exact Observation Engine Session-Renewal Continuity v1 shape
+    (`_RenewingTransport`, mirroring `test_bounded_transport_error_
+    recovers_without_stopping_or_duplicating_the_visit` above): two bounded,
+    recoverable interruptions before real frames arrive must never close or
+    fragment this session's own coverage interval -- exactly as `_state`/
+    `observing` are never touched during a bounded reconnect
+    (docs/observation-session-renewal-continuity-contract.md), coverage
+    must not regress that guarantee either."""
+
+    transport = _RenewingTransport(["raise", "raise", 4, 4], generation="generation-a")
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: transport,
+        analysis_stream_retry_policy=_fast_retry_policy(),
+        clock=_FakeClock(NOW),
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "stopped", timeout=10.0)
+
+    final = manager.status(STREAM_ID)
+    assert final.advanced.get("analysis_stream_reconnect_recoveries") == 1
+
+    intervals = _intervals(repository, STREAM_ID)
+    assert len(intervals) == 1  # never fragmented by the two recoverable interruptions
+    assert intervals[0].close_reason == "provider_failure"  # the fixture's own eventual terminal end
+    assert _utc(intervals[0].started_at) < _utc(intervals[0].ended_at)
+
+
+def test_terminal_retry_exhaustion_closes_monitoring_exposure_as_provider_failure(
+    repository: ProductRepository,
+) -> None:
+    """A recoverable-shaped interruption that never once recovers still
+    honestly closes coverage once the bounded retry budget is exhausted --
+    "genuine terminal camera failure should stop or gap coverage
+    honestly," not leave a stale open interval."""
+
+    transport = _RenewingTransport([4, 4, "raise", "raise", "raise"], generation="generation-a")
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: transport,
+        analysis_stream_retry_policy=_fast_retry_policy(maximum_consecutive_failures=3),
+        clock=_FakeClock(NOW),
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "stopped", timeout=10.0)
+
+    final = manager.status(STREAM_ID)
+    assert final.stopped_reason == "camera_unavailable"
+
+    intervals = _intervals(repository, STREAM_ID)
+    assert len(intervals) == 1
+    assert intervals[0].close_reason == "provider_failure"
+    assert intervals[0].ended_at is not None
+    assert _utc(intervals[0].started_at) < _utc(intervals[0].ended_at)
+
+
+def test_immediately_terminal_failure_before_any_frame_records_no_exposure(
+    repository: ProductRepository,
+) -> None:
+    """Mirrors `test_node_identity_pairing_failure_remains_immediately_
+    terminal`: zero real frames were ever received, so durable exposure
+    history -- which begins only on a Stream's first fresh monitoring frame
+    -- must never open an interval at all, not even a zero-length one."""
+
+    class _RejectedCredentialTransport(_FixtureTransport):
+        def iter_analysis_frames(self, *, maximum_frames: int):
+            raise CameraNodeClientError("authentication_rejected")
+
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: _RejectedCredentialTransport(),
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "stopped", timeout=10.0)
+
+    assert manager.status(STREAM_ID).stopped_reason == "camera_unavailable"
+    assert _intervals(repository, STREAM_ID) == []
+
+
+def test_idle_configured_stream_never_started_records_no_exposure(
+    repository: ProductRepository,
+) -> None:
+    """A Stream fully configured for Observation Engine (`_camera_node_
+    config`, a real paired Camera Node) but never actually started must
+    contribute nothing to durable exposure history -- a configured-but-idle
+    camera is never counted as coverage."""
+
+    assert _intervals(repository, STREAM_ID) == []

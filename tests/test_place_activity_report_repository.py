@@ -1148,3 +1148,183 @@ def test_report_generation_query_shape_stays_bounded_at_a_materially_larger_coho
     # real SQLite on developer/CI hardware -- a sanity trip-wire against a
     # gross pathological regression, not a performance target.
     assert large_elapsed < 5.0, f"report generation took {large_elapsed:.2f}s for {large_count} Visits"
+
+
+# 19. Today Coverage Truth v1: Observation Engine writer integration ---------------
+#
+# `record_observation_exposure_frame`/`close_observation_exposure`
+# (`ProductRepository`) are the camera_node-canonical writers of
+# `MonitoringExposureIntervalModel` -- the exact same durable ledger every
+# coverage test above already reads through `_add_exposure`'s raw-row
+# seeding. These tests drive the *real* writers instead of hand-seeding
+# rows, proving the full Observation Engine write -> Place Activity Report
+# coverage read pipeline end to end. See docs/todays-coverage-truth
+# -contract.md.
+
+
+def _observe(
+    repository: ProductRepository, *, stream_id: str, generation: str, healthy_at: datetime,
+) -> None:
+    repository.record_observation_exposure_frame(
+        stream_id=stream_id, runtime_generation_id=generation, healthy_at=healthy_at, now=healthy_at,
+    )
+
+
+def _stop_observing(
+    repository: ProductRepository, *, stream_id: str, now: datetime, reason: str = "session_stopped",
+) -> None:
+    repository.close_observation_exposure(stream_id=stream_id, close_reason=reason, now=now)
+
+
+def test_sixty_minutes_of_observation_yields_about_sixty_minutes_of_coverage(
+    repository: ProductRepository,
+) -> None:
+    """Milestone acceptance: 60 minutes of real Observation Engine activity
+    produces ~60 minutes of reported coverage -- proven against a genuinely
+    partial report window (90 minutes elapsed, only 60 observed), so this
+    also proves the ratio is computed against the elapsed window, not a
+    full nominal day."""
+
+    window_start = PERIOD_START
+    window_end = PERIOD_START + timedelta(minutes=90)
+    _observe(repository, stream_id=STREAM_A, generation="gen-1", healthy_at=window_start)
+    _observe(
+        repository, stream_id=STREAM_A, generation="gen-1",
+        healthy_at=window_start + timedelta(minutes=60),
+    )
+    _stop_observing(repository, stream_id=STREAM_A, now=window_start + timedelta(minutes=60, seconds=1))
+
+    report = _report(repository, start_at=window_start, end_at=window_end)
+
+    assert report.coverage.monitored_seconds == pytest.approx(60 * 60)
+    assert report.coverage.coverage_ratio == pytest.approx(60 / 90)
+    assert len(report.coverage.gaps) == 1
+    assert report.coverage.gaps[0].start_at == window_start + timedelta(minutes=60)
+    assert report.coverage.gaps[0].end_at == window_end
+
+
+def test_stop_closes_the_interval_and_later_time_is_not_counted_as_coverage(
+    repository: ProductRepository,
+) -> None:
+    _observe(repository, stream_id=STREAM_A, generation="gen-1", healthy_at=PERIOD_START)
+    _observe(
+        repository, stream_id=STREAM_A, generation="gen-1",
+        healthy_at=PERIOD_START + timedelta(hours=2),
+    )
+    _stop_observing(repository, stream_id=STREAM_A, now=PERIOD_START + timedelta(hours=2, minutes=1))
+
+    # A window extending well past the Stop -- coverage must not keep
+    # growing after Stop closed the interval.
+    report = _report(repository, start_at=PERIOD_START, end_at=PERIOD_START + timedelta(hours=10))
+
+    assert report.coverage.monitored_seconds == pytest.approx(2 * 3600)
+    assert len(report.coverage.gaps) == 1
+    assert report.coverage.gaps[0].start_at == PERIOD_START + timedelta(hours=2)
+
+
+def test_two_streams_with_partial_overlap_union_correctly(
+    repository: ProductRepository,
+) -> None:
+    """Stream A observes hour 0-3, Stream B observes hour 2-5 -- the
+    Place-level figure must be the *union* (hour 0-5, 5 hours), never the
+    naive sum (3+3=6 hours, which would silently exceed what actually
+    happened and could push a report over 100%)."""
+
+    _observe(repository, stream_id=STREAM_A, generation="gen-a", healthy_at=PERIOD_START)
+    _observe(
+        repository, stream_id=STREAM_A, generation="gen-a",
+        healthy_at=PERIOD_START + timedelta(hours=3),
+    )
+    _stop_observing(repository, stream_id=STREAM_A, now=PERIOD_START + timedelta(hours=3, minutes=1))
+
+    _observe(
+        repository, stream_id=STREAM_B, generation="gen-b",
+        healthy_at=PERIOD_START + timedelta(hours=2),
+    )
+    _observe(
+        repository, stream_id=STREAM_B, generation="gen-b",
+        healthy_at=PERIOD_START + timedelta(hours=5),
+    )
+    _stop_observing(repository, stream_id=STREAM_B, now=PERIOD_START + timedelta(hours=5, minutes=1))
+
+    report = _report(repository)
+
+    assert report.coverage.monitored_seconds == pytest.approx(5 * 3600)
+    assert report.coverage.coverage_ratio == pytest.approx(5 / 24)
+
+
+def test_idle_configured_stream_contributes_zero_to_place_coverage(
+    repository: ProductRepository,
+) -> None:
+    """Stream B is fully configured (a real Stream row in this Place) but
+    Observation Engine was never started for it -- it must simply be
+    excluded from the union, never dragging the figure down toward zero nor
+    counted as if it had coverage."""
+
+    _observe(repository, stream_id=STREAM_A, generation="gen-a", healthy_at=PERIOD_START)
+    _observe(
+        repository, stream_id=STREAM_A, generation="gen-a",
+        healthy_at=PERIOD_START + timedelta(hours=4),
+    )
+    _stop_observing(repository, stream_id=STREAM_A, now=PERIOD_START + timedelta(hours=4, minutes=1))
+    # Stream B: configured, never observed -- no exposure rows at all.
+
+    report = _report(repository)
+
+    assert report.coverage.monitored_seconds == pytest.approx(4 * 3600)
+    assert report.coverage.coverage_ratio == pytest.approx(4 / 24)
+    assert any(
+        "Stream" in warning and "no durable monitoring exposure" in warning
+        for warning in report.warnings
+    )
+
+
+def test_stream_with_prior_history_but_no_activity_in_window_reports_a_true_zero(
+    repository: ProductRepository,
+) -> None:
+    """The exact real field defect this milestone fixes (commit b8c6766):
+    a Stream has real Observation Engine exposure history from an *earlier*
+    day, but the queried report window has zero overlap with it. Unlike the
+    structural "no history at all" case (`test_coverage_fully_withheld_
+    only_when_no_in_scope_stream_has_any_history` above), this must report
+    a real, honest `coverage_ratio == 0.0` -- not `None` -- because durable
+    history genuinely exists for this Stream, it just does not cover this
+    window."""
+
+    earlier_day = PERIOD_START - timedelta(days=3)
+    _observe(repository, stream_id=STREAM_A, generation="gen-a", healthy_at=earlier_day)
+    _observe(
+        repository, stream_id=STREAM_A, generation="gen-a",
+        healthy_at=earlier_day + timedelta(hours=1),
+    )
+    _stop_observing(repository, stream_id=STREAM_A, now=earlier_day + timedelta(hours=1, minutes=1))
+
+    report = _report(repository)  # today's window, 3 days later than the recorded history
+
+    assert report.coverage.monitored_seconds == pytest.approx(0.0)
+    assert report.coverage.coverage_ratio == pytest.approx(0.0)
+    assert report.coverage.history_available_from == earlier_day
+    assert len(report.coverage.gaps) == 1
+
+
+def test_observation_engine_coverage_present_without_any_legacy_supervisor_state(
+    repository: ProductRepository,
+) -> None:
+    """Full-report-level proof, complementing tests/test_engine_runtime
+    .py's own session-lifecycle-level version: real, correct Place Activity
+    Report coverage requires zero legacy `StreamRuntimeCheckpointModel`/
+    armed `StreamMonitoringPolicyModel` state at any point."""
+
+    assert repository.list_enabled_monitoring_candidates(limit=10) == []
+
+    _observe(repository, stream_id=STREAM_A, generation="gen-a", healthy_at=PERIOD_START)
+    _observe(
+        repository, stream_id=STREAM_A, generation="gen-a",
+        healthy_at=PERIOD_START + timedelta(hours=1),
+    )
+    _stop_observing(repository, stream_id=STREAM_A, now=PERIOD_START + timedelta(hours=1, minutes=1))
+
+    report = _report(repository)
+
+    assert report.coverage.coverage_ratio == pytest.approx(1 / 24)
+    assert repository.list_enabled_monitoring_candidates(limit=10) == []

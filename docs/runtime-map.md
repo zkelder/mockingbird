@@ -132,6 +132,15 @@ clear error instead of silently arming it, but the checkbox itself is not
 yet hidden for Camera Node the way `LiveCameraOverview.tsx`'s was -- a small
 follow-up UI fix, not a backend gap.
 
+Forbidding legacy durable monitoring for Camera Node used to also mean no
+coverage: only that legacy path wrote `MonitoringExposureIntervalModel`, the
+table the Today / Place Activity Report's coverage figure reads, so a
+Camera Node Place monitored exclusively through Observation Engine
+permanently reported 0%/withheld coverage regardless of real activity.
+Today Coverage Truth v1 closed that gap by making `ObservationEngineSession
+Manager`/`_EngineSession` a second, independent writer of the exact same
+table -- see [todays-coverage-truth-contract.md](todays-coverage-truth-contract.md).
+
 ## Lane resolution: the one place that picks a runtime
 
 `observation/unified_status.py::resolve_observation_runtime` is the single

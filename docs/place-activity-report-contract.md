@@ -157,6 +157,19 @@ and is never inferred from armed policy, runtime checkpoints, or the
 calendar (see "Monitoring exposure and confidence" in
 [zone-feeder-insights-metrics.md](zone-feeder-insights-metrics.md)).
 
+This table has two writers today, both feeding the identical ledger through
+a shared provider-agnostic core: the legacy durable-monitoring-supervisor
+path (`DurableMonitoringSupervisor`/`mark_monitoring_running` and friends,
+for `armed`-policy Streams) and the Observation Engine path
+(`ObservationEngineSessionManager`/`_EngineSession`/`record_observation_
+exposure_frame`, canonical for `camera_node` Streams, which can never be
+legacy-armed -- see "Camera Node Legacy-Monitoring Backend Guard v1"). See
+[todays-coverage-truth-contract.md](todays-coverage-truth-contract.md) for
+the full lifecycle mapping, reconnect semantics, and why the Observation
+Engine path needed this integration (it originally wrote nothing here at
+all, which is why real Observation Engine activity used to report 0%
+coverage even after substantial genuine monitoring).
+
 `monitored_seconds`/`coverage_ratio` are `None` when no durable exposure
 history exists at all for the reported scope -- an honest "not yet
 computable" signal, never a fabricated number. Gaps are exposed as raw

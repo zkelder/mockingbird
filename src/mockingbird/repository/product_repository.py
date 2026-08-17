@@ -7164,7 +7164,48 @@ class ProductRepository:
         healthy_at: datetime,
         now: datetime,
     ) -> None:
-        """Checkpoint fresh-frame availability at a bounded cadence, not per frame."""
+        """Checkpoint fresh-frame availability at a bounded cadence, not per
+        frame -- the legacy durable-monitoring-supervisor entry point. Mints
+        and persists a `runtime_generation_id` onto `checkpoint` the first
+        time this Stream reports a healthy frame in this checkpoint's
+        lifetime (unchanged from before), then delegates to
+        `_checkpoint_monitoring_exposure_interval`, the same provider-
+        agnostic core `record_observation_exposure_frame` (Observation
+        Engine's own counterpart, which has no checkpoint row at all) also
+        uses -- see docs/todays-coverage-truth-contract.md."""
+
+        runtime_generation_id = checkpoint.runtime_generation_id
+        if not runtime_generation_id:
+            runtime_generation_id = uuid.uuid4().hex
+            checkpoint.runtime_generation_id = runtime_generation_id
+        ProductRepository._checkpoint_monitoring_exposure_interval(
+            session,
+            stream_id=stream_id,
+            runtime_generation_id=runtime_generation_id,
+            healthy_at=healthy_at,
+            now=now,
+        )
+
+    @staticmethod
+    def _checkpoint_monitoring_exposure_interval(
+        session: Session,
+        *,
+        stream_id: str,
+        runtime_generation_id: str,
+        healthy_at: datetime,
+        now: datetime,
+    ) -> None:
+        """Provider-agnostic durable-exposure checkpoint core: opens a new
+        interval on this Stream's first healthy frame of a runtime
+        generation, advances the open interval's checkpoint no more often
+        than `DURABLE_EXPOSURE_CHECKPOINT_INTERVAL`, and rotates to a fresh
+        interval (closing the previous one as `runtime_generation_replaced`)
+        whenever `runtime_generation_id` changes -- shared verbatim by the
+        legacy durable-monitoring-supervisor path
+        (`_record_monitoring_exposure_frame`) and the Observation Engine
+        path (`record_observation_exposure_frame`), so both write the exact
+        same `MonitoringExposureIntervalModel` ledger under one identical
+        rule. See docs/todays-coverage-truth-contract.md."""
 
         now = _as_utc(now)
         healthy_at = min(_as_utc(healthy_at), now)
@@ -7173,10 +7214,6 @@ class ProductRepository:
         stream = session.get(StreamModel, stream_id)
         if stream is None:
             return
-        runtime_generation_id = checkpoint.runtime_generation_id
-        if not runtime_generation_id:
-            runtime_generation_id = uuid.uuid4().hex
-            checkpoint.runtime_generation_id = runtime_generation_id
 
         open_interval = session.scalar(
             select(MonitoringExposureIntervalModel)
@@ -7225,6 +7262,68 @@ class ProductRepository:
         ):
             open_interval.last_confirmed_fresh_at = healthy_at
             open_interval.updated_at = now
+
+    def record_observation_exposure_frame(
+        self,
+        *,
+        stream_id: str,
+        runtime_generation_id: str,
+        healthy_at: datetime,
+        now: datetime,
+    ) -> None:
+        """Checkpoint durable monitoring-exposure history for the
+        Observation Engine path -- the camera_node-canonical counterpart to
+        `mark_monitoring_running`'s own exposure bookkeeping. Writes the
+        exact same `MonitoringExposureIntervalModel` ledger `zone_insights`/
+        `place_activity_report` coverage already read, through the identical
+        provider-agnostic core (`_checkpoint_monitoring_exposure_interval`),
+        without requiring a legacy `StreamRuntimeCheckpointModel`/armed
+        `StreamMonitoringPolicyModel` row -- Observation Engine sessions have
+        neither, by design (a `camera_node` Stream can never be legacy-armed;
+        see "Camera Node Legacy-Monitoring Backend Guard v1"). The caller
+        supplies one stable `runtime_generation_id` per running session (see
+        `_EngineSession`) so a rotated/duplicate session correctly closes and
+        replaces any interval an earlier, now-abandoned session left open,
+        exactly like the legacy path's own generation rotation. See
+        docs/todays-coverage-truth-contract.md."""
+
+        with self.session_factory() as session:
+            with session.begin():
+                self._checkpoint_monitoring_exposure_interval(
+                    session,
+                    stream_id=stream_id,
+                    runtime_generation_id=runtime_generation_id,
+                    healthy_at=healthy_at,
+                    now=now,
+                )
+
+    def close_observation_exposure(
+        self,
+        *,
+        stream_id: str,
+        close_reason: str,
+        now: datetime,
+        last_healthy_at: datetime | None = None,
+    ) -> None:
+        """Close any open durable monitoring-exposure interval for the
+        Observation Engine path -- the camera_node-canonical counterpart to
+        `mark_monitoring_stopped`'s own exposure close, reusing the exact
+        same `_close_open_monitoring_exposure` closer (close at durable
+        fresh-frame evidence, never at an assumed outage boundary) so both
+        paths honor one identical closing rule. A safe no-op if this Stream
+        has no open interval (for example a session that failed before its
+        first real frame ever arrived). See
+        docs/todays-coverage-truth-contract.md."""
+
+        with self.session_factory() as session:
+            with session.begin():
+                self._close_open_monitoring_exposure(
+                    session,
+                    stream_id=stream_id,
+                    close_reason=close_reason,
+                    now=now,
+                    last_healthy_at=last_healthy_at,
+                )
 
     def mark_monitoring_starting(
         self,

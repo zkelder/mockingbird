@@ -59,12 +59,14 @@ from __future__ import annotations
 import asyncio
 import os
 import threading
+import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
 from typing import Callable, Protocol
 
+from mockingbird.monitoring.exposure_history import exposure_close_reason_for_transition
 from mockingbird.observation.camera_node_live import (
     CameraNodeAnalysisSource,
     CameraNodeHttpTransport,
@@ -399,6 +401,7 @@ class _EngineSession:
         live_camera_sessions: LiveCameraSessionCoordinator | None = None,
         automatic_identification_assist: AutomaticReviewIdentificationAssist | None = None,
         analysis_stream_retry_policy: AnalysisStreamRetryPolicy | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.stream_id = stream_id
         self._playback_config = playback_config
@@ -410,6 +413,12 @@ class _EngineSession:
         self._live_camera_sessions = live_camera_sessions
         self._automatic_identification_assist = automatic_identification_assist
         self._retry_policy = analysis_stream_retry_policy or AnalysisStreamRetryPolicy()
+        # Today Coverage Truth v1: injectable only for tests (mirrors
+        # `DurableMonitoringSupervisor`'s own `clock` parameter, the
+        # existing convention for deterministically testing bounded-cadence
+        # durable-exposure checkpointing without a real wall-clock wait);
+        # production always takes the default real clock.
+        self._clock: Callable[[], datetime] = clock or (lambda: datetime.now(UTC))
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._state_lock = threading.RLock()
@@ -417,6 +426,20 @@ class _EngineSession:
         self._started_at: datetime | None = None
         self._stopped_at: datetime | None = None
         self._stopped_reason: str | None = None
+        # Today Coverage Truth v1 (see docs/todays-coverage-truth-contract.md):
+        # one stable id for this session's entire run, mirroring the legacy
+        # durable-monitoring-supervisor's own `runtime_generation_id`
+        # convention -- a fresh `_EngineSession` object is constructed on
+        # every "Start observing" (`ObservationEngineSessionManager.start`),
+        # so a new generation id here always correctly rotates past (and
+        # closes) any interval a prior, now-abandoned session left open.
+        # `_last_healthy_frame_at` is the best in-memory known-good frame
+        # time -- finer-grained than the durable checkpoint's own bounded
+        # cadence -- supplied to the exposure closer on the way out so a
+        # clean Stop closes at the true observed boundary, not one
+        # artificially truncated to the last persisted checkpoint.
+        self._runtime_generation_id = uuid.uuid4().hex
+        self._last_healthy_frame_at: datetime | None = None
         self._camera_connected = False
         self._camera_message = "Connecting to the Camera Node…"
         self._engine_available = False
@@ -773,6 +796,16 @@ class _EngineSession:
                                 int(self._advanced.get("analysis_stream_reconnect_recoveries", 0)) + 1
                             )
                         consecutive_transport_failures = 0
+                    # Today Coverage Truth v1: this batch just proved a real
+                    # fresh frame, the same durable-exposure signal the
+                    # legacy monitoring supervisor's own camera-health check
+                    # already records -- checkpoint once per batch (already
+                    # far coarser than per-frame; the durable model itself
+                    # further throttles actual writes to a 45-second
+                    # cadence), never during a recoverable retry/backoff
+                    # window above, so a bounded reconnect never fragments or
+                    # prematurely closes this session's coverage interval.
+                    self._checkpoint_observation_exposure(repository, healthy_at=self._clock())
                     for result in results:
                         all_track_updates.extend(result.track_updates)
                         all_evidence_candidates.extend(result.evidence_candidates)
@@ -848,6 +881,15 @@ class _EngineSession:
             # stopped the live session while it was paused (see
             # `LiveCameraSessionManager.resume_after_observation`).
             self._resume_live_camera_session()
+            # Today Coverage Truth v1: close this session's own durable
+            # monitoring-exposure interval the same unconditional way, for
+            # the same reason -- whenever this loop ends, coverage truth
+            # must stop growing with it, regardless of *why* it ended (see
+            # `_close_observation_exposure`). A recoverable retry/backoff
+            # window above never reaches this `finally` at all -- the loop
+            # is still running -- so a bounded reconnect can never trigger
+            # this close.
+            self._close_observation_exposure(repository)
             # Authority reverts to shadow whenever this session's own loop
             # ends, for *any* reason -- natural stream end, a transport
             # error, or an explicit Stop -- not only when a caller happens
@@ -929,6 +971,51 @@ class _EngineSession:
         try:
             self._live_camera_sessions.resume_after_observation(self._playback_config)
         except Exception:  # pragma: no cover - defensive: must never break Stop
+            pass
+
+    def _checkpoint_observation_exposure(self, repository: ProductRepository, *, healthy_at: datetime) -> None:
+        """Today Coverage Truth v1 (see docs/todays-coverage-truth-contract
+        .md): record one durable monitoring-exposure checkpoint for a batch
+        that just delivered at least one real frame -- never a raw transport
+        retry/backoff window (see `_await_transport_retry`, which never
+        calls this). Best-effort, matching every other per-batch bookkeeping
+        call in this loop: exposure accounting must never be able to break
+        live analysis."""
+
+        self._last_healthy_frame_at = healthy_at
+        try:
+            repository.record_observation_exposure_frame(
+                stream_id=self.stream_id,
+                runtime_generation_id=self._runtime_generation_id,
+                healthy_at=healthy_at,
+                now=healthy_at,
+            )
+        except Exception:  # pragma: no cover - defensive: must never break analysis
+            pass
+
+    def _close_observation_exposure(self, repository: ProductRepository) -> None:
+        """Close this session's own open durable monitoring-exposure
+        interval, if any, whenever `_run_async`'s main loop ends for *any*
+        reason -- mirroring `_resume_live_camera_session`/the authority-
+        revert call right below this one's own call site, both of which are
+        already unconditional cleanup for the identical reason. Closes at
+        the best known real fresh-frame evidence
+        (`_last_healthy_frame_at`), never at an assumed outage boundary; a
+        safe no-op if no interval was ever opened (for example a session
+        that failed before its first real frame ever arrived). `reason` is
+        mapped through the same shared vocabulary the legacy durable-
+        monitoring-supervisor path already uses, so both writers record one
+        consistent, honest close reason."""
+
+        close_reason = exposure_close_reason_for_transition(self._stopped_reason or "camera_unavailable")
+        try:
+            repository.close_observation_exposure(
+                stream_id=self.stream_id,
+                close_reason=close_reason,
+                now=self._clock(),
+                last_healthy_at=self._last_healthy_frame_at,
+            )
+        except Exception:  # pragma: no cover - defensive: cleanup must never raise
             pass
 
     def _schedule_automatic_identification(self, visit_id: str) -> None:
@@ -1164,6 +1251,7 @@ class ObservationEngineSessionManager:
         live_camera_sessions: LiveCameraSessionCoordinator | None = None,
         automatic_identification_assist: AutomaticReviewIdentificationAssist | None = None,
         analysis_stream_retry_policy: AnalysisStreamRetryPolicy | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._repository_factory = repository_factory
         self._provider_loader = provider_loader
@@ -1171,6 +1259,10 @@ class ObservationEngineSessionManager:
         self._live_camera_sessions = live_camera_sessions
         self._automatic_identification_assist = automatic_identification_assist
         self._analysis_stream_retry_policy = analysis_stream_retry_policy or AnalysisStreamRetryPolicy()
+        # Today Coverage Truth v1: test-only override, forwarded to every
+        # `_EngineSession` this manager constructs -- see `_EngineSession
+        # .__init__`'s own `clock` docstring.
+        self._clock = clock
         self._lock = threading.RLock()
         self._sessions: dict[str, _EngineSession] = {}
 
@@ -1199,6 +1291,7 @@ class ObservationEngineSessionManager:
                 live_camera_sessions=self._live_camera_sessions,
                 automatic_identification_assist=self._automatic_identification_assist,
                 analysis_stream_retry_policy=self._analysis_stream_retry_policy,
+                clock=self._clock,
             )
             self._sessions[stream_id] = session
             session.start()

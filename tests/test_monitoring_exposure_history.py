@@ -332,3 +332,182 @@ def test_supervisor_graceful_shutdown_closes_at_in_memory_fresh_frame(
     assert closed.close_reason == "application_shutdown"
     assert _utc(closed.ended_at) == START + timedelta(minutes=1)
     assert stream_id == closed.stream_id
+
+
+# --- Today Coverage Truth v1: Observation Engine's own exposure writers ----
+#
+# `record_observation_exposure_frame`/`close_observation_exposure`
+# (`ProductRepository`) are the camera_node-canonical counterpart to
+# `mark_monitoring_running`/`mark_monitoring_stopped` above -- the same
+# `MonitoringExposureIntervalModel` ledger, through the same provider-
+# agnostic `_checkpoint_monitoring_exposure_interval`/
+# `_close_open_monitoring_exposure` core, but without ever touching a
+# `StreamRuntimeCheckpointModel`/armed `StreamMonitoringPolicyModel` row --
+# Observation Engine sessions have neither. See
+# docs/todays-coverage-truth-contract.md.
+
+
+def test_observation_exposure_opens_and_checkpoints_with_no_legacy_state_at_all(
+    repository: ProductRepository,
+) -> None:
+    """The core "no longer depends on the legacy supervisor" proof: this
+    Stream is never enabled for legacy monitoring at any point -- no
+    `set_stream_monitoring_enabled`, no `StreamRuntimeCheckpointModel` row,
+    no armed `StreamMonitoringPolicyModel` row -- yet a real, correctly-
+    checkpointed durable exposure interval is still recorded."""
+
+    stream_id = repository.list_streams()[0].id
+    assert repository.list_enabled_monitoring_candidates(limit=10) == []
+    generation = "observation-engine-generation-1"
+
+    repository.record_observation_exposure_frame(
+        stream_id=stream_id, runtime_generation_id=generation, healthy_at=START, now=START,
+    )
+    opened = _intervals(repository)
+    assert len(opened) == 1
+    assert _utc(opened[0].started_at) == START
+    assert _utc(opened[0].last_confirmed_fresh_at) == START
+    assert opened[0].ended_at is None
+    assert opened[0].runtime_generation_id == generation
+
+    # A checkpoint well under the 45s cadence must not move the checkpoint.
+    repository.record_observation_exposure_frame(
+        stream_id=stream_id,
+        runtime_generation_id=generation,
+        healthy_at=START + timedelta(seconds=10),
+        now=START + timedelta(seconds=10),
+    )
+    unchanged = _intervals(repository)[0]
+    assert _utc(unchanged.last_confirmed_fresh_at) == START
+
+    # An hour later, well past the cadence, the checkpoint advances.
+    repository.record_observation_exposure_frame(
+        stream_id=stream_id,
+        runtime_generation_id=generation,
+        healthy_at=START + timedelta(hours=1),
+        now=START + timedelta(hours=1),
+    )
+    checkpointed = _intervals(repository)[0]
+    assert _utc(checkpointed.last_confirmed_fresh_at) == START + timedelta(hours=1)
+
+    # This Stream was never touched by legacy monitoring at any point.
+    assert repository.list_enabled_monitoring_candidates(limit=10) == []
+
+
+def test_observation_exposure_close_records_the_mapped_reason_and_true_boundary(
+    repository: ProductRepository,
+) -> None:
+    stream_id = repository.list_streams()[0].id
+    generation = "observation-engine-generation-1"
+    repository.record_observation_exposure_frame(
+        stream_id=stream_id, runtime_generation_id=generation, healthy_at=START, now=START,
+    )
+    repository.record_observation_exposure_frame(
+        stream_id=stream_id,
+        runtime_generation_id=generation,
+        healthy_at=START + timedelta(minutes=30),
+        now=START + timedelta(minutes=30),
+    )
+
+    # A clean user Stop: closes at the best known in-memory fresh-frame
+    # time, not the (possibly older, cadence-throttled) durable checkpoint.
+    repository.close_observation_exposure(
+        stream_id=stream_id,
+        close_reason="session_stopped",
+        now=START + timedelta(minutes=31),
+        last_healthy_at=START + timedelta(minutes=30, seconds=50),
+    )
+
+    closed = _intervals(repository)[0]
+    assert closed.close_reason == "session_stopped"
+    assert _utc(closed.ended_at) == START + timedelta(minutes=30, seconds=50)
+
+
+def test_observation_exposure_close_is_a_safe_no_op_with_nothing_open(
+    repository: ProductRepository,
+) -> None:
+    """A session that failed before its first real frame ever arrived (for
+    example an immediately-terminal node-identity rejection) has nothing to
+    close -- this must never raise or fabricate a row."""
+
+    stream_id = repository.list_streams()[0].id
+    repository.close_observation_exposure(
+        stream_id=stream_id, close_reason="provider_failure", now=START,
+    )
+    assert _intervals(repository) == []
+
+
+def test_observation_exposure_rotates_on_a_new_runtime_generation(
+    repository: ProductRepository,
+) -> None:
+    """A second `_EngineSession` (a fresh "Start observing" after an earlier
+    session was abandoned without an explicit close -- for example the
+    process died) closes the stale interval as `runtime_generation_replaced`
+    before opening its own, exactly like the legacy path's own generation
+    rotation (`test_unclean_restart_closes_at_last_fresh_frame_and_new_
+    generation_reopens` above) -- this is the self-healing safety net Today
+    Coverage Truth v1 relies on instead of wiring a new shutdown hook."""
+
+    stream_id = repository.list_streams()[0].id
+    repository.record_observation_exposure_frame(
+        stream_id=stream_id,
+        runtime_generation_id="generation-abandoned",
+        healthy_at=START,
+        now=START,
+    )
+    repository.record_observation_exposure_frame(
+        stream_id=stream_id,
+        runtime_generation_id="generation-abandoned",
+        healthy_at=START + timedelta(minutes=5),
+        now=START + timedelta(minutes=5),
+    )
+    # The abandoned session never explicitly closed -- simulating a killed
+    # process, before any restart-time cleanup has run.
+
+    repository.record_observation_exposure_frame(
+        stream_id=stream_id,
+        runtime_generation_id="generation-fresh",
+        healthy_at=START + timedelta(minutes=20),
+        now=START + timedelta(minutes=20),
+    )
+
+    intervals = _intervals(repository)
+    assert len(intervals) == 2
+    assert intervals[0].runtime_generation_id == "generation-abandoned"
+    assert intervals[0].close_reason == "runtime_generation_replaced"
+    assert _utc(intervals[0].ended_at) == START + timedelta(minutes=5)
+    assert intervals[1].runtime_generation_id == "generation-fresh"
+    assert intervals[1].ended_at is None
+
+
+def test_unclean_restart_cleanup_also_closes_an_abandoned_observation_exposure(
+    repository: ProductRepository,
+) -> None:
+    """`prepare_for_supervision` (run at every app boot by the legacy
+    supervisor's own `.start()`) is provider-agnostic -- it closes *any*
+    open `MonitoringExposureIntervalModel` row, regardless of which writer
+    opened it. This is the existing, already-tested mechanism that makes an
+    explicit Observation-Engine-specific app-shutdown hook unnecessary for
+    coverage truth specifically (see docs/todays-coverage-truth-contract
+    .md's "Application/process shutdown" section)."""
+
+    stream_id = repository.list_streams()[0].id
+    repository.record_observation_exposure_frame(
+        stream_id=stream_id,
+        runtime_generation_id="generation-killed",
+        healthy_at=START,
+        now=START,
+    )
+    repository.record_observation_exposure_frame(
+        stream_id=stream_id,
+        runtime_generation_id="generation-killed",
+        healthy_at=START + timedelta(minutes=5),
+        now=START + timedelta(minutes=5),
+    )
+
+    repository.prepare_for_supervision("next-process")
+
+    closed = _intervals(repository)
+    assert len(closed) == 1
+    assert closed[0].close_reason == "unclean_restart"
+    assert _utc(closed[0].ended_at) == START + timedelta(minutes=5)
