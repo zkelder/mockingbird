@@ -498,8 +498,18 @@ def _fixture_provider() -> tuple[FrameDrivenObservationProvider, _ConfirmingDete
 
 
 class _FixtureTransport:
-    """Yields one real bounded batch of frames once, then an empty stream --
-    a deterministic, natural end so the session loop exits on its own."""
+    """Yields one real bounded batch of frames once, then ends the session
+    deliberately and terminally -- a real live-camera analysis-stream never
+    has a legitimate "no more frames, ever" signal of its own (see
+    `engine_runtime.AnalysisStreamRetryPolicy`'s own docstring: every batch
+    is already a fresh bounded connection, and the fixed engine now
+    correctly treats an *empty* batch as recoverable and retries it rather
+    than stopping -- see `_RenewingTransport` below for that shape
+    specifically). This fixture's own scripted frames are a deliberately
+    bounded, finite script, so once they are served it raises the one
+    unambiguous terminal condition (`authentication_rejected`) instead, the
+    same deterministic, near-instant "the session loop exits on its own"
+    convergence every test in this module already depends on."""
 
     def __init__(self, frame_count: int = 4) -> None:
         self._frames = [_envelope(index) for index in range(1, frame_count + 1)]
@@ -510,7 +520,7 @@ class _FixtureTransport:
 
     def iter_analysis_frames(self, *, maximum_frames: int):
         if self._served:
-            return iter(())
+            raise CameraNodeClientError("authentication_rejected")
         self._served = True
         return self._paced_frames()
 
@@ -814,8 +824,14 @@ def test_start_pauses_live_session_and_stop_resumes_it(repository: ProductReposi
     assert coordinator.resume_calls == [config]
 
 
-def test_natural_stream_end_also_resumes_the_live_session(repository: ProductRepository) -> None:
-    """Resume must fire on *every* exit path, not only an explicit Stop."""
+def test_session_ending_without_explicit_stop_still_resumes_the_live_session(
+    repository: ProductRepository,
+) -> None:
+    """Resume must fire on *every* exit path, not only an explicit Stop --
+    here, `_FixtureTransport`'s own deliberate terminal signal once its
+    scripted frames are exhausted (see its docstring: a real live-camera
+    analysis-stream has no legitimate "natural end" of its own after
+    Observation Engine Session-Renewal Continuity v1)."""
 
     coordinator = _RecordingCameraCoordinator()
     manager = _manager(
@@ -835,24 +851,40 @@ def test_natural_stream_end_also_resumes_the_live_session(repository: ProductRep
 def test_camera_unavailable_mid_session_also_resumes_the_live_session(
     repository: ProductRepository,
 ) -> None:
-    """A Node transport failure ends the session exactly like an explicit
-    Stop from this coordination's point of view -- the physical camera must
-    still come back to the legacy live session, not sit paused forever."""
+    """A persistent Node transport failure -- recoverable-shaped, but never
+    once recovering -- still eventually ends the session exactly like an
+    explicit Stop from this coordination's point of view, once the bounded
+    `AnalysisStreamRetryPolicy` budget is exhausted: the physical camera
+    must still come back to the legacy live session, not sit paused
+    forever."""
 
     class _FailingTransport(_FixtureTransport):
         def iter_analysis_frames(self, *, maximum_frames: int):
+            self.calls += 1
             raise CameraNodeClientError("analysis_stream_unavailable")
 
     coordinator = _RecordingCameraCoordinator()
+    failing_transport = _FailingTransport()
+    failing_transport.calls = 0
+    policy = engine_runtime.AnalysisStreamRetryPolicy(maximum_consecutive_failures=3, backoff_seconds=0.01)
     manager = _manager(
         repository,
         provider_loader=lambda path: _fixture_provider(),
-        transport_factory=lambda config, stream_id: _FailingTransport(),
+        transport_factory=lambda config, stream_id: failing_transport,
         live_camera_sessions=coordinator,
+        analysis_stream_retry_policy=policy,
     )
     config = _camera_node_config()
     manager.start(STREAM_ID, config)
     assert _wait_until(lambda: manager.status(STREAM_ID).state == "stopped", timeout=10.0)
+
+    final = manager.status(STREAM_ID)
+    assert final.stopped_reason == "camera_unavailable"
+    assert final.camera_connected is False
+    # Bounded, not instant and not infinite: every recoverable attempt was
+    # actually retried up to the policy's own exact bound, never more.
+    assert failing_transport.calls == policy.maximum_consecutive_failures
+    assert final.advanced.get("analysis_stream_consecutive_failures") == policy.maximum_consecutive_failures
 
     assert coordinator.pause_calls == [STREAM_ID]
     assert coordinator.resume_calls == [config]
@@ -1255,3 +1287,295 @@ def test_a_fresh_session_never_mixes_counterfactual_records_with_a_prior_one(
     # The first session's own records remain intact and unaffected.
     first_window_again = first_session.counterfactual_query(start_offset_ms=0, end_offset_ms=1_000)
     assert first_window_again == first_window
+
+
+# =============================================================================
+# Observation Engine Session-Renewal Continuity v1 (see docs/observation
+# -session-renewal-continuity-contract.md and the real 2026-08-16 field
+# defect: the underlying Camera Node session/transport can renew/reconnect
+# normally, but the pre-fix outer loop treated any `session.run()`
+# interruption -- raised, or a batch that completed with zero frames -- as
+# unconditionally fatal, so a normal, bounded renewal silently and
+# permanently stopped Observation until a human noticed and pressed Start
+# again. Root-caused precisely: `mockingbird_node.app.analysis_parts`
+# already tolerates sustained `camera_busy` contention across a whole
+# ~10-second analysis-stream batch by ending that one batch cleanly with
+# zero frames (see its own `test_analysis_stream_ends_cleanly_when_camera_
+# never_recovers`, whose docstring explicitly assumes "the client's
+# existing reconnect logic can take over") -- but no such logic existed at
+# this outer layer before this fix.
+# =============================================================================
+
+
+class _RenewingTransport(_FixtureTransport):
+    """Simulates one or more bounded Camera Node analysis-stream
+    interruptions -- the real Observation Engine Session-Renewal Continuity
+    v1 shape (see `engine_runtime.AnalysisStreamRetryPolicy`) -- interleaved
+    with real frame batches, all under the *same* `provider_generation` (a
+    genuine bounded renewal never changes Node/Stream/camera identity by
+    itself -- see docs/reconnect-continuity-contract.md's own "three
+    separate concepts"). `script` is consumed in order, one entry per
+    `iter_analysis_frames` call:
+
+    - a positive int N: yield N further real frames from this transport's
+      own running sequence counter (same paced shape as `_FixtureTransport`
+      itself, just repeatable across many calls instead of a single batch).
+    - `"empty"`: return zero frames, no error -- the dominant real shape
+      proven server-side in `mockingbird_node.app.analysis_parts`: an
+      entire batch lost to sustained `camera_busy` contention (e.g. a
+      concurrent evidence-burst-triggered warm-profile teardown/rebuild
+      that legitimately outlasts one ~10-second analysis-stream batch).
+    - `"raise"`: raise `CameraNodeClientError("analysis_stream_unavailable")`
+      -- a bounded, recoverable transport-level interruption.
+    - `"auth"`: raise `CameraNodeClientError("authentication_rejected")` --
+      the one genuinely terminal condition this fixture can produce.
+
+    Once `script` is exhausted, every further call raises the same terminal
+    `"auth"` condition `_FixtureTransport` itself now uses, so a test that
+    never explicitly stops still converges deterministically.
+    """
+
+    def __init__(self, script: list[object], *, generation: str = "generation-a") -> None:
+        super().__init__(frame_count=0)
+        self._script = list(script)
+        self._generation = generation
+        self._next_sequence = 1
+        self.calls = 0
+
+    def iter_analysis_frames(self, *, maximum_frames: int):
+        self.calls += 1
+        outcome = self._script.pop(0) if self._script else "auth"
+        if outcome == "raise":
+            raise CameraNodeClientError("analysis_stream_unavailable")
+        if outcome == "auth":
+            raise CameraNodeClientError("authentication_rejected")
+        if outcome == "empty":
+            return iter(())
+        return self._yield_frames(int(outcome))
+
+    def _yield_frames(self, count: int):
+        # Same real-network-time pacing rationale as `_FixtureTransport.
+        # _paced_frames` -- yielding instantly would let the source queue
+        # coalesce away most frames before the consumer ever wakes.
+        for _ in range(count):
+            envelope = _envelope(self._next_sequence, generation=self._generation)
+            self._next_sequence += 1
+            time.sleep(0.06)
+            yield envelope
+
+
+def _fast_retry_policy(**overrides: object) -> engine_runtime.AnalysisStreamRetryPolicy:
+    values: dict[str, object] = dict(maximum_consecutive_failures=6, backoff_seconds=0.01)
+    values.update(overrides)
+    return engine_runtime.AnalysisStreamRetryPolicy(**values)
+
+
+def test_bounded_transport_error_recovers_without_stopping_or_duplicating_the_visit(
+    repository: ProductRepository,
+) -> None:
+    """The exact real field defect: two bounded, recoverable `session.run()`
+    errors before any frame of a real encounter ever arrives must not stop
+    Observation, and the one real encounter spanning them must still yield
+    exactly one candidate Visit -- never zero (Observation gave up), never
+    two (the renewal was mistaken for a new encounter)."""
+
+    transport = _RenewingTransport(["raise", "raise", 4], generation="generation-a")
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: transport,
+        analysis_stream_retry_policy=_fast_retry_policy(),
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    # The script's own eventual terminal fallback (`"auth"`) converges the
+    # session on its own, forcing the immediate `finalize=True` tick exactly
+    # like every other end-to-end fixture in this module -- never a real
+    # wait on the slow 10-second periodic tick.
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "stopped", timeout=10.0)
+
+    final = manager.status(STREAM_ID)
+    assert final.counts.candidates_created == 1
+    assert final.last_candidate_visit_id is not None
+    # The two `"raise"` batches were genuinely retried and recovered --
+    # never treated as fatal -- before the real encounter's own 4 frames
+    # ever arrived.
+    assert final.advanced.get("analysis_stream_reconnect_recoveries") == 1
+    assert transport.calls == 4  # 2 failed + 1 successful (4 frames) + 1 terminal fallback
+    assert repository.get_observation_authority_state().mode == "shadow"
+
+
+def test_empty_batch_interruption_recovers_without_stopping_observation(
+    repository: ProductRepository,
+) -> None:
+    """The dominant *real* shape (see this section's own header comment):
+    `session.run()` completing with zero frames and no exception at all --
+    proven server-side to mean "an entire batch was lost to sustained
+    camera_busy contention," not "the stream is permanently over." Must
+    recover exactly like the raised-exception shape `test_bounded_
+    transport_error_recovers_without_stopping_or_duplicating_the_visit`
+    already proves."""
+
+    transport = _RenewingTransport(["empty", "empty", 4], generation="generation-a")
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: transport,
+        analysis_stream_retry_policy=_fast_retry_policy(),
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "stopped", timeout=10.0)
+
+    final = manager.status(STREAM_ID)
+    assert final.counts.candidates_created == 1
+    assert final.advanced.get("analysis_stream_reconnect_recoveries") == 1
+    assert transport.calls == 4
+
+
+def test_repeated_bounded_renewals_all_recover_one_encounter_one_visit(
+    repository: ProductRepository,
+) -> None:
+    """Multiple separate renewal episodes across one session -- a mix of
+    both real shapes (raised and empty) -- must each recover independently,
+    and the one continuous real encounter spanning all of them must still
+    yield exactly one candidate Visit."""
+
+    transport = _RenewingTransport(
+        ["raise", "empty", 1, "raise", "raise", "empty", 1, "empty", 2],
+        generation="generation-a",
+    )
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: transport,
+        analysis_stream_retry_policy=_fast_retry_policy(),
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "stopped", timeout=10.0)
+
+    final = manager.status(STREAM_ID)
+    assert final.counts.candidates_created == 1
+    assert final.advanced.get("analysis_stream_reconnect_recoveries") == 3
+
+
+def test_user_stop_during_reconnect_backoff_is_prompt(repository: ProductRepository) -> None:
+    """An explicit Stop mid-backoff must not wait out the full backoff
+    window -- `_await_transport_retry` uses `Event.wait`, which returns the
+    instant `_stop_event` is set, mirroring `session.run()`'s own
+    `available.wait` pattern for the identical reason."""
+
+    class _AlwaysFailingTransport(_FixtureTransport):
+        def iter_analysis_frames(self, *, maximum_frames: int):
+            raise CameraNodeClientError("analysis_stream_unavailable")
+
+    policy = _fast_retry_policy(maximum_consecutive_failures=30, backoff_seconds=5.0)
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: _AlwaysFailingTransport(),
+        analysis_stream_retry_policy=policy,
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(
+        lambda: (manager.status(STREAM_ID).advanced.get("analysis_stream_consecutive_failures") or 0) >= 1,
+        timeout=5.0,
+    )
+
+    started = time.monotonic()
+    status = manager.stop(STREAM_ID)
+    elapsed = time.monotonic() - started
+
+    assert status is not None
+    assert status.state == "stopped"
+    assert elapsed < 3.0  # well under the 5-second backoff -- Stop cut the wait short
+    assert repository.get_observation_authority_state().mode == "shadow"
+
+
+def test_permanently_unavailable_camera_eventually_terminates_within_the_bound(
+    repository: ProductRepository,
+) -> None:
+    """A recoverable-shaped failure that never once recovers must still end
+    the session -- "persistent provider failure after bounded recovery" is
+    terminal, exhausting the exact bounded budget, never fewer attempts
+    (giving up too early) and never more (an unbounded busy retry loop)."""
+
+    class _AlwaysFailingTransport(_FixtureTransport):
+        def __init__(self) -> None:
+            super().__init__(frame_count=0)
+            self.calls = 0
+
+        def iter_analysis_frames(self, *, maximum_frames: int):
+            self.calls += 1
+            raise CameraNodeClientError("analysis_stream_unavailable")
+
+    transport = _AlwaysFailingTransport()
+    policy = _fast_retry_policy(maximum_consecutive_failures=4)
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: transport,
+        analysis_stream_retry_policy=policy,
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "stopped", timeout=10.0)
+
+    final = manager.status(STREAM_ID)
+    assert final.stopped_reason == "camera_unavailable"
+    assert final.camera_connected is False
+    assert transport.calls == policy.maximum_consecutive_failures
+    assert final.advanced.get("analysis_stream_consecutive_failures") == policy.maximum_consecutive_failures
+    assert repository.get_observation_authority_state().mode == "shadow"
+
+
+def test_node_identity_pairing_failure_remains_immediately_terminal(
+    repository: ProductRepository,
+) -> None:
+    """A `CameraNodeClientError("authentication_rejected")` -- the "node
+    identity/pairing invalid" terminal category -- must never be retried,
+    even once: retrying a rejected credential only delays the honest
+    terminal status the user actually needs to see and act on (re-pair)."""
+
+    class _RejectedCredentialTransport(_FixtureTransport):
+        def __init__(self) -> None:
+            super().__init__(frame_count=0)
+            self.calls = 0
+
+        def iter_analysis_frames(self, *, maximum_frames: int):
+            self.calls += 1
+            raise CameraNodeClientError("authentication_rejected")
+
+    transport = _RejectedCredentialTransport()
+    # A long backoff/high attempt budget -- if the terminal classification
+    # were not checked first, this test would time out well before 5s.
+    policy = _fast_retry_policy(maximum_consecutive_failures=10, backoff_seconds=5.0)
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: transport,
+        analysis_stream_retry_policy=policy,
+    )
+
+    started = time.monotonic()
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "stopped", timeout=5.0)
+    elapsed = time.monotonic() - started
+
+    assert transport.calls == 1
+    assert elapsed < 3.0
+    final = manager.status(STREAM_ID)
+    assert final.stopped_reason == "camera_unavailable"
+    assert "authentication_rejected" in final.camera_message
+    # Never entered the bounded-retry bookkeeping at all -- a genuinely
+    # different code path from the recoverable one.
+    assert final.advanced.get("analysis_stream_consecutive_failures") is None
+    assert repository.get_observation_authority_state().mode == "shadow"
+
+
+def test_reconnect_retry_policy_validates_its_own_bounds() -> None:
+    """Mirrors `ReconnectBridgeConfig.__post_init__`'s own bounded-and-
+    validated convention -- an out-of-range policy must never silently
+    become an effectively-unbounded or effectively-instant retry loop."""
+
+    with pytest.raises(ValueError):
+        engine_runtime.AnalysisStreamRetryPolicy(maximum_consecutive_failures=0)
+    with pytest.raises(ValueError):
+        engine_runtime.AnalysisStreamRetryPolicy(backoff_seconds=-1.0)

@@ -287,6 +287,74 @@ _UNSUPPORTED_GPU_CODES = frozenset({
 })
 
 
+@dataclass(frozen=True)
+class AnalysisStreamRetryPolicy:
+    """Bounded retry policy for one *recoverable* interruption of the live
+    Camera Node analysis-stream transport (`session.run()` in `_run_async`
+    below) -- Observation Engine Session-Renewal Continuity v1 (see
+    docs/observation-session-renewal-continuity-contract.md).
+
+    Distinct from `reconnect_continuity.ReconnectBridgeConfig`: that module
+    bridges one still-active *track* across a benign transport reconnect it
+    already sees fresh frames for. This policy instead bounds how long this
+    session keeps re-attempting `session.run()` itself while frames are not
+    arriving at all -- a `CameraNodeClientError`/`ValueError`, or a batch
+    that completes with zero frames, are both already-observed, honest
+    shapes of "the Camera Node's own physical-camera-lock contention
+    outlasted one bounded ~10-second analysis-stream batch" (see
+    `mockingbird_node.app.analysis_parts`, which already tolerates this
+    exact shape server-side -- its own
+    `test_analysis_stream_ends_cleanly_when_camera_never_recovers` docstring
+    says so explicitly: "so the client's existing reconnect logic can take
+    over"). A track/Visit-in-progress is never touched while this policy is
+    retrying -- `all_track_updates`/`all_evidence_candidates`/the live
+    `provider`'s own tracker generation all simply keep accumulating exactly
+    as they would across any ordinary reconnect, so a successful resume
+    resumes the same encounter rather than starting a new one.
+
+    Exhausting this bounded budget without a single successful frame still
+    ends the session exactly as before this fix
+    (`stopped_reason="camera_unavailable"`) -- this never retries forever.
+    """
+
+    #: How many consecutive recoverable `session.run()` outcomes (raised or
+    #: empty) this session tolerates in a row before giving up and treating
+    #: the interruption as genuinely terminal -- "persistent provider
+    #: failure after bounded recovery" in the contract doc's classification.
+    maximum_consecutive_failures: int = 6
+    #: Bounded, interruptible pause between consecutive retry attempts --
+    #: never a busy loop hammering the Node, and always cut short the
+    #: instant an explicit Stop is requested (see `_await_transport_retry`).
+    backoff_seconds: float = 2.0
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.maximum_consecutive_failures <= 30 or not 0.0 <= self.backoff_seconds <= 60.0:
+            raise ValueError("invalid_analysis_stream_retry_policy")
+
+
+# `session.run()`'s real call chain (`CameraNodeHttpTransport.
+# iter_analysis_frames`) can only ever raise these two `CameraNodeClientError`
+# codes for a reason retrying can never fix: the paired credential itself was
+# rejected, or the configured address stopped behaving like this Camera
+# Node's own paired endpoint at all (a redirect). Both match this contract's
+# "node identity/pairing invalid" terminal category exactly -- retrying
+# either only delays an honest terminal status the user needs to act on
+# (re-pair). Every other code this call chain can raise
+# (`analysis_stream_unavailable`, `analysis_stream_invalid`), a bare
+# `ValueError`, or any future code, is treated as bounded-recoverable -- see
+# `AnalysisStreamRetryPolicy`. Deliberately not the same set as
+# `_MISSING_MODEL_OR_RUNTIME_CODES`/`_UNSUPPORTED_GPU_CODES` above (those
+# classify a *Start*-time engine-load failure) or
+# `CAMERA_NODE_RUNTIME_FAILURE_CODES` (that one classifies a *different*
+# subsystem's snapshot/capture failures for its own UI-health purpose) --
+# this set answers one narrow question: should the live analysis-stream loop
+# keep retrying `session.run()`?
+_TERMINAL_ANALYSIS_STREAM_ERROR_CODES = frozenset({
+    "authentication_rejected",
+    "node_redirect_rejected",
+})
+
+
 def _engine_failure_message(error: BaseException) -> tuple[str, str]:
     """Return `(basic_message, category)` for an Observation Engine start
     failure. `basic_message` never tells a normal user to set an
@@ -330,6 +398,7 @@ class _EngineSession:
         transport_factory: TransportFactory = _default_transport_factory,
         live_camera_sessions: LiveCameraSessionCoordinator | None = None,
         automatic_identification_assist: AutomaticReviewIdentificationAssist | None = None,
+        analysis_stream_retry_policy: AnalysisStreamRetryPolicy | None = None,
     ) -> None:
         self.stream_id = stream_id
         self._playback_config = playback_config
@@ -340,6 +409,7 @@ class _EngineSession:
         self._transport_factory = transport_factory
         self._live_camera_sessions = live_camera_sessions
         self._automatic_identification_assist = automatic_identification_assist
+        self._retry_policy = analysis_stream_retry_policy or AnalysisStreamRetryPolicy()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._state_lock = threading.RLock()
@@ -643,19 +713,66 @@ class _EngineSession:
                     self._state = "observing"
                 loop = asyncio.get_running_loop()
                 last_tick = loop.time()
+                # Observation Engine Session-Renewal Continuity v1: a single
+                # `session.run()` interruption -- raised, or a batch that
+                # completes with genuinely zero frames -- is no longer
+                # automatically fatal to this whole session. Most of the
+                # time this loop reconnects anyway (a fresh `/analysis-
+                # stream` HTTP connection every ~10-second batch is already
+                # the normal, healthy shape -- see docs/reconnect-continuity
+                # -contract.md); `consecutive_transport_failures` only
+                # tracks a run of *unsuccessful* attempts in a row, reset the
+                # instant any attempt yields a real frame again. Nothing
+                # about the accumulated `all_track_updates`/
+                # `all_evidence_candidates`/the live `provider`'s own
+                # tracker generation is touched while retrying, so a
+                # recovered connection resumes the same encounter rather
+                # than starting a new one -- see `AnalysisStreamRetryPolicy`.
+                consecutive_transport_failures = 0
                 while not self._stop_event.is_set():
                     try:
                         results = await session.run(maximum_frames=_BATCH_FRAMES)
                     except (CameraNodeClientError, ValueError) as error:
-                        with self._state_lock:
-                            self._camera_connected = False
-                            self._camera_message = f"Camera Node connection stopped: {_sanitized(error)}."
-                            self._stopped_reason = "camera_unavailable"
-                        break
+                        code = _sanitized(error)
+                        if code in _TERMINAL_ANALYSIS_STREAM_ERROR_CODES:
+                            with self._state_lock:
+                                self._camera_connected = False
+                                self._camera_message = f"Camera Node connection stopped: {code}."
+                                self._stopped_reason = "camera_unavailable"
+                            break
+                        consecutive_transport_failures += 1
+                        if not await self._await_transport_retry(
+                            consecutive_failures=consecutive_transport_failures, reason=code,
+                        ):
+                            break
+                        continue
                     if not results:
+                        # A batch that completed cleanly (no exception) but
+                        # delivered zero frames -- the honest shape of
+                        # sustained `camera_busy` contention across an
+                        # entire batch (see `AnalysisStreamRetryPolicy`'s own
+                        # docstring), not proof the stream is permanently
+                        # over: every batch is already its own fresh
+                        # connection, so there is no persistent connection
+                        # left to have "ended."
+                        consecutive_transport_failures += 1
+                        if not await self._await_transport_retry(
+                            consecutive_failures=consecutive_transport_failures, reason="no_frames_received",
+                        ):
+                            break
+                        continue
+                    if consecutive_transport_failures:
+                        # Recovered: restore honest healthy status the
+                        # instant real frames arrive again -- "state returns
+                        # to observing, freshness resumes, no stale terminal
+                        # stopped_reason remains."
                         with self._state_lock:
-                            self._stopped_reason = "stream_ended"
-                        break
+                            self._camera_connected = True
+                            self._camera_message = "Connected to the Camera Node."
+                            self._advanced["analysis_stream_reconnect_recoveries"] = (
+                                int(self._advanced.get("analysis_stream_reconnect_recoveries", 0)) + 1
+                            )
+                        consecutive_transport_failures = 0
                     for result in results:
                         all_track_updates.extend(result.track_updates)
                         all_evidence_candidates.extend(result.evidence_candidates)
@@ -744,6 +861,51 @@ class _EngineSession:
             except Exception:  # pragma: no cover - defensive: cleanup must never raise
                 pass
             repository.close()
+
+    async def _await_transport_retry(self, *, consecutive_failures: int, reason: str) -> bool:
+        """Bounded, Stop-responsive wait between two `session.run()`
+        attempts for one recoverable Camera Node analysis-stream
+        interruption (see `AnalysisStreamRetryPolicy`). Returns `True` if
+        the caller should try `session.run()` again; `False` once the
+        bounded retry budget is exhausted or the user explicitly stopped
+        mid-wait -- both of which the caller treats exactly like the
+        unconditional break this replaces.
+
+        Honest status throughout (product requirement: during a bounded
+        reconnect, UI/API state must not falsely report that everything is
+        healthy): `camera_connected` goes false and `camera_message` names
+        the attempt the moment the first recoverable interruption is seen.
+        `_state`/`observing` are deliberately never touched here --
+        Observation stays logically active the whole time, exactly as
+        docs/observation-session-renewal-continuity-contract.md requires;
+        only the camera-health fields (already this module's existing,
+        established honesty channel -- see the "Camera health/status
+        correction" contract) reflect the degraded window.
+        """
+
+        policy = self._retry_policy
+        exhausted = consecutive_failures >= policy.maximum_consecutive_failures
+        with self._state_lock:
+            self._camera_connected = False
+            if exhausted:
+                self._camera_message = f"Camera Node connection stopped: {reason}."
+                self._stopped_reason = "camera_unavailable"
+            else:
+                self._camera_message = (
+                    f"Reconnecting to the Camera Node… (attempt {consecutive_failures} of "
+                    f"{policy.maximum_consecutive_failures}; last signal: {reason})"
+                )
+            self._advanced["analysis_stream_consecutive_failures"] = consecutive_failures
+        if exhausted:
+            return False
+        # `Event.wait` returns True the moment the event is set (even if
+        # that happens well before the timeout), so an explicit Stop
+        # requested mid-backoff is noticed immediately rather than only
+        # after the full backoff elapses -- mirroring the exact
+        # `asyncio.to_thread(available.wait, ...)` pattern `session.run()`
+        # itself already uses for the same reason.
+        stopped = await asyncio.to_thread(self._stop_event.wait, policy.backoff_seconds)
+        return not stopped
 
     def _pause_live_camera_session(self) -> None:
         """Best-effort: a bug here must never prevent Observation Engine
@@ -1001,12 +1163,14 @@ class ObservationEngineSessionManager:
         transport_factory: TransportFactory = _default_transport_factory,
         live_camera_sessions: LiveCameraSessionCoordinator | None = None,
         automatic_identification_assist: AutomaticReviewIdentificationAssist | None = None,
+        analysis_stream_retry_policy: AnalysisStreamRetryPolicy | None = None,
     ) -> None:
         self._repository_factory = repository_factory
         self._provider_loader = provider_loader
         self._transport_factory = transport_factory
         self._live_camera_sessions = live_camera_sessions
         self._automatic_identification_assist = automatic_identification_assist
+        self._analysis_stream_retry_policy = analysis_stream_retry_policy or AnalysisStreamRetryPolicy()
         self._lock = threading.RLock()
         self._sessions: dict[str, _EngineSession] = {}
 
@@ -1034,6 +1198,7 @@ class ObservationEngineSessionManager:
                 transport_factory=self._transport_factory,
                 live_camera_sessions=self._live_camera_sessions,
                 automatic_identification_assist=self._automatic_identification_assist,
+                analysis_stream_retry_policy=self._analysis_stream_retry_policy,
             )
             self._sessions[stream_id] = session
             session.start()
