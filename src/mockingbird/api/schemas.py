@@ -2140,6 +2140,36 @@ class VisitEvidenceFrame(BaseModel):
     # reprojecting a box computed for a different frame's own pixels.
     normalized_track_box: list[float] | None = None
 
+
+class ClassifierSupportingEvidence(BaseModel):
+    """Visit Same-Frame Classifier Evidence Visibility v1 (see docs/visit-
+    classifier-evidence-visibility-contract.md): the real, already-persisted
+    MediaAsset the species classifier actually used for this Visit's latest
+    SpeciesSuggestion (Same-Frame Species Evidence v1's own `classifier_
+    input` provenance, reused here, never re-resolved), reusing the exact
+    same `VisitEvidenceFrame` shape/serialization as the Visit's ordinary
+    evidence gallery. Present only when that asset is not already one of the
+    Visit's own `evidence_frames` -- see "Avoid duplicate-image clutter" in
+    the contract.
+
+    Supporting/diagnostic evidence only: never the Visit's primary/canonical
+    image, never a redefinition or alteration of the species suggestion
+    itself, and never a substitute for human review/correction truth.
+    """
+
+    frame: VisitEvidenceFrame
+    # The SpeciesSuggestion this evidence explains -- lets a caller with
+    # more than one historical suggestion for a Visit confirm which one.
+    species_suggestion_id: str
+    # Mirrors `classifier_input.same_frame`/`.input_type` from the
+    # suggestion's own `evidence_region_json` (Same-Frame Species Evidence
+    # v1): whether the resolver proved this exact frame (not merely a
+    # nearby one), and which resolver tier supplied it
+    # (`same_frame_crop` | `persisted_crop`).
+    same_frame: bool | None = None
+    input_type: str | None = None
+
+
 class EffectivePrimaryEvidence(BaseModel):
     selected_media_asset_id: str | None = None
     persisted_primary_media_asset_id: str | None = None
@@ -5407,6 +5437,12 @@ class VisitDetail(BaseModel):
     media_asset: MediaAsset | None = None
     evidence_frames: list[VisitEvidenceFrame] = Field(default_factory=list)
     effective_primary: EffectivePrimaryEvidence | None = None
+    # Visit Same-Frame Classifier Evidence Visibility v1 (see docs/visit-
+    # classifier-evidence-visibility-contract.md): present only when the
+    # asset the species classifier actually used differs materially from
+    # `evidence_frames` above -- never a second copy of an already-visible
+    # image, never the Visit's primary/canonical evidence.
+    classifier_supporting_evidence: ClassifierSupportingEvidence | None = None
     crop_history: list[VisitCropHistoryEntry] = Field(default_factory=list)
     stale_species_suggestions: bool = False
     detection_proposals: list[DetectionProposal] = Field(default_factory=list)

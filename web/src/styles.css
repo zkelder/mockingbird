@@ -6801,6 +6801,20 @@ a.secondary-action {
   padding-top: 14px;
 }
 
+/* Visit Same-Frame Classifier Evidence Visibility v1: a calm, clearly-
+   bounded callout (mirrors .today-report-fact's own light card treatment)
+   so the supporting evidence image reads as one grouped unit explaining a
+   suggestion -- distinct from, and visually lighter than, a top-level
+   .panel card, since it always nests inside one. */
+.classifier-supporting-evidence-panel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+  padding: 14px;
+  background: #f5f8f1;
+}
+
 .species-suggestion-review-context h3,
 .visit-suggestion-card h4,
 .visit-suggestion-card p {

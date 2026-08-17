@@ -675,6 +675,17 @@ export function VisitDetailPage({
       )
     : "";
   const sortedSpeciesSuggestions = [...speciesSuggestions].sort(compareSpeciesSuggestions);
+  // Visit Same-Frame Classifier Evidence Visibility v1: which already-loaded
+  // suggestion (if any) this Visit's classifier-supporting evidence
+  // explains, so the panel below can name it specifically instead of
+  // speaking generically. Both come from independent fetches
+  // (getVisitDetail vs listSpeciesSuggestions), so absence of a match here
+  // (e.g. suggestions still loading) is expected and handled in the panel.
+  const classifierSupportingEvidenceSuggestion = detail.classifier_supporting_evidence
+    ? sortedSpeciesSuggestions.find(
+        (suggestion) => suggestion.id === detail.classifier_supporting_evidence?.species_suggestion_id,
+      )
+    : undefined;
   // A lightweight "Other possibilities" hint next to the headline itself
   // (item 6 of the Automatic Species Suggestion v1 milestone): the current
   // top suggestion's own alternatives, never the full ranked-table detail
@@ -1352,6 +1363,22 @@ export function VisitDetailPage({
                   Clear prefill
                 </button>
               </div>
+            ) : null}
+            {detail.classifier_supporting_evidence ? (
+              <section className="classifier-supporting-evidence-panel">
+                <div className="section-heading">
+                  <div>
+                    <h4>Species suggestion evidence</h4>
+                    <span className="meta-text">
+                      {classifierSupportingEvidenceSuggestion
+                        ? `MockingBird's suggestion of ${displayTaxonomyLabel(classifierSupportingEvidenceSuggestion.suggested_label, taxonomyLabels)} was based on this frame -- not the Visit evidence image above.`
+                        : "MockingBird's species suggestion was based on this frame -- not the Visit evidence image above."}
+                    </span>
+                  </div>
+                  <EvidenceBadge label="Supporting evidence" tone="evidence" />
+                </div>
+                <VisitEvidenceSequence frames={[detail.classifier_supporting_evidence.frame]} />
+              </section>
             ) : null}
             {isLoadingSpeciesSuggestions ? (
               <span className="meta-text">Loading suggestions for this visit...</span>

@@ -48,6 +48,12 @@ function evidenceRoleLabel(frame: VisitEvidenceFrame): string {
     identification: "Best identification image",
     context: "Context image",
     alternate: "Alternate image",
+    // Visit Same-Frame Classifier Evidence Visibility v1: only ever appears
+    // via the dedicated `classifier_supporting_evidence` panel below, never
+    // in this gallery itself (the role is structurally excluded from
+    // `evidence_frames`) -- kept here so that panel's own `VisitEvidenceSequence`
+    // instance gets a real, specific caption instead of the generic fallback.
+    classifier_same_frame: "Frame used for species suggestion",
   };
   return labels[frame.evidence_role] ?? "Monitoring context";
 }

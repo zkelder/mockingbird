@@ -1534,6 +1534,22 @@ export interface VisitEvidenceFrame {
 }
 
 /**
+ * Visit Same-Frame Classifier Evidence Visibility v1: the real,
+ * already-persisted MediaAsset the species classifier actually used for
+ * this Visit's latest SpeciesSuggestion, reusing the same `VisitEvidenceFrame`
+ * shape as the ordinary evidence gallery above. Present only when that asset
+ * is not already one of the Visit's own `evidence_frames` -- never a second
+ * copy of an already-visible image, and never the Visit's primary/canonical
+ * evidence or a change to the suggestion itself.
+ */
+export interface ClassifierSupportingEvidence {
+  frame: VisitEvidenceFrame;
+  species_suggestion_id: string;
+  same_frame?: boolean | null;
+  input_type?: string | null;
+}
+
+/**
  * Read-only, bounded recommendation over a Visit's already-saved evidence
  * frames (see `mockingbird.motion.effective_primary`). Never model
  * inference and never written back to the Visit -- `is_primary` in
@@ -3379,6 +3395,7 @@ export interface VisitDetail {
   media_asset?: MediaAsset | null;
   evidence_frames: VisitEvidenceFrame[];
   effective_primary?: EffectivePrimaryEvidence | null;
+  classifier_supporting_evidence?: ClassifierSupportingEvidence | null;
   crop_history: VisitCropHistoryEntry[];
   stale_species_suggestions: boolean;
   detection_proposals: DetectionProposal[];

@@ -202,6 +202,7 @@ from mockingbird.api.schemas import (
     ClassifierReadinessReport,
     ClassifierReadinessSkipSummary,
     ClassifierReadinessSpeciesSummary,
+    ClassifierSupportingEvidence,
     ClassifierTrainingManifestResponse,
     DatasetCoverageGap,
     DatasetCoverageSpecies,
@@ -14130,10 +14131,10 @@ class ProductRepository:
         last_capture = _as_utc(parsed[-1][0].captured_at)
         duration_seconds = (last_capture - first_capture).total_seconds()
         return [
-            VisitEvidenceFrame(
-                media_asset_id=link.media_asset_id,
-                preview_url=f"/api/media/{link.media_asset_id}/preview",
-                captured_at=_as_utc(link.captured_at),
+            self._visit_evidence_frame_from_link_and_asset(
+                link,
+                asset,
+                is_primary=link.media_asset_id == primary_id,
                 relative_position=(
                     0.0
                     if duration_seconds <= 0
@@ -14146,16 +14147,6 @@ class ProductRepository:
                         ),
                     )
                 ),
-                frame_sequence=link.frame_sequence,
-                is_primary=link.media_asset_id == primary_id,
-                content_type=asset.content_type,
-                width=asset.image_width,
-                height=asset.image_height,
-                evidence_role=link.evidence_role or asset.evidence_role or "monitoring_frame",
-                normalized_crop_box=(
-                    _normalized_box_from_json(asset.normalized_crop_box_json)
-                    or _normalized_box_from_json(asset.normalized_padded_crop_box_json)
-                ),
                 normalized_track_box=_frame_local_subject_box(
                     _normalized_box_from_json(asset.normalized_track_box_json),
                     alignment_status=asset.alignment_status,
@@ -14164,6 +14155,194 @@ class ProductRepository:
             )
             for link, asset in parsed
         ]
+
+    def _visit_evidence_frame_from_link_and_asset(
+        self,
+        link: VisitEvidenceLinkModel | None,
+        asset: MediaAssetModel,
+        *,
+        is_primary: bool,
+        relative_position: float = 0.0,
+        normalized_track_box: list[float] | None = None,
+    ) -> VisitEvidenceFrame:
+        """One `VisitEvidenceFrame` from an already-resolved (link, asset)
+        pair -- pure serialization, no querying. Extracted from `_visit_
+        evidence_frames_from_links`'s own per-item construction (Visit Same-
+        Frame Classifier Evidence Visibility v1) so a caller resolving a
+        single asset outside that function's own multi-frame sequencing
+        (`_classifier_supporting_evidence_from_session`) reuses the exact
+        same `VisitEvidenceFrame` shape instead of a second, drifting
+        construction. `relative_position`/`normalized_track_box` stay
+        caller-supplied parameters rather than computed here: both depend on
+        context this single-item helper does not have -- a whole sequence's
+        first/last capture times for the former, a deliberately different
+        (same-frame-proof-gated, see `_classifier_supporting_evidence_from_
+        session`) trust rule for the latter. `link` is optional so a caller
+        with only a `MediaAssetModel` (no `VisitEvidenceLinkModel` row, e.g.
+        a historical record whose link was since removed) still degrades to
+        an honest frame rather than failing.
+        """
+
+        return VisitEvidenceFrame(
+            media_asset_id=asset.id,
+            preview_url=f"/api/media/{asset.id}/preview",
+            captured_at=_as_utc(link.captured_at if link is not None else (asset.captured_at or asset.created_at)),
+            relative_position=relative_position,
+            frame_sequence=link.frame_sequence if link is not None else None,
+            is_primary=is_primary,
+            content_type=asset.content_type,
+            width=asset.image_width,
+            height=asset.image_height,
+            evidence_role=(
+                (link.evidence_role if link is not None else None)
+                or asset.evidence_role
+                or "monitoring_frame"
+            ),
+            normalized_crop_box=(
+                _normalized_box_from_json(asset.normalized_crop_box_json)
+                or _normalized_box_from_json(asset.normalized_padded_crop_box_json)
+            ),
+            normalized_track_box=normalized_track_box,
+        )
+
+    def classifier_supporting_evidence(self, visit_id: str) -> ClassifierSupportingEvidence | None:
+        """Read-only recommendation; never rewrites the species suggestion
+        or any evidence link. See `_classifier_supporting_evidence_from_
+        session`."""
+
+        with self.session_factory() as session:
+            visit = session.get(VisitModel, visit_id)
+            if visit is None:
+                return None
+            event = session.get(EventModel, visit.event_id)
+            if event is None:
+                return None
+            return self._classifier_supporting_evidence_from_session(session, visit=visit, event=event)
+
+    def _classifier_supporting_evidence_from_session(
+        self,
+        session: Session,
+        *,
+        visit: VisitModel,
+        event: EventModel,
+    ) -> ClassifierSupportingEvidence | None:
+        """Visit Same-Frame Classifier Evidence Visibility v1 (see docs/
+        visit-classifier-evidence-visibility-contract.md): the real
+        MediaAsset `species/classifier_input.py` actually resolved and fed
+        BioCLIP for this Visit's latest SpeciesSuggestion (Same-Frame
+        Species Evidence v1's own `classifier_input` provenance, already
+        persisted on `SpeciesSuggestionModel.evidence_region_json` -- never
+        re-derived or re-resolved here), whenever that asset is not already
+        one of the Visit's own ordinary `evidence_frames`. Read-only
+        diagnostic-lineage exposure: never alters the suggestion, never
+        promotes the asset to primary/canonical evidence (see "Non-
+        promotion" in docs/same-frame-species-evidence-contract.md), and
+        degrades to `None` -- never raises -- for every "nothing to
+        honestly show" case: no suggestion, no recorded classifier input,
+        the referenced asset gone/deleted/cross-Stream, or the asset
+        already visible in the ordinary gallery.
+        """
+
+        suggestions = session.scalars(
+            select(SpeciesSuggestionModel)
+            .where(SpeciesSuggestionModel.visit_id == visit.id)
+            .order_by(
+                SpeciesSuggestionModel.created_at,
+                SpeciesSuggestionModel.rank,
+                SpeciesSuggestionModel.id,
+            )
+        ).all()
+        if not suggestions:
+            return None
+        # Mirrors `mockingbird.api.main._latest_species_suggestion_for_visit`
+        # exactly (same ordering, same `[-1]` pick) -- the identical
+        # suggestion a reviewer already sees as "the" current one for this
+        # Visit, so the evidence exposed here always explains that
+        # suggestion, never a stale or different one.
+        latest = suggestions[-1]
+        if not latest.evidence_region_json:
+            return None
+        try:
+            evidence_region = json.loads(latest.evidence_region_json)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        if not isinstance(evidence_region, dict):
+            return None
+        classifier_input = evidence_region.get("classifier_input")
+        if not isinstance(classifier_input, dict):
+            return None
+        source_media_asset_id = classifier_input.get("source_media_asset_id")
+        if not isinstance(source_media_asset_id, str) or not source_media_asset_id:
+            return None
+
+        asset = session.get(MediaAssetModel, source_media_asset_id)
+        # Evidence ownership stays Stream-scoped, exactly like `_visit_
+        # evidence_frames_from_links`'s own check: never trust a stored id
+        # (recorded at suggestion time, potentially stale) without
+        # re-verifying it still belongs to this Visit's own Stream.
+        # Curation must never reveal media from another Stream.
+        if asset is None or asset.stream_id != event.stream_id:
+            return None
+        if not Path(asset.local_path).is_file():
+            # Retention/cleanup since the suggestion was made -- degrade
+            # cleanly rather than link to a file that is no longer there.
+            return None
+
+        # Avoid duplicate-image clutter (see "Avoid duplicate-image
+        # clutter" in the contract): if this exact asset already appears in
+        # the Visit's ordinary evidence_frames gallery -- by asset
+        # identity, never a visual/pixel comparison -- it needs no separate
+        # presentation here. `classifier_same_frame`-role assets are always
+        # excluded from that gallery by construction (Same-Frame Species
+        # Evidence v1), so this only ever actually suppresses the dormant
+        # `persisted_crop` tier (an `activity_crop`/`user_refined_crop`
+        # asset the ordinary gallery already shows).
+        ordinary_links = self._visit_evidence_link_models(session, visit.id)
+        ordinary_frames = self._visit_evidence_frames_from_links(
+            session, visit=visit, event=event, links=ordinary_links,
+        )
+        if any(frame.media_asset_id == source_media_asset_id for frame in ordinary_frames):
+            return None
+
+        link = next(
+            (candidate for candidate in ordinary_links if candidate.media_asset_id == source_media_asset_id),
+            None,
+        )
+        # Same-frame proof (not the generic `alignment_status` gate `_frame_
+        # local_subject_box` uses for the ordinary gallery) authorizes the
+        # subject-box overlay here: `alignment_status` reconciles two
+        # *different* camera profiles, which does not apply to an asset
+        # that *is* the exact frame the tracker's own box was computed
+        # against (`same_frame=True`, a stronger, capture-time-proven fact
+        # -- see "Geometry provenance" in docs/same-frame-species-evidence-
+        # contract.md). Absent that proof, no box is shown, matching the
+        # ordinary gallery's own safe default.
+        attribution = geometry_attribution_from_json(asset.geometry_attribution_json)
+        normalized_track_box = (
+            _normalized_box_from_json(asset.normalized_track_box_json)
+            if attribution is not None and attribution.same_frame is True
+            else None
+        )
+        frame = self._visit_evidence_frame_from_link_and_asset(
+            link,
+            asset,
+            is_primary=False,
+            normalized_track_box=normalized_track_box,
+        )
+        return ClassifierSupportingEvidence(
+            frame=frame,
+            species_suggestion_id=latest.id,
+            same_frame=(
+                classifier_input.get("same_frame")
+                if isinstance(classifier_input.get("same_frame"), bool)
+                else None
+            ),
+            input_type=(
+                classifier_input.get("input_type")
+                if isinstance(classifier_input.get("input_type"), str)
+                else None
+            ),
+        )
 
     def _motion_evidence_model_for_visit(
         self,
