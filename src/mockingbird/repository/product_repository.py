@@ -8094,12 +8094,25 @@ class ProductRepository:
             event = session.get(EventModel, event_id)
             return self._event_from_model(session, event) if event else None
 
-    def events_for_stream(self, stream_id: str) -> list[Event]:
+    def events_for_stream(self, stream_id: str, *, limit: int = 50) -> list[Event]:
+        """Read a bounded, newest-first Event history for one Stream.
+
+        Unbounded before this: a real Camera Node Stream's full lifetime
+        history rendered every Event ever recorded, oldest-first -- a
+        235-event real history produced a 55,000+px Stream Detail page and
+        required scrolling past weeks of old motion events to reach
+        anything recent. Mirrors `recent_visits_for_stream`'s own already-
+        correct bounded/`.desc()` convention for the sibling "Recent
+        Visits" section on the same page.
+        """
+
+        bounded_limit = max(1, min(limit, 100))
         with self.session_factory() as session:
             events = session.scalars(
                 select(EventModel)
                 .where(EventModel.stream_id == stream_id)
-                .order_by(EventModel.started_at)
+                .order_by(EventModel.started_at.desc(), EventModel.id.desc())
+                .limit(bounded_limit)
             ).all()
             return [self._event_from_model(session, event) for event in events]
 

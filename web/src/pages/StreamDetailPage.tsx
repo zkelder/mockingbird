@@ -4709,7 +4709,10 @@ export function StreamDetailPage({
 
       <section className="panel">
         <div className="section-heading">
-          <h2>Stream events</h2>
+          <div>
+            <h2>Stream events</h2>
+            <span className="meta-text">Newest activity for this Stream</span>
+          </div>
         </div>
         <div className="event-list">
           {detail.events.map((event) => {

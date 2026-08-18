@@ -160,11 +160,11 @@ export function StreamPanel({
         </div>
         <div>
           <strong>{events.length}</strong>
-          <span>events</span>
+          <span>recent events</span>
         </div>
         <div>
           <strong>{needsReview}</strong>
-          <span>needs review</span>
+          <span>recent needs review</span>
         </div>
       </div>
     </section>

@@ -11783,12 +11783,15 @@ async def list_stream_zones(stream_id: str) -> list[Zone]:
 
 
 @app.get("/api/streams/{stream_id}/events", response_model=list[Event])
-async def list_stream_events(stream_id: str) -> list[Event]:
+async def list_stream_events(
+    stream_id: str,
+    limit: int = Query(default=50, ge=1, le=100),
+) -> list[Event]:
     repository = get_repository()
     stream = repository.get_stream(stream_id)
     if stream is None:
         raise _not_found("Stream", stream_id)
-    return repository.events_for_stream(stream_id)
+    return repository.events_for_stream(stream_id, limit=limit)
 
 
 @app.get("/api/streams/{stream_id}/visits", response_model=list[StreamVisitSummary])

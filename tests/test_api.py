@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 import asyncio
 
@@ -6,6 +7,7 @@ import pytest
 
 from mockingbird.api.main import app, configure_repository
 from mockingbird.repository.product_repository import ProductRepository
+from mockingbird.storage.models import EventModel
 
 
 class ASGITestClient:
@@ -45,10 +47,10 @@ SEED_EXPORT_ID = "dataset-export-reviewed-yard-001"
 
 
 @pytest.fixture(autouse=True)
-def isolated_repository(tmp_path: Path) -> None:
+def isolated_repository(tmp_path: Path) -> ProductRepository:
     repository = ProductRepository(db_url=f"sqlite:///{tmp_path / 'mockingbird.sqlite3'}")
     configure_repository(repository)
-    yield
+    yield repository
     configure_repository(None)
 
 
@@ -287,6 +289,52 @@ def test_stream_events_returns_stream_events() -> None:
         "event-squirrel-ground-001",
     }
     assert all(event["stream_id"] == STREAM_ID for event in events)
+
+
+def test_stream_events_are_bounded_and_newest_first(isolated_repository: ProductRepository) -> None:
+    """v0.1 Product Flow Gap Pass v1: a Stream with substantial real history
+    must not render every event ever recorded (unbounded growth -- a real
+    Camera Node history reproduced a 55,000px Stream Detail page from this
+    exact gap), and must surface the newest activity first rather than
+    requiring a user to scroll past months of old events to reach it --
+    matching `GET /api/streams/{id}/visits`' own already-correct bounded,
+    newest-first convention right next to this one on Stream Detail."""
+
+    base = datetime(2099, 1, 1, tzinfo=UTC)
+    with isolated_repository.session_factory() as session:
+        with session.begin():
+            session.add_all(
+                [
+                    EventModel(
+                        id=f"event-history-bulk-{index:03d}",
+                        stream_id=STREAM_ID,
+                        title="Live motion activity",
+                        event_type="motion_evidence",
+                        started_at=base + timedelta(minutes=index),
+                        review_status="reviewed",
+                    )
+                    for index in range(60)
+                ]
+            )
+
+    response = client.get(f"/api/streams/{STREAM_ID}/events")
+    assert response.status_code == 200
+    events = response.json()
+
+    assert len(events) <= 50
+    bulk_ids = [event["id"] for event in events if event["id"].startswith("event-history-bulk-")]
+    assert len(bulk_ids) == 50
+    # Newest (highest index / latest started_at) first.
+    assert bulk_ids[0] == "event-history-bulk-059"
+    assert bulk_ids[-1] == "event-history-bulk-010"
+
+    limited = client.get(f"/api/streams/{STREAM_ID}/events", params={"limit": 5})
+    assert limited.status_code == 200
+    assert len(limited.json()) == 5
+    assert limited.json()[0]["id"] == "event-history-bulk-059"
+
+    invalid_limit = client.get(f"/api/streams/{STREAM_ID}/events", params={"limit": 101})
+    assert invalid_limit.status_code == 422
 
 
 def test_events_are_reviewable_and_include_detections() -> None:
