@@ -672,9 +672,10 @@ that pass is complete.
 - `docs/camera-node-installer-design.md` (this document, new)
 - `docs/camera-node-install-guide.md` (new -- operator-facing guide, the
   proven-on-hardware instructions)
-- `docs/roadmap.md`, `docs/AGENTS.md`, `docs/runtime-map.md`,
-  `docs/camera-node-boundary-design.md`, `README.md` (cross-references and
-  current-state updates only -- see "Documentation updates")
+- `docs/roadmap.md`, `AGENTS.md`, `docs/runtime-map.md`,
+  `docs/camera-node-boundary-design.md`, `README.md`,
+  `docs/using-mockingbird.md` (cross-references and current-state updates
+  only -- see "Documentation updates")
 - `scripts/build_camera_node_artifact.py` (reproducibility hardening)
 - `scripts/install_camera_node.py` (new)
 - `src/mockingbird_node/{app.py,config.py,__main__.py}` (diagnostics only --

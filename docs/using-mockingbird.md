@@ -66,6 +66,12 @@ Your Camera Node's pairing stays local to your network; MockingBird never
 shows or asks for its underlying access credential directly -- pairing
 handles that for you.
 
+For a Camera Node that should keep running unattended and survive a
+reboot, see the more technical
+[Camera Node install guide](camera-node-install-guide.md) for installing
+it as a supervised background service instead of starting it by hand each
+time.
+
 **A camera already connected to this computer** (USB, or your computer's
 built-in camera): choose that option and MockingBird checks it directly.
 
