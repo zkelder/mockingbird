@@ -26,6 +26,66 @@ All outputs are `DetectionObservation`, `TrackUpdate`, `EvidenceCandidate`, or `
 
 Track decisions use source capture time and source-relative offsets. Analysis capture, PC receipt, detector/tracker support, burst request, and burst capture remain distinct facts. Analysis-to-host clock alignment is uncertain unless externally synchronized; source-relative analysis/burst ordering may be supported when both timestamps originate from the same Node generation. Coordinate correspondence alone never proves temporal alignment.
 
+## Clock-drift disposition (v0.1 Release Hardening v1)
+
+Investigated as a release-audit finding: is Node-to-host clock drift
+surfaced or acted upon before timestamps participate in persisted Visit/
+evidence chronology? Traced precisely, with no code change:
+
+`node_to_host_clock_offset_ms` (`camera_node_live.py`, `_pop_latest`) is
+computed once per delivered frame (`host_receive_time - node_capture_time`)
+and attached to `FramePacket.timing_facts`, alongside the static
+`node_to_host_clock_alignment="uncertain"` fact this document already
+describes above. It is not read anywhere else -- not by an API route, a
+health check, a log line, or a UI surface. This is a real gap between
+"computed" and "surfaced," but it is not a correctness gap: every
+consequential ordering/windowing decision already avoids ever comparing a
+Node timestamp against a host timestamp, confirmed by tracing each one --
+
+- **Visit/tracklet assembly** sorts and merges exclusively by
+  `source_offset_ms` (`VisitEpisodeAssembler`), a Node-session-relative
+  offset -- both operands of every comparison are Node-sourced.
+- **Cross-reconnect stitching** (`session_timeline.native_reconnect_step`)
+  compares two host-side `received_at` reads -- both operands are
+  host-sourced. Its own `NATIVE_CLOCK_REGRESSION_UNCERTAINTY_MS` constant
+  guards a real *host*-clock regression, a different concern from Node
+  drift.
+- **Burst latency/alignment** (`request_to_capture_ms`) compares two Node
+  timestamps.
+- **Coverage/exposure accounting** (`MonitoringExposureIntervalModel`,
+  Today Coverage Truth v1) reads only the host's own clock
+  (`ObservationEngineSessionManager._clock`) and never a Node timestamp at
+  all -- structurally immune, not merely careful.
+- **Visit-to-Visit ordering** (every Dashboard/journal/Bird Log query) sorts
+  by `EventModel.started_at`, stamped from the host's own `decided_at =
+  datetime.now(UTC)` at candidate-creation time -- never a Node timestamp.
+
+This is a deliberate, already-stated design discipline (see "Analysis-to-
+host clock alignment is uncertain unless externally synchronized," above),
+not an accident this pass discovered. No numeric drift threshold exists
+anywhere in the repository, and none is introduced here: inventing one
+would not be defensible from evidence, since nothing measured depends on
+one. Per this milestone's own instruction ("if current timestamps remain
+trustworthy under ordinary drift, document that and do not manufacture a
+feature"), no threshold, warning, degraded-health state, or new diagnostic
+was added.
+
+**One narrower, disclosed limitation, deliberately left open:** the raw
+Node capture timestamp is persisted verbatim onto `MediaAsset.captured_at`
+and `VisitEvidenceLink.captured_at` (`ProductRepository.
+_create_candidate_visit_locked`) without the "uncertain alignment" caveat
+computed two layers upstream. If a Node's own system clock were badly
+wrong (for example, no RTC and a lost-power boot to an incorrect time), an
+individual evidence image's displayed capture time could read inconsistent
+with its own Visit's host-clock-derived window -- a display-trust
+annoyance on that one field, not a Visit-ordering, coverage, or evidence-
+chronology defect, since (per the tracing above) nothing sorts, merges, or
+windows by it. Closing this -- for example, propagating the alignment
+caveat as far as the persisted record, or surfacing the already-computed
+offset in `ObservationSessionStatusResponse.advanced` for an operator who
+suspects a clock problem -- is reasonable future work if a real case is
+ever reported, not a v0.1 release blocker.
+
 ## Health and limitations
 
 Read-only status starts nothing. It reports source state, received FPS, gaps/drops/coalescing, frame age, current generation, supplied/inferred frames, detector observations and inferred cadence, active tracks, pending inference (bounded at zero or one), burst attempts/success/failure/stale results, median burst latency, and shadow-only authority. CUDA provider health and execution facts remain supplied by the Stage 3 detector adapter.
