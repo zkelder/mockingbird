@@ -10075,6 +10075,7 @@ async def _dashboard_runtime_by_stream(
     runtime_by_stream: dict[str, DashboardStreamRuntimeStatus] = {}
     live_manager = get_live_camera_session_manager()
     source_monitor_manager = get_source_monitor_manager()
+    engine_manager = get_observation_engine_session_manager()
     for stream in repository.list_streams()[:50]:
         live_snapshot = live_manager.status(stream.id)
         source_monitor = await source_monitor_manager.status(stream.id)
@@ -10094,8 +10095,28 @@ async def _dashboard_runtime_by_stream(
             and configuration.provider_key == "external_url"
             and configuration.safe_config_preview.get("url") not in {None, "not_configured"}
         )
+        # A paired Camera Node Stream is exclusively governed by the
+        # accepted Observation Engine, never this legacy subsystem -- and
+        # its own live-view session is *deliberately* paused for the whole
+        # time Observation Engine owns the camera (see "Live camera
+        # ownership" in architecture.md), so `live_active` above is always
+        # False while a Camera Node Stream is genuinely, healthily being
+        # observed. Reading the same side-effect-free engine status the
+        # Stream Detail Observation panel already uses (`ObservationEngine
+        # SessionManager.status`) closes that blind spot at its root rather
+        # than leaving every consumer of this dict (ProductHealthPanel's
+        # "Observing X of Y cameras", TodayReportPanel's monitoring-started
+        # empty state, LiveCameraOverview's activity/session facts) to
+        # undercount a real, working Camera Node observation session.
+        engine_active = False
+        if configuration is not None and configuration.provider_key == "camera_node":
+            engine_status = engine_manager.status(stream.id)
+            engine_active = bool(engine_status and engine_status.observing)
+
         if source_active:
             monitor_control = "source_monitor"
+        elif engine_active:
+            monitor_control = "observation_engine"
         elif live_active or live_session_ready:
             monitor_control = "live_motion"
         elif source_monitor_ready:
@@ -10104,8 +10125,15 @@ async def _dashboard_runtime_by_stream(
             monitor_control = "none"
 
         runtime_by_stream[stream.id] = DashboardStreamRuntimeStatus(
-            monitoring_active=live_active or source_active,
+            monitoring_active=live_active or source_active or engine_active,
             monitor_control=monitor_control,
+            # Camera Node never uses this legacy start/stop toggle (the
+            # Observation panel's own Start/Stop observing is the only
+            # control it recognizes -- see LiveCameraOverview.tsx, which
+            # already hides this toggle for `playback_kind === "camera_node"`),
+            # so `can_start_monitor`/`can_stop_monitor` deliberately stay
+            # scoped to the legacy subsystem alone; broadening them is out
+            # of scope for this truthfulness fix.
             can_start_monitor=(
                 not (live_active or source_active)
                 and (live_session_ready or source_monitor_ready)
