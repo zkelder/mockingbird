@@ -340,6 +340,33 @@ accounting surface, without a second review UI or metrics universe. This
 is measurement only: no detector, tracker-policy, Visit-assembly, or
 admission-gate behavior changed.
 
+Admission Recall Investigation + Conditional Fix v1 used exactly that
+counterfactual ledger, live-queried against a real ~94-minute accepted
+daily-use session (2026-08-17), to answer a distinct field-quality
+question that milestone's own measurement-only scope deliberately left
+open: the human observer saw more genuine wildlife activity than
+MockingBird surfaced as Visits. Encounter-level accounting (a new pure
+module, `mockingbird.observation.encounter_accounting`, clustering both
+confirmed and unconfirmed track generations by the assembler's own
+already-calibrated geometry/gap tolerance -- see
+[tracklet-visit-assembly-contract.md](tracklet-visit-assembly-contract.md)
+"Ambiguous boundary arbitration") found a real, demonstrated admission
+-lifecycle defect distinct from the ambiguity/continuation-pending timing
+fix Visit Continuity v1 already closed: `blocked_ambiguous_boundary` was,
+unlike `blocked_continuation_pending`, a genuinely permanent verdict with
+no recovery path at all -- including for a confirmed detection above
+`strong_detection_threshold` and for a well-evidenced, cleanly-merged
+14-generation episode that kept absorbing continuation evidence without
+ever being reconsidered. A bounded, deterministic arbitration mechanism
+(`candidate_visit_authority.resolve_ambiguous_boundary_arbitration`) now
+lets the single best-evidenced member of a fully-stabilized ambiguous
+cluster bypass the block, while every other member of that same cluster
+still correctly blocks -- at most one Visit per ambiguous cluster, the
+original duplicate-Visit protection fully preserved. See
+[tracklet-visit-assembly-contract.md](tracklet-visit-assembly-contract.md)
+and [candidate-visit-authority-contract.md](candidate-visit-authority-contract.md)
+for the full field evidence, mechanism, and fix.
+
 ### Review Decision Provenance
 
 `ReviewLabel` had no durable reviewer-origin identity at all before this

@@ -1930,6 +1930,17 @@ class CandidateVisitProposalFacts:
     # dataclass importing the assembler. Defaults `False` for a caller that
     # predates this field, matching `AssembledVisitProposal`'s own default.
     continuation_pending: bool = False
+    # Ambiguous boundary arbitration (see "Ambiguous boundary arbitration"
+    # in docs/tracklet-visit-assembly-contract.md): an explicit,
+    # caller-supplied fact -- never recomputed inside the repository, which
+    # has no visibility into sibling proposals -- set only by a tick-loop
+    # caller that already ran `candidate_visit_authority.resolve_ambiguous_
+    # boundary_arbitration` over the full current tick and confirmed this
+    # exact proposal is the single best-evidenced, fully-stabilized member
+    # of its own ambiguous cluster. Defaults `False`, matching every other
+    # additive fact on this dataclass -- an ordinary non-ambiguous proposal,
+    # or a caller that predates this field, is entirely unaffected.
+    ambiguous_boundary_resolved: bool = False
 
 
 @dataclass(frozen=True)
@@ -2763,6 +2774,7 @@ class ProductRepository:
                     )
                     decision = evaluate_candidate_authority(
                         proposal, observed_at=request.observed_at, state=state, limits=limits,
+                        ambiguous_boundary_resolved=proposal.ambiguous_boundary_resolved,
                     )
                     if not decision.should_create:
                         settings.suppressed_count += 1

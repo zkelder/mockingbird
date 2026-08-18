@@ -216,6 +216,32 @@ foreclose a better answer later. The shadow proposal itself remains fully
 visible through existing shadow/replay diagnostics either way; this policy
 only decides Stage 7's own persistence action.
 
+**Ambiguous boundary arbitration (Admission Recall Investigation +
+Conditional Fix v1):** a real ~94-minute accepted daily-use session found
+the block above was, unlike the continuation-pending policy below, a
+genuinely *permanent* verdict with no recovery path at all -- including for
+a confirmed detection above `strong_detection_threshold` and for a
+well-evidenced, cleanly-merged 14-generation episode that kept absorbing
+continuation evidence without ever being reconsidered (see "Ambiguous
+boundary arbitration" in
+[tracklet-visit-assembly-contract.md](tracklet-visit-assembly-contract.md)
+for the full field evidence and mechanism). `evaluate_candidate_authority`
+now accepts one additional, explicit, caller-supplied fact,
+`ambiguous_boundary_resolved: bool = False`: when `True`, this proposal
+skips the block above (falling through to every check below it,
+unchanged). This gate never computes that fact itself -- it has no
+visibility into sibling proposals -- so it may only ever be asserted by a
+caller that already ran `candidate_visit_authority.resolve_ambiguous_
+boundary_arbitration` over the full current tick's proposal set and
+confirmed this exact proposal is both the single best-evidenced member of
+its own ambiguous cluster *and* that every member of that cluster
+(including this one) has itself stopped growing (`not continuation_
+pending`). Every other member of a resolved cluster is still attempted
+with the default `False` and still blocks here exactly as before: at most
+one Visit is ever admitted per ambiguous cluster, so the original
+duplicate-Visit protection this policy exists to provide is fully
+preserved.
+
 ## Continuation-pending policy (Visit Continuity / Provisional Admission Fix v1)
 
 A proposal whose own `continuation_pending` is `True` -- the assembler

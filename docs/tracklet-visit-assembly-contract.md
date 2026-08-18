@@ -289,6 +289,125 @@ authority is never made responsible for reconstructing tracker/assembler
 semantics a second time (see "Persistence adapter boundary" in
 docs/candidate-visit-authority-contract.md).
 
+## Ambiguous boundary arbitration (Admission Recall Investigation + Conditional Fix v1)
+
+Episode finality (above) fixed a proposal's own *tail* boundary being
+locked in too early. It did not fix a distinct, real defect a ~94-minute
+accepted daily-use field session (2026-08-17) found in the *ambiguity*
+policy itself: unlike `blocked_continuation_pending`,
+`blocked_ambiguous_boundary` was a genuinely **permanent** verdict with no
+recovery path at all -- for any proposal, forever, regardless of what else
+happened afterward. Direct evidence from that session's own counterfactual
+ledger:
+
+- A confirmed, single-generation proposal carrying a genuine detection at
+  0.795 confidence -- above `strong_detection_threshold` (0.7), the
+  strongest single detection anywhere in the session's retained lineage --
+  was permanently blocked because a temporally-adjacent (1.7s gap),
+  near-identical-geometry sibling generation (0.590 confidence) made the
+  pair `ambiguous_boundary` (`stale_graduated_evidence`: the 0.795 hit
+  happened early in the first generation's life, more than
+  `graduated_freshness_bound_ms` before it ended). Both proposals were
+  attempted exactly once and blocked forever; neither ever became a Visit.
+- A cleanly-merged, 14-generation, ~5.3-minute episode (13 successful
+  internal `merge_same_visit` decisions -- `visit-episode:b410c58dfa...`)
+  was *also* permanently `blocked_ambiguous_boundary`, in a single attempt,
+  despite its own extensive internal evidence, because it inherited an
+  ambiguous link established by its very first constituent generation
+  against an earlier, unrelated fragment before the other 13 generations
+  ever merged in. Tracing the ledger further found this is a general
+  mechanism, not a one-off: 29 of the session's own `blocked_ambiguous_
+  boundary` proposals were later *superseded* (a continuation tracklet
+  merged into their own constituent set, producing a new, larger proposal
+  id) -- and the superseding, larger proposal inherited the identical
+  permanent block every time, regardless of how much additional clean
+  evidence it had absorbed.
+
+The root cause is structural, not a threshold: `assemble_visit_episodes`
+records an `ambiguous_adjacent_proposal_ids` link the moment a tracklet
+first fails to merge with a still-open episode while also being ambiguous
+against it (see "Ambiguity policy," above) -- and that link stays attached
+to *whatever episode index it was recorded against*, for the rest of that
+same assembly pass, even as that episode's own membership keeps growing
+through entirely unrelated, unambiguous merges later in the same pass. The
+authority gate then treats *any* non-empty `ambiguous_adjacent_proposal_ids`
+as an unconditional, non-retryable block (`RETRYABLE_OUTCOMES` never
+included it). Nothing in the original design distinguished "this specific
+boundary is still genuinely uncertain" from "this boundary was uncertain
+once, before either side had finished accumulating its own evidence."
+
+### Fix: bounded, deterministic arbitration once a cluster stops growing
+
+`candidate_visit_authority.resolve_ambiguous_boundary_arbitration` is a
+new, pure, per-tick function: given the current tick's full, freshly
+-assembled proposal set (every `AssembledVisitProposal`, not only the ones
+not yet attempted), it classifies every proposal with non-empty `ambiguous_
+adjacent_proposal_ids` into exactly one of:
+
+- **deferred**: this proposal, or a sibling it lists in its own `ambiguous_
+  adjacent_proposal_ids` that is still present this tick, is itself
+  `continuation_pending` -- a same-encounter continuation tracklet has not
+  yet had its own chance to arrive and change the picture (exactly the
+  reason `continuation_pending` exists one layer below). The caller must
+  not attempt this proposal at all this tick, and must not mark it
+  permanently attempted -- identical in spirit to how an ordinary
+  `continuation_pending` proposal is already retried, without inventing a
+  new outcome code for this case.
+- **resolved winner**: every member of this proposal's own cluster (itself
+  and every live, listed sibling) has stopped growing. This proposal is the
+  single best-evidenced member of that cluster -- ranked by detector
+  confidence (`confidence_evidence.max_confidence`), then constituent
+  evidence volume (`len(constituent_generation_ids)`), then a deterministic
+  `proposal_id` tiebreak, so a genuine tie never produces an ambiguous
+  arbitration result itself. The caller attempts this proposal with
+  `evaluate_candidate_authority(..., ambiguous_boundary_resolved=True)`,
+  letting it bypass the ambiguity block (still subject to every other check
+  -- lineage, rate limits, the quality gate -- unchanged).
+- **untouched**: empty `ambiguous_adjacent_proposal_ids` (not ambiguous at
+  all), or a stable cluster member that is not the winner. Attempted
+  exactly as before this fix -- the loser(s) of a resolved cluster still
+  correctly land on `blocked_ambiguous_boundary`, permanently.
+
+At most one Visit is ever admitted per ambiguous cluster: the original
+duplicate-Visit protection the ambiguity policy existed to provide is
+fully preserved, since a resolved cluster's non-winning member(s) are never
+given the bypass. Arbitration is bounded and does not cascade: if the
+single winner is later rejected by an unrelated, later gate (missing
+evidence, the quality gate), the next-best sibling is *not* automatically
+promoted -- a deliberate, disclosed scope boundary (cascading arbitration
+would let progressively weaker evidence keep trying until something is
+admitted, exactly the "meaningless dark patch" the quality gate exists to
+prevent).
+
+### Chain scope: local, not transitive
+
+Arbitration compares each proposal only against its own immediately-listed
+`ambiguous_adjacent_proposal_ids`, never a transitive closure across a
+longer chain (A-B ambiguous, B-C ambiguous, A-C never directly compared).
+This is a deliberate, disclosed choice: the real shape a temporal sequence
+produces is exactly this kind of chain (the assembler only ever compares a
+tracklet against the *tail* of a still-open episode), and computing a
+strict global ranking across an unbounded chain would be materially more
+architecture than the demonstrated defect requires. The practical effect,
+verified by test: `A` and `C` can each independently win arbitration
+against their own shared neighbor `B` (which loses both comparisons and
+stays permanently blocked) even though `A` and `C` are never compared to
+each other directly -- a bounded, rare, and disclosed edge case (at most
+one extra Visit per such chain, never a runaway cascade), preferred over
+losing every member of the chain, which was the prior, unconditional
+behavior.
+
+`engine_runtime._EngineSession._run_assembly_tick` and `candidate_visit_
+authority_cli.py`'s own mirrored tick both call `resolve_ambiguous_
+boundary_arbitration` once per tick, over the same full proposal set
+`known_horizon_ms`/`finalize` already use -- no second live incremental
+pass, no product-database read, no new schema (`ambiguous_adjacent_
+proposal_ids_json` was already persisted on the candidate ledger row before
+this fix; a reviewer or diagnostic can already tell an admitted Visit was
+an arbitration winner from that existing field being non-empty, without a
+new column). See docs/candidate-visit-authority-contract.md's own
+"Ambiguity policy" for the authority-gate side of this fix.
+
 ## VisitProposal lineage
 
 `AssembledVisitProposal`: deterministic `proposal_id` (`sha256` of the

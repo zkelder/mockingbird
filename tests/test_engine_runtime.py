@@ -1162,6 +1162,174 @@ def test_finalize_tick_admits_a_still_pending_singleton_immediately(repository: 
 
 
 # =============================================================================
+# Admission Recall Investigation + Conditional Fix v1 (see "Ambiguous
+# boundary arbitration" in docs/tracklet-visit-assembly-contract.md): a real
+# ~94-minute accepted daily-use session found `blocked_ambiguous_boundary`,
+# unlike `blocked_continuation_pending`, was a genuinely *permanent* verdict
+# -- including for a confirmed detection above the strong-detection
+# threshold (0.795) and for a well-evidenced, cleanly-merged 14-generation
+# episode that kept absorbing continuation evidence without ever being
+# reconsidered. These tests drive `_EngineSession._run_assembly_tick`
+# directly across multiple simulated ticks -- the actual live production
+# code path -- mirroring the Visit Continuity tests above exactly.
+# =============================================================================
+
+
+def _tick_track_updates_with_confidence(
+    generation_id: str, start_ms: int, end_ms: int, *, confidence: float,
+) -> tuple[TrackUpdate, ...]:
+    """`_tick_track_updates` with an explicit detector confidence carried
+    on both updates -- `Tracklet.confidence`/`ConfidenceEvidenceSummary.
+    max_confidence` are both derived from `TrackUpdate.confidence` (see
+    `build_tracklets`), so this is what actually differentiates two
+    otherwise-identical tracklets for arbitration purposes."""
+    box = (0.47, 0.58, 0.51, 0.63)
+    return (
+        TrackUpdate(
+            track_id=f"{generation_id}-track", generation_id=generation_id,
+            captured_at=NOW + timedelta(milliseconds=start_ms), status="started", lifecycle_state="confirmed",
+            frame_id=f"frame-{generation_id}-start", source_offset_ms=start_ms, broad_class="animal",
+            bounding_box=box, supporting_frame_ids=(f"frame-{generation_id}-start",),
+            support_state="weak_detector_supported", detector_ran=True, confidence=confidence,
+        ),
+        TrackUpdate(
+            track_id=f"{generation_id}-track", generation_id=generation_id,
+            captured_at=NOW + timedelta(milliseconds=end_ms), status="ended", lifecycle_state="ended",
+            frame_id=f"frame-{generation_id}-end", source_offset_ms=end_ms, broad_class="animal",
+            bounding_box=box, supporting_frame_ids=(f"frame-{generation_id}-end",),
+            support_state="weak_detector_supported", detector_ran=True, confidence=confidence,
+            terminal_reason="maximum_unsupported_duration",
+        ),
+    )
+
+
+def test_ambiguous_boundary_arbitration_admits_the_stronger_of_two_stable_siblings(
+    repository: ProductRepository,
+) -> None:
+    """Direct reproduction, at the real `_EngineSession._run_assembly_tick`
+    call site, of the real accepted session's own concrete finding: two
+    confirmed, geometrically-compatible tracklets ~20s apart (beyond
+    `merge_gap_ms`=15,000ms, so they do not silently merge; inside
+    `ambiguous_gap_ms`=45,000ms, so the assembler correctly reports the
+    boundary as ambiguous rather than `keep_separate`) -- the same shape as
+    the real field pair (0.795 vs 0.590 confidence, 1.7s apart, both
+    single-generation, both permanently lost before this fix). Before this
+    fix both would be blocked forever; after it, exactly the stronger one
+    is admitted and the weaker one stays suppressed -- never both, never
+    neither."""
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, now=NOW)
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    gen_strong, gen_weak = "gen-strong", "gen-weak"
+    strong_updates = list(_tick_track_updates_with_confidence(gen_strong, 0, 5_000, confidence=0.8))
+    weak_updates = list(_tick_track_updates_with_confidence(gen_weak, 25_000, 30_000, confidence=0.2))
+    all_updates = strong_updates + weak_updates
+
+    evidence_strong, bytes_strong = _tick_evidence(gen_strong, "high_resolution_burst", "hash-strong")
+    evidence_weak, bytes_weak = _tick_evidence(gen_weak, "high_resolution_burst", "hash-weak")
+    burst_bytes_cache = {evidence_strong.media_asset_id: bytes_strong, evidence_weak.media_asset_id: bytes_weak}
+    all_evidence = [evidence_strong, evidence_weak]
+    attempted_proposal_ids: set[str] = set()
+
+    # Tick 1: both generations have already finalized, but neither
+    # proposal's own continuation window (`ambiguous_gap_ms` past its own
+    # end) has closed yet -- arbitration must defer both rather than lock
+    # in a premature verdict while either could still grow.
+    session._run_assembly_tick(
+        all_track_updates=all_updates, all_evidence_candidates=all_evidence,
+        attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        known_horizon_ms=30_100,
+    )
+    assert session._counts.candidates_created == 0
+    assert attempted_proposal_ids == set()
+
+    # Tick 2: enough of the stream has now been observed for both
+    # proposals' own tails to finalize -- arbitration now runs. The
+    # stronger (0.8) generation is admitted; the weaker (0.2) one stays
+    # blocked, permanently, as a genuinely resolved fact about that exact
+    # proposal id -- exactly the duplicate-Visit protection the original,
+    # unconditional block existed to provide, still intact.
+    session._run_assembly_tick(
+        all_track_updates=all_updates, all_evidence_candidates=all_evidence,
+        attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        known_horizon_ms=30_000 + 45_000 + 1,
+    )
+    assert session._counts.candidates_created == 1
+    assert len(attempted_proposal_ids) == 2  # both now permanently resolved: one create, one block
+    assert session._suppressed.get("blocked_ambiguous_boundary") == 1
+
+    import json as _json
+
+    from mockingbird.repository.product_repository import ObservationCandidateVisitModel
+
+    with repository.session_factory() as db_session:
+        created_rows = [
+            row for row in (
+                db_session.get(ObservationCandidateVisitModel, proposal_id)
+                for proposal_id in attempted_proposal_ids
+            )
+            if row is not None
+        ]
+    assert len(created_rows) == 1
+    assert _json.loads(created_rows[0].constituent_generation_ids_json) == [gen_strong]
+    assert created_rows[0].visit_id == session._last_candidate_visit_id
+
+    # Tick 3: nothing changed -- both ids are permanently attempted, so a
+    # repeated tick must never create a second Visit for the same pair.
+    session._run_assembly_tick(
+        all_track_updates=all_updates, all_evidence_candidates=all_evidence,
+        attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        known_horizon_ms=30_000 + 45_000 + 5_000,
+    )
+    assert session._counts.candidates_created == 1
+
+
+def test_ambiguous_boundary_arbitration_does_not_cascade_to_the_next_sibling(
+    repository: ProductRepository,
+) -> None:
+    """Arbitration is single-shot, not a retry chain: if the single
+    best-evidenced member of a stabilized ambiguous cluster fails a *later*
+    gate (here, `blocked_missing_evidence` -- no persistable evidence bytes
+    at all for the winner), the weaker sibling is not automatically
+    promoted as a fallback. This is a deliberate, disclosed scope boundary
+    (see "Ambiguous boundary arbitration" in docs/tracklet-visit-assembly
+    -contract.md), not an oversight -- cascading arbitration would let
+    progressively weaker evidence keep trying until *something* is
+    admitted, which is exactly the "meaningless dark patch" the evidence
+    -quality boundary exists to prevent."""
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, now=NOW)
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    gen_strong, gen_weak = "gen-strong-no-evidence", "gen-weak-with-evidence"
+    strong_updates = list(_tick_track_updates_with_confidence(gen_strong, 0, 5_000, confidence=0.9))
+    weak_updates = list(_tick_track_updates_with_confidence(gen_weak, 25_000, 30_000, confidence=0.1))
+    all_updates = strong_updates + weak_updates
+
+    # Only the *weaker* generation has real, byte-backed evidence; the
+    # stronger one's evidence candidate exists (so it is still a
+    # structurally valid proposal) but no bytes are cached for it, so the
+    # quality gate correctly rejects it once authority stops blocking it
+    # on ambiguity alone.
+    evidence_strong, _unused_bytes = _tick_evidence(gen_strong, "high_resolution_burst", "hash-strong-empty")
+    evidence_weak, bytes_weak = _tick_evidence(gen_weak, "high_resolution_burst", "hash-weak-real")
+    burst_bytes_cache = {evidence_weak.media_asset_id: bytes_weak}  # deliberately no entry for evidence_strong
+    all_evidence = [evidence_strong, evidence_weak]
+    attempted_proposal_ids: set[str] = set()
+
+    session._run_assembly_tick(
+        all_track_updates=all_updates, all_evidence_candidates=all_evidence,
+        attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        known_horizon_ms=30_000 + 45_000 + 1,
+    )
+    assert session._counts.candidates_created == 0
+    assert len(attempted_proposal_ids) == 2
+    assert session._suppressed.get("blocked_ambiguous_boundary") == 1  # the weaker sibling, unaffected
+    assert session._suppressed.get("blocked_missing_evidence") == 1  # the winner, no evidence bytes -- not rescued
+
+
+# =============================================================================
 # Rejected / Suppressed Detection Attribution v1 (see
 # docs/rejected-detection-attribution-contract.md): every admission outcome
 # -- not only a bare `_suppressed[reason] += 1` count -- is now retained

@@ -42,7 +42,11 @@ from mockingbird.observation.camera_node_live import (
     LiveCameraNodeShadowSession,
 )
 from mockingbird.observation.candidate_visit_adapter import CandidateVisitAuthorityAdapter
-from mockingbird.observation.candidate_visit_authority import RETRYABLE_OUTCOMES, ObservationAuthorityMode
+from mockingbird.observation.candidate_visit_authority import (
+    RETRYABLE_OUTCOMES,
+    ObservationAuthorityMode,
+    resolve_ambiguous_boundary_arbitration,
+)
 from mockingbird.observation.contracts import EvidenceCandidate, TrackUpdate
 from mockingbird.observation.frame_driven_provider import FrameDrivenObservationProvider, FrameDrivenProviderConfiguration
 from mockingbird.observation.onnx_provider import OnnxCudaObservationProvider, OnnxModelBundle
@@ -148,7 +152,17 @@ def _run_assembly_tick(
     proposals = assemble_visit_episodes(
         tracklets, known_horizon_ms=None if finalize else state.latest_known_offset_ms,
     ).proposals
-    new_proposals = [item for item in proposals if item.proposal_id not in state.attempted_proposal_ids]
+    # Ambiguous boundary arbitration (Admission Recall Investigation +
+    # Conditional Fix v1, see "Ambiguous boundary arbitration" in
+    # docs/tracklet-visit-assembly-contract.md): mirrors `engine_runtime.
+    # _EngineSession._run_assembly_tick` exactly, so this trial's own
+    # behavior never silently diverges from the real product path it exists
+    # to rehearse.
+    arbitration = resolve_ambiguous_boundary_arbitration(proposals)
+    new_proposals = [
+        item for item in proposals
+        if item.proposal_id not in state.attempted_proposal_ids and item.proposal_id not in arbitration.deferred_ids
+    ]
     if not new_proposals:
         return False
 
@@ -161,6 +175,7 @@ def _run_assembly_tick(
         evidence_bytes = _burst_evidence_bytes(session, relevant)
         outcome = adapter.attempt_candidate(
             proposal, evidence_candidates=relevant, evidence_bytes=evidence_bytes, observed_at=datetime.now(UTC),
+            ambiguous_boundary_resolved=proposal.proposal_id in arbitration.resolved_winner_ids,
         )
         # See `RETRYABLE_OUTCOMES`: a proposal blocked only because its own
         # episode boundary is not yet final must be re-offered on a later

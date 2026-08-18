@@ -33,7 +33,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Literal, Protocol, runtime_checkable
+from typing import Literal, Protocol, Sequence, runtime_checkable
 
 AUTHORITY_GATE_VERSION = "candidate-visit-authority-v1"
 
@@ -64,6 +64,118 @@ class ProposalLineage(Protocol):
     # adjacent_proposal_ids`) naming whether a same-encounter continuation
     # tracklet could still be assembled onto this proposal's own tail later.
     continuation_pending: bool
+
+
+@runtime_checkable
+class ProposalArbitrationFacts(Protocol):
+    """The only shape `resolve_ambiguous_boundary_arbitration` needs --
+    deliberately a separate, narrower structural `Protocol` from
+    `ProposalLineage`: arbitration is a *caller-side*, cross-proposal policy
+    decision (comparing one proposal against its own ambiguous siblings),
+    never something the pure per-proposal authority gate itself computes.
+    `AssembledVisitProposal` already satisfies this shape unchanged."""
+
+    proposal_id: str
+    ambiguous_adjacent_proposal_ids: tuple[str, ...]
+    continuation_pending: bool
+    constituent_generation_ids: tuple[str, ...]
+    # Only `.max_confidence` is read; any object exposing that attribute
+    # (for example `contracts.ConfidenceEvidenceSummary`) satisfies this.
+    confidence_evidence: object
+
+
+@dataclass(frozen=True)
+class AmbiguousBoundaryArbitration:
+    """One deterministic, per-tick resolution of every currently-ambiguous
+    proposal's own boundary-arbitration status against its immediate
+    ambiguous-adjacent sibling(s) still present this tick (see "Ambiguous
+    boundary arbitration" in docs/tracklet-visit-assembly-contract.md).
+
+    `resolved_winner_ids`: proposals whose own ambiguous cluster (itself,
+    plus every one of its listed `ambiguous_adjacent_proposal_ids` that is
+    still present this tick) has fully stabilized -- none of them still
+    `continuation_pending` -- and which is the single best-evidenced member
+    of that cluster. A caller should attempt these with `evaluate_candidate_
+    authority(..., ambiguous_boundary_resolved=True)`; every other member of
+    a stabilized cluster is attempted normally and correctly still blocks.
+
+    `deferred_ids`: ambiguous proposals whose own cluster has *not* yet
+    stabilized (itself or a live sibling is still `continuation_pending`) --
+    a same-encounter continuation tracklet could still change the picture,
+    exactly the reason `continuation_pending` itself exists. A caller should
+    not attempt these at all this tick (never mark them permanently
+    attempted), so they are naturally re-offered once more of the stream has
+    been observed -- identical in spirit to how an ordinary `continuation_
+    pending` proposal is already retried, without needing a new outcome code
+    for this case.
+    """
+
+    resolved_winner_ids: frozenset[str]
+    deferred_ids: frozenset[str]
+
+
+def _arbitration_key(proposal: ProposalArbitrationFacts) -> tuple[float, int, str]:
+    """Deterministic total order for arbitration: strongest detector
+    confidence first, then the most constituent evidence (a longer,
+    internally-merged tracklet chain), then `proposal_id` as a last-resort,
+    arbitrary-but-reproducible tiebreak so a genuine float/count tie never
+    makes arbitration ambiguous itself. `max_confidence` reuses exactly the
+    same confidence fact Detection Quality Accounting v1 already threads
+    from detection through to this layer -- never a new signal."""
+
+    max_confidence = getattr(proposal.confidence_evidence, "max_confidence", None)
+    return (max_confidence if max_confidence is not None else -1.0, len(proposal.constituent_generation_ids), proposal.proposal_id)
+
+
+def resolve_ambiguous_boundary_arbitration(
+    proposals: Sequence[ProposalArbitrationFacts],
+) -> AmbiguousBoundaryArbitration:
+    """Classify every currently-ambiguous proposal in one tick's full,
+    freshly-assembled proposal set (see `visit_episode_assembler.
+    assemble_visit_episodes`) into "safe to arbitrate now, and wins" or
+    "not yet stable, defer."
+
+    Pure and deterministic: a function only of the supplied proposals'
+    own already-computed facts, never a wall clock, a database, or pixel
+    content. Comparison is local to each proposal's own listed
+    `ambiguous_adjacent_proposal_ids` (never a transitive closure across a
+    longer chain) -- see "Ambiguous boundary arbitration: chain scope" in
+    docs/tracklet-visit-assembly-contract.md for why this bounded, pairwise
+    scope is a deliberate, disclosed choice rather than an oversight.
+
+    A proposal with no `ambiguous_adjacent_proposal_ids` at all is untouched
+    by this function (never appears in either returned set) -- arbitration
+    only ever concerns proposals the assembler itself already flagged as
+    boundary-ambiguous.
+    """
+
+    by_id = {proposal.proposal_id: proposal for proposal in proposals}
+    winners: set[str] = set()
+    deferred: set[str] = set()
+
+    for proposal in proposals:
+        if not proposal.ambiguous_adjacent_proposal_ids:
+            continue
+        live_siblings = [
+            by_id[sibling_id]
+            for sibling_id in proposal.ambiguous_adjacent_proposal_ids
+            if sibling_id in by_id
+        ]
+        if proposal.continuation_pending or any(sibling.continuation_pending for sibling in live_siblings):
+            # This proposal, or a sibling it is still ambiguous against, may
+            # still grow (a same-encounter continuation tracklet has not yet
+            # had its own chance to arrive and change the picture) -- defer,
+            # exactly the reason `continuation_pending` exists one layer
+            # below. Never decide a permanent winner/loser from an
+            # incomplete cluster.
+            deferred.add(proposal.proposal_id)
+            continue
+        cluster = [proposal, *live_siblings]
+        best = max(cluster, key=_arbitration_key)
+        if best.proposal_id == proposal.proposal_id:
+            winners.add(proposal.proposal_id)
+
+    return AmbiguousBoundaryArbitration(resolved_winner_ids=frozenset(winners), deferred_ids=frozenset(deferred))
 
 
 class ObservationAuthorityMode(str, Enum):
@@ -189,6 +301,7 @@ def evaluate_candidate_authority(
     state: AuthorityState,
     limits: AuthorityLimits | None = None,
     already_exists: bool = False,
+    ambiguous_boundary_resolved: bool = False,
 ) -> AuthorityDecision:
     """Classify one assembled proposal against current authority state.
 
@@ -228,7 +341,19 @@ def evaluate_candidate_authority(
        (`ambiguous_adjacent_proposal_ids` non-empty) is conservatively
        blocked rather than persisted with a boundary that might need to
        change -- see "Ambiguity policy" in the contract doc for the full
-       rationale.
+       rationale -- *unless* the caller explicitly asserts
+       `ambiguous_boundary_resolved=True`. This gate never computes that
+       fact itself (it has no visibility into sibling proposals): a caller
+       sets it only after `resolve_ambiguous_boundary_arbitration` has
+       independently confirmed this exact proposal is both the single
+       best-evidenced member of its own ambiguous cluster *and* that every
+       member of that cluster has itself stopped growing (`not
+       continuation_pending`, checked below, for both this proposal and
+       every live sibling) -- see "Ambiguous boundary arbitration" in
+       docs/tracklet-visit-assembly-contract.md. Every other member of a
+       resolved cluster is still attempted with the default `False` and
+       still blocks here, exactly as before: at most one Visit is ever
+       admitted per ambiguous cluster, never more.
     6. Continuation-pending policy (Visit Continuity / Provisional
        Admission Fix v1): a proposal whose own tail boundary the assembler
        cannot yet certify as final (`continuation_pending`) is
@@ -259,7 +384,7 @@ def evaluate_candidate_authority(
     has_frame_lineage = bool(proposal.source_capture_frame_ids) or bool(proposal.supporting_frame_ids)
     if not proposal.constituent_generation_ids or not has_frame_lineage:
         return AuthorityDecision(proposal.proposal_id, "blocked_invalid_lineage", "proposal_missing_required_lineage")
-    if proposal.ambiguous_adjacent_proposal_ids:
+    if proposal.ambiguous_adjacent_proposal_ids and not ambiguous_boundary_resolved:
         return AuthorityDecision(
             proposal.proposal_id, "blocked_ambiguous_boundary", "proposal_boundary_ambiguous_with_adjacent_proposal",
         )
@@ -271,4 +396,9 @@ def evaluate_candidate_authority(
         return AuthorityDecision(proposal.proposal_id, "blocked_session_limit", "session_candidate_budget_exhausted")
     if state.candidates_created_in_trailing_hour >= limits.max_candidates_per_hour:
         return AuthorityDecision(proposal.proposal_id, "blocked_hourly_limit", "hourly_candidate_budget_exhausted")
-    return AuthorityDecision(proposal.proposal_id, "create", "eligible_assembled_proposal")
+    reason = (
+        "eligible_assembled_proposal_ambiguous_boundary_arbitration_winner"
+        if proposal.ambiguous_adjacent_proposal_ids
+        else "eligible_assembled_proposal"
+    )
+    return AuthorityDecision(proposal.proposal_id, "create", reason)

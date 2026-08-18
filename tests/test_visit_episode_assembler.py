@@ -25,8 +25,12 @@ from mockingbird.observation.visit_episode_assembler import (
     Tracklet,
     VisitAssemblyConfiguration,
     assemble_visit_episodes,
+    box_area,
+    boxes_geometry_compatible,
     build_tracklets,
+    centroid_distance,
     classify_boundary,
+    geometry_gap_tolerance,
     project_to_visit_proposal,
     semantic_fingerprint,
 )
@@ -610,6 +614,46 @@ def test_size_incompatible_tracklets_remain_separate_and_resolve_independently()
     result = assemble_visit_episodes((a, b), known_horizon_ms=9_000 + 45_001)
     assert result.assembled_proposal_count == 2
     assert all(not item.continuation_pending for item in result.proposals)
+
+
+def test_promoted_geometry_helpers_match_classify_boundary() -> None:
+    """Admission Recall Investigation + Conditional Fix v1: `_geometry_
+    compatible` (used by `classify_boundary`) was refactored to delegate to
+    a new public `boxes_geometry_compatible` -- promoted, mirroring
+    `confidence_evidence_from_terminal_update`'s own precedent, so
+    `encounter_accounting.py` can reuse the identical, already-calibrated
+    tolerance formula rather than a second copy. This is a pure
+    regression: the promotion must not change `classify_boundary`'s own
+    observable decisions for either a compatible or an incompatible pair."""
+    compatible_earlier = _tracklet("a", 0, 5_000, end_bounding_box=(0.40, 0.40, 0.44, 0.44))
+    compatible_later = _tracklet("b", 6_000, 9_000, start_bounding_box=(0.41, 0.41, 0.45, 0.45))
+    assert classify_boundary(compatible_earlier, compatible_later).decision == "merge_same_visit"
+    assert boxes_geometry_compatible(
+        compatible_earlier.end_bounding_box, compatible_later.start_bounding_box,
+        compatible_later.start_offset_ms - compatible_earlier.end_offset_ms, VisitAssemblyConfiguration(),
+    )
+
+    incompatible_earlier = _tracklet("c", 0, 5_000, end_bounding_box=(0.02, 0.02, 0.10, 0.10))
+    incompatible_later = _tracklet("d", 6_000, 9_000, start_bounding_box=(0.85, 0.85, 0.95, 0.95))
+    assert classify_boundary(incompatible_earlier, incompatible_later).decision == "keep_separate"
+    assert not boxes_geometry_compatible(
+        incompatible_earlier.end_bounding_box, incompatible_later.start_bounding_box,
+        incompatible_later.start_offset_ms - incompatible_earlier.end_offset_ms, VisitAssemblyConfiguration(),
+    )
+
+
+def test_geometry_gap_tolerance_widens_with_gap_up_to_the_cap() -> None:
+    config = VisitAssemblyConfiguration()
+    assert geometry_gap_tolerance(0, config) == pytest.approx(config.geometry_gap_tolerance_base)
+    widened = geometry_gap_tolerance(2_000, config)
+    assert config.geometry_gap_tolerance_base < widened <= config.geometry_gap_tolerance_cap
+    assert geometry_gap_tolerance(600_000, config) == config.geometry_gap_tolerance_cap
+
+
+def test_centroid_distance_and_box_area_are_ordinary_box_math() -> None:
+    assert centroid_distance((0.0, 0.0, 0.2, 0.2), (0.0, 0.0, 0.2, 0.2)) == 0.0
+    assert box_area((0.0, 0.0, 0.5, 0.4)) == pytest.approx(0.2)
+    assert box_area((0.5, 0.5, 0.5, 0.9)) == 0.0  # zero-width degenerate box
 
 
 def test_provisional_encounter_without_continuation_eventually_becomes_eligible() -> None:

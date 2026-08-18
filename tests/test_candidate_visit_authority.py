@@ -7,6 +7,7 @@ must stay a pure decision module exactly like `reconnect_continuity`/
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -16,8 +17,10 @@ from mockingbird.observation.candidate_visit_authority import (
     AuthorityState,
     ObservationAuthorityMode,
     evaluate_candidate_authority,
+    resolve_ambiguous_boundary_arbitration,
 )
-from mockingbird.observation.visit_episode_assembler import AssembledVisitProposal
+from mockingbird.observation.contracts import EMPTY_CONFIDENCE_EVIDENCE
+from mockingbird.observation.visit_episode_assembler import AssembledVisitProposal, BoundaryDecision
 
 
 NOW = datetime(2026, 8, 8, 12, 0, 0, tzinfo=UTC)
@@ -254,6 +257,222 @@ def test_ambiguity_is_checked_before_continuation_pending() -> None:
         state=_state(),
     )
     assert decision.outcome == "blocked_ambiguous_boundary"
+
+
+# --- 31. Ambiguous boundary arbitration (Admission Recall Investigation +
+# Conditional Fix v1) -- see "Ambiguous boundary arbitration" in
+# docs/tracklet-visit-assembly-contract.md. A real ~94-minute accepted
+# daily-use session found `blocked_ambiguous_boundary`, unlike
+# `blocked_continuation_pending`, was a genuinely permanent verdict with no
+# recovery path at all -- including for a confirmed, above-strong
+# -detection-threshold (0.795) real detection, and for a well-evidenced,
+# cleanly-merged 14-generation episode that kept absorbing continuation
+# evidence without ever being reconsidered. These tests exercise the gate's
+# own `ambiguous_boundary_resolved` bypass and the pure, per-tick
+# cross-proposal decision (`resolve_ambiguous_boundary_arbitration`) a
+# caller uses to decide when it is safe to assert that bypass.
+# -----------------------------------------------------------------------
+
+
+def test_ambiguous_boundary_resolved_bypasses_the_block_when_asserted() -> None:
+    decision = evaluate_candidate_authority(
+        _proposal(ambiguous_adjacent_proposal_ids=("visit-episode:other",)),
+        observed_at=NOW,
+        state=_state(),
+        ambiguous_boundary_resolved=True,
+    )
+    assert decision.should_create
+    assert decision.reason == "eligible_assembled_proposal_ambiguous_boundary_arbitration_winner"
+
+
+def test_ambiguous_boundary_resolved_true_is_a_no_op_when_not_ambiguous() -> None:
+    """The bypass only ever matters when the proposal is actually ambiguous
+    -- asserting it for an ordinary, unambiguous proposal must not change
+    the outcome or reason string at all."""
+    ordinary = evaluate_candidate_authority(_proposal(), observed_at=NOW, state=_state())
+    with_bypass = evaluate_candidate_authority(
+        _proposal(), observed_at=NOW, state=_state(), ambiguous_boundary_resolved=True,
+    )
+    assert ordinary == with_bypass
+    assert with_bypass.reason == "eligible_assembled_proposal"
+
+
+def test_ambiguous_boundary_resolved_does_not_defeat_continuation_pending() -> None:
+    """Arbitration is only ever safe to assert once a proposal's own
+    cluster has fully stabilized (see `resolve_ambiguous_boundary_
+    arbitration`); if a proposal is somehow both ambiguous-resolved *and*
+    still `continuation_pending`, the gate still correctly blocks on that
+    more fundamental, unrelated fact -- the bypass is narrowly scoped to
+    step 5 (the ambiguity check) only, never a general override."""
+    decision = evaluate_candidate_authority(
+        _proposal(ambiguous_adjacent_proposal_ids=("visit-episode:other",), continuation_pending=True),
+        observed_at=NOW,
+        state=_state(),
+        ambiguous_boundary_resolved=True,
+    )
+    assert decision.outcome == "blocked_continuation_pending"
+
+
+def test_ambiguous_boundary_resolved_still_respects_rate_limits() -> None:
+    """Bypassing the ambiguity check does not bypass every later check --
+    an arbitration winner is still an ordinary proposal for every other
+    purpose, including session/hourly candidate budgets."""
+    decision = evaluate_candidate_authority(
+        _proposal(ambiguous_adjacent_proposal_ids=("visit-episode:other",)),
+        observed_at=NOW,
+        state=_state(candidates_created_in_session=50),
+        ambiguous_boundary_resolved=True,
+    )
+    assert decision.outcome == "blocked_session_limit"
+
+
+def _arbitration_proposal(
+    proposal_id: str,
+    *,
+    ambiguous_adjacent_proposal_ids: tuple[str, ...] = (),
+    continuation_pending: bool = False,
+    max_confidence: float | None = None,
+    constituent_generation_ids: tuple[str, ...] = ("gen-1",),
+) -> AssembledVisitProposal:
+    # `AssembledVisitProposal.__post_init__` requires exactly one
+    # `BoundaryDecision` per internal merge (`len(constituent_generation_
+    # ids) - 1`); these tests only ever compare *counts* of constituent
+    # generations (evidence volume), never inspect the decisions
+    # themselves, so bare placeholders satisfy the invariant without
+    # implying anything about geometry/timing.
+    filler_decisions = tuple(
+        BoundaryDecision(f"gen-{index}", f"gen-{index + 1}", "merge_same_visit", "test_fixture")
+        for index in range(len(constituent_generation_ids) - 1)
+    )
+    base = replace(
+        _proposal(
+            proposal_id=proposal_id,
+            ambiguous_adjacent_proposal_ids=ambiguous_adjacent_proposal_ids,
+            continuation_pending=continuation_pending,
+        ),
+        constituent_generation_ids=constituent_generation_ids,
+        assembly_decisions=filler_decisions,
+    )
+    return replace(base, confidence_evidence=replace(EMPTY_CONFIDENCE_EVIDENCE, max_confidence=max_confidence))
+
+
+def test_arbitration_ignores_proposals_with_no_ambiguity() -> None:
+    result = resolve_ambiguous_boundary_arbitration([_arbitration_proposal("p1"), _arbitration_proposal("p2")])
+    assert result.resolved_winner_ids == frozenset()
+    assert result.deferred_ids == frozenset()
+
+
+def test_arbitration_picks_the_higher_confidence_stable_sibling() -> None:
+    """Direct reproduction of the real field pair: two mutually-ambiguous,
+    fully-stable, confirmed generations 1.7s apart with near-identical
+    geometry -- one carries a genuine 0.795 strong detection, the other
+    0.590. The stronger one must win; the weaker must not also win."""
+    strong = _arbitration_proposal("p-strong", ambiguous_adjacent_proposal_ids=("p-weak",), max_confidence=0.795)
+    weak = _arbitration_proposal("p-weak", ambiguous_adjacent_proposal_ids=("p-strong",), max_confidence=0.590)
+    result = resolve_ambiguous_boundary_arbitration([strong, weak])
+    assert result.resolved_winner_ids == frozenset({"p-strong"})
+    assert result.deferred_ids == frozenset()
+
+
+def test_arbitration_defers_when_self_still_growing() -> None:
+    strong = _arbitration_proposal(
+        "p-strong", ambiguous_adjacent_proposal_ids=("p-weak",), max_confidence=0.9, continuation_pending=True,
+    )
+    weak = _arbitration_proposal("p-weak", ambiguous_adjacent_proposal_ids=("p-strong",), max_confidence=0.1)
+    result = resolve_ambiguous_boundary_arbitration([strong, weak])
+    # Neither may be arbitrated yet: `p-strong` might still grow (a
+    # continuation tracklet could still merge into it, changing the
+    # evidence comparison this arbitration would otherwise make final).
+    assert result.resolved_winner_ids == frozenset()
+    assert result.deferred_ids == frozenset({"p-strong", "p-weak"})
+
+
+def test_arbitration_defers_when_a_sibling_is_still_growing() -> None:
+    """Even a proposal that has itself stopped growing must wait for its
+    sibling to stabilize too -- the sibling could still grow stronger,
+    changing which one should win."""
+    stable = _arbitration_proposal("p-stable", ambiguous_adjacent_proposal_ids=("p-growing",), max_confidence=0.5)
+    growing = _arbitration_proposal(
+        "p-growing", ambiguous_adjacent_proposal_ids=("p-stable",), max_confidence=0.1, continuation_pending=True,
+    )
+    result = resolve_ambiguous_boundary_arbitration([stable, growing])
+    assert result.resolved_winner_ids == frozenset()
+    assert result.deferred_ids == frozenset({"p-stable", "p-growing"})
+
+
+def test_arbitration_never_admits_both_sides_of_a_pair() -> None:
+    """The central duplicate-Visit protection this fix must preserve: at
+    most one member of a mutually-ambiguous pair is ever a winner,
+    regardless of how confidence/evidence compares."""
+    a = _arbitration_proposal("p-a", ambiguous_adjacent_proposal_ids=("p-b",), max_confidence=0.5)
+    b = _arbitration_proposal("p-b", ambiguous_adjacent_proposal_ids=("p-a",), max_confidence=0.5)
+    result = resolve_ambiguous_boundary_arbitration([a, b])
+    assert len(result.resolved_winner_ids) <= 1
+
+
+def test_arbitration_tie_break_is_deterministic() -> None:
+    """Equal confidence and equal evidence volume: the `proposal_id`
+    tiebreak must still produce exactly one, reproducible winner -- never
+    both, never neither, and never a different answer depending on input
+    order (`resolve_ambiguous_boundary_arbitration` never sorts its own
+    input)."""
+    a = _arbitration_proposal("p-aaa", ambiguous_adjacent_proposal_ids=("p-bbb",), max_confidence=0.5)
+    b = _arbitration_proposal("p-bbb", ambiguous_adjacent_proposal_ids=("p-aaa",), max_confidence=0.5)
+    first = resolve_ambiguous_boundary_arbitration([a, b])
+    second = resolve_ambiguous_boundary_arbitration([b, a])
+    assert first == second
+    assert len(first.resolved_winner_ids) == 1
+
+
+def test_arbitration_more_constituent_evidence_breaks_a_confidence_tie() -> None:
+    thin = _arbitration_proposal(
+        "p-thin", ambiguous_adjacent_proposal_ids=("p-rich",), max_confidence=0.5,
+        constituent_generation_ids=("gen-1",),
+    )
+    rich = _arbitration_proposal(
+        "p-rich", ambiguous_adjacent_proposal_ids=("p-thin",), max_confidence=0.5,
+        constituent_generation_ids=("gen-1", "gen-2", "gen-3"),
+    )
+    result = resolve_ambiguous_boundary_arbitration([thin, rich])
+    assert result.resolved_winner_ids == frozenset({"p-rich"})
+
+
+def test_arbitration_local_chain_is_consistent() -> None:
+    """A real, disclosed scope boundary (see "Ambiguous boundary
+    arbitration: chain scope" in docs/tracklet-visit-assembly-contract.md):
+    A-B ambiguous, B-C ambiguous, A-C never directly compared -- the real
+    shape a temporal chain produces, since the assembler only ever compares
+    temporally-adjacent tracklets. Each proposal arbitrates only against
+    its own immediate listed siblings; a proposal is never declared a
+    winner from one neighbor's perspective and a loser from another's."""
+    a = _arbitration_proposal("p-a", ambiguous_adjacent_proposal_ids=("p-b",), max_confidence=0.9)
+    b = _arbitration_proposal("p-b", ambiguous_adjacent_proposal_ids=("p-a", "p-c"), max_confidence=0.2)
+    c = _arbitration_proposal("p-c", ambiguous_adjacent_proposal_ids=("p-b",), max_confidence=0.85)
+    result = resolve_ambiguous_boundary_arbitration([a, b, c])
+    # b loses to both neighbors; a and c each independently beat b and are
+    # never compared against each other at all (not listed as siblings).
+    assert result.resolved_winner_ids == frozenset({"p-a", "p-c"})
+
+
+def test_arbitration_missing_sibling_this_tick_is_treated_as_no_rival() -> None:
+    """A sibling id no longer present in this tick's own freshly-assembled
+    proposal set (already superseded into a bigger proposal within this
+    same call, which gets its own fresh evaluation) never blocks
+    arbitration for the proposal still referencing it."""
+    lone = _arbitration_proposal("p-lone", ambiguous_adjacent_proposal_ids=("p-vanished",), max_confidence=0.1)
+    result = resolve_ambiguous_boundary_arbitration([lone])
+    assert result.resolved_winner_ids == frozenset({"p-lone"})
+    assert result.deferred_ids == frozenset()
+
+
+def test_arbitration_is_pure_and_deterministic() -> None:
+    proposals = [
+        _arbitration_proposal("p-a", ambiguous_adjacent_proposal_ids=("p-b",), max_confidence=0.6),
+        _arbitration_proposal("p-b", ambiguous_adjacent_proposal_ids=("p-a",), max_confidence=0.3),
+    ]
+    first = resolve_ambiguous_boundary_arbitration(proposals)
+    second = resolve_ambiguous_boundary_arbitration(proposals)
+    assert first == second
 
 
 # --- Explicit authority states (no vague boolean) ---------------------------

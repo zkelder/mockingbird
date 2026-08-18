@@ -80,6 +80,7 @@ class CandidateVisitAuthorityAdapter:
         evidence_candidates: tuple[EvidenceCandidate, ...],
         evidence_bytes: Mapping[str, bytes],
         observed_at: datetime,
+        ambiguous_boundary_resolved: bool = False,
     ) -> CandidateAttemptResult:
         """Score `proposal`'s already-retained evidence exactly the way
         Stage 6 already does (`evidence_scoring.score_proposal_evidence`,
@@ -90,6 +91,14 @@ class CandidateVisitAuthorityAdapter:
         replay/test fixture's synthetic bytes) keyed by `EvidenceCandidate.
         media_asset_id` -- a candidate with no entry here is honestly
         skipped, never fabricated.
+
+        `ambiguous_boundary_resolved` is copied verbatim onto the repository
+        -level proposal facts, never recomputed here: this adapter has no
+        visibility into sibling proposals, so only a caller that already ran
+        `candidate_visit_authority.resolve_ambiguous_boundary_arbitration`
+        over the full current tick may honestly set it `True` (see
+        "Ambiguous boundary arbitration" in
+        docs/tracklet-visit-assembly-contract.md).
 
         Never raises: a repository-level failure is caught, recorded as a
         sanitized diagnostic, and returned as an ordinary `"failed"`
@@ -132,6 +141,10 @@ class CandidateVisitAuthorityAdapter:
             # verbatim, never recomputed here -- the assembler alone owns
             # this fact (see docs/tracklet-visit-assembly-contract.md).
             continuation_pending=proposal.continuation_pending,
+            # Ambiguous boundary arbitration: copied verbatim from this
+            # call's own explicit parameter, never recomputed here -- see
+            # this method's own docstring.
+            ambiguous_boundary_resolved=ambiguous_boundary_resolved,
             assembler_version=ASSEMBLER_VERSION,
             detector_provenance=self._detector_provenance,
             tracker_provenance=self._tracker_provenance,

@@ -52,6 +52,28 @@ coherent encounter still yields at most one candidate Visit. The session
 -ending tick (`finalize=True`) treats every still-pending proposal as final
 immediately: once the stream itself has ended, no continuation could ever
 arrive, so nothing is left waiting forever.
+
+Admission Recall Investigation + Conditional Fix v1 (see "Ambiguous
+boundary arbitration" in docs/tracklet-visit-assembly-contract.md): a real
+~94-minute accepted daily-use session found that `blocked_ambiguous_
+boundary`, unlike `blocked_continuation_pending`, was a genuinely permanent
+verdict with no recovery path at all -- including for a proposal with a
+confirmed, above-strong-threshold detection, and for a well-evidenced,
+cleanly-merged multi-generation episode that later absorbed more
+continuation evidence without ever being reconsidered. `_run_assembly_tick`
+now also calls `candidate_visit_authority.resolve_ambiguous_boundary_
+arbitration` once per tick over the full freshly-assembled proposal set:
+an ambiguous proposal whose own cluster (itself and every live sibling
+named in `ambiguous_adjacent_proposal_ids`) has not yet stopped growing is
+deferred (never attempted, exactly like `continuation_pending` already
+behaves); once every member of a cluster has genuinely stopped growing,
+the single best-evidenced member (by detector confidence, then evidence
+volume, then a deterministic id tiebreak) is attempted with an explicit
+`ambiguous_boundary_resolved=True` fact, letting it bypass the otherwise-
+permanent block -- every other member of that same cluster is still
+attempted normally and still blocks, so at most one Visit is ever admitted
+per ambiguous cluster, exactly preserving the duplicate-Visit protection
+the original policy existed to provide.
 """
 
 from __future__ import annotations
@@ -79,6 +101,7 @@ from mockingbird.observation.candidate_visit_authority import (
     BLOCKED_OUTCOMES,
     RETRYABLE_OUTCOMES,
     ObservationAuthorityMode,
+    resolve_ambiguous_boundary_arbitration,
 )
 from mockingbird.observation.contracts import (
     CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE,
@@ -1086,6 +1109,23 @@ class _EngineSession:
         `known_horizon_ms` is passed straight through to `assemble_visit_
         episodes`, which alone decides -- from facts it already owns --
         whether each proposal's own tail boundary might still change.
+
+        Ambiguous boundary arbitration (Admission Recall Investigation +
+        Conditional Fix v1, see "Ambiguous boundary arbitration" in
+        docs/tracklet-visit-assembly-contract.md): every tick's full,
+        freshly-assembled `proposals` -- not just the ones not yet
+        attempted -- is first passed to `resolve_ambiguous_boundary_
+        arbitration`, exactly once, so this tick sees a consistent
+        snapshot. A proposal in its `deferred_ids` is excluded from `new_
+        proposals` below and simply never attempted this tick (identical in
+        spirit to how an ordinary `continuation_pending` proposal is
+        already left out of `attempted_proposal_ids` so it is naturally
+        re-offered later); a proposal in `resolved_winner_ids` is attempted
+        with `ambiguous_boundary_resolved=True`, letting it bypass a
+        permanent `blocked_ambiguous_boundary` verdict its own cluster has
+        already resolved in its favor. Every other proposal (empty
+        `ambiguous_adjacent_proposal_ids`, or a non-winning, now-stable
+        cluster member) is attempted exactly as before this fix.
         """
 
         evidence_by_generation: dict[str, list[str]] = {}
@@ -1101,7 +1141,11 @@ class _EngineSession:
         proposals = assemble_visit_episodes(
             tracklets, known_horizon_ms=None if finalize else known_horizon_ms,
         ).proposals
-        new_proposals = [item for item in proposals if item.proposal_id not in attempted_proposal_ids]
+        arbitration = resolve_ambiguous_boundary_arbitration(proposals)
+        new_proposals = [
+            item for item in proposals
+            if item.proposal_id not in attempted_proposal_ids and item.proposal_id not in arbitration.deferred_ids
+        ]
         if not new_proposals:
             return
 
@@ -1131,6 +1175,7 @@ class _EngineSession:
             outcome = adapter.attempt_candidate(
                 proposal, evidence_candidates=relevant, evidence_bytes=evidence_bytes,
                 observed_at=decided_at,
+                ambiguous_boundary_resolved=proposal.proposal_id in arbitration.resolved_winner_ids,
             )
             # Rejected / Suppressed Detection Attribution v1: recorded
             # regardless of outcome (including a genuine "created"), so

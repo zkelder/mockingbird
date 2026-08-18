@@ -514,17 +514,45 @@ def _temporal_overlap(earlier: Tracklet, later: Tracklet) -> bool:
 def _geometry_compatible(
     earlier: Tracklet, later: Tracklet, gap_ms: int, config: VisitAssemblyConfiguration,
 ) -> bool:
-    tolerance = min(
-        config.geometry_gap_tolerance_cap,
-        config.geometry_gap_tolerance_base + config.geometry_gap_tolerance_per_second * (gap_ms / 1000.0),
-    )
-    if _centroid_distance(earlier.end_bounding_box, later.start_bounding_box) > tolerance:
+    return boxes_geometry_compatible(earlier.end_bounding_box, later.start_bounding_box, gap_ms, config)
+
+
+def boxes_geometry_compatible(
+    earlier_box: tuple[float, float, float, float],
+    later_box: tuple[float, float, float, float],
+    gap_ms: int,
+    config: VisitAssemblyConfiguration,
+) -> bool:
+    """The exact box-jitter/size-change tolerance test `classify_boundary`
+    already applies between two tracklets' own end/start boxes -- promoted
+    to a public, `Tracklet`-independent function (raw boxes only) so a
+    sibling diagnostic can reuse the identical, already-calibrated policy
+    rather than re-deriving a second copy of the same tolerance formula.
+    Mirrors `confidence_evidence_from_terminal_update`'s own "promoted from
+    module-private to shared for exactly this reuse" precedent (see
+    docs/rejected-detection-attribution-contract.md)."""
+
+    tolerance = geometry_gap_tolerance(gap_ms, config)
+    if centroid_distance(earlier_box, later_box) > tolerance:
         return False
-    earlier_area = _area(earlier.end_bounding_box)
-    later_area = _area(later.start_bounding_box)
+    earlier_area = box_area(earlier_box)
+    later_area = box_area(later_box)
     if earlier_area <= 0.0 or later_area <= 0.0:
         return True  # a degenerate box fact must not veto on size alone
     return abs(later_area - earlier_area) / earlier_area <= config.maximum_size_change_ratio
+
+
+def geometry_gap_tolerance(gap_ms: int, config: VisitAssemblyConfiguration) -> float:
+    """The bounded-displacement-budget tolerance for a gap of `gap_ms`
+    between two tracklets -- see `VisitAssemblyConfiguration`'s own
+    `geometry_gap_tolerance_*` fields for the derivation. Extracted so
+    `boxes_geometry_compatible` and a caller comparing raw boxes directly
+    (for example `encounter_accounting.py`) share one formula."""
+
+    return min(
+        config.geometry_gap_tolerance_cap,
+        config.geometry_gap_tolerance_base + config.geometry_gap_tolerance_per_second * (gap_ms / 1000.0),
+    )
 
 
 def _graduated_and_stale(tracklet: Tracklet, config: VisitAssemblyConfiguration) -> bool:
@@ -533,7 +561,7 @@ def _graduated_and_stale(tracklet: Tracklet, config: VisitAssemblyConfiguration)
     return (tracklet.end_offset_ms - tracklet.last_strong_detector_offset_ms) > config.graduated_freshness_bound_ms
 
 
-def _centroid_distance(
+def centroid_distance(
     left: tuple[float, float, float, float], right: tuple[float, float, float, float],
 ) -> float:
     left_center = ((left[0] + left[2]) / 2.0, (left[1] + left[3]) / 2.0)
@@ -541,7 +569,7 @@ def _centroid_distance(
     return hypot(left_center[0] - right_center[0], left_center[1] - right_center[1])
 
 
-def _area(box: tuple[float, float, float, float]) -> float:
+def box_area(box: tuple[float, float, float, float]) -> float:
     return max(0.0, box[2] - box[0]) * max(0.0, box[3] - box[1])
 
 
