@@ -705,5 +705,219 @@ criteria," above). See the milestone's final report for exact results.
 
 ## Real hardware acceptance findings
 
-Recorded after the real Pi 4 acceptance pass; see the milestone's final
-report for the complete account. Summary appended here once complete.
+Against the project's real reference device (Raspberry Pi 4 Model B Rev
+1.5, Raspberry Pi OS/Debian 13 "trixie" `aarch64`, Python 3.13.5) and the
+real Windows-hosted MockingBird instance, 2026-08-18.
+
+**Install (adopting the pre-existing ad hoc install).** First real run of
+`install_camera_node.py` against a device that already had the hand-built
+ad hoc unit described in "Relationship to the real reference device"
+running for 40+ hours: succeeded on the first attempt, detected all three
+system prerequisites already present, created the dedicated
+`mockingbird-node` account (uid 999, primary group `mockingbird-node`,
+supplementary group `video` only -- confirmed by inspecting the running
+process's real `id` output), replaced the ad hoc unit with the reviewed
+one, and reached a healthy state. Ownership/permissions matched the design
+exactly: `/opt/mockingbird-camera-node` and `/etc/mockingbird-camera-node/
+node.env` root-owned (`node.env` mode `0600`), `/var/lib/mockingbird-
+camera-node/` owned by the service account via `StateDirectory=`. A real
+functional capture (not just health/enumeration) was proven: a genuine
+1920x1080 JPEG (720,243 bytes) was captured through the hardened service
+identity, including the PiCamera2 warm dual-stream profile reaching
+`ready`/`accepted`. One benign, non-fatal log line appears on every
+PiCamera2 initialization: `libcamera`'s own `global_configuration.cpp`
+logs an `ERROR` that `/home/mockingbird-node/.config/libcamera/
+configuration.yaml` does not exist -- expected and harmless (`ProtectHome=
+true` hides `/home` from the service, and there is no operator-supplied
+libcamera override to find regardless), confirmed non-fatal by the
+successful capture immediately following it in the same log. Not "fixed"
+(there is nothing to fix -- creating a home directory purely to suppress
+an optional-file-not-found message would trade away `ProtectHome=true`'s
+real benefit for cosmetics); documented here and in the install guide's
+advanced diagnostics instead.
+
+Because the pre-existing ad hoc install used entirely different paths (a
+login-user home directory, not `/etc`/`/opt`/`/var/lib`) and a different
+service identity, adopting it necessarily involved one fresh Node pairing
+rather than inheriting the ad hoc pairing file directly -- an expected,
+disclosed, one-time consequence of migrating an unmanaged install onto the
+new canonical layout, not a defect in the installer's own update-
+preservation guarantee (separately proven both hermetically and live on
+this device -- see "Update/rollback," below).
+
+**Pairing with the real host.** A fresh Node pairing code was exchanged
+with the real, already-running MockingBird host through the actual product
+API (`POST /api/camera-nodes/pair`, then the guided in-place camera-
+configuration repair path -- `.../camera-configuration/preview` then
+`.../apply`, the same mechanism "Guided Camera Editing" already provides
+for a lost/revoked credential) against the pre-existing real `Pi camera 1`
+Source/Stream, over the real LAN. The repair preserved the existing
+Source/Stream identity, Zones, monitoring policy, and history exactly as
+its own preview response promised (`preservation_summary`), changing only
+the pairing credential, capability fingerprint, and evidence-profile
+fields. `GET /node/v1/health` reported `pairing_required: false` and the
+persisted `pairing.json` digest matched the newly issued credential.
+
+**Reboot experiment (first pass -- found a real defect).** With a live
+Observation Engine session actually running against the paired Node
+(`POST /api/streams/.../observation/start` reached `state: observing`),
+the device was rebooted (`systemd-run --on-active=1 systemctl reboot`, so
+the triggering SSH command itself returned cleanly before the reboot
+began) and both vantage points polled concurrently and independently:
+
+| Event | Elapsed (from reboot command) |
+| --- | --- |
+| SSH stops responding | +8s |
+| SSH reachable again | +47.2s |
+| `systemctl is-active`: active | +47.7s |
+| `/node/v1/health` answers 200 | **+55.2s** |
+| Paired credential digest unchanged after reboot | confirmed at +56.0s |
+| Host's first reconnect attempt logged | +17.8s |
+| Host exhausts its 6-attempt budget, gives up | **+38.1s** (`stopped_reason=camera_unavailable`) |
+
+The host gave up roughly **17 seconds before** the Node was actually
+healthy again -- a real, measured case of exactly the failure mode the
+milestone brief anticipated ("the host gives up before a normally
+functioning Pi can recover"). Root cause and fix: see "backoff_seconds
+raised from 2.0 to 12.0" in
+[observation-session-renewal-continuity-contract.md](observation-session-renewal-continuity-contract.md).
+No re-pairing was required by the reboot itself (the pairing digest survived
+correctly); the defect was purely in how long the host kept trying before
+giving up.
+
+**Reboot experiment (second pass -- confirms the fix).** The Windows host
+was redeployed at the corrected commit
+(`git_commit=b29837af7a7f1db656a1c2c3d3229b9e771e205b`, confirmed live via
+`GET /api/product/instance` after the deploy tool's own bounded
+verification gave a false-negative timeout -- a previously-documented
+flaky pattern, not a real failure; see "Windows redeploy," below), a fresh
+Observation session started against the same real Pi 4, and the identical
+reboot procedure repeated:
+
+| Event | Elapsed (from reboot command) |
+| --- | --- |
+| SSH stops responding | +7.8s |
+| SSH reachable again | +50.3s |
+| `/node/v1/health` answers 200 | +58.0s |
+| Paired credential digest unchanged after reboot | confirmed at +59.1s |
+| Host's first reconnect attempt logged | +21.6s |
+| Host's second attempt (spacing now ~12.1s, matching the fix exactly) | +33.7s |
+| Host reconnects (`camera_connected: true`, still `observing`) | **+88.7s**, never exhausted its budget |
+
+The host never reached `stopped`/gave up -- it stayed `observing: true`
+throughout, correctly weathering the interruption and reconnecting once
+the Node was genuinely ready. The inter-attempt spacing (~12.1s between
+attempts 1 and 2) directly confirms the mechanism: `backoff_seconds=12.0`
+is what actually governs real-world retry cadence for a fully-unreachable
+Node. This closes the defect with real re-validation, not only the
+hermetic regression test.
+
+**Crash acceptance.** With the session `observing` again, the Node process
+was killed abnormally (`sudo kill -9 <MainPID>`, the real "abnormal
+termination" case -- distinct from the graceful-SIGTERM path
+`TimeoutStopSec` governs). Measured directly from `journalctl`'s own
+`systemd[1]` lifecycle lines (timestamps local, `08:04:14`/`08:04:19`):
+
+```
+08:04:14 mockingbird-camera-node.service: Main process exited, code=killed, status=9/KILL
+08:04:14 mockingbird-camera-node.service: Failed with result 'signal'.
+08:04:19 mockingbird-camera-node.service: Scheduled restart job, restart counter is at 1.
+08:04:19 Started mockingbird-camera-node.service - MockingBird Camera Node.
+```
+
+- `systemd` waited exactly `RestartSec=5`'s configured 5 seconds, then
+  respawned it (`Restart=on-failure` fired as designed, restart counter
+  correctly incremented to 1); `/node/v1/health` answered again ~7s after
+  the kill (the SSH-round-trip-inclusive measurement -- the service itself
+  was active within the 5s restart delay plus a brief FastAPI/PiCamera2
+  startup);
+- the paired credential digest was **byte-identical** before and after
+  (`StateDirectory=` survived the crash untouched, as expected -- the
+  crash never touched the process's own already-fsync'd state file);
+- `journalctl` gave an unambiguous, diagnosable sequence exactly as shown
+  above -- an operator can tell precisely what happened (killed by signal
+  9, respawned once) without guessing, and the unit's *current* `Result=`
+  correctly reads `success` once the respawned instance is healthy (a
+  systemd property of the live instance, not a permanent scar from the
+  crash -- the crash itself remains visible as history in the journal
+  lines above, not erased);
+- the host's live Observation session survived the interruption through
+  its own bounded reconnect logic (the same mechanism just re-validated
+  above), never requiring a manual restart, since the crash-respawn cycle
+  finished in single-digit seconds -- far inside even the *old*, pre-fix
+  retry budget.
+
+**Clean restart.** `sudo systemctl restart mockingbird-camera-node` while
+paired and observing: `systemctl status` afterward showed
+`Active: active (running)` with **no `failed`/`Result=signal` markers** --
+confirming directly what "backoff_seconds raised..." above predicted from
+the real-process test's own SIGTERM finding: `systemd` correctly
+correlates a process death with its *own* stop request and does not treat
+a normal, systemd-initiated restart as an `on-failure` trigger, even
+though `uvicorn` still technically exits via a re-raised `SIGTERM`.
+Pairing state, `node.env`, and the running Observation session all
+survived identically to the crash case.
+
+**Network interruption.** A temporary `nft` rule dropped only inbound LAN
+traffic to the Node's own port, deliberately never touching `wlan0` itself
+or SSH (port 22) -- this device has no wired fallback, so disabling its
+own WiFi interface would have required physical access to recover (see
+"Relationship to the real reference device"):
+
+```
+table inet mockingbird_test_block {
+    chain input {
+        type filter hook input priority 0;
+        iifname != "lo" tcp dport 8787 drop
+    }
+}
+```
+
+The `iifname != "lo"` condition was a real, empirically-found correction --
+a first attempt without it discovered that `nft`'s `input` hook sees
+*loopback* traffic too, so a bare `tcp dport 8787 drop` blocked the Node's
+own `curl 127.0.0.1:8787` health check exactly as much as external LAN
+access, defeating the point of the experiment (proving the Node stays
+healthy *independently* of external reachability specifically requires
+excluding loopback from the block). With the corrected rule: external
+access failed immediately (`curl` from another LAN device timed out
+outright) while `curl 127.0.0.1:8787/node/v1/health` from the Pi itself
+kept answering `200` throughout -- direct proof the Node process itself
+never degrades merely because the network path to it is cut. The host
+(already mid-reconnect from the preceding clean-restart test) correctly
+progressed through its same bounded attempt sequence
+(`analysis_stream_unavailable`, observed at attempt 4 of 6 while the rule
+was active) and, once the rule was removed, **reconnected successfully at
+attempt 5 of 6** (`camera_connected: true`, `stopped_reason: null`) --
+never exhausting the budget, no manual action, no re-pairing. A bounded,
+truthful, ordinary interruption handled correctly.
+
+## Windows redeploy
+
+Two incidental findings while producing a deployable build to validate the
+retry-policy fix on real hardware, neither part of this milestone's own
+scope:
+
+- A first redeploy attempt failed on a **pre-existing, unrelated** defect:
+  `scripts/build_local_product.py`'s `WINDOWS_BIOCLIP_RUNTIME_
+  REQUIREMENTS` pins `idna==3.18`, while the core tier's loose
+  `anyio>=3.7,<4.0` bound now resolves a newer `idna` release from PyPI --
+  the exact "duplicate `.dist-info`" class of bug
+  `verify_no_duplicate_site_packages_metadata` was already built to catch
+  (see "BioCLIP durable-deployment findings" in
+  [windows-dev-deployment-design.md](windows-dev-deployment-design.md)),
+  and it did. Not fixed here -- out of scope for this milestone ("general
+  host installer changes"), and BioCLIP is unrelated to Camera Node.
+  Worked around with the existing `--skip-bioclip-runtime` flag, which
+  avoids the conflicting tier entirely with zero changes to any file
+  outside this milestone's scope. Left for the BioCLIP/packaging owner to
+  re-pin `idna` to match.
+- The deploy tool's own bounded post-launch verification reported a false
+  failure (`did not return a valid product-health body`) even though the
+  new build was genuinely healthy seconds later -- directly confirmed via
+  `GET /api/product/instance` (`git_commit` matched exactly) and `GET
+  /api/product/health` (`ready: true`). This is the same previously
+  -documented flaky-verification pattern noted for this sandbox's
+  WSL/Windows interop (slow real CUDA/ONNX cold start racing the
+  verification timeout); re-querying `--status` immediately afterward
+  self-corrected. Not a defect in this milestone's own code.

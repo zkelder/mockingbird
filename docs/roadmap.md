@@ -134,6 +134,61 @@ analytics; unknown and abstained outcomes are valid.
   disproportionate to this bounded pass. See
   [v0.1 product-flow findings](v01-product-flow-gap-pass-v1-findings.md)
   for the complete audit record.
+- **Camera Node Installer / Package / Reboot Hardening v1** (2026-08-18)
+  closed the last structural gap in "the real Camera Node path": until
+  this milestone the only way to run a Camera Node unattended was a
+  developer hand-assembling a `systemd` unit over SSH (exactly what had
+  quietly accumulated on the project's own real Pi 4 reference device
+  across several earlier field sessions). It added a reviewed,
+  reproducible install/service/OS-supervision path
+  (`scripts/install_camera_node.py`; dedicated `mockingbird-node` service
+  account with only the `video` group -- empirically proven sufficient by
+  inspecting a real running process's open device file descriptors;
+  bounded-restart `systemd` unit; root-only `EnvironmentFile=`;
+  `StateDirectory=`-backed pairing persistence; a deterministic,
+  log-level-independent startup diagnostic closing a real gap where
+  uvicorn's own startup confirmation was silently suppressed by the
+  Node's conservative default log level), hardened
+  `scripts/build_camera_node_artifact.py` with git-commit provenance and a
+  clean-tree reproducibility guard, and added the real-OS-process/real
+  -TCP-socket smoke test the existing suite never had. Installed for real
+  on the project's actual Pi 4 reference device -- adopting its
+  pre-existing ad hoc install in place -- with a real functional PiCamera2
+  capture proven through the new hardened service identity, and paired
+  with the actual MockingBird host through the real guided camera-repair
+  flow (not a synthetic path), preserving the existing Source/Stream/
+  Zone/history exactly as its own preview promised. A live reboot
+  experiment, run with a genuine Observation Engine session actually
+  running against the paired Node, found a real defect: the host's
+  `AnalysisStreamRetryPolicy` gave up (`stopped_reason=
+  "camera_unavailable"`) after only ~38 seconds of real session time,
+  while the same Pi took a measured ~55 seconds to become healthy again
+  after a normal reboot -- because a fully unreachable Node fails each
+  retry attempt in about a second rather than the ~10-second batch
+  duration the old 2.0-second backoff was implicitly sized against, an
+  assumption that only held for a merely *degraded* connection, not a
+  genuinely offline one. Raising `backoff_seconds` to 12.0 (leaving
+  `maximum_consecutive_failures` and the bounded-retry shape untouched)
+  restored the "~70-90 second" budget already documented as this policy's
+  design intent, and a second real reboot with the corrected build
+  redeployed confirmed it directly: the host reconnected successfully
+  (`camera_connected: true`) without exhausting its budget. Real crash
+  (`kill -9`), clean-restart, and network-interruption (a surgical `nft`
+  rule dropping only the Node's own LAN port, never touching the device's
+  sole WiFi interface or its SSH control channel) acceptance all passed:
+  pairing state survived byte-identical across every event, `systemd`
+  correctly distinguished a genuine crash (`Failed with result 'signal'`,
+  `Restart=on-failure` firing) from a normal restart (`Result=success`,
+  restart counter unchanged), and the host's corrected reconnect logic
+  recovered from the network interruption without manual intervention or
+  re-pairing. See
+  [camera-node-installer-design.md](camera-node-installer-design.md) for
+  the complete design, real-hardware findings, and exact measurements, and
+  [observation-session-renewal-continuity-contract.md](observation-session-renewal-continuity-contract.md)
+  for the retry-policy fix. This closes "sustained operation" and
+  "restart/recovery" for the Camera Node path specifically; the phase's
+  broader "representative field acceptance" (admission precision/recall,
+  detector quality) remains separately open, below.
 - **Remains for this phase:** a 2026-08-10 real end-to-end Camera Node
   session (25.3 minutes, the two just-fixed paths holding up cleanly)
   proved the structural path but found admission *precision* is not yet
@@ -220,12 +275,16 @@ CPU/RAM/storage behavior, admission/rejection observability, representative
 field acceptance, coherent Visits, useful evidence, correct source-resolution
 lineage, durable review/correction truth.
 
-Largely proven: the real Camera Node path; the native ONNX Runtime CUDA
-detection/tracking/evidence pipeline with verified CUDA-only execution;
-restart/recovery; admission/rejection observability (July 30 cohort);
-source-resolution lineage; durable review/correction truth. Two real defects
-found through live use are fixed: Camera Node pairing repair, and an
-Observation/live-view capture-ownership collision.
+Largely proven: the real Camera Node path, now including its own
+OS-level install/service/reboot/crash supervision (Camera Node Installer
+v1, above) alongside the previously-proven application-level restart/
+recovery; the native ONNX Runtime CUDA detection/tracking/evidence
+pipeline with verified CUDA-only execution; admission/rejection
+observability (July 30 cohort); source-resolution lineage; durable
+review/correction truth. Three real defects found through live use are
+fixed: Camera Node pairing repair, an Observation/live-view
+capture-ownership collision, and (Camera Node Installer v1) a host
+reconnect-retry budget that gave up before a rebooting Pi could recover.
 
 Still open: representative field acceptance has been mixed -- the first
 campaign failed on admission precision, a later cohort passed precision with
@@ -345,6 +404,21 @@ recovery; storage management as product-managed behavior rather than
 developer tooling; accessibility. `scripts/deploy_windows_dev.py` stays
 developer tooling only and is not this phase's product installer (see
 [windows-dev-deployment-design.md](windows-dev-deployment-design.md)).
+
+This phase is the **MockingBird host's** own install/upgrade/recovery
+experience only. The separate Camera Node edge device's own install/
+service/reboot-supervision path (`scripts/install_camera_node.py`, a
+`systemd` unit) is Phase 1 work, not this phase -- it finishes proving "the
+real Camera Node path" is durable infrastructure (see "Current status,"
+above, and
+[camera-node-installer-design.md](camera-node-installer-design.md) "Phase
+ownership" for why), not a second appliance-packaging initiative. The two
+components have different product identities on purpose: the host is
+local desktop software a user unpacks and double-clicks (no service
+manager, by explicit product-identity decision -- see
+[local-product-packaging-design.md](local-product-packaging-design.md)),
+while the Node is a headless edge device meant to run unattended
+indefinitely, an appliance in exactly the sense the host is not.
 
 Exit condition: a technically competent non-developer can deploy MockingBird
 without WSL, cloning GitHub, or understanding internal services.

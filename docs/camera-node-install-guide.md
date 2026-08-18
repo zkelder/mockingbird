@@ -103,13 +103,26 @@ sudo journalctl -u mockingbird-camera-node -n 20
 ```
 
 Look for `MockingBird Camera Node pairing code: ...` and its expiry. This
-line only appears once, right after the service (re)starts -- if you need a
-fresh code, restart the service (`sudo systemctl restart
-mockingbird-camera-node`), which generates a new one and invalidates the
-old (already-expired or unused) one. **An already-completed pairing is
-unaffected by a restart** -- only an outstanding, not-yet-used code is
-replaced. Enter the printed LAN IP address and this code in MockingBird's
-**Add Camera -> MockingBird Camera Node** flow.
+line only appears once, right after the service (re)starts. Enter the
+printed LAN IP address and this code in MockingBird's **Add Camera ->
+MockingBird Camera Node** flow.
+
+**A not-yet-paired Node** (fresh install, or an expired/unused code): a
+restart (`sudo systemctl restart mockingbird-camera-node`) mints a fresh,
+immediately usable code.
+
+**An already-paired Node**: restarting does *not* help -- confirmed
+directly on real hardware. Once a pairing exists, the Node refuses any new
+pairing attempt (`pairing_code_used`) regardless of how many times it
+restarts or how fresh the printed code looks, by design (a Node must not
+silently accept a second pairing while already committed to one). To
+re-pair (a lost credential, or moving the Node to a different
+MockingBird install), either use MockingBird's own guided camera repair
+(edit the existing camera in place -- it revokes and re-pairs in one
+guided step and preserves Zones/history), or explicitly revoke first:
+`curl -X POST http://127.0.0.1:8787/node/v1/pair/revoke -H "Authorization:
+Bearer <credential>"` (only MockingBird itself normally holds that
+credential), then restart.
 
 ## 6. Inspect health
 
@@ -205,3 +218,10 @@ to roll back to). Configuration and pairing state are unaffected either way.
 - Boot-time capture readiness: `journalctl -u mockingbird-camera-node -b`
   shows this boot's log from the very start, including `libcamera`'s own
   pipeline-handler discovery messages.
+- One benign log line you will see on every PiCamera2 initialization:
+  `libcamera`'s own `global_configuration.cpp` logs an `ERROR` that
+  `/home/mockingbird-node/.config/libcamera/configuration.yaml` does not
+  exist. This is expected and harmless -- the service account has no home
+  directory by design, and there is no optional per-user `libcamera`
+  override to find regardless; capture works normally immediately
+  afterward. It is not a sign of a startup or capture failure.
