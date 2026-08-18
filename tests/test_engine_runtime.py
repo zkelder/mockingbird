@@ -1764,6 +1764,34 @@ def test_reconnect_retry_policy_validates_its_own_bounds() -> None:
         engine_runtime.AnalysisStreamRetryPolicy(backoff_seconds=-1.0)
 
 
+def test_default_retry_policy_budget_covers_a_real_measured_pi_reboot() -> None:
+    """Regression guard for the real defect Camera Node Installer v1 found:
+    a genuinely unreachable Node (a device mid-reboot, not merely degraded)
+    fails each attempt in about a second rather than a full batch timeout,
+    so the *effective* worst-case budget is dominated by
+    `backoff_seconds` alone, not by the batch-duration assumption the old
+    2.0s default was implicitly sized against. A real reboot of the
+    reference Pi 4 measured ~55s to become healthy again; at the old
+    default the host gave up after only ~38s. This asserts the *default*
+    policy (the one every real session actually uses -- `_EngineSession`/
+    `ObservationEngineSessionManager` both fall back to
+    `AnalysisStreamRetryPolicy()` with no arguments) budgets comfortably
+    past that real measurement even in the worst case of a connection that
+    fails instantly on every attempt, so this exact regression -- a future
+    edit quietly shrinking `backoff_seconds` again -- fails a fast, offline
+    test rather than only being caught on the next real device reboot. See
+    "backoff_seconds raised from 2.0 to 12.0" in
+    docs/observation-session-renewal-continuity-contract.md."""
+
+    policy = engine_runtime.AnalysisStreamRetryPolicy()
+    measured_real_pi4_reboot_recovery_seconds = 55.2
+    worst_case_budget_seconds = policy.maximum_consecutive_failures * policy.backoff_seconds
+    assert worst_case_budget_seconds > measured_real_pi4_reboot_recovery_seconds
+    # Still strictly bounded -- never widened into an effectively-unbounded
+    # retry loop merely as insurance.
+    assert worst_case_budget_seconds < 180.0
+
+
 # =============================================================================
 # Today Coverage Truth v1 (see docs/todays-coverage-truth-contract.md):
 # lifecycle integration between `_EngineSession` and durable

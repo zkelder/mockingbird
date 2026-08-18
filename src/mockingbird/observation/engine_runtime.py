@@ -350,7 +350,27 @@ class AnalysisStreamRetryPolicy:
     #: Bounded, interruptible pause between consecutive retry attempts --
     #: never a busy loop hammering the Node, and always cut short the
     #: instant an explicit Stop is requested (see `_await_transport_retry`).
-    backoff_seconds: float = 2.0
+    #:
+    #: This default was raised from 2.0 to 12.0 after Camera Node Installer
+    #: v1's real reboot-recovery experiment measured a genuine premature
+    #: give-up: a fully unreachable Node (the real shape of a device
+    #: rebooting, not a merely-degraded one) fails each `session.run()`
+    #: attempt in roughly a second rather than after a full ~10s batch
+    #: timeout -- the batch-duration case this budget was originally,
+    #: implicitly modeled on. At the old 2.0s value the six-attempt budget
+    #: was exhausted in a measured ~20s of real wall-clock retrying (total
+    #: session time to give-up ~38s from the interruption), while the same
+    #: real Raspberry Pi 4 needed a measured ~55s to become healthy again
+    #: after a normal reboot -- the host gave up about 17s before a
+    #: perfectly healthy Node could have reconnected. 12.0s keeps
+    #: `maximum_consecutive_failures` and the overall bounded-retry shape
+    #: unchanged (never infinite) while restoring the "~70-90 second"
+    #: budget this module's own docs already documented as the design
+    #: intent (see docs/observation-session-renewal-continuity-contract.md
+    #: and docs/camera-node-installer-design.md "Real hardware acceptance
+    #: findings" for the exact measurement and the re-validated reboot run
+    #: this fix required).
+    backoff_seconds: float = 12.0
 
     def __post_init__(self) -> None:
         if not 1 <= self.maximum_consecutive_failures <= 30 or not 0.0 <= self.backoff_seconds <= 60.0:

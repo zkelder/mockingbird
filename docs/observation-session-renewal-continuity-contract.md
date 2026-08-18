@@ -136,7 +136,7 @@ convention):
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `maximum_consecutive_failures` | 6 | How many consecutive recoverable `session.run()` outcomes (raised or empty) in a row this session tolerates before giving up and treating the interruption as terminal. |
-| `backoff_seconds` | 2.0 | Bounded, interruptible pause between consecutive retry attempts. |
+| `backoff_seconds` | 12.0 (raised from 2.0 -- see below) | Bounded, interruptible pause between consecutive retry attempts. |
 
 Worst-case bounded patience before a persistently-failing connection is
 declared terminal: roughly `maximum_consecutive_failures *
@@ -144,6 +144,30 @@ declared terminal: roughly `maximum_consecutive_failures *
 for the production defaults, comfortably longer than a realistic
 burst-triggered warm-profile teardown/rebuild, while still strictly bounded
 (never an unbounded busy retry loop, never a stranded session).
+
+**`backoff_seconds` raised from 2.0 to 12.0 (Camera Node Installer v1, real
+reboot experiment).** The `~70-90s`/"on the order of a minute" language
+above was this policy's original documented *intent*, but it implicitly
+assumed each failed attempt takes close to its own ~10-second batch
+duration before failing -- true for a *degraded* connection (camera
+contention, a slow warm-profile rebuild) but not for a Camera Node that is
+*completely unreachable*, the real shape of a device mid-reboot: a refused/
+unroutable connection fails in about a second, not ten. A real reboot of
+the reference Pi 4, with a live Observation session already running against
+it, measured this gap directly: at the old `backoff_seconds=2.0`, the host
+exhausted its six-attempt budget and gave up (`stopped_reason=
+"camera_unavailable"`) after only **~20s** of real retrying (~38s total
+session time from the interruption), while the same Pi took a measured
+**~55s** to become genuinely healthy again after a normal reboot -- the
+host gave up about 17 seconds before a perfectly healthy Node could have
+reconnected. `12.0` restores the original ~70-90s intent (predicted
+worst case: `6 * (12.0 + ~1-2s connect-failure overhead) ≈ 78-84s`) without
+changing `maximum_consecutive_failures` or the bounded-retry shape at all.
+The corrected value was re-validated against a second real reboot of the
+same device with a live session running, which reconnected successfully
+without exhausting the budget. See
+[camera-node-installer-design.md](camera-node-installer-design.md) "Real
+hardware acceptance findings" for the complete before/after measurement.
 
 ## Retry behavior
 
