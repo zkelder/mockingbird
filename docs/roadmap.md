@@ -105,6 +105,35 @@ analytics; unknown and abstained outcomes are valid.
   (no confirmed tracking reached, so the new arbitration path was not
   naturally re-exercised live) -- an honest, disclosed limitation of a
   real, unpredictable backyard window, not a defect.
+- **v0.1 Product Flow Gap Pass v1** (2026-08-18) audited the working
+  product from a new/ordinary user's perspective across all seven required
+  journeys (first meaningful use, Today, Visit/evidence, confirmation/
+  correction, Bird Log/history, monitoring/health, responsive/
+  accessibility) against real persisted field-session data at desktop and
+  narrow widths. Found and fixed one P0 truthfulness defect and three P1
+  usability defects, all with focused regression tests and zero measured
+  regressions: (1) `GET /api/dashboard/summary`/`GET /api/product/health`
+  never consulted `ObservationEngineSessionManager`, so `ProductHealthPanel`'s
+  always-visible "Observing X of Y cameras" line and `TodayReportPanel`'s
+  empty state undercounted a genuinely, successfully observing Camera Node
+  Stream and could show "Monitoring hasn't started yet" while it already
+  had -- fixed by reading the same side-effect-free engine status Stream
+  Detail's own Observation panel already uses; (2) Stream Detail's "Stream
+  events" list was completely unbounded and oldest-first (a real 235-event
+  Camera Node history rendered a 55,000+px page) -- bounded to 50 and
+  reordered newest-first, matching the sibling "Recent Visits" section's
+  already-correct convention; (3) the Analytics/Insights page's Dataset QA
+  panel rendered its full, unbounded issue list (420 real issues measured,
+  51,000+px) -- bounded to 50 with an honest "N of M total" disclosure,
+  aggregate counts unaffected; (4) a narrow-width (≤640px) CSS overflow cut
+  off Stream Detail's live-camera placeholder/heading text on a real
+  375px viewport -- fixed with `max-width: 100%` at the existing
+  breakpoint. A handful of P2 cosmetic findings (redundant species-name
+  display, an always-expanded advanced-provenance panel, minor nav/label
+  polish) were documented and deliberately left unfixed as
+  disproportionate to this bounded pass. See
+  [v0.1 product-flow findings](v01-product-flow-gap-pass-v1-findings.md)
+  for the complete audit record.
 - **Remains for this phase:** a 2026-08-10 real end-to-end Camera Node
   session (25.3 minutes, the two just-fixed paths holding up cleanly)
   proved the structural path but found admission *precision* is not yet
