@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import sys
 import threading
 import time
 
@@ -640,6 +641,25 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
     def revoke(credential: str = Depends(require_pairing)) -> Response:
         pairing.revoke(credential)
         return Response(status_code=204)
+
+    @app.on_event("startup")
+    def announce_startup() -> None:
+        # A deterministic, log-level-independent operator diagnostic:
+        # uvicorn's own startup confirmation is silenced whenever
+        # `config.log_level` stays at its conservative default (confirmed
+        # empirically against the real reference device's journal -- see
+        # "Logging behavior" in docs/camera-node-installer-design.md), so a
+        # normal operator needs this to determine the service actually
+        # started, which providers are configured, and whether pairing
+        # state already loaded. Never includes the pairing code, the
+        # credential, or its digest -- only whether a pairing exists.
+        providers = ",".join(config.enabled_providers) if config.enabled_providers else config.provider_key
+        print(
+            "MockingBird Camera Node listening: "
+            f"bind={config.bind_host} port={config.port} providers={providers} "
+            f"pairing={'loaded' if not pairing.pairing_required else 'not yet paired'}",
+            file=sys.stderr,
+        )
 
     @app.on_event("shutdown")
     def shutdown_provider() -> None:

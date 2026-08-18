@@ -321,6 +321,7 @@ frontend (`web/src/api/client.ts`) is the only caller that stamps
 | `python -m mockingbird --check` | Side-effect-light startup validation only. |
 | `python -m mockingbird <subcommand>` (everything `__main__.py` dispatches besides the bare launch) | **Research/benchmark CLIs** -- `replay-benchmark`, `detector-benchmark`, `detector-comparison`, `multi-scale-benchmark`/`-comparison`, `motion-proposal-benchmark`/`-decision`, `temporal-capture`/`-mark`, `temporal-review-build`/`-validate`/`-export`, `stage3-tranche-review-build`, `burst-schedule-replay`, `evidence-benchmark`/`-comparison`, `candidate-authority-trial`. None of these run through the app; they are offline, shadow-only, or explicit Tier-4 trial tooling. |
 | `python -m mockingbird_node` | The separate Camera Node edge-device package (`src/mockingbird_node/`) -- a different product component, not a duplicate entry point. |
+| `systemctl start/stop/restart mockingbird-camera-node` | The supervised-service entry point onto the same package, installed by `scripts/install_camera_node.py`; runs the identical `python -m mockingbird_node` command as a dedicated unprivileged service account. See [camera-node-installer-design.md](camera-node-installer-design.md). |
 
 **`observation/` package (58 files): production core vs. research/benchmark
 harness.** Production (imported by `engine_runtime.py`, `camera_node_live.py`,
@@ -359,7 +360,9 @@ finding; production detector unchanged).
 `scripts/build_local_product.py` (Windows packaging),
 `scripts/deploy_windows_dev.py` (dev-box deployment, see
 [windows-dev-deployment-design.md](windows-dev-deployment-design.md)),
-`scripts/build_camera_node_artifact.py`, `scripts/prepare_bioclip_candidate_cache.py`,
+`scripts/build_camera_node_artifact.py`, `scripts/install_camera_node.py`
+(see [camera-node-installer-design.md](camera-node-installer-design.md)),
+`scripts/prepare_bioclip_candidate_cache.py`,
 `scripts/repair_review_label_provenance.py` (see
 [review-decision-provenance-contract.md](review-decision-provenance-contract.md)),
 `scripts/check_mvp_smoke.py`, `scripts/capture_zone_diagnostic.py`,

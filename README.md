@@ -171,13 +171,18 @@ python -m mockingbird --check
 ### Optional Camera Node
 
 On a Raspberry Pi or ordinary Linux edge device, start the separately bounded
-Node manually with `python -m mockingbird_node`. It prints a short-lived pairing
-code to that device's local console. In **Add Camera**, choose **MockingBird
-Camera Node**, enter an explicit LAN IP address and that code, then choose one
-advertised camera view. Pairing credentials remain local and masked; previews
-are transient and monitoring stays off until explicitly enabled. There is no
-automatic LAN discovery, service installer, remote shell, cloud relay, audio,
-or recording. See [Camera Node boundary](docs/camera-node-boundary-design.md).
+Node manually with `python -m mockingbird_node`, or install it as a
+supervised, boot-persistent `systemd` service with
+`scripts/install_camera_node.py` -- see the
+[Camera Node install guide](docs/camera-node-install-guide.md). Either way it
+prints a short-lived pairing code to that device's console (or its journal).
+In **Add Camera**, choose **MockingBird Camera Node**, enter an explicit LAN
+IP address and that code, then choose one advertised camera view. Pairing
+credentials remain local and masked; previews are transient and monitoring
+stays off until explicitly enabled. There is no automatic LAN discovery,
+remote shell, cloud relay, audio, or recording, and the host cannot trigger
+or run the installer remotely. See
+[Camera Node boundary](docs/camera-node-boundary-design.md).
 
 ### Start observing wildlife
 

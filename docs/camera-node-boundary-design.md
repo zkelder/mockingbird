@@ -6,10 +6,10 @@ MockingBird application. The main application continues to own Sources,
 Streams, Zones, monitoring policy, activity sessions, evidence, Visits,
 review/correction truth, retention, backup, and analytics.
 
-## Manual startup
+## Startup: manual, or as a supervised service
 
-The Node has no service installer or automatic updates. Start it manually on
-the edge device after installing the existing project package:
+For local development, testing, or a one-off check, start the Node manually
+on the edge device after installing the existing project package:
 
 ```sh
 python -m mockingbird_node
@@ -19,12 +19,25 @@ The launcher prints a short-lived one-time pairing code only to that local
 console. The default bind address is loopback. Set `MOCKINGBIRD_NODE_BIND=0.0.0.0`
 only when the Node must be reachable from the local LAN. The compact environment
 contract also supports a display name, port, explicit provider allowlist
-(`v4l2`, `picamera2`, or both), image bounds, pairing-code lifetime, and
-preview-viewer cap. Separate optional evidence-still bounds may be higher than
-the monitoring bounds for one explicit activity capture; they cannot be lower
-and do not change normal monitoring snapshots. The default tries only locally supported production
-providers; synthetic is test-only. It never accepts a command,
-filesystem path, cloud account, or remote-management setting.
+(`v4l2`, `picamera2`, or both), image bounds, pairing-code lifetime, log
+verbosity, and preview-viewer cap. Separate optional evidence-still bounds
+may be higher than the monitoring bounds for one explicit activity capture;
+they cannot be lower and do not change normal monitoring snapshots. The
+default tries only locally supported production providers; synthetic is
+test-only. It never accepts a command, filesystem path, cloud account, or
+remote-management setting.
+
+For a real, unattended installation expected to survive reboots and
+process crashes, `scripts/install_camera_node.py` installs the Node as a
+supervised local `systemd` service instead -- a dedicated unprivileged
+service account, boot enablement, bounded restart, and journald
+diagnostics, with no change to the manual path above or to any of the
+network/pairing/provider boundaries this document defines. See
+[camera-node-installer-design.md](camera-node-installer-design.md) for the
+full contract and [camera-node-install-guide.md](camera-node-install-guide.md)
+for the normal-user install path. Still no remote-command channel: the
+installer only ever acts on a local artifact already present on the
+device, never a URL, and the host cannot trigger or run it remotely.
 
 ## Pairing and network boundary
 

@@ -5,10 +5,14 @@ from __future__ import annotations
 import argparse
 import base64
 from dataclasses import dataclass
+from datetime import UTC, datetime
 import hashlib
 import json
 from pathlib import Path
+import secrets
+import subprocess
 import tomllib
+from typing import Sequence
 import zipfile
 
 
@@ -20,6 +24,19 @@ RUNTIME_REQUIREMENTS = (
     "pydantic>=2.7,<3.0",
     "uvicorn[standard]>=0.30,<1.0",
 )
+#: This builder's entire input surface: it reads exactly these five files by
+#: fixed name (`NODE_FILES`, never a directory glob), so an untracked stray
+#: file under `src/mockingbird_node/` was already structurally unable to
+#: enter the wheel -- unlike `scripts/build_local_product.py`'s `pip wheel .`
+#: (which sweeps a whole directory and needed a `git archive` clean-tree
+#: export to close that class of leak). Only the narrower "uncommitted edit
+#: to an already-tracked file" ambiguity needs a reproducibility guard here.
+#: See "Reproducibility hardening" in docs/camera-node-installer-design.md.
+RELEASE_SOURCE_PATHS: tuple[str, ...] = ("src/mockingbird_node",)
+
+
+class CameraNodeArtifactError(RuntimeError):
+    """Raised when the artifact cannot be built reproducibly from a known source state."""
 
 
 @dataclass(frozen=True)
@@ -29,6 +46,65 @@ class CameraNodeArtifact:
     configuration_example: Path
     manifest: Path
     checksums: Path
+
+
+def verify_clean_camera_node_source(
+    *, paths: Sequence[str] = RELEASE_SOURCE_PATHS, cwd: Path = ROOT,
+) -> str:
+    """Prove the exact wheel inputs match a real git commit, with no
+    uncommitted edit sitting unreviewed on top of it. Returns the resolved
+    commit hash a clean build is taken from.
+
+    Mirrors `build_local_product.verify_clean_tracked_source` at a scope
+    proportionate to this builder's own narrower, fixed-file-list input
+    surface -- see `RELEASE_SOURCE_PATHS` above. Deliberately checks
+    `git diff` (working tree vs. `HEAD`) rather than `git status`: this
+    builder never globs a directory, so an untracked file is not an
+    ambiguity it needs to resolve at all.
+    """
+
+    completed = subprocess.run(
+        ["git", "diff", "--name-only", "HEAD", "--", *paths],
+        cwd=cwd, check=False, capture_output=True, text=True,
+    )
+    if completed.returncode != 0:
+        raise CameraNodeArtifactError(
+            f"Could not verify source cleanliness with git: {completed.stderr.strip()}"
+        )
+    dirty = completed.stdout.strip()
+    if dirty:
+        changed = ", ".join(dirty.splitlines())
+        raise CameraNodeArtifactError(
+            "Refusing to build a Camera Node artifact: uncommitted changes exist in "
+            f"tracked packaged-input files ({changed}). Commit them first, or pass "
+            "--allow-dirty-source for a local/development build only -- never for a "
+            "release artifact."
+        )
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=cwd, check=False, capture_output=True, text=True,
+    )
+    if head.returncode != 0 or not head.stdout.strip():
+        raise CameraNodeArtifactError(
+            f"Could not resolve the current git commit for a clean release build: {head.stderr.strip()}"
+        )
+    return head.stdout.strip()
+
+
+def _current_head_commit(*, cwd: Path = ROOT) -> str | None:
+    """Best-effort HEAD commit for an `--allow-dirty-source` build, which by
+    definition has no *verified* clean commit the way
+    `verify_clean_camera_node_source` proves for a real release build.
+    Never raises: a build host with no git history at all simply gets
+    `None`, an honest "unknown" rather than a build failure over a
+    provenance nicety.
+    """
+
+    completed = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=cwd, check=False, capture_output=True, text=True,
+    )
+    if completed.returncode != 0 or not completed.stdout.strip():
+        return None
+    return completed.stdout.strip()
 
 
 def _source_version() -> str:
@@ -91,11 +167,31 @@ def _configuration_example() -> bytes:
 def build_camera_node_artifact(
     output_dir: Path,
     *,
-    source_state: str = "unspecified",
+    source_state: str | None = None,
+    allow_dirty_source: bool = False,
 ) -> CameraNodeArtifact:
-    """Write a standalone wheel and deployment metadata with no application files."""
+    """Write a standalone wheel and deployment metadata with no application files.
+
+    By default (`allow_dirty_source=False`, the only mode a real release
+    should ever use) this refuses to build unless `src/mockingbird_node`
+    matches a real, clean git commit -- see `verify_clean_camera_node_source`.
+    `allow_dirty_source=True` exists only for iterating on this build script
+    itself against uncommitted local edits, or a build host with no git
+    history at all. `source_state`, when given, overrides only the derived
+    human-readable label; it never overrides the independently-computed
+    `provenance` facts written into `manifest.json`.
+    """
 
     version = _source_version()
+    if allow_dirty_source:
+        commit = _current_head_commit()
+        source_clean = False
+        resolved_source_state = source_state or "dirty:unverified-working-tree"
+    else:
+        commit = verify_clean_camera_node_source()
+        source_clean = True
+        resolved_source_state = source_state or f"git:{commit}"
+
     normalized_name = "mockingbird_camera_node"
     distribution = f"{normalized_name}-{version}"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -123,7 +219,21 @@ def build_camera_node_artifact(
             {
                 "artifact": wheel.name,
                 "package": "mockingbird-camera-node",
-                "source_state": source_state,
+                "source_state": resolved_source_state,
+                # Structured, verifiable provenance alongside the human-readable
+                # `source_state` label above -- `build_id` mirrors
+                # `build_local_product.BuildIdentity.build_id`: a fresh random
+                # token per *build invocation*, not per commit, so two
+                # independent builds of the identical commit stay
+                # distinguishable (the installer's update/idempotency logic
+                # depends on this -- see "Update behavior" in
+                # docs/camera-node-installer-design.md).
+                "provenance": {
+                    "git_commit": commit,
+                    "source_clean": source_clean,
+                    "build_id": secrets.token_hex(16),
+                    "built_at": datetime.now(UTC).isoformat(timespec="seconds"),
+                },
                 "version": version,
                 "runtime_requirements": list(RUNTIME_REQUIREMENTS),
                 "wheel_contents": [
@@ -151,11 +261,22 @@ def main() -> None:
     parser.add_argument("output_dir", type=Path)
     parser.add_argument(
         "--source-state",
-        default="unspecified",
-        help="human-readable committed or working-tree source identifier for this artifact",
+        default=None,
+        help="override the derived human-readable source label "
+        "(default: git:<hash>, or dirty:unverified-working-tree with --allow-dirty-source)",
+    )
+    parser.add_argument(
+        "--allow-dirty-source",
+        action="store_true",
+        help="build from the live working tree without a clean-git-commit guarantee -- "
+        "local iteration only, never for a release artifact",
     )
     arguments = parser.parse_args()
-    artifact = build_camera_node_artifact(arguments.output_dir, source_state=arguments.source_state)
+    artifact = build_camera_node_artifact(
+        arguments.output_dir,
+        source_state=arguments.source_state,
+        allow_dirty_source=arguments.allow_dirty_source,
+    )
     print(artifact.wheel)
 
 

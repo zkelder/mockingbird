@@ -13,6 +13,13 @@ DEFAULT_MAX_IMAGE_WIDTH = 1920
 DEFAULT_MAX_IMAGE_HEIGHT = 1080
 DEFAULT_PAIRING_TTL_SECONDS = 10 * 60
 DEFAULT_MAX_PREVIEW_VIEWERS = 2
+DEFAULT_LOG_LEVEL = "warning"
+# uvicorn's own accepted `log_level` values (uvicorn.config.LOG_LEVELS keys).
+# Validated here rather than left to uvicorn's own error path so a bad value
+# fails through the same clean `CameraNodeConfig` error surface as every
+# other field -- see "Diagnostics implementation" in
+# docs/camera-node-installer-design.md.
+_VALID_LOG_LEVELS = frozenset({"critical", "error", "warning", "info", "debug", "trace"})
 
 
 @dataclass(frozen=True)
@@ -27,6 +34,7 @@ class CameraNodeConfig:
     max_image_height: int
     pairing_ttl_seconds: int
     max_preview_viewers: int
+    log_level: str = DEFAULT_LOG_LEVEL
     testing: bool = False
     enabled_providers: tuple[str, ...] = ()
     evidence_max_image_bytes: int | None = None
@@ -134,6 +142,9 @@ class CameraNodeConfig:
         ).expanduser()
         if not pairing_state_path.is_absolute():
             raise ValueError("mockingbird_node_pairing_state_path_invalid")
+        log_level = os.getenv("MOCKINGBIRD_NODE_LOG_LEVEL", DEFAULT_LOG_LEVEL).strip().lower()
+        if log_level not in _VALID_LOG_LEVELS:
+            raise ValueError("mockingbird_node_log_level_invalid")
         return cls(
             display_name=display_name,
             bind_host=bind_host,
@@ -145,6 +156,7 @@ class CameraNodeConfig:
             max_image_height=max_image_height,
             pairing_ttl_seconds=integer("MOCKINGBIRD_NODE_PAIRING_TTL_SECONDS", DEFAULT_PAIRING_TTL_SECONDS, minimum=60, maximum=3600),
             max_preview_viewers=integer("MOCKINGBIRD_NODE_MAX_PREVIEW_VIEWERS", DEFAULT_MAX_PREVIEW_VIEWERS, minimum=0, maximum=4),
+            log_level=log_level,
             testing=testing,
             enabled_providers=enabled_providers,
             # These opt-in bounds can exceed the economical monitoring profile
