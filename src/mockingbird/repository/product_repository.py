@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 import csv
+import dataclasses
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime, timedelta, tzinfo
 import hashlib
@@ -1611,6 +1612,63 @@ class _ReviewSpeciesCropContext:
     classifier_input_same_frame: bool | None = None
     classifier_input_crop_method: str | None = None
     classifier_input_selection_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class _ReviewAdapterStatusContext:
+    """Model-adapter/BioCLIP status resolved once per bounded repository
+    operation (one `_review_queue_items` pass, one species-suggestion
+    batch preflight, ...), not once per review item.
+
+    `get_bioclip_status`/`get_megadetector_status`/`get_local_detector_status`
+    only reflect local filesystem, model-bundle, and installed-runtime
+    state; none of that can meaningfully change while one bounded
+    operation is being assembled. Every review item built from the same
+    context therefore observes one coherent adapter-availability snapshot,
+    exactly as the caller would if it froze status once by hand -- this is
+    a plain per-call convenience object, never a process-level or
+    persisted cache, so a fresh operation (a fresh
+    `_ReviewAdapterStatusContext.resolve()`) always re-resolves current
+    status from scratch. See docs/bioclip-review-queue-performance-
+    contract.md.
+
+    `model_adapters` covers the adapter-registry-wide status every
+    `_model_adapters()` caller needs (proposal/suggestion adapter lookup,
+    adapter selection). `_bioclip_pack_status` separately memoizes the
+    narrower, stream-candidate-pack-scoped BioCLIP status
+    (`_review_identification_summary_for_item`'s own explicit
+    `get_bioclip_status(_bioclip_config(pack_labels))` call), keyed by the
+    exact candidate-label tuple, because that result legitimately differs
+    per Stream/pack (a pack referencing a label outside the local
+    embedding bank correctly reports unavailable even when the adapter is
+    otherwise available) -- it must not collapse into the single adapter-
+    registry-wide status above.
+    """
+
+    model_adapters: tuple[ModelAdapter, ...]
+    # Frozen dataclasses cannot take a mutable default via `= {}"` or a
+    # normal `__post_init__` assignment; `object.__setattr__` is the
+    # standard escape hatch. This dict is still freely mutated in place by
+    # `bioclip_status_for_candidate_pack` below -- `frozen` only blocks
+    # reassigning the attribute itself, not mutating what it points to.
+    _bioclip_pack_status: dict[tuple[str, ...], BioClipAdapterStatus] = dataclasses.field(
+        default_factory=dict,
+    )
+
+    @classmethod
+    def resolve(cls) -> "_ReviewAdapterStatusContext":
+        return cls(model_adapters=_model_adapters())
+
+    def bioclip_status_for_candidate_pack(
+        self,
+        candidate_labels: tuple[str, ...],
+    ) -> BioClipAdapterStatus:
+        cached = self._bioclip_pack_status.get(candidate_labels)
+        if cached is not None:
+            return cached
+        status = get_bioclip_status(_bioclip_config(candidate_labels))
+        self._bioclip_pack_status[candidate_labels] = status
+        return status
 
 
 @dataclass(frozen=True)
@@ -17877,6 +17935,11 @@ class ProductRepository:
         results: list[ReviewQueueSpeciesSuggestionBatchPrepareResult] = []
         seen_visit_ids: set[str] = set()
         with self.session_factory() as session:
+            # Same rationale as `_review_queue_items`: this batch can cover
+            # several Visits in one bounded request, so resolve
+            # model-adapter/BioCLIP status once and reuse it, rather than
+            # once per Visit.
+            adapter_status = _ReviewAdapterStatusContext.resolve()
             for raw_visit_id in payload.visit_ids:
                 visit_id = raw_visit_id.strip()
                 if not visit_id:
@@ -17971,6 +18034,7 @@ class ProductRepository:
                     session,
                     item,
                     media_asset_id=frames[0].media_asset_id,
+                    adapter_status=adapter_status,
                 )
                 legacy_reuse_available = False
                 if not summary.can_run:
@@ -20490,7 +20554,18 @@ class ProductRepository:
         *,
         requested_adapter_id: str | None = None,
         media_asset_id: str | None = None,
+        adapter_status: "_ReviewAdapterStatusContext | None" = None,
     ) -> ReviewIdentificationSummary:
+        # `adapter_status`, when supplied by a caller building several
+        # review items in one bounded operation (see
+        # `_ReviewAdapterStatusContext`), is reused for every model-
+        # adapter/BioCLIP status lookup below instead of re-running local
+        # filesystem/model-bundle validation once per lookup, once per
+        # item. Omitting it (every other, single-item caller) resolves a
+        # fresh context right here, preserving the original always-fresh
+        # per-call behavior exactly.
+        resolved_adapter_status = adapter_status or _ReviewAdapterStatusContext.resolve()
+        model_adapters = resolved_adapter_status.model_adapters
         normalized_media_asset_id = (
             media_asset_id
             or item.best_media_asset_id
@@ -20531,18 +20606,22 @@ class ProductRepository:
             else None
         )
         proposal_adapter = (
-            _model_adapter_for_detection_run(session.get(DetectionRunModel, proposal_model.run_id))
+            _model_adapter_for_detection_run(
+                session.get(DetectionRunModel, proposal_model.run_id),
+                model_adapters=model_adapters,
+            )
             if proposal_model is not None
             else None
         )
         suggestion_adapter = (
-            _model_adapter_by_id(suggestion.adapter_id)
+            _model_adapter_by_id(suggestion.adapter_id, model_adapters=model_adapters)
             if suggestion is not None
             else None
         )
         selected_adapter = self._select_review_identification_adapter(
             requested_adapter_id=requested_adapter_id,
             media_asset_model=media_asset_model,
+            model_adapters=model_adapters,
         )
         if requested_adapter_id is not None:
             adapter = selected_adapter
@@ -20589,8 +20668,8 @@ class ProductRepository:
         unavailable_reason: str | None = None
         candidate_pack_setup_status: BioClipAdapterStatus | None = None
         if adapter is not None and adapter.id == BIOCLIP_ADAPTER_ID:
-            candidate_pack_setup_status = get_bioclip_status(
-                _bioclip_config(_species_candidate_pack_prompt_labels(candidate_pack))
+            candidate_pack_setup_status = resolved_adapter_status.bioclip_status_for_candidate_pack(
+                _species_candidate_pack_prompt_labels(candidate_pack)
             )
             if candidate_pack_setup_status.status != "available":
                 can_run = False
@@ -20799,16 +20878,21 @@ class ProductRepository:
         *,
         requested_adapter_id: str | None,
         media_asset_model: MediaAssetModel | None,
+        model_adapters: tuple[ModelAdapter, ...] | None = None,
     ) -> ModelAdapter | None:
+        # See `_model_adapter_by_id`: an explicit `model_adapters` snapshot
+        # (from a caller-shared `_ReviewAdapterStatusContext`) is reused
+        # rather than re-running the whole adapter registry's own status
+        # validation again; omitting it preserves always-fresh resolution.
         if requested_adapter_id is not None:
-            adapter = _model_adapter_by_id(requested_adapter_id)
+            adapter = _model_adapter_by_id(requested_adapter_id, model_adapters=model_adapters)
             if adapter is None:
                 raise ValueError("missing_adapter")
             return adapter
 
         real_adapters = [
             adapter
-            for adapter in _model_adapters()
+            for adapter in (model_adapters if model_adapters is not None else _model_adapters())
             if adapter.kind
             in {ModelAdapterKind.object_detector, ModelAdapterKind.species_classifier}
         ]
@@ -24279,6 +24363,17 @@ class ProductRepository:
         recency_by_item_id: dict[str, float] = {}
         visits = self._visits_for_eventless_query(session)
 
+        # One coherent model-adapter/BioCLIP status snapshot for this whole
+        # queue build, not one fresh (expensive local filesystem/model-
+        # bundle validation) resolution per review item -- see
+        # `_ReviewAdapterStatusContext`. This is the primary fix for the
+        # BioCLIP Status / Review Queue Performance v1 defect: before it,
+        # a ~87-item backlog performed on the order of ~200
+        # `get_bioclip_status()` calls in one `dashboard_summary()`
+        # request; status/model-bundle validation no longer scales with
+        # review-item count.
+        adapter_status = _ReviewAdapterStatusContext.resolve()
+
         for visit in visits:
             if visit.review_status != ReviewStatus.needs_review and not (
                 include_reviewed and visit.review_status == ReviewStatus.reviewed
@@ -24423,6 +24518,7 @@ class ProductRepository:
             queue_item.identification = self._review_identification_summary_for_item(
                 session,
                 queue_item,
+                adapter_status=adapter_status,
             )
             queue.append(queue_item)
             recency_by_item_id[queue_item.id] = _review_queue_timestamp(event.started_at)
@@ -24517,6 +24613,7 @@ class ProductRepository:
             queue_item.identification = self._review_identification_summary_for_item(
                 session,
                 queue_item,
+                adapter_status=adapter_status,
             )
             queue.append(queue_item)
             recency_by_item_id[queue_item.id] = _review_queue_timestamp(event.started_at)
@@ -27863,19 +27960,34 @@ def _model_adapter_setup_can_run(adapter: ModelAdapter) -> bool:
     return adapter.status == ModelAdapterStatus.available
 
 
-def _model_adapter_by_id(adapter_id: str) -> ModelAdapter | None:
-    return next((adapter for adapter in _model_adapters() if adapter.id == adapter_id), None)
+def _model_adapter_by_id(
+    adapter_id: str,
+    *,
+    model_adapters: tuple[ModelAdapter, ...] | None = None,
+) -> ModelAdapter | None:
+    # `model_adapters`, when supplied, is a caller-resolved snapshot (see
+    # `_ReviewAdapterStatusContext`) reused instead of rebuilding the whole
+    # adapter registry -- and re-running every adapter's own status/model-
+    # bundle validation -- again. Omitting it preserves the original
+    # always-fresh-resolution behavior exactly.
+    resolved = model_adapters if model_adapters is not None else _model_adapters()
+    return next((adapter for adapter in resolved if adapter.id == adapter_id), None)
 
 
-def _model_adapter_for_detection_run(run: DetectionRunModel | None) -> ModelAdapter | None:
+def _model_adapter_for_detection_run(
+    run: DetectionRunModel | None,
+    *,
+    model_adapters: tuple[ModelAdapter, ...] | None = None,
+) -> ModelAdapter | None:
     if run is None or run.summary is None:
         return None
 
     summary_key = run.summary.lower()
+    resolved = model_adapters if model_adapters is not None else _model_adapters()
     return next(
         (
             adapter
-            for adapter in _model_adapters()
+            for adapter in resolved
             if adapter.id.lower() in summary_key or adapter.name.lower() in summary_key
         ),
         None,
