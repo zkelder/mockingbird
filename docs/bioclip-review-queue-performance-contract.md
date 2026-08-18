@@ -134,14 +134,34 @@ were never expected to fail (neither behavior was ever broken).
 
 ## Performance results
 
-See the final task report for exact reproduction commands, environment,
-and full before/after numbers (hermetic WSL profiling and real packaged
-Windows/GPU acceptance). Summary: hermetic `get_bioclip_status()` call
-count for `dashboard_summary()` dropped from linear growth (19/69/152/292
-calls for 5/20/45/87 review items, ~3.3-3.8 calls/item) to a flat 2 calls
-regardless of item count. On the real packaged Windows/GPU host, at the
-exact starting commit, with the real ~87-item backlog that originally
-exposed the defect, `GET /api/dashboard/summary` measured 50.0 seconds.
+See the final task report for exact reproduction commands and
+environment. Summary:
+
+- Hermetic (WSL, synthetic backlog): `get_bioclip_status()` call count for
+  `dashboard_summary()` dropped from linear growth (19/69/152/292 calls
+  for 5/20/45/87 review items, ~3.3-3.8 calls/item) to a flat 2 calls
+  regardless of item count -- confirmed at every tested size.
+- Real packaged Windows/GPU host, exact starting commit (`293e55c`), the
+  real 87-item backlog that originally exposed the defect: `GET
+  /api/dashboard/summary` measured 50.0 seconds. A single `get_bioclip_
+  status()`-triggering call (`GET /api/model-adapters`) alone blocked the
+  server's event loop badly enough that a concurrent, completely
+  unrelated trivial endpoint (`GET /api/product/instance`, no DB access)
+  took 40 seconds to respond -- direct evidence the defect was not merely
+  slow, but could stall the whole single-process API for any concurrent
+  request.
+- Same real packaged Windows/GPU host, same real userdata (same
+  `instance_id`, same 87-item backlog, confirmed via matching
+  `needs_review_visit_count`/`actionable_animal_visit_count`), fixed
+  commit (`a423899`): `GET /api/dashboard/summary` measured 1.96 seconds
+  (cold) and 1.99 seconds (repeat) -- a 25.6x improvement. `GET
+  /api/review-queue` (the full identification-summary list, not just
+  headline counts) measured 3.09 seconds for the same 87 items. `POST
+  /api/review-queue/species-suggestions/prepare` (the second fixed hot
+  loop) measured 0.33 seconds. BioCLIP reported `status=available`,
+  `runtime_available=true`, `can_run=true` throughout, and real backlog
+  items correctly resolved `adapter_id=bioclip_2` with correct
+  `can_run`/`status` values -- the species-suggestion path is unaffected.
 
 ## Remaining hotspots (disclosed, out of scope for this milestone)
 

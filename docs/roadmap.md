@@ -189,6 +189,33 @@ analytics; unknown and abstained outcomes are valid.
   "restart/recovery" for the Camera Node path specifically; the phase's
   broader "representative field acceptance" (admission precision/recall,
   detector quality) remains separately open, below.
+- **BioCLIP Status / Review Queue Performance v1** (2026-08-18) fixed a
+  severe pre-existing performance defect that real packaged Windows/GPU
+  acceptance for the preceding v0.1 Release Hardening v1 milestone
+  exposed: with BioCLIP enabled and a real ~87-item review backlog, `GET
+  /api/dashboard/summary` took up to 119.5 seconds. Root cause:
+  `_review_identification_summary_for_item` independently re-resolved the
+  entire model-adapter registry (`_model_adapters()`, which validates
+  BioCLIP's local model bundle, embedding cache, and runtime packages from
+  scratch) from three separate internal call sites per review item, plus
+  a fourth Stream-pack-scoped BioCLIP call -- on the order of ~200
+  `get_bioclip_status()` calls in one Dashboard request, confirmed by
+  hermetic profiling to scale linearly (19/69/152/292 calls for
+  5/20/45/87 items). `_ReviewAdapterStatusContext` resolves this once per
+  bounded repository operation (`_review_queue_items`, the bulk species-
+  suggestion batch preflight) and threads it through, rather than once
+  per item -- a per-call convenience object, never a process-level cache,
+  so a fresh operation always re-resolves current status. After the fix,
+  hermetic call count is a flat 2 regardless of backlog size, and a
+  byte-for-byte diff of every review item's identification fields across
+  a 41-item backlog is identical before/after. Real packaged Windows/GPU
+  acceptance, same real userdata/87-item backlog, same starting commit
+  before and fixed commit after: `GET /api/dashboard/summary` dropped
+  from a measured 50.0 seconds to 1.96 seconds (25.6x), with BioCLIP
+  still reporting `available`/`runtime_available=true`/`can_run=true` and
+  the species-suggestion path functioning correctly on real data
+  throughout. See
+  [bioclip-review-queue-performance-contract.md](bioclip-review-queue-performance-contract.md).
 - **Remains for this phase:** a 2026-08-10 real end-to-end Camera Node
   session (25.3 minutes, the two just-fixed paths holding up cleanly)
   proved the structural path but found admission *precision* is not yet
