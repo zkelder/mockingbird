@@ -111,9 +111,12 @@ uptime is itself useful evidence: `Restart=on-failure`/`RestartSec=5` and
 plain group-based `/dev/video*` access were already proven sufficient in
 practice before this milestone tightened them further (dedicated service
 user, `ProtectSystem=strict`, bounded restart-storm limits -- see "systemd
-unit," below). The installer adopts this device in place (preserving its
-already-durable pairing state) rather than requiring a re-flash; see
-"Upgrading an ad hoc install," below.
+unit," below). The installer adopts this device in place rather than
+requiring a re-flash; because the ad hoc install used entirely different
+paths and a different service identity, adoption could not inherit its
+pairing file directly and required one fresh pairing -- see "Real hardware
+acceptance findings," below, for exactly what that looked like in
+practice.
 
 ## Artifact/install contract
 
@@ -647,11 +650,18 @@ A supported installation is accepted when, on the real reference device:
    provider is active, whether pairing state loaded, and why a failure
    happened, without reading source code;
 6. the measured Node recovery time against each of these events is compared
-   against the host's existing bounded reconnect budget (`AnalysisStreamRetryPolicy`:
-   `maximum_consecutive_failures=6` x (~10s attempt + `backoff_seconds=2.0`) approx
-   72s worst case, see `src/mockingbird/observation/engine_runtime.py`), with
-   any resulting host-side change made only from that real measurement, never
-   speculatively.
+   against the host's bounded reconnect budget
+   (`AnalysisStreamRetryPolicy`, `src/mockingbird/observation/
+   engine_runtime.py`), with any resulting host-side change made only from
+   that real measurement, never speculatively. (This criterion is exactly
+   what caught the real defect this milestone found and fixed: measured
+   against the *original* `backoff_seconds=2.0` default, the real Node
+   recovery time -- ~55s -- exceeded the host's real worst-case retry
+   window -- ~20-38s, dominated by `backoff_seconds` alone for a fully
+   unreachable Node, not the ~72s a batch-duration assumption would
+   predict. The corrected `backoff_seconds=12.0` was re-validated against
+   this same criterion on a second real reboot. See "Real hardware
+   acceptance findings," below, for the complete measurement.)
 
 See the milestone's final report for the actual recorded measurements
 against these criteria, and "Real hardware acceptance findings" below once
@@ -742,8 +752,10 @@ service identity, adopting it necessarily involved one fresh Node pairing
 rather than inheriting the ad hoc pairing file directly -- an expected,
 disclosed, one-time consequence of migrating an unmanaged install onto the
 new canonical layout, not a defect in the installer's own update-
-preservation guarantee (separately proven both hermetically and live on
-this device -- see "Update/rollback," below).
+preservation guarantee (separately proven both hermetically -- see
+"Update behavior"/"Rollback," above -- and live on this device across the
+crash/clean-restart/network-interruption acceptance, below, all of which
+kept the *same* pairing established here intact).
 
 **Pairing with the real host.** A fresh Node pairing code was exchanged
 with the real, already-running MockingBird host through the actual product
