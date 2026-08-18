@@ -156,7 +156,15 @@ def test_product_health_reflects_backup_status(
     )
 
     before = _get("/api/product/health").json()
-    assert before["backup"] == {"has_backup": False, "last_backup_at": None, "last_backup_verified": None}
+    assert before["backup"] == {
+        "has_backup": False,
+        "last_backup_at": None,
+        "last_backup_verified": None,
+        # A brand-new test database seeds setup_state.completed=False (see
+        # AppSetupStateModel), so the nudge deliberately stays quiet during
+        # onboarding even though no backup exists yet.
+        "suggest_first_backup": False,
+    }
 
     LocalBackupManager(
         db_url=isolated_repository.db_url,
@@ -172,6 +180,59 @@ def test_product_health_reflects_backup_status(
     # widget must reflect that honestly rather than claim "verified".
     assert after["backup"]["last_backup_verified"] is False
     assert after["backup"]["last_backup_at"] is not None
+    assert after["backup"]["suggest_first_backup"] is False
+
+
+def test_product_health_suggests_a_first_backup_once_setup_is_complete_and_none_exists(
+    isolated_repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Calm, non-nagging backup-awareness nudge (v0.1 Release Hardening
+    v1): a user could otherwise operate MockingBird for weeks without
+    realizing backups exist (docs/local-backup-recovery-design.md). The
+    nudge is a computed fact, not a persisted/scheduled alert -- it appears
+    only once onboarding is genuinely finished (not mid-wizard) and no
+    backup has ever been created, and disappears the moment one exists."""
+
+    from mockingbird.api.schemas import SetupStateUpdate
+    from mockingbird.storage.backup import LocalBackupManager
+
+    monkeypatch.setattr(
+        isolated_repository,
+        "dashboard_summary",
+        lambda *_args, **_kwargs: _fake_dashboard_summary(camera_states=[], configured=0, monitored=0),
+    )
+    monkeypatch.setattr(
+        api_main,
+        "_local_backup_manager",
+        lambda _repository=None: LocalBackupManager(
+            db_url=isolated_repository.db_url,
+            media_root=isolated_repository.media_root,
+            backup_root=tmp_path / "backups",
+        ),
+    )
+
+    mid_onboarding = _get("/api/product/health").json()
+    assert mid_onboarding["backup"]["suggest_first_backup"] is False, (
+        "must not nag a user who has not even finished first-run setup yet"
+    )
+
+    isolated_repository.update_setup_state(
+        SetupStateUpdate(current_step="done", completed=True, last_created_stream_id=None)
+    )
+    completed_no_backup = _get("/api/product/health").json()
+    assert completed_no_backup["backup"]["suggest_first_backup"] is True
+
+    LocalBackupManager(
+        db_url=isolated_repository.db_url,
+        media_root=isolated_repository.media_root,
+        backup_root=tmp_path / "backups",
+    ).create_backup()
+    completed_with_backup = _get("/api/product/health").json()
+    assert completed_with_backup["backup"]["suggest_first_backup"] is False, (
+        "must stop suggesting the instant a backup actually exists"
+    )
 
 
 def test_product_health_reports_previous_shutdown_marker(

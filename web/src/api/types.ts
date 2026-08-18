@@ -4281,6 +4281,7 @@ export interface ProductHealthStatus {
     has_backup: boolean;
     last_backup_at?: string | null;
     last_backup_verified?: boolean | null;
+    suggest_first_backup?: boolean;
   };
   previous_shutdown_clean?: boolean | null;
   database_schema_version: number;

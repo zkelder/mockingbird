@@ -62,9 +62,24 @@ export function ProductHealthPanel() {
         </span>
         <span>
           <strong>Backup</strong>{" "}
-          {health.backup.has_backup ? (health.backup.last_backup_verified ? "Verified" : "Not yet verified") : "None yet"}
+          {health.backup.has_backup ? (
+            health.backup.last_backup_verified ? "Verified" : "Not yet verified"
+          ) : health.backup.suggest_first_backup ? (
+            <a href="/local-data">Create your first backup</a>
+          ) : (
+            "None yet"
+          )}
         </span>
       </div>
+      {health.backup.suggest_first_backup ? (
+        <div className="notice-panel">
+          <span>
+            You haven't created a backup yet. Your local data (Streams, Zones, reviewed Visits,
+            and history) can be protected in one click from{" "}
+            <a href="/local-data">Local Data</a>.
+          </span>
+        </div>
+      ) : null}
       {health.previous_shutdown_clean === false ? (
         <div className="notice-panel">
           <span>MockingBird did not shut down cleanly last time. Your local data is unaffected.</span>

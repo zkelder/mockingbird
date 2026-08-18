@@ -4943,6 +4943,13 @@ class ProductHealthBackupSummary(BaseModel):
     has_backup: bool
     last_backup_at: datetime | None = None
     last_backup_verified: bool | None = None
+    # Calm, non-nagging backup-awareness nudge (v0.1 Release Hardening v1):
+    # true only once first-run setup is complete and no backup has ever been
+    # created. Computed fresh on every read, never persisted/scheduled/
+    # dismissed -- there is nothing to nag about repeatedly since it stops
+    # being true the moment a backup exists. See
+    # docs/local-backup-recovery-design.md.
+    suggest_first_backup: bool = False
 
 
 class ProductHealthStatus(BaseModel):

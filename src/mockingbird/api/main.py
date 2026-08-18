@@ -10186,6 +10186,12 @@ async def get_product_health() -> ProductHealthStatus:
     except LocalBackupError:
         backups = []
     most_recent_backup = backups[0] if backups else None
+    # Nudge only once there is something worth protecting and the user has
+    # had a real chance to see backups exist -- not mid-onboarding, and
+    # never once a backup has actually been created. Side-effect-free: a
+    # computed fact, not a persisted/scheduled alert, so there is nothing to
+    # dismiss or repeat-nag about (see ProductHealthBackupSummary).
+    suggest_first_backup = repository.get_setup_state().completed and most_recent_backup is None
 
     needs_attention_count = sum(
         1
@@ -10230,6 +10236,7 @@ async def get_product_health() -> ProductHealthStatus:
                 if most_recent_backup
                 else None
             ),
+            suggest_first_backup=suggest_first_backup,
         ),
         previous_shutdown_clean=previous_shutdown_was_clean(),
         database_schema_version=repository.schema_status.version,
