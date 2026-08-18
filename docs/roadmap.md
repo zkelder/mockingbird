@@ -76,7 +76,35 @@ analytics; unknown and abstained outcomes are valid.
   and a read-only ROI/time-window query API now make that question
   answerable for the next real bird -- retrospective analysis of the
   2026-08-11 session itself honestly remains `insufficient_counterfactual_
-  lineage`, since the ledger did not exist yet when that session ran.
+  lineage`, since the ledger did not exist yet when that session ran; and
+  Admission Recall Investigation + Conditional Fix v1 (see "Ambiguous
+  boundary arbitration" in
+  [tracklet-visit-assembly-contract.md](tracklet-visit-assembly-contract.md)),
+  which used that same counterfactual ledger -- live-queried from a real,
+  still-running ~94-minute accepted daily-use session's own process --
+  to answer a distinct field-quality question the prior milestone
+  deliberately left open: the human observer saw more genuine wildlife
+  activity than MockingBird surfaced as Visits. New encounter-level
+  accounting found a real, demonstrated admission-lifecycle defect:
+  `blocked_ambiguous_boundary`, unlike `blocked_continuation_pending`, was a
+  genuinely permanent verdict with no recovery path at all -- including for
+  a confirmed detection above `strong_detection_threshold` whose 1.7s-gap,
+  near-identical-geometry sibling made the pair ambiguous, and for a
+  cleanly-merged 14-generation episode that inherited an ambiguous link
+  from its own first constituent generation and stayed permanently blocked
+  even after absorbing 13 further unambiguous merges. A bounded,
+  deterministic arbitration mechanism now lets the single best-evidenced,
+  fully-stabilized member of an ambiguous cluster be admitted while every
+  other member still correctly blocks -- at most one Visit per cluster, the
+  original duplicate-Visit protection fully preserved. A real-data before/
+  after replay of the exact motivating field pair confirmed the fix
+  (0.795-confidence proposal: `blocked_ambiguous_boundary` ->
+  `create`; its 0.590-confidence sibling: unchanged, still blocked). A
+  fresh ~94-minute field acceptance of the deployed fix ran clean and
+  stable end to end (zero errors, zero reconnects needed) but stayed quiet
+  (no confirmed tracking reached, so the new arbitration path was not
+  naturally re-exercised live) -- an honest, disclosed limitation of a
+  real, unpredictable backyard window, not a defect.
 - **Remains for this phase:** a 2026-08-10 real end-to-end Camera Node
   session (25.3 minutes, the two just-fixed paths holding up cleanly)
   proved the structural path but found admission *precision* is not yet
@@ -89,7 +117,12 @@ analytics; unknown and abstained outcomes are valid.
   did not change production admission behavior, pending a larger, less
   session-concentrated reviewed cohort (see that contract's "Production
   authority gate"); the July 30 cohort's separately-measured insufficient
-  admission *recall* also still needs resolving; bounded CPU/RAM/storage
+  admission *recall* also still needs resolving -- Admission Recall
+  Investigation + Conditional Fix v1 (above) closed one demonstrated,
+  bounded piece of this (the permanent `blocked_ambiguous_boundary`
+  mechanism), but did not re-open detector recall, evidence-quality
+  rejection, or tracking-confirmation recall, all of which remain
+  separately open; bounded CPU/RAM/storage
   behavior and truthful capability reporting against representative
   unattended field conditions remain unverified beyond shadow/synthetic
   benchmarks. A 2026-08-11 fresh field session then reproduced a sharper,
