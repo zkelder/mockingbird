@@ -509,14 +509,14 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
         {validation ? <div className="notice-panel"><strong>{validation.status.replace(/_/g, " ")}</strong><span>{validation.message}</span></div> : null}
       </section>
       <section className="panel page-stack">
-        <h2>2. Choose the area to watch</h2><p>Draw the part of this camera’s view that matters. Privacy and Ignore areas stay suppression-only and never watched.</p>
+        <h2>2. Choose the area to watch</h2><p>Draw the part of this camera’s view that matters. Privacy and Ignore areas won’t trigger monitoring on their own, but can still appear in a photo saved because of activity elsewhere in view.</p>
         <div className="zone-drawing-canvas" onPointerDown={(event) => { drawStart.current = pointAt(event); event.currentTarget.setPointerCapture(event.pointerId); }} onPointerUp={finishDraw} role="img" aria-label="Draw the area to watch">
           <div className="zone-drawing-rectangle" style={{ left: `${polygon[0].x * 100}%`, top: `${polygon[0].y * 100}%`, width: `${(polygon[1].x - polygon[0].x) * 100}%`, height: `${(polygon[2].y - polygon[1].y) * 100}%` }} />
           <span>Drag to draw the area to watch</span>
         </div>
         <label>Area name<input onChange={(event) => setZoneName(event.target.value)} onBlur={() => saveNodeDraft({ zone_name: zoneName })} value={zoneName} /></label>
         <label>Area type<select value={zoneType} onChange={(event) => { const value = event.target.value as ZoneType; setZoneType(value); saveNodeDraft({ zone_type: value }); }}>{["feeder", "birdbath", "ground", "perch", "yard", "driveway", "privacy", "ignore"].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
-        {zoneType !== "privacy" && zoneType !== "ignore" ? <label>Sensitivity<select value={sensitivity} onChange={(event) => { const value = event.target.value as ZoneActivitySensitivity; setSensitivity(value); saveNodeDraft({ sensitivity: value }); }}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option></select></label> : <p className="meta-text">This area is never watched -- it only hides activity there.</p>}
+        {zoneType !== "privacy" && zoneType !== "ignore" ? <label>Sensitivity<select value={sensitivity} onChange={(event) => { const value = event.target.value as ZoneActivitySensitivity; setSensitivity(value); saveNodeDraft({ sensitivity: value }); }}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option></select></label> : <p className="meta-text">Activity in this area won’t start or trigger monitoring by itself. If activity elsewhere starts monitoring, a saved photo can still show this area.</p>}
       </section>
       <section className="panel page-stack">
         <h2>3. Start watching</h2>

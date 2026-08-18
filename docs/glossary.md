@@ -266,11 +266,20 @@ A zone around a birdbath or water source.
 
 ## Privacy Zone
 
-A zone where detection, storage, or review should be limited or disabled.
+A zone whose activity does not independently trigger detection, capture, or
+review -- trigger-level exclusion only. It does not redact, crop, or remove
+this area's pixels from evidence saved because activity elsewhere in the same
+frame triggered capture; MockingBird does not implement pixel-level redaction
+today. See [privacy-ignore-zone-contract.md](privacy-ignore-zone-contract.md).
 
 ## Ignore Zone
 
-A zone where activity should not create normal review events.
+A zone where activity should not create normal review events. Enforced
+identically to a Privacy Zone (same trigger-level exclusion, same absence of
+pixel redaction) -- the two names exist for the user's own organizational use
+(privacy-sensitive areas versus routine unwanted motion), not a difference in
+implemented behavior. See
+[privacy-ignore-zone-contract.md](privacy-ignore-zone-contract.md).
 
 ## Event / Activity Session
 

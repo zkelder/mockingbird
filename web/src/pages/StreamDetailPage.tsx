@@ -4375,7 +4375,9 @@ export function StreamDetailPage({
                 <div className="zone-monitoring-restricted">
                   <strong>Suppression only</strong>
                   <span>
-                    Privacy and Ignore Zones do not capture activity or expose monitoring controls.
+                    This zone has no monitoring settings of its own. Activity here won’t trigger
+                    detection or review, but a photo saved because of activity elsewhere in view
+                    can still show this area.
                   </span>
                 </div>
               ) : !drawMode ? (
@@ -4444,11 +4446,14 @@ export function StreamDetailPage({
 
               <div className="zone-meaning">
                 <span>
-                  <strong>Privacy zone</strong> restricts future detection, storage, and review
-                  behavior.
+                  <strong>Privacy zone</strong> and <strong>Ignore zone</strong> behave the same
+                  way: activity here won’t trigger detection or review on its own. Use Privacy for
+                  areas like windows or doorways, and Ignore for routine motion such as a feeder
+                  moving in the wind.
                 </span>
                 <span>
-                  <strong>Ignore zone</strong> keeps routine activity out of normal review events.
+                  Neither zone redacts or removes footage — a photo saved because of activity
+                  elsewhere in view can still show this area.
                 </span>
               </div>
 

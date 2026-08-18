@@ -702,6 +702,45 @@ def test_privacy_zone_candidate_is_blocked(repository: ProductRepository) -> Non
     assert _counts(repository) == before
 
 
+def test_evidence_from_a_non_privacy_zone_is_not_redacted_for_a_coexisting_privacy_zone(
+    repository: ProductRepository,
+) -> None:
+    """Release-truthfulness regression (see docs/privacy-ignore-zone-contract.md):
+    a Privacy Zone only blocks a candidate whose *own* triggering zone is
+    Privacy/Ignore (see `test_privacy_zone_candidate_is_blocked` above). It
+    does not redact, crop, or otherwise alter evidence for a *different,
+    legitimately triggered* candidate merely because a Privacy Zone also
+    exists somewhere on the same Stream. This locks in the persistence half
+    of the trigger-level-exclusion contract: the persisted MediaAsset's
+    bytes on disk are byte-identical to the source evidence content, proving
+    no pixel-level redaction happened anywhere in this path."""
+
+    privacy_zone_id = "zone-privacy-coexisting"
+    with repository.session_factory() as session:
+        with session.begin():
+            from mockingbird.storage.models import ZoneModel
+
+            session.add(ZoneModel(
+                id=privacy_zone_id, stream_id=STREAM_ID, name="Neighbor's window",
+                zone_type="privacy", polygon_json="[]", is_active=True,
+            ))
+    _activate(repository)
+    before = _counts(repository)
+    outcome = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            # Default zone_id is FEEDER_ZONE_ID -- a different, non-privacy
+            # zone on the same stream as the privacy zone created above.
+            proposal=_facts(), observed_at=NOW, evidence_items=(_evidence(),),
+        )
+    )
+    assert outcome.outcome == "created"
+    assert _counts(repository)["media_assets"] == before["media_assets"] + 1
+    with repository.session_factory() as session:
+        media = session.get(MediaAssetModel, outcome.persisted_media_asset_ids[0])
+        assert media is not None
+        assert Path(media.local_path).read_bytes() == JPEG_BYTES
+
+
 # --- 24 / 25. Session + hourly limits ---------------------------------------
 
 
