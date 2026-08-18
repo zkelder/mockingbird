@@ -127,6 +127,11 @@ export function DatasetQualityPanel({
 
       {visibleIssues.length > 0 ? (
         <div className="quality-issue-list">
+          {!isCompact && quality.issue_count > visibleIssues.length ? (
+            <span className="meta-text">
+              Showing the {visibleIssues.length} highest-priority issues of {quality.issue_count} total.
+            </span>
+          ) : null}
           {visibleIssues.map((issue) => (
             <article className="quality-issue-card" key={issue.id}>
               <div>

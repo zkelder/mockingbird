@@ -636,6 +636,13 @@ DEFAULT_STORAGE_SUPERSEDED_AGE_DAYS = 90
 DEFAULT_STORAGE_ORPHANED_AGE_DAYS = 30
 MAX_ALERT_PAGE_SIZE = 50
 MAX_RECENT_ALERTS = 12
+# Dataset QA's own summary counts (issue_count, high_count, ...) are always
+# computed from every qualifying record; only the detailed `issues` list
+# returned for display is bounded, so a real installation's growing history
+# (measured: 420 real issues rendered a 51,000+px Analytics page from this
+# exact gap) cannot make the page itself unbounded the way it made the
+# aggregate counts honest already.
+MAX_DATASET_QUALITY_ISSUES = 50
 
 
 @dataclass(frozen=True)
@@ -24672,7 +24679,13 @@ class ProductRepository:
             false_positive_count=type_counts["false_positive"],
             export_ready_count=export_ready_count,
             needs_review_count=needs_review_count,
-            issues=sorted(issues, key=lambda issue: (issue.severity, issue.issue_type, issue.target_id)),
+            # Every count above already reflects the complete, untruncated
+            # `issues` list; only the detailed list actually returned for
+            # display is bounded, so a large real history cannot make the
+            # page itself unbounded (see MAX_DATASET_QUALITY_ISSUES).
+            issues=sorted(
+                issues, key=lambda issue: (issue.severity, issue.issue_type, issue.target_id)
+            )[:MAX_DATASET_QUALITY_ISSUES],
             generated_at=datetime.now(UTC),
             local_first_note=(
                 "Dataset QA uses corrected labels as local dataset truth. Detection and "

@@ -193,6 +193,37 @@ async def test_false_positive_is_counted_but_not_species_truth(client: httpx.Asy
     assert coverage["reviewed_species_count"] == 0
 
 
+async def test_dataset_quality_issue_list_is_bounded_but_counts_stay_exact(
+    client: httpx.AsyncClient,
+) -> None:
+    """v0.1 Product Flow Gap Pass v1: a real installation's Dataset QA panel
+    (Insights/Analytics page) rendered its full, unbounded `issues` array
+    with no cap -- a real 420-issue history produced a 51,000+px page
+    section. The detailed `issues` list must be bounded, but the aggregate
+    counts (`issue_count`, `high_count`, `unknown_label_count`, ...) --
+    already correctly computed from every qualifying record -- must stay
+    exact, not silently shrink to match the now-truncated list."""
+
+    before = (await client.get("/api/dataset-quality/summary")).json()
+
+    # Each uncorrected "unknown bird" import creates exactly two issues
+    # (needs_review + unknown_label): 30 imports comfortably exceeds the
+    # bounded display limit while keeping this test fast (local sqlite
+    # writes only, no real media/model work).
+    for _ in range(30):
+        response = await import_unknown_bird(client)
+        assert response.status_code == 201
+
+    after = (await client.get("/api/dataset-quality/summary")).json()
+
+    assert after["issue_count"] == before["issue_count"] + 60
+    assert after["high_count"] == before["high_count"] + 30
+    assert after["unknown_label_count"] == before["unknown_label_count"] + 30
+    assert after["needs_review_count"] == before["needs_review_count"] + 30
+    assert len(after["issues"]) <= 50
+    assert len(after["issues"]) < after["issue_count"]
+
+
 async def test_dataset_quality_aligns_with_coverage_and_ignores_raw_proposal_truth(
     client: httpx.AsyncClient,
 ) -> None:
