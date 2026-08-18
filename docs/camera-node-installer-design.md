@@ -904,6 +904,23 @@ attempt 5 of 6** (`camera_connected: true`, `stopped_reason: null`) --
 never exhausting the budget, no manual action, no re-pairing. A bounded,
 truthful, ordinary interruption handled correctly.
 
+**Idempotency, update, and rollback (live, on the real device).** Beyond
+the hermetic test suite, the full sequence was run for real: (1) re-running
+the installer with the *identical* artifact reported `already exists` /
+`already installed` / `existing node.env preserved untouched` / `systemd
+unit: unchanged` / `already running, left untouched` for every step, with
+`pairing_required: false` unaffected; (2) installing a second, freshly
+-built artifact from the same commit (a different `build_id`, proving
+`build_id` rather than commit or version string is what actually gates the
+update decision) correctly kept exactly one prior version
+(`venv.previous/`, `manifest.json.previous`) and left `node.env`'s
+modification time and the pairing digest completely unchanged; (3)
+`--rollback` swapped cleanly back to the first build and reported healthy;
+(4) re-installing the second artifact rolled forward again just as
+cleanly. Every step reported the exact provenance `build_id` it acted on,
+and the paired credential digest was verified byte-identical across the
+entire sequence.
+
 ## Windows redeploy
 
 Two incidental findings while producing a deployable build to validate the
