@@ -137,6 +137,23 @@ local data with the backup's.
 - **MockingBird did not shut down cleanly last time**: the status area says
   so after a crash or a forced shutdown; your data is unaffected; nothing
   further is needed.
+- **MockingBird won't start, or shows a message about its local database**:
+  MockingBird checks its database before opening and refuses to start
+  rather than risk existing data if that check fails -- it never silently
+  modifies or replaces a database it can't safely read. To recover:
+  1. Close MockingBird if it's still running.
+  2. In MockingBird's data folder (the same folder shown on the Storage
+     step during first-run setup and on the Local Data page), move the
+     `mockingbird.sqlite3` file somewhere else -- don't delete it, in case
+     you want it looked at later.
+  3. Reopen MockingBird. With no database file present it starts fresh, the
+     same as a new install.
+  4. Open **Local Data**, then **Import backup** to add your most recent
+     `.mbbackup` file if it isn't already listed, and **Restore** it. This
+     replaces the fresh, empty database with your backed-up data.
+
+  This is why creating a backup before you need one matters -- see
+  "Backup and restore," above.
 - **Storage shows low space or "not writable"**: free up space, or check
   that the folder MockingBird uses is not read-only, then reopen MockingBird.
 - **Logs**: MockingBird keeps its own log file inside its data folder (shown

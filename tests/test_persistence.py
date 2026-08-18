@@ -491,3 +491,66 @@ def test_database_needing_unknown_migration_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(DatabaseSchemaCompatibilityError, match="explicit migration"):
         repository_for(db_path)
+
+
+def test_corrupted_database_is_refused_without_modification_and_recoverable_from_backup(
+    tmp_path: Path,
+) -> None:
+    """v0.1 Release Hardening v1 -- 2c: grounds docs/using-mockingbird.md's
+    corrupted-database recovery guidance in real, executed behavior rather
+    than an untested claim. `test_newer_database_version_is_rejected_
+    without_modification`/`test_database_needing_unknown_migration_is_
+    rejected` above already prove the schema-incompatibility branches of
+    this same `_sqlite_integrity_check` gate; this test exercises genuine
+    byte-level corruption (a failed `PRAGMA quick_check`, not a version
+    mismatch) and then proves the composed operator recovery procedure
+    end-to-end: move the corrupt file aside, let MockingBird start fresh,
+    then restore the most recent backup."""
+
+    from mockingbird.storage.backup import LocalBackupManager
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    media_root = tmp_path / "media"
+    repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=media_root)
+    known_zone_name = repository.zones_for_stream("stream-backyard-feeder")[0].name
+    manager = LocalBackupManager(
+        db_url=repository.db_url, media_root=media_root, backup_root=tmp_path / "backups",
+    )
+    backup = manager.create_backup()
+    repository.close()
+
+    # Genuine corruption: overwrite the live file's own bytes in place (not
+    # a schema-version edit through a real connection) so PRAGMA quick_check
+    # itself fails, exercising the "could not safely read" branch the two
+    # tests above do not reach.
+    original_bytes = db_path.read_bytes()
+    db_path.write_bytes(b"not a sqlite database" * 64)
+
+    with pytest.raises(DatabaseSchemaCompatibilityError):
+        ProductRepository(db_url=f"sqlite:///{db_path}", media_root=media_root)
+
+    # MockingBird must never modify a file it refused to open -- still
+    # exactly the corrupted bytes, not the original, valid ones.
+    assert db_path.read_bytes() == b"not a sqlite database" * 64
+    assert original_bytes != b"not a sqlite database" * 64
+
+    # Operator recovery: move the corrupt file aside (MockingBird itself
+    # never does this automatically -- no silent auto-recreate/auto-restore
+    # exists, matching the two schema-incompatibility tests above), then a
+    # fresh launch against the same path succeeds normally.
+    db_path.unlink()
+    fresh = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=media_root)
+    assert fresh.zones_for_stream("stream-backyard-feeder") != []  # ordinary fresh-install seed data
+    fresh.close()
+
+    # Then restore the pre-corruption backup through the exact same,
+    # already-thoroughly-tested restore mechanism test_local_backup_
+    # recovery.py exercises -- recovery does not require inventing any new
+    # mechanism.
+    transaction = manager.replace_live_files(manager.verify_backup(backup.backup.id))
+    restored = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=media_root)
+    try:
+        assert restored.zones_for_stream("stream-backyard-feeder")[0].name == known_zone_name
+        transaction.commit()
+    finally:
+        restored.close()
