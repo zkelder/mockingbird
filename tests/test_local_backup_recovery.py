@@ -30,6 +30,7 @@ from mockingbird.storage.models import (
     BioClipIdentificationAttemptModel,
     MediaAssetModel,
     MonitoringExposureIntervalModel,
+    StreamRuntimeCheckpointModel,
 )
 
 
@@ -414,6 +415,32 @@ def test_backup_api_restore_keeps_pre_restore_safety_backup(
     assert {item["kind"] for item in backups} == {"manual", "pre_restore"}
 
 
+def test_backup_api_restore_holds_an_armed_stream(api_repository: ProductRepository) -> None:
+    """End-to-end proof that the real `POST .../restore` route (not only the
+    underlying repository methods in isolation) applies the restore hold:
+    arm a Stream, back it up while armed, restore over the API, and confirm
+    `GET .../runtime-status` -- the same route Stream Detail reads -- now
+    reports `safety_hold_active=True` and a `restore_hold` reason."""
+
+    stream_id = "stream-backyard-feeder"
+    api_repository.set_stream_monitoring_enabled(
+        stream_id, enabled=True, idempotency_key="arm-before-api-backup",
+    )
+    backup_id = client.post("/api/settings/backups").json()["backup"]["id"]
+
+    response = client.post(
+        f"/api/settings/backups/{backup_id}/restore", json={"confirm": True},
+    )
+    assert response.status_code == 200
+
+    status = client.get(f"/api/streams/{stream_id}/runtime-status").json()
+    assert status["safety_hold_active"] is True
+    assert status["last_stop_reason"] == "restore_hold"
+
+    health = client.get("/api/product/health").json()
+    assert health["ready"] is True, "a deliberate, safe restore hold must not alarm the aggregate Dashboard"
+
+
 def test_failed_repository_reopen_rolls_back_before_returning_error(
     api_repository: ProductRepository,
     monkeypatch: pytest.MonkeyPatch,
@@ -526,6 +553,85 @@ def test_backup_restore_closes_open_exposure_as_historical_evidence() -> None:
             )
             assert status is not None
             assert status.exposure_interval_active is False
+            transaction.commit()
+        finally:
+            restored_repository.close()
+
+
+def test_restore_holds_an_armed_stream_rather_than_letting_it_silently_resume() -> None:
+    """docs/local-backup-recovery-design.md and docs/durable-camera-monitor-
+    lifecycle-design.md both document a persisted `restore_hold`: an armed
+    Stream's *policy* survives restore unchanged (it is the restored durable
+    truth), but the *runtime* must not resume monitoring until the user
+    explicitly resumes it -- including after the next application restart,
+    not merely within the current process. Prove the hold is actually
+    applied and persisted, not merely documented."""
+
+    with TemporaryDirectory(dir="/tmp") as temporary_directory:
+        root = Path(temporary_directory)
+        repository = _repository(root)
+        repository.set_stream_monitoring_enabled(
+            "stream-backyard-feeder", enabled=True, idempotency_key="arm-before-backup",
+        )
+        manager = _manager(repository, root)
+        backup = manager.create_backup()
+        repository.close()
+
+        transaction = manager.replace_live_files(manager.verify_backup(backup.backup.id))
+        restored_repository = _repository(root)
+        restored_repository.prepare_for_supervision("local-backup-restore")
+        restored_repository.apply_restore_hold()
+        try:
+            policy = restored_repository.get_stream_monitoring_policy("stream-backyard-feeder")
+            assert policy is not None
+            assert policy.mode.value == "armed", "restored policy is durable truth -- must survive unchanged"
+
+            with restored_repository.session_factory() as session:
+                checkpoint = session.get(StreamRuntimeCheckpointModel, "stream-backyard-feeder")
+                assert checkpoint is not None
+                assert checkpoint.safety_hold_active is True
+                assert checkpoint.last_stop_reason == "restore_hold"
+
+            # The hold is a real, persisted DB row -- simulate the next
+            # application restart by reopening the repository and reading it
+            # back fresh, rather than trusting in-memory state.
+            transaction.commit()
+        finally:
+            restored_repository.close()
+
+        reopened = _repository(root)
+        try:
+            with reopened.session_factory() as session:
+                checkpoint = session.get(StreamRuntimeCheckpointModel, "stream-backyard-feeder")
+                assert checkpoint is not None
+                assert checkpoint.safety_hold_active is True, (
+                    "the hold must survive an application restart, not only the current process"
+                )
+        finally:
+            reopened.close()
+
+
+def test_restore_hold_does_not_affect_a_stream_that_was_never_armed() -> None:
+    """Negative control: a Stream whose policy is `off` at backup time has
+    nothing to hold -- `apply_restore_hold` must not touch it."""
+
+    with TemporaryDirectory(dir="/tmp") as temporary_directory:
+        root = Path(temporary_directory)
+        repository = _repository(root)
+        manager = _manager(repository, root)
+        backup = manager.create_backup()
+        repository.close()
+
+        transaction = manager.replace_live_files(manager.verify_backup(backup.backup.id))
+        restored_repository = _repository(root)
+        restored_repository.prepare_for_supervision("local-backup-restore")
+        restored_repository.apply_restore_hold()
+        try:
+            with restored_repository.session_factory() as session:
+                checkpoint = session.get(StreamRuntimeCheckpointModel, "stream-backyard-feeder")
+                assert checkpoint is not None
+                assert checkpoint.safety_hold_active is False
+                assert checkpoint.last_stop_reason != "restore_hold"
             transaction.commit()
         finally:
             restored_repository.close()

@@ -852,7 +852,9 @@ export function LocalDataPage({
                         <strong>Confirm restore</strong>
                         <span>
                           Current local data and managed media will be replaced. Active camera work
-                          will stop, and a verified safety backup will be created first.
+                          will stop, and a verified safety backup will be created first. Any camera
+                          that was continuously monitoring will be paused after restore -- resume it
+                          from Stream Detail when you're ready.
                         </span>
                       </div>
                     ) : null}

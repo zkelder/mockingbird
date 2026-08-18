@@ -13927,6 +13927,13 @@ def restore_local_backup(
             classifier_manifest_export_root=classifier_export_root,
         )
         restored_repository.prepare_for_supervision("local-backup-restore")
+        # Restored durable policy (armed/paused/off) is kept exactly as
+        # backed up -- it is the restored truth. The runtime hold applied
+        # here is the separate safety measure: it prevents an armed Stream
+        # from silently resuming monitoring, including after the next
+        # application restart, until the user explicitly resumes it. See
+        # docs/local-backup-recovery-design.md and `apply_restore_hold`.
+        restored_repository.apply_restore_hold()
         configure_repository(restored_repository)
         restored_repository_configured = True
         restored_status = restored_repository.local_data_status()

@@ -5986,6 +5986,21 @@ class ProductRepository:
             state = CameraHealthState.evidence_storage_degraded
             message = "Frames may be available, but required evidence persistence needs attention."
         elif (
+            checkpoint is not None
+            and checkpoint.safety_hold_active
+            and checkpoint.last_stop_reason == "restore_hold"
+        ):
+            # `apply_restore_hold` set this after a restore, on purpose: the
+            # policy stayed armed (restored truth), but the runtime must not
+            # silently resume. `CameraHealthState.stopped` keeps the
+            # aggregate Dashboard calm (a deliberate, safe pause is not an
+            # alarm); the per-Stream Observation panel still surfaces this
+            # plainly and offers a working "Retry"/resume action, since its
+            # own wire state derives from `actual_state` (left `interrupted`
+            # by `prepare_for_supervision`), not from this state value.
+            state = CameraHealthState.stopped
+            message = "Monitoring was paused by a recent restore. Resume it here when you're ready."
+        elif (
             actual_state == StreamRuntimeState.blocked
             and checkpoint is not None
             and checkpoint.failure_code == "waiting_for_capacity"
@@ -7050,6 +7065,52 @@ class ProductRepository:
                     checkpoint.app_instance_id = None
                     checkpoint.runtime_generation_id = None
                     checkpoint.last_stop_reason = "previous_process_ended"
+                    checkpoint.updated_at = now
+                    self._sync_monitoring_alert(session, checkpoint.stream_id, now)
+
+    def apply_restore_hold(self) -> None:
+        """Persist a runtime safety hold on every currently-armed Stream
+        after a restore (docs/local-backup-recovery-design.md "Future
+        durable-runtime coordination", docs/durable-camera-monitor-
+        lifecycle-design.md's `RuntimeSafetyHold`/`restore_hold`).
+
+        A restored backup's `StreamMonitoringPolicy` reflects the *backed-up*
+        intent -- restored durable truth that this method deliberately never
+        touches. But that policy may be stale, or the physically restored
+        configuration may no longer match it, so the *runtime* must not
+        resume monitoring on its own. Without this hold, restore only
+        happens to look safe because the current process's supervisor was
+        stopped as a side effect of the restore -- that protection does not
+        persist: the very next application start reconciles every `armed`
+        policy exactly as it would after a normal restart. Setting a
+        persisted hold here (rather than relying on that in-memory
+        coincidence) keeps the "no hidden auto-restart surprise" contract
+        true across a restart, not merely within the current process. Only
+        an explicit user action -- `retry_stream_monitoring`, or toggling
+        monitoring off/on -- clears the hold; see `DurableMonitoringSupervisor
+        ._reconcile_inactive`, which already refuses to start any candidate
+        with `safety_hold_active=True`.
+
+        Call this once, immediately after `prepare_for_supervision`, from
+        the restore path only -- never from normal startup, which must keep
+        letting an armed Stream recover automatically.
+        """
+
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                checkpoints = session.scalars(
+                    select(StreamRuntimeCheckpointModel)
+                    .join(
+                        StreamMonitoringPolicyModel,
+                        StreamMonitoringPolicyModel.stream_id
+                        == StreamRuntimeCheckpointModel.stream_id,
+                    )
+                    .where(StreamMonitoringPolicyModel.mode == StreamMonitoringMode.armed.value)
+                ).all()
+                for checkpoint in checkpoints:
+                    checkpoint.safety_hold_active = True
+                    checkpoint.last_stop_reason = "restore_hold"
                     checkpoint.updated_at = now
                     self._sync_monitoring_alert(session, checkpoint.stream_id, now)
 

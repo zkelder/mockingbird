@@ -168,6 +168,27 @@ def test_supervisor_waits_for_a_healthy_frame_and_never_duplicates_a_session() -
     assert store.candidates["stream-one"].actual_state == "running"
 
 
+def test_supervisor_never_starts_a_camera_with_an_active_safety_hold() -> None:
+    """A `RuntimeSafetyHold` (see docs/durable-camera-monitor-lifecycle-
+    design.md) -- for example the restore hold `apply_restore_hold` applies
+    -- must actually prevent an auto-start, not merely be documented as
+    doing so. Previously untested: `safety_hold_active` has been read by
+    `_reconcile_inactive` since the config-change and pairing-revocation
+    call sites started setting it, but no test ever exercised this branch."""
+
+    now = datetime(2026, 7, 20, tzinfo=UTC)
+    held = replace(_candidate("stream-one"), safety_hold_active=True)
+    store = FakeStore([held])
+    camera = FakeCamera()
+    supervisor = _supervisor(store, camera)
+
+    supervisor.reconcile_once(now=now)
+
+    assert camera.start_calls == [], "a held candidate must never be started automatically"
+    assert store.candidates["stream-one"].actual_state == "blocked"
+    assert ("starting", "stream-one") not in store.events
+
+
 def test_supervisor_normalizes_legacy_naive_startup_timestamp_before_subtraction() -> None:
     """Regression for aware runtime UTC minus naive SQLite startup checkpoint."""
 

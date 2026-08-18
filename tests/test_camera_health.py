@@ -179,6 +179,47 @@ def test_stale_frame_and_evidence_persistence_are_separate(repository: ProductRe
     assert degraded.health.failure_reason == "MockingBird could not safely persist required evidence."
 
 
+def test_restore_hold_shows_a_calm_explicit_message_and_clears_on_explicit_retry(
+    repository: ProductRepository,
+) -> None:
+    """v0.1 Release Hardening v1: `apply_restore_hold` (see
+    docs/local-backup-recovery-design.md) must be visible and explicit, not
+    a silent block a user has no way to discover or clear. The aggregate
+    Dashboard state stays in the calm/OK bucket (`stopped`) -- a deliberate,
+    safe pause is not an alarm -- but the message names exactly what
+    happened and that an explicit resume exists; the existing `retry_
+    stream_monitoring` explicit-resume action already clears
+    `safety_hold_active` for any reason, including this one."""
+
+    candidate = _enable(repository)
+    repository.apply_restore_hold()
+
+    held = repository.get_stream_camera_health(candidate.stream_id)
+    assert held is not None
+    assert held.health.state == CameraHealthState.stopped
+    assert "restore" in held.health.message.lower()
+    assert "resume" in held.health.message.lower()
+    with repository.session_factory() as session:
+        checkpoint = session.get(StreamRuntimeCheckpointModel, candidate.stream_id)
+        assert checkpoint is not None
+        assert checkpoint.safety_hold_active is True
+
+    resumed = repository.retry_stream_monitoring(
+        candidate.stream_id, idempotency_key="resume-after-restore"
+    )
+    assert resumed is False, "False means freshly applied, matching set_stream_monitoring_enabled's convention"
+    with repository.session_factory() as session:
+        checkpoint = session.get(StreamRuntimeCheckpointModel, candidate.stream_id)
+        assert checkpoint is not None
+        assert checkpoint.safety_hold_active is False
+        assert checkpoint.last_stop_reason == "retry_requested"
+
+    after_resume = repository.get_stream_camera_health(candidate.stream_id)
+    assert after_resume is not None
+    assert after_resume.health.state != CameraHealthState.stopped
+    assert "restore" not in after_resume.health.message.lower()
+
+
 def test_camera_health_normalizes_legacy_naive_checkpoint_timestamps(repository: ProductRepository) -> None:
     candidate = _enable(repository)
     now = datetime.now(UTC).replace(microsecond=0)

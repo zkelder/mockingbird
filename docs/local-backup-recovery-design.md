@@ -80,14 +80,50 @@ Storage & Retention maintenance is a separate, optional local service: it is
 disabled by default, shares the backup/restore maintenance window, and skips a
 run rather than overlapping a backup or restore.
 
-## Future durable-runtime coordination
+## Post-restore monitoring hold (implemented, v0.1 Release Hardening v1)
 
-When durable live monitoring is implemented, backup creation must temporarily
-quiesce new evidence/media writes and wait for an in-progress handoff within a
-bounded deadline. Restore must hard-stop the durable supervisor before repository
-close and persist a `restore_hold` after the restored repository opens. An armed
-monitoring policy contained in a backup must not restart a camera until the user
-explicitly resumes it. See
+Restore keeps a Stream's `StreamMonitoringPolicy` exactly as backed up --
+that policy is restored durable truth, and this contract never rewrites it.
+But `ProductRepository.apply_restore_hold()` (called from
+`restore_local_backup` immediately after `prepare_for_supervision`)
+separately persists `safety_hold_active=True`/`last_stop_reason=
+"restore_hold"` on every currently-`armed` Stream's runtime checkpoint. This
+is a genuine `RuntimeSafetyHold` (see
+[durable-camera-monitor-lifecycle-design.md](durable-camera-monitor-lifecycle-design.md)),
+not merely the incidental fact that restore stops the current process's
+supervisor: because the hold is a persisted database row,
+`DurableMonitoringSupervisor._reconcile_inactive` continues to refuse to
+start a held Stream across every subsequent reconciliation pass, including
+after the next full application restart -- an armed policy contained in a
+restored backup cannot silently resume monitoring. Camera health reports
+this plainly ("Monitoring was paused by a recent restore. Resume it here
+when you're ready.") without alarming the aggregate Dashboard (the state
+stays in the calm/OK bucket -- a deliberate, safe pause is not treated as a
+malfunction). The user resumes explicitly through the existing "Retry"
+action (`retry_stream_monitoring`, `POST /api/streams/{id}/runtime/retry`)
+or by toggling monitoring off and back on -- both already clear
+`safety_hold_active` for any reason, restore included.
+
+**Scope note:** this durable-continuity supervisor, and therefore this
+hold, applies only to the legacy backend-owned RTSP/local-USB/Windows-
+DirectShow live-video path (`StreamMonitoringPolicy`). A paired Camera
+Node's Observation Engine session
+(`ObservationEngineSessionManager`/"Start observing") has no durable
+auto-resume at application startup at all -- `_app_lifespan` starts only
+the durable supervisor, never an Observation session, which is always a
+fresh, explicit, per-launch user action reached through
+`POST /api/streams/{id}/observation/start`. A restore therefore cannot
+cause a Camera Node Stream to silently resume monitoring either, but for a
+structurally different reason: there is nothing durable there to hold.
+
+## Future durable-runtime coordination (remaining)
+
+Backup creation still does not explicitly quiesce new evidence/media writes
+or wait for an in-progress handoff before assembling an archive; it relies
+on SQLite's online backup API for database-level write consistency during
+capture. Closing this narrower gap (bounded quiesce plus deadline, matching
+the restore-hold shape above) remains future work if a real race is ever
+demonstrated; see
 [durable-camera-monitor-lifecycle-design.md](durable-camera-monitor-lifecycle-design.md).
 
 ## Truth and product boundaries
