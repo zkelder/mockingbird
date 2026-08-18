@@ -10109,9 +10109,28 @@ async def _dashboard_runtime_by_stream(
         # empty state, LiveCameraOverview's activity/session facts) to
         # undercount a real, working Camera Node observation session.
         engine_active = False
+        # Mirrors the exact "genuinely terminal" test unified_status.py's
+        # per-Stream Observation panel already uses implicitly (a non-
+        # "observing" state with a real failure behind it): `state="error"`
+        # (an immediate pairing/engine-load failure) or the bounded retry
+        # policy's own exhausted-recovery marker,
+        # `stopped_reason="camera_unavailable"` (never set for an explicit
+        # user Stop, which uses "user_stopped", or a natural session end,
+        # "session_ended" -- see AnalysisStreamRetryPolicy/_EngineSession in
+        # engine_runtime.py). A reconnect still in its bounded retry window
+        # deliberately stays `observing`/non-terminal here, matching that
+        # policy's own "do not alarm on a benign reconnect" design.
+        engine_terminally_unavailable = False
+        engine_unavailable_message = None
         if configuration is not None and configuration.provider_key == "camera_node":
             engine_status = engine_manager.status(stream.id)
             engine_active = bool(engine_status and engine_status.observing)
+            if engine_status is not None and (
+                engine_status.state == "error"
+                or engine_status.stopped_reason == "camera_unavailable"
+            ):
+                engine_terminally_unavailable = True
+                engine_unavailable_message = engine_status.camera_message or engine_status.message
 
         if source_active:
             monitor_control = "source_monitor"
@@ -10145,6 +10164,8 @@ async def _dashboard_runtime_by_stream(
             ready_activity_session_count=(
                 live_snapshot.ready_activity_session_count if live_snapshot else 0
             ),
+            engine_terminally_unavailable=engine_terminally_unavailable,
+            engine_unavailable_message=engine_unavailable_message,
         )
     return runtime_by_stream
 
@@ -10225,7 +10246,7 @@ async def get_product_health() -> ProductHealthStatus:
         storage_warning=storage.storage_warning,
         cameras=ProductHealthCameraSummary(needs_attention_count=needs_attention_count),
         observation=ProductHealthObservationSummary(
-            configured_stream_count=dashboard.headline.configured_stream_count,
+            configured_stream_count=dashboard.headline.real_stream_count,
             monitored_stream_count=dashboard.headline.monitored_stream_count,
         ),
         backup=ProductHealthBackupSummary(

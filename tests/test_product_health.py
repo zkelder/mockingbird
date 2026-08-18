@@ -40,12 +40,22 @@ def _get(path: str) -> httpx.Response:
     return asyncio.run(send())
 
 
-def _fake_dashboard_summary(*, camera_states: list[CameraHealthState], configured: int, monitored: int):
+def _fake_dashboard_summary(
+    *, camera_states: list[CameraHealthState], configured: int, monitored: int, real: int | None = None,
+):
     cameras = [types.SimpleNamespace(state=state) for state in camera_states]
     return types.SimpleNamespace(
         today=types.SimpleNamespace(observation_health=cameras),
         headline=types.SimpleNamespace(
-            configured_stream_count=configured, monitored_stream_count=monitored
+            configured_stream_count=configured,
+            # Defaults to `configured` (no demo stream in play) unless a
+            # test explicitly wants to exercise the two counts diverging --
+            # see test_stream_playback_contract.py's
+            # test_real_stream_count_excludes_the_lingering_demo_stream for
+            # that real-query-level coverage; this file only stubs the
+            # aggregation `get_product_health` performs on top.
+            real_stream_count=configured if real is None else real,
+            monitored_stream_count=monitored,
         ),
     )
 

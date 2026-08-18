@@ -1718,6 +1718,11 @@ export interface DashboardReviewedObservation {
 
 export interface DashboardHeadline {
   configured_stream_count: number;
+  // Same population as configured_stream_count minus any Source whose
+  // provider configuration is still literally unconfigured ("demo"); only
+  // GET /api/product/health's "Observing X of Y cameras" ratio uses this
+  // today.
+  real_stream_count: number;
   monitored_stream_count: number;
   open_activity_session_count: number;
   needs_review_visit_count: number;

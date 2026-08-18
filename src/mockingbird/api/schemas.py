@@ -2435,6 +2435,13 @@ class DashboardStreamRuntimeStatus(BaseModel):
     can_stop_monitor: bool = False
     open_activity_session_count: int = Field(default=0, ge=0)
     ready_activity_session_count: int = Field(default=0, ge=0)
+    # Camera Node's canonical ObservationEngineSessionManager truth, bridged
+    # in so the aggregate camera-health summary can distinguish a genuinely
+    # terminal engine failure from a Stream that was simply never armed
+    # (which a camera_node Stream, by design, can never be through
+    # StreamMonitoringPolicy). See "_camera_health_summary_from_models".
+    engine_terminally_unavailable: bool = False
+    engine_unavailable_message: str | None = None
 
 
 class DashboardVisitSummary(StreamVisitSummary):
@@ -2500,6 +2507,21 @@ class DashboardReviewedObservation(BaseModel):
 
 class DashboardHeadline(BaseModel):
     configured_stream_count: int = Field(ge=0)
+    # Same population as `configured_stream_count` minus any Source whose
+    # *current* provider configuration is still literally unconfigured
+    # (`provider_key == "demo"`) -- a durable, already-present semantic
+    # distinction (the same field `engine_active`/`live_active`/
+    # `source_active` already gate on), not a display-name/fixture-identity
+    # special case, and not the Source's own `kind` (which never updates
+    # once set, so it cannot tell a still-inert demo Source from one later
+    # repurposed into a real camera). Only `ProductHealthObservationSummary`'s
+    # "Observing X of Y cameras" ratio uses this; `configured_stream_count`
+    # itself is unchanged everywhere else (including TodayReportPanel's own
+    # "do you have anything configured at all" empty-state gate, where the
+    # demo Stream legitimately counts as something to explore -- excluding
+    # it there would misrepresent intentional demo mode as "nothing
+    # configured").
+    real_stream_count: int = Field(ge=0)
     monitored_stream_count: int = Field(ge=0)
     open_activity_session_count: int = Field(ge=0)
     needs_review_visit_count: int = Field(ge=0)
@@ -4935,6 +4957,12 @@ class ProductHealthCameraSummary(BaseModel):
 
 
 class ProductHealthObservationSummary(BaseModel):
+    # Deliberately sourced from `DashboardHeadline.real_stream_count`
+    # (excludes a still-unconfigured demo Source), not
+    # `.configured_stream_count` -- this field feeds only the "Observing X
+    # of Y cameras" ratio, where a demo Stream that can never be observed
+    # would otherwise understate real observing coverage. See
+    # `DashboardHeadline.real_stream_count`.
     configured_stream_count: int = Field(ge=0)
     monitored_stream_count: int = Field(ge=0)
 

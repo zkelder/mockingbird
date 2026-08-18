@@ -24,6 +24,7 @@ from mockingbird.api.main import (
     get_stream_windows_dshow_mjpeg_bridge,
 )
 from mockingbird.api.schemas import (
+    CameraSourceCreate,
     DashboardStreamRuntimeStatus,
     LivePreviewLeaseRequest,
     MotionEvidenceCreateRequest,
@@ -700,6 +701,37 @@ def test_dashboard_summary_exposes_durable_source_and_playback_classification(
     assert demo_stream.source_kind == SourceKind.demo
     assert demo_stream.playback_kind.value == "demo_panel"
 
+
+def test_real_stream_count_excludes_the_lingering_demo_stream(
+    isolated_repository: ProductRepository,
+) -> None:
+    """v0.1 Release Hardening v1 -- 3b: a fresh install's seeded demo
+    Stream is meant to be auto-removed once a user finishes the guided
+    first-run wizard with a real camera, but that removal is best-effort
+    and never triggered by real-camera setup completed outside the
+    wizard's own handler -- so the demo Stream commonly lingers alongside
+    a real one. `real_stream_count` (unlike `configured_stream_count`)
+    must not count it, using the durable `SourceKind.demo` distinction
+    rather than a display-name/fixture-identity special case."""
+
+    before = isolated_repository.dashboard_summary(now=datetime.now().astimezone())
+    assert before.headline.configured_stream_count == 1  # the demo stream alone
+    assert before.headline.real_stream_count == 0
+
+    isolated_repository.create_camera_source(CameraSourceCreate(name="Real backyard camera"))
+
+    with_both = isolated_repository.dashboard_summary(now=datetime.now().astimezone())
+    assert with_both.headline.configured_stream_count == 2, (
+        "unchanged elsewhere -- TodayReportPanel's own empty-state gate must keep "
+        "treating the demo stream as something to explore, not nothing configured"
+    )
+    assert with_both.headline.real_stream_count == 1
+
+    removed = isolated_repository.remove_sample_data(confirm=True)
+    assert removed.removed is True
+    after_removal = isolated_repository.dashboard_summary(now=datetime.now().astimezone())
+    assert after_removal.headline.configured_stream_count == 1
+    assert after_removal.headline.real_stream_count == 1, "the two counts converge once demo is gone"
 
 
 def test_dashboard_summary_serializes_an_empty_stream_installation(

@@ -5940,8 +5940,23 @@ class ProductRepository:
         now: datetime,
         open_activity_session_count: int = 0,
         latest_visit_at: datetime | None = None,
+        engine_terminally_unavailable: bool = False,
+        engine_unavailable_message: str | None = None,
     ) -> CameraHealthSummary:
-        """Resolve one product health state from durable intent and bounded checkpoints."""
+        """Resolve one product health state from durable intent and bounded checkpoints.
+
+        `engine_terminally_unavailable` carries a Camera Node Stream's
+        canonical `ObservationEngineSessionManager` truth in from the API
+        layer (see `_dashboard_runtime_by_stream`), the same bridge pattern
+        `open_activity_session_count` already uses. It is needed because a
+        `camera_node` Stream can never be legacy-`armed`
+        (`StreamMonitoringPolicy`) by design, so without this signal every
+        Camera Node Stream would always take the `desired_mode != armed`
+        branch below and report the OK-bucket `stopped` state regardless of
+        whether its Observation Engine session is healthy, reconnecting, or
+        has permanently given up (`stopped_reason="camera_unavailable"`) --
+        silently hiding a terminal failure from the aggregate Dashboard.
+        """
 
         policy = session.get(StreamMonitoringPolicyModel, stream.id)
         checkpoint = session.get(StreamRuntimeCheckpointModel, stream.id)
@@ -5972,7 +5987,21 @@ class ProductRepository:
 
         # Frames are operational health signals. Wildlife activity and Visits are
         # deliberately absent from this decision so a quiet feeder can be healthy.
-        if desired_mode != StreamMonitoringMode.armed:
+        if engine_terminally_unavailable:
+            # Takes priority over every branch below: a camera_node Stream
+            # never populates StreamMonitoringPolicy/StreamRuntimeCheckpoint
+            # through this path at all (Observation Engine sessions are
+            # tracked separately, in-process, by
+            # ObservationEngineSessionManager), so none of those branches
+            # would ever fire for it anyway -- this is that Stream's only
+            # real health signal reaching this function.
+            state = CameraHealthState.camera_unavailable
+            message = (
+                engine_unavailable_message
+                or "The camera is unavailable and needs attention before it can restart."
+            )
+            failure_code = "camera_unavailable"
+        elif desired_mode != StreamMonitoringMode.armed:
             state = CameraHealthState.stopped
             message = "Monitoring is stopped by its saved local policy."
         elif source is None or source.status == SourceStatus.needs_setup.value or readiness_status in {
@@ -9982,6 +10011,51 @@ class ProductRepository:
                 )
                 or 0
             )
+            real_stream_count = (
+                session.scalar(
+                    select(func.count(StreamModel.id))
+                    .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+                    # Deliberately keys off the Source's *effective* provider
+                    # configuration, the same field `engine_active`/
+                    # `live_active`/`source_active` already gate on in
+                    # `_dashboard_runtime_by_stream` -- not the Source's own
+                    # `kind`, which records only how a Source was originally
+                    # created and never updates when its provider
+                    # configuration is later changed (for example, Guided
+                    # Camera Editing repurposing the seeded demo Source into
+                    # a real `camera_node` Source keeps `kind="demo"`
+                    # forever; filtering on stale `kind` alone would make
+                    # that genuinely real, actively observing camera
+                    # disappear from this denominator while it still counted
+                    # in the numerator -- a nonsensical "observing more
+                    # cameras than exist"). No `SourceProviderConfiguration
+                    # Model` row is ever eagerly seeded for a fresh demo
+                    # Source, though -- `_default_source_provider_key`
+                    # resolves its *effective* provider_key ("demo") from
+                    # `kind` alone in that case -- so this replicates that
+                    # exact fallback in SQL via an outer join: a real row's
+                    # own `provider_key` wins when present, `kind` decides
+                    # only when no row exists yet.
+                    .outerjoin(
+                        SourceProviderConfigurationModel,
+                        SourceProviderConfigurationModel.source_id == CameraSourceModel.id,
+                    )
+                    .where(
+                        CameraSourceModel.status != SourceStatus.archived.value,
+                        or_(
+                            and_(
+                                SourceProviderConfigurationModel.source_id.isnot(None),
+                                SourceProviderConfigurationModel.provider_key != "demo",
+                            ),
+                            and_(
+                                SourceProviderConfigurationModel.source_id.is_(None),
+                                CameraSourceModel.kind != SourceKind.demo.value,
+                            ),
+                        ),
+                    )
+                )
+                or 0
+            )
             stream_models = session.scalars(
                 select(StreamModel)
                 .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
@@ -10087,6 +10161,8 @@ class ProductRepository:
                     latest_visit_at=(
                         latest_visit.activity_started_at if latest_visit is not None else None
                     ),
+                    engine_terminally_unavailable=runtime.engine_terminally_unavailable,
+                    engine_unavailable_message=runtime.engine_unavailable_message,
                 )
                 stream_summaries.append(
                     DashboardStreamSummary(
@@ -10244,6 +10320,7 @@ class ProductRepository:
                 generated_at=_as_utc(local_now),
                 headline=DashboardHeadline(
                     configured_stream_count=configured_stream_count,
+                    real_stream_count=real_stream_count,
                     monitored_stream_count=sum(
                         summary.monitoring_active for summary in stream_summaries
                     ),
