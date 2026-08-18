@@ -101,6 +101,22 @@ DEFAULT_BIOCLIP_WHEEL_CACHE_DIR = _MODULE["DEFAULT_BIOCLIP_WHEEL_CACHE_DIR"]
 WINDOWS_BIOCLIP_RUNTIME_REQUIREMENTS = _MODULE["WINDOWS_BIOCLIP_RUNTIME_REQUIREMENTS"]
 REQUIRED_CUDA_RUNTIME_DLL_BASENAMES = _MODULE["REQUIRED_CUDA_RUNTIME_DLL_BASENAMES"]
 REQUIRED_ORT_CUDA_PROVIDER_DLL_BASENAMES = _MODULE["REQUIRED_ORT_CUDA_PROVIDER_DLL_BASENAMES"]
+WEB_ROOT = _MODULE["WEB_ROOT"]
+build_frontend = _MODULE["build_frontend"]
+compute_frontend_source_fingerprint = _MODULE["compute_frontend_source_fingerprint"]
+verify_frontend_dist_freshness = _MODULE["verify_frontend_dist_freshness"]
+write_frontend_source_fingerprint = _MODULE["write_frontend_source_fingerprint"]
+FRONTEND_SOURCE_FINGERPRINT_FILENAME = _MODULE["FRONTEND_SOURCE_FINGERPRINT_FILENAME"]
+
+
+def _fake_fresh_frontend_dist(*, dist_dir: Path, web_root: Path = WEB_ROOT) -> tuple[bool, str]:
+    """A stand-in for `verify_frontend_dist_freshness` reporting an always-
+    fresh frontend -- for tests exercising unrelated `build_local_product`
+    behavior (dirty-source refusal, relative-path resolution, build-
+    identity wiring) that must not depend on whatever this real checkout's
+    own `web/dist` happens to contain right now."""
+
+    return True, "fresh (faked for this test)"
 
 
 def _noop_gpu_installer(_site_packages: Path) -> None:
@@ -254,6 +270,104 @@ def test_sync_packaged_web_dist_refuses_a_missing_build(tmp_path: Path) -> None:
         assert "No built frontend" in str(error)
     else:
         raise AssertionError("expected LocalProductBuildError for a missing frontend build")
+
+
+def _fake_web_root(directory: Path) -> Path:
+    """A minimal stand-in for the real `web/` checkout: a `src/` tree plus
+    the handful of root-level files `compute_frontend_source_fingerprint`
+    actually reads."""
+
+    web_root = directory / "fake-web-root"
+    (web_root / "src" / "pages").mkdir(parents=True)
+    (web_root / "src" / "App.tsx").write_text("export const App = () => null;", encoding="utf-8")
+    (web_root / "src" / "pages" / "DashboardPage.tsx").write_text("// dashboard", encoding="utf-8")
+    (web_root / "package.json").write_text('{"name": "web"}', encoding="utf-8")
+    (web_root / "index.html").write_text("<!doctype html>", encoding="utf-8")
+    return web_root
+
+
+def test_compute_frontend_source_fingerprint_is_deterministic_and_content_sensitive(
+    tmp_path: Path,
+) -> None:
+    web_root = _fake_web_root(tmp_path)
+
+    first = compute_frontend_source_fingerprint(web_root)
+    second = compute_frontend_source_fingerprint(web_root)
+    assert first == second, "hashing the same unchanged tree twice must be deterministic"
+
+    (web_root / "src" / "App.tsx").write_text("export const App = () => 'changed';", encoding="utf-8")
+    changed = compute_frontend_source_fingerprint(web_root)
+    assert changed != first, "a real source-content change must change the fingerprint"
+
+
+def test_compute_frontend_source_fingerprint_ignores_e2e_and_playwright_config(tmp_path: Path) -> None:
+    """Test/e2e configuration does not affect `npm run build`'s own output
+    -- an e2e-only change must never trigger a false staleness refusal."""
+
+    web_root = _fake_web_root(tmp_path)
+    before = compute_frontend_source_fingerprint(web_root)
+
+    (web_root / "e2e").mkdir()
+    (web_root / "e2e" / "smoke.spec.ts").write_text("test('x', () => {});", encoding="utf-8")
+    (web_root / "playwright.config.ts").write_text("export default {};", encoding="utf-8")
+
+    after = compute_frontend_source_fingerprint(web_root)
+    assert after == before
+
+
+def test_write_and_verify_frontend_dist_freshness_roundtrip(tmp_path: Path) -> None:
+    web_root = _fake_web_root(tmp_path)
+    dist_dir = _fake_web_dist(tmp_path)
+    write_frontend_source_fingerprint(dist_dir=dist_dir, web_root=web_root)
+
+    fresh, detail = verify_frontend_dist_freshness(dist_dir=dist_dir, web_root=web_root)
+    assert fresh is True
+    assert "matches" in detail
+
+    (web_root / "src" / "App.tsx").write_text("export const App = () => 'now different';", encoding="utf-8")
+    stale, stale_detail = verify_frontend_dist_freshness(dist_dir=dist_dir, web_root=web_root)
+    assert stale is False
+    assert "different frontend source" in stale_detail
+
+
+def test_verify_frontend_dist_freshness_treats_a_missing_stamp_as_not_fresh(tmp_path: Path) -> None:
+    """A `dist` with no recorded fingerprint at all (an older build from
+    before this check existed, or one assembled some other way) must never
+    be assumed safe -- "cannot prove freshness" is treated as "not fresh."
+    """
+
+    web_root = _fake_web_root(tmp_path)
+    dist_dir = _fake_web_dist(tmp_path)  # never stamped
+
+    fresh, detail = verify_frontend_dist_freshness(dist_dir=dist_dir, web_root=web_root)
+
+    assert fresh is False
+    assert "no recorded source fingerprint" in detail
+
+
+def test_build_frontend_stamps_a_real_fingerprint_after_building(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`build_frontend` itself (not just the lower-level helpers) must
+    leave a verifiable stamp behind -- proven by faking only the actual
+    `npm` subprocess call, never `write_frontend_source_fingerprint`."""
+
+    web_root = _fake_web_root(tmp_path)
+    dist_dir = web_root / "dist"
+
+    def _fake_run(command, *, cwd: Path) -> None:
+        if list(command)[:2] == ["npm", "run"]:
+            dist_dir.mkdir(parents=True, exist_ok=True)
+            (dist_dir / "index.html").write_text("<!doctype html>", encoding="utf-8")
+
+    monkeypatch.setitem(build_local_product.__globals__, "_run", _fake_run)
+    monkeypatch.setitem(build_local_product.__globals__, "WEB_ROOT", web_root)
+    (web_root / "node_modules").mkdir()  # skip the npm-ci branch
+
+    build_frontend()
+
+    fresh, _detail = verify_frontend_dist_freshness(dist_dir=dist_dir, web_root=web_root)
+    assert fresh is True
 
 
 def test_assemble_windows_bundle_produces_a_python_and_pip_free_user_experience(tmp_path: Path) -> None:
@@ -1409,6 +1523,9 @@ def test_build_local_product_refuses_dirty_source_by_default(
         raise LocalProductBuildError("Refusing to build a release artifact: uncommitted changes exist.")
 
     monkeypatch.setitem(build_local_product.__globals__, "verify_clean_tracked_source", _raising_verify)
+    monkeypatch.setitem(
+        build_local_product.__globals__, "verify_frontend_dist_freshness", _fake_fresh_frontend_dist
+    )
 
     with pytest.raises(LocalProductBuildError, match="uncommitted changes"):
         build_local_product(
@@ -1418,6 +1535,85 @@ def test_build_local_product_refuses_dirty_source_by_default(
             install_gpu_dependencies=_noop_gpu_installer,
             model_bundle_source=None,
         )
+
+
+def test_build_local_product_refuses_a_stale_skipped_frontend_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """v0.1 Release Hardening v1 -- 5a: `--skip-frontend-build` must not be
+    able to silently package a `web/dist` that does not correspond to
+    current frontend source. `verify_clean_tracked_source` is deliberately
+    left unfaked here (and would raise a *different*, easily-confused
+    error if reached) -- the freshness refusal must happen first, on its
+    own, without depending on the unrelated dirty-source check."""
+
+    def _fake_stale_frontend_dist(*, dist_dir: Path, web_root: Path = WEB_ROOT) -> tuple[bool, str]:
+        return False, "recorded fingerprint does not match current source (faked)"
+
+    monkeypatch.setitem(
+        build_local_product.__globals__, "verify_frontend_dist_freshness", _fake_stale_frontend_dist
+    )
+
+    with pytest.raises(LocalProductBuildError, match="stale or unverifiable"):
+        build_local_product(
+            tmp_path / "out",
+            skip_frontend_build=True,
+            install_dependencies=lambda _target: None,
+            install_gpu_dependencies=_noop_gpu_installer,
+            model_bundle_source=None,
+        )
+
+
+def test_build_local_product_allows_a_stale_skipped_frontend_with_explicit_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The explicit `--allow-stale-frontend` escape hatch (mirroring
+    `--allow-dirty-source`'s exact contract) proceeds past the same
+    refusal instead of blocking it -- proven by reaching a *later*,
+    distinctly-worded faked failure rather than the freshness one."""
+
+    def _fake_stale_frontend_dist(*, dist_dir: Path, web_root: Path = WEB_ROOT) -> tuple[bool, str]:
+        return False, "recorded fingerprint does not match current source (faked)"
+
+    def _raising_verify(*_args: object, **_kwargs: object) -> str:
+        raise LocalProductBuildError("stop here -- proves execution proceeded past the freshness check")
+
+    monkeypatch.setitem(
+        build_local_product.__globals__, "verify_frontend_dist_freshness", _fake_stale_frontend_dist
+    )
+    monkeypatch.setitem(build_local_product.__globals__, "verify_clean_tracked_source", _raising_verify)
+
+    with pytest.raises(LocalProductBuildError, match="stop here"):
+        build_local_product(
+            tmp_path / "out",
+            skip_frontend_build=True,
+            allow_stale_frontend=True,
+            install_dependencies=lambda _target: None,
+            install_gpu_dependencies=_noop_gpu_installer,
+            model_bundle_source=None,
+        )
+
+
+def test_write_manifest_records_frontend_source_state(tmp_path: Path) -> None:
+    """`manifest.json` must disclose which of the three frontend states
+    produced this artifact -- built fresh, reused-and-verified-fresh, or
+    reused-while-stale-and-explicitly-overridden -- never silently."""
+
+    bundle_dir = tmp_path / "bundle"
+    bundle_dir.mkdir()
+    zip_path = tmp_path / "MockingBird-windows-x64.zip"
+    zip_path.write_bytes(b"fake zip contents")
+
+    manifest_path, _checksums_path = write_manifest(
+        output_dir=tmp_path,
+        bundle_dir=bundle_dir,
+        zip_path=zip_path,
+        source_state="git:" + "a" * 40,
+        frontend_source_state="reused:stale_allowed",
+    )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["frontend_source_state"] == "reused:stale_allowed"
 
 
 @pytest.mark.skipif(
@@ -1554,6 +1750,9 @@ def test_build_local_product_resolves_a_relative_output_dir(
         raise LocalProductBuildError("stop here -- this test only cares what happened before this point")
 
     monkeypatch.setitem(build_local_product.__globals__, "verify_clean_tracked_source", _raising_verify)
+    monkeypatch.setitem(
+        build_local_product.__globals__, "verify_frontend_dist_freshness", _fake_fresh_frontend_dist
+    )
 
     different_cwd = tmp_path / "somewhere-else-entirely"
     different_cwd.mkdir()
@@ -1613,6 +1812,7 @@ def test_build_local_product_end_to_end_records_a_verified_build_identity(
         ("export_clean_source_tree", _fake_export_clean_source_tree),
         ("sync_packaged_web_dist", _fake_sync_packaged_web_dist),
         ("build_wheel", _fake_build_wheel),
+        ("verify_frontend_dist_freshness", _fake_fresh_frontend_dist),
     ):
         monkeypatch.setitem(build_local_product.__globals__, name, fake)
 
@@ -1673,6 +1873,7 @@ def test_build_local_product_dirty_source_records_a_best_effort_commit(
         ("sync_packaged_web_dist", _fake_sync_packaged_web_dist),
         ("build_wheel", _fake_build_wheel),
         ("_current_head_commit", _fake_current_head_commit),
+        ("verify_frontend_dist_freshness", _fake_fresh_frontend_dist),
     ):
         monkeypatch.setitem(build_local_product.__globals__, name, fake)
 

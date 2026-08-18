@@ -182,7 +182,9 @@ EMBED_PYTHON_URL = (
 # httptools, websockets, watchfiles, python-dotenv, PyYAML, colorama); it
 # runs on uvicorn's default asyncio loop and h11 HTTP implementation, which
 # is exactly what already runs in this repository's own dev/test/CI use.
-# Keep this in sync with the runtime dependency list in pyproject.toml.
+# Keep this in sync with the runtime dependency list in pyproject.toml --
+# except the trailing `idna` pin below, a Windows-packaging-only addition
+# with no pyproject.toml counterpart (see its own comment).
 WINDOWS_RUNTIME_REQUIREMENTS: tuple[str, ...] = (
     "anyio>=3.7,<4.0",
     "fastapi>=0.111,<0.116",
@@ -192,6 +194,30 @@ WINDOWS_RUNTIME_REQUIREMENTS: tuple[str, ...] = (
     "SQLAlchemy>=2.0,<3.0",
     "opencv-python-headless>=4.10,<5.0",
     "uvicorn>=0.30,<1.0",
+    # Not a direct MockingBird dependency -- pulled in transitively by
+    # `anyio`'s own unconditional, unbounded `idna>=2.8` requirement (real,
+    # installed metadata: `anyio 3.7.1 requires: idna (>=2.8), ...`). This
+    # one line deliberately breaks the "mirror pyproject.toml's `dependencies`
+    # 1:1" convention every other entry above follows -- it exists only to
+    # close a real, reproduced defect: `install_windows_runtime_dependencies`
+    # has no wheel cache and always does a live online resolve, so without
+    # an explicit pin here it silently installs whatever idna is newest on
+    # PyPI at build time (observed for real: 3.19, one release ahead of the
+    # pin below) -- while `WINDOWS_BIOCLIP_RUNTIME_REQUIREMENTS` pins idna
+    # to a specific, offline-wheel-cached version for its own reproducibility.
+    # Those two independent `pip install --target` calls into the same flat
+    # site-packages then produce two different `idna-*.dist-info/`
+    # directories -- exactly the corruption class `verify_no_duplicate_
+    # site_packages_metadata` exists to catch (and did: reproduced via a
+    # real redeploy attempt, see "Windows redeploy" in
+    # docs/camera-node-installer-design.md). Exact-pinning it here, to
+    # precisely match `WINDOWS_BIOCLIP_RUNTIME_REQUIREMENTS`'s own pin,
+    # turns the later BioCLIP install into a genuine no-op for this package
+    # -- the same fix shape already applied to `Pillow`/`numpy`/`anyio`
+    # itself for the identical reason (see that tuple's own docstring).
+    # Keep this in sync with `WINDOWS_BIOCLIP_RUNTIME_REQUIREMENTS`'s own
+    # `idna` pin if that one is ever intentionally re-validated and bumped.
+    "idna==3.18",
 )
 
 # The accepted Observation Engine's optional GPU detector stack (pyproject
@@ -675,6 +701,11 @@ def build_frontend() -> None:
     if not (WEB_ROOT / "node_modules").is_dir():
         _run(["npm", "ci"], cwd=WEB_ROOT)
     _run(["npm", "run", "build"], cwd=WEB_ROOT)
+    # Stamp provenance immediately after a real build, while the source
+    # that produced this exact `dist` is still the source on disk -- see
+    # `verify_frontend_dist_freshness`, the `--skip-frontend-build` guard
+    # this makes possible.
+    write_frontend_source_fingerprint(dist_dir=WEB_ROOT / "dist", web_root=WEB_ROOT)
 
 
 def sync_packaged_web_dist(
@@ -704,6 +735,105 @@ def sync_packaged_web_dist(
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(dist, destination)
     return destination
+
+
+# Real build-input files at the `web/` root that affect `npm run build`'s
+# compiled output. Deliberately excludes `playwright*.config.ts` and `e2e/`
+# -- test/e2e configuration never affects the built frontend, and including
+# it would make an e2e-only change trigger a false staleness refusal.
+FRONTEND_BUILD_INPUT_ROOT_FILES: tuple[str, ...] = (
+    "index.html",
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json",
+    "vite.config.ts",
+)
+
+FRONTEND_SOURCE_FINGERPRINT_FILENAME = "frontend-source-fingerprint.json"
+
+
+def compute_frontend_source_fingerprint(web_root: Path = WEB_ROOT) -> str:
+    """A real SHA-256 over every actual frontend build input's own content
+    (relative path, per-file hash, and size, combined deterministically) --
+    the same "hash the real bytes, not a version string" philosophy
+    `deploy_windows_dev.py`'s `compute_runtime_hash`/`compute_model_hash`
+    already use for their own cache keys, reused here rather than
+    reinvented. Covers `web/src/**` plus the handful of root-level files in
+    `FRONTEND_BUILD_INPUT_ROOT_FILES` that actually affect compiled output.
+    """
+
+    entries: list[str] = []
+    src_root = web_root / "src"
+    if src_root.is_dir():
+        for path in sorted(src_root.rglob("*")):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(web_root).as_posix()
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            entries.append(f"{relative}:{digest}:{path.stat().st_size}")
+    for name in FRONTEND_BUILD_INPUT_ROOT_FILES:
+        candidate = web_root / name
+        if not candidate.is_file():
+            continue
+        digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
+        entries.append(f"{name}:{digest}:{candidate.stat().st_size}")
+    combined = "\n".join(sorted(entries))
+    return hashlib.sha256(combined.encode("utf-8")).hexdigest()
+
+
+def write_frontend_source_fingerprint(*, dist_dir: Path, web_root: Path = WEB_ROOT) -> Path:
+    """Stamp the current frontend source fingerprint into the *build
+    output* directory (`web/dist`, never `web/src`), immediately after a
+    real `build_frontend()` run. This is what later lets `--skip-frontend-
+    build` prove -- not merely assume -- that a reused `dist` genuinely
+    corresponds to the source that produced it."""
+
+    destination = dist_dir / FRONTEND_SOURCE_FINGERPRINT_FILENAME
+    destination.write_text(
+        json.dumps(
+            {
+                "source_fingerprint": compute_frontend_source_fingerprint(web_root),
+                "written_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return destination
+
+
+def verify_frontend_dist_freshness(
+    *, dist_dir: Path, web_root: Path = WEB_ROOT,
+) -> tuple[bool, str]:
+    """Compare a `web/dist` directory's own recorded provenance stamp
+    (written by `write_frontend_source_fingerprint` the last time it was
+    actually built) against the *current* frontend source on disk. Returns
+    `(fresh, detail)`. `fresh=False` covers both a genuine mismatch and a
+    `dist` with no stamp at all (an older build from before this check
+    existed, or one assembled some other way) -- "cannot prove freshness"
+    is treated the same as "not fresh," never assumed safe.
+    """
+
+    stamp_path = dist_dir / FRONTEND_SOURCE_FINGERPRINT_FILENAME
+    if not stamp_path.is_file():
+        return False, (
+            f"{dist_dir} has no recorded source fingerprint (built before this check "
+            "existed, or assembled some other way)"
+        )
+    try:
+        recorded = json.loads(stamp_path.read_text(encoding="utf-8"))
+        recorded_fingerprint = recorded["source_fingerprint"]
+    except (OSError, ValueError, KeyError) as error:
+        return False, f"{dist_dir}'s source fingerprint could not be read: {error}"
+    current_fingerprint = compute_frontend_source_fingerprint(web_root)
+    if recorded_fingerprint != current_fingerprint:
+        return False, (
+            f"{dist_dir} was built from different frontend source than what is on disk now "
+            f"(recorded {recorded_fingerprint[:12]}, current {current_fingerprint[:12]})"
+        )
+    return True, f"{dist_dir} matches the current frontend source (fingerprint {current_fingerprint[:12]})"
 
 
 def verify_clean_tracked_source(
@@ -1577,6 +1707,7 @@ def write_manifest(
     bundle_dir: Path,
     zip_path: Path,
     source_state: str,
+    frontend_source_state: str = "unknown",
     model_bundle_provenance: ModelBundleProvenance | None = None,
     gpu_runtime_included: bool | None = None,
     native_runtime_verification: NativeRuntimeVerification | None = None,
@@ -1591,6 +1722,13 @@ def write_manifest(
         "package": "mockingbird-local-product-windows-x64",
         "version": version,
         "source_state": source_state,
+        # "built": a real `npm run build` just ran. "reused:verified_fresh":
+        # `--skip-frontend-build` reused an existing `web/dist` whose own
+        # recorded fingerprint matched the current frontend source exactly.
+        # "reused:stale_allowed": the fingerprint did not match (or none
+        # existed) and `--allow-stale-frontend` explicitly overrode the
+        # refusal -- never silent. See `verify_frontend_dist_freshness`.
+        "frontend_source_state": frontend_source_state,
         "embedded_python_version": EMBED_PYTHON_VERSION,
         "runtime_requirements": list(WINDOWS_RUNTIME_REQUIREMENTS),
         "gpu_runtime_included": gpu_runtime_included,
@@ -1663,6 +1801,7 @@ def build_local_product(
     wheel_cache_dir: Path | None = DEFAULT_WHEEL_CACHE_DIR,
     bioclip_wheel_cache_dir: Path | None = DEFAULT_BIOCLIP_WHEEL_CACHE_DIR,
     allow_dirty_source: bool = False,
+    allow_stale_frontend: bool = False,
 ) -> LocalProductArtifact:
     """Run the complete build: frontend -> clean source snapshot -> wheel ->
     Windows bundle -> zip.
@@ -1683,12 +1822,37 @@ def build_local_product(
     looks there (`LocalProductBuildError: Wheel build did not produce a
     mockingbird-*.whl file`, discovered validating the CUDA dependency
     -closure fix; see docs/windows-dev-deployment-design.md).
+
+    `skip_frontend_build=True` reuses whatever is already at `web/dist`
+    instead of running `npm ci`/`npm run build` -- a useful fast-iteration
+    option this function deliberately keeps offering, but a dangerous one
+    to use by accident: nothing about the existing dist's own presence
+    proves it corresponds to the frontend source actually on disk right
+    now. `verify_frontend_dist_freshness` closes that gap: by default a
+    stale or unprovable `dist` refuses the build outright (matching
+    `verify_clean_tracked_source`'s own refuse-by-default shape for the
+    equivalent backend-source risk); `allow_stale_frontend=True` opts out
+    explicitly, for local/development iteration only, never for a release
+    artifact -- the exact same escape-hatch contract `allow_dirty_source`
+    already establishes.
     """
 
     output_dir = output_dir.resolve()
 
     if not skip_frontend_build:
         build_frontend()
+        frontend_source_state = "built"
+    else:
+        fresh, detail = verify_frontend_dist_freshness(dist_dir=WEB_ROOT / "dist", web_root=WEB_ROOT)
+        if not fresh and not allow_stale_frontend:
+            raise LocalProductBuildError(
+                f"Refusing to package a stale or unverifiable frontend build: {detail}. "
+                "Run `npm run build` (or omit --skip-frontend-build) first, or pass "
+                "--allow-stale-frontend for a local/development build only -- never for a "
+                "release artifact."
+            )
+        print(f"{'WARNING: proceeding with' if not fresh else 'Frontend freshness verified:'} {detail}")
+        frontend_source_state = "reused:verified_fresh" if fresh else "reused:stale_allowed"
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1740,6 +1904,7 @@ def build_local_product(
         bundle_dir=bundle_dir,
         zip_path=zip_path,
         source_state=resolved_source_state,
+        frontend_source_state=frontend_source_state,
         model_bundle_provenance=model_provenance,
         gpu_runtime_included=include_gpu_runtime,
         native_runtime_verification=native_runtime_verification,
@@ -1771,6 +1936,15 @@ def main() -> None:
         "--skip-frontend-build",
         action="store_true",
         help="reuse an existing web/dist instead of running npm ci/build",
+    )
+    parser.add_argument(
+        "--allow-stale-frontend",
+        action="store_true",
+        help=(
+            "package an existing web/dist with --skip-frontend-build even if it cannot be "
+            "verified fresh against current frontend source -- for local/development "
+            "iteration only; never for a release artifact"
+        ),
     )
     parser.add_argument(
         "--allow-dirty-source",
@@ -1854,6 +2028,7 @@ def main() -> None:
         wheel_cache_dir=arguments.wheel_cache_dir,
         bioclip_wheel_cache_dir=arguments.bioclip_wheel_cache_dir,
         allow_dirty_source=arguments.allow_dirty_source,
+        allow_stale_frontend=arguments.allow_stale_frontend,
     )
     print(artifact.zip_path)
 

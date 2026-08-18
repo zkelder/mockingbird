@@ -321,6 +321,53 @@ any of their internals, thresholds, or authority semantics.
   one remaining real ambiguity `git archive` alone cannot resolve) still
   fails the build by default; `--allow-dirty-source` opts out for local
   iteration on the build script itself, never for a release artifact.
+- **Frontend build freshness (v0.1 Release Hardening v1).** The clean-
+  source guard above only ever covered `src/mockingbird`/`pyproject.toml`/
+  `README.md` -- `web/` was never in scope, and `--skip-frontend-build`
+  had no freshness check at all: it packaged whatever bytes already sat at
+  `web/dist` (or a stale leftover `src/mockingbird/web_dist/`, which
+  `resolve_frontend_dist` prefers whenever present) with no comparison
+  against current `web/src`. `build_frontend` now stamps a real SHA-256
+  fingerprint of every frontend build input (`compute_frontend_source_
+  fingerprint` -- `web/src/**` plus the handful of root-level files that
+  affect compiled output, deliberately excluding e2e/Playwright
+  configuration) into `web/dist/frontend-source-fingerprint.json`
+  immediately after a real build. `--skip-frontend-build` now verifies
+  this stamp (`verify_frontend_dist_freshness`) against current source and
+  refuses the build by default -- both a genuine mismatch and a `dist`
+  with no stamp at all (an older build, or one assembled some other way)
+  are treated as "not fresh," never assumed safe -- mirroring
+  `--allow-dirty-source`'s own refuse-by-default shape exactly.
+  `--allow-stale-frontend` opts out explicitly, for local/development
+  iteration only, never for a release artifact; either way, `manifest.json`
+  now records `frontend_source_state` (`built`, `reused:verified_fresh`,
+  or `reused:stale_allowed`) so a resulting artifact's own provenance
+  record discloses which happened, never silently.
+- **BioCLIP/idna packaging conflict (v0.1 Release Hardening v1).** The
+  Camera Node Installer milestone's own real Windows redeploy had to use
+  `--skip-bioclip-runtime` after hitting a real duplicate-`.dist-info`
+  failure (see "Windows redeploy" in
+  [camera-node-installer-design.md](camera-node-installer-design.md)).
+  Root cause, confirmed against real installed package metadata: `anyio`
+  (in `WINDOWS_RUNTIME_REQUIREMENTS`, the always-installed core tier)
+  unconditionally requires `idna>=2.8` with no upper bound, and
+  `install_windows_runtime_dependencies` has no wheel cache -- it always
+  does a live online resolve, so it silently installs whatever `idna` is
+  newest on PyPI at build time. `WINDOWS_BIOCLIP_RUNTIME_REQUIREMENTS`
+  separately pins `idna==3.18` for its own offline-wheel-cache
+  reproducibility. Two independent `pip install --target` calls into the
+  same flat site-packages then produced two different `idna-*.dist-info/`
+  directories -- exactly the corruption class `verify_no_duplicate_
+  site_packages_metadata` already exists to catch, and did. Unlike
+  `Pillow`/`numpy`/`anyio` itself (each already exact-pinned in the
+  BioCLIP tier to match what the core/GPU tier resolves), `idna` had no
+  matching pin in `WINDOWS_RUNTIME_REQUIREMENTS` to synchronize against --
+  the precise, narrow gap. Fixed by adding that one missing pin
+  (`idna==3.18`, matching the already-validated BioCLIP-tier version) to
+  `WINDOWS_RUNTIME_REQUIREMENTS`; no other dependency, model, or runtime
+  behavior changed. `test_real_windows_bioclip_dependency_closure_
+  installs_offline_with_no_duplicates` -- previously failing for exactly
+  this reason -- now passes.
 
 ## BioCLIP runtime packaging (Automatic Species Suggestion v1.2)
 

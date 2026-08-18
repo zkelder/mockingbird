@@ -997,7 +997,11 @@ scope:
   Worked around with the existing `--skip-bioclip-runtime` flag, which
   avoids the conflicting tier entirely with zero changes to any file
   outside this milestone's scope. Left for the BioCLIP/packaging owner to
-  re-pin `idna` to match.
+  re-pin `idna` to match -- fixed in v0.1 Release Hardening v1 (see
+  "BioCLIP/idna packaging conflict" in
+  [local-product-packaging-design.md](local-product-packaging-design.md)):
+  an explicit `idna==3.18` pin added to `WINDOWS_RUNTIME_REQUIREMENTS`,
+  matching the BioCLIP tier's own already-validated pin.
 - The deploy tool's own bounded post-launch verification reported a false
   failure (`did not return a valid product-health body`) even though the
   new build was genuinely healthy seconds later -- directly confirmed via
