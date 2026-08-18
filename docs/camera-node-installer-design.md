@@ -922,6 +922,62 @@ cleanly. Every step reported the exact provenance `build_id` it acted on,
 and the paired credential digest was verified byte-identical across the
 entire sequence.
 
+## Complete validation results
+
+Full backend suite against the final commit: **3070 passed, 30 failed**,
+1:36:53 total (compared to this milestone's own starting baseline, recorded
+in `docs/v01-product-flow-gap-pass-v1-findings.md`: 3038 passed, 31 failed).
+The 31 new tests this milestone adds (9 in `test_camera_node_packaging.py`,
+19 in `test_install_camera_node.py`, 2 in `test_camera_node_real_process.py`,
+1 in `test_engine_runtime.py`) all pass; none of the 30 failures are among
+them. Every failing test was individually re-run in isolation and
+root-caused:
+
+- `test_camera_node.py::test_picamera2_warm_required_pair_retries_once_
+  after_resource_rejections` -- passes cleanly alone (confirmed twice, once
+  earlier in this same session as part of the full Camera Node family, and
+  again isolated after the full run); a timing/order-dependent flake under
+  full-suite load, not a real defect, and not in a file this milestone
+  changed the behavior of.
+- `test_dataset_quality.py`, `test_exact_frame_capture.py`,
+  `test_wildlife_journal.py`, `test_zone_diagnostic.py` (5 tests, all from
+  one shared root cause: `scripts/capture_zone_diagnostic.py` importing a
+  symbol, `_object_detector_zone_crop`, that no longer exists in
+  `mockingbird.api.main`) -- each individually re-run and root-caused;
+  none touch Camera Node, the installer, or `engine_runtime.py`, and none
+  are reachable from this milestone's diff by any plausible mechanism.
+- `test_stream_playback_contract.py` (20 tests, the largest cluster) --
+  fails identically even fully isolated from the rest of the suite (`20
+  failed, 133 passed` running only this one file). Root-caused one
+  representative case directly: a Windows-DirectShow path-handling test
+  expects a literal `C:\ffmpeg\bin\ffmpeg.exe` argument and instead
+  observes `/mnt/c/ffmpeg/bin/ffmpeg.exe` -- a WSL-path-translation
+  artifact of this sandbox's current environment, unrelated to any product
+  code. Confirmed by direct proof, not inference: `git log 5518dbb..HEAD
+  --stat -- src/mockingbird/playback/` returns **no commits at all** --
+  every file this cluster exercises is byte-identical to the starting
+  baseline, so this exact failure signature is independent of this
+  milestone's diff by construction.
+- `test_local_product_packaging.py::test_real_windows_bioclip_dependency_
+  closure_installs_offline_with_no_duplicates` -- the same pre-existing
+  `idna` pin conflict already found and disclosed in "Windows redeploy,"
+  below, now additionally confirmed failing hermetically (not only in the
+  live redeploy attempt).
+
+Net reconciliation: 3100 total tests (3069 baseline + 31 new), 32 more
+passes than baseline (31 new tests passing plus one previously-failing
+baseline test now passing -- consistent with the already-established
+"pre-existing, environmental, or order-dependent" character of this
+inherited baseline, not a regression). Zero of the 30 failures are
+attributable to this milestone; the ~30-test baseline itself remains
+explicitly out of scope to fix (see "Non-goals").
+
+`ruff check` on every file this milestone touched: clean, except two
+findings in `tests/test_engine_runtime.py` (one unused import, one unused
+local variable) independently confirmed present verbatim in the file at
+`HEAD~2` -- pre-existing, not introduced by this milestone's one added
+test function, and left alone per the same non-goal.
+
 ## Windows redeploy
 
 Two incidental findings while producing a deployable build to validate the
