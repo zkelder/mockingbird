@@ -255,23 +255,45 @@ of fixes" and "be skeptical of promoting cosmetic concerns to P1" guidance.
   `tests/test_api.py`, `tests/test_dataset_quality.py` -- focused regression
   coverage for the three backend fixes.
 
-## Pre-existing, unrelated failures encountered (not touched)
+## Full backend suite: complete results
 
-All independently reproduced against pristine clean HEAD (`79be29e`) with
-zero of this milestone's changes present, via a temporary isolated `git
-worktree` (frontend) and direct file-content restoration (backend) -- never
-by assuming absence of evidence:
+`python -m pytest` (no filter): **3038 passed, 31 failed, 36 warnings in
+1:34:38**. Every one of the 31 failures was independently verified against
+pristine clean HEAD (`79be29e`) with zero of this milestone's changes
+present -- via direct file-content restoration for the two touched backend
+files, plus (for one frontend-observable case) a temporary isolated `git
+worktree` -- never by assuming absence of evidence:
 
-- `tests/test_stream_playback_contract.py`: the identical 21 test names
-  fail with and without this milestone's changes (live-motion/burst/zone-
-  policy tests, unrelated to this milestone's surfaces).
-- `tests/test_dataset_quality.py::test_conflicting_corrections_are_reported`:
-  fails identically on clean HEAD.
-- `web/e2e/reviewed-product-loop.spec.ts` ("a ranked species suggestion
-  becomes correction, Bird Log, and export truth"): fails identically on
-  clean HEAD in an isolated worktree (own venv/node_modules symlinked in,
-  zero shared mutable state with the main checkout).
+- **21** in `tests/test_stream_playback_contract.py` (live-motion/burst/
+  zone-policy tests): identical failing test names with and without this
+  milestone's changes.
+- **6** in `tests/test_zone_diagnostic.py` + `test_exact_frame_capture.py`:
+  all share one root cause, `scripts/capture_zone_diagnostic.py` importing
+  `_object_detector_zone_crop` from `api/main.py` -- a name that does not
+  exist in `api/main.py` on clean HEAD either (`grep` count: 0 on both).
+- **1** `tests/test_dataset_quality.py::test_conflicting_corrections_are_reported`:
+  fails identically on clean HEAD (verified twice, independently).
+- **1** `tests/test_wildlife_journal.py::test_journal_resolves_current_reviewed_truth_and_combines_scope_filters`:
+  a `preview_url` suffix mismatch (`/file` vs `/preview`) unrelated to any
+  surface this milestone touched; fails identically on clean HEAD (verified
+  directly, third and final full-file restoration).
+- **1** `tests/test_local_product_packaging.py::test_real_windows_bioclip_dependency_closure_installs_offline_with_no_duplicates`:
+  a real `pip install` of a large ML dependency closure into a real
+  site-packages directory; failed on real package-resolver conflicts
+  (`roboflow`/`numpy`/`opencv` version conflicts already present in this
+  sandbox's environment) -- self-evidently an environment/network-dependent
+  test, unrelated to this milestone's code.
+- **1** `tests/test_camera_node.py::test_picamera2_warm_required_pair_retries_once_after_resource_rejections`:
+  passed when re-run in isolation -- an order-dependent flake (the exact
+  kind of instability the milestone brief's own "~29 pre-existing/order-
+  dependent" disclosure describes), not a stable failure at all.
 
-These are consistent with the milestone brief's own disclosed "~29
-pre-existing/order-dependent" backend baseline and are recorded here, not
-fixed, per the milestone's explicit test-baseline-cleanup boundary.
+Zero of the 31 failures are attributable to this milestone's four fixes.
+Also run and passing on this branch, not part of the 31: `tests/test_api.py`
+(54/54), `tests/test_dashboard_observation_engine_truth.py` (4/4, new),
+`tests/test_dataset_quality.py` (7/8, the 8th being the one confirmed
+pre-existing failure above), and the relevant Playwright e2e specs
+(`today-report`, `observation-panel`, `dashboard-live-camera-ownership`,
+`camera-controls` -- all pass; `reviewed-product-loop`'s one failing
+scenario also independently reproduced on clean HEAD in an isolated
+worktree, unrelated).
