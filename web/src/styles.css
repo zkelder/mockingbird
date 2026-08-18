@@ -8513,6 +8513,13 @@ a.secondary-action {
 
   .stream-scene {
     min-height: 260px;
+    /* `aspect-ratio: 16 / 9` (base rule) computes width from min-height,
+       which at this breakpoint's available content width overflows the
+       viewport (measured: 462px wide inside a 375px viewport, the "Camera
+       session stopped"/zone-illustration placeholder visibly cut off on
+       the right) -- cap width so aspect-ratio yields to min-height rather
+       than the reverse on a narrow screen. */
+    max-width: 100%;
   }
 
   .stream-live-toolbar {
@@ -8535,6 +8542,10 @@ a.secondary-action {
 
   .stream-live-frame {
     min-height: 260px;
+    /* Same aspect-ratio/min-height overflow as .stream-scene above, for the
+       live-view frame itself (every Stream type, whenever not actively
+       streaming a decoded frame). */
+    max-width: 100%;
   }
 
   .quality-issue-card {
