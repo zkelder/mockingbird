@@ -90,6 +90,15 @@ from mockingbird.observation.candidate_visit_authority import (
 from mockingbird.observation.candidate_quality_gate import evaluate_evidence_admission
 from mockingbird.observation.contracts import CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE
 from mockingbird.observation.localization_attribution import geometry_attribution_from_json
+from mockingbird.observation.scene_confusor import (
+    SceneConfusorConfig,
+    SceneRegionSnapshot,
+    evaluate_scene_confusor_suspicion,
+    find_matching_region,
+    region_fingerprint,
+    update_region_bounds,
+    update_representative_box,
+)
 from mockingbird.species.classifier_input import (
     ClassifierInputCropAsset,
     ClassifierInputSubjectFrame,
@@ -1900,6 +1909,112 @@ class ObservationCandidateVisitModel(Base):
     confidence_evidence_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class SceneConfusorRegionModel(Base):
+    """Durable, per-Stream recurring-geometry history backing the scene-
+    confusor suspicion mechanism (schema 34, see
+    docs/scene-confusor-suspicion-contract.md). Distinct in kind from the
+    in-memory-only, per-session `burst_scheduler._RecurrenceGroup` and
+    `temporal_capture.RecurringGeometryTracker`: this is the one place in
+    the whole Observation Engine v2 tree that remembers recurring
+    candidate geometry *across* sessions and app restarts, which is exactly
+    what a persistent scene confusor (a shadow, a feeder-silhouette
+    texture) requires -- those in-memory precedents are reset on every
+    Stop/Start and would never build cross-session suspicion at all.
+
+    `id` is a stable, content-addressed identity
+    (`scene_confusor.region_fingerprint`) -- deterministic from
+    `(stream_id, broad_class, rounded representative_box)`, never a
+    session/process identity, so it survives restarts unlike
+    `burst_scheduler`'s own in-memory group id. Diagnostic evidence only:
+    nothing here is reviewed truth, and nothing here can be read as proof
+    an animal was or was not present -- see `evaluate_scene_confusor_
+    suspicion`'s own docstring for the decision this table's rows feed."""
+
+    __tablename__ = "scene_confusor_regions"
+    __table_args__ = (
+        Index("ix_scene_confusor_regions_stream_updated", "stream_id", "updated_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    stream_id: Mapped[str] = mapped_column(ForeignKey("streams.id"), nullable=False)
+    broad_class: Mapped[str] = mapped_column(String, nullable=False)
+    representative_box_json: Mapped[str] = mapped_column(Text, nullable=False)
+    representative_area: Mapped[float] = mapped_column(Float, nullable=False)
+    # How many admission attempts (created *or* blocked -- every one that
+    # reached this check) have ever matched this region's own geometry.
+    # The primary recurrence signal; never reset except by explicit
+    # reconfiguration invalidation (see `purge_scene_confusor_regions_
+    # for_stream`) or bounded per-Stream eviction (`max_regions_per_
+    # stream`).
+    occurrence_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # How many of those attempts this mechanism actually suspected/blocked
+    # -- a bounded diagnostic count, never itself part of the decision
+    # (the decision reads `occurrence_count`/spread/review counts only).
+    suspected_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Reviewed-truth interaction (see "Reviewed-truth interaction" in the
+    # contract doc): incremented only from an authority-eligible ReviewLabel
+    # (`review_provenance.is_authority_eligible`) on a Visit whose own
+    # persisted evidence geometry matches this region. `reviewed_real_count
+    # > 0` is unconditional, permanent protection -- see
+    # `evaluate_scene_confusor_suspicion`. `reviewed_false_count` only ever
+    # strengthens the reason disclosed to a reviewer; it is never required
+    # for suspicion (most real confusors accumulate no review at all).
+    reviewed_real_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    reviewed_false_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_confidence_observed: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Cheap, O(1)-per-touch running bounds backing `centroid_spread` (see
+    # `scene_confusor.update_region_bounds`) -- a bounded envelope, never a
+    # retained per-occurrence history, matching this package's own
+    # established "bounded structured facts, not full history" convention.
+    centroid_min_x: Mapped[float] = mapped_column(Float, nullable=False)
+    centroid_min_y: Mapped[float] = mapped_column(Float, nullable=False)
+    centroid_max_x: Mapped[float] = mapped_column(Float, nullable=False)
+    centroid_max_y: Mapped[float] = mapped_column(Float, nullable=False)
+    first_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+def _scene_confusor_snapshot_from_model(row: SceneConfusorRegionModel) -> SceneRegionSnapshot:
+    """Pure projection: durable row -> the small snapshot the pure
+    `scene_confusor` decision module actually reads. Mirrors every other
+    `_x_from_model` projection already used throughout this file."""
+
+    return SceneRegionSnapshot(
+        region_id=row.id,
+        representative_box=tuple(json.loads(row.representative_box_json)),
+        representative_area=row.representative_area,
+        broad_class=row.broad_class,
+        occurrence_count=row.occurrence_count,
+        reviewed_real_count=row.reviewed_real_count,
+        reviewed_false_count=row.reviewed_false_count,
+        max_confidence_observed=row.max_confidence_observed,
+        centroid_min=(row.centroid_min_x, row.centroid_min_y),
+        centroid_max=(row.centroid_max_x, row.centroid_max_y),
+    )
+
+
+def _max_confidence_from_evidence_json(confidence_evidence_json: str | None) -> float | None:
+    """Reads only `max_confidence` from an already-serialized
+    `contracts.ConfidenceEvidenceSummary` JSON blob -- the one field the
+    scene-confusor mechanism's own `stronger_confidence` escape needs.
+    `None` for a missing, empty, or malformed payload (a legacy proposal,
+    or one whose confidence lineage was never retained), never a
+    fabricated value -- the same honesty rule every other confidence-
+    evidence reader in this codebase already follows."""
+
+    if not confidence_evidence_json:
+        return None
+    try:
+        payload = json.loads(confidence_evidence_json)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get("max_confidence")
+    return float(value) if isinstance(value, (int, float)) else None
+
+
 @dataclass(frozen=True)
 class CameraConfigurationApplyResult:
     revision: CameraConfigurationRevision
@@ -2919,6 +3034,47 @@ class ProductRepository:
                 quality.outcome, quality.reason, None, None, proposal.proposal_id, (),
             )
 
+        # Scene confusor suspicion (see docs/scene-confusor-suspicion-
+        # contract.md): the last admission check, run only once authority
+        # and evidence quality have both already said "create" -- exactly
+        # where `blocked_privacy_zone` already sits, since this is the only
+        # place in the whole pipeline with both a live database session
+        # (for the durable, cross-session region history) and the
+        # candidate's own selected evidence geometry. Uses whichever
+        # evidence item will actually become the reviewer-visible subject
+        # box (`identification`, falling back to `context` -- the same
+        # preference `evaluate_evidence_admission` itself already requires
+        # at least one of); a proposal with neither was already rejected
+        # above and never reaches here.
+        geometry_item = next(
+            (item for item in items_with_content if item.role == "identification"),
+            next((item for item in items_with_content if item.role == "context"), items_with_content[0]),
+        )
+        if geometry_item.subject_geometry is not None:
+            confidence = _max_confidence_from_evidence_json(proposal.confidence_evidence_json)
+            regions = self._scene_confusor_regions_for_stream(
+                session, stream_id=stream_model.id, broad_class=proposal.broad_class, now=observed_at,
+            )
+            confusor_decision = evaluate_scene_confusor_suspicion(
+                candidate_box=geometry_item.subject_geometry,
+                broad_class=proposal.broad_class,
+                max_confidence=confidence,
+                regions=regions,
+            )
+            self._touch_scene_confusor_region(
+                session,
+                stream_id=stream_model.id,
+                broad_class=proposal.broad_class,
+                box=geometry_item.subject_geometry,
+                confidence=confidence,
+                now=observed_at,
+                suspected=confusor_decision.outcome == "suspected_confusor",
+            )
+            if confusor_decision.outcome == "suspected_confusor":
+                return CandidateVisitCreationOutcome(
+                    "blocked_scene_confusor_suspected", confusor_decision.reason, None, None, proposal.proposal_id, (),
+                )
+
         persisted: list[tuple[CandidateEvidenceItem, MediaAssetModel]] = []
         total_bytes = 0
         for item in bounded_items:
@@ -3056,6 +3212,239 @@ class ProductRepository:
             "created", "candidate_visit_created", visit_id, event_id, proposal.proposal_id,
             tuple(media.id for _, media in persisted),
         )
+
+    # -------------------------------------------------------------------
+    # Scene confusor suspicion (see docs/scene-confusor-suspicion-
+    # contract.md): the one impure seam around the pure `scene_confusor`
+    # decision module, mirroring `candidate_visit_adapter`/
+    # `create_candidate_visit_from_proposal`'s own "pure gate, impure
+    # adapter" split. Every method here is bounded (`max_regions_per_
+    # stream`, indexed by `(stream_id, updated_at)`) -- a per-candidate-
+    # attempt cost, never an unbounded historical scan.
+    # -------------------------------------------------------------------
+
+    def _scene_confusor_regions_for_stream(
+        self, session: Session, *, stream_id: str, broad_class: str, now: datetime,
+        config: SceneConfusorConfig | None = None,
+    ) -> tuple[SceneRegionSnapshot, ...]:
+        """Side-effect-free read of a bounded snapshot -- except for lazily
+        deleting rows this Stream's own history has aged out (see
+        `region_ttl_days`), which is itself a bounded, indexed delete
+        scoped to already-fetched rows, never a second unbounded scan."""
+
+        config = config or SceneConfusorConfig()
+        rows = session.scalars(
+            select(SceneConfusorRegionModel)
+            .where(
+                SceneConfusorRegionModel.stream_id == stream_id,
+                SceneConfusorRegionModel.broad_class == broad_class,
+            )
+            .order_by(SceneConfusorRegionModel.updated_at.desc())
+            .limit(config.max_regions_per_stream)
+        ).all()
+        fresh: list[SceneRegionSnapshot] = []
+        for row in rows:
+            age = now - row.last_observed_at if row.last_observed_at.tzinfo else now.replace(tzinfo=None) - row.last_observed_at
+            if age.total_seconds() > config.region_ttl_days * 86400:
+                # Stale: this exact recurring geometry has not been seen
+                # again within the bounded retention window. Purged, not
+                # merely skipped, so it stops silently consuming this
+                # Stream's own bounded region slot -- see "How long it
+                # persists" in the contract doc.
+                session.delete(row)
+                continue
+            fresh.append(_scene_confusor_snapshot_from_model(row))
+        if len(fresh) != len(rows):
+            session.flush()
+        return tuple(fresh)
+
+    def _touch_scene_confusor_region(
+        self, session: Session, *, stream_id: str, broad_class: str,
+        box: tuple[float, float, float, float], confidence: float | None, now: datetime, suspected: bool,
+        config: SceneConfusorConfig | None = None,
+    ) -> str:
+        """Find-or-create-and-update -- called for *every* admission
+        attempt that reaches this check, regardless of its own outcome, so
+        a suspected-and-blocked candidate still contributes to this
+        Stream's own future recurrence history exactly like a created one
+        does. Returns the touched region's own `id`."""
+
+        config = config or SceneConfusorConfig()
+        existing = find_matching_region(
+            box, broad_class,
+            self._scene_confusor_regions_for_stream(
+                session, stream_id=stream_id, broad_class=broad_class, now=now, config=config,
+            ),
+            config,
+        )
+
+        if existing is None:
+            region_id = region_fingerprint(stream_id, broad_class, box)
+            row = session.get(SceneConfusorRegionModel, region_id)
+            if row is None:
+                # Bounded storage, not just a bounded read: a genuinely new
+                # region only ever gets created after evicting this
+                # Stream's own least-recently-seen region(s) once it is
+                # already at capacity -- mirrors `burst_scheduler.
+                # BurstScheduler`'s identical `OrderedDict.popitem(last=
+                # False)` LRU eviction, durably instead of in-memory. Never
+                # evicts to make room for an *existing* region's own
+                # update (the `else` branch below never reaches here).
+                current_total = session.scalar(
+                    select(func.count(SceneConfusorRegionModel.id)).where(
+                        SceneConfusorRegionModel.stream_id == stream_id,
+                        SceneConfusorRegionModel.broad_class == broad_class,
+                    )
+                ) or 0
+                if current_total >= config.max_regions_per_stream:
+                    oldest = session.scalars(
+                        select(SceneConfusorRegionModel)
+                        .where(
+                            SceneConfusorRegionModel.stream_id == stream_id,
+                            SceneConfusorRegionModel.broad_class == broad_class,
+                        )
+                        .order_by(SceneConfusorRegionModel.updated_at.asc())
+                        .limit(current_total - config.max_regions_per_stream + 1)
+                    ).all()
+                    for stale_row in oldest:
+                        session.delete(stale_row)
+                    session.flush()
+                x1, y1, x2, y2 = box
+                row = SceneConfusorRegionModel(
+                    id=region_id, stream_id=stream_id, broad_class=broad_class,
+                    representative_box_json=json.dumps(list(box)),
+                    representative_area=max(0.0, x2 - x1) * max(0.0, y2 - y1),
+                    occurrence_count=0, suspected_count=0, reviewed_real_count=0, reviewed_false_count=0,
+                    max_confidence_observed=None,
+                    centroid_min_x=(x1 + x2) / 2.0, centroid_min_y=(y1 + y2) / 2.0,
+                    centroid_max_x=(x1 + x2) / 2.0, centroid_max_y=(y1 + y2) / 2.0,
+                    first_observed_at=now, last_observed_at=now, updated_at=now,
+                )
+                session.add(row)
+        else:
+            row = session.get(SceneConfusorRegionModel, existing.region_id)
+        if row is None:
+            raise ValueError("scene_confusor_region_missing_after_match")
+
+        current_box = tuple(json.loads(row.representative_box_json))
+        updated_box = update_representative_box(current_box, row.occurrence_count, box)
+        centroid_min, centroid_max = update_region_bounds(
+            (row.centroid_min_x, row.centroid_min_y), (row.centroid_max_x, row.centroid_max_y), box,
+        )
+        row.representative_box_json = json.dumps(list(updated_box))
+        ux1, uy1, ux2, uy2 = updated_box
+        row.representative_area = max(0.0, ux2 - ux1) * max(0.0, uy2 - uy1)
+        row.occurrence_count += 1
+        row.suspected_count += 1 if suspected else 0
+        if confidence is not None:
+            row.max_confidence_observed = max(row.max_confidence_observed or 0.0, confidence)
+        row.centroid_min_x, row.centroid_min_y = centroid_min
+        row.centroid_max_x, row.centroid_max_y = centroid_max
+        row.last_observed_at = now
+        row.updated_at = now
+        session.flush()
+        return row.id
+
+    def _visit_identification_box(
+        self, session: Session, visit_id: str,
+    ) -> tuple[float, float, float, float] | None:
+        """Read-only: the persisted `identification`-role evidence box for
+        one Visit, when it has one -- the same box a reviewer actually
+        sees, and the same one `_create_candidate_visit_locked` checked at
+        admission time. `None` for a Visit with no Stage 7 geometry (a
+        legacy/motion-evidence Visit, or one whose evidence never carried a
+        subject box)."""
+
+        media = session.scalar(
+            select(MediaAssetModel)
+            .join(VisitEvidenceLinkModel, VisitEvidenceLinkModel.media_asset_id == MediaAssetModel.id)
+            .where(
+                VisitEvidenceLinkModel.visit_id == visit_id,
+                MediaAssetModel.evidence_role == "identification",
+                MediaAssetModel.normalized_track_box_json.is_not(None),
+            )
+            .order_by(VisitEvidenceLinkModel.sort_order.asc())
+            .limit(1)
+        )
+        if media is None:
+            return None
+        try:
+            box = json.loads(media.normalized_track_box_json)
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(box, list) or len(box) != 4:
+            return None
+        return (float(box[0]), float(box[1]), float(box[2]), float(box[3]))
+
+    def _update_scene_confusor_region_from_review(
+        self, session: Session, visit_model: "VisitModel", normalized_label: str, *, now: datetime,
+    ) -> None:
+        """Reviewed-truth interaction (see "Reviewed-truth interaction" in
+        docs/scene-confusor-suspicion-contract.md), called only from the
+        one authority-eligible-review choke point
+        (`_create_review_label_in_session`). Scoped to Stage 7 candidate
+        Visits only (`ObservationCandidateVisitModel` lineage) -- a legacy/
+        motion-evidence Visit carries no comparable cross-session geometry
+        this mechanism understands, and is silently, correctly skipped.
+        Only ever *updates* an existing region (never creates one): a
+        single reviewed Visit is not itself "recurring," so a review with
+        no prior recurring history at this geometry has nothing to
+        protect or strengthen yet."""
+
+        # `ObservationCandidateVisitModel`'s primary key is `proposal_id`,
+        # not `visit_id` (a merely unique-constrained column) -- an
+        # explicit query, never `session.get`, which looks up by primary
+        # key only.
+        candidate = session.scalar(
+            select(ObservationCandidateVisitModel).where(
+                ObservationCandidateVisitModel.visit_id == visit_model.id
+            )
+        )
+        if candidate is None:
+            return
+        box = self._visit_identification_box(session, visit_model.id)
+        if box is None:
+            return
+        regions = self._scene_confusor_regions_for_stream(
+            session, stream_id=candidate.stream_id, broad_class=candidate.broad_class, now=now,
+        )
+        match = find_matching_region(box, candidate.broad_class, regions, SceneConfusorConfig())
+        if match is None:
+            return
+        row = session.get(SceneConfusorRegionModel, match.region_id)
+        if row is None:
+            return
+        # `false_positive` is the one product label meaning "no animal was
+        # actually present" (see product_repository._create_review_label_
+        # in_session's own callers); every other supported label on a
+        # Stage 7 Visit -- a species name, `unknown_bird`, `unknown_
+        # animal`, `squirrel`, `cat`, ... -- confirms an animal *was*
+        # present, which is what this region-protection guarantee actually
+        # needs. Never the inverse: a non-`false_positive` label is never
+        # required to be a *correct* species to count as "an animal was
+        # here."
+        if normalized_label == "false_positive":
+            row.reviewed_false_count += 1
+        else:
+            row.reviewed_real_count += 1
+        row.updated_at = now
+        session.flush()
+
+    def purge_scene_confusor_regions_for_stream(self, session: Session, stream_id: str) -> int:
+        """Explicit invalidation: deletes every durable scene-confusor
+        region for one Stream. Called only when this Stream's own camera
+        configuration changed in a way already judged runtime-affecting
+        (`restart_required=True` in `apply_camera_configuration` -- a
+        resolution, provider, or camera-selection change, never a cosmetic
+        one; see "Invalidation" in docs/scene-confusor-suspicion-
+        contract.md). Reuses that already-correct classification rather
+        than inventing a second one. Returns the number of rows removed,
+        for the caller's own diagnostic/audit use."""
+
+        result = session.execute(
+            delete(SceneConfusorRegionModel).where(SceneConfusorRegionModel.stream_id == stream_id)
+        )
+        return result.rowcount or 0
 
     def _get_or_create_authority_settings(
         self, session: Session, *, now: datetime | None = None,
@@ -4740,6 +5129,20 @@ class ProductRepository:
                     )
                     checkpoint.updated_at = now
                     actual_after = StreamRuntimeState.stopped
+                    # Scene confusor invalidation (see "Invalidation" in
+                    # docs/scene-confusor-suspicion-contract.md): a
+                    # `restart_required` configuration change is already
+                    # this codebase's own judgment that this Stream's
+                    # captured geometry may no longer mean what it used to
+                    # (resolution, provider, or camera-selection changed --
+                    # never a cosmetic field like a display name). Reusing
+                    # that existing, already-correct classification -- not
+                    # inventing a second one -- purges every durable
+                    # recurring-geometry region for this Stream in the same
+                    # transaction, so no stale image-space suspicion (or
+                    # stale reviewed-truth protection) can survive a real
+                    # geometry change.
+                    self.purge_scene_confusor_regions_for_stream(session, stream.id)
 
                 revision_model = CameraConfigurationRevisionModel(
                     id=f"camera-config-{uuid.uuid4().hex[:16]}",
@@ -23973,6 +24376,16 @@ class ProductRepository:
             session.add(label_model)
             visit_model.reviewed_label = normalized_label
             visit_model.review_status = ReviewStatus.reviewed.value
+            # Scene confusor reviewed-truth interaction (see docs/scene-
+            # confusor-suspicion-contract.md): reached only for an
+            # authority-eligible review (this branch already required
+            # `is_authoritative` above -- an agent-diagnostic or omitted-
+            # provenance review never reaches here, so it can never
+            # protect or strengthen a region either). A no-op for any
+            # non-Stage-7 Visit or one with no recurring history yet.
+            self._update_scene_confusor_region_from_review(
+                session, visit_model, normalized_label, now=created_at or datetime.now(UTC),
+            )
 
             if event_model is not None:
                 child_visits = self._visit_models_for_event(session, event_model.id)

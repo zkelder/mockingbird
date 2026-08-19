@@ -200,6 +200,13 @@ def test_real_attempt2_hard_negative_candidates_remain_bounded_and_needs_review(
         allowed_reasons = {
             "created", "blocked_session_limit", "blocked_hourly_limit",
             "blocked_missing_evidence", "blocked_invalid_lineage", "blocked_ambiguous_boundary",
+            # Scene confusor suspicion (see docs/scene-confusor-suspicion-
+            # contract.md): a real, honest, stable outcome this exact
+            # hard-negative session's own recurring clutter can legitimately
+            # reach now -- added to the allow-list, not asserted to fire,
+            # since whether it actually does depends on this session's own
+            # real recurrence/spread history.
+            "blocked_scene_confusor_suspected",
         }
         assert {outcome.outcome for outcome in outcomes} <= allowed_reasons
 
@@ -277,7 +284,14 @@ def test_real_session04_close_appearances_remain_separate_when_assembler_separat
         # never silently dropped.
         accounted_for = created_ids | blocked_ambiguous | {
             outcome.proposal_id for outcome in outcomes
-            if outcome.outcome in {"blocked_session_limit", "blocked_hourly_limit", "blocked_invalid_lineage", "blocked_missing_evidence"}
+            if outcome.outcome in {
+                "blocked_session_limit", "blocked_hourly_limit", "blocked_invalid_lineage",
+                "blocked_missing_evidence",
+                # Scene confusor suspicion (see docs/scene-confusor-
+                # suspicion-contract.md): one more honest, stable outcome
+                # code this real session can now legitimately reach.
+                "blocked_scene_confusor_suspected",
+            }
         }
         assert accounted_for == {proposal.proposal_id for proposal in session.proposals}
     finally:

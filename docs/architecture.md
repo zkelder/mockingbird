@@ -367,6 +367,53 @@ original duplicate-Visit protection fully preserved. See
 and [candidate-visit-authority-contract.md](candidate-visit-authority-contract.md)
 for the full field evidence, mechanism, and fix.
 
+Persistent Scene Confusor Suppression v1 (see
+[scene-confusor-suspicion-contract.md](scene-confusor-suspicion-contract.md))
+answered the resulting admission-**precision** question Observational
+Quality Closure v1 left open: a large, independently-adjudicated real
+cohort found 52.9% of admitted Visits were false positives, 76% clustering
+into six recurring static scene confusors, and formally ruled out
+confidence-gated admission as a fix (see "Production authority gate" in
+[detection-quality-accounting-contract.md](detection-quality-accounting-contract.md)).
+A new pure module, `mockingbird.observation.scene_confusor`, and one new
+durable, per-Stream table (`scene_confusor_regions`, schema 34) give the
+existing `_create_candidate_visit_locked` admission boundary a third,
+sibling check alongside the existing `blocked_privacy_zone`: a candidate
+whose own persisted evidence geometry closely, repeatedly matches a region
+this Stream has produced many prior admission attempts from -- without ever
+being confirmed a real animal by reviewed truth -- is suspected and blocked
+(`blocked_scene_confusor_suspected`). Reused, not invented: the same IoU/
+centroid/size-ratio geometry-matching formula `burst_scheduler.
+BurstScheduler` already validated for in-session burst-capture suppression,
+now applied durably across sessions. A naive occurrence-count-only version
+was built first and directly replay-simulated against the real 70-Visit
+cohort; the replay found it would wrongly suppress a real bird landing near
+an unrelated, coincidentally-nearby false detection, before enough history
+existed to tell the two apart -- a demonstrated, not hypothetical, recall
+hazard. The shipped mechanism adds a geometry-spread requirement (a static
+artifact re-detects near-identical geometry every time; real, repeated
+animal activity at a popular real location measurably spreads more) plus
+two independent confidence escapes, one relative and one absolute -- the
+second added after a steady-state replay (the same cohort's real sightings
+recurring a second time against already-built-up history) found the
+relative escape alone insufficient for a real, tightly-clustered repeat
+sighting. Human-reviewed real-animal evidence unconditionally and
+permanently protects a region regardless of accumulated unreviewed history;
+an authority-eligible `false_positive` review only ever strengthens, never
+requires, suspicion. Every region is invalidated (purged) the moment a
+Guided Camera Editing save is classified `restart_required=True` -- reusing
+that already-correct signal rather than inventing a second one -- plus a
+disclosed, conservative 45-day backstop. Extends the existing counterfactual
+lineage (`counterfactual_lineage.ADMISSION_REJECTED_OUTCOMES`) with one new
+outcome code rather than a parallel audit system. A real, faithful,
+end-to-end replay of the historical cohort through the actual implemented
+mechanism found zero real Visits incorrectly suppressed, both cold-start and
+steady-state, while catching a modest but real, honestly-disclosed fraction
+of the confirmed recurring confusors (cold-start 5/40; steady-state 14/40) --
+this milestone's own final report carries the complete evidence, the fresh
+independent field-encounter denominator this replay alone cannot establish,
+and the resulting decision.
+
 ### Review Decision Provenance
 
 `ReviewLabel` had no durable reviewer-origin identity at all before this

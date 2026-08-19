@@ -101,6 +101,7 @@ FAST_FILES = [
     "test_replay_visit_episode_assembly.py",
     "test_review_provenance.py",
     "test_reviewed_replay_lineage.py",
+    "test_scene_confusor.py",
     "test_session_timeline.py",
     "test_storage_retention_service.py",
     "test_storage_status_disk.py",

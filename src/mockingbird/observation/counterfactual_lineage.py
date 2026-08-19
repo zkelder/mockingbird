@@ -67,15 +67,20 @@ BoundingBox = tuple[float, float, float, float]
 # candidate_visit_authority.py) versus outcome codes that mean "the proposal
 # reached the *admission/evidence-quality* boundary and was actively
 # evaluated and rejected there" (candidate_quality_gate.py's own reject_*
-# codes, plus the two repository-local checks `_create_candidate_visit_
+# codes, plus the repository-local checks `_create_candidate_visit_
 # locked` performs only *after* authority already said "create":
-# `blocked_missing_evidence`/`blocked_privacy_zone` -- see their own
-# docstring on `CandidateVisitCreationOutcome`). This module invents neither
+# `blocked_missing_evidence`/`blocked_privacy_zone`/`blocked_scene_
+# confusor_suspected` -- see their own docstring on
+# `CandidateVisitCreationOutcome`). This module invents neither
 # vocabulary; it only partitions the two already-existing ones so
 # `detector_hit_then_suppressed` and `admission_rejected` stay
 # distinguishable, non-overlapping outcomes, matching the task's own naming.
+# `blocked_scene_confusor_suspected` (see docs/scene-confusor-suspicion-
+# contract.md) is structurally identical in kind to `blocked_privacy_zone`:
+# a repository-local check with its own Stream/geometry context neither
+# `candidate_visit_authority` nor `candidate_quality_gate` can see.
 ADMISSION_REJECTED_OUTCOMES: frozenset[str] = _QUALITY_REJECTED_OUTCOMES | frozenset({
-    "blocked_missing_evidence", "blocked_privacy_zone", "failed",
+    "blocked_missing_evidence", "blocked_privacy_zone", "blocked_scene_confusor_suspected", "failed",
 })
 
 

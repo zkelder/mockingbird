@@ -1235,7 +1235,9 @@ class _EngineSession:
                 )
                 if outcome.created:
                     self._last_candidate_visit_id = outcome.visit_id
-                elif outcome.outcome in BLOCKED_OUTCOMES or outcome.outcome in REJECTED_OUTCOMES or outcome.outcome in {"blocked_privacy_zone", "blocked_missing_evidence", "failed"}:
+                elif outcome.outcome in BLOCKED_OUTCOMES or outcome.outcome in REJECTED_OUTCOMES or outcome.outcome in {
+                    "blocked_privacy_zone", "blocked_missing_evidence", "blocked_scene_confusor_suspected", "failed",
+                }:
                     self._suppressed[outcome.outcome] = self._suppressed.get(outcome.outcome, 0) + 1
             # Automatic Species Suggestion v1: a durably-created candidate
             # Visit (evidence already committed by `create_candidate_visit_

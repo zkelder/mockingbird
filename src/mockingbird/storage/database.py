@@ -42,7 +42,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 33
+CURRENT_DATABASE_SCHEMA_VERSION = 34
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -834,6 +834,27 @@ def _migrate_to_observation_geometry_lineage(connection: Connection) -> None:
         )
 
 
+def _migrate_to_scene_confusor_regions(connection: Connection) -> None:
+    """Add the empty, bounded, per-Stream scene-confusor recurring-geometry
+    table (see docs/scene-confusor-suspicion-contract.md).
+
+    No row is seeded here: the table starts genuinely empty for every
+    installation, including one upgrading from real historical candidate
+    Visits -- this migration never backfills recurring-geometry history
+    from pre-existing `observation_candidate_visits`/`media_assets` rows,
+    so an upgraded installation's scene-confusor mechanism starts exactly
+    as cold as a brand-new one, never silently retroactive. Mirrors
+    `_migrate_to_observation_candidate_authority`'s own
+    "additive table, no seeded row" pattern exactly.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Scene-confusor-region migration requires local SQLite storage."
+        )
+    Base.metadata.tables["scene_confusor_regions"].create(bind=connection, checkfirst=True)
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -867,6 +888,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     31: _migrate_to_observation_confidence_evidence,
     32: _migrate_to_review_decision_provenance,
     33: _migrate_to_observation_geometry_lineage,
+    34: _migrate_to_scene_confusor_regions,
 }
 
 

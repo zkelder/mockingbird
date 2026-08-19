@@ -45,6 +45,15 @@ const ADVANCED_LABELS: Record<string, string> = {
   activation_boundary_at: "Activation boundary",
 };
 
+// Plain-language override for the one suppression reason that most benefits
+// from it (see docs/scene-confusor-suspicion-contract.md "UI" -- diagnostics
+// stay here, in the advanced/support view, not the everyday Today
+// experience). Every other reason falls back to the existing generic
+// `formatLabel` conversion unchanged.
+const SUPPRESSED_REASON_LABELS: Record<string, string> = {
+  blocked_scene_confusor_suspected: "Repeated background pattern ignored",
+};
+
 /**
  * The unified Observation panel (Unified Observation Experience v1):
  * Start/Stop for one Stream, plus compact camera and observation-capability
@@ -262,7 +271,7 @@ export function ObservationControlPanel({
               <div className="review-diagnostic-grid">
                 {status.counts.suppressed_reasons.map(([reason, count]) => (
                   <span key={reason}>
-                    {formatLabel(reason)}: {count}
+                    {SUPPRESSED_REASON_LABELS[reason] ?? formatLabel(reason)}: {count}
                   </span>
                 ))}
               </div>

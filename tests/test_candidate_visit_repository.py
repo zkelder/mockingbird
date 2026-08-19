@@ -121,6 +121,51 @@ def test_schema_migrates_to_stage7_tables(repository: ProductRepository) -> None
         assert "observation_candidate_visits" in table_names
 
 
+def test_schema_v34_adds_scene_confusor_regions_table_empty_and_unseeded(tmp_path: Path) -> None:
+    """Persistent Scene Confusor Suppression v1 (see docs/scene-confusor-
+    suspicion-contract.md): the new table exists after migration, and --
+    unlike a new column on an existing table -- starts genuinely empty even
+    for a database that already has real historical candidate Visits, since
+    this migration never backfills recurring-geometry history from them
+    (see the migration's own docstring, `_migrate_to_scene_confusor_
+    regions`)."""
+
+    db_path = tmp_path / "schema-v34.sqlite3"
+    repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 34
+    _activate(repository)
+    outcome = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=_facts(proposal_id="visit-episode:pre-migration-scene"), observed_at=NOW,
+            evidence_items=(_evidence(),),
+        )
+    )
+    assert outcome.outcome == "created"
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql("DROP TABLE scene_confusor_regions")
+        connection.exec_driver_sql("UPDATE mockingbird_schema SET version = 33 WHERE singleton_id = 1")
+    engine.dispose()
+
+    migrated = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
+    try:
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 34
+        from sqlalchemy import inspect as sa_inspect
+
+        from mockingbird.repository.product_repository import SceneConfusorRegionModel
+
+        with migrated.session_factory() as session:
+            table_names = set(sa_inspect(session.get_bind()).get_table_names())
+            assert "scene_confusor_regions" in table_names
+            # Genuinely empty, not backfilled from the real pre-migration
+            # candidate Visit above.
+            assert session.scalar(select(func.count(SceneConfusorRegionModel.id))) == 0
+    finally:
+        migrated.close()
+
+
 def test_schema_v31_adds_confidence_evidence_column_without_fabricating_legacy_data(
     tmp_path: Path,
 ) -> None:
@@ -133,11 +178,11 @@ def test_schema_v31_adds_confidence_evidence_column_without_fabricating_legacy_d
     db_path = tmp_path / "schema-v31.sqlite3"
     repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
     # This pin intentionally tracks whatever the latest schema version is
-    # (33 as of Localization Attribution / Detection Geometry Lineage v1) --
-    # the migration path below always exercises "roll back to just before
-    # this column existed, then migrate all the way forward to current,"
-    # regardless of how many later schema versions have been added since.
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 33
+    # (34 as of Persistent Scene Confusor Suppression v1) -- the migration
+    # path below always exercises "roll back to just before this column
+    # existed, then migrate all the way forward to current," regardless of
+    # how many later schema versions have been added since.
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 34
     _activate(repository)
     pre_migration_outcome = repository.create_candidate_visit_from_proposal(
         CreateCandidateVisitRequest(
@@ -160,7 +205,7 @@ def test_schema_v31_adds_confidence_evidence_column_without_fabricating_legacy_d
 
     migrated = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
     try:
-        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 33
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 34
         with migrated.session_factory() as session:
             pre_ledger = session.get(ObservationCandidateVisitModel, "visit-episode:pre-migration")
             assert pre_ledger is not None
@@ -551,7 +596,7 @@ def test_schema_v33_adds_geometry_attribution_column_without_fabricating_legacy_
 
     db_path = tmp_path / "schema-v33.sqlite3"
     repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 33
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 34
     _activate(repository)
     pre_migration_outcome = repository.create_candidate_visit_from_proposal(
         CreateCandidateVisitRequest(
@@ -575,7 +620,7 @@ def test_schema_v33_adds_geometry_attribution_column_without_fabricating_legacy_
 
     migrated = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
     try:
-        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 33
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 34
         with migrated.session_factory() as session:
             pre_media = session.get(MediaAssetModel, pre_migration_media_id)
             assert pre_media is not None
