@@ -1809,11 +1809,22 @@ class SourceProviderConfigurationModel(Base):
 
 
 class ObservationAuthoritySettingsModel(Base):
-    """One durable Stage 7 authority-mode row (see
-    docs/candidate-visit-authority-contract.md). Never seeded by a schema
-    migration -- `ProductRepository` lazily creates it, defaulted to
-    `shadow`, the first time authority state is read or written, so an
-    upgraded installation never silently gains candidate authority."""
+    """One durable Stage 7 authority-mode row *per Stream* (see
+    docs/candidate-visit-authority-contract.md, "Session/Stream scope").
+    Never seeded by a schema migration -- `ProductRepository` lazily creates
+    one, defaulted to `shadow`, the first time a given Stream's authority
+    state is read or written, so an upgraded installation never silently
+    gains candidate authority.
+
+    Visit Authority Budget + Ambiguous-Boundary Recall Closure v1: this row
+    used to be a single global singleton (`singleton_id=1`) shared by every
+    Stream -- a real, demonstrated defect (2026-08-19 field session): one
+    Stream's Stop silently reverted a different, still-running Stream's
+    authority to shadow, and the session/hourly candidate-budget count was a
+    cross-Stream total despite the name. Real Streams each own an
+    independent Start/Stop Observation control (see
+    docs/observation-engine-product-control-contract.md), so the durable
+    authority state they each govern must be independently scoped too."""
 
     __tablename__ = "observation_authority_settings"
     __table_args__ = (
@@ -1823,7 +1834,7 @@ class ObservationAuthoritySettingsModel(Base):
         ),
     )
 
-    singleton_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    stream_id: Mapped[str] = mapped_column(ForeignKey("streams.id"), primary_key=True)
     mode: Mapped[str] = mapped_column(String, nullable=False)
     # Deterministic activation/start fact: set fresh every time `mode`
     # transitions shadow -> candidate_visit, cleared back to `None` whenever
@@ -2150,10 +2161,12 @@ class CandidateVisitCreationOutcome:
 
 @dataclass(frozen=True)
 class ObservationAuthorityStatus:
-    """Bounded, read-only Stage 7 authority diagnostics. A status read never
-    creates the settings row -- an installation that has never touched
-    Stage 7 authority reports these exact defaults from nothing on disk."""
+    """Bounded, read-only Stage 7 authority diagnostics for one Stream. A
+    status read never creates the settings row -- a Stream that has never
+    touched Stage 7 authority reports these exact defaults from nothing on
+    disk."""
 
+    stream_id: str
     mode: str
     activation_boundary_at: datetime | None
     max_candidates_per_session: int
@@ -2824,15 +2837,18 @@ class ProductRepository:
     # candidate Visit creation` actually touches the product database.
     # =========================================================================
 
-    def get_observation_authority_state(self) -> ObservationAuthorityStatus:
-        """Side-effect-free status read. Never creates the settings row --
-        an untouched installation reports shadow-mode defaults from nothing
-        on disk, exactly like it would after reading them."""
+    def get_observation_authority_state(self, *, stream_id: str) -> ObservationAuthorityStatus:
+        """Side-effect-free status read for one Stream. Never creates the
+        settings row -- a Stream that has never touched Stage 7 authority
+        reports shadow-mode defaults from nothing on disk, exactly like it
+        would after reading them. Independent of every other Stream's own
+        authority state (see the model's own docstring)."""
 
         with self.session_factory() as session:
-            settings = session.get(ObservationAuthoritySettingsModel, 1)
+            settings = session.get(ObservationAuthoritySettingsModel, stream_id)
             if settings is None:
                 return ObservationAuthorityStatus(
+                    stream_id=stream_id,
                     mode=ObservationAuthorityMode.shadow.value,
                     activation_boundary_at=None,
                     max_candidates_per_session=_DEFAULT_MAX_CANDIDATES_PER_SESSION,
@@ -2858,30 +2874,59 @@ class ProductRepository:
         self,
         mode: ObservationAuthorityMode,
         *,
+        stream_id: str,
+        fresh_session: bool = False,
         max_candidates_per_session: int | None = None,
         max_candidates_per_hour: int | None = None,
         max_evidence_items_per_candidate: int | None = None,
         max_evidence_bytes_per_candidate: int | None = None,
         now: datetime | None = None,
     ) -> ObservationAuthorityStatus:
-        """The one explicit, deliberate authority-mode mutation -- both the
-        activation action and the kill switch (setting `mode` back to
-        `shadow`). Immediate and restart-free: every candidate-creation
-        attempt re-reads this row fresh, never a cached in-process value, so
-        a change made from any process sharing this database takes effect
-        on the very next attempt anywhere. Bumps a fresh `activation_
-        boundary_at` only on an actual shadow -> candidate_visit transition
-        (re-affirming an already-active mode does not reset it, so it
-        cannot be used to sneak a later backlog window in); clears it back
-        to `None` on candidate_visit -> shadow."""
+        """The one explicit, deliberate authority-mode mutation for one
+        Stream -- both the activation action and the kill switch (setting
+        `mode` back to `shadow`). Immediate and restart-free: every
+        candidate-creation attempt re-reads this Stream's own row fresh,
+        never a cached in-process value, so a change made from any process
+        sharing this database takes effect on the very next attempt for this
+        Stream, and never touches a different Stream's own row. Bumps a
+        fresh `activation_boundary_at` on an actual shadow -> candidate_visit
+        transition, or (see `fresh_session` below) whenever the caller
+        explicitly asserts a genuinely new governing session is beginning;
+        clears it back to `None` on candidate_visit -> shadow.
+
+        `fresh_session`: set only by a caller that owns the actual Stream
+        observation-session lifecycle (`engine_runtime._EngineSession`'s own
+        Start path -- see docs/candidate-visit-authority-contract.md,
+        "Fresh-session activation"), exactly once per real "Start observing"
+        action. A brand-new `_EngineSession` is only ever constructed when no
+        session for this Stream is already active in this process (see
+        `ObservationEngineSessionManager.start`), so the only way this call
+        can ever find `mode` already `candidate_visit` for this Stream is a
+        stale leftover from a *previous* session that ended without going
+        through the kill switch (a process crash, kill, or redeploy that
+        never reached `stop()`'s `finally`) -- never a legitimately-still-
+        running session calling this twice. `fresh_session=True` forces a
+        fresh `activation_boundary_at` (and therefore a fresh candidate
+        budget) in that case too, so a genuinely new monitoring session can
+        never silently inherit a stale, possibly-already-exhausted budget
+        from a session that has actually ended. This can only ever move the
+        boundary *forward* (never backward), so it cannot be used to widen
+        eligibility for any already-observed historical proposal -- the
+        original "no backlog replay into authority" guarantee is preserved
+        exactly (see "Activation boundary" in the contract doc). Every other
+        caller (the CLI trial, tests exercising ordinary re-affirmation)
+        omits it and keeps the original "re-affirming an already-active mode
+        does not reset it" behavior unchanged."""
 
         moment = now or datetime.now(UTC)
         with self.session_factory() as session:
             with session.begin():
-                settings = self._get_or_create_authority_settings(session, now=moment)
+                settings = self._get_or_create_authority_settings(session, stream_id=stream_id, now=moment)
                 previous_mode = settings.mode
                 settings.mode = mode.value
-                if mode == ObservationAuthorityMode.candidate_visit and previous_mode != mode.value:
+                if mode == ObservationAuthorityMode.candidate_visit and (
+                    previous_mode != mode.value or fresh_session
+                ):
                     settings.activation_boundary_at = moment
                 elif mode == ObservationAuthorityMode.shadow:
                     settings.activation_boundary_at = None
@@ -2929,7 +2974,9 @@ class ProductRepository:
             with self._observation_authority_lock, self.session_factory() as session:
                 with session.begin():
                     existing = session.get(ObservationCandidateVisitModel, proposal.proposal_id)
-                    settings = self._get_or_create_authority_settings(session, now=request.observed_at)
+                    settings = self._get_or_create_authority_settings(
+                        session, stream_id=proposal.stream_id, now=request.observed_at,
+                    )
                     settings.proposals_observed_count += 1
                     if existing is not None:
                         settings.idempotent_repeat_count += 1
@@ -3447,14 +3494,14 @@ class ProductRepository:
         return result.rowcount or 0
 
     def _get_or_create_authority_settings(
-        self, session: Session, *, now: datetime | None = None,
+        self, session: Session, *, stream_id: str, now: datetime | None = None,
     ) -> ObservationAuthoritySettingsModel:
-        settings = session.get(ObservationAuthoritySettingsModel, 1)
+        settings = session.get(ObservationAuthoritySettingsModel, stream_id)
         if settings is not None:
             return settings
         moment = now or datetime.now(UTC)
         settings = ObservationAuthoritySettingsModel(
-            singleton_id=1,
+            stream_id=stream_id,
             mode=AuthorityState.default_mode().value,
             activation_boundary_at=None,
             max_candidates_per_session=_DEFAULT_MAX_CANDIDATES_PER_SESSION,
@@ -3471,9 +3518,12 @@ class ProductRepository:
         self, session: Session, settings: ObservationAuthoritySettingsModel, *, observed_at: datetime,
     ) -> AuthorityState:
         """Compute durable session/hourly candidate counts live from the
-        ledger table -- never an in-memory-only counter a restart could
-        reset. "Session" here means "since the current activation boundary,"
-        matching the contract doc's own definition."""
+        ledger table, scoped to this Stream alone -- never an in-memory-only
+        counter a restart could reset, and never another Stream's own
+        candidates (see the model's own docstring: a global cross-Stream
+        total was a real, demonstrated defect). "Session" here means "since
+        this Stream's own current activation boundary," matching the
+        contract doc's own definition."""
 
         # SQLite's `DateTime(timezone=True)` does not itself preserve
         # tzinfo across a write/read round trip -- normalize every
@@ -3485,12 +3535,14 @@ class ProductRepository:
         if settings.mode == ObservationAuthorityMode.candidate_visit.value and activation_boundary_at is not None:
             session_count = session.scalar(
                 select(func.count(ObservationCandidateVisitModel.proposal_id)).where(
-                    ObservationCandidateVisitModel.created_at >= activation_boundary_at
+                    ObservationCandidateVisitModel.stream_id == settings.stream_id,
+                    ObservationCandidateVisitModel.created_at >= activation_boundary_at,
                 )
             ) or 0
         hourly_count = session.scalar(
             select(func.count(ObservationCandidateVisitModel.proposal_id)).where(
-                ObservationCandidateVisitModel.created_at >= observed_at - timedelta(hours=1)
+                ObservationCandidateVisitModel.stream_id == settings.stream_id,
+                ObservationCandidateVisitModel.created_at >= observed_at - timedelta(hours=1),
             )
         ) or 0
         return AuthorityState(
@@ -3505,6 +3557,7 @@ class ProductRepository:
     ) -> ObservationAuthorityStatus:
         state = self._authority_state(session, settings, observed_at=now)
         return ObservationAuthorityStatus(
+            stream_id=settings.stream_id,
             mode=settings.mode,
             activation_boundary_at=state.activation_boundary_at,
             max_candidates_per_session=settings.max_candidates_per_session,
@@ -3525,7 +3578,9 @@ class ProductRepository:
             last_proposal_id=settings.last_proposal_id,
         )
 
-    def record_observation_authority_failure(self, *, failure_code: str, now: datetime | None = None) -> None:
+    def record_observation_authority_failure(
+        self, *, stream_id: str, failure_code: str, now: datetime | None = None,
+    ) -> None:
         """Bounded, sanitized failure diagnostics for a persistence attempt
         that raised out of `create_candidate_visit_from_proposal` (for
         example a repository/storage error). Called by the adapter in a
@@ -3538,7 +3593,7 @@ class ProductRepository:
         try:
             with self.session_factory() as session:
                 with session.begin():
-                    settings = self._get_or_create_authority_settings(session, now=moment)
+                    settings = self._get_or_create_authority_settings(session, stream_id=stream_id, now=moment)
                     settings.failure_count += 1
                     settings.last_failure_code = safe_code
                     settings.last_failure_at = moment

@@ -117,8 +117,8 @@ def _evidence(box: tuple[float, float, float, float], *, proposal_id: str) -> Ca
     )
 
 
-def _activate(repository: ProductRepository) -> None:
-    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, now=NOW)
+def _activate(repository: ProductRepository, *, stream_id: str = STREAM_ID) -> None:
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=stream_id, now=NOW)
 
 
 def _attempt(repository, box, *, proposal_id, at, confidence=0.3, stream_id=STREAM_ID):
@@ -333,7 +333,7 @@ def _complete_setup(repository: ProductRepository):
 def test_camera_reconfiguration_purges_stale_regions_for_that_stream(repository: ProductRepository) -> None:
     completed = _complete_setup(repository)
     stream_id = completed.stream.id
-    _activate(repository)
+    _activate(repository, stream_id=stream_id)
     for index, box in enumerate(CONFUSOR_JITTER):
         _attempt(
             repository, box, proposal_id=f"visit-episode:invalidation-{index}", at=NOW + timedelta(minutes=index),
@@ -370,7 +370,7 @@ def test_cosmetic_camera_edit_does_not_purge_regions(repository: ProductReposito
 
     completed = _complete_setup(repository)
     stream_id = completed.stream.id
-    _activate(repository)
+    _activate(repository, stream_id=stream_id)
     for index, box in enumerate(CONFUSOR_JITTER):
         _attempt(
             repository, box, proposal_id=f"visit-episode:cosmetic-{index}", at=NOW + timedelta(minutes=index),

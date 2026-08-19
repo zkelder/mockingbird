@@ -68,6 +68,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import runpy
 import secrets
@@ -1417,10 +1418,26 @@ def launch_release(release_dir: Path, *, host: str, port: int, userdata_dir: Pat
     # `WindowsHost.to_windows_path` used in tests is the identity function,
     # so a bare `str(path)` and a real conversion happen to produce the
     # same value there either way.
+    extra_env: dict[str, str] = {}
+    # Visit Authority Budget + Ambiguous-Boundary Recall Closure v1 field
+    # validation only: forwards the *dev shell's own* opt-in variable
+    # (deliberately a different name from the product's own
+    # `MOCKINGBIRD_ACCEPTANCE_RECORDING_DIR`, which `main.
+    # get_observation_engine_session_manager` reads inside the launched
+    # process -- see docs/independent-encounter-denominator-design.md) into
+    # the launched process's own environment, exactly like `MOCKINGBIRD_
+    # HOME` already is. Unset for every ordinary deploy -- this changes
+    # nothing about normal dev-deploy behavior, only lets an explicitly
+    # opted-in field-validation session enable the diagnostic recorder
+    # without hand-editing a running Windows process's environment.
+    recording_dir = os.environ.get("MOCKINGBIRD_DEV_ACCEPTANCE_RECORDING_DIR")
+    if recording_dir:
+        extra_env["MOCKINGBIRD_ACCEPTANCE_RECORDING_DIR"] = recording_dir
     windows_host.launch_release(
         release_dir,
         {
             "MOCKINGBIRD_HOME": windows_host.to_windows_path(userdata_dir),
+            **extra_env,
             # The runtime cache is junctioned, not copied, into every
             # release that shares it -- so *every* file the running process
             # itself writes through that junction lands directly in the

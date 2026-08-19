@@ -33,7 +33,13 @@ from mockingbird.observation.media_contracts import (
     EvidenceBurstFrame,
     EvidenceBurstResult,
 )
-from mockingbird.repository.product_repository import ProductRepository, StreamLivePlaybackConfig
+from mockingbird.repository.product_repository import (
+    CandidateEvidenceItem,
+    CandidateVisitProposalFacts,
+    CreateCandidateVisitRequest,
+    ProductRepository,
+    StreamLivePlaybackConfig,
+)
 from mockingbird.source_providers.camera_node import CameraNodeClientError
 from mockingbird.storage.models import MonitoringExposureIntervalModel
 
@@ -107,7 +113,7 @@ def test_non_camera_node_stream_reports_honest_unavailable_state(repository: Pro
     assert final.camera_connected is False
     assert "Camera Node" in final.camera_message
     # No fabricated confidence: authority was never touched.
-    assert repository.get_observation_authority_state().mode == "shadow"
+    assert repository.get_observation_authority_state(stream_id=STREAM_ID).mode == "shadow"
 
 
 def test_provider_load_failure_reports_honest_unavailable_engine(repository: ProductRepository) -> None:
@@ -121,7 +127,7 @@ def test_provider_load_failure_reports_honest_unavailable_engine(repository: Pro
     assert status.state == "error"
     assert status.engine_available is False
     assert "onnx_cuda_unavailable" in status.engine_message
-    assert repository.get_observation_authority_state().mode == "shadow"
+    assert repository.get_observation_authority_state(stream_id=STREAM_ID).mode == "shadow"
 
 
 def test_real_provider_loader_reports_honest_missing_model_end_to_end(
@@ -286,7 +292,7 @@ def _table_counts(repository: ProductRepository) -> dict[str, int]:
             "media_assets": session.scalar(select(func.count(MediaAssetModel.id))),
             "review_labels": session.scalar(select(func.count(ReviewLabelModel.id))),
             "candidate_ledger": session.scalar(select(func.count(ObservationCandidateVisitModel.proposal_id))),
-            "authority_settings": session.scalar(select(func.count(ObservationAuthoritySettingsModel.singleton_id))),
+            "authority_settings": session.scalar(select(func.count(ObservationAuthoritySettingsModel.stream_id))),
         }
 
 
@@ -391,7 +397,7 @@ def test_resolve_provider_config_path_env_and_explicit_override_still_win(
 def test_status_before_start_is_none_and_side_effect_free(repository: ProductRepository) -> None:
     manager = _manager(repository)
     assert manager.status(STREAM_ID) is None
-    assert repository.get_observation_authority_state().mode == "shadow"
+    assert repository.get_observation_authority_state(stream_id=STREAM_ID).mode == "shadow"
 
 
 def test_stop_before_start_is_a_no_op(repository: ProductRepository) -> None:
@@ -415,7 +421,7 @@ def test_start_is_idempotent_while_active(repository: ProductRepository) -> None
 def test_stop_is_the_kill_switch(repository: ProductRepository) -> None:
     """Even mid-startup, Stop must always return authority to shadow."""
 
-    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, now=NOW)
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
 
     def _slow_loader(path: Path):
         time.sleep(0.3)
@@ -426,7 +432,7 @@ def test_stop_is_the_kill_switch(repository: ProductRepository) -> None:
     status = manager.stop(STREAM_ID)
     assert status is not None
     assert status.state == "stopped"
-    assert repository.get_observation_authority_state().mode == "shadow"
+    assert repository.get_observation_authority_state(stream_id=STREAM_ID).mode == "shadow"
 
 
 # --- Fake end-to-end: real assembler/quality-gate/repository wiring --------
@@ -595,7 +601,232 @@ def test_end_to_end_creates_one_candidate_and_activates_authority(repository: Pr
         assert visit.reviewed_label is None  # no automatic reviewed truth
 
     # Stop already fired naturally on stream end; authority is back to shadow.
-    assert repository.get_observation_authority_state().mode == "shadow"
+    assert repository.get_observation_authority_state(stream_id=STREAM_ID).mode == "shadow"
+
+
+def test_acceptance_recording_is_off_by_default_and_never_touches_admission(
+    repository: ProductRepository,
+) -> None:
+    """No `acceptance_recording_root` supplied -- the manager's own default
+    -- must behave byte-for-byte like every other test in this module: no
+    new directory, no new behavior, zero coupling to normal product Start."""
+
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: _FixtureTransport(),
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "stopped", timeout=10.0)
+    assert manager.status(STREAM_ID).counts.candidates_created == 1
+
+
+def test_acceptance_recording_captures_frames_independent_of_admission_outcome(
+    repository: ProductRepository, tmp_path: Path,
+) -> None:
+    """Independent biological-encounter denominator (see docs/independent-
+    encounter-denominator-design.md): when explicitly configured, every real
+    Start records a bounded, timestamped sample of the exact already-decoded
+    analysis frames this session itself used for inference -- proving the
+    tee is wired into the real product Start path, not just the standalone
+    module under test in test_acceptance_recorder.py."""
+
+    recording_root = tmp_path / "acceptance-recordings"
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: _FixtureTransport(),
+        acceptance_recording_root=recording_root,
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "stopped", timeout=10.0)
+
+    session_dirs = list((recording_root / STREAM_ID).iterdir())
+    assert len(session_dirs) == 1
+    saved = list(session_dirs[0].glob("*.jpg"))
+    assert len(saved) >= 1  # the fixture's own real 4-frame batch was sampled
+    assert (session_dirs[0] / "manifest.jsonl").is_file()
+
+    # Never becomes evidence: still exactly one candidate Visit, and the
+    # candidate count is unaffected by whether recording is on.
+    assert manager.status(STREAM_ID).counts.candidates_created == 1
+
+
+# --- Visit Authority Budget + Ambiguous-Boundary Recall Closure v1 ---------
+# (see docs/candidate-visit-authority-contract.md "Fresh-session activation"
+# and "Session/Stream scope"). Real, demonstrated 2026-08-19 field defect,
+# reproduced end to end through the actual product Start path.
+
+
+def test_start_after_ungraceful_process_end_gets_a_fresh_budget(repository: ProductRepository) -> None:
+    """The exact real defect: a prior process that never reached `stop()`'s
+    kill switch (crash, `kill -9`, a mid-session redeploy) leaves this
+    Stream's own authority row stuck at `candidate_visit` with a stale,
+    possibly-already-exhausted activation boundary. A brand-new
+    `_EngineSession` (this test's own `manager.start(...)` call -- a fresh
+    Python object/manager, simulating a fresh process) must still get a
+    genuinely fresh budget for this Stream."""
+
+    stale_boundary = NOW - timedelta(days=1)
+    repository.set_observation_authority_mode(
+        ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=stale_boundary,
+    )
+    # Simulate the stale session having already exhausted its own budget
+    # (mirrors the real 2026-08-19 field finding: 88 pre-existing Visits
+    # against a default-50 budget).
+    repository.set_observation_authority_mode(
+        ObservationAuthorityMode.candidate_visit,
+        stream_id=STREAM_ID,
+        now=stale_boundary,
+        max_candidates_per_session=1,
+    )
+    exhausting = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=CandidateVisitProposalFacts(
+                proposal_id="visit-episode:stale-session-exhaust",
+                stream_id=STREAM_ID,
+                zone_id=None,
+                broad_class="animal",
+                start_offset_ms=0,
+                end_offset_ms=1000,
+                constituent_generation_ids=("gen-stale",),
+                constituent_track_ids=("track-stale",),
+                source_capture_frame_ids=(),
+                supporting_frame_ids=("frame-stale-1",),
+                evidence_candidate_ids=(),
+                limitation_facts=(),
+                ambiguous_adjacent_proposal_ids=(),
+                assembler_version="tracklet-visit-assembler-v1",
+            ),
+            observed_at=stale_boundary,
+            evidence_items=(
+                CandidateEvidenceItem(
+                    engine_media_id="shadow-burst:stale",
+                    role="identification",
+                    content=_jpeg_bytes(),
+                    content_type="image/jpeg",
+                    width=1920,
+                    height=1080,
+                    captured_at=stale_boundary,
+                    subject_geometry=(0.4, 0.4, 0.6, 0.6),
+                ),
+            ),
+        )
+    )
+    assert exhausting.outcome == "created"
+    # The process "crashes" here -- never calls .stop(), so mode is left at
+    # candidate_visit with a stale, already-exhausted boundary, exactly like
+    # the real field defect.
+
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: _FixtureTransport(),
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "stopped", timeout=10.0)
+
+    status = manager.status(STREAM_ID)
+    # The genuinely new session must have been able to create its own
+    # candidate -- never silently blocked by the stale, already-exhausted
+    # budget from the "crashed" prior process. (The session already ended
+    # naturally here, so its own kill switch has already cleared
+    # `activation_boundary_at` back to `None` -- the same honest fact
+    # `test_end_to_end_creates_one_candidate_and_activates_authority` above
+    # already asserts; a fresh, non-poisoned budget is proven by the two
+    # facts below, not by inspecting the now-cleared boundary itself.)
+    assert status.counts.candidates_created == 1
+    assert "blocked_session_limit" not in dict(status.counts.suppressed_reasons)
+
+
+def test_multi_stream_stop_does_not_kill_a_different_streams_authority(
+    repository: ProductRepository,
+) -> None:
+    """A real, demonstrated cross-Stream hazard of the old global-singleton
+    design: Stream B's Stop must never silently revert Stream A's own,
+    independently-still-running authority to shadow."""
+
+    other_stream_id = "stream-second-camera"
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: _SlowIndefiniteTransport(),
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    manager.start(other_stream_id, _camera_node_config(stream_id=other_stream_id))
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "observing", timeout=10.0)
+    assert _wait_until(lambda: manager.status(other_stream_id).state == "observing", timeout=10.0)
+
+    assert repository.get_observation_authority_state(stream_id=STREAM_ID).mode == "candidate_visit"
+    assert repository.get_observation_authority_state(stream_id=other_stream_id).mode == "candidate_visit"
+
+    manager.stop(other_stream_id)
+    assert manager.status(other_stream_id).state == "stopped"
+
+    # Stream A's own authority must be completely unaffected by Stream B's
+    # Stop -- and its session must still be genuinely running.
+    assert repository.get_observation_authority_state(stream_id=STREAM_ID).mode == "candidate_visit"
+    assert repository.get_observation_authority_state(stream_id=other_stream_id).mode == "shadow"
+    assert manager.status(STREAM_ID).state == "observing"
+
+    manager.stop(STREAM_ID)
+    assert manager.status(STREAM_ID).state == "stopped"
+
+
+def test_candidate_authority_exhausted_flag_is_truthful_and_sticky(
+    repository: ProductRepository,
+) -> None:
+    """Health/diagnostic truth for budget exhaustion: a session that is
+    still genuinely `observing` but has exhausted its own in-session budget
+    must say so plainly, and the fact must stay true for the rest of this
+    session (see "Health/diagnostic truth for budget exhaustion" in
+    docs/candidate-visit-authority-contract.md)."""
+
+    repository.set_observation_authority_mode(
+        ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW, max_candidates_per_session=1,
+        fresh_session=True,
+    )
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    # Two well-separated, independently-confirmable encounters -- the
+    # second must be legitimately blocked by the (now-exhausted) budget,
+    # never by ambiguity/continuation timing.
+    first_updates = list(_tick_track_updates("gen-first", 0, 1_000))
+    second_updates = list(_tick_track_updates("gen-second", 100_000, 101_000))
+    evidence_first, bytes_first = _tick_evidence("gen-first", "identification", "hash-first")
+    evidence_second, bytes_second = _tick_evidence("gen-second", "identification", "hash-second")
+    burst_bytes_cache = {
+        evidence_first.media_asset_id: bytes_first, evidence_second.media_asset_id: bytes_second,
+    }
+    attempted_proposal_ids: set[str] = set()
+
+    session._run_assembly_tick(
+        all_track_updates=first_updates, all_evidence_candidates=[evidence_first],
+        attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        finalize=True,
+    )
+    assert session._counts.candidates_created == 1
+    assert session._candidate_authority_exhausted is False
+    assert session.snapshot().candidate_authority_exhausted is False
+
+    session._run_assembly_tick(
+        all_track_updates=first_updates + second_updates,
+        all_evidence_candidates=[evidence_first, evidence_second],
+        attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        finalize=True,
+    )
+    assert session._suppressed.get("blocked_session_limit") == 1
+    assert session._candidate_authority_exhausted is True
+    assert session._candidate_authority_message is not None
+
+    snapshot = session.snapshot()
+    assert snapshot.candidate_authority_exhausted is True
+    assert snapshot.candidate_authority_message is not None
+    # Still genuinely observing-shaped facts -- exhaustion is reported
+    # alongside them, never by falsely degrading `engine_available`/camera
+    # health, which stay reserved for actual camera/engine problems.
+    assert snapshot.counts.candidates_created == 1
 
 
 class _RecordingAutomaticIdentificationAssist:
@@ -779,7 +1010,7 @@ def test_stop_is_bounded_while_actively_observing(repository: ProductRepository)
     assert status is not None
     assert status.state == "stopped"
     assert elapsed < 15.0  # well under the hard join timeout; a clean, bounded stop
-    assert repository.get_observation_authority_state().mode == "shadow"
+    assert repository.get_observation_authority_state(stream_id=STREAM_ID).mode == "shadow"
     # A second status read after stop must stay stable (side-effect-free).
     assert manager.status(STREAM_ID).state == "stopped"
 
@@ -965,7 +1196,7 @@ def test_resume_failure_never_prevents_stop_or_authority_revert(repository: Prod
     assert status is not None
     assert status.state == "stopped"
     assert coordinator.resume_calls  # it was at least attempted
-    assert repository.get_observation_authority_state().mode == "shadow"
+    assert repository.get_observation_authority_state(stream_id=STREAM_ID).mode == "shadow"
 
 
 def test_repeated_start_stop_observing_pauses_and_resumes_each_time(
@@ -1068,7 +1299,7 @@ def test_continuation_pending_defers_admission_until_encounter_resolves(reposito
     window closes; once a genuine continuation tracklet merges into it,
     only the merged episode is ever admitted -- one encounter, one Visit,
     never two."""
-    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, now=NOW)
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
     session = _tick_session(repository)
     adapter = _tick_adapter(repository)
 
@@ -1142,7 +1373,7 @@ def test_finalize_tick_admits_a_still_pending_singleton_immediately(repository: 
     own candidate-006 (created during the session's graceful-teardown
     window) and proves the fix does not silently swallow a genuine
     encounter that simply never got a chance to wait out its own window."""
-    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, now=NOW)
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
     session = _tick_session(repository)
     adapter = _tick_adapter(repository)
 
@@ -1217,7 +1448,7 @@ def test_ambiguous_boundary_arbitration_admits_the_stronger_of_two_stable_siblin
     fix both would be blocked forever; after it, exactly the stronger one
     is admitted and the weaker one stays suppressed -- never both, never
     neither."""
-    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, now=NOW)
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
     session = _tick_session(repository)
     adapter = _tick_adapter(repository)
 
@@ -1298,7 +1529,7 @@ def test_ambiguous_boundary_arbitration_does_not_cascade_to_the_next_sibling(
     progressively weaker evidence keep trying until *something* is
     admitted, which is exactly the "meaningless dark patch" the evidence
     -quality boundary exists to prevent."""
-    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, now=NOW)
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
     session = _tick_session(repository)
     adapter = _tick_adapter(repository)
 
@@ -1330,6 +1561,101 @@ def test_ambiguous_boundary_arbitration_does_not_cascade_to_the_next_sibling(
 
 
 # =============================================================================
+# Visit Authority Budget + Ambiguous-Boundary Recall Closure v1: evidence-
+# cache capacity. Real, evidenced 2026-08-19 field defect: reconstructing
+# the two missed strong encounters (~5.0min/34-generation/0.889-confidence
+# and ~8.67min/40-generation/0.846-confidence) against the real captured
+# counterfactual ledger found that in both clusters, the proposal that
+# actually escaped `blocked_ambiguous_boundary` (either never ambiguous, or
+# an arbitration winner) still permanently failed at evidence admission
+# (`reject_no_identification_or_context`) -- not because no evidence was
+# ever captured, but because `_MAX_CACHED_BURST_BYTES`/`_MAX_CACHED_
+# SAME_FRAME_BYTES` (previously 8) is a session-global cache evicted purely
+# by insertion count, with no awareness of which pending proposal still
+# needs which bytes. A proposal legitimately delayed by ambiguous-boundary/
+# continuation-pending resolution (which can span the full `ambiguous_gap_
+# ms`, 45s, or longer for a still-growing cluster) can easily have its own
+# already-captured evidence evicted by unrelated activity elsewhere in a
+# busy real stream before its own delayed admission attempt ever runs. See
+# "Why the evidence-admission-escaping winner has no usable evidence" in
+# docs/candidate-visit-authority-contract.md.
+# =============================================================================
+
+
+def test_evidence_cache_bound_has_real_headroom_over_the_old_undersized_default() -> None:
+    """Not a magic-number regression alone: this pins the *reasoning*, not
+    just a value -- the bound must comfortably exceed the old, demonstrated-
+    insufficient default (8) by a real margin, for both the burst and
+    same-frame caches (the identical mechanism, same reasoning, on the
+    identical timing pressure)."""
+
+    assert engine_runtime._MAX_CACHED_BURST_BYTES >= 24
+    assert engine_runtime._MAX_CACHED_SAME_FRAME_BYTES >= 24
+
+
+def test_delayed_proposal_still_finds_its_evidence_after_unrelated_cache_churn(
+    repository: ProductRepository,
+) -> None:
+    """Direct reproduction of the real defect's own mechanism: a proposal's
+    evidence is captured and harvested while still `blocked_continuation_
+    pending` (a legitimate, real delay -- not a bug in itself, see the
+    Visit Continuity tests above); while it waits, unrelated activity
+    elsewhere in the stream captures more bursts than the *old* 8-slot cache
+    could hold; once the proposal's own continuation window finally closes,
+    its own already-captured evidence must still be there."""
+
+    repository.set_observation_authority_mode(
+        ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW, fresh_session=True,
+    )
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    subject_updates = list(_tick_track_updates("gen-subject", 0, 1_000))
+    subject_evidence, subject_bytes = _tick_evidence("gen-subject", "high_resolution_burst", "hash-subject")
+    burst_bytes_cache: dict[str, bytes] = {}
+    attempted_proposal_ids: set[str] = set()
+
+    # Tick 1: still inside the continuation window -- correctly deferred,
+    # never permanently attempted. This is the exact real moment a live
+    # session's own `_harvest_burst_bytes` would have already copied this
+    # subject's evidence into the shared cache.
+    burst_bytes_cache[subject_evidence.media_asset_id] = subject_bytes
+    session._run_assembly_tick(
+        all_track_updates=subject_updates, all_evidence_candidates=[subject_evidence],
+        attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        known_horizon_ms=1_100,
+    )
+    assert session._counts.candidates_created == 0
+    assert attempted_proposal_ids == set()
+    assert session._suppressed.get("blocked_continuation_pending") == 1
+
+    # Meanwhile: unrelated real activity elsewhere in the stream keeps
+    # capturing bursts, cycling the shared cache exactly the way
+    # `_harvest_burst_bytes` already does live -- more than the old 8-slot
+    # bound, fewer than the new one, so this test discriminates the fix.
+    for index in range(20):
+        candidate, payload = _tick_evidence(
+            f"gen-unrelated-{index}", "high_resolution_burst", f"hash-unrelated-{index}",
+        )
+        burst_bytes_cache[candidate.media_asset_id] = payload
+        while len(burst_bytes_cache) > engine_runtime._MAX_CACHED_BURST_BYTES:
+            burst_bytes_cache.pop(next(iter(burst_bytes_cache)))
+
+    # Tick 2: the continuation window has now closed (finalize=True, the
+    # real session-end shape, but an equally-real mid-session horizon tick
+    # past the window would behave identically) -- the subject's own
+    # already-captured evidence must still be retrievable.
+    session._run_assembly_tick(
+        all_track_updates=subject_updates, all_evidence_candidates=[subject_evidence],
+        attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        finalize=True,
+    )
+    assert session._counts.candidates_created == 1
+    assert "reject_no_identification_or_context" not in session._suppressed
+    assert "blocked_missing_evidence" not in session._suppressed
+
+
+# =============================================================================
 # Rejected / Suppressed Detection Attribution v1 (see
 # docs/rejected-detection-attribution-contract.md): every admission outcome
 # -- not only a bare `_suppressed[reason] += 1` count -- is now retained
@@ -1342,7 +1668,7 @@ def test_ambiguous_boundary_arbitration_does_not_cascade_to_the_next_sibling(
 
 
 def test_run_assembly_tick_records_full_lineage_for_a_created_candidate(repository: ProductRepository) -> None:
-    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, now=NOW)
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
     session = _tick_session(repository)
     adapter = _tick_adapter(repository)
 
@@ -1375,7 +1701,7 @@ def test_suppressed_proposal_creates_no_visit_but_retains_exact_lineage(reposito
     Visit/Event/ReviewLabel, and the *reason* the counterfactual ledger
     retains is the real repository-level outcome code, not a guess."""
 
-    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, now=NOW)
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
     session = _tick_session(repository)
     adapter = _tick_adapter(repository)
 
@@ -1424,7 +1750,7 @@ def test_counterfactual_query_advertises_bounded_eviction_accounting_in_status(
     lightweight, always-fresh eviction summary -- no query parameters
     needed for the at-a-glance case."""
 
-    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, now=NOW)
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
     session = _tick_session(repository)
     adapter = _tick_adapter(repository)
     updates = list(_tick_track_updates("gen-solo", 0, 1_000))
@@ -1584,7 +1910,7 @@ def test_bounded_transport_error_recovers_without_stopping_or_duplicating_the_vi
     # ever arrived.
     assert final.advanced.get("analysis_stream_reconnect_recoveries") == 1
     assert transport.calls == 4  # 2 failed + 1 successful (4 frames) + 1 terminal fallback
-    assert repository.get_observation_authority_state().mode == "shadow"
+    assert repository.get_observation_authority_state(stream_id=STREAM_ID).mode == "shadow"
 
 
 def test_empty_batch_interruption_recovers_without_stopping_observation(
@@ -1670,7 +1996,7 @@ def test_user_stop_during_reconnect_backoff_is_prompt(repository: ProductReposit
     assert status is not None
     assert status.state == "stopped"
     assert elapsed < 3.0  # well under the 5-second backoff -- Stop cut the wait short
-    assert repository.get_observation_authority_state().mode == "shadow"
+    assert repository.get_observation_authority_state(stream_id=STREAM_ID).mode == "shadow"
 
 
 def test_permanently_unavailable_camera_eventually_terminates_within_the_bound(
@@ -1706,7 +2032,7 @@ def test_permanently_unavailable_camera_eventually_terminates_within_the_bound(
     assert final.camera_connected is False
     assert transport.calls == policy.maximum_consecutive_failures
     assert final.advanced.get("analysis_stream_consecutive_failures") == policy.maximum_consecutive_failures
-    assert repository.get_observation_authority_state().mode == "shadow"
+    assert repository.get_observation_authority_state(stream_id=STREAM_ID).mode == "shadow"
 
 
 def test_node_identity_pairing_failure_remains_immediately_terminal(
@@ -1750,7 +2076,7 @@ def test_node_identity_pairing_failure_remains_immediately_terminal(
     # Never entered the bounded-retry bookkeeping at all -- a genuinely
     # different code path from the recoverable one.
     assert final.advanced.get("analysis_stream_consecutive_failures") is None
-    assert repository.get_observation_authority_state().mode == "shadow"
+    assert repository.get_observation_authority_state(stream_id=STREAM_ID).mode == "shadow"
 
 
 def test_reconnect_retry_policy_validates_its_own_bounds() -> None:

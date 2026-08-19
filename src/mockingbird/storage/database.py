@@ -42,7 +42,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 34
+CURRENT_DATABASE_SCHEMA_VERSION = 35
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -855,6 +855,46 @@ def _migrate_to_scene_confusor_regions(connection: Connection) -> None:
     Base.metadata.tables["scene_confusor_regions"].create(bind=connection, checkfirst=True)
 
 
+def _migrate_to_per_stream_observation_authority(connection: Connection) -> None:
+    """Re-key `observation_authority_settings` from a single global singleton
+    row (`singleton_id=1`) to one row per Stream (`stream_id` primary key) --
+    see docs/candidate-visit-authority-contract.md, "Session/Stream scope."
+
+    Visit Authority Budget + Ambiguous-Boundary Recall Closure v1: a real,
+    demonstrated 2026-08-19 field defect traced to this table being a single
+    global row shared by every Stream -- one Stream's Stop silently reverted
+    a *different*, still-running Stream's candidate authority to shadow, and
+    the session/hourly candidate-budget count was a cross-Stream total
+    despite its name. Fixing this requires the primary key itself to change,
+    which SQLite cannot do in place.
+
+    The old row is dropped, never migrated forward: it only ever held
+    lazily-created diagnostic/mode state (current mode, activation boundary,
+    bounded lifetime counters), never reviewed truth, dataset truth, or any
+    fact this contract promises to preserve across a migration -- see
+    `_migrate_to_observation_candidate_authority`'s own "no row is seeded"
+    precedent. Every Stream reverting to the safe `shadow` default on
+    upgrade is the *correct* direction (mirrors the original migration's own
+    "an existing installation upgrading through this migration therefore
+    gains no candidate authority" guarantee) -- it also happens to be the
+    exact fix for the demonstrated defect itself: any installation carrying
+    a stale, silently-exhausted `candidate_visit` row from before this
+    migration is unconditionally reset by it, not merely by the next
+    process restart. The durable candidate ledger
+    (`observation_candidate_visits`, keyed by `proposal_id` and already
+    carrying its own `stream_id` on every row) is completely untouched --
+    every previously-created candidate Visit remains exactly as reviewable
+    as before.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Per-Stream observation-authority migration requires local SQLite storage."
+        )
+    connection.exec_driver_sql("DROP TABLE IF EXISTS observation_authority_settings")
+    Base.metadata.tables["observation_authority_settings"].create(bind=connection, checkfirst=True)
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -889,6 +929,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     32: _migrate_to_review_decision_provenance,
     33: _migrate_to_observation_geometry_lineage,
     34: _migrate_to_scene_confusor_regions,
+    35: _migrate_to_per_stream_observation_authority,
 }
 
 

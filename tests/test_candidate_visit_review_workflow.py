@@ -86,7 +86,7 @@ def _create_candidate(
     proposal_id: str = "visit-episode:review-workflow-fixture",
     content: bytes = JPEG_BYTES,
 ) -> str:
-    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, now=NOW)
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=stream_id, now=NOW)
     facts = CandidateVisitProposalFacts(
         proposal_id=proposal_id,
         stream_id=stream_id,

@@ -10,6 +10,7 @@ from datetime import UTC, date, datetime
 from hashlib import sha1
 import json
 from math import ceil
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -397,6 +398,7 @@ from mockingbird.observation import (
     SnapshotObservationProvider,
     unified_status,
 )
+from mockingbird.observation.acceptance_recorder import ACCEPTANCE_RECORDING_DIR_ENV
 from mockingbird.observation.counterfactual_lineage import classify_rejection_attribution
 from mockingbird.observation.engine_runtime import (
     ObservationEngineSessionManager,
@@ -1430,6 +1432,17 @@ def get_observation_engine_session_manager() -> ObservationEngineSessionManager:
 
     global _observation_engine_session_manager
     if _observation_engine_session_manager is None:
+        # Independent biological-encounter denominator (Visit Authority
+        # Budget + Ambiguous-Boundary Recall Closure v1): `None`/unset for
+        # every ordinary product process -- this is explicitly scoped
+        # field-validation tooling, never a normal product capability (see
+        # docs/independent-encounter-denominator-design.md). Reading the
+        # raw env var here, at process-construction time, rather than
+        # inside `engine_runtime.py` itself keeps that module's own "no new
+        # capture/recording capability without an explicit opt-in" contract
+        # visible at the one place the whole app process is actually wired
+        # together.
+        recording_dir = os.environ.get(ACCEPTANCE_RECORDING_DIR_ENV)
         _observation_engine_session_manager = ObservationEngineSessionManager(
             repository_factory=ProductRepository,
             # So Start/Stop observing can deliberately pause/resume an
@@ -1445,6 +1458,7 @@ def get_observation_engine_session_manager() -> ObservationEngineSessionManager:
             # identification ever runs at a time regardless of how many
             # Streams/paths triggered it.
             automatic_identification_assist=get_automatic_review_identification_assist(),
+            acceptance_recording_root=Path(recording_dir) if recording_dir else None,
         )
     return _observation_engine_session_manager
 
@@ -10714,6 +10728,8 @@ def _observation_panel_response(
         last_useful_frame_at=facts.last_useful_frame_at,
         setup_action=facts.setup_action,
         retry_action=facts.retry_action,
+        candidate_authority_exhausted=facts.candidate_authority_exhausted,
+        candidate_authority_message=facts.candidate_authority_message,
         counts=ObservationSessionCounts(
             track_updates_observed=facts.counts.track_updates_observed,
             evidence_candidates_observed=facts.counts.evidence_candidates_observed,

@@ -137,6 +137,12 @@ class ObservationPanelFacts:
     last_useful_frame_at: datetime | None = None
     setup_action: Literal["edit_camera_setup"] | None = None
     retry_action: bool = False
+    # Visit Authority Budget + Ambiguous-Boundary Recall Closure v1: `False`/
+    # `None` for every lane except the Camera Node engine lane while its own
+    # in-session candidate budget is genuinely exhausted -- see
+    # `ObservationEngineSessionStatus`'s matching fields.
+    candidate_authority_exhausted: bool = False
+    candidate_authority_message: str | None = None
     counts: ObservationEngineCounts = field(default_factory=ObservationEngineCounts)
     advanced: dict[str, object] = field(default_factory=dict)
 
@@ -194,6 +200,8 @@ def camera_node_facts(
             stopped_reason=session_status.stopped_reason,
             last_candidate_visit_id=session_status.last_candidate_visit_id,
             setup_action=setup_action,
+            candidate_authority_exhausted=session_status.candidate_authority_exhausted,
+            candidate_authority_message=session_status.candidate_authority_message,
             counts=session_status.counts,
             advanced={**session_status.advanced, "runtime_kind": RUNTIME_KIND_CAMERA_NODE},
         )

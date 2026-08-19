@@ -219,6 +219,15 @@ export function ObservationControlPanel({
                   </span>
                 </div>
               ) : null}
+              {status.candidate_authority_exhausted ? (
+                <div className="continuity-message">
+                  <span>
+                    {status.candidate_authority_message ??
+                      "This session has reached its automatic Visit-creation limit for now. " +
+                        "Stop and start observation again to resume creating new Visits."}
+                  </span>
+                </div>
+              ) : null}
             </>
           )}
           <div className="panel-actions">

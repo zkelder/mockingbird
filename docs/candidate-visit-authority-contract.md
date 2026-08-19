@@ -52,20 +52,82 @@ migration can ever set `mode='candidate_visit'`.
 
 Future authority levels are explicitly out of scope for this stage.
 
+## Session/Stream scope (Visit Authority Budget + Ambiguous-Boundary Recall
+## Closure v1)
+
+`ObservationAuthoritySettingsModel` is keyed by `stream_id` (primary key) --
+one durable authority row per Stream, never a single global singleton. This
+corrects a real, demonstrated 2026-08-19 field defect in the original
+`singleton_id=1` design: a shared global row meant one Stream's Stop
+silently reverted a *different*, still-running Stream's authority to
+shadow, and the session/hourly candidate-budget count was a cross-Stream
+total despite its own name. `get_observation_authority_state`/
+`set_observation_authority_mode`/`create_candidate_visit_from_proposal`'s
+own transactional re-check all resolve exactly one Stream's own row;
+`_authority_state`'s session/hourly count queries filter
+`ObservationCandidateVisitModel.stream_id` explicitly. A real Stream's own
+per-Stream Start/Stop Observation control (see
+[observation-engine-product-control-contract.md](observation-engine-product-control-contract.md))
+is the product's real session unit; the durable authority state it governs
+is now scoped to match, not a global implementation artifact left over from
+when only a single-Stream CLI trial existed. Schema 35
+(`_migrate_to_per_stream_observation_authority`) re-keys the table on
+upgrade, safely: the row only ever holds lazily-created diagnostic/mode
+state, never truth, and every Stream reverting to the safe `shadow` default
+is the correct direction for any installation carrying a stale row forward.
+
 ## Activation boundary
 
 `activation_boundary_at` is a deterministic activation/start fact: set fresh
 (to the caller-supplied `now`) every time `mode` transitions
 `shadow -> candidate_visit`, and cleared back to `None` on every
 `candidate_visit -> shadow` transition (the kill switch). Re-affirming an
-already-active mode does not reset it. A proposal is only eligible to create
-a candidate when its own `observed_at` (the wall-clock moment the adapter
-first evaluated it -- never recomputed, never read from the proposal itself,
-which stays deliberately wall-clock-free per the assembly contract) is at or
-after this boundary. This is what makes turning authority on never
-retroactively promote historical shadow output: "no backlog replay into
-authority when enabling the mode" is enforced structurally, not by caller
-discipline alone.
+already-active mode does not reset it, *unless* the caller explicitly
+asserts `fresh_session=True` (see "Fresh-session activation," below). A
+proposal is only eligible to create a candidate when its own `observed_at`
+(the wall-clock moment the adapter first evaluated it -- never recomputed,
+never read from the proposal itself, which stays deliberately wall-clock-free
+per the assembly contract) is at or after this boundary. This is what makes
+turning authority on never retroactively promote historical shadow output:
+"no backlog replay into authority when enabling the mode" is enforced
+structurally, not by caller discipline alone.
+
+### Fresh-session activation
+
+Real, demonstrated 2026-08-19 field defect: a process that never reached
+`stop()`'s kill switch (a crash, `kill -9`, or a mid-session redeploy --
+exactly what a real Windows dev-deployment redeploy does) leaves a Stream's
+own authority row stuck at `candidate_visit` with a stale, possibly-already-
+exhausted `activation_boundary_at`. The *next* literal "Start observing" for
+that Stream previously found `mode` already `candidate_visit` and, per the
+re-affirmation rule above, never reset the boundary -- silently inheriting
+whatever budget the "crashed" prior session had already consumed, in one
+real case exhausted from a previous *day's* sessions.
+
+`set_observation_authority_mode` accepts an explicit, caller-supplied
+`fresh_session: bool = False`. When `True`, a transition *into*
+`candidate_visit` always establishes a fresh `activation_boundary_at`, even
+if the row's `mode` was already `candidate_visit` for that Stream. Only
+`engine_runtime._EngineSession._run_async` -- the product's own Start path
+-- ever passes `fresh_session=True`, exactly once per real "Start observing"
+action: `ObservationEngineSessionManager.start()` only ever constructs a
+brand-new `_EngineSession` when no session for that Stream is already
+`is_active` in this process, so the *only* way this call can ever find
+`mode` already `candidate_visit` for that Stream is a stale leftover from a
+session that has actually ended (crashed) -- never a genuinely-still-running
+session calling Start twice. This makes `fresh_session=True` unconditionally
+safe at this one call site: it can never "steal" a still-active session's own
+budget, because a still-active session's own `_EngineSession` object already
+holds that Stream's only path to this call.
+
+This can only ever move the boundary *forward* in real use (a well-behaved
+caller's own `now` is monotonically non-decreasing), never backward -- it
+cannot be used to admit an older historical proposal, preserving "no backlog
+replay into authority" exactly. The CLI trial
+(`candidate_visit_authority_cli.py --activate`) and every other caller omit
+`fresh_session`, preserving the original re-affirmation-does-not-reset
+behavior unchanged (a trial reactivated mid-run must not be able to sneak a
+wider window in).
 
 ## Kill switch
 
@@ -322,6 +384,43 @@ persisting without real evidence. This is a deliberate, disclosed scope
 choice for the first trial, not a defect -- broadening evidence sourcing to
 ordinary tracked frames is future, separately-scoped work.
 
+### Evidence-cache capacity (Visit Authority Budget + Ambiguous-Boundary
+### Recall Closure v1)
+
+`engine_runtime._EngineSession` harvests each burst-role/same-frame-role
+candidate's real bytes out of the live session's own transient cache the
+moment it is first observed (`_harvest_burst_bytes`/`_harvest_same_frame_
+bytes`), into its own longer-lived `burst_bytes_cache`/`same_frame_bytes_
+cache` -- because the underlying live-session cache is cleared on `session.
+stop()`, and a proposal's own admission attempt can be legitimately delayed
+well past capture time (`blocked_ambiguous_boundary` pending arbitration
+stabilization, or `blocked_continuation_pending` for up to `ambiguous_gap_
+ms`, 45s, per retry cycle -- see "Ambiguous boundary arbitration" in
+[tracklet-visit-assembly-contract.md](tracklet-visit-assembly-contract.md)).
+Real, evidenced 2026-08-19 field defect: reconstructing both missed strong
+encounters (~5.0min/34-generation/0.889-confidence and ~8.67min/40-
+generation/0.846-confidence) against the real captured counterfactual ledger
+found the proposal that actually escaped the ambiguity block in each cluster
+(either never ambiguous, or an arbitration winner) still permanently failed
+at evidence admission (`reject_no_identification_or_context`) -- not because
+no evidence was ever captured, but because `_MAX_CACHED_BURST_BYTES`/
+`_MAX_CACHED_SAME_FRAME_BYTES` (previously 8) is evicted purely by insertion
+count, with no awareness of which pending proposal still needs which bytes;
+unrelated activity elsewhere in a busy real stream cycled past it before the
+delayed proposal's own attempt ever ran. Raised to 32 -- a capacity fix, not
+an evidence-quality threshold change: every requirement `candidate_quality_
+gate.evaluate_evidence_admission` enforces (a real, decodable, geometrically
+-valid identification/context candidate) is completely unchanged; this only
+keeps evidence already judged sufficient from vanishing before its own
+legitimately-delayed admission attempt runs. Verified directly:
+`test_delayed_proposal_still_finds_its_evidence_after_unrelated_cache_churn`
+in `tests/test_engine_runtime.py` reproduces the exact real failure shape
+with the old bound (RED) and stays fixed with the new one (GREEN). The
+ambiguous-boundary arbitration mechanism itself needed no change -- real
+evidence (proposals reaching the evidence-quality gate at all) proves it
+already correctly narrows each cluster to one winner in both missed
+encounters; the loss happened one stage downstream, at evidence retention.
+
 ## Privacy / Ignore
 
 Subjects inside a Privacy or Ignore Zone are already excluded upstream of
@@ -359,18 +458,50 @@ for general operation, overridden to the trial-mandated 3-candidate session
 bound by `candidate-authority-trial`'s own CLI. `create_candidate_visit_
 from_proposal` never ingests a historical backlog: only proposals whose
 `observed_at` is at or after the current activation boundary are eligible
-at all, regardless of budget headroom.
+at all, regardless of budget headroom. The safety bound itself is
+unconditionally preserved by this contract's own Visit Authority Budget +
+Ambiguous-Boundary Recall Closure v1 fix (above) -- it is scoped correctly
+(per Stream, per genuinely-new session), never raised or removed: a
+genuinely still-active session that exhausts its own real budget must, and
+does, still block (`blocked_session_limit`) exactly as before.
 
 ## Diagnostics
 
-`ProductRepository.get_observation_authority_state()` is a side-effect-free
-read (never creates the settings row) returning: current mode, activation
-boundary, configured limits, live session/hourly counts, and bounded
-lifetime counters (`proposals_observed_count`, `candidates_attempted_count`,
+`ProductRepository.get_observation_authority_state(stream_id=...)` is a
+side-effect-free read (never creates the settings row) returning, for one
+Stream: current mode, activation boundary, configured limits, live
+session/hourly counts, and bounded lifetime counters
+(`proposals_observed_count`, `candidates_attempted_count`,
 `candidates_created_count`, `idempotent_repeat_count`, `suppressed_count`,
 `failure_count`, `last_failure_code`/`last_failure_at`,
 `last_candidate_visit_id`, `last_proposal_id`). No admin UI is added in this
 stage.
+
+### Health/diagnostic truth for budget exhaustion (Visit Authority Budget +
+### Ambiguous-Boundary Recall Closure v1)
+
+A legitimately exhausted in-session budget (`blocked_session_limit`, a real,
+non-retryable outcome for the rest of the current activation window -- see
+"Limits," below) must never be silently absorbed into an otherwise-healthy
+status: a Stream can stay genuinely `observing`/`engine_available` while
+unable to create any further Visit, and that fact must be surfaced
+truthfully rather than presented as ordinary full productivity.
+`_EngineSession` tracks `candidate_authority_exhausted: bool` (set the first
+time this running session observes a `blocked_session_limit` outcome; sticky
+for the rest of the session, matching the outcome's own permanent-for-this-
+activation-window semantics -- a fresh Start always begins with it `False`
+again) plus a plain-language `candidate_authority_message`. Both flow through
+`ObservationEngineSessionStatus` -> `unified_status.ObservationPanelFacts` ->
+the `ObservationSessionStatusResponse` wire contract unchanged in shape,
+reaching `GET /api/streams/{id}/observation/status` and the Observation
+panel's basic view (`ObservationControlPanel.tsx`) -- not buried in advanced
+diagnostics alone, since this is exactly the kind of truthful health fact a
+normal user needs without opening internal counters. Raw internal counters
+(configured budget, consumed count, activation/session identity, exhaustion
+timestamp/reason) remain in the existing `advanced` diagnostics object
+(`activation_boundary_at`, `counts.suppressed_reasons` including
+`blocked_session_limit`'s own count) -- reused, not duplicated, per "do not
+expose internal counters as ordinary UI clutter."
 
 ## Real controlled trial
 

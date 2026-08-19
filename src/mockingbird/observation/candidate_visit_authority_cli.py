@@ -216,6 +216,7 @@ async def _run_trial(args: argparse.Namespace) -> dict[str, object]:
         if args.activate:
             started_activation_status = repository.set_observation_authority_mode(
                 ObservationAuthorityMode.candidate_visit,
+                stream_id=args.stream_id_in_product,
                 max_candidates_per_session=args.max_candidates,
                 max_candidates_per_hour=max(args.max_candidates, MAX_TRIAL_CANDIDATES),
             )
@@ -282,7 +283,7 @@ async def _run_trial(args: argparse.Namespace) -> dict[str, object]:
             provider.close()
 
         ended_wall = datetime.now(UTC)
-        final_status = repository.get_observation_authority_state()
+        final_status = repository.get_observation_authority_state(stream_id=args.stream_id_in_product)
         summary = {
             "trial_version": "candidate-visit-authority-trial-v1",
             "assembler_version": ASSEMBLER_VERSION,

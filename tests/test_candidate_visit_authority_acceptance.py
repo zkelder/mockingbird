@@ -156,6 +156,7 @@ def _run_candidate_authority(
 
     repository.set_observation_authority_mode(
         ObservationAuthorityMode.candidate_visit,
+        stream_id=STREAM_ID,
         now=NOW,
         max_candidates_per_session=ACCEPTANCE_LIMITS.max_candidates_per_session,
         max_candidates_per_hour=ACCEPTANCE_LIMITS.max_candidates_per_hour,
@@ -381,7 +382,7 @@ def test_stage619_synthetic_long_visit_fragmented_scenario_creates_bounded_candi
     assembly = assemble_visit_episodes(tracklets)
     repository = _repository(tmp_path)
     try:
-        repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, now=NOW)
+        repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
         adapter = CandidateVisitAuthorityAdapter(repository)
         outcomes = [
             adapter.attempt_candidate(proposal, evidence_candidates=(), evidence_bytes={}, observed_at=NOW)
@@ -410,7 +411,7 @@ def test_stage619_synthetic_two_separate_appearances_stay_separate_candidates(tm
     assert len(assembly.proposals) >= 2  # the assembler itself must not have merged them
     repository = _repository(tmp_path)
     try:
-        repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, now=NOW)
+        repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
         adapter = CandidateVisitAuthorityAdapter(repository)
         evidence_item = EvidenceCandidate(
             media_asset_id="synthetic:evidence", stream_id=STREAM_ID, role="identification", captured_at=NOW,

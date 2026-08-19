@@ -376,7 +376,7 @@ async def test_demo_stream_start_is_honest_and_creates_no_observation_authority(
     assert payload["runtime_available"] is False
     assert payload["observing"] is False
     # Never grants Stage 7 candidate authority for a Stream with no runtime.
-    assert repository.get_observation_authority_state().mode == "shadow"
+    assert repository.get_observation_authority_state(stream_id=STREAM_ID).mode == "shadow"
 
 
 # --- Required test 22: no unexpected product writes on read-only status ---
@@ -397,4 +397,4 @@ async def test_status_reads_across_every_lane_are_side_effect_free(
     assert policy is None or policy.mode == "off"
     monitor_state = await get_source_monitor_manager().status(STREAM_ID)
     assert monitor_state is None
-    assert repository.get_observation_authority_state().mode == "shadow"
+    assert repository.get_observation_authority_state(stream_id=STREAM_ID).mode == "shadow"

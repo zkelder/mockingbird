@@ -114,7 +114,7 @@ def _adapter(repository: ProductRepository) -> CandidateVisitAuthorityAdapter:
 
 
 def _activate(repository: ProductRepository, *, now: datetime = NOW) -> None:
-    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, now=now)
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=now)
 
 
 def test_end_to_end_assembled_proposal_creates_one_candidate_visit(repository: ProductRepository) -> None:
@@ -288,7 +288,7 @@ def test_authority_mode_never_affects_assembler_output(repository: ProductReposi
     tracklet = _tracklet("gen-1", 0, 4500)
     before_toggle = assemble_visit_episodes((tracklet,))
     _activate(repository)
-    repository.set_observation_authority_mode(ObservationAuthorityMode.shadow, now=NOW)
+    repository.set_observation_authority_mode(ObservationAuthorityMode.shadow, stream_id=STREAM_ID, now=NOW)
     after_toggle = assemble_visit_episodes((tracklet,))
     assert before_toggle.proposals[0].proposal_id == after_toggle.proposals[0].proposal_id
     assert before_toggle.proposals == after_toggle.proposals
@@ -312,7 +312,7 @@ def test_repository_failure_is_caught_and_recorded_not_raised(
     assert outcome.outcome == "failed"
     assert not outcome.created
 
-    status = repository.get_observation_authority_state()
+    status = repository.get_observation_authority_state(stream_id=STREAM_ID)
     assert status.failure_count == 1
 
 

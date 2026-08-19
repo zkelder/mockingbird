@@ -166,7 +166,9 @@ class CandidateVisitAuthorityAdapter:
             # error). Record it and keep going; this adapter must never be
             # the reason a live observation loop crashes.
             failure_code = str(error) or "observation_candidate_visit_persistence_failed"
-            self._repository.record_observation_authority_failure(failure_code=failure_code, now=observed_at)
+            self._repository.record_observation_authority_failure(
+                stream_id=proposal.stream_id, failure_code=failure_code, now=observed_at,
+            )
             return CandidateAttemptResult(proposal.proposal_id, "failed", failure_code, None, None)
         return CandidateAttemptResult(
             outcome.proposal_id, outcome.outcome, outcome.reason, outcome.visit_id, outcome.event_id,

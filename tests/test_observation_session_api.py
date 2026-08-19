@@ -74,7 +74,7 @@ def test_status_before_start_is_stopped_and_side_effect_free(
     assert payload["observing"] is False
     assert payload["stream_id"] == DEMO_STREAM_ID
     # Side-effect-free: no session was created, no authority state touched.
-    assert repository.get_observation_authority_state().mode == "shadow"
+    assert repository.get_observation_authority_state(stream_id=DEMO_STREAM_ID).mode == "shadow"
 
 
 def test_start_on_stream_with_no_observation_runtime_is_honest_not_a_crash(
@@ -96,7 +96,7 @@ def test_start_on_stream_with_no_observation_runtime_is_honest_not_a_crash(
         assert forbidden not in payload["message"]
         assert forbidden not in payload["camera_message"]
     # No Stage 7 authority was ever touched for a Stream with no runtime.
-    assert repository.get_observation_authority_state().mode == "shadow"
+    assert repository.get_observation_authority_state(stream_id=DEMO_STREAM_ID).mode == "shadow"
 
 
 def test_start_on_unpaired_camera_node_stream_reports_pairing_reason(
@@ -124,7 +124,7 @@ def test_start_on_unpaired_camera_node_stream_reports_pairing_reason(
     assert payload["runtime_available"] is True
     assert payload["state"] == "needs_attention"
     assert "Camera Node" in payload["camera_message"]
-    assert repository.get_observation_authority_state().mode == "shadow"
+    assert repository.get_observation_authority_state(stream_id=DEMO_STREAM_ID).mode == "shadow"
 
 
 def test_camera_node_status_advanced_diagnostics_report_runtime_kind(
@@ -185,7 +185,7 @@ def test_counterfactual_before_any_session_is_honest_and_side_effect_free(
     assert payload["raw_detections"] == []
     assert payload["attribution"] == "insufficient_counterfactual_lineage"
     # Side-effect-free: no session was created, no authority state touched.
-    assert repository.get_observation_authority_state().mode == "shadow"
+    assert repository.get_observation_authority_state(stream_id=DEMO_STREAM_ID).mode == "shadow"
 
 
 def test_counterfactual_rejects_invalid_window_and_partial_roi(

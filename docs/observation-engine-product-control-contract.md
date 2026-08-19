@@ -55,7 +55,13 @@ event loop, explicit start/stop, and side-effect-free status reads.
   object (provider ids, activation boundary, transient per-session counts
   including suppressed-candidate reasons) for the collapsed diagnostics
   disclosure. No Stage numbers, CUDA, or ONNX vocabulary appear in the
-  basic fields.
+  basic fields. Visit Authority Budget + Ambiguous-Boundary Recall Closure
+  v1 adds one further basic-tier truthful fact,
+  `candidate_authority_exhausted`/`candidate_authority_message`: a Stream
+  can be genuinely `observing`/`engine_available` while its own in-session
+  candidate budget is exhausted, and that must never read as ordinary full
+  productivity -- see "Health/diagnostic truth for budget exhaustion" in
+  [candidate-visit-authority-contract.md](candidate-visit-authority-contract.md).
 
 ### Camera ownership vs. the legacy live-view/monitoring session
 
@@ -80,13 +86,19 @@ later resume -- Observation finishing afterward must not resurrect a session
 the user deliberately turned off in the meantime.
 
 "Start observing" is the one explicit action that also activates Stage 7's
-`candidate_visit` authority (`ProductRepository.
+`candidate_visit` authority for *this Stream* (`ProductRepository.
 set_observation_authority_mode`, the same call `candidate-authority-trial
---activate` already makes); the schema/migration default remains `shadow`
-untouched by this contract. Unlike the CLI trial, an app-started session has
-no wall-clock/candidate hard cap -- it is bounded by the same durable
-session/hourly authority limits every other Stage 7 caller already has, and
-runs until the user explicitly stops it.
+--activate` already makes, scoped per Stream since Visit Authority Budget +
+Ambiguous-Boundary Recall Closure v1 -- see "Session/Stream scope" in
+[candidate-visit-authority-contract.md](candidate-visit-authority-contract.md));
+the schema/migration default remains `shadow` untouched by this contract.
+Every real "Start observing" always establishes a fresh activation boundary
+and candidate budget for this Stream (`fresh_session=True`), regardless of
+whatever a prior, ungracefully-ended process may have left behind -- see
+"Fresh-session activation" in the same contract. Unlike the CLI trial, an
+app-started session has no wall-clock/candidate hard cap -- it is bounded by
+the same durable session/hourly authority limits every other Stage 7 caller
+already has, and runs until the user explicitly stops it.
 
 ## Candidate-quality admission boundary
 

@@ -1161,6 +1161,50 @@ def test_launch_release_never_injects_one_shot_bioclip_environment_variables(
     )
 
 
+def test_launch_release_does_not_inject_acceptance_recording_dir_by_default(
+    tmp_path: Path, fake_host: WindowsHost, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Visit Authority Budget + Ambiguous-Boundary Recall Closure v1: the
+    independent field-validation frame recorder
+    (docs/independent-encounter-denominator-design.md) must stay opt-in for
+    every ordinary dev deploy -- unset `MOCKINGBIRD_DEV_ACCEPTANCE_
+    RECORDING_DIR` (this dev shell's own opt-in variable, never the
+    product's own `MOCKINGBIRD_ACCEPTANCE_RECORDING_DIR`) must inject
+    nothing."""
+
+    monkeypatch.delenv("MOCKINGBIRD_DEV_ACCEPTANCE_RECORDING_DIR", raising=False)
+    bundle = make_bundle(tmp_path / "build", git_commit="a" * 40, build_id="id1")
+    release_dir = tmp_path / "releases" / "aaaaaaa"
+    shutil.copytree(bundle, release_dir)
+    userdata_dir = tmp_path / "LOCALAPPDATA" / DEV_ROOT_DIRNAME / USERDATA_DIRNAME
+
+    launch_release(release_dir, host=DEFAULT_HOST, port=DEFAULT_PORT, userdata_dir=userdata_dir, windows_host=fake_host)
+
+    calls = fake_host.launch_release.calls  # type: ignore[attr-defined]
+    assert "MOCKINGBIRD_ACCEPTANCE_RECORDING_DIR" not in calls[0]["extra_env"]
+
+
+def test_launch_release_forwards_acceptance_recording_dir_when_explicitly_opted_in(
+    tmp_path: Path, fake_host: WindowsHost, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicitly-set dev-shell variable forwards through to the
+    launched process's own environment, exactly like `MOCKINGBIRD_HOME`
+    already does -- the one supported way to enable the diagnostic recorder
+    for a real field-validation session without hand-editing a running
+    Windows process."""
+
+    monkeypatch.setenv("MOCKINGBIRD_DEV_ACCEPTANCE_RECORDING_DIR", r"C:\MockingBirdDev\acceptance-recordings")
+    bundle = make_bundle(tmp_path / "build", git_commit="a" * 40, build_id="id1")
+    release_dir = tmp_path / "releases" / "aaaaaaa"
+    shutil.copytree(bundle, release_dir)
+    userdata_dir = tmp_path / "LOCALAPPDATA" / DEV_ROOT_DIRNAME / USERDATA_DIRNAME
+
+    launch_release(release_dir, host=DEFAULT_HOST, port=DEFAULT_PORT, userdata_dir=userdata_dir, windows_host=fake_host)
+
+    calls = fake_host.launch_release.calls  # type: ignore[attr-defined]
+    assert calls[0]["extra_env"]["MOCKINGBIRD_ACCEPTANCE_RECORDING_DIR"] == r"C:\MockingBirdDev\acceptance-recordings"
+
+
 def test_launch_release_suppresses_bytecode_writes_into_the_shared_runtime_cache(
     tmp_path: Path, fake_host: WindowsHost,
 ) -> None:

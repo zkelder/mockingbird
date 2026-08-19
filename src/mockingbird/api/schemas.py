@@ -1379,6 +1379,16 @@ class ObservationSessionStatusResponse(BaseModel):
     # True only for the existing live-monitoring lane's own bounded
     # runtime/retry action, reusing `POST .../runtime/retry` unchanged.
     retry_action: bool = False
+    # Visit Authority Budget + Ambiguous-Boundary Recall Closure v1: truthful
+    # even while `observing`/`engine_available` stay true -- a genuinely
+    # exhausted in-session candidate budget must never be silently absorbed
+    # into an otherwise-healthy status. `False`/`None` for every other lane
+    # and for a Camera Node session that has never hit this. Raw counters
+    # (configured budget, consumed count, activation identity, exhaustion
+    # timestamp) remain in `advanced` only -- this is the one plain-language
+    # fact the basic UI may show.
+    candidate_authority_exhausted: bool = False
+    candidate_authority_message: str | None = None
     counts: ObservationSessionCounts = Field(default_factory=ObservationSessionCounts)
     advanced: dict[str, object] = Field(default_factory=dict)
 

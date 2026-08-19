@@ -125,7 +125,7 @@ def _create_visit(
     proposal` -- returns `(visit_id, identification_media_asset_id,
     same_frame_media_asset_id_or_None)`."""
 
-    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, now=NOW)
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
     items = [
         CandidateEvidenceItem(
             engine_media_id="shadow-burst:hash-1",

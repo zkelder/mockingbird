@@ -89,6 +89,7 @@ from time import perf_counter
 from typing import Callable, Protocol
 
 from mockingbird.monitoring.exposure_history import exposure_close_reason_for_transition
+from mockingbird.observation.acceptance_recorder import AcceptanceRecorderConfig, BoundedFrameSampleRecorder
 from mockingbird.observation.camera_node_live import (
     CameraNodeAnalysisSource,
     CameraNodeHttpTransport,
@@ -266,6 +267,17 @@ class ObservationEngineSessionStatus:
     stopped_at: datetime | None = None
     stopped_reason: str | None = None
     last_candidate_visit_id: str | None = None
+    # Visit Authority Budget + Ambiguous-Boundary Recall Closure v1: truthful,
+    # plain-language-adjacent health facts distinct from `message`/
+    # `engine_message` (which stay reserved for camera/engine subsystem
+    # problems, per the existing "headline whichever subsystem is actually
+    # blocking" convention) -- this session can be genuinely `observing` and
+    # `engine_available` while still unable to create any further Visit.
+    # `False`/`None` for every session that has never hit this. See
+    # docs/candidate-visit-authority-contract.md "Health/diagnostic truth
+    # for budget exhaustion."
+    candidate_authority_exhausted: bool = False
+    candidate_authority_message: str | None = None
     counts: ObservationEngineCounts = field(default_factory=ObservationEngineCounts)
     advanced: dict[str, object] = field(default_factory=dict)
 
@@ -445,6 +457,7 @@ class _EngineSession:
         automatic_identification_assist: AutomaticReviewIdentificationAssist | None = None,
         analysis_stream_retry_policy: AnalysisStreamRetryPolicy | None = None,
         clock: Callable[[], datetime] | None = None,
+        acceptance_recorder: BoundedFrameSampleRecorder | None = None,
     ) -> None:
         self.stream_id = stream_id
         self._playback_config = playback_config
@@ -456,6 +469,12 @@ class _EngineSession:
         self._live_camera_sessions = live_camera_sessions
         self._automatic_identification_assist = automatic_identification_assist
         self._retry_policy = analysis_stream_retry_policy or AnalysisStreamRetryPolicy()
+        # Independent biological-encounter denominator (Visit Authority
+        # Budget + Ambiguous-Boundary Recall Closure v1): `None` unless a
+        # caller explicitly supplies one -- off by default for every normal
+        # product Start, matching "do not create a large recording
+        # subsystem." See docs/independent-encounter-denominator-design.md.
+        self._acceptance_recorder = acceptance_recorder
         # Today Coverage Truth v1: injectable only for tests (mirrors
         # `DurableMonitoringSupervisor`'s own `clock` parameter, the
         # existing convention for deterministically testing bounded-cadence
@@ -490,6 +509,19 @@ class _EngineSession:
         self._counts = ObservationEngineCounts()
         self._suppressed: dict[str, int] = {}
         self._last_candidate_visit_id: str | None = None
+        # Visit Authority Budget + Ambiguous-Boundary Recall Closure v1: a
+        # candidate budget legitimately running out mid-session must be
+        # truthfully surfaced, not silently absorbed into the generic
+        # suppressed-reasons diagnostic alone (see "Health/diagnostic truth
+        # for budget exhaustion" in docs/candidate-visit-authority-
+        # contract.md). Sticky for the lifetime of this running session,
+        # matching `blocked_session_limit`'s own permanent-for-this-
+        # activation-window semantics (`candidate_visit_authority.
+        # RETRYABLE_OUTCOMES` excludes it) -- once true, stays true until
+        # this session stops (a fresh Start gets a fresh activation boundary
+        # and therefore a fresh flag).
+        self._candidate_authority_exhausted = False
+        self._candidate_authority_message: str | None = None
         self._advanced: dict[str, object] = {}
         # Rejected / Suppressed Detection Attribution v1 (see
         # docs/rejected-detection-attribution-contract.md): one bounded,
@@ -528,7 +560,9 @@ class _EngineSession:
         try:
             repository = self._repository_factory()
             try:
-                repository.set_observation_authority_mode(ObservationAuthorityMode.shadow)
+                repository.set_observation_authority_mode(
+                    ObservationAuthorityMode.shadow, stream_id=self.stream_id,
+                )
             finally:
                 repository.close()
         except Exception:  # pragma: no cover - defensive: stop must never raise
@@ -582,6 +616,8 @@ class _EngineSession:
                 stopped_at=self._stopped_at,
                 stopped_reason=self._stopped_reason,
                 last_candidate_visit_id=self._last_candidate_visit_id,
+                candidate_authority_exhausted=self._candidate_authority_exhausted,
+                candidate_authority_message=self._candidate_authority_message,
                 counts=counts,
                 advanced=advanced,
             )
@@ -709,7 +745,19 @@ class _EngineSession:
 
         repository = self._repository_factory()
         try:
-            activation = repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit)
+            # `fresh_session=True`: this call happens exactly once per real
+            # "Start observing" action (a brand-new `_EngineSession`, only
+            # ever constructed when no session for this Stream is already
+            # active -- see `ObservationEngineSessionManager.start`), so it
+            # always establishes a fresh candidate-authority activation
+            # boundary for *this Stream*, even if a prior process crash or
+            # redeploy left this Stream's own persisted mode stuck at
+            # `candidate_visit` without ever reaching `stop()`'s kill switch.
+            # See "Fresh-session activation" in
+            # docs/candidate-visit-authority-contract.md.
+            activation = repository.set_observation_authority_mode(
+                ObservationAuthorityMode.candidate_visit, stream_id=self.stream_id, fresh_session=True,
+            )
             with self._state_lock:
                 self._advanced["activation_boundary_at"] = (
                     activation.activation_boundary_at.isoformat()
@@ -865,6 +913,15 @@ class _EngineSession:
                         for packet in result.frame_packets:
                             if packet.source_offset_ms is not None:
                                 latest_known_offset_ms = max(latest_known_offset_ms, packet.source_offset_ms)
+                            if self._acceptance_recorder is not None:
+                                # Independent biological-encounter denominator
+                                # (see docs/independent-encounter-denominator-
+                                # design.md): a capability-safe tee of the
+                                # exact already-decoded bytes this session
+                                # itself just used for inference -- no new
+                                # capture connection, no influence on any
+                                # detection/tracking/admission decision below.
+                                self._acceptance_recorder.maybe_record(packet)
                     with self._state_lock:
                         self._counts = ObservationEngineCounts(
                             track_updates_observed=len(all_track_updates),
@@ -942,7 +999,9 @@ class _EngineSession:
             # additional safeguard for a thread that fails to join in time,
             # not the only place this happens.
             try:
-                repository.set_observation_authority_mode(ObservationAuthorityMode.shadow)
+                repository.set_observation_authority_mode(
+                    ObservationAuthorityMode.shadow, stream_id=self.stream_id,
+                )
             except Exception:  # pragma: no cover - defensive: cleanup must never raise
                 pass
             repository.close()
@@ -1239,6 +1298,21 @@ class _EngineSession:
                     "blocked_privacy_zone", "blocked_missing_evidence", "blocked_scene_confusor_suspected", "failed",
                 }:
                     self._suppressed[outcome.outcome] = self._suppressed.get(outcome.outcome, 0) + 1
+                if outcome.outcome == "blocked_session_limit" and not self._candidate_authority_exhausted:
+                    # Legitimate, in-session budget exhaustion (see "Health/
+                    # diagnostic truth for budget exhaustion" in
+                    # docs/candidate-visit-authority-contract.md) -- truthful
+                    # and sticky for the rest of this running session,
+                    # matching `blocked_session_limit`'s own permanent-for-
+                    # this-activation-window semantics. Never raw internal
+                    # counters here (those stay in `advanced`); a plain-
+                    # language fact plus the one safe, always-correct action.
+                    self._candidate_authority_exhausted = True
+                    self._candidate_authority_message = (
+                        "This session has reached its automatic Visit-creation limit for now. "
+                        "Existing Visits are unaffected. Stop and start observation again to "
+                        "resume creating new Visits."
+                    )
             # Automatic Species Suggestion v1: a durably-created candidate
             # Visit (evidence already committed by `create_candidate_visit_
             # from_proposal` before `attempt_candidate` returned above) is
@@ -1252,8 +1326,36 @@ class _EngineSession:
                 self._schedule_automatic_identification(outcome.visit_id)
 
 
-_MAX_CACHED_BURST_BYTES = 8
-_MAX_CACHED_SAME_FRAME_BYTES = 8
+# Visit Authority Budget + Ambiguous-Boundary Recall Closure v1: raised from
+# the original 8. Real, evidenced 2026-08-19 field defect: reconstructing
+# both missed strong encounters against the real captured counterfactual
+# ledger found the proposal that actually escaped `blocked_ambiguous_
+# boundary` (either never ambiguous, or an arbitration winner) still
+# permanently failed at evidence admission (`reject_no_identification_or_
+# context`/`blocked_missing_evidence`) in both clusters -- not because no
+# evidence was ever captured, but because this session-global cache,
+# evicted purely by insertion count with no awareness of which pending
+# proposal still needs which bytes, had already cycled past it. A proposal
+# legitimately delayed by ambiguous-boundary/continuation-pending
+# resolution (which can span the full `VisitAssemblyConfiguration.
+# ambiguous_gap_ms`, 45s, or longer for a still-growing cluster) can easily
+# have its own already-captured evidence evicted by unrelated activity
+# elsewhere in a busy real stream before its own delayed admission attempt
+# ever runs -- confirmed directly:
+# `test_delayed_proposal_still_finds_its_evidence_after_unrelated_cache_
+# churn` in tests/test_engine_runtime.py reproduces the exact real failure
+# shape with the old bound and stays fixed with this one. This is a
+# capacity fix, not an evidence-quality threshold change -- every quality
+# requirement `candidate_quality_gate.evaluate_evidence_admission` already
+# enforces (a real, decodable, geometrically-valid identification/context
+# candidate) is completely unchanged; this only keeps evidence that was
+# already judged sufficient from vanishing before its own legitimately-
+# delayed admission attempt runs. 32 is a deliberately generous multiple of
+# the old bound (real cluster generation counts measured 34 and 40 within a
+# single encounter), while remaining a small, bounded in-memory footprint
+# (each cached image is a source-resolution JPEG, never unbounded).
+_MAX_CACHED_BURST_BYTES = 32
+_MAX_CACHED_SAME_FRAME_BYTES = 32
 
 
 def _harvest_burst_bytes(
@@ -1319,6 +1421,7 @@ class ObservationEngineSessionManager:
         automatic_identification_assist: AutomaticReviewIdentificationAssist | None = None,
         analysis_stream_retry_policy: AnalysisStreamRetryPolicy | None = None,
         clock: Callable[[], datetime] | None = None,
+        acceptance_recording_root: Path | None = None,
     ) -> None:
         self._repository_factory = repository_factory
         self._provider_loader = provider_loader
@@ -1330,6 +1433,16 @@ class ObservationEngineSessionManager:
         # `_EngineSession` this manager constructs -- see `_EngineSession
         # .__init__`'s own `clock` docstring.
         self._clock = clock
+        # Independent biological-encounter denominator (Visit Authority
+        # Budget + Ambiguous-Boundary Recall Closure v1): `None` unless the
+        # process was explicitly configured with `MOCKINGBIRD_ACCEPTANCE_
+        # RECORDING_DIR` (see `main.get_observation_engine_session_manager`)
+        # -- off by default for every normal product Start. When set, every
+        # new `_EngineSession` this manager creates gets its own bounded
+        # recorder writing to a fresh, stream- and start-time-scoped
+        # subdirectory, so concurrent/repeated Streams/sessions never
+        # collide or overwrite each other's manifest.
+        self._acceptance_recording_root = acceptance_recording_root
         self._lock = threading.RLock()
         self._sessions: dict[str, _EngineSession] = {}
 
@@ -1347,10 +1460,16 @@ class ObservationEngineSessionManager:
                 return existing.snapshot()
             if existing is not None:
                 existing.stop()
+            acceptance_recorder = None
+            if self._acceptance_recording_root is not None:
+                started_at = (self._clock or (lambda: datetime.now(UTC)))()
+                session_dir = self._acceptance_recording_root / stream_id / started_at.strftime("%Y%m%dT%H%M%SZ")
+                acceptance_recorder = BoundedFrameSampleRecorder(AcceptanceRecorderConfig(output_dir=session_dir))
             session = _EngineSession(
                 stream_id=stream_id,
                 playback_config=playback_config,
                 provider_config_path=resolve_provider_config_path(provider_config_path),
+                acceptance_recorder=acceptance_recorder,
                 privacy_ignore_regions=privacy_ignore_regions,
                 repository_factory=self._repository_factory,
                 provider_loader=self._provider_loader,

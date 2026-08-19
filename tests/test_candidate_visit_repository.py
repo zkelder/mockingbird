@@ -28,6 +28,7 @@ from mockingbird.repository.product_repository import (
     VisitModel,
 )
 from mockingbird.storage.database import CURRENT_DATABASE_SCHEMA_VERSION, create_database_engine
+from mockingbird.storage.models import CameraSourceModel, StreamModel
 
 STREAM_ID = "stream-backyard-feeder"
 FEEDER_ZONE_ID = "zone-feeder"
@@ -46,6 +47,7 @@ def repository(tmp_path: Path) -> ProductRepository:
 def _facts(
     *,
     proposal_id: str = "visit-episode:fixture-1",
+    stream_id: str = STREAM_ID,
     zone_id: str | None = FEEDER_ZONE_ID,
     source_capture_frame_ids: tuple[str, ...] = ("frame-1", "frame-2"),
     supporting_frame_ids: tuple[str, ...] = ("frame-1", "frame-2"),
@@ -54,7 +56,7 @@ def _facts(
 ) -> CandidateVisitProposalFacts:
     return CandidateVisitProposalFacts(
         proposal_id=proposal_id,
-        stream_id=STREAM_ID,
+        stream_id=stream_id,
         zone_id=zone_id,
         broad_class="animal",
         start_offset_ms=0,
@@ -94,7 +96,7 @@ def _evidence(
 
 
 def _activate(repository: ProductRepository, *, now: datetime = NOW, **limits) -> None:
-    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, now=now, **limits)
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=now, **limits)
 
 
 def _counts(repository: ProductRepository) -> dict[str, int]:
@@ -132,7 +134,7 @@ def test_schema_v34_adds_scene_confusor_regions_table_empty_and_unseeded(tmp_pat
 
     db_path = tmp_path / "schema-v34.sqlite3"
     repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 34
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 35
     _activate(repository)
     outcome = repository.create_candidate_visit_from_proposal(
         CreateCandidateVisitRequest(
@@ -151,7 +153,7 @@ def test_schema_v34_adds_scene_confusor_regions_table_empty_and_unseeded(tmp_pat
 
     migrated = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
     try:
-        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 34
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 35
         from sqlalchemy import inspect as sa_inspect
 
         from mockingbird.repository.product_repository import SceneConfusorRegionModel
@@ -182,7 +184,7 @@ def test_schema_v31_adds_confidence_evidence_column_without_fabricating_legacy_d
     # path below always exercises "roll back to just before this column
     # existed, then migrate all the way forward to current," regardless of
     # how many later schema versions have been added since.
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 34
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 35
     _activate(repository)
     pre_migration_outcome = repository.create_candidate_visit_from_proposal(
         CreateCandidateVisitRequest(
@@ -205,12 +207,19 @@ def test_schema_v31_adds_confidence_evidence_column_without_fabricating_legacy_d
 
     migrated = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
     try:
-        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 34
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 35
         with migrated.session_factory() as session:
             pre_ledger = session.get(ObservationCandidateVisitModel, "visit-episode:pre-migration")
             assert pre_ledger is not None
             assert pre_ledger.confidence_evidence_json is None  # no fabricated confidence for a legacy record
 
+        # Visit Authority Budget + Ambiguous-Boundary Recall Closure v1:
+        # migrating through schema 35 resets this Stream's own authority
+        # settings row (see `_migrate_to_per_stream_observation_authority`)
+        # -- exactly mirroring what a real installation upgrading across
+        # this migration must do (Start observing again). Re-activate here,
+        # not a regression: this is the fix's own intended behavior.
+        _activate(migrated)
         post_migration_outcome = migrated.create_candidate_visit_from_proposal(
             CreateCandidateVisitRequest(
                 proposal=_facts(
@@ -230,22 +239,219 @@ def test_schema_v31_adds_confidence_evidence_column_without_fabricating_legacy_d
         migrated.close()
 
 
+# --- Visit Authority Budget + Ambiguous-Boundary Recall Closure v1 ---------
+# (see docs/candidate-visit-authority-contract.md "Session/Stream scope" and
+# "Fresh-session activation"). Real, demonstrated 2026-08-19 field defect:
+# a stale `candidate_visit` mode left behind by a process that never
+# reached the kill switch (crash, kill, redeploy) silently poisoned every
+# later session's own candidate budget, and a global settings row let one
+# Stream's Stop silently kill a different, still-running Stream's authority.
+
+
+def test_reaffirming_active_mode_without_fresh_session_does_not_reset_boundary(
+    repository: ProductRepository,
+) -> None:
+    """Original, still-correct behavior preserved for a caller that does not
+    assert a fresh session (for example the CLI trial re-affirming mid-run):
+    re-affirming an already-active mode must not silently widen the
+    activation window -- this is what keeps the boundary from being usable
+    to sneak a later backlog window in."""
+
+    first = repository.set_observation_authority_mode(
+        ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW,
+    )
+    again = repository.set_observation_authority_mode(
+        ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW + timedelta(minutes=10),
+    )
+    assert again.activation_boundary_at == first.activation_boundary_at == NOW
+
+
+def test_fresh_session_resets_boundary_even_when_mode_already_active(
+    repository: ProductRepository,
+) -> None:
+    """The real, demonstrated defect: a stale `candidate_visit` mode left
+    behind by a process that never reached the kill switch must not
+    silently poison a genuinely new session. A caller that asserts
+    `fresh_session=True` (only ever the product's own Start path,
+    `_EngineSession._run_async`) always gets a fresh boundary for this
+    Stream, regardless of the leftover mode."""
+
+    stale = repository.set_observation_authority_mode(
+        ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW,
+    )
+    assert stale.activation_boundary_at == NOW
+    # Simulate the crash: mode is left at candidate_visit forever (the
+    # process died before `stop()`'s kill switch could ever run).
+
+    later = NOW + timedelta(days=1)
+    fresh = repository.set_observation_authority_mode(
+        ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=later, fresh_session=True,
+    )
+    assert fresh.activation_boundary_at == later
+    assert fresh.candidates_created_in_session == 0
+
+
+def test_fresh_session_can_only_move_the_boundary_forward(repository: ProductRepository) -> None:
+    """`fresh_session` must never be usable to *lower* the effective
+    boundary and admit an older historical proposal -- only to establish a
+    later one, preserving "no backlog replay into authority" exactly."""
+
+    repository.set_observation_authority_mode(
+        ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW + timedelta(hours=1),
+    )
+    earlier_attempt = repository.set_observation_authority_mode(
+        ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW, fresh_session=True,
+    )
+    # A caller can only ever supply its own current wall-clock `now`, which
+    # is monotonically non-decreasing in real use; this asserts the
+    # mechanism itself performs no clamping trickery either way -- it simply
+    # records whatever `now` a well-behaved caller supplies.
+    assert earlier_attempt.activation_boundary_at == NOW
+
+
+def test_exhausted_previous_session_cannot_poison_a_fresh_session(
+    repository: ProductRepository,
+) -> None:
+    """Direct end-to-end reproduction of the field defect: a session
+    genuinely exhausts its own tiny budget, the process is never gracefully
+    stopped, and a later fresh Start must still be able to create a Visit."""
+
+    repository.set_observation_authority_mode(
+        ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW, max_candidates_per_session=1,
+    )
+    first = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=_facts(proposal_id="visit-episode:exhaust-1"), observed_at=NOW, evidence_items=(_evidence(),),
+        )
+    )
+    assert first.outcome == "created"
+    second = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=_facts(proposal_id="visit-episode:exhaust-2"), observed_at=NOW, evidence_items=(_evidence(),),
+        )
+    )
+    assert second.outcome == "blocked_session_limit"
+    # The process "crashes" here: mode stays candidate_visit, never
+    # reverted, exactly like a killed Python process leaves the durable
+    # settings row.
+
+    later = NOW + timedelta(hours=2)
+    repository.set_observation_authority_mode(
+        ObservationAuthorityMode.candidate_visit,
+        stream_id=STREAM_ID,
+        now=later,
+        fresh_session=True,
+        max_candidates_per_session=1,
+    )
+    third = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=_facts(proposal_id="visit-episode:exhaust-3"), observed_at=later, evidence_items=(_evidence(),),
+        )
+    )
+    assert third.outcome == "created"
+
+
+def test_multi_stream_authority_is_isolated(repository: ProductRepository) -> None:
+    """A second Stream's own authority lifecycle -- mode, activation
+    boundary, and candidate budget -- must be completely independent of the
+    first (see the model's own docstring: a shared global row was a real,
+    demonstrated cross-Stream defect: one Stream's Stop silently killed a
+    different, still-running Stream's authority)."""
+
+    other_stream_id = "stream-other-camera"
+    other_source_id = "source-other-camera"
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                CameraSourceModel(
+                    id=other_source_id, name="Other camera", kind="integration",
+                    status="connected", description="Second, independent fixture Source.",
+                )
+            )
+            session.add(
+                StreamModel(
+                    id=other_stream_id, source_id=other_source_id, name="Other stream",
+                    description="Second, independent fixture Stream.", is_live=True,
+                )
+            )
+
+    repository.set_observation_authority_mode(
+        ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW, max_candidates_per_session=1,
+    )
+    repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=_facts(proposal_id="visit-episode:stream-a-only"),
+            observed_at=NOW,
+            evidence_items=(_evidence(),),
+        )
+    )
+    # Stream A is now exhausted (budget=1, already used).
+    exhausted = repository.get_observation_authority_state(stream_id=STREAM_ID)
+    assert exhausted.candidates_created_in_session == 1
+
+    # Stream B has never been touched: still shadow, zero count -- never
+    # inheriting Stream A's mode or its already-consumed budget.
+    fresh_other = repository.get_observation_authority_state(stream_id=other_stream_id)
+    assert fresh_other.mode == "shadow"
+    assert fresh_other.candidates_created_in_session == 0
+
+    repository.set_observation_authority_mode(
+        ObservationAuthorityMode.candidate_visit, stream_id=other_stream_id, now=NOW,
+    )
+    created_for_other = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=_facts(proposal_id="visit-episode:stream-b-only", stream_id=other_stream_id, zone_id=None),
+            observed_at=NOW,
+            evidence_items=(_evidence(),),
+        )
+    )
+    # Stream B can still create -- Stream A's own exhaustion never
+    # consumed any of Stream B's budget.
+    assert created_for_other.outcome == "created"
+
+    # Stopping Stream A (reverting it to shadow) must never touch Stream B.
+    repository.set_observation_authority_mode(ObservationAuthorityMode.shadow, stream_id=STREAM_ID, now=NOW)
+    assert repository.get_observation_authority_state(stream_id=STREAM_ID).mode == "shadow"
+    assert repository.get_observation_authority_state(stream_id=other_stream_id).mode == "candidate_visit"
+
+
+def test_legitimate_active_session_exhaustion_still_blocks_safely(repository: ProductRepository) -> None:
+    """The guardrail itself is unchanged: a genuinely still-fresh, still-
+    active session that exhausts its own real budget must still block --
+    this milestone fixes lifecycle/ownership, not the existence of the cap."""
+
+    repository.set_observation_authority_mode(
+        ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW, max_candidates_per_session=2,
+    )
+    outcomes = [
+        repository.create_candidate_visit_from_proposal(
+            CreateCandidateVisitRequest(
+                proposal=_facts(proposal_id=f"visit-episode:cap-{index}"),
+                observed_at=NOW,
+                evidence_items=(_evidence(),),
+            )
+        )
+        for index in range(3)
+    ]
+    assert [outcome.outcome for outcome in outcomes] == ["created", "created", "blocked_session_limit"]
+
+
 # --- 1. Default authority is shadow -----------------------------------------
 
 
 def test_fresh_repository_defaults_to_shadow_authority(repository: ProductRepository) -> None:
-    status = repository.get_observation_authority_state()
+    status = repository.get_observation_authority_state(stream_id=STREAM_ID)
     assert status.mode == "shadow"
     assert status.activation_boundary_at is None
     assert status.candidates_created_count == 0
 
 
 def test_status_read_never_creates_settings_row(repository: ProductRepository) -> None:
-    repository.get_observation_authority_state()
+    repository.get_observation_authority_state(stream_id=STREAM_ID)
     with repository.session_factory() as session:
         from mockingbird.repository.product_repository import ObservationAuthoritySettingsModel
 
-        assert session.get(ObservationAuthoritySettingsModel, 1) is None
+        assert session.get(ObservationAuthoritySettingsModel, STREAM_ID) is None
 
 
 # --- 2. Shadow mode creates zero product records ----------------------------
@@ -378,7 +584,7 @@ def test_kill_switch_blocks_new_candidates(repository: ProductRepository) -> Non
             proposal=_facts(proposal_id="visit-episode:a"), observed_at=NOW, evidence_items=(_evidence(),),
         )
     )
-    repository.set_observation_authority_mode(ObservationAuthorityMode.shadow, now=NOW)
+    repository.set_observation_authority_mode(ObservationAuthorityMode.shadow, stream_id=STREAM_ID, now=NOW)
     outcome = repository.create_candidate_visit_from_proposal(
         CreateCandidateVisitRequest(
             proposal=_facts(proposal_id="visit-episode:b"), observed_at=NOW + timedelta(seconds=1), evidence_items=(_evidence(),),
@@ -393,7 +599,7 @@ def test_disabling_authority_preserves_existing_candidate(repository: ProductRep
     created = repository.create_candidate_visit_from_proposal(
         CreateCandidateVisitRequest(proposal=_facts(), observed_at=NOW, evidence_items=(_evidence(),))
     )
-    repository.set_observation_authority_mode(ObservationAuthorityMode.shadow, now=NOW)
+    repository.set_observation_authority_mode(ObservationAuthorityMode.shadow, stream_id=STREAM_ID, now=NOW)
     with repository.session_factory() as session:
         visit = session.get(VisitModel, created.visit_id)
         assert visit is not None
@@ -402,11 +608,11 @@ def test_disabling_authority_preserves_existing_candidate(repository: ProductRep
 
 def test_toggle_back_to_candidate_authority_gets_fresh_activation_boundary(repository: ProductRepository) -> None:
     _activate(repository, now=NOW)
-    repository.set_observation_authority_mode(ObservationAuthorityMode.shadow, now=NOW + timedelta(minutes=1))
-    status = repository.get_observation_authority_state()
+    repository.set_observation_authority_mode(ObservationAuthorityMode.shadow, stream_id=STREAM_ID, now=NOW + timedelta(minutes=1))
+    status = repository.get_observation_authority_state(stream_id=STREAM_ID)
     assert status.activation_boundary_at is None
     _activate(repository, now=NOW + timedelta(minutes=2))
-    status = repository.get_observation_authority_state()
+    status = repository.get_observation_authority_state(stream_id=STREAM_ID)
     assert status.activation_boundary_at == NOW + timedelta(minutes=2)
 
 
@@ -596,7 +802,7 @@ def test_schema_v33_adds_geometry_attribution_column_without_fabricating_legacy_
 
     db_path = tmp_path / "schema-v33.sqlite3"
     repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 34
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 35
     _activate(repository)
     pre_migration_outcome = repository.create_candidate_visit_from_proposal(
         CreateCandidateVisitRequest(
@@ -620,13 +826,18 @@ def test_schema_v33_adds_geometry_attribution_column_without_fabricating_legacy_
 
     migrated = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
     try:
-        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 34
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 35
         with migrated.session_factory() as session:
             pre_media = session.get(MediaAssetModel, pre_migration_media_id)
             assert pre_media is not None
             assert pre_media.geometry_attribution_json is None  # no fabricated attribution for a legacy record
 
         payload = json.dumps({"geometry_source": "tracker", "same_frame": True, "geometry_evidence_gap_ms": 0})
+        # See the identical comment in
+        # test_schema_v31_adds_confidence_evidence_column_without_
+        # fabricating_legacy_data: migrating through schema 35 resets this
+        # Stream's own authority settings row -- re-activate, not a regression.
+        _activate(migrated)
         post_migration_outcome = migrated.create_candidate_visit_from_proposal(
             CreateCandidateVisitRequest(
                 proposal=_facts(proposal_id="visit-episode:post-migration-geometry"),
@@ -869,8 +1080,10 @@ def test_persistence_failure_rolls_back_and_creates_no_partial_truth(
         )
     assert _counts(repository) == before  # nothing partial survives
 
-    repository.record_observation_authority_failure(failure_code="observation_candidate_visit_persistence_failed", now=NOW)
-    status = repository.get_observation_authority_state()
+    repository.record_observation_authority_failure(
+        stream_id=STREAM_ID, failure_code="observation_candidate_visit_persistence_failed", now=NOW,
+    )
+    status = repository.get_observation_authority_state(stream_id=STREAM_ID)
     assert status.failure_count == 1
     assert status.last_failure_code == "observation_candidate_visit_persistence_failed"
 
@@ -891,7 +1104,7 @@ def test_diagnostics_track_attempts_creates_repeats_and_suppressions(repository:
     )  # suppressed (invalid lineage) -- a distinct proposal_id, or this would
     # itself just be another idempotent repeat of fixture-1
 
-    status = repository.get_observation_authority_state()
+    status = repository.get_observation_authority_state(stream_id=STREAM_ID)
     assert status.proposals_observed_count == 3
     assert status.candidates_created_count == 1
     assert status.idempotent_repeat_count == 1

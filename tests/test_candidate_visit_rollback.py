@@ -62,7 +62,7 @@ def _create(repository: ProductRepository, proposal_id: str, observed_at: dateti
 
 def test_full_rollback_drill(repository: ProductRepository) -> None:
     # --- Setup: authority active, two genuine candidates created ---------
-    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, now=NOW)
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
     first = _create(repository, "visit-episode:rollback-a", NOW)
     second = _create(repository, "visit-episode:rollback-b", NOW + timedelta(seconds=1))
     assert first.outcome == "created"
@@ -78,7 +78,7 @@ def test_full_rollback_drill(repository: ProductRepository) -> None:
     assert reviewed_snapshot_before.review_status.value == "reviewed"
 
     # --- Step 1: disable candidate authority (the kill switch) -----------
-    status = repository.set_observation_authority_mode(ObservationAuthorityMode.shadow, now=NOW + timedelta(seconds=2))
+    status = repository.set_observation_authority_mode(ObservationAuthorityMode.shadow, stream_id=STREAM_ID, now=NOW + timedelta(seconds=2))
     assert status.mode == "shadow"
     assert status.activation_boundary_at is None
 

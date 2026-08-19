@@ -1080,6 +1080,11 @@ export interface ObservationSessionStatus {
   /** True only for the existing live-monitoring lane's own bounded
    * runtime/retry action. */
   retry_action: boolean;
+  /** True only while a Camera Node session is genuinely `observing` but its
+   * own in-session candidate budget has been reached -- existing Visits are
+   * unaffected, but no further Visit can be created until Stop/Start. */
+  candidate_authority_exhausted: boolean;
+  candidate_authority_message?: string | null;
   counts: ObservationSessionCounts;
   advanced: Record<string, unknown>;
 }
