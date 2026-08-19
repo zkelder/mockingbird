@@ -499,9 +499,61 @@ analytics; unknown and abstained outcomes are valid.
   (correctly functioning) arbitration mechanism** -- soundly verified by
   synthetic reproduction of the real failure shape and zero regression
   across every replayed cohort, but not yet confirmed by a live encounter
-  of the same shape; one more bounded field session (no code change
-  expected first) is the concrete next gate before this piece of
-  observational quality can close.
+  of the same shape at the time. **End-to-End Bird Encounter Recall
+  Closure v1 (above) has since supplied exactly that live encounter --
+  twice, with full counterfactual-ledger traces -- and found the fix's own
+  32-entry bound was not yet enough under a busier real session's load;
+  raised to 128 and RED/GREEN-verified against this session's own real
+  failure shape.** The concrete next gate is now the *raised* bound's own
+  live re-proof under real conditions (no code change expected first,
+  exactly mirroring how this milestone was itself the live-proof follow-up
+  for the fix that preceded it) -- plus, separately and at lower priority,
+  the newly-diagnosed (not yet fixed) duplicate-Visit pattern from
+  temporally-overlapping tracker generations, a known, deliberately
+  conservative `visit_episode_assembler` design boundary rather than an
+  undiscovered bug.
+- **End-to-End Bird Encounter Recall Closure v1** (2026-08-19) asked the question every prior
+  Phase 1 field-acceptance session had approached only indirectly: of the birds actually
+  present in front of the real paired Camera Node, how many did MockingBird notice and turn
+  into one truthful Visit? Built a genuinely independent biological-encounter denominator (a
+  reconfigured, denser-cadence `acceptance_recorder` -- three new, individually optional env
+  vars widen its cadence/bounds for one explicitly-scoped field session, unset for every
+  ordinary process) and reviewed it *before* opening the product's own Visit list, correcting
+  itself once already (a full-frame-only first pass missed a bird perched on a thin hook and
+  birds mid-flight; a zoom re-pass, applied to every real candidate timestamp, recovered
+  both -- the same "contact sheets -> crop sheets" lesson Observational Quality Closure v1
+  first taught, independently re-confirmed). A real ~92-minute session (busier than every
+  prior one: 21 candidates, 227 proposals, 1336 evidence candidates) produced a conservative
+  22-genuine-encounter independent denominator (bird-only this session; no hummingbird
+  sighting occurred). End-to-end recall: 15/22 (68.2%, a disclosed ceiling -- the one
+  multi-visit cluster is counted at its conservative minimum) became a Visit; detector
+  localization succeeded 17/19 lineage-available times (89.5%); every detector-localized,
+  tracked subject went on to form a viable proposal (100%). Precision is now genuinely strong
+  -- 2/21 created Visits independently confirmed false (9.5%), down from 52.9%/57.1% in the
+  two immediately-preceding large cohorts -- and Scene Confusor Suppression v1 fired zero
+  times against a third real session, continuing its clean recall-safety record. The dominant,
+  quantified, *material* loss stage was not the detector (one clean miss, n=1) but evidence
+  admission: this session's own required fresh field validation found and proved -- with full
+  counterfactual-ledger traces and RED/GREEN regression evidence, not guesswork -- that the
+  prior milestone's evidence-cache fix (`_MAX_CACHED_BURST_BYTES`/`_MAX_CACHED_SAME_FRAME_
+  BYTES`, 8->32) was *still insufficient* under this busier real session's own load: two
+  genuine, strong (0.816/0.815 confidence), well-tracked birds, legitimately delayed by
+  `blocked_continuation_pending` resolution (183.5s and ~34s), still lost their own
+  already-captured evidence before their delayed admission attempt ran. Raised to 128 (the
+  same relative 4x jump the original fix used, sized against this session's own measured
+  evidence-candidate rate) -- disclosed as still a capacity bound, not a structural fix (a
+  pending-proposal-aware eviction policy would close the gap for an arbitrarily busier session,
+  left as a follow-up). Also found and diagnosed, but explicitly did not fix, two duplicate-
+  Visit cases (one real sighting each producing 2-3 Visits, one with inconsistent species
+  labels) traced to `visit_episode_assembler`'s own deliberate, documented non-merge of
+  temporally-overlapping tracklets -- a known conservative design boundary this milestone's own
+  governing constraints protect from casual change, not an undiscovered bug. See
+  [end-to-end-bird-encounter-recall-closure-v1-report.md](end-to-end-bird-encounter-recall-closure-v1-report.md)
+  for the complete evidence, the full encounter-by-encounter funnel, and every number. Decision:
+  **B -- one bounded pipeline recall defect remains** -- found, evidenced, and fixed this same
+  milestone (evidence-cache capacity), with the fix's own live re-proof (mirroring exactly what
+  this milestone itself was the live-proof follow-up for) now the concrete next gate; detector
+  quality and denominator methodology are both confirmed sound.
 - **Explicitly deferred:** Phases 2 and 5-8 below do not start in earnest
   until Phase 1's exit gate is met, except where already-shipped Phase 3/4
   capability (Today in Your Yard v1, Phase 27A packaging) or Phase-1-
