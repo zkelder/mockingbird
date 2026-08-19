@@ -280,6 +280,71 @@ analytics; unknown and abstained outcomes are valid.
   genuine encounter recall, Visit-continuity correctness, detector choice,
   and resolution-aware species decisions are all confirmed sound by fresh,
   independent evidence.
+- **Persistent Scene Confusor Suppression + Recall-Safe Field Validation v1**
+  (2026-08-19) closed the admission-precision gap the milestone above left
+  open. Independently re-derived five of that milestone's own six named
+  confusor clusters from real box geometry alone (several matching to two
+  decimal places) without reading the original per-event labels first; the
+  sixth ("second feeder-adjacent spot... several high-confidence House
+  Finch") did not reproduce as a clean cluster on fresh, independent
+  re-examination -- it is a genuinely popular real feeder-perch location
+  with substantial real bird activity intermixed, exactly the "bird near
+  feeder silhouette" special case this milestone's own governing
+  constraints warn about by name, now directly evidenced rather than
+  hypothetical. Compared raw detector confidence, motion/track
+  displacement, geometry persistence, and evidence-crop behavior explicitly
+  and found none of them separates real from false at the single-detection/
+  single-track/single-Visit level; the first stage that does is
+  cross-session recurrence of near-identical geometry with bounded spread,
+  which is why the fix lives at admission rather than the detector,
+  tracker, or evidence-scoring stage. Added one new pure decision module
+  (`mockingbird.observation.scene_confusor`) and one new durable, per-Stream
+  table (`scene_confusor_regions`, schema 34): a candidate whose own
+  persisted evidence geometry closely, repeatedly matches a region this
+  Stream has produced many prior admission attempts from, without ever
+  being confirmed a real animal by reviewed truth, is suspected and blocked
+  -- a third, sibling check alongside the existing `blocked_privacy_zone`.
+  A naive occurrence-count-only version was built and replay-tested first,
+  and found a genuine, demonstrated recall hazard (a real bird near an
+  unrelated, coincidentally-nearby false detection could be wrongly
+  suspected); fixed with a geometry-spread requirement justified by real
+  measured numbers (confirmed-false regions stayed under 0.0045 spread; a
+  real popular perch reached 0.0524 by its 15th occurrence). A second,
+  steady-state stress replay then found that fix's relative confidence
+  escape alone still insufficient for one narrow real case; fixed with a
+  second, absolute escape reusing this codebase's own already-established
+  `strong_detection_threshold`. A real, faithful, end-to-end replay of the
+  actual implemented mechanism against the full historical 70-event cohort
+  found **zero real Visits incorrectly suppressed**, both cold-start (real
+  57.1% -> 53.8% false-Visit rate) and steady-state (35.0% of recurring
+  false positives caught). A fresh ~98-minute live field session against
+  the real Camera Node then ran the mechanism continuously with zero
+  interference against 6 real, cleanly-admitted candidates and zero
+  scene-confusor firings of its own; a forward-looking simulation on that
+  session's own real geometry both confirmed a fresh, concrete confusor
+  example (19/132 real events, one tight low-confidence region) and
+  honestly surfaced one disclosed boundary-tolerance case at a busy real
+  perch, never live-witnessed crossing into unsafe territory. The same
+  fresh session, exactly as intended, also surfaced two findings beyond
+  this milestone's own scope: two long (5.0/8.67-minute), high-confidence
+  (0.889/0.846), heavily-tracked real-seeming encounters were completely
+  missed for reasons unrelated to scene-confusor
+  (`blocked_ambiguous_boundary`/evidence-admission gates, not this
+  milestone's mechanism), and a significant independently-discovered defect -- a global,
+  cross-session, silently-exhaustible candidate-visit authority budget with
+  no UI signal and no reset path -- had to be diagnosed and worked around
+  (zero code change: the existing Stop/Start product action resets it)
+  before the field evidence could be trusted. See
+  [scene-confusor-suspicion-contract.md](scene-confusor-suspicion-contract.md)
+  for the complete mechanism design and real-data justification and
+  [scene-confusor-suppression-v1-report.md](scene-confusor-suppression-v1-report.md)
+  for the complete field evidence and every number. Decision: **B --
+  precision improved but recall/confusor work remains** -- scene-confusor
+  suppression itself is fully evidenced as recall-safe at every layer
+  (replay and live), but the fresh field validation this milestone required
+  surfaced a further, different, bounded observational-quality gap (missed
+  high-confidence encounters via a different admission-gate family) that
+  keeps the broader phase from closing yet.
 - **Remains for this phase:** a 2026-08-10 real end-to-end Camera Node
   session (25.3 minutes, the two just-fixed paths holding up cleanly)
   proved the structural path but found admission *precision* is not yet
@@ -331,12 +396,28 @@ analytics; unknown and abstained outcomes are valid.
   measured from raw detector confidence or species-suggestion confidence
   (see that milestone's own report for the swept thresholds). No narrow,
   deterministic code fix was found that closes this without a larger
-  initiative -- left
-  open deliberately; a persistent, per-Stream, cross-session
-  recurring-geometry confusor-suppression capability is the concrete next
-  gate this evidence points to (bounded like the existing counterfactual
-  ledger, fails closed, shadow-evaluated against real historical false
-  positives and real positive controls before any live change).
+  initiative -- left open deliberately at the time. **Persistent Scene
+  Confusor Suppression + Recall-Safe Field Validation v1 (above) has since
+  built, replay-validated, and field-validated exactly that capability** --
+  a persistent, per-Stream, cross-session recurring-geometry
+  confusor-suppression mechanism, bounded like the existing counterfactual
+  ledger, fails closed, and shown recall-safe by real historical replay
+  (zero real Visits incorrectly suppressed, cold-start and steady-state)
+  plus a real ~98-minute live field session (zero interference with 6 real
+  admissions, zero scene-confusor firings of its own). What that same fresh
+  field session's own required independent validation surfaced instead is
+  the new concrete next gate: two long, high-confidence, real-seeming
+  encounters completely missed for reasons unrelated to scene-confusor
+  (`blocked_ambiguous_boundary`/evidence-admission gates, the same general
+  admission-lifecycle family Admission Recall Investigation + Conditional
+  Fix v1 previously and only partially closed) and one encounter that
+  fragmented into three separate admitted Visits -- both using this
+  session's own two concrete, evidenced examples as starting material for
+  the next Observational Quality milestone, plus a significant,
+  independently-discovered candidate-visit authority budget defect (global,
+  cross-session, silently-exhaustible, no UI signal, no reset path) that
+  should be addressed alongside it since it directly threatens any future
+  field-session methodology, not just this one.
 - **Explicitly deferred:** Phases 2 and 5-8 below do not start in earnest
   until Phase 1's exit gate is met, except where already-shipped Phase 3/4
   capability (Today in Your Yard v1, Phase 27A packaging) or Phase-1-
