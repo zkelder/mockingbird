@@ -1433,6 +1433,20 @@ def launch_release(release_dir: Path, *, host: str, port: int, userdata_dir: Pat
     recording_dir = os.environ.get("MOCKINGBIRD_DEV_ACCEPTANCE_RECORDING_DIR")
     if recording_dir:
         extra_env["MOCKINGBIRD_ACCEPTANCE_RECORDING_DIR"] = recording_dir
+    # End-to-End Bird Encounter Recall Closure v1: same dev-shell-opt-in
+    # forwarding shape as the directory var above, for the three further
+    # optional cadence/bound overrides `acceptance_recorder.
+    # acceptance_recorder_config_from_env` reads (see that function's own
+    # docstring). Unset for every ordinary deploy, including a recording
+    # session that is happy with the recorder's own dataclass defaults.
+    for _dev_env, _product_env in (
+        ("MOCKINGBIRD_DEV_ACCEPTANCE_RECORDING_INTERVAL_MS", "MOCKINGBIRD_ACCEPTANCE_RECORDING_INTERVAL_MS"),
+        ("MOCKINGBIRD_DEV_ACCEPTANCE_RECORDING_MAX_FRAMES", "MOCKINGBIRD_ACCEPTANCE_RECORDING_MAX_FRAMES"),
+        ("MOCKINGBIRD_DEV_ACCEPTANCE_RECORDING_MAX_BYTES", "MOCKINGBIRD_ACCEPTANCE_RECORDING_MAX_BYTES"),
+    ):
+        _value = os.environ.get(_dev_env)
+        if _value:
+            extra_env[_product_env] = _value
     windows_host.launch_release(
         release_dir,
         {

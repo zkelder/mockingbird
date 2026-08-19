@@ -38,6 +38,8 @@ this module under any input.
 from __future__ import annotations
 
 import json
+import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
@@ -52,6 +54,22 @@ ACCEPTANCE_RECORDER_VERSION = "acceptance-recorder-v1"
 # PROVIDER_CONFIG_PATH_ENV`'s own "the env var name lives with the thing it
 # configures" convention).
 ACCEPTANCE_RECORDING_DIR_ENV = "MOCKINGBIRD_ACCEPTANCE_RECORDING_DIR"
+
+# End-to-End Bird Encounter Recall Closure v1: three further, individually
+# optional overrides for the same explicitly-opted-in field-validation
+# session -- never a normal product setting. The milestone that added these
+# needed a denser-than-default cadence ("Target: <= 1 second between
+# independent frames where practical") and a correspondingly larger
+# frame/byte bound for a single bounded ~90-minute session; hand-editing
+# `AcceptanceRecorderConfig`'s own dataclass defaults for one session, then
+# remembering to revert them, was rejected in favor of the same
+# env-var-opt-in shape `ACCEPTANCE_RECORDING_DIR_ENV` already established.
+# Unset (the default for every ordinary opt-in recording session, including
+# every prior field session) reproduces the dataclass's own defaults
+# exactly -- see `acceptance_recorder_config_from_env`.
+ACCEPTANCE_RECORDING_INTERVAL_MS_ENV = "MOCKINGBIRD_ACCEPTANCE_RECORDING_INTERVAL_MS"
+ACCEPTANCE_RECORDING_MAX_FRAMES_ENV = "MOCKINGBIRD_ACCEPTANCE_RECORDING_MAX_FRAMES"
+ACCEPTANCE_RECORDING_MAX_BYTES_ENV = "MOCKINGBIRD_ACCEPTANCE_RECORDING_MAX_BYTES"
 
 
 @runtime_checkable
@@ -107,6 +125,43 @@ class AcceptanceRecorderConfig:
             raise ValueError("invalid_acceptance_recorder_frame_bound")
         if not 1_000_000 <= self.max_total_bytes <= 5_000_000_000:
             raise ValueError("invalid_acceptance_recorder_byte_bound")
+
+
+def acceptance_recorder_config_from_env(
+    output_dir: Path, *, environ: Mapping[str, str] | None = None,
+) -> AcceptanceRecorderConfig:
+    """Build one session's recorder config, honoring optional bounded
+    overrides of `sample_interval_ms`/`max_frames`/`max_total_bytes` from
+    `ACCEPTANCE_RECORDING_INTERVAL_MS_ENV`/`_MAX_FRAMES_ENV`/`_MAX_BYTES_ENV`
+    (see their own docstring for why these exist). Every override is read
+    fresh, at the moment a session actually starts -- matching `output_dir`
+    itself, which is also computed fresh per Start from the current
+    stream/start-time -- never cached at process-construction time the way
+    `ACCEPTANCE_RECORDING_DIR_ENV` deliberately is (that one gates whether
+    recording happens at all for the life of the process; these three only
+    ever tune an already-opted-in session's own bounds).
+
+    Unset (every ordinary case) reproduces `AcceptanceRecorderConfig`'s own
+    dataclass defaults exactly, byte-for-byte -- `environ=None` reads the
+    real process environment; a test may inject an explicit mapping
+    instead. An explicitly supplied but out-of-range value fails exactly
+    the way an invalid direct constructor call already does
+    (`AcceptanceRecorderConfig.__post_init__`'s own bounds check) -- never
+    silently clamped or silently ignored.
+    """
+
+    source = os.environ if environ is None else environ
+    kwargs: dict[str, object] = {"output_dir": output_dir}
+    interval = source.get(ACCEPTANCE_RECORDING_INTERVAL_MS_ENV)
+    if interval:
+        kwargs["sample_interval_ms"] = int(interval)
+    max_frames = source.get(ACCEPTANCE_RECORDING_MAX_FRAMES_ENV)
+    if max_frames:
+        kwargs["max_frames"] = int(max_frames)
+    max_bytes = source.get(ACCEPTANCE_RECORDING_MAX_BYTES_ENV)
+    if max_bytes:
+        kwargs["max_total_bytes"] = int(max_bytes)
+    return AcceptanceRecorderConfig(**kwargs)
 
 
 @dataclass(frozen=True)

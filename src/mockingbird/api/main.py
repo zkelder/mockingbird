@@ -398,7 +398,10 @@ from mockingbird.observation import (
     SnapshotObservationProvider,
     unified_status,
 )
-from mockingbird.observation.acceptance_recorder import ACCEPTANCE_RECORDING_DIR_ENV
+from mockingbird.observation.acceptance_recorder import (
+    ACCEPTANCE_RECORDING_DIR_ENV,
+    acceptance_recorder_config_from_env,
+)
 from mockingbird.observation.counterfactual_lineage import classify_rejection_attribution
 from mockingbird.observation.engine_runtime import (
     ObservationEngineSessionManager,
@@ -1459,6 +1462,15 @@ def get_observation_engine_session_manager() -> ObservationEngineSessionManager:
             # Streams/paths triggered it.
             automatic_identification_assist=get_automatic_review_identification_assist(),
             acceptance_recording_root=Path(recording_dir) if recording_dir else None,
+            # End-to-End Bird Encounter Recall Closure v1: reads the three
+            # optional cadence/bound overrides (see their own docstrings in
+            # acceptance_recorder.py) fresh at each real Start, not here --
+            # `acceptance_recorder_config_from_env` is passed as the factory
+            # itself rather than called now, so a later env-var change
+            # before the *next* Start still takes effect. A no-op when
+            # every override is unset, matching ordinary product behavior
+            # byte-for-byte.
+            acceptance_recorder_config_factory=acceptance_recorder_config_from_env,
         )
     return _observation_engine_session_manager
 

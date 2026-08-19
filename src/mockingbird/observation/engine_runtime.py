@@ -89,7 +89,10 @@ from time import perf_counter
 from typing import Callable, Protocol
 
 from mockingbird.monitoring.exposure_history import exposure_close_reason_for_transition
-from mockingbird.observation.acceptance_recorder import AcceptanceRecorderConfig, BoundedFrameSampleRecorder
+from mockingbird.observation.acceptance_recorder import (
+    AcceptanceRecorderConfig,
+    BoundedFrameSampleRecorder,
+)
 from mockingbird.observation.camera_node_live import (
     CameraNodeAnalysisSource,
     CameraNodeHttpTransport,
@@ -147,6 +150,13 @@ class _DetectorProvenance(Protocol):
 
 ProviderLoader = Callable[[Path], tuple[FrameDrivenObservationProvider, _DetectorProvenance]]
 TransportFactory = Callable[[StreamLivePlaybackConfig, str], CameraNodeLiveTransport]
+# End-to-End Bird Encounter Recall Closure v1: lets a caller (in practice
+# only `main.get_observation_engine_session_manager`, via `acceptance_
+# recorder.acceptance_recorder_config_from_env`) tune one opted-in field
+# session's recorder bounds without this module knowing anything about env
+# vars itself -- mirrors `ProviderLoader`/`TransportFactory`'s own
+# injected-factory shape exactly.
+AcceptanceRecorderConfigFactory = Callable[[Path], AcceptanceRecorderConfig]
 
 
 class LiveCameraSessionCoordinator(Protocol):
@@ -1422,6 +1432,7 @@ class ObservationEngineSessionManager:
         analysis_stream_retry_policy: AnalysisStreamRetryPolicy | None = None,
         clock: Callable[[], datetime] | None = None,
         acceptance_recording_root: Path | None = None,
+        acceptance_recorder_config_factory: AcceptanceRecorderConfigFactory | None = None,
     ) -> None:
         self._repository_factory = repository_factory
         self._provider_loader = provider_loader
@@ -1442,6 +1453,14 @@ class ObservationEngineSessionManager:
         # recorder writing to a fresh, stream- and start-time-scoped
         # subdirectory, so concurrent/repeated Streams/sessions never
         # collide or overwrite each other's manifest.
+        # End-to-End Bird Encounter Recall Closure v1: `None` reproduces the
+        # exact prior behavior (`AcceptanceRecorderConfig(output_dir=...)`,
+        # every field defaulted) -- only an explicit caller-supplied factory
+        # (in practice `main.py` wiring `acceptance_recorder_config_from_
+        # env`) can widen/tighten one session's cadence or bounds.
+        self._acceptance_recorder_config_factory: AcceptanceRecorderConfigFactory = (
+            acceptance_recorder_config_factory or (lambda output_dir: AcceptanceRecorderConfig(output_dir=output_dir))
+        )
         self._acceptance_recording_root = acceptance_recording_root
         self._lock = threading.RLock()
         self._sessions: dict[str, _EngineSession] = {}
@@ -1464,7 +1483,9 @@ class ObservationEngineSessionManager:
             if self._acceptance_recording_root is not None:
                 started_at = (self._clock or (lambda: datetime.now(UTC)))()
                 session_dir = self._acceptance_recording_root / stream_id / started_at.strftime("%Y%m%dT%H%M%SZ")
-                acceptance_recorder = BoundedFrameSampleRecorder(AcceptanceRecorderConfig(output_dir=session_dir))
+                acceptance_recorder = BoundedFrameSampleRecorder(
+                    self._acceptance_recorder_config_factory(session_dir)
+                )
             session = _EngineSession(
                 stream_id=stream_id,
                 playback_config=playback_config,

@@ -16,8 +16,12 @@ from pathlib import Path
 import pytest
 
 from mockingbird.observation.acceptance_recorder import (
+    ACCEPTANCE_RECORDING_INTERVAL_MS_ENV,
+    ACCEPTANCE_RECORDING_MAX_BYTES_ENV,
+    ACCEPTANCE_RECORDING_MAX_FRAMES_ENV,
     AcceptanceRecorderConfig,
     BoundedFrameSampleRecorder,
+    acceptance_recorder_config_from_env,
 )
 
 NOW = datetime(2026, 8, 19, 12, 0, 0, tzinfo=UTC)
@@ -145,6 +149,63 @@ def test_default_byte_bound_has_real_headroom_over_the_old_undersized_default(tm
     config = AcceptanceRecorderConfig(output_dir=tmp_path)
     worst_case_real_frame_bytes = 850_000  # above the ~841KB observed real max
     assert config.max_frames * worst_case_real_frame_bytes <= config.max_total_bytes
+
+
+def test_config_from_env_reproduces_defaults_when_every_override_is_unset(tmp_path: Path) -> None:
+    """End-to-End Bird Encounter Recall Closure v1: an explicit empty
+    mapping (no override env vars set) must produce a byte-identical config
+    to calling the constructor directly -- the ordinary case for every
+    recording session that is happy with the built-in defaults."""
+
+    from_env = acceptance_recorder_config_from_env(tmp_path, environ={})
+    direct = AcceptanceRecorderConfig(output_dir=tmp_path)
+    assert from_env == direct
+
+
+def test_config_from_env_applies_explicit_bounded_overrides(tmp_path: Path) -> None:
+    """A real field session needing denser-than-default cadence (see
+    "Temporal sampling requirement") sets all three; every value must
+    actually reach the constructed config, not just the ones that happen
+    to differ from the default."""
+
+    config = acceptance_recorder_config_from_env(
+        tmp_path,
+        environ={
+            ACCEPTANCE_RECORDING_INTERVAL_MS_ENV: "1000",
+            ACCEPTANCE_RECORDING_MAX_FRAMES_ENV: "5500",
+            ACCEPTANCE_RECORDING_MAX_BYTES_ENV: "4950000000",
+        },
+    )
+    assert config.sample_interval_ms == 1000
+    assert config.max_frames == 5500
+    assert config.max_total_bytes == 4_950_000_000
+
+
+def test_config_from_env_partial_override_leaves_the_rest_at_default(tmp_path: Path) -> None:
+    """Only `sample_interval_ms` overridden -- `max_frames`/`max_total_bytes`
+    must stay at their own dataclass defaults, never silently zeroed or
+    coerced by the mere presence of a different override."""
+
+    config = acceptance_recorder_config_from_env(
+        tmp_path, environ={ACCEPTANCE_RECORDING_INTERVAL_MS_ENV: "1000"},
+    )
+    default = AcceptanceRecorderConfig(output_dir=tmp_path)
+    assert config.sample_interval_ms == 1000
+    assert config.max_frames == default.max_frames
+    assert config.max_total_bytes == default.max_total_bytes
+
+
+def test_config_from_env_out_of_range_override_fails_the_same_way_a_direct_call_would(
+    tmp_path: Path,
+) -> None:
+    """Never silently clamped or ignored: an explicitly-supplied override
+    outside `AcceptanceRecorderConfig`'s own bounds still raises exactly the
+    constructor's own `ValueError`."""
+
+    with pytest.raises(ValueError, match="invalid_acceptance_recorder_byte_bound"):
+        acceptance_recorder_config_from_env(
+            tmp_path, environ={ACCEPTANCE_RECORDING_MAX_BYTES_ENV: "999"},
+        )
 
 
 def test_module_has_no_product_repository_or_admission_pipeline_import() -> None:

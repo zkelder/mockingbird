@@ -652,6 +652,44 @@ def test_acceptance_recording_captures_frames_independent_of_admission_outcome(
     assert manager.status(STREAM_ID).counts.candidates_created == 1
 
 
+def test_acceptance_recorder_config_factory_is_used_for_real_starts(
+    repository: ProductRepository, tmp_path: Path,
+) -> None:
+    """End-to-End Bird Encounter Recall Closure v1: an explicit
+    `acceptance_recorder_config_factory` (in the real product, `main.py`
+    wiring `acceptance_recorder.acceptance_recorder_config_from_env`) must
+    actually decide the recorder's bounds for a real Start -- proving the
+    injection point works, not just that `acceptance_recorder_config_
+    from_env` itself parses env vars correctly (covered separately in
+    test_acceptance_recorder.py)."""
+
+    recording_root = tmp_path / "acceptance-recordings"
+    seen_output_dirs: list[Path] = []
+
+    def _tiny_bound_factory(output_dir: Path) -> engine_runtime.AcceptanceRecorderConfig:
+        seen_output_dirs.append(output_dir)
+        # A deliberately tiny, easy-to-observe override -- proves this
+        # factory's own return value, not the module's built-in default,
+        # is what the manager actually constructs the recorder from.
+        return engine_runtime.AcceptanceRecorderConfig(output_dir=output_dir, max_frames=1)
+
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: _FixtureTransport(),
+        acceptance_recording_root=recording_root,
+        acceptance_recorder_config_factory=_tiny_bound_factory,
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "stopped", timeout=10.0)
+
+    assert len(seen_output_dirs) == 1  # called exactly once, for this one real Start
+    session_dirs = list((recording_root / STREAM_ID).iterdir())
+    assert seen_output_dirs[0] == session_dirs[0]
+    saved = list(session_dirs[0].glob("*.jpg"))
+    assert len(saved) == 1  # the injected max_frames=1 bound actually took effect
+
+
 # --- Visit Authority Budget + Ambiguous-Boundary Recall Closure v1 ---------
 # (see docs/candidate-visit-authority-contract.md "Fresh-session activation"
 # and "Session/Stream scope"). Real, demonstrated 2026-08-19 field defect,
