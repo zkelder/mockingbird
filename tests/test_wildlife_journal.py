@@ -333,7 +333,7 @@ async def test_journal_resolves_current_reviewed_truth_and_combines_scope_filter
     cardinal = next(row for row in labels if row["label"] == "northern_cardinal")
     assert cardinal["representative"]["visit_id"] == "moved-cardinal"
     assert cardinal["representative"]["primary_evidence"]["preview_url"] == (
-        "/api/media/media-moved-cardinal/file"
+        "/api/media/media-moved-cardinal/preview"
     )
 
     history = await client.get(

@@ -40,6 +40,10 @@ test = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--strict-markers"
+markers = [
+  "slow: heavyweight software-integration coverage (packaging, real subprocess servers/processes, real dependency installation into a real site-packages, large real-artifact hashing, real ffmpeg/PowerShell process launches). Excluded from the Fast (scripts/verify_fast.py) and Core (scripts/verify_core.py) gates; included in the Full gate (scripts/verify_full.py / plain `pytest`). See docs/test-suite-validation-tiers-contract.md.",
+]
 
 [tool.hatch.build.targets.wheel]
 # `src/mockingbird/web_dist/` is a build-time-generated, gitignored copy of

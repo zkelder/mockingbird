@@ -770,6 +770,7 @@ def test_install_windows_gpu_runtime_dependencies_falls_back_to_network_when_cac
     assert "fake-pkg==1.0" in command
 
 
+@pytest.mark.slow  # real offline pip install from a ~1.3 GB local wheel cache.
 @pytest.mark.skipif(
     not DEFAULT_WHEEL_CACHE_DIR.is_dir(),
     reason="real win_amd64 CUDA/cuDNN wheel cache not present on this build host",
@@ -1363,6 +1364,7 @@ def test_assemble_windows_bundle_fails_the_whole_build_on_a_duplicate_dependency
         )
 
 
+@pytest.mark.slow  # real SHA-256 hashing of a ~1.6 GB local model bundle.
 @pytest.mark.skipif(
     not DEFAULT_BIOCLIP_BUNDLE_SOURCE.is_dir(),
     reason="real local BioCLIP evaluation bundle not present on this build host",
@@ -1389,6 +1391,7 @@ def test_real_local_bioclip_bundle_matches_accepted_provenance_when_present(tmp_
     assert provenance.embedding_cache_sha256 == ACCEPTED_BIOCLIP_EMBEDDING_CACHE_SHA256
 
 
+@pytest.mark.slow  # real offline pip install of the BioCLIP dependency closure.
 @pytest.mark.skipif(
     not DEFAULT_BIOCLIP_WHEEL_CACHE_DIR.is_dir(),
     reason="real win_amd64 BioCLIP wheel cache not present on this build host",
@@ -1616,6 +1619,7 @@ def test_write_manifest_records_frontend_source_state(tmp_path: Path) -> None:
     assert manifest["frontend_source_state"] == "reused:stale_allowed"
 
 
+@pytest.mark.slow  # real SHA-256 hashing of a ~500 MB-1 GB local model bundle.
 @pytest.mark.skipif(
     not DEFAULT_MODEL_BUNDLE_SOURCE.is_dir(),
     reason="real Observation Engine model bundle not present on this build host",

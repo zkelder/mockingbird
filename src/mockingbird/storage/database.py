@@ -897,6 +897,20 @@ def _running_under_pytest() -> bool:
     return "pytest" in sys.modules
 
 
+def _under_pytest_tempdir(path: Path) -> bool:
+    """True when `path` is pytest's own temp root or lies beneath it.
+
+    The one place both the fail-closed default-storage guard (below) and
+    the ephemeral-test-database fast path (`_is_ephemeral_pytest_sqlite_
+    database`) decide "is this a throwaway path pytest itself made," so
+    the two safety-relevant checks can never silently drift apart.
+    """
+
+    resolved = path.resolve()
+    safe_root = Path(tempfile.gettempdir()).resolve()
+    return resolved == safe_root or safe_root in resolved.parents
+
+
 def _reject_unconfigured_default_outside_test_temp(path: Path, *, what: str) -> None:
     """Fail closed rather than silently open a persistent default path.
 
@@ -914,13 +928,11 @@ def _reject_unconfigured_default_outside_test_temp(path: Path, *, what: str) -> 
 
     if not _running_under_pytest():
         return
-    resolved = path.resolve()
-    safe_root = Path(tempfile.gettempdir()).resolve()
-    if resolved == safe_root or safe_root in resolved.parents:
+    if _under_pytest_tempdir(path):
         return
     raise UnsafeDefaultStorageAccessError(
         f"Refusing to let a test fall back to MockingBird's default {what} "
-        f"path ({resolved}) with no repository explicitly configured. "
+        f"path ({path.resolve()}) with no repository explicitly configured. "
         "Inject an isolated ProductRepository(db_url=...), call "
         "configure_repository(...), or rely on the autouse "
         "tests/conftest.py fixture. A test that deliberately needs the "
@@ -1055,6 +1067,43 @@ def probe_local_storage_disk(directory: Path) -> LocalStorageDiskStatus:
     return LocalStorageDiskStatus(total_bytes=total_bytes, free_bytes=free_bytes, is_writable=is_writable)
 
 
+def _is_ephemeral_pytest_sqlite_database(resolved_url: str) -> bool:
+    """True only for a SQLite *file* pytest itself created under its own tempdir.
+
+    Test Suite Runtime & Baseline Reliability v1: profiling this milestone
+    (a `cProfile` run over one `ProductRepository()` construction) found
+    `Base.metadata.create_all`'s ~200 CREATE TABLE/INDEX statements costing
+    ~1.4s of a ~1.8s total -- not seeding or product logic -- almost
+    entirely `sqlite3.Cursor.execute` time under this sandbox's WSL2
+    filesystem. Each DDL statement fsyncs its own implicit commit under
+    SQLite's default `synchronous=FULL`; a throwaway per-test database
+    that never survives past its own test (`tests/conftest.py`'s autouse
+    fixture, and the ~90 existing test-owned fixtures that already pass an
+    isolated `tmp_path`-derived `db_url`) has no real crash-durability
+    requirement, so skipping that fsync is free correctness-wise -- this
+    changes no on-disk journal format, so a mid-test file copy (backup/
+    restore tests) observes exactly the same committed bytes it always
+    did; only durability against a hard power-loss/OS-crash is relaxed,
+    which no test in this suite exercises or depends on.
+
+    Reuses the exact pytest+tempdir detection `_reject_unconfigured_
+    default_outside_test_temp` already established (see docs/test-
+    repository-isolation-contract.md) so this can never fire for a
+    production/packaged launch (which never imports pytest) or for an
+    explicit on-disk path outside pytest's own temp root -- an explicit
+    `db_url`/`MOCKINGBIRD_DB_URL` pointing at a real location is never
+    second-guessed, exactly like that guard.
+    """
+
+    if not _running_under_pytest() or not resolved_url.startswith("sqlite:///"):
+        return False
+    try:
+        path = sqlite_database_path(resolved_url)
+    except ValueError:
+        return False
+    return _under_pytest_tempdir(path)
+
+
 def create_database_engine(db_url: str | None = None) -> Engine:
     resolved_url = resolve_database_url(db_url)
     _ensure_sqlite_parent(resolved_url)
@@ -1063,6 +1112,8 @@ def create_database_engine(db_url: str | None = None) -> Engine:
     )
     engine = create_engine(resolved_url, connect_args=connect_args)
     if resolved_url.startswith("sqlite"):
+        ephemeral_test_database = _is_ephemeral_pytest_sqlite_database(resolved_url)
+
         # A short local write should wait briefly instead of making the app look
         # unavailable during another in-process transaction.
         @event.listens_for(engine, "connect")
@@ -1070,6 +1121,8 @@ def create_database_engine(db_url: str | None = None) -> Engine:
             cursor = dbapi_connection.cursor()
             try:
                 cursor.execute("PRAGMA busy_timeout=5000")
+                if ephemeral_test_database:
+                    cursor.execute("PRAGMA synchronous=OFF")
             finally:
                 cursor.close()
 

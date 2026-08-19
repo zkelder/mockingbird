@@ -1,11 +1,23 @@
 """Capture bounded local Zone crops for offline detector comparison.
 
 This development utility reads an existing local live-session MJPEG endpoint
-and uses the production Privacy/Ignore-masked Zone crop helper.  It persists
-only the masked Zone crops, compact contact sheets, and non-secret metadata;
-it never stores a full frame, records audio, opens a camera, or creates product
-records.  Detector inference and bird annotation are deliberately separate
-offline steps.
+and applies a Privacy/Ignore-masked Zone crop.  It persists only the masked
+Zone crops, compact contact sheets, and non-secret metadata; it never stores
+a full frame, records audio, opens a camera, or creates product records.
+Detector inference and bird annotation are deliberately separate offline
+steps.
+
+`_zone_crop`, below, is a deliberately local copy of the masked-crop-per-
+Zone geometry `api.main._object_detector_zone_crop` implemented before "Use
+live object detection for animal visits" replaced it with a different
+production shape (mask-then-detect-on-the-full-frame, then associate each
+detection to a Zone after inference -- see `_object_detector_monitoring_
+frame`/`_associate_object_detector_zones`). This diagnostic's own purpose
+(a single Zone's masked crop, independent of any detector) still needs the
+old per-Zone crop shape; importing a production module's private
+underscore-prefixed symbol was exactly what let this tool silently bit-rot
+the last time production's internal shape changed, so this keeps the same
+proven geometry owned locally instead of reaching into `api.main` again.
 """
 
 from __future__ import annotations
@@ -23,7 +35,6 @@ from urllib.request import urlopen
 import cv2
 import numpy as np
 
-from mockingbird.api.main import _object_detector_zone_crop
 from mockingbird.api.schemas import Zone
 
 
@@ -41,6 +52,84 @@ MAX_CONSECUTIVE_CONNECT_FAILURES = 10
 def _json(url: str) -> Any:
     with urlopen(url, timeout=5) as response:  # noqa: S310 - local caller URL only.
         return json.loads(response.read().decode("utf-8"))
+
+
+def _zone_crop(
+    frame_bytes: bytes,
+    *,
+    zone: Zone,
+    blocked_zones: list[Zone],
+) -> tuple[bytes, tuple[float, float, float, float], int, int, int, int] | None:
+    """Build one masked high-detail ordinary-Zone JPEG for offline review.
+
+    Privacy and Ignore geometry is masked out before the crop is written to
+    disk; the full source frame is never persisted, only this bounded crop.
+    """
+
+    image = cv2.imdecode(np.frombuffer(frame_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if image is None or image.ndim != 3:
+        return None
+    source_height, source_width = image.shape[:2]
+    if source_width < 2 or source_height < 2:
+        return None
+    points = np.asarray(
+        [
+            [
+                round(max(0.0, min(1.0, point.x)) * (source_width - 1)),
+                round(max(0.0, min(1.0, point.y)) * (source_height - 1)),
+            ]
+            for point in zone.polygon
+        ],
+        dtype=np.int32,
+    )
+    if len(points) < 3:
+        return None
+    x, y, width, height = cv2.boundingRect(points)
+    if width < 2 or height < 2:
+        return None
+    mask = np.zeros((source_height, source_width), dtype=np.uint8)
+    cv2.fillPoly(mask, [points], 255)
+    for blocked in blocked_zones:
+        blocked_points = np.asarray(
+            [
+                [
+                    round(max(0.0, min(1.0, point.x)) * (source_width - 1)),
+                    round(max(0.0, min(1.0, point.y)) * (source_height - 1)),
+                ]
+                for point in blocked.polygon
+            ],
+            dtype=np.int32,
+        )
+        if len(blocked_points) >= 3:
+            cv2.fillPoly(mask, [blocked_points], 0)
+    crop = image[y : y + height, x : x + width].copy()
+    crop_mask = mask[y : y + height, x : x + width]
+    if crop.size == 0 or not np.any(crop_mask):
+        return None
+    crop[crop_mask == 0] = 0
+    # Preserve source detail through the bird-scale 720-1280px range rather
+    # than an old, coarser motion-detector plane.
+    longest = max(crop.shape[:2])
+    if longest > 1280:
+        scale = 1280 / float(longest)
+        crop = cv2.resize(
+            crop,
+            (max(1, round(crop.shape[1] * scale)), max(1, round(crop.shape[0] * scale))),
+            interpolation=cv2.INTER_AREA,
+        )
+    encoded, output = cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, 90])
+    if not encoded:
+        return None
+    data = output.tobytes()
+    if not data or len(data) > 4_000_000:
+        return None
+    coordinate_box = (
+        x / source_width,
+        y / source_height,
+        min(1.0, (x + width) / source_width),
+        min(1.0, (y + height) / source_height),
+    )
+    return data, coordinate_box, width, height, crop.shape[1], crop.shape[0]
 
 
 def _read_mjpeg_frame(response: Any) -> bytes | None:
@@ -285,7 +374,7 @@ def main() -> int:
             if frame_identity == last_frame_identity:
                 duplicate_frame_count += 1
                 continue
-            crop = _object_detector_zone_crop(frame, zone=zone, blocked_zones=blocked)
+            crop = _zone_crop(frame, zone=zone, blocked_zones=blocked)
             if crop is None:
                 continue
             image, coordinate_box, source_width, source_height, input_width, input_height = crop

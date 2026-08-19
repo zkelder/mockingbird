@@ -385,7 +385,10 @@ The production build is served by the single MockingBird application process.
 
 ## Validation
 
-Backend suite:
+Backend suite (see
+[docs/test-suite-validation-tiers-contract.md](docs/test-suite-validation-tiers-contract.md)
+for the tiered `scripts/verify_fast.py`/`verify_core.py`/`verify_full.py`
+gates and what each guarantees):
 
 ```sh
 python -m pytest

@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from threading import Event
 from time import sleep
 
+import pytest
 
 from mockingbird.detectors.megadetector_adapter import MegaDetectorBox, MegaDetectorProposal
 from mockingbird.motion.object_tracking import LiveObjectDetectorManager
@@ -404,6 +405,13 @@ def test_runtime_failure_is_reported_without_throwing_from_monitor_submit() -> N
         manager.shutdown()
 
 
+# Test Suite Runtime & Baseline Reliability v1: `isolated_runner=` makes
+# `LiveObjectDetectorManager` spawn a real `multiprocessing.get_context
+# ("spawn")` OS process (the deterministic stand-in function still runs for
+# real, out-of-process) -- Tier C (slow software integration: real
+# process launch), excluded from the Fast/Core gates. See
+# docs/test-suite-validation-tiers-contract.md.
+@pytest.mark.slow
 def test_timed_out_native_runtime_drops_the_late_result_and_recovers_fresh_work(
     monkeypatch,
 ) -> None:
@@ -449,6 +457,7 @@ def test_timed_out_native_runtime_drops_the_late_result_and_recovers_fresh_work(
 
 
 
+@pytest.mark.slow  # real multiprocessing OS process -- see comment above.
 def test_shutdown_releases_active_generation_work_before_returning(monkeypatch) -> None:
     monkeypatch.setattr(object_tracking, "INFERENCE_TIMEOUT_SECONDS", 0.05)
     monkeypatch.setattr(object_tracking, "INITIAL_RUNTIME_LOAD_TIMEOUT_SECONDS", 0.05)
@@ -472,6 +481,7 @@ def test_shutdown_releases_active_generation_work_before_returning(monkeypatch) 
     assert not manager._worker.is_alive()
 
 
+@pytest.mark.slow  # real multiprocessing OS process -- see comment above.
 def test_initial_model_load_allowance_is_separate_from_steady_inference_deadline(
     monkeypatch,
 ) -> None:

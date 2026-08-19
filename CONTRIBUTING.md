@@ -71,8 +71,21 @@ python -m pytest tests/test_place_activity_report.py
 python -m pytest tests/test_place_activity_report.py -k dst_correct
 ```
 
+**Backend, a tiered gate** (before calling a bounded change or a milestone
+complete -- see
+[docs/test-suite-validation-tiers-contract.md](docs/test-suite-validation-tiers-contract.md)
+for what each guarantees and exactly how long it takes on the reference
+development machine):
+
+```sh
+python scripts/verify_fast.py   # Tier A: a couple of minutes
+python scripts/verify_core.py   # Tier B: the normal milestone gate
+python scripts/verify_full.py   # Tier C: full release regression, reserve for RC/release-hardening checkpoints
+```
+
 **Backend, the whole suite** (only when a change crosses many runtime
-boundaries -- it is large: ~2,960 tests):
+boundaries -- it is large: 3,100+ tests; `scripts/verify_full.py` above is
+the same thing with a name that states what it guarantees):
 
 ```sh
 python -m pytest

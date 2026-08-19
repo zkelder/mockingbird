@@ -21,6 +21,13 @@ import urllib.error
 import urllib.request
 import venv
 
+import pytest
+
+# Test Suite Runtime & Baseline Reliability v1: a real venv/pip install plus
+# a real subprocess.Popen'd OS process over a real TCP socket -- Tier C
+# (slow software integration), excluded from the Fast/Core gates. See
+# docs/test-suite-validation-tiers-contract.md.
+pytestmark = pytest.mark.slow
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD_ARTIFACT = runpy.run_path(ROOT / "scripts" / "build_camera_node_artifact.py")["build_camera_node_artifact"]

@@ -51,6 +51,9 @@ For small, isolated behavior changes:
 - run the relevant frontend type-check or backend static/lint checks when the
   changed language is covered
 - verify no generated/local artifact entered the worktree
+- before considering a bounded, single-area backend change complete, also run
+  the Fast gate (`python scripts/verify_fast.py`) -- see "Backend validation
+  gates," below
 
 ### Tier 2 - domain integration and persistence
 
@@ -61,13 +64,18 @@ provider boundaries, or backup/restore behavior:
 - run schema migration and backup compatibility tests when persistence changes
 - validate negative paths, side-effect-free reads, and evidence/truth boundaries
 - run the frontend build when API shapes or shared product flows change
+- the Core gate (`python scripts/verify_core.py`) covers this tier's backend
+  checks together and is required before calling a normal milestone complete
 
 ### Tier 3 - complete non-hardware gate
 
 For cross-cutting product work, lifecycle foundations, release candidates, or
 changes with broad blast radius:
 
-- run the complete backend suite
+- run the Core gate (`python scripts/verify_core.py`); escalate to the Full
+  gate (`python scripts/verify_full.py`) for release-hardening completion, RC
+  acceptance, or any change to packaging/dependency-closure/model-bundle code
+  -- see "Backend validation gates," below
 - run frontend type-check and production build
 - run the critical hardware-free product smoke flow
 - run migration/backup compatibility checks
@@ -101,6 +109,40 @@ acceptance:
 
 Tier 4 media, benchmark data, reports, model artifacts, and caches remain under
 ignored local paths.
+
+### Backend validation gates
+
+Three pytest-marker-based gates implement Tiers 1-3's backend checks above
+without a manual "which tests" judgment call each time; see
+[test-suite-validation-tiers-contract.md](test-suite-validation-tiers-contract.md)
+for the full evidence, exact file/marker lists, and baseline failure
+disposition this was built from.
+
+| Command | Guarantees | Typical runtime here |
+| --- | --- | --- |
+| `python scripts/verify_fast.py` | curated fast unit/pure-contract coverage | ~2.5 minutes (measured: 147s) |
+| `python scripts/verify_core.py` | the whole backend suite except `slow`-marked packaging/subprocess/large-artifact tests | ~9 minutes (measured: 537s), under the 10-20 minute target |
+| `python scripts/verify_full.py` | the complete backend suite, `slow` included | allowed to run substantially longer -- see the contract doc for the measured figure |
+
+**Escalation is based on change risk and scope, never on how inconvenient a
+slower gate is.** Do not choose Fast merely because Core or Full would take
+longer to run:
+
+- Fast is sufficient only for a bounded, single-area change already covered
+  by focused tests during implementation.
+- Escalate to Core for anything crossing more than one subsystem, and always
+  for a change touching Observation durable truth, review/correction
+  provenance, Visit admission/authority, Detection Quality Accounting,
+  evidence/media lineage, database migrations, backup/restore, Camera Node
+  pairing/recovery, packaging/release provenance, BioCLIP/species-suggestion
+  correctness, or privacy semantics -- regardless of how small the diff looks.
+- Escalate to Full for release-hardening completion, RC acceptance, or any
+  change to packaging/dependency-closure/model-bundle code.
+- Escalate to Tier 4's explicit hardware/platform procedure whenever real
+  hardware/runtime behavior (Camera Node capture, Windows/GPU runtime,
+  packaged BioCLIP, reboot/network-recovery logic) actually changed -- a
+  `slow`/`skipif`-gated pytest pass over a locally-present artifact is not a
+  substitute for real hardware acceptance.
 
 ## Change workflow
 

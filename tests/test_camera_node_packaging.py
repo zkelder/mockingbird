@@ -33,6 +33,11 @@ def _commit_fixture_node_package(repo: Path) -> None:
     subprocess.run(["git", "commit", "--quiet", "-m", "initial"], cwd=repo, check=True, capture_output=True)
 
 
+# Test Suite Runtime & Baseline Reliability v1: a real venv + real `pip
+# install` of the built wheel, plus real subprocess launches of the
+# installed launcher -- Tier C (slow software integration), excluded from
+# the Fast/Core gates. See docs/test-suite-validation-tiers-contract.md.
+@pytest.mark.slow
 def test_camera_node_artifact_is_slim_and_launcher_checks_without_starting(tmp_path) -> None:
     # allow_dirty_source=True: this test is about wheel *contents* and launcher
     # behavior, not source-provenance verification (covered separately below),

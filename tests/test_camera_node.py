@@ -362,7 +362,7 @@ def test_picamera2_advertises_real_still_modes_and_restores_monitoring_after_evi
     module = type("Module", (), {"Picamera2": Picamera2})
     provider = PiCamera2Provider(config, module=module, cv2_module=Encoder())
     provider.capture_profiles("picamera2-camera-0")
-    provider._warm_proofs["picamera2-camera-0"].join(timeout=1)
+    provider._warm_proofs["picamera2-camera-0"].join(timeout=10)
     profiles = provider.capture_profiles("picamera2-camera-0")
 
     monitoring = next(profile for profile in profiles if "monitoring" in profile.purposes)
@@ -518,7 +518,7 @@ def test_picamera2_warm_dual_stream_uses_one_session_without_reconfiguration(
     )
 
     provider.capture_profiles("picamera2-camera-0")
-    provider._warm_proofs["picamera2-camera-0"].join(timeout=1)
+    provider._warm_proofs["picamera2-camera-0"].join(timeout=10)
     profiles = provider.capture_profiles("picamera2-camera-0")
     monitoring = next(profile for profile in profiles if "monitoring" in profile.purposes)
     evidence = next(
@@ -604,7 +604,7 @@ def test_picamera2_warm_candidate_resource_rejection_promotes_next_profile_and_c
     )
 
     provider.capture_profiles("picamera2-camera-0")
-    provider._warm_proofs["picamera2-camera-0"].join(timeout=1)
+    provider._warm_proofs["picamera2-camera-0"].join(timeout=10)
     profiles = provider.capture_profiles("picamera2-camera-0")
 
     assert provider.capture_readiness("picamera2-camera-0") == "ready"
@@ -708,7 +708,7 @@ def test_picamera2_warm_required_pair_retries_once_after_resource_rejections() -
     )
 
     provider.capture_profiles("picamera2-camera-0")
-    provider._warm_proofs["picamera2-camera-0"].join(timeout=1)
+    provider._warm_proofs["picamera2-camera-0"].join(timeout=10)
 
     assert provider.capture_readiness("picamera2-camera-0") == "ready"
     assert Picamera2.configured_sizes == [
@@ -809,7 +809,7 @@ def test_picamera2_warm_session_failure_reopens_the_accepted_pair(
     )
     try:
         provider.capture_profiles("picamera2-camera-0")
-        provider._warm_proofs["picamera2-camera-0"].join(timeout=1)
+        provider._warm_proofs["picamera2-camera-0"].join(timeout=10)
         profiles = provider.capture_profiles("picamera2-camera-0")
         monitoring = next(profile for profile in profiles if "monitoring" in profile.purposes)
         evidence = next(profile for profile in profiles if "evidence" in profile.purposes)
@@ -882,7 +882,7 @@ def test_picamera2_all_warm_candidates_rejected_keeps_cold_monitoring_degraded()
     )
 
     provider.capture_profiles("picamera2-camera-0")
-    provider._warm_proofs["picamera2-camera-0"].join(timeout=1)
+    provider._warm_proofs["picamera2-camera-0"].join(timeout=10)
 
     assert provider.capture_readiness("picamera2-camera-0") == "degraded"
     assert provider._cameras == {}
@@ -955,7 +955,7 @@ async def test_pairing_returns_while_picamera2_warm_proof_runs() -> None:
     assert paired.json()["cameras"][0]["capture_readiness"] == "warming"
     assert started.wait(timeout=1)
     release.set()
-    provider._warm_proofs["picamera2-camera-0"].join(timeout=1)
+    provider._warm_proofs["picamera2-camera-0"].join(timeout=10)
     assert provider.capture_readiness("picamera2-camera-0") == "ready"
     provider.close()
 

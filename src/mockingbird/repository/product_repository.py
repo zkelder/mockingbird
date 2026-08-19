@@ -23664,6 +23664,26 @@ class ProductRepository:
             ).all()
         )
 
+    def _review_label_history_models_for_event(
+        self,
+        session: Session,
+        event_id: str,
+        *,
+        limit: int = 50,
+    ) -> list[ReviewLabelModel]:
+        bounded_limit = max(1, min(limit, 50))
+        return list(
+            session.scalars(
+                select(ReviewLabelModel)
+                .where(
+                    ReviewLabelModel.target_type == "event",
+                    ReviewLabelModel.target_id == event_id,
+                )
+                .order_by(ReviewLabelModel.created_at.desc(), ReviewLabelModel.id.desc())
+                .limit(bounded_limit)
+            ).all()
+        )
+
     def _effective_review_label_models(
         self,
         labels: list[ReviewLabelModel],
@@ -24670,6 +24690,17 @@ class ProductRepository:
             # assessment honestly disagreeing with the actual reviewed
             # label is expected, not a data-quality problem. See
             # docs/review-decision-provenance-contract.md.
+            #
+            # Callers must pass raw per-target history (`_review_label_
+            # history_models_for_visit`/`_for_event`), never the collapsed
+            # single-effective-row view `_review_label_models_for_visit`/
+            # `_for_event` return -- `_effective_review_label_models`
+            # resolves history down to exactly one current row per target
+            # by design, so it can structurally never contain two rows to
+            # disagree with each other. Two independent, unlinked plain
+            # corrections (no `supersedes_review_label_id`/`revision_
+            # idempotency_key` connecting them) are exactly the case this
+            # exists to catch.
             normalized_labels = {
                 self._normalize_label_from_session(session, label.label)
                 for label in labels
@@ -24689,6 +24720,7 @@ class ProductRepository:
             media_path: str | None,
             media_asset_id: str | None,
             review_label_models: list[ReviewLabelModel],
+            review_label_history_models: list[ReviewLabelModel],
         ) -> None:
             nonlocal export_ready_count
             nonlocal needs_review_count
@@ -24814,7 +24846,7 @@ class ProductRepository:
                     suggested_action="Recheck the local media reference before relying on this export record.",
                 )
 
-            if has_conflicting_corrections(review_label_models):
+            if has_conflicting_corrections(review_label_history_models):
                 add_issue(
                     severity="medium",
                     issue_type="conflicting_corrections",
@@ -24871,6 +24903,9 @@ class ProductRepository:
                 media_path=visit.representative_media_path,
                 media_asset_id=media_asset.id if media_asset else None,
                 review_label_models=visit_labels,
+                review_label_history_models=self._review_label_history_models_for_visit(
+                    session, visit.id
+                ),
             )
 
         event_models = session.scalars(select(EventModel).order_by(EventModel.started_at)).all()
@@ -24897,6 +24932,9 @@ class ProductRepository:
                 media_path=None,
                 media_asset_id=None,
                 review_label_models=event_labels,
+                review_label_history_models=self._review_label_history_models_for_event(
+                    session, event.id
+                ),
             )
 
         severity_counts = Counter(issue.severity for issue in issues)

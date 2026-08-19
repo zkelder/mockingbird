@@ -190,6 +190,8 @@ def test_exact_capture_cli_flag_is_explicit_and_default_off() -> None:
         "provider.json",
         "--output",
         "capture",
+        "--scene-id",
+        "scene-01",
     ]
     assert _capture_parser().parse_args(required).retain_exact_analysis is False
     assert (
