@@ -1337,7 +1337,7 @@ class _EngineSession:
 
 
 # Visit Authority Budget + Ambiguous-Boundary Recall Closure v1: raised from
-# the original 8. Real, evidenced 2026-08-19 field defect: reconstructing
+# the original 8 to 32. Real, evidenced 2026-08-19 field defect: reconstructing
 # both missed strong encounters against the real captured counterfactual
 # ledger found the proposal that actually escaped `blocked_ambiguous_
 # boundary` (either never ambiguous, or an arbitration winner) still
@@ -1351,21 +1351,39 @@ class _EngineSession:
 # ambiguous_gap_ms`, 45s, or longer for a still-growing cluster) can easily
 # have its own already-captured evidence evicted by unrelated activity
 # elsewhere in a busy real stream before its own delayed admission attempt
-# ever runs -- confirmed directly:
-# `test_delayed_proposal_still_finds_its_evidence_after_unrelated_cache_
-# churn` in tests/test_engine_runtime.py reproduces the exact real failure
-# shape with the old bound and stays fixed with this one. This is a
-# capacity fix, not an evidence-quality threshold change -- every quality
-# requirement `candidate_quality_gate.evaluate_evidence_admission` already
-# enforces (a real, decodable, geometrically-valid identification/context
-# candidate) is completely unchanged; this only keeps evidence that was
-# already judged sufficient from vanishing before its own legitimately-
-# delayed admission attempt runs. 32 is a deliberately generous multiple of
-# the old bound (real cluster generation counts measured 34 and 40 within a
-# single encounter), while remaining a small, bounded in-memory footprint
-# (each cached image is a source-resolution JPEG, never unbounded).
-_MAX_CACHED_BURST_BYTES = 32
-_MAX_CACHED_SAME_FRAME_BYTES = 32
+# ever runs. 32 was a deliberately generous multiple of the old bound (real
+# cluster generation counts measured 34 and 40 within a single encounter),
+# while remaining a small, bounded in-memory footprint.
+#
+# End-to-End Bird Encounter Recall Closure v1: raised again, from 32 to 128.
+# A real, evidenced 2026-08-19 field defect -- a *different*, busier real
+# session (21 candidates/227 proposals/1336 evidence candidates in 92
+# minutes, versus the ~98-minute session that motivated the 32 bound) still
+# exhausted it: a genuine 149.6s, 6-generation, 0.816-max-confidence
+# encounter (six generations at stable feeder-perch geometry -- one real,
+# mostly-stationary bird, not six subjects) was legitimately deferred
+# `blocked_continuation_pending` for a real 183.5 seconds before permanently
+# failing `reject_no_identification_or_context`; a second, independent real
+# case in the same session (30.3s, single-generation, 0.815 max confidence,
+# 12 strong detections) failed `blocked_missing_evidence` after an even
+# shorter ~34s delay. This session's own measured evidence-candidate rate
+# (1336 over 5512s, ~0.242/s) projected across a realistic 150-280s
+# continuation-pending delay window is ~36-68 candidates -- past the 32
+# bound. 128 is the same relative (4x) jump the original 8->32 fix itself
+# used, verified directly against this exact real failure shape:
+# `test_delayed_proposal_survives_a_busier_real_session_shape_than_the_32_
+# bound_covers` in tests/test_engine_runtime.py fails at 32 (RED) and
+# passes at 128 (GREEN). Still a capacity fix, not an evidence-quality
+# threshold change -- every requirement `candidate_quality_gate.
+# evaluate_evidence_admission` enforces is unchanged. This remains a bound,
+# not a structural fix: an arbitrarily busier or longer-delayed session
+# could still in principle exhaust it, since eviction is still purely
+# insertion-count-based with no awareness of which pending proposal still
+# needs which bytes -- a pending-proposal-aware eviction policy would close
+# that gap structurally, but is a materially larger change than this
+# capacity bump and is left as a disclosed follow-up, not undertaken here.
+_MAX_CACHED_BURST_BYTES = 128
+_MAX_CACHED_SAME_FRAME_BYTES = 128
 
 
 def _harvest_burst_bytes(

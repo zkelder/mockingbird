@@ -1693,6 +1693,73 @@ def test_delayed_proposal_still_finds_its_evidence_after_unrelated_cache_churn(
     assert "blocked_missing_evidence" not in session._suppressed
 
 
+def test_delayed_proposal_survives_a_busier_real_session_shape_than_the_32_bound_covers(
+    repository: ProductRepository,
+) -> None:
+    """End-to-End Bird Encounter Recall Closure v1: a real, evidenced
+    2026-08-19 field defect -- a busier real session than the one that
+    motivated the 8->32 fix still exhausted the 32-entry bound. Direct
+    reconstruction of the real failure shape from that session's own live
+    counterfactual ledger (`GET .../observation/counterfactual`, queried
+    after Stop): a genuine 149.6s, 6-generation, 0.816-max-confidence
+    encounter (six `maximum_unsupported_duration`/`maximum_duration`
+    generations at stable feeder-perch geometry -- one real, mostly-
+    stationary bird, not six separate subjects) was legitimately deferred
+    `blocked_continuation_pending` across 5 real assembly ticks spanning
+    183.5 real seconds (22:26:09Z first attempt to 22:29:12Z final
+    decision) before permanently failing `reject_no_identification_or_
+    context` -- despite 22 detections including 6 strong (>=0.70) hits in
+    its own penultimate generation. This session's own measured evidence-
+    candidate rate (1336 over 5512s, ~0.242/s) projected across that same
+    183.5s real delay is ~44 candidates -- comfortably past the 32 bound,
+    comfortably under a 128 bound. A second, independent real case in the
+    same session (30.3s, single-generation, 0.815 max confidence, 12
+    strong detections, only a ~34s delay) reached `blocked_missing_
+    evidence` even faster, confirming this is not a one-off."""
+
+    repository.set_observation_authority_mode(
+        ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW, fresh_session=True,
+    )
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    subject_updates = list(_tick_track_updates("gen-subject", 0, 1_000))
+    subject_evidence, subject_bytes = _tick_evidence("gen-subject", "high_resolution_burst", "hash-subject")
+    burst_bytes_cache: dict[str, bytes] = {}
+    attempted_proposal_ids: set[str] = set()
+
+    burst_bytes_cache[subject_evidence.media_asset_id] = subject_bytes
+    session._run_assembly_tick(
+        all_track_updates=subject_updates, all_evidence_candidates=[subject_evidence],
+        attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        known_horizon_ms=1_100,
+    )
+    assert session._counts.candidates_created == 0
+    assert session._suppressed.get("blocked_continuation_pending") == 1
+
+    # ~44 unrelated real-shaped burst insertions -- this session's own
+    # measured 0.242 evidence-candidates/second rate projected across the
+    # real 183.5s delay this exact proposal was actually subjected to (see
+    # docstring). Deliberately real-measured, not a round number picked to
+    # make the test pass.
+    for index in range(44):
+        candidate, payload = _tick_evidence(
+            f"gen-unrelated-{index}", "high_resolution_burst", f"hash-unrelated-{index}",
+        )
+        burst_bytes_cache[candidate.media_asset_id] = payload
+        while len(burst_bytes_cache) > engine_runtime._MAX_CACHED_BURST_BYTES:
+            burst_bytes_cache.pop(next(iter(burst_bytes_cache)))
+
+    session._run_assembly_tick(
+        all_track_updates=subject_updates, all_evidence_candidates=[subject_evidence],
+        attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        finalize=True,
+    )
+    assert session._counts.candidates_created == 1
+    assert "reject_no_identification_or_context" not in session._suppressed
+    assert "blocked_missing_evidence" not in session._suppressed
+
+
 # =============================================================================
 # Rejected / Suppressed Detection Attribution v1 (see
 # docs/rejected-detection-attribution-contract.md): every admission outcome
