@@ -77,17 +77,28 @@ class AcceptanceRecorderConfig:
     Defaults chosen for a real bounded field session (comparable to the
     ~98-minute 2026-08-19 session this milestone's own field defect was
     found in): a 3-second sample interval over 120 minutes yields at most
-    2400 frames; each analysis-resolution JPEG is typically well under
-    200KB (a fraction of a source-resolution evidence burst), so
-    `max_total_bytes`'s own default (750MB) is reached only if frames run
-    unusually large, not under ordinary operation -- both bounds are
+    2400 frames (`max_frames`'s own default), which is the bound meant to
+    bind first in ordinary operation.
+
+    `max_total_bytes` is sized off a REAL measurement, not an assumption:
+    the first live field session run under this recorder (2026-08-19,
+    stream `stream-ca892992771c`) showed analysis-resolution JPEGs
+    averaging ~801KB and reaching ~841KB, not the "well under 200KB"
+    originally assumed here -- that wrong assumption made the old 750MB
+    default bind FIRST, silently ending recording ~30 minutes early (936
+    of an intended ~2400 frames) and losing independent coverage of the
+    session's last three admitted Visits. `max_total_bytes` now gives
+    `max_frames` * a safety-margined per-frame size (900KB, above the
+    observed 841KB max) headroom, so the frame-count/duration bound is the
+    one that binds under ordinary operation, and this byte bound is purely
+    a safety net for unusually large frames -- both bounds are still
     enforced directly, never assumed.
     """
 
     output_dir: Path
     sample_interval_ms: int = 3_000
     max_frames: int = 2_400
-    max_total_bytes: int = 750_000_000
+    max_total_bytes: int = 2_500_000_000
 
     def __post_init__(self) -> None:
         if self.sample_interval_ms < 100:

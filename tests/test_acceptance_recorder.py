@@ -127,6 +127,26 @@ def test_honestly_skips_a_frame_with_no_payload_or_missing_identity(tmp_path: Pa
     assert status.stopped_reason is None  # never a bound violation, just missing facts
 
 
+def test_default_byte_bound_has_real_headroom_over_the_old_undersized_default(tmp_path: Path) -> None:
+    """Regression test for a real field-use defect: the original 750MB
+    `max_total_bytes` default was sized off an assumed ~200KB/frame, but the
+    2026-08-19 live field session measured analysis-resolution JPEGs
+    averaging ~801KB (max ~841KB) -- so the byte bound silently bound FIRST,
+    at 936 of an intended ~2400 frames, ending recording ~30 minutes before
+    the session's actual Stop and losing independent coverage of the last
+    three admitted Visits that session.
+
+    This locks in that `max_frames`'s own default (a full 120-minute session
+    at the default 3-second interval) now fits under `max_total_bytes`'s own
+    default even at a per-frame size somewhat above the worst real frame
+    observed -- i.e. the frame-count/duration bound is the one that binds in
+    ordinary operation, not a silent early byte-cap stop.
+    """
+    config = AcceptanceRecorderConfig(output_dir=tmp_path)
+    worst_case_real_frame_bytes = 850_000  # above the ~841KB observed real max
+    assert config.max_frames * worst_case_real_frame_bytes <= config.max_total_bytes
+
+
 def test_module_has_no_product_repository_or_admission_pipeline_import() -> None:
     """The structural guarantee this whole tool exists to provide: it can
     never become admission evidence even by accident, because it has no way

@@ -52,16 +52,29 @@ authority`/`candidate_quality_gate`/`visit_episode_assembler`/
 `sample_interval_ms` (default 3000ms -- dense enough to catch a multi-
 minute encounter's own start/end, sparse enough to stay a genuinely bounded
 diagnostic artifact, not a re-implementation of continuous recording),
-`max_frames` (default 2400), and `max_total_bytes` (default 750MB). Every
-bound is enforced directly (`BoundedFrameSampleRecorder.maybe_record`
-returns `False` and records a `stopped_reason` once a cap is reached,
-verified directly by `test_stops_accepting_once_max_frames_reached`/
+`max_frames` (default 2400, i.e. a full 120-minute session at the default
+interval), and `max_total_bytes` (default 2.5GB). Every bound is enforced
+directly (`BoundedFrameSampleRecorder.maybe_record` returns `False` and
+records a `stopped_reason` once a cap is reached, verified directly by
+`test_stops_accepting_once_max_frames_reached`/
 `test_stops_accepting_once_max_total_bytes_reached`) -- never a silent
 truncation. Each saved frame is written as a plain JPEG file plus one JSONL
 manifest line (sequence index, source-relative offset, wall-clock capture
 time, filename, sha256 content hash, byte count) -- enough identity for a
 human reviewer to independently mark encounter start/end and species/taxon
 against real timestamps, without needing anything else from the product.
+
+`max_total_bytes`'s default was revised from an initial 750MB after the
+first real field use of this recorder (2026-08-19): analysis-resolution
+JPEGs measured ~801KB on average (max ~841KB), not the "well under 200KB"
+originally assumed, so the byte bound silently bound first -- at 936 of an
+intended ~2400 frames -- ending recording ~30 minutes before the session's
+actual Stop and losing independent coverage of that session's last three
+admitted Visits. 2.5GB gives `max_frames`'s own default real headroom over
+the worst frame size actually observed
+(`test_default_byte_bound_has_real_headroom_over_the_old_undersized_default`),
+so the frame-count/duration bound is the one that binds in ordinary
+operation.
 
 ## Off by default; explicit opt-in only
 

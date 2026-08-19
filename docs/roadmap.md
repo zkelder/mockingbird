@@ -345,6 +345,81 @@ analytics; unknown and abstained outcomes are valid.
   surfaced a further, different, bounded observational-quality gap (missed
   high-confidence encounters via a different admission-gate family) that
   keeps the broader phase from closing yet.
+- **Visit Authority Budget + Ambiguous-Boundary Recall Closure v1** (2026-08-19)
+  closed the candidate-visit authority budget defect the milestone above
+  surfaced and investigated the two long, high-confidence, heavily-tracked
+  encounters that same milestone's fresh field session missed. Root cause of
+  the budget defect: `ObservationAuthoritySettingsModel` was a single global
+  singleton row shared by every Stream, and `activation_boundary_at` reset
+  only on an actual `shadow -> candidate_visit` mode transition -- so a
+  process that never reached its own `stop()` kill switch (a crash, or a
+  mid-session dev redeploy) left the row stuck at `candidate_visit` with a
+  stale, possibly-already-exhausted boundary, and the next Start, even in a
+  brand-new process, silently inherited whatever budget the "crashed"
+  session had already spent. A related latent defect shared the same root:
+  session/hourly count queries carried no `stream_id` filter, so one
+  Stream's Stop could revert a *different*, still-running Stream's
+  authority to shadow. Fixed by making the settings row and every query
+  against it per-Stream (schema 35; every existing installation reverts to
+  the safe `shadow` default on upgrade, which is also the direct fix for
+  any stale stuck row) and resetting the boundary whenever a Stream's own
+  Start path asserts a fresh session -- structurally safe, since a live
+  in-process session for a Stream cannot call Start twice. A truthful
+  `candidate_authority_exhausted`/message pair now surfaces in the basic
+  Observation panel, not buried in advanced diagnostics, for the case where
+  a Stream is genuinely observing but budget-exhausted. Reconstructing both
+  missed encounters from the real 2026-08-19 session's own still-live
+  counterfactual ledger found the ambiguous-boundary arbitration mechanism
+  (Admission Recall Investigation + Conditional Fix v1) had worked
+  correctly for both -- each cluster's best-evidenced proposal legitimately
+  escaped ambiguity, then permanently failed
+  `reject_no_identification_or_context` instead. The actual first
+  irreversible loss stage was one layer downstream: resolving ambiguity
+  legitimately delays a proposal's own admission attempt past its evidence-
+  capture moment, and `engine_runtime`'s harvested-evidence cache was bound
+  to only 8 entries with no awareness of which pending proposal still
+  needed which bytes -- unrelated activity elsewhere in a busy real stream
+  (9,363 raw detections that session) cycled the cache many times over
+  within the legitimate delay window, and by the time the delayed attempt
+  ran, its own already-captured bytes were gone. Raised the bound to 32
+  (a bounded memory-footprint change, not an admission-threshold change);
+  reproduced the exact real failure and fix directly with a focused
+  regression test using the real generation/timing shape (RED against the
+  old bound, GREEN against the new one). Replayed every required negative
+  control unchanged: the original 0.795-confidence ambiguous pair, the
+  existing fragmentation/duplicate regression suite, and the full historical
+  70-event scene-confusor cohort (byte-identical cold-start/steady-state
+  numbers) -- confirming both fixes carry zero precision regression. Built
+  a new independent biological-encounter denominator
+  (`mockingbird.observation.acceptance_recorder`) explicitly because the
+  prior milestone's own field validation could not establish one -- a
+  capability-safe tee inside the Engine's existing frame-processing loop,
+  structurally incapable of becoming evidence (zero import path into the
+  product repository or any admission-pipeline module), off by default. A
+  fresh real 81m51s field session against the real Camera Node
+  live-verified the budget fix directly (`activation_boundary_at` came up
+  fresh 3 seconds after Start and never moved; `candidate_authority_
+  exhausted` stayed false across all 84 status polls and 8 real admissions,
+  nowhere near the default budget of 50) and used the new recorder for
+  real, independent confirmation of two of those 8 admissions by full-
+  resolution photograph, with zero admission independently contradicted --
+  but also found a real defect in the recorder itself (its `max_total_
+  bytes` default assumed ~200KB analysis frames; real frames measured
+  ~801KB, so the byte bound stopped recording at 52 of 82 minutes, before
+  the session's last three admissions -- now fixed with measured headroom).
+  Zero false Visits, zero duplicates, zero fragmentation, and zero
+  scene-confusor firings were found in this session by either lens. See
+  [visit-authority-budget-recall-closure-v1-report.md](visit-authority-budget-recall-closure-v1-report.md)
+  for the complete evidence and every number. Decision: **B -- budget
+  defect fixed and live-verified; admission-recall fix needs one more
+  bounded field session** -- the evidence-cache fix is soundly verified
+  against the real reconstructed shape of both originally-missed encounters
+  plus zero measured regression everywhere replayed, but this fresh session
+  did not happen to produce another long, high-confidence encounter that
+  traverses the exact ambiguity-then-delayed-evidence path the two original
+  misses followed, so it still lacks a live proof point under real
+  conditions -- no code change is expected to be needed first, only a
+  matching real encounter with the recorder's coverage gap now fixed.
 - **Remains for this phase:** a 2026-08-10 real end-to-end Camera Node
   session (25.3 minutes, the two just-fixed paths holding up cleanly)
   proved the structural path but found admission *precision* is not yet
@@ -417,7 +492,16 @@ analytics; unknown and abstained outcomes are valid.
   independently-discovered candidate-visit authority budget defect (global,
   cross-session, silently-exhaustible, no UI signal, no reset path) that
   should be addressed alongside it since it directly threatens any future
-  field-session methodology, not just this one.
+  field-session methodology, not just this one. **Visit Authority Budget +
+  Ambiguous-Boundary Recall Closure v1 (above) has since fixed and
+  live-verified the budget defect, and root-caused and fixed both missed
+  encounters to an evidence-cache capacity gap one stage downstream of the
+  (correctly functioning) arbitration mechanism** -- soundly verified by
+  synthetic reproduction of the real failure shape and zero regression
+  across every replayed cohort, but not yet confirmed by a live encounter
+  of the same shape; one more bounded field session (no code change
+  expected first) is the concrete next gate before this piece of
+  observational quality can close.
 - **Explicitly deferred:** Phases 2 and 5-8 below do not start in earnest
   until Phase 1's exit gate is met, except where already-shipped Phase 3/4
   capability (Today in Your Yard v1, Phase 27A packaging) or Phase-1-
