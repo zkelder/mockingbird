@@ -216,6 +216,70 @@ analytics; unknown and abstained outcomes are valid.
   the species-suggestion path functioning correctly on real data
   throughout. See
   [bioclip-review-queue-performance-contract.md](bioclip-review-queue-performance-contract.md).
+- **v0.1 Observational Quality Closure v1** (2026-08-18/19) asked the one
+  question every prior Phase 1 field-acceptance session had left open: not
+  "do the Visits MockingBird creates look good" but how often it actually
+  notices a real animal, turns it into a usable Visit, and offers an
+  appropriately accurate (or abstaining) species suggestion. Built an
+  independently-adjudicated (agent-diagnostic visual review, disclosed
+  non-authoritative, box-verified via zoomed full-resolution crops, never
+  claimed as reviewed truth) real-evidence denominator from the real paired
+  Camera Node's own accumulated evidence: 70 admitted candidate Visits
+  across four real days (2026-08-14/16/17/18), including a
+  previously-unrecorded real ~5.5-hour daytime session that had not yet
+  been analyzed. Found and quantified a real, material admission-
+  **precision** gap distinct from the admission-recall gap Admission Recall
+  Investigation + Conditional Fix v1 already closed: after a disclosed
+  self-correction (a first-pass visual review left 15 cases ambiguous on
+  crops too soft to safely call; a second, sharper recheck pass resolved
+  every one, and the honest, less flattering result is reported here)
+  **slightly over half -- 52.9% (37/70) -- of admitted Visits in this
+  large, non-session-concentrated cohort show no animal at all**,
+  geometrically clustering into 6 recurring static scene confusors (a
+  roof/chimney shadow, a feeder-silhouette texture, driveway/grass edges)
+  covering 76% of the false positives, not diffuse noise. Swept real
+  persisted detector confidence against this ground truth and found **no
+  threshold gives an acceptable trade-off** (the prior smaller-cohort "best"
+  point, 0.3, rejects only 27% of false positives while losing 18% of real
+  animals) -- the first cohort ever large/representative enough
+  (`detection-quality-accounting-contract.md`'s "Production authority gate"
+  condition 1) to answer this, and the answer is negative: confidence-gated
+  admission is not adopted; see that contract's own updated gate section.
+  Species-suggestion confidence (BioCLIP) is a real but weaker-than-first-
+  measured signal for the same question -- five of eleven false-positive
+  Visits with a suggestion still carry a ≥0.9-confidence species label.
+  Rigorous geometry-formula-consistent clustering (reusing
+  `visit_episode_assembler.boxes_geometry_compatible` directly) found
+  **zero duplicate/fragmented Visits** in the same 70-Visit cohort,
+  confirming Visit Continuity v1 holds at real, larger scale. A fresh
+  hard-negative/positive-control detector comparison (real GPU inference,
+  both models re-run full-frame from scratch against 6 freshly-discovered
+  real confusors plus 5 real positive controls) found production MDv5
+  rejects 5/6 cleanly versus RF-DETR Stage-2's 1/6 (whose own dominant
+  false-positive mode here was a parked vehicle, a different confusor
+  family, confirmed by direct visual inspection) -- a second, independent
+  line of evidence confirming
+  [detector-promotion-benchmark-report.md](detector-promotion-benchmark-report.md)'s
+  state A; no promotion. A real resolution-aware species-inference
+  comparison (executed for the first time) found conservative 2x
+  interpolation is a no-op relative to its own base image in every one of 8
+  real cases, and 4x downsample-then-recover measurably degrades results in
+  6/8 -- confirming existing doctrine rather than motivating a new
+  enhancement stage; separately found, and disclosed without acting on it
+  (n=1 ground truth), that the one human-reviewed case classifies correctly
+  from the lower-native-resolution same-frame asset but incorrectly from
+  the higher-native-resolution identification-burst asset, most likely a
+  capture-timing/pose-alignment effect worth a future species-quality
+  milestone. No narrow, deterministic code fix was found for the
+  admission-precision gap -- a persistent, cross-session, per-Stream
+  recurring-geometry confusor-suppression capability does not exist today
+  and is a real, scopeable next milestone, not a rushed policy patch. See
+  [observational-quality-closure-v1-report.md](observational-quality-closure-v1-report.md)
+  for the complete evidence and every number. Decision: **B -- one bounded
+  observational defect remains** (admission-precision/confusor-suppression);
+  genuine encounter recall, Visit-continuity correctness, detector choice,
+  and resolution-aware species decisions are all confirmed sound by fresh,
+  independent evidence.
 - **Remains for this phase:** a 2026-08-10 real end-to-end Camera Node
   session (25.3 minutes, the two just-fixed paths holding up cleanly)
   proved the structural path but found admission *precision* is not yet
@@ -258,7 +322,21 @@ analytics; unknown and abstained outcomes are valid.
   evidence candidates, zero errors) but produced no fresh admitted
   candidate to exercise the new fine-grained diagnostic against a genuine
   sighting -- the honest, disclosed outcome of a deliberately short window,
-  not a defect.
+  not a defect. Observational Quality Closure v1 (above) then added a real,
+  quantified admission-**precision** finding distinct from all of the
+  admission-recall work above: slightly over half of real admitted Visits in
+  a large, non-session-concentrated cohort are false positives from a small
+  number of recurring static scene confusors, and confirmed on that larger
+  cohort that confidence-gated admission is not a safe fix for it, whether
+  measured from raw detector confidence or species-suggestion confidence
+  (see that milestone's own report for the swept thresholds). No narrow,
+  deterministic code fix was found that closes this without a larger
+  initiative -- left
+  open deliberately; a persistent, per-Stream, cross-session
+  recurring-geometry confusor-suppression capability is the concrete next
+  gate this evidence points to (bounded like the existing counterfactual
+  ledger, fails closed, shadow-evaluated against real historical false
+  positives and real positive controls before any live change).
 - **Explicitly deferred:** Phases 2 and 5-8 below do not start in earnest
   until Phase 1's exit gate is met, except where already-shipped Phase 3/4
   capability (Today in Your Yard v1, Phase 27A packaging) or Phase-1-

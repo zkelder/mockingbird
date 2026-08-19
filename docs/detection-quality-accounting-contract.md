@@ -254,6 +254,25 @@ If any condition is unmet, the candidate policy stays in shadow/evaluation
 mode and the report states what additional reviewed examples are needed --
 never a threshold guess.
 
+**Condition 1 answered (2026-08-19, Observational Quality Closure v1):** a
+70-admitted-Visit, four-real-day (2026-08-14/16/17/18), non-session-concentrated
+independently-adjudicated cohort from the real paired Camera Node -- the first
+reviewed truth ever large/representative enough to evaluate this gate at all --
+found conditions 2 and 3 fail together at every threshold swept against real
+persisted detector confidence (`observation_candidate_visits.
+confidence_evidence_json`): the best-looking prior single-session point (0.3)
+rejects only 29% of real false positives while losing 19% of real animals;
+0.7 rejects 67% of false positives while losing 45% of real animals; no swept
+value clears both conditions simultaneously. **The gate is not cleared.
+Confidence-gated admission remains shadow/evaluation-only; production
+admission stays confidence-blind, unchanged.** The real, quantified problem
+this cohort *did* find -- roughly a third of admitted Visits are false
+positives, geometrically concentrated in a handful of recurring static scene
+confusors rather than diffuse noise -- needs a different kind of fix (a
+persistent, cross-session, per-Stream recurring-geometry suppression
+capability, not a confidence floor); see
+[observational-quality-closure-v1-report.md](observational-quality-closure-v1-report.md).
+
 ## Candidate-model lifecycle compatibility
 
 Nothing here is MDv5-specific. `ConfidenceEvidenceSummary`/`DetectionEvidenceSample`
