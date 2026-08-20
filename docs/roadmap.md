@@ -25,11 +25,40 @@ Detectors and SpeciesSuggestions are evidence; explicit correction is the
 only reviewed truth used for confirmed species, history, exports, and
 analytics; unknown and abstained outcomes are valid.
 
+## Governing priority for v0.1
+
+Two different kinds of quality govern this product, and they do not carry
+equal release weight.
+
+**Trustworthy detection, encounter reconstruction, Visit correctness, and
+evidence correctness must be highly reliable before v0.1.** A user must be
+able to trust that MockingBird noticed the wildlife that was actually there,
+represented it as a coherent Visit (or Visits, for genuinely separate
+subjects), and preserved evidence that actually shows what happened.
+
+**Species identification only needs to be useful, honest, calibrated,
+abstention-capable assistance for human review.** Perfect species top-1
+accuracy is not a v0.1 requirement; a confident wrong species is worse than
+an honest "bird, species uncertain."
+
+MockingBird will not spend months chasing another few points of species
+top-1 accuracy while real animals are missed, one encounter becomes three
+Visits, several simultaneous birds collapse into one subject, empty frames
+become bird Visits, evidence points at the wrong frame, or processing delay
+looks indistinguishable from a detection miss. See Gate A and Gate B in
+"v0.1 release gates," below, for what this means operationally.
+
 ## Current status
 
 - **Current phase:** Phase 1 -- Trustworthy Single-Site Observatory (below).
 - **Current exit gate:** one representative installation can run for days
   and create trustworthy useful history without developer babysitting.
+- **v0.1 release-gate mapping:** see "v0.1 release gates," below, for the
+  authoritative small gate set this phase's still-open work maps onto --
+  principally Gate A (detection/encounter/Visit correctness, including the
+  new multi-subject requirement) and part of Gate E (reliability/
+  observability). Phase numbering below is preserved as historical record,
+  not renumbered.
 - **Already complete** (see [roadmap-history.md](roadmap-history.md) for
   detail): the real Camera Node path; the native ONNX Runtime CUDA
   detection/tracking/evidence Observation Engine, hardened through repeated
@@ -571,7 +600,8 @@ analytics; unknown and abstained outcomes are valid.
   -- because no challenger dominated the incumbent and tiling created
   unacceptable false positives/runtime. The live misses remain valid;
   production and threshold 0.1 are unchanged.
-- **Next recommended implementation milestone:** have a human independently
+- **Detector-benchmark follow-up (a future detector-quality action, not the
+  current top-priority next step -- see below):** have a human independently
   review and box the four latest attributed birds; add a new multi-scene,
   non-session-concentrated holdout with deliberate small/distant birds and
   surviving environmental confusors; and retain exact live analysis-frame
@@ -580,7 +610,592 @@ analytics; unknown and abstained outcomes are valid.
   default-off live shadow only if a challenger clearly dominates. This is the
   exact next gate recorded by
   [detector-promotion-benchmark-report.md](detector-promotion-benchmark-report.md);
-  the holdout remains prohibited from training.
+  the holdout remains prohibited from training. It stays valid future work,
+  but End-to-End Bird Encounter Recall Closure v1 (above, the chronologically
+  latest milestone) found the detector was not this session's material loss
+  stage (one clean miss, n=1, of 22 real encounters) and performed no
+  detector-comparison work, so this is not queued ahead of the action below.
+- **Current recommended next action:** one more real field session, now with
+  the raised 128-entry evidence-cache bound in place, specifically to obtain
+  a live (not only RED/GREEN-synthetic) proof point that the raised bound
+  holds under real busy-session load -- mirroring exactly how the 2026-08-19
+  session was itself the live-proof follow-up for the fix that preceded it.
+  See "v0.1 release gates" (Gate A) below and
+  [end-to-end-bird-encounter-recall-closure-v1-report.md](end-to-end-bird-encounter-recall-closure-v1-report.md)'s
+  own "Recommended next bounded step."
+
+## v0.1 scope freeze
+
+Public v0.1 means, approximately: install MockingBird → connect a supported
+camera → reliably notice wildlife → preserve useful evidence → assemble
+correct Visits → provide honest species assistance → let the user
+confirm/correct → create durable Observations → return later and understand
+what has been happening at the Place.
+
+A new requirement enters v0.1 scope only when at least one of these is true:
+
+- direct field evidence shows product correctness depends on it;
+- safety, privacy, or security requires it;
+- release, install, or recovery correctness requires it;
+- a previously accepted assumption is empirically invalidated.
+
+An idea does not become a v0.1 requirement merely because it is interesting,
+ambitious, or would make the product more capable later. The 2026-08-19
+multi-animal, duplicate-Visit, evidence-latency, and detection-recall field
+findings (see "Current status," above) qualify under the first criterion --
+they are direct field evidence, not speculation. Remote/cellular/solar
+hardware does not qualify under any criterion today; see "Post-v0.1 lanes,"
+below.
+
+## Scope-reopening rule
+
+Accepted architecture/product decisions are not reopened merely because
+another interesting option exists. A decision reopens only when:
+
+- new field evidence contradicts it;
+- correctness, safety, or privacy requires it;
+- release validation reveals an invalid assumption;
+- materially stronger technology justifies a bounded candidate evaluation
+  (see "Formal model lifecycle" in [architecture.md](architecture.md)).
+
+Settled direction, not up for casual reconsideration:
+
+- Observation is the semantic center; detection is infrastructure.
+- Local-first; cloud is optional, never required.
+- Human review creates truth; nothing else does.
+- Hardware- and provider-agnostic; Raspberry Pi is a reference
+  implementation, not product identity.
+- Remote field hardware (LTE/solar/custom carrier) is post-v0.1.
+- Research-grade credibility is earned through sustained real deployment,
+  not declared.
+- Custom hardware requires accumulated deployment evidence first, not the
+  reverse.
+- SpeciesNet remains an unadopted, evidence-only candidate (see Gate B,
+  below); any future look is a fresh re-evaluation, not resuming a prior
+  adoption that never happened.
+
+This is intentionally the last general, open-ended roadmap/doctrine audit
+before v0.1. Future audits should be gate-specific ("what prevents Gate X
+from passing," not "what else could we improve") unless new empirical field
+evidence invalidates something above.
+
+## v0.1 release gates
+
+The remaining path to v0.1 is a small, ordered set of release gates, not an
+open-ended list of phases. Gate order is priority order: do not spend
+material effort on a later gate while an earlier one has a known, evidenced
+gap, except where independent work genuinely does not depend on the
+unanswered question (see "Field-testing doctrine," below).
+
+Historical Phase numbering ("Phase sequencing," below) remains the
+structural/historical record of how the product got here and is not
+renumbered. Each phase's still-open v0.1-relevant work maps onto one or more
+gates here; use this section, not phase number, to answer "what's actually
+left before v0.1."
+
+### Gate A -- Trustworthy Detection, Encounter & Visit Correctness
+
+The hardest and highest-priority v0.1 gate. The product question is not "is
+the detector benchmark good" -- it is **did MockingBird correctly notice and
+represent what actually happened outside.** Passing this gate requires
+measuring the full perception funnel, not an isolated model score: capture
+coverage → activity detection → animal presence → detector localization →
+tracking → proposal generation → admission → evidence survival → Visit
+assembly → evidence selection → source-resolution lineage → multi-subject
+handling → false Visits → fragmentation → duplicate Visits → accidental
+merging → capture-to-visible-Visit latency → backpressure behavior →
+admission/suppression correctness → provenance.
+
+Top-level field metrics (see
+[detection-quality-accounting-contract.md](detection-quality-accounting-contract.md)
+for the formal accounting and "Numeric release budgets," below, for what
+does and does not yet have an accepted number): genuine wildlife encounters
+presented vs. captured vs. missed; end-to-end Visit recall; false-Visit
+rate; fragmentation rate; duplicate-Visit rate; useful-evidence rate;
+per-subject evidence correctness; capture-to-user-visible-Visit latency;
+monitoring coverage.
+
+**Current disposition (2026-08-19 evidence,
+[end-to-end-bird-encounter-recall-closure-v1-report.md](end-to-end-bird-encounter-recall-closure-v1-report.md)):**
+genuine encounter recall 15/22 = 68.2% (a disclosed ceiling), detector
+localization 17/19 = 89.5%, evidence-survival-to-admission 15/17 = 88.2%,
+false-Visit rate 2/21 = 9.5%. Precision is now strong; recall and Visit-shape
+correctness are the open work. Gate A is not passed. Three concrete,
+evidenced gaps remain (none of them "the detector is bad"):
+
+1. **Evidence-cache capacity fix (32→128) needs one more live field proof.**
+   RED/GREEN-verified against the exact real failure shape that motivated
+   it, zero measured regression across every replayed cohort -- but not yet
+   confirmed by a live encounter of the same shape under the raised bound.
+   This is the single concrete next field-acceptance action (see "Current
+   recommended next action," above, and "Numeric release budgets," below).
+2. **Multi-subject Visit correctness** -- see the dedicated subsection
+   immediately below. New, hard requirement; current schema/UI cannot
+   represent it.
+3. **Background/empty evidence receiving a confident species label** -- a
+   real, repeatedly-observed regression class (2/21 false Visits in the
+   latest session, 5/70 in the prior large cohort, all carrying a confident
+   wrong species name because BioCLIP has no abstention path). See Gate B;
+   the fix belongs partly in Gate A (credible-animal gating) and partly in
+   Gate B (abstention).
+
+Gate A also owns **observation freshness / capture-to-visible latency** as a
+first-class quality concern, not merely an implementation detail: a user
+must be able to tell "missed" apart from "queued," "admitted but not yet
+persisted," "persisted but not yet visible," and "species still processing."
+Track (or plan observability for) timestamps across: source capture →
+activity → animal detection → proposal → admission → Visit persistence →
+Visit UI visibility → evidence ready → species suggestion ready. A delayed
+Visit must never look, to the user, like MockingBird saw nothing. Visit
+visibility must not wait on species enrichment, which finishes
+asynchronously. Under backpressure, priority order is: (1) capture, (2)
+encounter/Visit correctness, (3) durable evidence, (4) user-visible Visit,
+(5) species enrichment, (6) optional analytics/enrichment -- never sacrifice
+observation correctness for optional inference that is behind.
+
+The accepted `frame-driven-onnx-cuda` Camera Node path is already, today,
+continuous/near-continuous frame-driven detection with burst-triggered
+high-resolution evidence capture -- not isolated snapshot-timer polling;
+`SnapshotObservationProvider`'s timer-driven path remains a deliberately
+preserved compatibility/lower-capability/CPU-fallback provider, not the
+primary architecture (see "Observation Engine v2 boundary" in
+[architecture.md](architecture.md)). Snapshot-based acquisition is
+therefore not a permanent architectural requirement, and was never
+asserted as one -- but it is also not yet fully evolved: evidence bursts
+are captured measurably *after*, not at, the triggering detection, a
+documented mechanism behind at least one real off-target localization
+finding (see [localization-attribution-contract.md](localization-attribution-contract.md)).
+A short rolling pre-trigger source buffer -- memory/local-storage bounded,
+persisting evidence only when needed, never continuous video storage, never
+an NVR -- is a candidate solution if capture timing turns out to be a
+material Gate A blocker; it is not scoped or implemented in this pass.
+
+#### Multi-subject Visit correctness (new, hard v0.1 requirement)
+
+`Visit = exactly one animal` is not a valid product assumption --
+[product-doctrine.md](product-doctrine.md) already says so ("Do not assume
+one Visit equals one bird... every Visit contains exactly one individual").
+What is new, from direct 2026-08-19 field evidence, is that this is now a
+**hard v0.1 release gate**, not only a modeling caution: ordinary
+feeder/property scenes with multiple simultaneous birds (the real, current
+example: a nuthatch plus two finches present at once) must not become zero
+Visits, one falsely singular bird, several duplicate Visits for one
+encounter, accidental subject merges, one species label applied to every
+animal in the frame, or contradictory species labels for duplicated
+representations of the same subject.
+
+**Current state, verified directly against the domain model, not assumed:
+the schema and UI cannot represent this today.**
+
+- `visit_episode_assembler.classify_boundary`'s documented "structural
+  incompatibility" rule treats *any* temporal overlap between two confirmed
+  tracklets as non-mergeable, because it cannot safely tell "two simultaneous
+  real subjects" apart from "one tracker-association artifact" -- and, by
+  design, never tries; see
+  [tracklet-visit-assembly-contract.md](tracklet-visit-assembly-contract.md)
+  "Structural incompatibility." This is a deliberate, historically-correct
+  design boundary (it protects against fabricating false continuity), not a
+  bug -- but its downstream effect is now an explicit v0.1 correctness gap:
+  2026-08-19 evidence traced two fragmentation cases directly to it, one
+  producing three Visits with three different species labels
+  (`tufted_titmouse`, `american_robin`, `american_robin`) for what is almost
+  certainly one bird, and a separate two-different-birds-at-once encounter
+  (a reddish bird on the hook, a brown bird at the feeder, simultaneously)
+  that produced **zero** Visits at all. See
+  [end-to-end-bird-encounter-recall-closure-v1-report.md](end-to-end-bird-encounter-recall-closure-v1-report.md)
+  §5/§7 for the complete evidence.
+- `VisitModel` has scalar `subject_label`/`species_guess`/`confidence`/
+  `reviewed_label` fields (one value per Visit, not per subject);
+  `SpeciesSuggestionModel` has no subject/track discriminator (the product
+  already treats "the Visit's latest suggestion" as *the* suggestion);
+  `ReviewLabelModel.target_type` is hard-constrained to `{event, visit}` with
+  no subject-level target; `VisitRelationshipModel.relationship_type` only
+  ever takes `split`/`merge`, with no "concurrent, different subjects"
+  relationship; the frontend Visit case file renders exactly one correction
+  form per Visit. None of this is an oversight -- it is a consistent,
+  whole-stack single-subject assumption that now needs to change.
+- Notably, the live tracker/burst-evidence layer *can already* track and
+  capture evidence for concurrent generations somewhat independently (one
+  `BurstOpportunity` per generation; see "Multi-subject handling" in
+  [burst-scheduler-contract.md](burst-scheduler-contract.md), which
+  documents a real, previously-reviewed two-simultaneous-bird frame with two
+  independent boxes). The gap is downstream, at assembly, persistence, and
+  review -- not at capture.
+
+**Scope boundary, explicit:** required before v0.1 is reliable
+*within-encounter* multi-subject tracking/association sufficient for
+trustworthy Visit construction and review. Not required, and out of scope:
+recognizing the same individual animal tomorrow, biometric individual
+identification, persistent cross-Visit ReID, perfect identity across
+arbitrarily long occlusion, or research-grade population estimation (all
+remain explicitly deprioritized; see "v0.1 non-blockers," below). If subject
+identity becomes ambiguous mid-encounter, MockingBird must preserve that
+ambiguity rather than fabricate continuity -- the same principle that
+justified the conservative boundary in the first place.
+
+This is a design problem, not something to solve in a documentation pass. A
+focused **Multi-Subject Visit Assembly & Review v1** milestone is now an
+explicit v0.1 prerequisite. Its design authority is the existing
+[tracklet-visit-assembly-contract.md](tracklet-visit-assembly-contract.md)
+(assembly/merge-boundary mechanism) and
+[candidate-visit-authority-contract.md](candidate-visit-authority-contract.md)
+(admission/persistence), extended -- not a new parallel system -- governed
+throughout by [product-doctrine.md](product-doctrine.md)'s existing
+individual-identity caution. Do not implement it opportunistically inside an
+unrelated task.
+
+### Gate B -- Useful Species Assistance
+
+Perfect top-1 species identification is not a v0.1 requirement. The purpose
+of automatic identification before review is useful, honest assistance --
+not the product outcome by itself (see
+[product-doctrine.md](product-doctrine.md) "Product promise"). Acceptance
+requires: useful top-k, not necessarily correct top-1; a sufficiently low
+confidently-wrong rate; meaningful abstention ("Bird -- species uncertain"
+is a valid, often-preferable output); safe non-bird/background behavior (a
+credible-animal gate, or classifier abstention, on empty/background
+evidence); provenance and correct evidence input; bounded inference latency
+and safe failure; no creation of reviewed truth -- suggestion only, exactly
+as already governed.
+
+**Current disposition:** BioCLIP 2 (`adapter_id=bioclip_2`) is the live,
+default-off-automatic/always-available-manual suggestion adapter. It is
+genuinely useful on plausible common species, but **has no abstention path
+at all today** -- confirmed repeatedly, not theoretical: it returned a
+specific, confident species name for every one of 5 empty-frame Visits in
+the 70-Visit Observational Quality Closure v1 cohort and for both of the 2
+confirmed-false Visits in the 2026-08-19 End-to-End session. This is the
+concrete Gate B blocker, not species accuracy: **abstention does not exist
+anywhere in the species pipeline today** (also true of the detection
+pipeline's own stage 12; see [architecture.md](architecture.md) "Detection
+Quality Accounting"). Representative species-level correction truth (30-100
+reviewed examples) to actually validate accuracy also remains uncollected.
+
+Do not let species-model optimization block release once identification
+assistance is demonstrably useful and safe. Do not reduce abstention just to
+produce more exact-looking labels.
+
+#### Background/empty evidence → confident species label (regression class)
+
+Real, repeatedly-observed, not hypothetical: empty/background evidence has
+received confident bird species labels in more than one field cohort. For
+each case, distinguish rather than lump together: (1) genuine detector false
+positive; (2) inference eligibility/gating error (species inference ran when
+it should not have); (3) classifier failure to abstain on non-animal
+evidence (the confirmed mechanism behind every case traced so far); (4)
+wrong source frame/crop/evidence-lineage defect; (5) delayed/stale evidence
+mismatch, where applicable.
+
+v0.1 invariant: background/empty evidence must either fail the
+credible-animal gate or cause species inference to abstain/not run. If a
+real animal existed, the Visit must preserve and display the correct source
+evidence used for interpretation. Do not fix this solely by raising the
+detector confidence threshold before root cause is understood -- that
+specific approach has already been swept against real reviewed data and
+rejected (see
+[detection-quality-accounting-contract.md](detection-quality-accounting-contract.md)
+"Production authority gate": no threshold clears both the
+false-positive-rejection and real-animal-recall conditions together). This
+regression class is now a standing cohort for the eventual fix, not a
+one-off finding.
+
+#### SpeciesNet / BioCLIP history (accurate record, preserved)
+
+SpeciesNet was a deliberate, seriously-evaluated direction, not something
+newly discovered: MegaDetector-family detection and SpeciesNet species
+identification were investigated together (Phases 9I-9K), then SpeciesNet
+was actually run against real saved field media on 2026-07-16 and got top-1
+bird on only 1 of 8 reviewed crops with no species-specific top-1 result at
+all -- it failed the usefulness gate on MockingBird's own corpus. BioCLIP 2
+returned an avian species top-1 on every reviewed/candidate crop in the same
+evaluation and became the stronger candidate, then the production suggestion
+adapter (Phase 26A/26B). Any future SpeciesNet work is a fresh
+re-evaluation against then-current evidence, not resuming an adoption that
+never happened.
+
+#### Species Classification Re-evaluation / Promotion v2 (bounded future milestone, not v0.1-blocking)
+
+One bounded candidate-model milestone, once Gate B's abstention/safety
+requirements are otherwise met: compare the current deployed BioCLIP path,
+current SpeciesNet, a justified newer BioCLIP-family model, and (only with
+evidence) another materially stronger model. Benchmark across the actual
+MockingBird visual domain -- feeder, yard/porch, nest/box, RTSP/
+security-style, remote/trail-cam-like, manual/DSLR import, close, small/far,
+day, night/IR, motion blur, juvenile/sex variation, multiple subjects,
+birds, non-bird wildlife, and difficult sibling taxa (a real example already
+exists: House Finch vs. Carolina Chickadee vs. Tufted Titmouse, per
+[observational-quality-closure-v1-report.md](observational-quality-closure-v1-report.md)).
+Measure top-1, top-k, coverage, calibration, abstention, confidently-wrong
+rate, crop-vs-full-frame, geography on/off where relevant, and runtime cost.
+Do not build a SpeciesNet/BioCLIP ensemble or router first -- determine
+whether one model materially wins overall, or a repeatable domain split
+justifies the added complexity, before building either. Once a v0.1
+selection is accepted, it is settled direction (see "Scope-reopening rule,"
+above) absent materially new evidence.
+
+#### Resolution-aware species inference (preserved, partially tested doctrine)
+
+Lineage doctrine already exists and is unchanged ("Source-resolution
+evidence contract" in [product-doctrine.md](product-doctrine.md)): trace
+original source resolution → selected source frame → source-coordinate crop
+→ any subsequent transform. A real, first-of-its-kind resolution-enhancement
+comparison
+([observational-quality-closure-v1-report.md](observational-quality-closure-v1-report.md)
+§12) tested part of a broader ordering and found: native/source-resolution
+evidence remains canonical; conservative 2x interpolation is a measured
+no-op (0/8 cases improved); a synthetic 4x-downsample-then-recover
+measurably degrades results (6/8 cases worse); multi-frame/burst
+reconstruction was named but not attempted. Two further stages --
+conservative learned super-resolution, and generative/diffusion
+super-resolution as experimental-only -- have no existing evidence base and
+are net-new framing here, to be evaluated (if ever) only with real
+comparative evidence against native evidence, never as a default replacement
+for it. One specific, disclosed, unresolved lead from that same test (n=1):
+a lower-native-resolution same-moment crop classified a real bird correctly
+while the higher-native-resolution burst crop classified it wrong, plausibly
+a capture-timing/pose-alignment effect rather than a resolution effect --
+recorded as a future species-quality lead, not acted on.
+
+### Gate C -- Today / Report-First / Place Intelligence
+
+Detection work must not pull the product back into being a detector
+dashboard. MockingBird must eventually answer, for a Place: what visited,
+how often, where, what's new, what's regular, what's changed, and how much
+monitoring coverage supports those claims. Preserve: Today, Place history,
+counts, species-visit summaries, Zone/hour patterns, baseline maturity,
+new-vs-regular species, coverage-aware claims, a clear
+confirmed-vs-provisional distinction, calm review, calm digests/
+notifications, and useful sparse/first-run states (see
+[product-doctrine.md](product-doctrine.md) "Place Intelligence" and
+"Calm-observatory notifications"). Language models and external ecological
+context may explain and enrich; they never become observational authority
+(see "Language models" in product-doctrine.md). **Current disposition:**
+substantially delivered as Today in Your Yard, with Place Intelligence's
+backend hardening also complete (DST-correct bucketing, wildlife-eligibility
+denylist, taxonomy N+1 eliminated, union-based coverage); the frontend
+surface for that newer Place Intelligence work is the open piece -- see
+Phase 5, below.
+
+### Gate D -- First-Hour Setup & Camera Node Golden Path
+
+Scope is the *current* supported Camera Node and host: install,
+pairing/configuration, health, reboot recovery, provider/capability
+reporting, monitoring, first useful Observation/report, support-safe
+recovery. This is not the same gate as Remote Field Node (LTE/solar/
+battery/remote enclosure/custom hardware) -- that is post-v0.1; see
+"Post-v0.1 lanes," below. **Current disposition:** the Camera Node's own
+install/service/reboot-supervision path is proven on real Pi 4 hardware
+(crash, clean-restart, and network-interruption recovery all verified
+live); the MockingBird host's own install/upgrade/recovery experience
+(Phase 4) has a self-contained Windows bundle and first-run wizard, with
+native Windows hardware acceptance, automatic upgrade, and guided recovery
+still open.
+
+### Gate E -- Reliability / Recovery / Observability
+
+Existing structured error/diagnostics doctrine remains and now explicitly
+includes perception latency and freshness (see Gate A, above) alongside:
+capture freshness, activity/detections/tracks/proposals, admission,
+suppressed/rejected reasons, evidence survival, Visit creation,
+duplicate/fragmentation signals, queue depth, processing latency, classifier
+latency, UI freshness, Camera Node health, reconnects, storage/database
+failures, and coverage gaps. A user should never need to stare at the
+feeder and guess whether the system is still working. Avoid high-cardinality
+or raw-image telemetry. **Current disposition:** sustained operation,
+restart/recovery, and truthful health reporting are largely proven for the
+Camera Node path; bounded CPU/RAM/storage behavior is declared but not
+exhaustively field-verified under representative unattended conditions (see
+Phase 1, below).
+
+### Gate F -- OSS / Security / Compatibility / Packaging Closure
+
+Preserve: LICENSE, SECURITY, CONTRIBUTING, a clean repository, a
+supported-version/security-disclosure policy, installation/packaging,
+upgrade/recovery, backup compatibility, API/schema/event versioning with
+additive-compatibility rules, privacy/security, dependency reproducibility,
+accessibility/responsiveness, support-safe diagnostics, public benchmark
+governance, and accurate user docs. Do not revive unnecessary cloud
+dependency, Kubernetes, microservices, or speculative enterprise
+architecture. **Current disposition:** CONTRIBUTING.md exists and is
+current; **no `LICENSE` or `SECURITY.md` file exists in the repository
+today** -- a real, open Gate F item, not yet started, distinct from and
+smaller than Phase 4's packaging work. Public benchmark/training governance
+(frozen holdout, provenance, contamination) exists for internal use (see
+[wildlife-detector-training-contract.md](wildlife-detector-training-contract.md));
+the legal-releasability/license/consent layer needed before any public
+release did not exist before this pass -- see
+[public-benchmark-governance.md](public-benchmark-governance.md).
+
+### Gate G -- External Beta Acceptance
+
+After the internal gates above are credible, move to a small external
+cohort -- not hundreds of users. Prioritize diversity of real setups over
+headcount. External usage should validate installation, Camera Node
+pairing, detection, multi-subject encounters, evidence quality, review,
+Today/report usefulness, recovery, and diagnostics under conditions this
+project cannot fully simulate itself. Beta findings outrank speculative
+architecture work. Not started; no existing doctrine to reconcile.
+
+### Numeric release budgets
+
+Where a valid numeric threshold already exists, it is preserved here rather
+than reinvented:
+
+- MDv5 production `score_threshold`: **0.1** (unchanged; state A, "MDv5
+  native retained," per
+  [detector-promotion-benchmark-report.md](detector-promotion-benchmark-report.md)
+  -- no challenger dominated on the 70-image reviewed cohort).
+- Tracker-internal `strong_detection_threshold`: **0.7** (gates
+  confirmation/continuity bookkeeping, not admission).
+- Confidence-gated admission was formally swept against real reviewed data
+  and explicitly **not adopted**: at 0.3 it rejects 29% of false positives
+  while losing 19% of real animals; at 0.7 it rejects 67% of false positives
+  while losing 45% of real animals; no swept value clears both the
+  false-positive-rejection and real-animal-recall conditions together (see
+  [detection-quality-accounting-contract.md](detection-quality-accounting-contract.md)
+  "Production authority gate"). Production admission stays confidence-blind
+  by measured decision, not by omission.
+
+What does **not** yet exist, and must be established from representative
+field evidence -- not invented -- before Gate A can be declared passed: an
+accepted minimum end-to-end Visit recall; a maximum false-Visit rate; a
+maximum fragmentation/duplicate-Visit rate; a minimum evidence-survival/
+useful-evidence rate; a maximum capture-to-visible-Visit latency; a minimum
+monitoring-coverage figure. The most recent single session (68.2% recall
+ceiling, 9.5% false-Visit rate, 88.2% evidence survival) is a
+*measurement*, not yet an *accepted budget* -- one session, however
+carefully independently validated, is not a representative body of evidence
+on its own. Do not adopt "looks pretty good" as a substitute for a stated
+number, and do not invent a precise-sounding target (such as 99.9%) that no
+field cohort has actually justified. Establishing these budgets, from a
+broader body of field evidence than any single session, is itself part of
+what closes Gate A.
+
+## Post-v0.1 lanes
+
+Real future direction, deliberately not implemented now and not gating
+v0.1. Kept here so it is not lost, not so it grows into a second roadmap.
+
+**Remote / Intermittent-WAN Camera Node.** The *current* Camera Node
+reference implementation is explicitly LAN/Wi-Fi-scoped today
+(loopback-default bind, `network-online.target`-gated systemd startup, no
+battery/RTC/power-loss handling) -- an accurate baseline to extend from, not
+contradict. Architecture should already be tested against "would this still
+work on a large property, on solar/battery, connected intermittently by
+LTE, physically untouched for months" without claiming any of that works
+today. Future direction: LTE/cellular transport, no Ethernet/Wi-Fi
+requirement, secure outbound-only connectivity, no required inbound public
+port, local store-and-forward, resumable/idempotent sync, retained
+evidence/provenance, explicit pending-sync state, network-health and
+data-budget awareness, and continued local operation through hours/days
+offline. Never default to continuous source-video upload over cellular.
+Cellular support, when built, should be bounded (a validated modem/SIM/
+carrier matrix; standard Linux abstractions such as NetworkManager/
+ModemManager, not a custom stack) with diagnostics that distinguish
+modem-missing, SIM-missing/locked, registration failure, weak signal,
+APN/data-session failure, internet failure, host/tunnel failure, quota, and
+reconnect loops -- Observation continues locally through any of them. Route
+the actual design to a focused future `docs/remote-field-node-design.md`
+when this work is genuinely scoped; do not speculatively author it now.
+
+**Power / solar.** Future first-class capability: report power source,
+battery state, charge/solar input, autonomy, power-health, and storage
+remaining where measurable; deployment profiles (bird/daylight, full
+24-hour, other capability-aware duty cycles -- never globally disable night
+just because the product is bird-first); deferred uploads, reduced optional
+compute, survival mode, graceful shutdown, and auto-restart after power
+recovery; possibly an ultra-low-power supervisory MCU later (watchdog,
+battery/solar monitoring, wake/sleep, hard reset, modem reset). Planning
+envelopes only, not guarantees: ≤20W-class is an excellent optimized stretch
+target, ~30-50W-class is the desirable normal Remote Field Node range,
+~100W-class is specialized/research territory, and routinely exceeding
+100W per camera means reconsidering architecture rather than just adding
+panel area. None of this is implemented now.
+
+**Hardware progression, evidence-driven.** Pi 4/5 remains reference/
+golden-path hardware. Next, if evidenced: a remote prototype using existing
+Pi + LTE + storage + solar/battery. CM4/CM5 only after measured evidence
+from that prototype. Custom carrier boards only after deployment evidence.
+No custom SBC, modem, sensor, battery chemistry, solar controller, or
+proprietary radio unless justified much later. Pi/CM is an implementation
+ecosystem, not product identity (see "Scope-reopening rule," above).
+
+**Deployment classes, one core.** Home/Property Observatory (primary
+product), Remote Field Node (advanced field deployment, earned),
+Research/Conservation Deployment (earned future capability) -- one
+architecture, not forked products (see
+[product-doctrine.md](product-doctrine.md) "Product profiles"). Research
+credibility specifically requires evidence before the label is used:
+~60-90+ day unattended deployments, no silent evidence loss,
+coverage/sampling accounting, reliable timestamps, known deployment
+configuration, model/provenance history, documented power/network behavior,
+reproducible workflows, recoverable failures, disclosed detector/classifier
+limitations, useful standardized exports, and fleet health where necessary.
+Prefer roughly 3-5 external deployments (serious naturalist/large-property,
+technically sophisticated user, ecology/conservation collaborator) as
+external-demand evidence before custom field hardware.
+
+**OSS / productization boundary.** The scientifically important core stays
+open: Camera Node software, Observation/review/evidence semantics,
+provenance, transport abstractions, store-and-forward, diagnostics,
+power-aware logic, model lifecycle, benchmark methodology, export schemas,
+provider profiles, reference configurations/BOMs. Possible later commercial
+value: preassembled/tested hardware, enclosures, modem/antenna selection,
+provisioning, updates, remote/fleet services, support, warranty,
+replacement, installation. No artificial lock-in; MockingBird does not
+become a commodity trail-camera hardware company.
+
+**Audio.** Remains on the roadmap, not implemented. The canonical
+design/consent boundary already exists and is more detailed than a one-line
+mention:
+[durable-camera-monitor-lifecycle-design.md](durable-camera-monitor-lifecycle-design.md)
+"Audio-aware boundary" -- separate consent from video, cannot inherit
+video's `armed` state, video privacy polygons are insufficient for audio,
+off-by-default retention, BirdNET-family output would be suggestion-only
+(never reviewed truth), video arming never enables audio capture. Future
+direction otherwise: optional local microphones/audio providers, capability
+reporting, retention, source-evidence provenance, audio model lifecycle,
+ranked species/taxon evidence, eventual visual/audio/context fusion, safe
+failure, human review authority throughout. Audio feeds Evidence →
+Interpretation → Review Decision → Observation; it never creates a second
+truth system. Nothing in current repository evidence moves audio into v0.1.
+
+**Ecological export & sharing interoperability.** A real, working local
+export exists today -- structured metadata/manifest export (JSONL +
+taxonomy + skip-reasons + summary) built only from reviewed `ReviewLabel`
+truth -- but it is reference-only (it points at local media paths; it does
+not yet bundle/copy the actual media bytes). Camtrap DP, GBIF, eBird,
+Wildlife Insights, Darwin Core, and iNaturalist interoperability do not
+exist anywhere in the repository today (confirmed absent, not merely
+undocumented) -- this is genuinely new post-v0.1 direction, not a
+correction. External sharing always consumes data already permitted by the
+existing reviewed-truth contract; do not build a second "human
+verification" mechanism per destination. eBird: eventual assisted/reviewed
+export where the checklist context is eligible under then-current eBird
+rules -- no autonomous reporting of unreviewed machine detections, and
+eBird's data model never becomes MockingBird's internal truth model. Camtrap
+DP: the important standardized interchange target for autonomous
+field/research deployments -- deployment/site, coverage/sampling,
+timestamps, evidence/media, taxonomy, machine provenance, human review, and
+events/observations should all be representable when this is built. GBIF:
+future publication interoperability through Camtrap DP/Darwin Core where
+appropriate. Wildlife Insights: a downstream interoperability target, not
+something MockingBird replaces -- note this name collides with
+MockingBird's own existing internal Wildlife Insights analytics panel
+(`/analytics`); disambiguate explicitly in any future implementation, this
+is not the same thing. Other legitimate destinations (iNaturalist, research
+datasets): keep the architecture extensible; verify each destination's
+actual current rules/API when actually built. None of this delays v0.1.
+
+**Public benchmark / training governance.** See
+[public-benchmark-governance.md](public-benchmark-governance.md) (new --
+no dedicated governance existed before this pass beyond the internal frozen-
+holdout/contamination rules already in
+[wildlife-detector-training-contract.md](wildlife-detector-training-contract.md)
+and [detector-promotion-benchmark-contract.md](detector-promotion-benchmark-contract.md)).
+Human review is required for training/reporting eligibility but does not by
+itself grant public-release rights; benchmark/public-corpus licensing and
+consent remain separately governed.
 
 ## Phase sequencing
 
@@ -588,6 +1203,12 @@ A later phase may already have partial, opportunistically-shipped capability
 (noted where applicable) without changing which phase currently governs
 prioritization -- that remains the lowest-numbered phase whose exit
 condition is not yet met.
+
+This phase framework is the historical/structural record of how the
+roadmap arrived here. For v0.1 release sequencing specifically, use "v0.1
+release gates," above, as the authoritative answer to "what's actually
+left" -- each phase's still-open, v0.1-relevant work maps onto one or more
+gates there.
 
 ### Phase 1 -- Trustworthy Single-Site Observatory (current)
 
@@ -620,15 +1241,18 @@ CPU/RAM/storage behavior is declared (see the former Gate E budgets, below)
 but not exhaustively verified under representative unattended field
 conditions.
 
-The former "Phase 24 hardening" Gates A-F are superseded by this exit gate
-and by [development-workflow.md](development-workflow.md)'s validation
-tiers. Gates A and D are substantially fulfilled by development-workflow.md
+The former "Phase 24 hardening" sub-gates A-F (an unrelated, unlettered-in-
+spirit internal checklist from that phase -- do not confuse with the v0.1
+release gates A-G defined above) are superseded by this exit gate and by
+[development-workflow.md](development-workflow.md)'s validation tiers.
+Sub-gates A and D are substantially fulfilled by development-workflow.md
 itself and by the entire Observation Engine v2 benchmark suite
-(architecture.md), and Gate B is substantially fulfilled by the existing
+(architecture.md), and sub-gate B is substantially fulfilled by the existing
 Playwright suite (`web/e2e`: onboarding, the reviewed product loop, camera
-controls, the Observation panel). Gate C (targeted architecture seams) is an
-ongoing practice, not a one-time gate. Gate E's resource/failure budgets are
-declared but not exhaustively field-verified -- part of "still open," above.
+controls, the Observation panel). Sub-gate C (targeted architecture seams)
+is an ongoing practice, not a one-time gate. Sub-gate E's resource/failure
+budgets are declared but not exhaustively field-verified -- part of "still
+open," above.
 
 Exit condition: one representative installation can run for days and create
 trustworthy useful history without developer babysitting.
@@ -819,6 +1443,19 @@ second, separate inventory.
 - model marketplaces
 - broad smart-home automation
 
+## v0.1 non-blockers
+
+Distinct from "Explicit deprioritization," above (the longer-standing
+critical-path list): these specific items do not delay v0.1 release, absent
+new empirical evidence that changes a real dependency --
+
+LTE, solar, custom CM hardware, custom PCB, manufactured hardware,
+research-grade claims, advanced field fleets, audio, eBird/GBIF/Wildlife
+Insights integration, persistent individual ReID, every possible camera
+provider, a native mobile app, perfect species classification, model
+ensembles, a custom global classifier, sophisticated ecological
+forecasting, cloud services, enterprise features.
+
 ## Field-testing doctrine
 
 Every extended field test should answer a bounded question -- for example
@@ -908,6 +1545,12 @@ See [roadmap-history.md](roadmap-history.md) for the concise phase record.
   scorecards" in [product-doctrine.md](product-doctrine.md).
 - Each implementation task uses the task packet and validation tiers in
   [development-workflow.md](development-workflow.md).
+- Detection, encounter reconstruction, and Visit correctness are the harder,
+  higher-priority v0.1 gate; species identification needs to be useful and
+  honest, not perfect -- see "Governing priority for v0.1," above.
+- Reviewed truth is necessary for training/reporting eligibility but does
+  not by itself grant public-release rights -- see
+  [public-benchmark-governance.md](public-benchmark-governance.md).
 
 ## Roadmap non-goals
 

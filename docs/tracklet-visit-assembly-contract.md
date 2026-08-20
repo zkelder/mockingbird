@@ -158,6 +158,32 @@ wall-clock time.
    separation evidence, but the gap exceeds the confident-merge window, or
    `earlier` is graduated-and-stale. Never guessed into a merge.
 
+**Historical rationale, preserved, still correct as far as it goes:** rule 1
+above is a deliberate, historically-justified conservative boundary -- this
+layer genuinely cannot tell "two simultaneous real subjects" apart from "one
+tracker-association artifact," and guessing wrong in either direction is
+worse than the current behavior (fabricating false continuity, or silently
+merging two different animals into one identity). It is not, and has never
+been, an implementation bug.
+
+**Downstream consequence, now a v0.1 release-gate item:** 2026-08-19 field
+evidence traced real duplicate/fragmented Visits directly to this rule
+(one real sighting producing three Visits with three different species
+labels; a separate two-simultaneous-birds encounter producing zero Visits)
+-- see
+[end-to-end-bird-encounter-recall-closure-v1-report.md](end-to-end-bird-encounter-recall-closure-v1-report.md)
+§7. That resulting duplicate/fragmentation *behavior* is classified as a
+current v0.1 correctness gap (see "Multi-subject Visit correctness" under
+Gate A in [roadmap.md](roadmap.md)), even though the design decision that
+causes it remains sound as originally reasoned. Any future fix must resolve
+concurrent-subject disambiguation safely (or preserve the ambiguity all the
+way to review) rather than simply relaxing this rule -- naively merging
+temporally-overlapping tracklets would reintroduce exactly the fabricated-
+continuity failure mode this rule exists to prevent. This contract, together
+with [candidate-visit-authority-contract.md](candidate-visit-authority-contract.md),
+is the design authority a future **Multi-Subject Visit Assembly & Review
+v1** milestone extends; do not design that milestone as a parallel system.
+
 ### Bounded gap windows -- reused, not invented
 
 `merge_gap_ms` (default 15000ms) reuses `TrackerConfiguration.maximum_weak_

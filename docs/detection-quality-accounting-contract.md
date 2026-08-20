@@ -273,6 +273,38 @@ persistent, cross-session, per-Stream recurring-geometry suppression
 capability, not a confidence floor); see
 [observational-quality-closure-v1-report.md](observational-quality-closure-v1-report.md).
 
+## Gate A field-acceptance metric set
+
+The condition-1/2/3 sweep above answers one narrow question (is
+confidence-gated admission a safe production policy). It does not by itself
+answer the broader product question roadmap.md's Gate A asks: did
+MockingBird correctly notice and represent what actually happened outside.
+That broader question needs the full perception funnel measured together,
+not one policy sweep. [end-to-end-bird-encounter-recall-closure-v1-report.md](end-to-end-bird-encounter-recall-closure-v1-report.md)
+is the first field session to measure this funnel end-to-end against a
+genuinely independent, pre-Visit-list encounter denominator, and its stage
+table is now the standing methodology for future Gate A field acceptance,
+not a one-off:
+
+genuine encounters → presented to analysis → detector localized → coherent
+confirmed track → viable proposal assembled → evidence survived to
+admission attempt → admitted Visit, each measured as a rate against the
+prior stage and against the original independent denominator, plus:
+false-Visit rate, duplicate-Visit rate, fragmented-encounter rate, and
+per-subject evidence correctness measured separately from the recall
+funnel.
+
+A future Gate A field-acceptance session should reuse this same funnel
+shape (an independent encounter denominator built and reviewed *before*
+opening the product's own Visit list, then mapped stage-by-stage) rather
+than inventing a new measurement structure each time. See "Numeric release
+budgets" in [roadmap.md](roadmap.md): several of these rates now have real
+recent measurements (for example 2026-08-19's 68.2% end-to-end recall
+ceiling and 9.5% false-Visit rate) but no accepted release *budget* yet --
+establishing those budgets from a broader body of field evidence than any
+single session is itself open Gate A work, not something this contract
+invents unilaterally.
+
 ## Candidate-model lifecycle compatibility
 
 Nothing here is MDv5-specific. `ConfidenceEvidenceSummary`/`DetectionEvidenceSample`

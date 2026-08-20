@@ -421,6 +421,20 @@ evidence (proposals reaching the evidence-quality gate at all) proves it
 already correctly narrows each cluster to one winner in both missed
 encounters; the loss happened one stage downstream, at evidence retention.
 
+**Superseded bound, current value:** a busier 2026-08-19 session
+(End-to-End Bird Encounter Recall Closure v1) found this same mechanism's
+32-entry bound still insufficient under real, busier load and raised it
+again to **128** (same relative 4x jump; RED/GREEN-verified against that
+session's own real generation/timing/confidence shape; zero regression
+across every replayed cohort). The mechanism above (harvest-before-eviction)
+is unchanged and still accurately described; only the specific bound is
+current-as-of-32 in this section's own historical narration. See
+[end-to-end-bird-encounter-recall-closure-v1-report.md](end-to-end-bird-encounter-recall-closure-v1-report.md)
+§9 for the complete defect/fix account, and "Gate A" in
+[roadmap.md](roadmap.md) for why this remains an open item: the raised
+bound is RED/GREEN-verified but still needs one live field proof under real
+busy-session load.
+
 ## Privacy / Ignore
 
 Subjects inside a Privacy or Ignore Zone are already excluded upstream of

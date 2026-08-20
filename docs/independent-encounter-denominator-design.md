@@ -76,6 +76,35 @@ the worst frame size actually observed
 so the frame-count/duration bound is the one that binds in ordinary
 operation.
 
+**Configurable cadence/bounds, added later the same day:** three
+individually-optional environment variables
+(`MOCKINGBIRD_ACCEPTANCE_RECORDING_INTERVAL_MS`/`_MAX_FRAMES`/`_MAX_BYTES`)
+let one explicitly-scoped field session override
+`sample_interval_ms`/`max_frames`/`max_total_bytes` above without changing
+the defaults for any ordinary process (see
+`acceptance_recorder_config_from_env`). The
+2026-08-19 End-to-End Bird Encounter Recall Closure v1 session used this to
+reach an actual measured ~1.17s cadence (configured minimum 1000ms; the
+extra ~170ms is real source-frame delivery granularity) -- denser than this
+document's own 3000ms default, which remains correct as a default but is no
+longer representative of what the most active recent field session actually
+used.
+
+**Methodological caveat, disclosed rather than assumed away:** even at
+sub-1.17s cadence, "not present in the recorder's sample" is not proof
+"not present in the source stream" -- a genuinely short encounter can fall
+entirely between two saved frames. Denominator construction from this
+recorder's output must account for its actual measured cadence (which may
+run looser than the configured interval, per the source-frame-delivery
+granularity above), and should prefer disclosing a conservative range or
+ceiling (as
+[end-to-end-bird-encounter-recall-closure-v1-report.md](end-to-end-bird-encounter-recall-closure-v1-report.md)
+did for its own 68.2% end-to-end recall figure) over a single precise-looking
+number the sampling rate cannot actually support. This does not invalidate
+any already-completed cohort's own disclosed, conservative denominator
+treatment -- it is guidance for future acceptance methodology, not a
+retroactive correction.
+
 ## Off by default; explicit opt-in only
 
 `ObservationEngineSessionManager` accepts an optional `acceptance_recording_

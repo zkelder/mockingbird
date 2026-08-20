@@ -54,8 +54,13 @@ evidence selection, source-resolution crop quality/lineage, broad
 classification, species candidate ranking, calibration, abstention,
 Observation creation, and human confirmation are each separately measurable.
 Prefer fixing the weakest relevant stage over reflexively replacing a model.
+Detection, tracking, and Visit-assembly stages must be highly reliable
+before release; species-ranking stages only need to be useful, honest, and
+abstention-capable -- perfect species identification is not a release
+requirement, but reliable perception of the fact that wildlife appeared is.
 See [architecture.md](architecture.md) for the current stage-by-stage account
-and [roadmap.md](roadmap.md) Phase 2 for sequencing.
+and "Governing priority for v0.1" / Gates A-B in [roadmap.md](roadmap.md)
+for the release sequencing this implies.
 
 ## Product promise
 
@@ -140,6 +145,11 @@ representative samples, temporary diagnostic retention, stage-of-rejection
 information -- so MockingBird can measure false-negative behavior and whether
 an admission policy is too permissive or too conservative. This is not
 permanent storage of every rejected frame.
+
+Reviewed truth is necessary for training and reporting eligibility but does
+not by itself grant public-release rights; benchmark and public-corpus
+licensing/consent remain separately governed -- see
+[public-benchmark-governance.md](public-benchmark-governance.md).
 
 ## Product objects
 

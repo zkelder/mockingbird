@@ -155,7 +155,13 @@ Current capability, in pipeline order:
   strong/weak/tracker-only evidence hierarchy for sustained multi-minute
   visits. A separate, optional `VisitEpisodeAssembler` decides whether
   temporally adjacent confirmed tracklets belong to one sustained appearance,
-  keeping the tracker itself conservative and bounded.
+  keeping the tracker itself conservative and bounded. The assembler
+  deliberately never merges temporally *overlapping* tracklets -- it cannot
+  safely tell "two simultaneous subjects" apart from "one
+  tracker-association artifact" and does not try -- which correctly avoids
+  fabricated continuity but also means end-to-end concurrent multi-subject
+  Visit representation does not exist yet; see "Multi-subject Visit
+  correctness" under Gate A in [roadmap.md](roadmap.md).
 - **Evidence selection**: a recurrence-aware burst scheduler decides whether
   a track update is a genuine burst opportunity or a suppressible recurring
   false positive before requesting a high-resolution capture; bounded,
@@ -245,6 +251,14 @@ mapping:
 13. **Observation creation** -- not yet implemented as a distinct step; a
     candidate Visit is the closest current equivalent.
 14. **human confirmation/review** -- Review Queue, `ReviewLabel` correction.
+
+Observation freshness -- the elapsed time from source capture through each
+of these stages to a user-visible Visit -- is also part of this accounting,
+not merely an implementation performance detail: a user must be able to
+tell a delayed Visit apart from a missed one, and Visit visibility must not
+wait on asynchronous species enrichment. See "Gate A" in
+[roadmap.md](roadmap.md) for the full timestamp chain and the backpressure
+priority order this implies.
 
 Rejected-candidate / counterfactual auditing is part of this accounting:
 retain bounded, privacy-conscious diagnostic information about rejected
