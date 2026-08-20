@@ -87,6 +87,21 @@ _NODE_SNAPSHOT_ERROR_ALIASES = {
 class CameraNodeClientError(ValueError):
     """Safe client error codes only; raw host/credential/transport text is discarded."""
 
+    def __init__(self, code: str, *, failure_class: str | None = None) -> None:
+        super().__init__(code)
+        # Camera Node Connectivity & Recovery Diagnosis v1: an optional,
+        # bounded, safe (a fixed vocabulary word, never raw host/port/
+        # message text) sub-classification of *why* a transport-level code
+        # such as `analysis_stream_unavailable` occurred -- connection
+        # refused, timed out, reset, or a bad HTTP response, for example.
+        # Purely additive diagnostic detail: `code` (this exception's own
+        # `str()`) remains the single source of truth every existing
+        # retry/terminal-classification check already matches against;
+        # `failure_class` is never used for control flow, only surfaced
+        # into advanced diagnostics so an operator (or a future automated
+        # check) can tell these apart without Camera Node-side log access.
+        self.failure_class = failure_class
+
 
 @dataclass(frozen=True)
 class CameraNodeCamera:

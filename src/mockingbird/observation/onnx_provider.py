@@ -36,6 +36,14 @@ MAX_REPLAY_OBSERVATIONS = 100_000
 CUDA_EXECUTION_VERIFIED = "cuda_only_verified"
 CUDA_EXECUTION_MIXED = "mixed_cuda_cpu_execution"
 CUDA_EXECUTION_UNVERIFIABLE = "cuda_execution_verification_insufficient"
+# Camera Node Connectivity & Recovery Diagnosis v1: a session that never ran
+# one real inference (finalized/stopped before any frame ever reached
+# `infer_frame` -- the honest shape of a Camera Node analysis-stream outage
+# that delivered zero frames, not a GPU/CUDA problem) has no node execution
+# to classify at all, on any provider. Distinct from `CUDA_EXECUTION_
+# UNVERIFIABLE`, which means execution *did* happen but could not be proven
+# CUDA-only -- a genuine, still-fatal verification failure.
+CUDA_EXECUTION_NOT_ATTEMPTED = "no_inference_attempted"
 
 _windows_dll_search_path_prepared = False
 # `os.add_dll_directory()` returns a handle object, and the directory it
@@ -599,6 +607,27 @@ class OnnxCudaObservationProvider:
         cuda_nodes = evidence.get("cuda_executed_nodes")
         cpu_nodes = evidence.get("cpu_executed_nodes")
         unknown_nodes = evidence.get("unknown_executed_nodes")
+        valid_counts = (
+            isinstance(cuda_nodes, int) and not isinstance(cuda_nodes, bool)
+            and isinstance(cpu_nodes, int) and not isinstance(cpu_nodes, bool)
+            and isinstance(unknown_nodes, int) and not isinstance(unknown_nodes, bool)
+        )
+        # Camera Node Connectivity & Recovery Diagnosis v1 (real 2026-08-20
+        # field incident): every provider's count genuinely zero means this
+        # session's detector session loaded but never actually ran a single
+        # frame through it -- there is nothing to verify, so this must never
+        # raise the same code a real CUDA failure raises. Confirmed real
+        # shape: a Camera Node analysis-stream outage that exhausts the
+        # bounded reconnect budget before one frame ever arrives still calls
+        # `finalize_replay()` on teardown; without this branch that produced
+        # the misleading bare `onnx_cuda_verification_insufficient` message
+        # in place of the actual, already-diagnosed transport failure. Any
+        # node that *did* execute is still verified exactly as strictly as
+        # before this branch -- this only recognizes "nothing ran," never
+        # "something ran but wasn't CUDA."
+        if valid_counts and cuda_nodes == 0 and cpu_nodes == 0 and unknown_nodes == 0:
+            self._cuda_execution_verification["classification"] = CUDA_EXECUTION_NOT_ATTEMPTED
+            return
         if isinstance(cpu_nodes, int) and not isinstance(cpu_nodes, bool) and cpu_nodes > 0:
             self._cuda_execution_verification["classification"] = CUDA_EXECUTION_MIXED
             raise ReplayValidationError("onnx_cuda_mixed_execution")

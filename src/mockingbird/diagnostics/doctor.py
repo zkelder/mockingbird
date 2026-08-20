@@ -105,6 +105,13 @@ _CAMERA_ATTENTION_CHECKPOINT_STATES = frozenset({"blocked", "interrupted"})
 # doc's "Known v1 scope limits").
 _CAMERA_NODE_SOURCE_KIND = "integration"
 _FFMPEG_DEPENDENT_SOURCE_KINDS = frozenset({"rtsp", "local_camera"})
+# Camera Node Connectivity & Recovery Diagnosis v1 (real 2026-08-20 field
+# incident): comfortably longer than both the ~45s normal checkpoint cadence
+# (Today Coverage Truth v1) and the default bounded reconnect budget (6
+# attempts x 12s backoff = ~72s -- see `AnalysisStreamRetryPolicy`), so an
+# ordinary, already-recovering reconnect never trips this WARN; a real,
+# sustained Camera Node outage still surfaces within a few minutes.
+_CAMERA_NODE_STALE_AFTER_SECONDS = 300.0
 
 
 class DoctorStatus(str, Enum):
@@ -683,16 +690,50 @@ def _gather_camera_node(engine: Engine) -> dict[str, Any]:
         checkpoint_states = [
             row[0] for row in connection.execute(select(StreamRuntimeCheckpointModel.actual_state)).all()
         ]
+        # `StreamRuntimeCheckpointModel` above belongs exclusively to the
+        # legacy live_monitoring lane -- the accepted camera_node
+        # Observation Engine lane never writes it (confirmed: `engine_
+        # runtime.py` has no reference to that model at all), so Doctor was
+        # completely blind to a camera_node Stream's own runtime health.
+        # That lane DOES already checkpoint `MonitoringExposureInterval
+        # Model.last_confirmed_fresh_at` on every healthy analysis-stream
+        # batch (Today Coverage Truth v1); the single stalest still-open
+        # camera_node interval is a real, durable, read-only signal of
+        # "Camera Node unavailable / last frame N minutes ago" -- exactly
+        # what the real 2026-08-20 field incident showed Doctor could not
+        # answer. Raw timestamp only, matching `_gather_backup`'s own
+        # convention: all datetime math stays in `_interpret_camera_node`,
+        # which stays pure and unit-testable with a fixed `now`.
+        stalest_camera_node_interval = connection.execute(
+            select(
+                MonitoringExposureIntervalModel.stream_id,
+                MonitoringExposureIntervalModel.last_confirmed_fresh_at,
+            )
+            .join(
+                CameraSourceModel,
+                CameraSourceModel.id == MonitoringExposureIntervalModel.source_id,
+            )
+            .where(
+                MonitoringExposureIntervalModel.ended_at.is_(None),
+                CameraSourceModel.kind == _CAMERA_NODE_SOURCE_KIND,
+            )
+            .order_by(MonitoringExposureIntervalModel.last_confirmed_fresh_at.asc())
+            .limit(1)
+        ).first()
     return {
         "source_count": len(sources),
         "source_kinds": [row[1] for row in sources],
         "stream_count": stream_count,
         "currently_monitored_count": len(open_interval_stream_ids),
         "attention_count": sum(1 for state in checkpoint_states if state in _CAMERA_ATTENTION_CHECKPOINT_STATES),
+        "stalest_camera_node_stream_id": stalest_camera_node_interval[0] if stalest_camera_node_interval else None,
+        "stalest_camera_node_fresh_at": (
+            stalest_camera_node_interval[1].isoformat() if stalest_camera_node_interval else None
+        ),
     }
 
 
-def _interpret_camera_node(gathered: dict[str, Any]) -> DoctorCheckResult:
+def _interpret_camera_node(gathered: dict[str, Any], *, now: datetime) -> DoctorCheckResult:
     source_count = gathered.get("source_count", 0)
     camera_node_configured = _CAMERA_NODE_SOURCE_KIND in (gathered.get("source_kinds") or [])
     context = {
@@ -722,6 +763,37 @@ def _interpret_camera_node(gathered: dict[str, Any]) -> DoctorCheckResult:
             user_action="Open the affected Stream's camera health details, check its network/cable connection, or restart its Camera Node.",
             diagnostic_context=context,
         )
+    # Camera Node Connectivity & Recovery Diagnosis v1: the camera_node
+    # Observation Engine lane's own honest freshness signal, independent of
+    # `StreamRuntimeCheckpointModel` above (that lane never writes it -- see
+    # `_gather_camera_node`). A currently-open exposure interval whose last
+    # confirmed-fresh checkpoint has gone stale well past both the normal
+    # checkpoint cadence and the bounded reconnect budget means the Camera
+    # Node has stopped delivering frames. Read-only: this never initiates,
+    # arms, or otherwise touches monitoring itself -- it only reads a
+    # timestamp an already-running session already recorded. Known v1 scope
+    # limit, disclosed rather than solved here: if more than one Stream
+    # needs attention across the two lanes at once, only one WARN surfaces
+    # per Doctor run (the `attention_count` branch above takes precedence) --
+    # matching how every other Doctor check already reports one status per
+    # component, not a fix this milestone's small integration attempts.
+    stalest_fresh_at_raw = gathered.get("stalest_camera_node_fresh_at")
+    if stalest_fresh_at_raw:
+        stalest_fresh_at = datetime.fromisoformat(stalest_fresh_at_raw)
+        staleness_seconds = (now - stalest_fresh_at).total_seconds()
+        context["stalest_camera_node_staleness_minutes"] = round(staleness_seconds / 60, 1)
+        if staleness_seconds > _CAMERA_NODE_STALE_AFTER_SECONDS:
+            staleness_minutes = max(1, round(staleness_seconds / 60))
+            return DoctorCheckResult(
+                code=DoctorCheckCode.CAMERA_NODE,
+                component="Camera Node",
+                status=DoctorStatus.WARN,
+                summary=f"Camera Node unavailable -- last frame ~{staleness_minutes} minute(s) ago.",
+                detail="A Stream is still marked as observing, but no fresh frame has arrived recently.",
+                recoverability=DoctorRecoverability.DEGRADED,
+                user_action="Check the affected Stream's camera health details, its network/cable connection, or restart its Camera Node.",
+                diagnostic_context=context,
+            )
     return DoctorCheckResult(
         code=DoctorCheckCode.CAMERA_NODE,
         component="Camera Node",
@@ -1087,7 +1159,7 @@ def run_doctor(
             code=DoctorCheckCode.CAMERA_NODE,
             component="Camera Node",
             gather=lambda: _gather_camera_node(engine),
-            interpret=_interpret_camera_node,
+            interpret=lambda gathered: _interpret_camera_node(gathered, now=current_time),
             timeout_seconds=timeout_seconds,
         )
         if camera_check.diagnostic_context:
@@ -1097,7 +1169,7 @@ def run_doctor(
             code=DoctorCheckCode.CAMERA_NODE,
             component="Camera Node",
             gather=None,
-            interpret=_interpret_camera_node,
+            interpret=lambda gathered: _interpret_camera_node(gathered, now=current_time),
             skip_reason="Skipped because the database is unavailable.",
         )
     checks.append(camera_check)

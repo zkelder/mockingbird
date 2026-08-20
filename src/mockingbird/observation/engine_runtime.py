@@ -110,6 +110,7 @@ from mockingbird.observation.candidate_visit_authority import (
 from mockingbird.observation.contracts import (
     CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE,
     EvidenceCandidate,
+    ObservationResult,
     TrackUpdate,
 )
 from mockingbird.observation.counterfactual_lineage import (
@@ -613,6 +614,14 @@ class _EngineSession:
             )
             advanced = dict(self._advanced)
             advanced["counterfactual_ledger"] = self._counterfactual_summary()
+            # Camera Node Connectivity & Recovery Diagnosis v1: the best
+            # in-memory known-good frame time (see `_checkpoint_observation_
+            # exposure`), so a caller diagnosing a stalled/degraded session
+            # can see "last real frame N minutes ago" without cross-
+            # referencing the durable exposure-interval table separately.
+            advanced["last_healthy_frame_at"] = (
+                self._last_healthy_frame_at.isoformat() if self._last_healthy_frame_at else None
+            )
             return ObservationEngineSessionStatus(
                 stream_id=self.stream_id,
                 state=self._state,
@@ -858,6 +867,19 @@ class _EngineSession:
                         results = await session.run(maximum_frames=_BATCH_FRAMES)
                     except (CameraNodeClientError, ValueError) as error:
                         code = _sanitized(error)
+                        # Camera Node Connectivity & Recovery Diagnosis v1:
+                        # surface the transport's own bounded failure-class
+                        # detail (connect refused vs. timed out vs. reset vs.
+                        # a bad HTTP response), when the raising site
+                        # provided one, as auxiliary diagnostics only -- this
+                        # never changes `code` (still the single value every
+                        # retry/terminal check below matches against) and is
+                        # simply overwritten by the next attempt, so it
+                        # always reflects the most recent one.
+                        failure_class = getattr(error, "failure_class", None)
+                        if failure_class is not None:
+                            with self._state_lock:
+                                self._advanced["analysis_stream_failure_class"] = failure_class
                         if code in _TERMINAL_ANALYSIS_STREAM_ERROR_CODES:
                             with self._state_lock:
                                 self._camera_connected = False
@@ -953,7 +975,50 @@ class _EngineSession:
                             known_horizon_ms=latest_known_offset_ms,
                         )
             finally:
-                final_results = session.stop()
+                final_results: tuple[ObservationResult, ...] = ()
+                try:
+                    final_results = session.stop()
+                except Exception as teardown_error:  # noqa: BLE001 - see comment below
+                    # Recovery-state-machine hardening (Camera Node
+                    # Connectivity & Recovery Diagnosis v1, real 2026-08-20
+                    # field incident): `except Exception`, matching `_run()`'s
+                    # own generic handler below, deliberately never
+                    # `BaseException` -- this branch does not re-raise, so it
+                    # must never be able to swallow `CancelledError`/
+                    # `SystemExit`/`KeyboardInterrupt`. A failure surfacing
+                    # only here, during teardown -- most commonly `_verify_
+                    # cuda_execution`'s own end-of-session CUDA self-check --
+                    # must never skip the cleanup below (the finalize
+                    # assembly tick and `provider.close()`). Before this fix, both were
+                    # silently skipped whenever `session.stop()` raised: a
+                    # fresh Start looked externally clean but the prior
+                    # session's CUDA session/profiling directory was never
+                    # released, and any still-pending episode was never
+                    # finalized. This also must never overwrite an
+                    # already-diagnosed camera-connectivity reason --
+                    # `stopped_reason == "camera_unavailable"`, set only by
+                    # the retry-exhaustion path above or the terminal-error-
+                    # code branch, never by an ordinary user/session-end
+                    # stop -- with a secondary teardown-time symptom that
+                    # would hide the real, already-known root cause. Every
+                    # other case (an ordinary clean stop, or a session that
+                    # never hit a transport problem at all) keeps this
+                    # module's exact pre-existing behavior: before this fix,
+                    # `_run()`'s own generic `except Exception` handler set
+                    # only `_state`/`_camera_message` from a propagating
+                    # exception, never `_stopped_reason` -- deliberately
+                    # matched here rather than widened, since `_stopped_
+                    # reason` also drives `exposure_close_reason_for_
+                    # transition` below. A genuine teardown-time failure --
+                    # most seriously, real CUDA mixed-execution discovered
+                    # only now -- still becomes the primary camera-facing
+                    # reason, exactly as it always has, because it is the
+                    # only diagnosis this session has.
+                    with self._state_lock:
+                        self._advanced["analysis_stream_teardown_error"] = _sanitized(teardown_error)
+                        if self._stopped_reason != "camera_unavailable":
+                            self._state = "error"
+                            self._camera_message = _sanitized(teardown_error)
                 for result in final_results:
                     all_track_updates.extend(result.track_updates)
                     all_evidence_candidates.extend(result.evidence_candidates)

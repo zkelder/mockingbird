@@ -518,6 +518,49 @@ def _fixture_provider() -> tuple[FrameDrivenObservationProvider, _ConfirmingDete
     return provider, detector
 
 
+class _TeardownFailingDetector(_ConfirmingDetector):
+    """Camera Node Connectivity & Recovery Diagnosis v1: mirrors the real
+    `OnnxCudaObservationProvider.finalize_replay`'s ability to raise during
+    teardown (see `_verify_cuda_execution`'s own direct unit coverage in
+    `test_observation_onnx_cuda.py`). `_ConfirmingDetector.finalize_replay`
+    is a no-op -- exactly why no existing reconnect/retry test in this
+    module could ever have caught the real defect this proves: a teardown
+    exception used to skip the finalize assembly tick and `provider.close()`
+    (never called here -- `close_calls` stays 0) and could clobber an
+    already-diagnosed `camera_message`."""
+
+    def __init__(self, *, error: Exception, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._error = error
+        self.finalize_replay_calls = 0
+        self.close_calls = 0
+
+    def finalize_replay(self) -> None:
+        self.finalize_replay_calls += 1
+        raise self._error
+
+    def close(self) -> None:
+        self.close_calls += 1
+
+
+def _teardown_failing_provider(
+    *, error: Exception,
+) -> tuple[FrameDrivenObservationProvider, _TeardownFailingDetector]:
+    settings = FrameDrivenSettings(
+        source_nominal_fps=5, baseline_detector_fps=5, candidate_detector_fps=5,
+        strong_detection_threshold=0.8, minimum_detector_confirmations=2,
+        minimum_tracker_support_frames=1, maximum_missed_frames=2, maximum_frame_gap_ms=2000,
+        tracker_expiry_ms=2000, maximum_track_duration_ms=30000, maximum_active_tracks=4,
+        evidence_ring_size=4, pretrigger_frame_count=1,
+    )
+    detector = _TeardownFailingDetector(error=error)
+    provider = FrameDrivenObservationProvider(
+        detector=detector, settings=settings, tracker_support=lambda frame, track: track.bounding_box,
+    )
+    provider.load()
+    return provider, detector
+
+
 class _FixtureTransport:
     """Yields one real bounded batch of frames once, then ends the session
     deliberately and terminally -- a real live-camera analysis-stream never
@@ -2138,6 +2181,124 @@ def test_permanently_unavailable_camera_eventually_terminates_within_the_bound(
     assert transport.calls == policy.maximum_consecutive_failures
     assert final.advanced.get("analysis_stream_consecutive_failures") == policy.maximum_consecutive_failures
     assert repository.get_observation_authority_state(stream_id=STREAM_ID).mode == "shadow"
+
+
+def test_teardown_failure_after_retry_exhaustion_preserves_the_diagnosed_reason_and_still_cleans_up(
+    repository: ProductRepository,
+) -> None:
+    """Camera Node Connectivity & Recovery Diagnosis v1: the exact real
+    2026-08-20 field incident shape (proven independently, at the real
+    provider's own boundary, in `test_observation_onnx_cuda.py`) --
+    `finalize_replay()` can raise during teardown after a session's bounded
+    reconnect budget exhausts with zero frames ever received. Before this
+    fix, that teardown exception (1) overwrote the already-correct
+    `"Camera Node connection stopped: analysis_stream_unavailable."` message
+    with a bare, misleading CUDA-flavored string, and (2) skipped the
+    finalize assembly tick and `provider.close()` entirely -- a resource
+    leak: a fresh Start looked externally clean but the prior session's
+    detector was never released."""
+
+    class _AlwaysFailingTransport(_FixtureTransport):
+        def __init__(self) -> None:
+            super().__init__(frame_count=0)
+            self.calls = 0
+
+        def iter_analysis_frames(self, *, maximum_frames: int):
+            self.calls += 1
+            raise CameraNodeClientError("analysis_stream_unavailable")
+
+    transport = _AlwaysFailingTransport()
+    teardown_error = ValueError("onnx_cuda_verification_insufficient")
+    provider, detector = _teardown_failing_provider(error=teardown_error)
+    policy = _fast_retry_policy(maximum_consecutive_failures=4)
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: (provider, detector),
+        transport_factory=lambda config, stream_id: transport,
+        analysis_stream_retry_policy=policy,
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "stopped", timeout=10.0)
+
+    final = manager.status(STREAM_ID)
+    # The already-diagnosed connectivity reason survives -- never clobbered
+    # by the secondary teardown-time exception.
+    assert final.stopped_reason == "camera_unavailable"
+    assert "analysis_stream_unavailable" in final.camera_message
+    assert "onnx_cuda_verification_insufficient" not in final.camera_message
+    # The teardown exception is still recorded, just as auxiliary detail.
+    assert final.advanced.get("analysis_stream_teardown_error") == "onnx_cuda_verification_insufficient"
+    # Cleanup still ran despite the exception: finalize was attempted
+    # exactly once, and `provider.close()` (-> `detector.close()`) was not
+    # skipped.
+    assert detector.finalize_replay_calls == 1
+    assert detector.close_calls == 1
+    assert repository.get_observation_authority_state(stream_id=STREAM_ID).mode == "shadow"
+
+
+def test_teardown_failure_with_no_prior_camera_diagnosis_is_still_reported_honestly(
+    repository: ProductRepository,
+) -> None:
+    """Regression guard for the fix above: a genuine teardown-time failure
+    with no prior camera-connectivity diagnosis -- for example real CUDA
+    mixed-execution discovered only at Stop -- must still become the
+    primary camera-facing reason exactly as it always has. The fix only
+    protects an *already-diagnosed* connectivity reason; it must not start
+    silently swallowing a genuinely new problem, and must not widen
+    `stopped_reason` beyond what this module already sets it to."""
+
+    teardown_error = ValueError("onnx_cuda_mixed_execution")
+    provider, detector = _teardown_failing_provider(error=teardown_error)
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: (provider, detector),
+        transport_factory=lambda config, stream_id: _FixtureTransport(),
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "observing", timeout=5.0)
+
+    status = manager.stop(STREAM_ID)
+
+    assert status is not None
+    assert status.state == "stopped"
+    assert status.camera_message == "onnx_cuda_mixed_execution"
+    # `stopped_reason` stays exactly what the ordinary user-stop path
+    # already set -- the fix never widens it to "camera_unavailable" for a
+    # problem that has nothing to do with camera connectivity.
+    assert status.stopped_reason == "user_stopped"
+    assert detector.finalize_replay_calls == 1
+    assert detector.close_calls == 1
+
+
+def test_analysis_stream_failure_class_is_surfaced_for_diagnosis(repository: ProductRepository) -> None:
+    """Camera Node Connectivity & Recovery Diagnosis v1 (Section 10): the
+    real 2026-08-20 field incident could not distinguish connection-refused
+    from timed-out from a bad HTTP response using only the host-side API --
+    `analysis_stream_unavailable` collapsed every one of them into one
+    opaque string. `CameraNodeClientError.failure_class`, when the raising
+    site provides one (see `camera_node_live._classify_analysis_stream_
+    transport_error`), must reach `advanced` diagnostics without changing
+    the primary retry-controlling `code` any existing check matches."""
+
+    class _RefusedTransport(_FixtureTransport):
+        def __init__(self) -> None:
+            super().__init__(frame_count=0)
+
+        def iter_analysis_frames(self, *, maximum_frames: int):
+            raise CameraNodeClientError("analysis_stream_unavailable", failure_class="connect_refused")
+
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: _RefusedTransport(),
+        analysis_stream_retry_policy=_fast_retry_policy(maximum_consecutive_failures=2),
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "stopped", timeout=10.0)
+
+    final = manager.status(STREAM_ID)
+    assert final.advanced.get("analysis_stream_failure_class") == "connect_refused"
+    assert "analysis_stream_unavailable" in final.camera_message
 
 
 def test_node_identity_pairing_failure_remains_immediately_terminal(

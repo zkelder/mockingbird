@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 import asyncio
 import hashlib
 from io import BytesIO
+import socket
 
 import pytest
 from fastapi import HTTPException
@@ -23,6 +24,7 @@ from mockingbird.observation.camera_node_live import (
     LiveCameraNodeShadowSession,
     CameraNodeHttpTransport,
     _analysis_envelope,
+    _classify_analysis_stream_transport_error,
     _jpeg_dimensions,
 )
 from mockingbird.observation.contracts import (
@@ -41,6 +43,7 @@ from mockingbird.observation.media_contracts import (
     EvidenceBurstResult,
     EvidenceBurstRequest,
 )
+from mockingbird.source_providers.camera_node import CameraNodeClientError
 from mockingbird_node.app import EvidenceBurstNodeRequest, create_node_app
 from mockingbird_node.config import CameraNodeConfig
 from mockingbird_node.providers import SyntheticCameraProvider
@@ -723,6 +726,55 @@ def test_http_transport_rejects_burst_profile_mismatch_without_network() -> None
     result = transport.request_evidence_burst(request)
     assert result.status == "failed"
     assert result.failure_code == "evidence_profile_mismatch"
+
+
+# --- Camera Node Connectivity & Recovery Diagnosis v1 (Section 10): the real
+# 2026-08-20 field incident could not distinguish "Camera Node refused the
+# connection" from "it timed out" from "it sent a bad response" using only
+# the host-side API -- every one of those collapsed into the same bare
+# `analysis_stream_unavailable` string, and the underlying exception detail
+# was discarded before it ever reached diagnostics. -------------------------
+
+
+def test_transport_error_classification_is_a_bounded_safe_vocabulary() -> None:
+    """Pure classification function: every branch, and the safe fallback for
+    an exception type none of the specific branches recognize."""
+
+    assert _classify_analysis_stream_transport_error(ConnectionRefusedError()) == "connect_refused"
+    assert _classify_analysis_stream_transport_error(ConnectionResetError()) == "connection_reset"
+    assert _classify_analysis_stream_transport_error(socket.timeout()) == "timeout"
+    assert _classify_analysis_stream_transport_error(TimeoutError()) == "timeout"
+    assert _classify_analysis_stream_transport_error(socket.gaierror()) == "dns_unresolved"
+    assert _classify_analysis_stream_transport_error(OSError("unrecognized")) == "os_error"
+
+
+def test_real_connection_refused_is_classified_and_never_leaks_raw_text() -> None:
+    """A real OS-level connection refusal (not a fake/simulated one) against
+    the real `CameraNodeHttpTransport.iter_analysis_frames` -- the exact
+    transport a live session's receiver thread calls. Binds and immediately
+    releases a real socket to get a genuinely unbound local port, so the
+    ensuing connection attempt gets a real `ConnectionRefusedError` from the
+    OS, not a mock."""
+
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+
+    transport = CameraNodeHttpTransport(
+        base_address=f"http://127.0.0.1:{port}",
+        credential="paired",
+        camera_id="camera-a",
+        stream_id="stream-yard",
+        evidence_profile_id="evidence-large",
+    )
+    with pytest.raises(CameraNodeClientError) as excinfo:
+        next(transport.iter_analysis_frames(maximum_frames=1))
+    error = excinfo.value
+    # The primary retry-controlling code stays exactly what every existing
+    # terminal/retry check already matches -- classification is additive.
+    assert str(error) == "analysis_stream_unavailable"
+    assert error.failure_class == "connect_refused"
 
 
 def test_multipart_header_and_jpeg_parsers_use_wire_bytes() -> None:

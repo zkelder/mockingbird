@@ -408,6 +408,28 @@ class CameraNodeLiveTransport(Protocol):
     def close(self) -> None: ...
 
 
+def _classify_analysis_stream_transport_error(error: BaseException) -> str:
+    """Bounded, safe (a fixed vocabulary word, never raw host/port/message
+    text) classification of the low-level socket/connection failure behind
+    one `analysis_stream_unavailable` -- Camera Node Connectivity & Recovery
+    Diagnosis v1 (real 2026-08-20 field incident: the host-side API alone
+    could not tell "Camera Node refused the connection" apart from "it timed
+    out," and no Pi-side log access existed to fill that gap). Purely
+    additive: never changes what `analysis_stream_unavailable` itself means
+    or how the caller's bounded retry policy treats it -- see
+    `AnalysisStreamRetryPolicy`."""
+
+    if isinstance(error, ConnectionRefusedError):
+        return "connect_refused"
+    if isinstance(error, ConnectionResetError):
+        return "connection_reset"
+    if isinstance(error, (socket.timeout, TimeoutError)):
+        return "timeout"
+    if isinstance(error, socket.gaierror):
+        return "dns_unresolved"
+    return "os_error"
+
+
 class CameraNodeHttpTransport:
     """Bounded authenticated multipart-JPEG transport for one paired Camera Node."""
 
@@ -473,8 +495,10 @@ class CameraNodeHttpTransport:
             if 300 <= response.status < 400:
                 raise CameraNodeClientError("node_redirect_rejected")
             content_type = response.getheader("Content-Type", "").lower()
-            if response.status != 200 or "multipart/x-mixed-replace" not in content_type:
-                raise CameraNodeClientError("analysis_stream_unavailable")
+            if response.status != 200:
+                raise CameraNodeClientError("analysis_stream_unavailable", failure_class="http_status")
+            if "multipart/x-mixed-replace" not in content_type:
+                raise CameraNodeClientError("analysis_stream_unavailable", failure_class="content_type_mismatch")
             for _ in range(maximum_frames):
                 line = response.readline(256)
                 while line == b"\r\n":
@@ -492,7 +516,10 @@ class CameraNodeHttpTransport:
                     raise CameraNodeClientError("analysis_stream_invalid")
                 yield _analysis_envelope(self.stream_id, headers, payload)
         except (socket.timeout, TimeoutError, OSError) as error:
-            raise CameraNodeClientError("analysis_stream_unavailable") from error
+            raise CameraNodeClientError(
+                "analysis_stream_unavailable",
+                failure_class=_classify_analysis_stream_transport_error(error),
+            ) from error
         finally:
             self._connection = None
             if connection is not None:

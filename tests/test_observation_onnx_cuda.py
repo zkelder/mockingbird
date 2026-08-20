@@ -280,6 +280,119 @@ def test_load_requires_cuda_and_accepts_registered_cpu_when_cuda_is_first(tmp_pa
     assert mixed.closed is True
 
 
+# --- Camera Node Connectivity & Recovery Diagnosis v1: `_verify_cuda_
+# execution`'s three real outcomes. No prior test in this file called
+# `finalize_replay()`/asserted on `cuda_execution_verification` at all --
+# every existing `FakeSession.execution_assignment()` caller relies on its
+# `max(1, len(self.calls))` default, which can never itself produce the real
+# "zero inference ever ran" shape a live Camera Node session hits when its
+# analysis-stream connection dies before one frame arrives. -------------------
+
+
+class _NeverRanSession(FakeSession):
+    """A session that loaded successfully but never ran a single inference --
+    the exact shape `finalize_replay()` sees when a live session's Camera
+    Node connection dies (and its bounded reconnect budget exhausts) before
+    any frame ever arrives. Overrides `FakeSession.execution_assignment`'s
+    own `max(1, ...)` convenience default, which exists so its *other*
+    callers never need a real `.run()` call first -- this is the one place a
+    genuinely all-zero profile (what the real `_ProfiledOrtSession` reports
+    when `session.run()` was never called) is actually needed."""
+
+    def execution_assignment(self) -> dict[str, object]:
+        return {
+            "classification": onnx_provider.CUDA_EXECUTION_UNVERIFIABLE,
+            "cuda_executed_nodes": 0,
+            "cpu_executed_nodes": 0,
+            "unknown_executed_nodes": 0,
+        }
+
+
+class _PartiallyExecutedSession(FakeSession):
+    """A session where inference genuinely ran but not verifiably CUDA-only
+    -- a real, still-fatal verification failure, distinct from `_NeverRan
+    Session` above. Proves the fix does not weaken real verification."""
+
+    def execution_assignment(self) -> dict[str, object]:
+        return {
+            "classification": onnx_provider.CUDA_EXECUTION_UNVERIFIABLE,
+            "cuda_executed_nodes": 0,
+            "cpu_executed_nodes": 0,
+            "unknown_executed_nodes": 2,
+        }
+
+
+class _MixedExecutionSession(FakeSession):
+    """A session where inference genuinely ran, partly on CPU -- a real CUDA
+    fallback, the most serious verification failure. Proves the new
+    all-zero check (evaluated first) never intercepts this real failure."""
+
+    def execution_assignment(self) -> dict[str, object]:
+        return {
+            "classification": onnx_provider.CUDA_EXECUTION_MIXED,
+            "cuda_executed_nodes": 1,
+            "cpu_executed_nodes": 1,
+            "unknown_executed_nodes": 0,
+        }
+
+
+def test_finalize_replay_does_not_misreport_zero_inference_as_a_cuda_failure(
+    tmp_path: Path,
+) -> None:
+    """The real 2026-08-20 field incident: a live session whose Camera Node
+    analysis-stream connection dies before any frame ever arrives still
+    loads its CUDA session successfully, then calls `finalize_replay()` on
+    teardown. Before this fix, `_verify_cuda_execution` raised the same
+    `onnx_cuda_verification_insufficient` code a real CUDA execution failure
+    raises -- misclassifying a Camera Node connectivity problem as a GPU
+    problem and overwriting the already-correct, already-diagnosed
+    `analysis_stream_unavailable` reason (see `test_engine_runtime.py`'s
+    matching end-to-end coverage). RED before the fix: this raised
+    `ReplayValidationError("onnx_cuda_verification_insufficient")`."""
+
+    _, bundle = _bundle(tmp_path)
+    provider = OnnxCudaObservationProvider(runtime=FakeRuntime(_NeverRanSession([])), bundle=bundle)
+    provider.load()
+
+    provider.finalize_replay()  # must not raise
+
+    verification = provider.execution_facts()["cuda_execution_verification"]
+    assert verification["classification"] == onnx_provider.CUDA_EXECUTION_NOT_ATTEMPTED
+    assert verification["cuda_executed_nodes"] == 0
+
+
+def test_finalize_replay_still_raises_for_real_verification_failures(tmp_path: Path) -> None:
+    """Regression guard: the fix above must never weaken a genuine CUDA
+    verification failure where inference actually ran -- neither the "ran,
+    but not verifiably CUDA-only" shape nor the more serious "ran partly on
+    CPU" shape. Both have real (nonzero) execution, so the new all-zero
+    check in `_verify_cuda_execution` (evaluated first) must never
+    intercept either of them."""
+
+    _, bundle = _bundle(tmp_path)
+    unverifiable_provider = OnnxCudaObservationProvider(
+        runtime=FakeRuntime(_PartiallyExecutedSession([])), bundle=bundle,
+    )
+    unverifiable_provider.load()
+    with pytest.raises(ReplayValidationError, match="onnx_cuda_verification_insufficient"):
+        unverifiable_provider.finalize_replay()
+    assert (
+        unverifiable_provider.execution_facts()["cuda_execution_verification"]["classification"]
+        == onnx_provider.CUDA_EXECUTION_UNVERIFIABLE
+    )
+
+    mixed_provider = OnnxCudaObservationProvider(
+        runtime=FakeRuntime(_MixedExecutionSession([])), bundle=bundle,
+    )
+    mixed_provider.load()
+    with pytest.raises(ReplayValidationError, match="onnx_cuda_mixed_execution"):
+        mixed_provider.finalize_replay()
+    assert (
+        mixed_provider.execution_facts()["cuda_execution_verification"]["classification"]
+        == onnx_provider.CUDA_EXECUTION_MIXED
+    )
+
+
 @pytest.mark.anyio
 async def test_deterministic_letterbox_normalization_order_bounds_and_close(tmp_path: Path) -> None:
     _, bundle = _bundle(tmp_path)

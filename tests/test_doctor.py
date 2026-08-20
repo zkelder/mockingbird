@@ -410,7 +410,9 @@ def test_interpret_backup_recent_is_pass() -> None:
 
 
 def test_interpret_camera_node_none_configured_is_pass() -> None:
-    result = doctor._interpret_camera_node({"source_count": 0, "source_kinds": [], "stream_count": 0})
+    result = doctor._interpret_camera_node(
+        {"source_count": 0, "source_kinds": [], "stream_count": 0}, now=datetime.now(UTC)
+    )
     assert result.status == DoctorStatus.PASS
     assert result.recoverability is None
 
@@ -426,7 +428,8 @@ def test_interpret_camera_node_offline_stream_needs_attention_is_degraded_warnin
             "stream_count": 1,
             "currently_monitored_count": 0,
             "attention_count": 1,
-        }
+        },
+        now=datetime.now(UTC),
     )
     assert result.status == DoctorStatus.WARN
     assert result.recoverability == DoctorRecoverability.DEGRADED
@@ -441,10 +444,65 @@ def test_interpret_camera_node_all_fine_is_pass() -> None:
             "stream_count": 1,
             "currently_monitored_count": 1,
             "attention_count": 0,
-        }
+        },
+        now=datetime.now(UTC),
     )
     assert result.status == DoctorStatus.PASS
     assert result.diagnostic_context["camera_node_configured"] is True
+
+
+def test_interpret_camera_node_stale_freshness_warns_with_last_frame_minutes() -> None:
+    """Camera Node Connectivity & Recovery Diagnosis v1 (Section 12): the
+    accepted camera_node Observation Engine lane never writes
+    `StreamRuntimeCheckpointModel` (see `_gather_camera_node`), so before
+    this fix Doctor was structurally blind to this lane's own runtime
+    health -- a Stream could be silently stuck exactly like the real
+    2026-08-20 field incident and Doctor would still report a bland PASS.
+    A stale `last_confirmed_fresh_at` on a still-open camera_node exposure
+    interval is a real, durable, read-only "Camera Node unavailable / last
+    frame N minutes ago" signal."""
+
+    now = datetime.now(UTC)
+    stale = now - timedelta(seconds=doctor._CAMERA_NODE_STALE_AFTER_SECONDS + 300)
+    result = doctor._interpret_camera_node(
+        {
+            "source_count": 1,
+            "source_kinds": ["integration"],
+            "stream_count": 1,
+            "currently_monitored_count": 1,
+            "attention_count": 0,
+            "stalest_camera_node_stream_id": "stream-backyard-feeder",
+            "stalest_camera_node_fresh_at": stale.isoformat(),
+        },
+        now=now,
+    )
+    assert result.status == DoctorStatus.WARN
+    assert result.recoverability == DoctorRecoverability.DEGRADED
+    assert "unavailable" in result.summary.lower()
+    assert "minute" in result.summary.lower()
+    assert result.user_action
+
+
+def test_interpret_camera_node_recent_freshness_is_pass() -> None:
+    """A camera_node Stream whose exposure interval checkpointed recently
+    (well within the normal ~45s cadence) must not falsely WARN."""
+
+    now = datetime.now(UTC)
+    recent = now - timedelta(seconds=20)
+    result = doctor._interpret_camera_node(
+        {
+            "source_count": 1,
+            "source_kinds": ["integration"],
+            "stream_count": 1,
+            "currently_monitored_count": 1,
+            "attention_count": 0,
+            "stalest_camera_node_stream_id": "stream-backyard-feeder",
+            "stalest_camera_node_fresh_at": recent.isoformat(),
+        },
+        now=now,
+    )
+    assert result.status == DoctorStatus.PASS
+    assert result.recoverability is None
 
 
 # --------------------------------------------------------------------------
