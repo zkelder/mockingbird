@@ -24,6 +24,7 @@ from mockingbird.observation.visit_episode_assembler import (
     AssembledVisitProposal,
     Tracklet,
     VisitAssemblyConfiguration,
+    VisitAssemblyResult,
     assemble_visit_episodes,
     box_area,
     boxes_geometry_compatible,
@@ -330,6 +331,16 @@ def test_two_simultaneous_animals_remain_separate() -> None:
     assert result.assembled_proposal_count == 2
     assert result.incompatible_decisions == 1
 
+    # Multi-Subject Visit Assembly & Review v1, Phase 1: each proposal
+    # recognizes the other as a concurrent sibling -- deterministic,
+    # symmetric -- and neither fabricates an ambiguous-boundary relationship
+    # (that field stays reserved for a structurally different decision kind).
+    first, second = result.proposals
+    assert first.concurrent_sibling_proposal_ids == (second.proposal_id,)
+    assert second.concurrent_sibling_proposal_ids == (first.proposal_id,)
+    assert first.ambiguous_adjacent_proposal_ids == ()
+    assert second.ambiguous_adjacent_proposal_ids == ()
+
 
 def test_crossing_animals_do_not_collapse() -> None:
     """Scenario 16 -- committed `crossing_subjects` fixture."""
@@ -338,6 +349,197 @@ def test_crossing_animals_do_not_collapse() -> None:
     assert result.assembled_proposal_count == scenario["expected"]["proposal_count"] == 2
     generations = {gen for p in result.proposals for gen in p.constituent_generation_ids}
     assert generations == {item.generation_id for item in tracklets}
+
+    # Two crossing subjects are exactly "concurrent siblings," not merely
+    # "kept separate" -- the relationship is positively recorded, not just
+    # the absence of a merge.
+    first, second = result.proposals
+    assert first.concurrent_sibling_proposal_ids == (second.proposal_id,)
+    assert second.concurrent_sibling_proposal_ids == (first.proposal_id,)
+
+
+def test_single_subject_has_no_concurrent_siblings() -> None:
+    """Case 1: one ordinary bird proposal has no sibling relationship at
+    all -- the common case, and the field must default to genuinely empty,
+    never `None` or a fabricated self-reference."""
+    only = _tracklet("solo", 0, 5000)
+    result = assemble_visit_episodes((only,))
+    assert result.assembled_proposal_count == 1
+    assert result.proposals[0].concurrent_sibling_proposal_ids == ()
+
+
+def test_three_simultaneous_subjects_all_recognize_each_other_as_siblings() -> None:
+    """Case 3 -- committed `three_simultaneous_subjects` fixture (nuthatch +
+    two finch-like subjects, all mutually overlapping). Cardinality must be
+    fully preserved: three proposals, never collapsed to fewer, and every
+    proposal's own `concurrent_sibling_proposal_ids` names *both* of the
+    other two -- proving the mechanism is not merely pairwise-adjacent (a
+    naive "only compare against the immediately preceding open episode"
+    implementation would miss the third relationship for whichever subject
+    is processed last)."""
+    scenario, tracklets = _fixture_scenario("three_simultaneous_subjects")
+    result = assemble_visit_episodes(tracklets)
+    assert result.assembled_proposal_count == scenario["expected"]["proposal_count"] == 3
+
+    by_generation = {p.constituent_generation_ids[0]: p for p in result.proposals}
+    assert set(by_generation) == {"nuthatch-center", "finch-left", "finch-right"}
+    nuthatch, finch_left, finch_right = (
+        by_generation["nuthatch-center"], by_generation["finch-left"], by_generation["finch-right"],
+    )
+    # No collapse to one, and no fabricated persistent identity: each
+    # proposal keeps exactly its own single constituent tracklet.
+    assert nuthatch.constituent_generation_ids == ("nuthatch-center",)
+    assert finch_left.constituent_generation_ids == ("finch-left",)
+    assert finch_right.constituent_generation_ids == ("finch-right",)
+    # Full mutual recognition -- a 3-clique, not a chain.
+    assert set(nuthatch.concurrent_sibling_proposal_ids) == {finch_left.proposal_id, finch_right.proposal_id}
+    assert set(finch_left.concurrent_sibling_proposal_ids) == {nuthatch.proposal_id, finch_right.proposal_id}
+    assert set(finch_right.concurrent_sibling_proposal_ids) == {nuthatch.proposal_id, finch_left.proposal_id}
+
+
+def test_same_subject_continuation_is_not_classified_as_concurrent_siblings() -> None:
+    """Case 4: two tracklets that clearly represent one continuing subject
+    under current accepted rules (short gap, compatible geometry -> merges
+    into one proposal) must never be misclassified as two concurrent
+    siblings -- they are not even two proposals to begin with."""
+    a = _tracklet("a", 0, 4000)
+    b = _tracklet("b", 5000, 9000)  # 1s gap, identical geometry -> merge_same_visit
+    decision = classify_boundary(a, b)
+    assert decision.decision == "merge_same_visit"
+    result = assemble_visit_episodes((a, b))
+    assert result.assembled_proposal_count == 1
+    assert result.proposals[0].concurrent_sibling_proposal_ids == ()
+
+
+def test_sequential_independent_encounters_have_no_concurrent_siblings() -> None:
+    """Case 5: two encounters far enough apart to have no temporal
+    concurrency at all (well beyond `ambiguous_gap_ms`, not merely
+    non-overlapping) must show no sibling relationship -- unrelated time
+    windows can never become siblings."""
+    a = _tracklet("a", 0, 4000)
+    b = _tracklet("b", 120_000, 124_000)  # 116s later -- far past ambiguous_gap_ms (45s default)
+    decision = classify_boundary(a, b)
+    assert decision.decision == "keep_separate"
+    result = assemble_visit_episodes((a, b))
+    assert result.assembled_proposal_count == 2
+    for proposal in result.proposals:
+        assert proposal.concurrent_sibling_proposal_ids == ()
+
+
+def test_ambiguous_crossing_does_not_manufacture_sibling_or_continuity() -> None:
+    """Case 6, extending Scenario 13's committed `ambiguous_separation`
+    fixture: when identity cannot be established reliably, the assembler
+    must preserve that ambiguity (already proven by `test_ambiguous_
+    boundary_remains_explicit`) *and* must not manufacture a confident
+    concurrent-sibling relationship as some kind of consolation classification
+    -- `ambiguous_boundary` and `incompatible`/`temporal_overlap` are
+    mutually exclusive `BoundaryDecision` outcomes for one pair, and both of
+    this proposal's relationship fields must reflect that honestly."""
+    scenario, tracklets = _fixture_scenario("ambiguous_separation")
+    result = assemble_visit_episodes(tracklets)
+    assert result.assembled_proposal_count == 2
+    for proposal in result.proposals:
+        assert proposal.concurrent_sibling_proposal_ids == ()
+        assert proposal.ambiguous_adjacent_proposal_ids != ()  # ambiguity itself still preserved
+
+
+# =============================================================================
+# Multi-Subject Visit Assembly & Review v1, Phase 1 -- cross-stage invariants
+# =============================================================================
+
+
+def test_concurrent_sibling_ids_reference_only_proposals_in_the_same_result() -> None:
+    """Every id named in any proposal's `concurrent_sibling_proposal_ids`
+    must resolve to a real proposal in that same `assemble_visit_episodes`
+    result -- never a dangling reference, never something from a different
+    call."""
+    _, tracklets = _fixture_scenario("three_simultaneous_subjects")
+    result = assemble_visit_episodes(tracklets)
+    real_ids = {p.proposal_id for p in result.proposals}
+    for proposal in result.proposals:
+        for sibling_id in proposal.concurrent_sibling_proposal_ids:
+            assert sibling_id in real_ids
+
+
+def test_concurrent_sibling_ids_never_self_reference() -> None:
+    _, tracklets = _fixture_scenario("three_simultaneous_subjects")
+    result = assemble_visit_episodes(tracklets)
+    for proposal in result.proposals:
+        assert proposal.proposal_id not in proposal.concurrent_sibling_proposal_ids
+
+
+def test_concurrent_sibling_relationship_is_deterministic_and_order_independent() -> None:
+    """Shuffled input order must produce the identical sibling-relationship
+    graph -- the same guarantee `test_input_order_normalization_deterministic`
+    already proves for merge/ambiguous decisions, extended to this field."""
+    _, tracklets = _fixture_scenario("three_simultaneous_subjects")
+    forward = assemble_visit_episodes(tracklets)
+    reversed_order = assemble_visit_episodes(tuple(reversed(tracklets)))
+    shuffled = assemble_visit_episodes((tracklets[2], tracklets[0], tracklets[1]))
+
+    def sibling_graph(result: VisitAssemblyResult) -> dict[str, frozenset[str]]:
+        return {
+            p.constituent_generation_ids[0]: frozenset(
+                by_id[sibling_id].constituent_generation_ids[0]
+                for sibling_id in p.concurrent_sibling_proposal_ids
+            )
+            for by_id in ({q.proposal_id: q for q in result.proposals},)
+            for p in result.proposals
+        }
+
+    assert sibling_graph(forward) == sibling_graph(reversed_order) == sibling_graph(shuffled)
+
+
+def test_concurrent_sibling_grouping_does_not_merge_geometry_or_evidence() -> None:
+    """Recognizing two proposals as concurrent siblings must never leak one
+    subject's own evidence/lineage into the other's -- each proposal's
+    `supporting_frame_ids`/`evidence_candidate_ids`/`constituent_track_ids`
+    must reflect only its own constituent tracklet(s), exactly as if the
+    sibling relationship had never been computed."""
+    a = _tracklet(
+        "left", 0, 8000, start_bounding_box=(0.05, 0.05, 0.2, 0.2), end_bounding_box=(0.05, 0.05, 0.2, 0.2),
+        supporting_frame_ids=("left-f1", "left-f2"), evidence_candidate_ids=("left-ev-1",),
+    )
+    b = _tracklet(
+        "right", 2000, 10000, start_bounding_box=(0.8, 0.8, 0.95, 0.95), end_bounding_box=(0.8, 0.8, 0.95, 0.95),
+        supporting_frame_ids=("right-f1",), evidence_candidate_ids=("right-ev-1", "right-ev-2"),
+    )
+    result = assemble_visit_episodes((a, b))
+    assert result.assembled_proposal_count == 2
+    left = next(p for p in result.proposals if p.constituent_generation_ids == ("left",))
+    right = next(p for p in result.proposals if p.constituent_generation_ids == ("right",))
+    assert left.concurrent_sibling_proposal_ids == (right.proposal_id,)
+    assert left.supporting_frame_ids == ("left-f1", "left-f2")
+    assert left.evidence_candidate_ids == ("left-ev-1",)
+    assert left.constituent_track_ids == ("left-track",)
+    assert right.supporting_frame_ids == ("right-f1",)
+    assert right.evidence_candidate_ids == ("right-ev-1", "right-ev-2")
+    assert right.constituent_track_ids == ("right-track",)
+
+
+def test_concurrent_sibling_of_a_merged_episode_links_to_the_merged_in_proposal() -> None:
+    """A tracklet can simultaneously overlap one open episode (incompatible)
+    while its own gap/geometry cleanly continues a *different* open episode
+    (merge) in the same assembly pass. The resulting sibling link must name
+    the actual multi-tracklet proposal the continuing tracklet ended up in,
+    not a stale or nonexistent single-tracklet id -- proving the bookkeeping
+    correctly follows a tracklet into whichever episode it actually joins,
+    including when that episode already has other constituents."""
+    # `still_active` stays in view 0-20000ms, overlapping everything below.
+    still_active = _tracklet("still-active", 0, 20_000, start_bounding_box=(0.05, 0.05, 0.2, 0.2), end_bounding_box=(0.05, 0.05, 0.2, 0.2))
+    # `continuing_a`/`continuing_b` are two fragments of one *other* subject,
+    # a clean 1s-gap merge -- both temporally inside `still_active`'s span.
+    continuing_a = _tracklet("continuing-a", 2000, 6000, start_bounding_box=(0.8, 0.8, 0.95, 0.95), end_bounding_box=(0.8, 0.8, 0.95, 0.95))
+    continuing_b = _tracklet("continuing-b", 7000, 11000, start_bounding_box=(0.8, 0.8, 0.95, 0.95), end_bounding_box=(0.8, 0.8, 0.95, 0.95))
+
+    result = assemble_visit_episodes((still_active, continuing_a, continuing_b))
+    assert result.assembled_proposal_count == 2
+    merged = next(p for p in result.proposals if len(p.constituent_generation_ids) == 2)
+    solo = next(p for p in result.proposals if len(p.constituent_generation_ids) == 1)
+    assert merged.constituent_generation_ids == ("continuing-a", "continuing-b")
+    assert solo.constituent_generation_ids == ("still-active",)
+    assert merged.concurrent_sibling_proposal_ids == (solo.proposal_id,)
+    assert solo.concurrent_sibling_proposal_ids == (merged.proposal_id,)
 
 
 # =============================================================================

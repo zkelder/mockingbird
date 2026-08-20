@@ -617,6 +617,25 @@ class AssembledVisitProposal:
     # relationship is not silently discarded), plus honest, general
     # disclosure facts about the evidence this proposal was built from.
     ambiguous_adjacent_proposal_ids: tuple[str, ...] = ()
+    # Multi-Subject Visit Assembly & Review v1, Phase 1 (see
+    # docs/multi-subject-visit-assembly-review-v1.md "Assembly layer --
+    # detect concurrent siblings"): other proposals this one was classified
+    # `incompatible`/`temporal_overlap` against specifically -- genuinely
+    # simultaneous/crossing distinct subjects sharing this encounter
+    # context, never a continuation-timing question. Structurally disjoint
+    # from `ambiguous_adjacent_proposal_ids` above: `classify_boundary`
+    # returns exactly one `BoundaryDecisionKind` per pair, and its
+    # `_temporal_overlap` check is evaluated before any ambiguous-boundary
+    # logic runs, so a pair can never populate both fields. Computed at the
+    # same point `ambiguous_adjacent_proposal_ids` already is, by the same
+    # bookkeeping shape, over a fact `classify_boundary` already produced
+    # (never a new temporal subsystem). Purely additive/inspectable: never
+    # changes which proposals are admitted, merged, or how -- grouping two
+    # proposals' evidence/geometry remains this module's job to never do.
+    # Phase 2 is what a caller (`_create_candidate_visit_locked`) would use
+    # this for (sharing one `EventModel` across sibling proposals instead of
+    # minting a new one per proposal); unchanged in this phase.
+    concurrent_sibling_proposal_ids: tuple[str, ...] = ()
     limitation_facts: tuple[str, ...] = ()
     shadow_only: bool = True
     # Detection Quality Accounting v1 (see
@@ -733,6 +752,11 @@ def assemble_visit_episodes(
     episode_decisions: list[list[BoundaryDecision]] = []
     open_by_class: dict[tuple[str, str], list[int]] = {}
     ambiguous_links: dict[int, set[int]] = {}
+    # Multi-Subject Visit Assembly & Review v1, Phase 1: mirrors
+    # `ambiguous_links` exactly, but keyed off `incompatible`/
+    # `temporal_overlap` decisions instead of `ambiguous_boundary` ones --
+    # see `AssembledVisitProposal.concurrent_sibling_proposal_ids`.
+    sibling_links: dict[int, set[int]] = {}
     all_decisions: list[BoundaryDecision] = []
     merges = separates = ambiguous_count = incompatible_count = 0
 
@@ -747,11 +771,23 @@ def assemble_visit_episodes(
 
         merge_candidates: list[tuple[int, BoundaryDecision]] = []
         ambiguous_candidates: list[tuple[int, BoundaryDecision]] = []
+        # Multi-Subject Visit Assembly & Review v1, Phase 1: every
+        # still-open episode this tracklet was classified `incompatible`/
+        # `temporal_overlap` against this iteration -- collected during the
+        # same comparison pass as `ambiguous_candidates`, resolved below
+        # against whichever episode this tracklet actually ends up in
+        # (merged-into, or newly created), never assumed to always be a new
+        # episode: a tracklet can simultaneously overlap one open episode
+        # (incompatible) while its own gap/geometry cleanly continues a
+        # *different* open episode (merge) -- both facts must survive.
+        sibling_candidates: list[int] = []
         for index in still_open:
             decision = classify_boundary(episodes[index][-1], tracklet, config)
             all_decisions.append(decision)
             if decision.decision == "incompatible":
                 incompatible_count += 1
+                if decision.reason == "temporal_overlap":
+                    sibling_candidates.append(index)
             elif decision.decision == "keep_separate":
                 separates += 1
             elif decision.decision == "ambiguous_boundary":
@@ -781,6 +817,9 @@ def assemble_visit_episodes(
                 episodes[index].append(tracklet)
                 episode_decisions[index].append(decision)
                 merges += 1
+                for sibling_index in sibling_candidates:
+                    sibling_links.setdefault(index, set()).add(sibling_index)
+                    sibling_links.setdefault(sibling_index, set()).add(index)
                 continue
             # Bounded safety cap reached: do not extend this episode
             # further, even though the pairwise boundary itself qualified --
@@ -796,11 +835,15 @@ def assemble_visit_episodes(
             for index, _ in ambiguous_candidates:
                 ambiguous_links.setdefault(new_index, set()).add(index)
                 ambiguous_links.setdefault(index, set()).add(new_index)
+        for sibling_index in sibling_candidates:
+            sibling_links.setdefault(new_index, set()).add(sibling_index)
+            sibling_links.setdefault(sibling_index, set()).add(new_index)
 
     proposal_ids = [_proposal_id(members) for members in episodes]
     proposals = tuple(
         _build_proposal(
             members, episode_decisions[index], proposal_ids, ambiguous_links.get(index, set()),
+            sibling_links.get(index, set()),
             known_horizon_ms=known_horizon_ms, ambiguous_gap_ms=config.ambiguous_gap_ms,
         )
         for index, members in enumerate(episodes)
@@ -826,6 +869,7 @@ def _build_proposal(
     decisions: list[BoundaryDecision],
     proposal_ids: list[str],
     ambiguous_with: set[int],
+    sibling_with: set[int],
     *,
     known_horizon_ms: int | None,
     ambiguous_gap_ms: int,
@@ -861,6 +905,7 @@ def _build_proposal(
         assembly_decisions=tuple(decisions),
         zone_id=next((item.zone_id for item in ordered_members if item.zone_id is not None), None),
         ambiguous_adjacent_proposal_ids=tuple(sorted({proposal_ids[index] for index in ambiguous_with})),
+        concurrent_sibling_proposal_ids=tuple(sorted({proposal_ids[index] for index in sibling_with})),
         limitation_facts=tuple(limitation_facts),
         confidence_evidence=merge_confidence_evidence(
             tuple(item.confidence_evidence for item in ordered_members)

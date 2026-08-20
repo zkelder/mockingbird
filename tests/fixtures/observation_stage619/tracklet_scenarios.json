@@ -95,6 +95,16 @@
       ],
       "expected": {"proposal_count": 2, "boundary_decision": "incompatible", "reason": "temporal_overlap"}
     },
+    "three_simultaneous_subjects": {
+      "description": "Multi-Subject Visit Assembly & Review v1, Phase 1: three animals present at once at three distinct positions -- a nuthatch (center, longest span) plus two finch-like subjects (left, right), each pair mutually temporally-overlapping. Must never collapse to fewer than three proposals, and each proposal must recognize both others as concurrent siblings (no fabricated persistent identity, no pairwise-only detection that misses the third member of the group).",
+      "stream_id": "s-three-simultaneous",
+      "tracklets": [
+        {"generation_id": "nuthatch-center", "start_offset_ms": 0, "end_offset_ms": 12000, "start_bounding_box": [0.40, 0.40, 0.55, 0.55], "end_bounding_box": [0.41, 0.41, 0.56, 0.56], "terminal_reason": "tracker_lost"},
+        {"generation_id": "finch-left", "start_offset_ms": 2000, "end_offset_ms": 9000, "start_bounding_box": [0.05, 0.05, 0.18, 0.18], "end_bounding_box": [0.06, 0.06, 0.19, 0.19], "terminal_reason": "tracker_lost"},
+        {"generation_id": "finch-right", "start_offset_ms": 4000, "end_offset_ms": 11000, "start_bounding_box": [0.80, 0.80, 0.93, 0.93], "end_bounding_box": [0.81, 0.81, 0.94, 0.94], "terminal_reason": "tracker_lost"}
+      ],
+      "expected": {"proposal_count": 3, "boundary_decision": "incompatible", "reason": "temporal_overlap"}
+    },
     "spatially_incompatible_reentry": {
       "description": "Short gap (3s, well within merge_gap_ms), same broad_class, but the next tracklet starts at a spatially implausible position for that gap duration (opposite corner of frame). Geometry must veto the merge despite the short gap.",
       "stream_id": "s-incompatible-reentry",
