@@ -184,6 +184,31 @@ with [candidate-visit-authority-contract.md](candidate-visit-authority-contract.
 is the design authority a future **Multi-Subject Visit Assembly & Review
 v1** milestone extends; do not design that milestone as a parallel system.
 
+### Concurrent-sibling detection (Multi-Subject Visit Assembly & Review v1, Phase 1)
+
+Implemented 2026-08-19, per
+[multi-subject-visit-assembly-review-v1.md](multi-subject-visit-assembly-review-v1.md)'s
+own "Implementation phases" §1. `AssembledVisitProposal.concurrent_sibling_
+proposal_ids` names every other proposal this one was classified
+`incompatible`/`temporal_overlap` against specifically -- the "two
+simultaneous/crossing subjects" case rule 1 above already, deliberately,
+never tries to resolve, now positively recorded rather than only counted.
+Computed inside the same tracklet-comparison loop `assemble_visit_episodes`
+already runs, using the same bookkeeping shape `ambiguous_adjacent_
+proposal_ids` already established (see "Ambiguity policy" below) -- not a
+new temporal subsystem, and structurally disjoint from it: a pair's single
+`BoundaryDecision` can never populate both fields, since `_temporal_overlap`
+is evaluated before any ambiguous-boundary logic runs.
+
+**Purely additive and inert on its own.** This field changes nothing about
+which tracklets merge, which proposals result, or which are admitted --
+verified directly: every existing test in `test_visit_episode_assembler.py`
+passes unchanged, and a real 2026-08-19 field fixture replayed through the
+Perception Replay Regression Harness before/after this change classified
+every admission/assembly metric `equivalent`. Phase 2 (Event-reuse
+persistence, schema 36, not yet implemented) is what gives this fact
+product consequence.
+
 ### Bounded gap windows -- reused, not invented
 
 `merge_gap_ms` (default 15000ms) reuses `TrackerConfiguration.maximum_weak_

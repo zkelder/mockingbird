@@ -747,7 +747,11 @@ evidenced gaps remain (none of them "the detector is bad"):
    represent it. A concrete, repository-grounded implementation design now
    exists:
    [multi-subject-visit-assembly-review-v1.md](multi-subject-visit-assembly-review-v1.md).
-   Not yet implemented.
+   **Phase 1** (assembly-layer `concurrent_sibling_proposal_ids` detection,
+   pure/additive, no schema/persistence change) implemented 2026-08-19. The
+   schema/UI gap this subsection describes is **not yet closed** -- Phase 2
+   (Event-reuse persistence, schema 36) and Phase 3 (frontend) remain not
+   started; Phase 1 alone does not change which Visits are created.
 3. **Background/empty evidence receiving a confident species label** -- a
    real, repeatedly-observed regression class (2/21 false Visits in the
    latest session, 5/70 in the prior large cohort, all carrying a confident

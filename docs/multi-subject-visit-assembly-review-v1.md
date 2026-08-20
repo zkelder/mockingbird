@@ -338,11 +338,25 @@ for a multi-subject case.
 
 ## Implementation phases
 
-1. **Assembly-layer concurrent-sibling detection** (pure, no DB). New field
-   on `AssembledVisitProposal` + computation in `assemble_visit_episodes`.
-   RED/GREEN tests extending `test_visit_episode_assembler.py` (mirroring
-   its existing purity self-check and fixture-catalog conventions). No
-   schema change.
+1. **DONE (2026-08-19).** **Assembly-layer concurrent-sibling detection**
+   (pure, no DB). New field on `AssembledVisitProposal` + computation in
+   `assemble_visit_episodes`. RED/GREEN tests extending
+   `test_visit_episode_assembler.py` (mirroring its existing purity
+   self-check and fixture-catalog conventions). No schema change. See
+   "Concurrent-sibling detection" in
+   [tracklet-visit-assembly-contract.md](tracklet-visit-assembly-contract.md)
+   for the implemented mechanism, and the "Files likely owned" list below
+   for the exact diff -- `ProposalLineage`/`candidate_visit_adapter.py`/
+   `candidate_visit_authority.py` were deliberately left untouched (Stage 7
+   authority needs no change for this phase, and threading the field that
+   far buys nothing without a Phase 2 consumer); only
+   `visit_episode_assembler.py` and its own tests/fixtures changed. Real
+   2026-08-19 field-fixture replay (Perception Replay Regression Harness,
+   real MDv5/CUDA) confirmed zero admission/assembly behavior change before
+   vs. after. Confirmed as instructed: the design's headline finding (Event
+   already sits above Visit, already plural, already rendered) held up
+   against current code without needing revision. This phase does not fix
+   duplicate-Visit persistence -- that is Phase 2.
 2. **Persistence-layer Event reuse + schema 36.** Thread the new field
    through `ProposalLineage`/`CandidateVisitProposalFacts`, add the additive
    migration, implement the sibling-lookup-and-reuse change in
