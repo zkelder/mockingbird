@@ -54,6 +54,18 @@ startup without opening a browser:
 python -m mockingbird --check
 ```
 
+Check whether a running installation is healthy -- database, storage,
+backup, Camera Node, detector model, species identification, GPU/CUDA, and
+clock -- in one bounded, privacy-safe report:
+
+```sh
+python -m mockingbird doctor
+python -m mockingbird doctor --json
+```
+
+See [docs/mockingbird-doctor-operational-health-contract.md](docs/mockingbird-doctor-operational-health-contract.md)
+for the full check list, severity semantics, exit codes, and JSON shape.
+
 For frontend-only iteration, run the API and Vite dev server separately
 (see README.md's "Developer split mode").
 

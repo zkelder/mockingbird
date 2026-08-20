@@ -57,5 +57,8 @@ if __name__ == "__main__":
     elif len(sys.argv) > 1 and sys.argv[1] == "candidate-authority-trial":
         from mockingbird.observation.candidate_visit_authority_cli import run_trial as candidate_authority_trial_run
         raise SystemExit(candidate_authority_trial_run(sys.argv[2:]))
+    elif len(sys.argv) > 1 and sys.argv[1] == "doctor":
+        from mockingbird.diagnostics.doctor_cli import run as doctor_run
+        raise SystemExit(doctor_run(sys.argv[2:]))
     else:
         main()
