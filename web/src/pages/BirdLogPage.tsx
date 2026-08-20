@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { apiClient } from "../api/client";
 import type {
   CameraSource,
+  ClassifierSupportingEvidence,
   DashboardTodaySpecies,
   Stream,
   WildlifeJournalGalleryOrder,
@@ -19,6 +20,7 @@ import type {
 } from "../api/types";
 import { activityLibraryPath } from "./ActivityLibraryPage";
 import { EmptyState } from "../components/EmptyState";
+import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
@@ -202,20 +204,127 @@ function JournalThumbnail({
   );
 }
 
-function LikelySpeciesThumbnail({ species }: { species: DashboardTodaySpecies }) {
-  const [failed, setFailed] = useState(false);
-  const evidence = species.latest_visit.primary_evidence;
-  useEffect(() => setFailed(false), [evidence?.media_asset_id]);
-  if (!evidence || failed) {
-    return <div className="journal-thumbnail-fallback">No saved thumbnail</div>;
+type LikelySightingEvidenceSource = "identification" | "visit_preview" | "unavailable";
+
+interface LikelySightingEvidenceState {
+  source: LikelySightingEvidenceSource;
+  imageUrl: string | null;
+  onImageError: () => void;
+}
+
+/**
+ * Likely Sightings Evidence Fidelity & ID Honesty v1.
+ *
+ * `GET /api/bird-log/likely` (`ProductRepository.list_likely_species_
+ * overview` -> `_stream_visit_summary_from_models`) only ever returns a
+ * Visit's generic, persisted `is_primary` evidence frame -- never the
+ * frame the species classifier actually read. Those are frequently
+ * different images: Same-Frame Species Evidence v1 (docs/same-frame-
+ * species-evidence-contract.md) can feed BioCLIP a same-frame/persisted-
+ * crop asset that never becomes the Visit's primary evidence at all.
+ * Showing the generic frame under a specific species name without saying
+ * so implies evidence that may not exist.
+ *
+ * This resolves the real classified image by reusing the exact,
+ * already-shipped `VisitDetail.classifier_supporting_evidence` contract
+ * (docs/visit-classifier-evidence-visibility-contract.md) that Visit
+ * Detail's own "Species suggestion evidence" panel already renders --
+ * the same source-of-truth read (the suggestion's own recorded
+ * `evidence_region.classifier_input`), already existence/Stream-
+ * ownership/gallery-dedup checked server side. Deliberately not a second,
+ * frontend-reimplemented reading of the raw suggestion JSON: that would
+ * both duplicate that server-side logic and skip its safety checks.
+ *
+ * One extra `GET /api/visits/{id}/detail` per visible card is the
+ * accepted cost of reusing that real contract instead of guessing; see
+ * the milestone report for why a lighter, list-scoped backend field would
+ * be a better long-term contract than N per-card detail fetches.
+ *
+ * Never claims more than is proven: while resolution is in flight, and
+ * whenever it comes back empty (most Visits today -- the same-frame/
+ * persisted-crop resolver often does not fire), the card falls back to
+ * the Visit's generic preview honestly labeled "Visit preview" rather
+ * than silently upgrading it to look like identification evidence.
+ */
+function useLikelySightingEvidence(species: DashboardTodaySpecies): LikelySightingEvidenceState {
+  const visitId = species.latest_visit.id;
+  const primary = species.latest_visit.primary_evidence ?? null;
+  const [supporting, setSupporting] = useState<ClassifierSupportingEvidence | null | undefined>(undefined);
+  const [identificationFailed, setIdentificationFailed] = useState(false);
+  const [previewFailed, setPreviewFailed] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    setSupporting(undefined);
+    setIdentificationFailed(false);
+    setPreviewFailed(false);
+    void apiClient
+      .getVisitDetail(visitId)
+      .then((detail) => {
+        if (active) setSupporting(detail.classifier_supporting_evidence ?? null);
+      })
+      .catch(() => {
+        // Best-effort only, same posture as this page's other provisional
+        // reads: a failed lookup falls back to the honest Visit preview
+        // below rather than blocking or misrepresenting the card.
+        if (active) setSupporting(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [visitId]);
+
+  if (supporting && !identificationFailed) {
+    return {
+      imageUrl: `${apiClient.baseUrl}${supporting.frame.preview_url}`,
+      onImageError: () => setIdentificationFailed(true),
+      source: "identification",
+    };
   }
+  if (primary && !previewFailed) {
+    return {
+      imageUrl: `${apiClient.baseUrl}${primary.preview_url}`,
+      onImageError: () => setPreviewFailed(true),
+      source: "visit_preview",
+    };
+  }
+  return { imageUrl: null, onImageError: () => {}, source: "unavailable" };
+}
+
+function LikelySightingCard({
+  onOpenVisit,
+  species,
+}: {
+  onOpenVisit: (visitId: string) => void;
+  species: DashboardTodaySpecies;
+}) {
+  const evidence = useLikelySightingEvidence(species);
+  const alt =
+    evidence.source === "identification"
+      ? `Evidence for provisional ${species.display_name} suggestion`
+      : `Visit preview, not confirmed as the evidence for the provisional ${species.display_name} suggestion`;
   return (
-    <img
-      alt={`Likely ${species.display_name}, awaiting confirmation`}
-      loading="lazy"
-      onError={() => setFailed(true)}
-      src={`${apiClient.baseUrl}${evidence.preview_url}`}
-    />
+    <article className="journal-label-card">
+      <button className="journal-label-image" onClick={() => onOpenVisit(species.latest_visit.id)} type="button">
+        {evidence.imageUrl ? (
+          <img alt={alt} loading="lazy" onError={evidence.onImageError} src={evidence.imageUrl} />
+        ) : (
+          <div className="journal-thumbnail-fallback">No saved thumbnail</div>
+        )}
+      </button>
+      <div className="journal-label-card-body">
+        <div className="section-heading">
+          <div><h2>Likely {species.display_name}</h2><span className="meta-text">Not yet confirmed</span></div>
+        </div>
+        {evidence.source === "unavailable" ? null : (
+          <EvidenceBadge
+            label={evidence.source === "identification" ? "Identification evidence" : "Visit preview"}
+            tone={evidence.source === "identification" ? "evidence" : "quiet"}
+          />
+        )}
+        <button className="secondary-action" onClick={() => onOpenVisit(species.latest_visit.id)} type="button">Confirm or correct</button>
+      </div>
+    </article>
   );
 }
 
@@ -499,17 +608,7 @@ export function BirdLogPage({
             </div>
             <section className="journal-label-grid" aria-label="Likely species awaiting confirmation">
               {likelySpecies.map((species) => (
-                <article className="journal-label-card" key={species.label}>
-                  <button className="journal-label-image" onClick={() => onOpenVisit(species.latest_visit.id)} type="button">
-                    <LikelySpeciesThumbnail species={species} />
-                  </button>
-                  <div className="journal-label-card-body">
-                    <div className="section-heading">
-                      <div><h2>Likely {species.display_name}</h2><span className="meta-text">Not yet confirmed</span></div>
-                    </div>
-                    <button className="secondary-action" onClick={() => onOpenVisit(species.latest_visit.id)} type="button">Confirm or correct</button>
-                  </div>
-                </article>
+                <LikelySightingCard key={species.label} onOpenVisit={onOpenVisit} species={species} />
               ))}
             </section>
           </section>
