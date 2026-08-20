@@ -654,6 +654,33 @@ looks indistinguishable from a detection miss. See Gate A and Gate B in
   independently before committing another long session -- this milestone
   improved diagnosis for the *next* failure, it did not make the Camera
   Node itself more available.
+- **Camera Node Field Hardware Resilience / Bad-Boot Recovery (roadmap
+  amendment, 2026-08-20).** The same day, physically checking the Pi 4
+  reference device (the next action the diagnosis above recommended) found
+  the concrete failure case that diagnosis had only inferred from logs: a
+  solid red power LED, no green ACT activity, and the device completely
+  absent from the LAN -- `192.168.1.112` failed ICMP, TCP 8787, and
+  `/node/v1/health` alike -- while the Windows host and MockingBird product
+  stayed healthy throughout, and six bounded reconnect attempts correctly,
+  honestly classified the failure as `timeout` (among the bounded
+  `connect_refused`/`connection_reset`/`dns_unresolved`/`http_status`/
+  `content_type_mismatch`/`os_error` vocabulary that milestone added). With
+  the earlier `onnx_cuda_verification_insufficient` misclassification
+  already fixed, nothing downstream was misdiagnosed this time -- the
+  diagnosis pointed at the node, and the node was in fact the problem.
+  Only a physical power cycle recovered the device; no software action
+  could have, and none claimed otherwise. This is direct field evidence of
+  a genuinely new case -- **powered but never successfully booted** --
+  distinct from every previously-tested reboot/crash/network-interruption
+  case, all of which assumed the device eventually comes back on its own.
+  This is a planning amendment, not a code change: it adds one bounded
+  governing requirement, beneath the existing Gate D and Gate E, for
+  Camera Node field-hardware resilience -- automatic recovery from
+  controllable failures, honest exposure of uncontrollable ones, durable
+  host-side truth through node failure, and straightforward
+  reprovisioning/replacement. See the new subsections under Gate D and
+  Gate E, below, the new cross-cutting invariant, below, and the extended
+  "v0.1 non-blockers," below, for what stays explicitly deferred.
 
 ## v0.1 scope freeze
 
@@ -674,7 +701,12 @@ An idea does not become a v0.1 requirement merely because it is interesting,
 ambitious, or would make the product more capable later. The 2026-08-19
 multi-animal, duplicate-Visit, evidence-latency, and detection-recall field
 findings (see "Current status," above) qualify under the first criterion --
-they are direct field evidence, not speculation. Remote/cellular/solar
+they are direct field evidence, not speculation. The 2026-08-20 Camera Node
+bad-boot incident (see "Current status," above) qualifies the same way: a
+real reference device failed to boot in the field, not hypothetically, and
+the product's own reconnect diagnosis needed to -- and did -- tell that
+apart from a host or GPU problem; see "Camera Node field hardware
+resilience / bad-boot recovery" under Gate D, below. Remote/cellular/solar
 hardware does not qualify under any criterion today; see "Post-v0.1 lanes,"
 below.
 
@@ -1170,6 +1202,80 @@ impact-preview/bounded-save flow (see "Source adapters" in
 future config flow with real runtime effect, including explicit progress
 states for the asynchronous steps, rather than inventing a second pattern.
 
+#### Camera Node field hardware resilience / bad-boot recovery (new, evidence-driven requirement)
+
+Direct 2026-08-20 field evidence (see "Current status," above) showed a
+case none of the reboot/crash/network-interruption acceptance above
+actually covers: the real reference Pi 4 was powered (solid red LED) but
+never came back on the network at all -- no ACT activity, no ICMP, no TCP
+8787, no `/node/v1/health` -- until a physical power cycle recovered it.
+MockingBird software cannot repair hardware that never boots, and must
+never claim to; but it must recover automatically once the node returns,
+accurately say so when it cannot, and never again let an unrelated
+diagnosis (as the now-fixed `onnx_cuda_verification_insufficient`
+misclassification once did) obscure that the node itself, not the host or
+GPU, is the problem.
+
+Camera Nodes are replaceable field infrastructure; they are not where
+MockingBird's truth lives (see "Cross-cutting roadmap invariants," below).
+A Camera Node must: (1) automatically recover from failures it can
+control; (2) accurately expose failures it cannot control; (3) preserve
+host-side observational truth through node failure; (4) be straightforward
+to reprovision or replace. (1)-(3) extend the install/service/reboot proof
+already delivered (above); (4) is new. This governs both this gate's
+setup/identity/recovery-state surface and Gate E's field-recovery ladder,
+below -- one bounded capability, not two.
+
+Bounded additions to the Camera Node golden path, all capability-driven
+and hardware-agnostic -- no proprietary MockingBird hardware required:
+
+- a node boot/readiness self-test, run before the node reports itself
+  healthy;
+- a stable node identity, distinct from the pairing credential, that
+  survives reinstall/update;
+- `boot_id`, process uptime, installed software-image/OS version, and
+  Camera Node service (package) version, readable locally and reportable
+  to the host;
+- a record of the node's last successful startup;
+- a host-visible heartbeat / last-seen fact that exists independently of
+  whether an Observation session happens to be running right now;
+- an explicit distinction between "paired/configured" and "actually
+  reachable right now" (see "Product-health semantics" under Gate E,
+  below) -- exactly the distinction the 2026-08-20 incident needed, and
+  the host's bounded reconnect logic already gets right *while a session
+  is retrying*, but which has no persistent, host-visible surface once a
+  session has already given up -- a gap "Camera Node Connectivity &
+  Recovery Diagnosis v1" (above) already discloses;
+- startup validation of the camera/provider, node storage, and other
+  supported capabilities, reusing the existing per-provider
+  `setup_required`/unavailable reporting (see
+  [camera-node-boundary-design.md](camera-node-boundary-design.md)) rather
+  than inventing a second capability model;
+- clear operator recovery states and actions -- what to check, and in what
+  order, when a node stops reporting;
+- a configuration backup/export, or equivalent mechanism, so a working
+  node's own configuration is not itself a single point of failure;
+- a replacement-node workflow that preserves the existing Place/Source/
+  Stream/Zone/history exactly as Guided Camera Editing's existing repair
+  path already does for a lost credential (see "Source adapters" in
+  [architecture.md](architecture.md)), while retaining an honest
+  hardware/provenance lineage across the swap -- reviewed history must
+  never read as if it came from a device that was actually replaced;
+- golden-Pi guidance for supported-quality power supply, storage/boot
+  media, and networking, added to
+  [camera-node-install-guide.md](camera-node-install-guide.md) alongside
+  its existing prerequisites/bind-address guidance;
+- a high-endurance boot-media recommendation (storage rated for sustained
+  write endurance, not a bargain consumer card) for the Pi reference
+  deployment specifically -- guidance for the golden path, not a
+  requirement the installer enforces.
+
+Every item above is either a software self-check, a documentation
+addition, or a workflow already structurally proven by the installer or
+Guided Camera Editing (above); none requires custom MockingBird hardware,
+and Raspberry Pi remains the reference implementation, not the product
+architecture (see "Scope-reopening rule," above).
+
 ### Gate E -- Reliability / Recovery / Observability
 
 Existing structured error/diagnostics doctrine remains and now explicitly
@@ -1248,6 +1354,193 @@ capture through admission can be followed in logs) are both named, open
 capabilities -- neither exists today. Avoid high-cardinality or raw-image
 telemetry in either, per the existing structured-diagnostics doctrine
 above.
+
+#### Camera Node field-recovery ladder (extends "Fault injection," above)
+
+The 2026-08-20 bad-boot incident (see "Current status," above, and the new
+Gate D subsection, above) motivates naming a complete recovery ladder for
+Camera Node field-hardware failure, rung by rung -- what MockingBird
+recovers automatically, what it can only report honestly, and what already
+has live evidence versus what is still open.
+
+**Application/service failure.** Already proven: bounded
+`Restart=on-failure`/`RestartSec=5`, capped by `StartLimitIntervalSec=300`/
+`StartLimitBurst=5` so a persistent crash loop fails visibly instead of
+hot-restarting forever (the systemd unit, live-verified under a real `kill
+-9` -- see "Camera Node Installer / Package / Reboot Hardening v1," above).
+Open: surfacing the node's own restart count / last-failure reason to the
+paired host -- today this is visible only via direct `journalctl` access to
+the device itself.
+
+**OS hang.** Open, not yet built: a hardware watchdog where the platform
+supports one (Pi 4's SoC has one, `bcm2835_wdt`) is not enabled or
+acceptance-tested today. The Raspberry Pi golden path should enable and
+acceptance-test it if practical; this stays a capability-gated addition,
+not a requirement of every supported platform.
+
+**Network outage.** Already proven: bounded reconnect
+(`AnalysisStreamRetryPolicy`, 6 attempts, `backoff_seconds=12.0`), accurate
+`advanced.last_healthy_frame_at`, and automatic recovery once connectivity
+returns are all live-verified (Camera Node Installer v1's network-
+interruption acceptance, above). "No misleading detector/species/CUDA
+diagnosis when no frames arrived" is also already closed: this is exactly
+what Camera Node Connectivity & Recovery Diagnosis v1 (above) root-caused
+and fixed -- a session that never received a frame no longer misreports a
+CUDA failure.
+
+**Unexpected power loss.** Partially proven: pairing state is already
+written atomically (`os.O_EXCL` + `os.replace`, per
+[camera-node-installer-design.md](camera-node-installer-design.md) "State
+paths") and survived a real `kill -9` and reboot untouched. Open: bounding
+`journald`'s own on-disk growth (no size/retention bound is configured for
+this unit today), minimizing unnecessary writes to boot media, and naming
+an explicit acceptance case confirming a Camera Node reboot never requires
+host-side database repair (true by construction today -- the host's own
+database is entirely independent of Node state -- but not yet a named
+acceptance case; see the field acceptance matrix, below).
+
+**Boot failure / powered-but-not-booted.** This is the exact 2026-08-20
+case. Already proven: while a session is actively retrying, the host
+correctly and honestly classifies this as `timeout`/`camera_unavailable`
+(above) rather than a host or GPU fault. Open, and the concrete gap this
+incident exposes: once a session has already exhausted its retries and
+stopped, there is no persisted "Camera Node offline, last seen at T" state
+-- Doctor's own staleness check only covers a currently-*open* exposure
+interval, a disclosed v1 scope limit (see
+[camera-node-connectivity-recovery-diagnosis-v1-report.md](camera-node-connectivity-recovery-diagnosis-v1-report.md)).
+The product must say "Camera Node offline / last seen X" in that gap,
+never merely "paired and ready," and must preserve whatever boot/health
+evidence it already had rather than discarding it the moment a session
+closes. It must never claim software recovery when the node itself did
+not boot.
+
+**Boot loop / repeated restart.** Partially proven: `systemd`'s own
+`StartLimitBurst=5`/`StartLimitIntervalSec=300` already bounds a hot-
+restart loop at the process level (above) -- it cannot loop silently
+forever. Open: nothing today exposes *evidence* of flapping (a changing
+`boot_id`, a rising restart count) through a host-visible surface, so an
+operator currently has no way to tell "the node is stuck restarting" apart
+from "the node is simply offline" without direct device access -- this is
+what the Gate D `boot_id`/identity addition (above) exists to close.
+
+**Camera-device failure.** Partially proven: a camera provider that is
+absent, permission-denied, or otherwise unusable already reports
+`setup_required`/unavailable rather than a false ready state (see
+[camera-node-boundary-design.md](camera-node-boundary-design.md)), and
+`/node/v1/health`'s existing `camera_count`/`available_camera_count`
+already lets a reachable-but-camera-broken node be distinguished from an
+unreachable one in principle. Open: formalizing that distinction as one of
+the named node-health states (see "Product-health semantics," below) and
+adding a live acceptance case for it (see the field acceptance matrix,
+below) rather than relying on it holding only by inspection of the
+contract.
+
+**Storage/media failure.** Open, not yet built: nothing today checks the
+node's own free space, write pressure, or (where the platform exposes it)
+filesystem/storage health -- the existing storage-pressure discipline (see
+"Bounded resource behavior," above) is host-side only. A Camera Node
+should fail safely -- stop attempting writes it cannot complete, and say
+so -- before its own boot media fills, bounded and capability-gated the
+same way provider capability reporting already is.
+
+**Hardware-quality telemetry.** Open, not yet built, and explicitly
+capability-driven rather than a fixed field set: for a platform that
+exposes it, undervoltage/throttling, CPU temperature, storage health, and
+reboot reason are useful operator-facing signals. Keep this
+capability-aware (see "Capability-aware UX" in
+[product-doctrine.md](product-doctrine.md)) -- a Raspberry-Pi-specific
+field (for example `vcgencmd`'s throttling bitmask) stays a Pi provider
+detail surfaced through a generic capability, never a core product
+semantic every platform must implement.
+
+**Replacement.** The terminal rung when nothing above recovers the node:
+treat the field node itself as replaceable, reuse the same fast re-pair/
+reprovision workflow named under Gate D, above, and preserve host-side
+Place/Observation history and honest provenance across the swap. A
+replaced node is a routine field event, not a data-loss incident.
+
+#### External recovery boundary
+
+Recovery from a node that is powered but never boots requires an
+independent actor -- today, a person physically present to power-cycle it,
+exactly what closed the 2026-08-20 incident. MockingBird does not, and for
+v0.1 will not, claim to recover a node no software action can reach.
+Managed PoE power cycling, smart power control, or an external hardware
+supervisor may become useful for a future advanced/remote deployment (the
+"Power / solar" lane already names a possible future low-power supervisory
+MCU with hard-reset capability for that context; see "Post-v0.1 lanes,"
+below) -- but automated, independent power-cycling of the golden home Pi
+path stays post-v0.1 and optional unless future field evidence
+demonstrates it is actually necessary there, not merely convenient (see
+the extended "v0.1 non-blockers," below).
+
+#### Field-failure acceptance matrix (Gate D/E, extends "Fault injection," above)
+
+Camera Node field-hardware resilience closes only once each of the
+following has a real or deliberately-injected acceptance case, verifying
+for each: what recovers automatically, what requires operator
+intervention, the correct user-visible state, the correct diagnostic
+evidence, that no authoritative host history is lost or corrupted, and
+that no false downstream detector/species/CUDA diagnosis results. Injected
+faults use disposable/synthetic media or a safe fault-injection technique
+-- never physical damage to hardware and never intentional corruption of
+the production SD card.
+
+1. kill the Camera Node service -- already live-verified (`kill -9`,
+   above).
+2. the analysis stream closes mid-session -- already live-verified
+   (network-interruption and multiple real reconnect episodes, above).
+3. a temporary LAN outage -- already live-verified (the `nft`-rule
+   experiment, above).
+4. a host restart -- already live-verified (survived cleanly mid-session
+   during End-to-End Bird Encounter Recall Closure v1, above).
+5. abrupt Pi power removal -- **open**: distinct from a clean reboot (no
+   orderly unmount, real filesystem/boot-media risk) and not yet exercised
+   as its own case.
+6. a Pi reboot -- already live-verified twice, with precise recovery
+   timing (Camera Node Installer v1, above).
+7. an OS/service hang or watchdog trip, where safely testable -- open;
+   blocked on the watchdog itself being enabled first (above).
+8. powered-but-no-successful-boot / node absent -- real field evidence now
+   exists (2026-08-20, above) that the host correctly classifies this as
+   `timeout`, but it has not yet been exercised as a deliberate, repeatable
+   case, and the between-sessions "offline, last seen" gap named above
+   remains open.
+9. repeated boot/restart-loop evidence -- open; no `boot_id`/restart-count
+   evidence surface exists yet to verify against.
+10. a physical camera disconnect while the node itself stays up -- open;
+    not yet exercised live.
+11. a low-storage/storage-pressure condition on the node -- open; no
+    node-side storage check exists yet to exercise.
+12. replacement/reprovision of a Camera Node -- partially evidenced: a
+    real credential re-pair through Guided Camera Editing's repair flow is
+    live-proven (Camera Node Installer v1's "Pairing with the real host,"
+    above), but a genuine physical-device swap preserving Place/history
+    and provenance lineage end to end is not yet a deliberate acceptance
+    case.
+
+#### Product-health semantics: paired/configured != live/reachable
+
+A Source can be paired and fully configured while the physical Camera Node
+behind it is unreachable right now -- the 2026-08-20 incident, and every
+ordinary network hiccup before it. Node health must ultimately distinguish
+at least: healthy/reachable; degraded; camera unavailable while the node
+itself is reachable; temporarily disconnected/reconnecting; node offline/
+unreachable; boot/restart instability suspected; and replacement/
+reprovision required, where determinable. This extends, and must reuse
+rather than duplicate, Doctor's existing PASS/WARN/FAIL and
+blocking/degraded/informational severity model (see
+[mockingbird-doctor-operational-health-contract.md](mockingbird-doctor-operational-health-contract.md))
+and the existing capability-aware-UX discipline (see
+[product-doctrine.md](product-doctrine.md)), not a second health taxonomy.
+
+Do not fabricate certainty. If the host only knows a heartbeat
+disappeared, say "Camera Node offline, last seen <time>" -- never a
+specific claim like "boot media failed" or "SD card corrupted" the host
+has no way to actually know. An honest "offline, last seen" is more
+useful, and more truthful, than a confident wrong diagnosis -- the same
+principle Gate B already applies to species identification (see
+"Governing priority for v0.1," above), extended here to node health.
 
 ### Gate F -- OSS / Security / Compatibility / Packaging Closure
 
@@ -1724,7 +2017,15 @@ research-grade claims, advanced field fleets, audio, eBird/GBIF/Wildlife
 Insights integration, persistent individual ReID, every possible camera
 provider, a native mobile app, perfect species classification, model
 ensembles, a custom global classifier, sophisticated ecological
-forecasting, cloud services, enterprise features.
+forecasting, cloud services, enterprise features, mandatory UPS, mandatory
+PoE, a mandatory managed switch, dual-node redundancy, redundant boot
+media, a cloud fleet manager, an A/B OS updater beyond what the existing
+update/rollback architecture already provides (see "Update behavior" in
+[camera-node-installer-design.md](camera-node-installer-design.md)), and
+automated/independent power-cycling or an external hardware supervisor for
+the golden home path (see "External recovery boundary" under Gate E,
+above) -- these remain techniques or future options, not requirements,
+unless field evidence later elevates one of them.
 
 ## Field-testing doctrine
 
@@ -1803,6 +2104,12 @@ See [roadmap-history.md](roadmap-history.md) for the concise phase record.
   scoped, bounded, and tested.
 - Privacy and Ignore Zones, local storage, retention, backups, and safe restart
   behavior are first-class constraints.
+- Camera Nodes are replaceable field infrastructure, not the system of
+  record: Place history, reviewed truth, Observations, and evidence
+  provenance are durable on the host and must survive a Camera Node's
+  failure, unavailability, or physical replacement -- see "Camera Node
+  field hardware resilience / bad-boot recovery" under Gate D and Gate E,
+  below.
 - Workers and durable monitoring default off, are observable and safely
   stoppable, and cannot create reviewed truth.
 - Model runtimes, training dependencies, generated datasets, captured media,
