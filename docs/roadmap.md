@@ -623,6 +623,37 @@ looks indistinguishable from a detection miss. See Gate A and Gate B in
   See "v0.1 release gates" (Gate A) below and
   [end-to-end-bird-encounter-recall-closure-v1-report.md](end-to-end-bird-encounter-recall-closure-v1-report.md)'s
   own "Recommended next bounded step."
+- **Camera Node Connectivity & Recovery Diagnosis v1** (2026-08-20) answered
+  why the second (2026-08-20 daylight) cache-128 live-proof attempt above
+  also failed: a real, external Camera Node/network outage (`analysis_
+  stream_unavailable`, unrelated to the evidence-cache fix under test)
+  after 4.08 genuinely healthy, busy minutes. The bounded reconnect/retry
+  state machine itself was correct and not the cause -- but tracing the
+  terminal `onnx_cuda_verification_insufficient` message the prior session
+  had explicitly left unresolved found and fixed a real diagnostic defect:
+  a session that lost its connection before any frame ever reached the
+  detector still ran the detector's own end-of-session CUDA self-check on
+  teardown, which could not tell "no inference ever ran" apart from a real
+  CUDA failure, raised the same misleading code, and (via an unguarded
+  teardown path) overwrote the already-correct connectivity diagnosis --
+  sending the prior session down a GPU-investigation path for a problem
+  that was never GPU-related. Also found and fixed, in the same teardown
+  path: any exception from session teardown silently skipped `provider.
+  close()` (a resource leak) and the finalize assembly tick. Doctor's
+  Camera Node check was also found structurally blind to this lane's own
+  runtime health (it only ever read the legacy `live_monitoring` lane's
+  checkpoint table) and gained one small, read-only, additive freshness
+  check. Decision D (diagnostic defect, now fixed); zero change to the
+  reconnect/retry logic's own correctness or to the evidence-cache fix.
+  Real bounded acceptance was not performed -- the shared Windows dev
+  instance was independently confirmed unreachable this same session
+  (consistent with a reported mid-session host reboot), so neither this
+  fix nor Camera Node reachability itself could be live-verified yet. See
+  [camera-node-connectivity-recovery-diagnosis-v1-report.md](camera-node-connectivity-recovery-diagnosis-v1-report.md).
+  The next cache-128 attempt should still confirm Camera Node reachability
+  independently before committing another long session -- this milestone
+  improved diagnosis for the *next* failure, it did not make the Camera
+  Node itself more available.
 
 ## v0.1 scope freeze
 
