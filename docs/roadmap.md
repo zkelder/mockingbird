@@ -729,9 +729,25 @@ evidenced gaps remain (none of them "the detector is bad"):
    confirmed by a live encounter of the same shape under the raised bound.
    This is the single concrete next field-acceptance action (see "Current
    recommended next action," above, and "Numeric release budgets," below).
+   A 2026-08-19 attempt redeployed and started a real session against this
+   exact fix but produced no usable denominator: the session was started
+   after local sunset (a real gap in that attempt's own session-quality
+   judgment, not a product defect -- every prior successful session started
+   during daylight). 32.8 real minutes produced zero track generations,
+   zero proposals, and zero candidates; the counterfactual ledger shows the
+   detector was not idle (2268 raw detections at MDv5's permissive 0.1
+   threshold, consistent with low-light sensor/IR noise), and correctly
+   never promoted any of them to a confirmed track -- a clean, if
+   unintended, precision data point, but not a proof of the cache fix under
+   real churn. The live proof itself remains outstanding; the deployed
+   build (`c5278cb`, includes the fix) is healthy and ready for the next
+   daylight attempt without a rebuild.
 2. **Multi-subject Visit correctness** -- see the dedicated subsection
    immediately below. New, hard requirement; current schema/UI cannot
-   represent it.
+   represent it. A concrete, repository-grounded implementation design now
+   exists:
+   [multi-subject-visit-assembly-review-v1.md](multi-subject-visit-assembly-review-v1.md).
+   Not yet implemented.
 3. **Background/empty evidence receiving a confident species label** -- a
    real, repeatedly-observed regression class (2/21 false Visits in the
    latest session, 5/70 in the prior large cohort, all carrying a confident
