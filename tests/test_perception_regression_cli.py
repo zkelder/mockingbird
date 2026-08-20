@@ -21,6 +21,8 @@ from mockingbird.observation import perception_regression_cli as cli
 from mockingbird.observation.contracts import DetectionObservation, FramePacket
 from mockingbird.observation.frame_driven_provider import FrameDrivenObservationProvider, FrameDrivenSettings
 
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
 
 class _FakeDetector:
     def __init__(self, detections: dict[str, tuple[DetectionObservation, ...]]) -> None:
@@ -112,6 +114,23 @@ def test_run_with_explicit_frames_and_manifest_writes_a_report(tmp_path: Path) -
     assert payload["admission"]["outcome_counts"] == {}
     assert "execution" in payload
     assert str(frames_dir) not in json.dumps(payload["provenance"])
+
+
+def test_run_rejects_an_output_directory_inside_tracked_source(tmp_path: Path) -> None:
+    """`_write_report` delegates to `replay_io.py`'s own output-directory
+    guard, which refuses anywhere under the repository root except `data/`
+    -- proving a regression report can never silently land somewhere a
+    later `git add` might pick it up, exactly like every other replay/
+    benchmark CLI in this package already guarantees for its own reports."""
+
+    frames_dir, manifest_path = _write_frames_and_manifest(tmp_path, count=2)
+    exit_code = cli.run([
+        "run", "--frames", str(frames_dir), "--manifest", str(manifest_path),
+        "--stream-id", "replay:fixture-feeder",
+        "--output", str(_REPO_ROOT / "src" / "perception-regression-cli-test-out"),
+    ])
+    assert exit_code == cli._EXIT_CODES["unsafe_output_path"]
+    assert not (_REPO_ROOT / "src" / "perception-regression-cli-test-out").exists()
 
 
 def test_run_rejects_both_fixture_and_explicit_frames(tmp_path: Path) -> None:

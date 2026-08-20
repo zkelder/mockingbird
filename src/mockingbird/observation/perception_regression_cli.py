@@ -53,6 +53,7 @@ from mockingbird.observation.perception_regression_io import (
 )
 from mockingbird.observation.replay import ReplayValidationError
 from mockingbird.observation.replay_io import ReplayBundle, load_replay_bundle
+from mockingbird.observation.replay_io import _safe_output_directory as _replay_safe_output_directory
 
 _EXIT_CODES: dict[str, int] = {
     "unsupported_provider": 4,
@@ -107,20 +108,14 @@ def _bundle_for_fixture(fixture: RegressionFixture) -> ReplayBundle:
     return bundle
 
 
-def _safe_output_directory(value: Path) -> Path:
-    directory = value.expanduser()
-    if directory.is_symlink() or directory == Path(".") or directory.suffix:
-        raise ReplayValidationError("unsafe_output_path")
-    if directory.exists():
-        if not directory.is_dir() or any(directory.iterdir()):
-            raise ReplayValidationError("nonempty_output_directory")
-    else:
-        directory.mkdir(parents=True, exist_ok=False)
-    return directory.resolve(strict=True)
-
-
 def _write_report(output_directory: Path, payload: dict[str, Any]) -> Path:
-    directory = _safe_output_directory(output_directory)
+    # Reuses `replay_io.py`'s own output-directory guard verbatim rather than
+    # a second, independently-maintained copy: new-or-empty only, refused
+    # through a symlink, and -- the property a hand-written duplicate here
+    # previously dropped -- refused anywhere under the repository root except
+    # `data/` (never `src/`/`docs/`/`tests/`), so a report can never silently
+    # land somewhere `git add` might later pick up.
+    directory = _replay_safe_output_directory(output_directory)
     output = directory / "perception-regression-report.json"
     serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode() + b"\n"
     descriptor, temporary_name = tempfile.mkstemp(prefix=".perception-regression-report.", suffix=".tmp", dir=directory)
