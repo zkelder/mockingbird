@@ -681,6 +681,16 @@ looks indistinguishable from a detection miss. See Gate A and Gate B in
   reprovisioning/replacement. See the new subsections under Gate D and
   Gate E, below, the new cross-cutting invariant, below, and the extended
   "v0.1 non-blockers," below, for what stays explicitly deferred.
+- **Independent Power / Node Supervisor + Solar/Battery Field Profile
+  (roadmap amendment, 2026-08-20).** Same-day follow-up to the bad-boot
+  amendment above: makes explicit what "External recovery boundary" (Gate
+  E) and the "Power / solar" lane (Post-v0.1 lanes) already gestured at but
+  never stated -- when an external power supervisor counts as genuine
+  independent recovery rather than another single point of failure, and
+  how that concept connects to remote, solar, battery, and PoE field
+  deployments. Planning-only: no code change, no new gate, no new v0.1
+  requirement. See "Independent Power / Node Supervisor" under Gate E and
+  the extended "Power / solar" lane, below.
 
 ## v0.1 scope freeze
 
@@ -1474,6 +1484,63 @@ path stays post-v0.1 and optional unless future field evidence
 demonstrates it is actually necessary there, not merely convenient (see
 the extended "v0.1 non-blockers," below).
 
+#### Independent Power / Node Supervisor (optional, post-v0.1)
+
+For remote, solar, battery, PoE, or otherwise unattended installations,
+MockingBird may integrate with an external supervisor that remains
+operational when the Camera Node itself has failed -- the concrete
+mechanism "External recovery boundary," above, and the "Power / solar"
+lane (see "Post-v0.1 lanes," below) already anticipated without naming or
+defining. The architecture stays hardware-agnostic: this is a
+capability-driven interface, not a dependency on any specific device.
+Possible capabilities MAY include -- MockingBird must not require all of
+them:
+
+- hard power-cycle of a Camera Node;
+- controlled power on/off;
+- node-power-state telemetry;
+- battery state of charge, where available;
+- battery voltage/current, where available;
+- solar/charging state, where available;
+- low-voltage disconnect/protection;
+- delayed restart until battery voltage/state has recovered sufficiently;
+- bounded automatic recovery policy;
+- power-budget/load-shedding signals;
+- reboot/power-cycle history.
+
+MockingBird must not require or assume a specific solar charge controller,
+BMS, relay, smart plug, PoE switch, MCU, Raspberry Pi HAT, or proprietary
+MockingBird power controller.
+
+**Independence rule.** A power supervisor only provides recovery from
+failures below the Camera Node OS if it remains independently operable
+when the Camera Node itself is unavailable. A relay controlled only by the
+failed Pi is not independent recovery: if the supervisor's own control
+path routes through the thing it exists to recover, it is not a recovery
+path at all. Examples of genuinely independent implementations may include
+managed PoE, a solar-controller load output, a smart BMS/controller, a
+separate low-power MCU, an external watchdog/power supervisor, or future
+integrated field-power hardware -- these are examples, not product
+dependencies.
+
+**Recovery semantics.** Where an independent supervisor exists, it extends
+-- never replaces -- the existing ladder ("Camera Node field-recovery
+ladder," above): node heartbeat disappears; bounded software
+recovery/reconnect is attempted first; only if that does not recover the
+node does an optional independent hard power-cycle run, according to
+policy; then a fresh `boot_id`/heartbeat is verified; the operator is
+notified only if recovery still fails. Automatic power-cycling is never
+mandatory. A policy that performs it must bound attempts and rate the same
+way the existing service-level restart bounding already does
+(`StartLimitBurst`/`StartLimitIntervalSec`; see "Application/service
+failure" under "Camera Node field-recovery ladder," above) -- an endless
+power-cycle loop is exactly the failure mode this must not reproduce at
+the power layer.
+
+This entire capability stays post-v0.1 and optional (see the extended
+"v0.1 non-blockers," below); it does not change the v0.1 obligation
+already stated in "External recovery boundary," above.
+
 #### Field-failure acceptance matrix (Gate D/E, extends "Fault injection," above)
 
 Camera Node field-hardware resilience closes only once each of the
@@ -1665,6 +1732,31 @@ target, ~30-50W-class is the desirable normal Remote Field Node range,
 ~100W-class is specialized/research territory, and routinely exceeding
 100W per camera means reconsidering architecture rather than just adding
 panel area. None of this is implemented now.
+
+**Remote / energy-constrained field profile.** A bounded post-v0.1
+deployment profile, not a new architecture: it complements the existing
+local-first, hardware-agnostic design rather than replacing it, and
+implies nothing about normal mains-powered home deployments, which stay
+the primary product target unchanged. Assumptions this profile may
+eventually design against: intermittent solar generation, finite battery
+capacity, possible low-voltage/brownout conditions, intermittent WAN,
+local-first operation, store-and-forward synchronization, energy-aware
+capture/processing, and optional independent power supervision (see
+"Independent Power / Node Supervisor" under Gate E, above). Energy-aware
+product direction -- recorded here as future capability direction only,
+not current implementation, and not a full energy-management subsystem
+designed now:
+
+- degraded operating modes under low energy;
+- prioritize capture/evidence/truth over optional inference/analytics
+  when energy-constrained;
+- postpone expensive optional processing -- not core capture or evidence
+  preservation -- under the same condition;
+- resume deferred work once power recovers;
+- never sacrifice authoritative host-side truth merely to conserve node
+  power -- the Camera Node stays replaceable field infrastructure, not the
+  system of record, even under energy constraint (see "Cross-cutting
+  roadmap invariants," below).
 
 **Hardware progression, evidence-driven.** Pi 4/5 remains reference/
 golden-path hardware. Next, if evidenced: a remote prototype using existing
@@ -2012,20 +2104,23 @@ Distinct from "Explicit deprioritization," above (the longer-standing
 critical-path list): these specific items do not delay v0.1 release, absent
 new empirical evidence that changes a real dependency --
 
-LTE, solar, custom CM hardware, custom PCB, manufactured hardware,
-research-grade claims, advanced field fleets, audio, eBird/GBIF/Wildlife
-Insights integration, persistent individual ReID, every possible camera
-provider, a native mobile app, perfect species classification, model
-ensembles, a custom global classifier, sophisticated ecological
-forecasting, cloud services, enterprise features, mandatory UPS, mandatory
-PoE, a mandatory managed switch, dual-node redundancy, redundant boot
-media, a cloud fleet manager, an A/B OS updater beyond what the existing
-update/rollback architecture already provides (see "Update behavior" in
-[camera-node-installer-design.md](camera-node-installer-design.md)), and
+LTE, solar, battery/BMS integration, managed PoE, custom CM hardware,
+custom PCB, manufactured hardware, research-grade claims, advanced field
+fleets, audio, eBird/GBIF/Wildlife Insights integration, persistent
+individual ReID, every possible camera provider, a native mobile app,
+perfect species classification, model ensembles, a custom global
+classifier, sophisticated ecological forecasting, cloud services,
+enterprise features, mandatory UPS, mandatory PoE, a mandatory managed
+switch, dual-node redundancy, redundant boot media, a cloud fleet manager,
+an A/B OS updater beyond what the existing update/rollback architecture
+already provides (see "Update behavior" in
+[camera-node-installer-design.md](camera-node-installer-design.md)),
+power-budget-aware inference, specialized remote field-power hardware, and
 automated/independent power-cycling or an external hardware supervisor for
-the golden home path (see "External recovery boundary" under Gate E,
-above) -- these remain techniques or future options, not requirements,
-unless field evidence later elevates one of them.
+the golden home path (see "External recovery boundary" and "Independent
+Power / Node Supervisor" under Gate E, above) -- these remain techniques or
+future options, not requirements, unless field evidence later elevates one
+of them.
 
 ## Field-testing doctrine
 
