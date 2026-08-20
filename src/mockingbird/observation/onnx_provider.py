@@ -624,8 +624,22 @@ class OnnxCudaObservationProvider:
         # in place of the actual, already-diagnosed transport failure. Any
         # node that *did* execute is still verified exactly as strictly as
         # before this branch -- this only recognizes "nothing ran," never
-        # "something ran but wasn't CUDA."
-        if valid_counts and cuda_nodes == 0 and cpu_nodes == 0 and unknown_nodes == 0:
+        # "something ran but wasn't CUDA." `"error_type" not in evidence`
+        # excludes the one other real producer of an all-zero-count dict:
+        # `_ProfiledOrtSession.execution_assignment`'s own internal `except`
+        # fallback (a genuine profiling-instrumentation failure -- e.g. its
+        # temp profile file could not be read/parsed -- distinct from
+        # "profiling ran cleanly and genuinely saw zero nodes"). That shape
+        # already carries `error_type` precisely so a caller can tell the
+        # two apart; without this guard it was indistinguishable from a real
+        # Camera Node outage and silently downgraded a genuine CUDA/
+        # profiling-infrastructure verification failure to a false "no
+        # inference attempted," the exact over-forgiving mistake this
+        # milestone's own review requires never happen.
+        if (
+            valid_counts and cuda_nodes == 0 and cpu_nodes == 0 and unknown_nodes == 0
+            and "error_type" not in evidence
+        ):
             self._cuda_execution_verification["classification"] = CUDA_EXECUTION_NOT_ATTEMPTED
             return
         if isinstance(cpu_nodes, int) and not isinstance(cpu_nodes, bool) and cpu_nodes > 0:

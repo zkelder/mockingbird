@@ -79,7 +79,7 @@ from mockingbird.storage.models import (
     StreamModel,
     StreamRuntimeCheckpointModel,
 )
-from mockingbird.time_utils import resolve_host_local_timezone
+from mockingbird.time_utils import normalize_utc, resolve_host_local_timezone
 from mockingbird.web_app import find_workspace_root
 
 T = TypeVar("T")
@@ -727,8 +727,15 @@ def _gather_camera_node(engine: Engine) -> dict[str, Any]:
         "currently_monitored_count": len(open_interval_stream_ids),
         "attention_count": sum(1 for state in checkpoint_states if state in _CAMERA_ATTENTION_CHECKPOINT_STATES),
         "stalest_camera_node_stream_id": stalest_camera_node_interval[0] if stalest_camera_node_interval else None,
+        # SQLite's `DateTime(timezone=True)` does not itself preserve tzinfo
+        # across a write/read round trip (see product_repository.py's own
+        # documented convention for this exact column) -- a raw read here
+        # comes back naive, which would otherwise later fail to subtract
+        # against `_interpret_camera_node`'s aware `now` the instant any
+        # camera_node Stream had a real, currently-open exposure interval
+        # (the ordinary actively-observing state, not only a stale one).
         "stalest_camera_node_fresh_at": (
-            stalest_camera_node_interval[1].isoformat() if stalest_camera_node_interval else None
+            normalize_utc(stalest_camera_node_interval[1]).isoformat() if stalest_camera_node_interval else None
         ),
     }
 

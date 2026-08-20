@@ -393,6 +393,49 @@ def test_finalize_replay_still_raises_for_real_verification_failures(tmp_path: P
     )
 
 
+class _ProfilingInstrumentationFailedSession(FakeSession):
+    """The real `_ProfiledOrtSession.execution_assignment`'s own internal
+    `except Exception` fallback shape (its temp profile file could not be
+    read/parsed, for example) -- a genuine CUDA/profiling-infrastructure
+    verification failure, indistinguishable from `_NeverRanSession` above by
+    raw counts alone (both report all-zero), but carrying `error_type`
+    precisely so the two can be told apart. Bounded-review regression guard:
+    an all-zero-count check that only looked at counts would silently
+    downgrade this real failure to a false "no inference attempted.\""""
+
+    def execution_assignment(self) -> dict[str, object]:
+        return {
+            "classification": onnx_provider.CUDA_EXECUTION_UNVERIFIABLE,
+            "cuda_executed_nodes": 0,
+            "cpu_executed_nodes": 0,
+            "unknown_executed_nodes": 0,
+            "error_type": "JSONDecodeError",
+        }
+
+
+def test_finalize_replay_still_raises_when_profiling_instrumentation_itself_fails(
+    tmp_path: Path,
+) -> None:
+    """Distinct from `_NeverRanSession`'s genuine all-zero shape: here the
+    all-zero counts come from a profiling *read/parse* failure, not from a
+    session that legitimately never ran. Must still raise
+    `onnx_cuda_verification_insufficient` and classify `UNVERIFIABLE` --
+    never silently reclassified as `CUDA_EXECUTION_NOT_ATTEMPTED` just
+    because its counts also happen to be all zero."""
+
+    _, bundle = _bundle(tmp_path)
+    provider = OnnxCudaObservationProvider(
+        runtime=FakeRuntime(_ProfilingInstrumentationFailedSession([])), bundle=bundle,
+    )
+    provider.load()
+    with pytest.raises(ReplayValidationError, match="onnx_cuda_verification_insufficient"):
+        provider.finalize_replay()
+    assert (
+        provider.execution_facts()["cuda_execution_verification"]["classification"]
+        == onnx_provider.CUDA_EXECUTION_UNVERIFIABLE
+    )
+
+
 @pytest.mark.anyio
 async def test_deterministic_letterbox_normalization_order_bounds_and_close(tmp_path: Path) -> None:
     _, bundle = _bundle(tmp_path)

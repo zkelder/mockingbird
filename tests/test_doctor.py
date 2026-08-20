@@ -35,6 +35,7 @@ from mockingbird.diagnostics.doctor import (
 )
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.storage.database import DB_URL_ENV_VAR
+from mockingbird.storage.models import CameraSourceModel, StreamModel
 
 # Forbidden substrings mirroring the existing precedent
 # (test_product_health.py::test_product_health_never_includes_credential_
@@ -503,6 +504,64 @@ def test_interpret_camera_node_recent_freshness_is_pass() -> None:
     )
     assert result.status == DoctorStatus.PASS
     assert result.recoverability is None
+
+
+def test_run_doctor_survives_a_real_open_camera_node_exposure_interval(tmp_path: Path) -> None:
+    """Real-database regression guard: every test above calls
+    `_interpret_camera_node` directly with a hand-built dict whose
+    `stalest_camera_node_fresh_at` came from `datetime.now(UTC).isoformat()`
+    -- always already timezone-aware -- so none of them ever exercised
+    `_gather_camera_node`'s actual SQLite round trip. Per
+    `product_repository.py`'s own documented convention ("SQLite's
+    `DateTime(timezone=True)` does not itself preserve tzinfo across a
+    write/read round trip"), a real `MonitoringExposureIntervalModel.
+    last_confirmed_fresh_at` reads back *naive*. Before this fix,
+    `_gather_camera_node` handed that naive value straight to `.isoformat()`
+    with no offset, and `_interpret_camera_node` crashed the instant any
+    camera_node Stream had a real, currently-open exposure interval --
+    the ordinary actively-observing state, not only a stale one:
+    `TypeError: can't subtract offset-naive and offset-aware datetimes`."""
+
+    runtime_home = _initialized_runtime_home(tmp_path)
+    db_path = runtime_home / "data" / "mockingbird.sqlite3"
+    repository = ProductRepository(
+        db_url=f"sqlite:///{db_path}", media_root=runtime_home / "data" / "media" / "imports"
+    )
+    try:
+        with repository.session_factory() as session, session.begin():
+            session.add(
+                CameraSourceModel(
+                    id="source-real-camera-node",
+                    name="Real Camera Node",
+                    kind="integration",
+                    status="connected",
+                    description="Real paired Camera Node fixture.",
+                )
+            )
+            session.add(
+                StreamModel(
+                    id="stream-real-camera-node",
+                    source_id="source-real-camera-node",
+                    name="Real Camera Node stream",
+                    description="Real paired Camera Node fixture.",
+                    is_live=True,
+                )
+            )
+        healthy_at = datetime.now(UTC)
+        repository.record_observation_exposure_frame(
+            stream_id="stream-real-camera-node",
+            runtime_generation_id="generation-real",
+            healthy_at=healthy_at,
+            now=healthy_at,
+        )
+    finally:
+        repository.close()
+
+    report = run_doctor(runtime_home=runtime_home)  # must not raise TypeError
+    camera_result = next(c for c in report.checks if c.code == DoctorCheckCode.CAMERA_NODE)
+    # Freshly checkpointed -- well within the staleness window -- so this
+    # must PASS, not WARN and not fail with an unexpected exception.
+    assert camera_result.status == DoctorStatus.PASS
 
 
 # --------------------------------------------------------------------------
