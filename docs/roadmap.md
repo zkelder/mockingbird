@@ -860,6 +860,68 @@ throughout by [product-doctrine.md](product-doctrine.md)'s existing
 individual-identity caution. Do not implement it opportunistically inside an
 unrelated task.
 
+**Multi-subject candidate techniques, explicitly not mandated for v1.** The
+accepted [multi-subject-visit-assembly-review-v1.md](multi-subject-visit-assembly-review-v1.md)
+design resolves the concrete 2026-08-19 evidence (simultaneous subjects,
+species-inconsistent fragmentation) through Event-level grouping and
+transitive ambiguous-cluster arbitration, neither of which requires tracking
+through occlusion. Short-term intra-encounter occlusion/reacquisition (a
+subject briefly leaving and re-entering frame within one encounter), scored
+tracklet association, and short-term motion prediction remain named
+candidate techniques for a future iteration if field evidence shows the
+current preserve-ambiguity-rather-than-fabricate-continuity default is
+insufficient -- not required, and not scoped, for v1. Do not build a custom
+optical-flow stack for this (see "Explicit deprioritization," below); any
+future motion-prediction candidate stays a bounded, lightweight technique
+evaluated the same way a detector candidate is (see "Formal model
+lifecycle" in [architecture.md](architecture.md)).
+
+**Small/far, crowded/NMS, and day/night detection quality remain in-scope
+Gate A dimensions with existing but not-yet-decisive infrastructure.**
+[multi-scale-detector-benchmark-contract.md](multi-scale-detector-benchmark-contract.md)
+(tiling/scale strategy) and
+[adaptive-motion-proposal-benchmark-contract.md](adaptive-motion-proposal-benchmark-contract.md)
+(cadence responsive to measured activity) already exist as Phase 2
+infrastructure for small/distant subjects and adaptive activity cadence;
+Detection and Localization Model Benchmark / Promotion v1 already evaluated
+a tiling strategy and rejected it on false-positive/runtime grounds (state
+A, incumbent retained -- see "Numeric release budgets," below). Crowded-
+feeder/NMS behavior and day/night quality accounting have no dedicated
+benchmark slice yet; both fold into the difficult-case-slice work Phase 2
+still owns (see "Phase 2," below) rather than becoming a new parallel
+initiative. Hard-negative/confusor cohorts are, by contrast, already a
+mature, evidenced capability -- see Scene Confusor Suppression v1, above.
+
+#### Perception Replay Regression Harness (Gate A engineering capability)
+
+Every serious field defect this project finds should leave behind, where
+practical, one of: a focused regression test, a deterministic replay
+sequence/fixture, a property/state-machine case, or a fault-injection case
+-- not only a narrative report. Prior art already exists and is the correct
+extension point, not a green field:
+[observation-replay-benchmark-contract.md](observation-replay-benchmark-contract.md)
+(Stage 2) already replays an ordered frame directory through a real,
+explicitly-selected Observation Engine provider -- offline, deterministic,
+shadow-only, and structurally unable to create product records or reviewed
+truth -- and already scores matched/missed Visits, false/duplicate
+proposals, fragmentation, and incorrect merging against an optional truth
+manifest. What that prior art does not yet provide: a logical-time replay
+mode driven by recorded timestamps rather than frame order alone; a
+differential `baseline` vs. `candidate` comparison for the same replay
+manifest; named regression fixtures built from real 2026 field defects (the
+cache-eviction encounters, a real encounter that fragmented into multiple
+Visits, a known background false Visit, a known valid bird Visit); an
+explicit run manifest recording code HEAD/model/config/seed provenance per
+run; and a documented determinism/semantic-equivalence statement for
+GPU-backed inference. Extending the existing benchmark into this fuller
+regression-harness capability -- reusing its production computation path
+rather than building a second perception implementation -- is queued
+engineering work, isolated from the live runtime (a separate branch/
+worktree, never the checkout used for field acceptance). Live field
+acceptance remains required for promotion regardless of replay coverage;
+the harness reduces how often a fix has to wait for another real bird to
+validate a hypothesis, it does not replace the live proof.
+
 ### Gate B -- Useful Species Assistance
 
 Perfect top-1 species identification is not a v0.1 requirement. The purpose
@@ -886,6 +948,37 @@ anywhere in the species pipeline today** (also true of the detection
 pipeline's own stage 12; see [architecture.md](architecture.md) "Detection
 Quality Accounting"). Representative species-level correction truth (30-100
 reviewed examples) to actually validate accuracy also remains uncollected.
+
+**Requirements the eventual abstention/eligibility mechanism must satisfy**
+(named now so a future implementer does not have to rediscover them from
+scratch): one canonical species-inference eligibility policy, not a
+per-caller check scattered the way review-truth authority used to be before
+[review-decision-provenance-contract.md](review-decision-provenance-contract.md)
+centralized it; machine-readable eligibility/abstention reason codes, not
+free-text; no credible-animal evidence must mean no forced species answer;
+evidence-quality gating on source subject pixel size, blur/sharpness,
+exposure, occlusion, and bounding-box completeness, all traceable through
+valid lineage back to a real captured frame; a genuine open-set/null outcome
+(`animal_uncertain`, `bird_uncertain`) distinct from a low-confidence guess;
+hierarchical specificity where evidence supports it (a genus/family-level
+answer is more honest than a forced species guess); per-subject
+classification once Multi-Subject Visit Assembly ships (one suggestion per
+sibling Visit, never one label smeared across every animal in frame);
+multi-frame classification with quality-ranked frame selection and
+duplicate-frame suppression before consensus, rather than one arbitrary
+frame; temporal-prediction disagreement across frames as positive evidence
+for abstention, not something discarded; and quality-regime calibration (a
+confidence number should mean the same thing across a good-light and a
+poor-light regime). Place/geography/season/history context may only rerank
+already-credible candidates -- see "External ecological context" in
+[product-doctrine.md](product-doctrine.md) -- never substitute for visual
+evidence or override a credible-animal/abstention decision, and raw visual
+prediction provenance stays preserved even when context reranks. Any future
+model comparison (Species Classification Re-evaluation / Promotion v2,
+below) happens only once classifier-input correctness is proven for the
+adapter being compared -- see
+[same-frame-species-evidence-contract.md](same-frame-species-evidence-contract.md)
+for that proof on the current adapter -- not before.
 
 Do not let species-model optimization block release once identification
 assistance is demonstrably useful and safe. Do not reduce abstention just to
@@ -992,6 +1085,23 @@ denylist, taxonomy N+1 eliminated, union-based coverage); the frontend
 surface for that newer Place Intelligence work is the open piece -- see
 Phase 5, below.
 
+**Temporal correctness surfaces this gate must preserve, named explicitly:**
+event time (source capture) vs. ingestion time vs. processing-completion
+time vs. presentation/UI freshness must stay distinguishable, not collapsed
+into one ambiguous timestamp (see the freshness chain in Gate A, above, for
+the perception side of this same principle); day-boundary semantics must
+honor Place timezone and DST, not UTC-midnight, matching the DST-correct
+bucketing already delivered (above); late-arriving evidence (a delayed
+Visit persisted after its own day's report was already viewed) must revise
+rather than silently omit. Camera Node clock drift already has a dedicated,
+disclosed measurement-only investigation -- see "Clock-drift disposition"
+in [camera-node-live-shadow-contract.md](camera-node-live-shadow-contract.md)
+-- not yet a correction mechanism; today's mitigation is server-side
+timestamp assignment at capture, not trusting device clocks for ordering.
+Derived insights (baselines, trends, coverage claims) must remain
+reproducible from persisted facts, never recomputed silently in a way that
+changes a past report.
+
 ### Gate D -- First-Hour Setup & Camera Node Golden Path
 
 Scope is the *current* supported Camera Node and host: install,
@@ -1006,6 +1116,24 @@ live); the MockingBird host's own install/upgrade/recovery experience
 (Phase 4) has a self-contained Windows bundle and first-run wizard, with
 native Windows hardware acceptance, automatic upgrade, and guided recovery
 still open.
+
+**MockingBird Doctor / self-check, named and still open.** No consolidated
+health/self-check capability exists today; product/camera health is spread
+across several narrower surfaces (Dashboard summary, Observation panel,
+Camera Health). A single self-check covering database integrity,
+migration/schema state, media-root reachability, filesystem permissions,
+disk space, Python/native dependency presence, model-file presence, GPU
+availability when configured, paired Camera Node reachability, provider
+configuration validity, clock sanity, backup state, and version/
+compatibility would give support and self-diagnosis one place to look
+instead of several -- not yet scoped or built; a future bounded milestone,
+not a v0.1 blocker by itself unless field evidence shows otherwise.
+Transactional configuration (`preview -> validate -> apply -> verify ->
+recover/rollback`) is already the shape of Guided Camera Editing's redacted
+impact-preview/bounded-save flow (see "Source adapters" in
+[architecture.md](architecture.md)); treat that as the template for any
+future config flow with real runtime effect, including explicit progress
+states for the asynchronous steps, rather than inventing a second pattern.
 
 ### Gate E -- Reliability / Recovery / Observability
 
@@ -1023,6 +1151,69 @@ Camera Node path; bounded CPU/RAM/storage behavior is declared but not
 exhaustively field-verified under representative unattended conditions (see
 Phase 1, below).
 
+**Bounded resource behavior, named as one family of concerns.** The
+evidence-cache capacity history (8 -> 32 -> 128, all three raised from real
+2026-08-19 recurrences under increasing real session load -- see "Current
+status," above) is the concrete, lived reason correctness-critical evidence
+cannot behave like an ordinary disposable cache sized by guess: undersizing
+it silently drops already-captured evidence for a proposal still
+legitimately resolving admission. Treat that history as the standing
+justification for an eventual application-wide bounded-cache/queue audit --
+every bounded structure in the runtime (evidence caches, the counterfactual
+ledger, scene-confusor region history, tracker generation state, burst-
+scheduler suppression memory) named with its units, purpose, capacity,
+eviction rule, whether correctness depends on it staying populated, and
+whether it exposes pressure telemetry -- not yet performed as one pass;
+each bound so far has been raised individually, reactively, from real field
+failure. A storage-pressure state machine (`healthy -> pressure -> critical
+-> survival`) with an explicit preservation priority (reviewed truth and
+durable evidence outrank caches, caches outrank optional enrichment) is
+named here as the target shape for host-level storage behavior; today's
+Storage & Retention (see [architecture.md](architecture.md)) is policy-led
+and fails closed on ambiguous media, but does not yet implement the full
+four-state escalation.
+
+**Fault injection, named as a canonical case list.** Camera loss, Camera
+Node loss, network loss, FFmpeg hang, classifier crash, unavailable GPU, DB
+lock, disk full, interrupted media write, process kill, Pi reboot, host
+reboot, clock jump, and malformed provider response should each have a
+regression case where technically practical. Real, live-witnessed evidence
+already exists for several of these -- Pi reboot, process crash (`kill
+-9`), and a surgical network interruption all passed acceptance under
+Camera Node Installer v1 (above); a real host reboot mid-session was
+survived cleanly during End-to-End Bird Encounter Recall Closure v1 (above)
+-- but they are not yet organized as one deliberate, repeatable
+fault-injection suite, and several types (FFmpeg hang, classifier crash,
+unavailable GPU, DB lock, disk full, interrupted media write, clock jump,
+malformed provider response) have no dedicated case yet, live-witnessed or
+synthetic.
+
+**Explainability, as structured provenance, not narration.** "Why did
+MockingBird create this Visit / suggest this species" should be answerable
+from real structured facts already flowing through the pipeline --
+animal-detected-in-N-frames, track confidence
+(`ConfidenceEvidenceSummary`), subject count (once Multi-Subject Visit
+Assembly ships), which evidence candidate was selected and why
+(`evidence_scoring`), classifier input provenance (see
+[same-frame-species-evidence-contract.md](same-frame-species-evidence-contract.md)),
+species ranking, and abstention reason (once Gate B's abstention mechanism
+exists) -- composed into one diagnostic view or export. This is a UI/API
+composition of already-real provenance, not a new inference stage, and
+never an LLM-generated narrative explanation standing in for it; language
+models remain governed by "Language models" in
+[product-doctrine.md](product-doctrine.md). Not yet built as one coherent
+view; the underlying facts already exist, scattered across the
+advanced-provenance surfaces named above.
+
+**Support bundle and tracing.** A privacy-safe support bundle (bounded
+diagnostic export -- health-check output, redacted logs, schema/version
+facts, no raw media or credentials by default) and correlation/causal
+tracing across a single request or session (so one Visit's full path from
+capture through admission can be followed in logs) are both named, open
+capabilities -- neither exists today. Avoid high-cardinality or raw-image
+telemetry in either, per the existing structured-diagnostics doctrine
+above.
+
 ### Gate F -- OSS / Security / Compatibility / Packaging Closure
 
 Preserve: LICENSE, SECURITY, CONTRIBUTING, a clean repository, a
@@ -1032,7 +1223,26 @@ additive-compatibility rules, privacy/security, dependency reproducibility,
 accessibility/responsiveness, support-safe diagnostics, public benchmark
 governance, and accurate user docs. Do not revive unnecessary cloud
 dependency, Kubernetes, microservices, or speculative enterprise
-architecture. **Current disposition:** CONTRIBUTING.md exists and is
+architecture. Also preserve, more specifically than that list implies:
+mechanized API/schema parity checks across backend and frontend; migration
+clean-install and supported-version upgrade validation with existing data
+preserved; update preflight and post-update verification with a documented
+recovery/rollback path; model/dependency provenance, artifact checksum
+identity, and OSS dependency-license hygiene; local/LAN exposure
+expectations and authentication where a surface needs it; CSRF/origin
+protection, secret redaction, safe file/path handling, and bounded
+request/upload size; frontend error isolation and performance (Visit/image
+loading stays usable at real backlog sizes -- see the P1 unbounded-list
+fixes in "v0.1 Product Flow Gap Pass v1," above, as the precedent); and
+reviewed-truth-safe archive/delete/retention semantics, so truth cannot
+disappear through an accidental cascade -- the existing fails-closed
+Storage & Retention behavior (see [architecture.md](architecture.md)) is
+the template, not a separate rule. The focused/core/integration/browser/
+hardware/field validation tiers, test-runtime discipline, and
+property/state-machine test style already exist and are current -- see
+[test-suite-validation-tiers-contract.md](test-suite-validation-tiers-contract.md).
+
+**Current disposition:** CONTRIBUTING.md exists and is
 current; **no `LICENSE` or `SECURITY.md` file exists in the repository
 today** -- a real, open Gate F item, not yet started, distinct from and
 smaller than Phase 4's packaging work. Public benchmark/training governance
@@ -1458,6 +1668,15 @@ second, separate inventory.
 - plugin-framework construction
 - model marketplaces
 - broad smart-home automation
+- Redis, Kafka, or another message-broker/cache service adopted for
+  architecture's own sake rather than a measured need
+- Kubernetes, microservices, or a second primary database
+- a custom optical-flow stack
+- max-FPS continuous GPU inference
+- complicated model ensembles
+- a learned evidence selector
+- continuous online retraining
+- proprietary hardware architecture
 
 ## v0.1 non-blockers
 
