@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from itertools import permutations
 
 import pytest
 
@@ -20,7 +21,12 @@ from mockingbird.observation.candidate_visit_authority import (
     resolve_ambiguous_boundary_arbitration,
 )
 from mockingbird.observation.contracts import EMPTY_CONFIDENCE_EVIDENCE
-from mockingbird.observation.visit_episode_assembler import AssembledVisitProposal, BoundaryDecision
+from mockingbird.observation.visit_episode_assembler import (
+    AssembledVisitProposal,
+    BoundaryDecision,
+    Tracklet,
+    assemble_visit_episodes,
+)
 
 
 NOW = datetime(2026, 8, 8, 12, 0, 0, tzinfo=UTC)
@@ -437,21 +443,156 @@ def test_arbitration_more_constituent_evidence_breaks_a_confidence_tie() -> None
     assert result.resolved_winner_ids == frozenset({"p-rich"})
 
 
-def test_arbitration_local_chain_is_consistent() -> None:
-    """A real, disclosed scope boundary (see "Ambiguous boundary
-    arbitration: chain scope" in docs/tracklet-visit-assembly-contract.md):
-    A-B ambiguous, B-C ambiguous, A-C never directly compared -- the real
-    shape a temporal chain produces, since the assembler only ever compares
-    temporally-adjacent tracklets. Each proposal arbitrates only against
-    its own immediate listed siblings; a proposal is never declared a
-    winner from one neighbor's perspective and a loser from another's."""
+def test_arbitration_resolves_transitive_chain_to_a_single_winner() -> None:
+    """Ambiguous-Boundary Transitive Fragmentation Closure v1. Supersedes
+    the prior disclosed-but-now-closed "local, not transitive" scope
+    boundary (see "Chain scope" history in
+    docs/tracklet-visit-assembly-contract.md): A-B ambiguous, B-C
+    ambiguous, A and C never directly listing each other -- the real shape
+    a temporal chain produces, since the assembler only ever compares a
+    tracklet against the tail of a still-open episode. Root cause: under
+    the prior pairwise-only scope, `p-a` and `p-c` each independently beat
+    their shared neighbor `p-b` in their own local comparison and both won
+    arbitration -- two admitted Visits for one connected, still-ambiguous
+    chain, exactly the "one real bird -> 2-3 Visits" defect this milestone
+    closes. The full three-proposal connected component now resolves to
+    exactly one winner: the single best-evidenced member of the *whole*
+    chain, never of one local pair."""
     a = _arbitration_proposal("p-a", ambiguous_adjacent_proposal_ids=("p-b",), max_confidence=0.9)
     b = _arbitration_proposal("p-b", ambiguous_adjacent_proposal_ids=("p-a", "p-c"), max_confidence=0.2)
     c = _arbitration_proposal("p-c", ambiguous_adjacent_proposal_ids=("p-b",), max_confidence=0.85)
     result = resolve_ambiguous_boundary_arbitration([a, b, c])
-    # b loses to both neighbors; a and c each independently beat b and are
-    # never compared against each other at all (not listed as siblings).
-    assert result.resolved_winner_ids == frozenset({"p-a", "p-c"})
+    # b loses to both neighbors; a -- the strongest member of the whole
+    # connected chain -- is the only winner. c must not also win merely
+    # because it was never directly compared against a.
+    assert result.resolved_winner_ids == frozenset({"p-a"})
+    assert result.deferred_ids == frozenset()
+
+
+def test_arbitration_transitive_chain_winner_is_order_independent() -> None:
+    """The identical A-B-C chain, arbitrated from every possible input
+    order, must always agree on the same single winner -- this function
+    never sorts its own input, so order-independence must come from the
+    algorithm (a deterministic connected-component partition), never from
+    incidental input ordering."""
+    a = _arbitration_proposal("p-a", ambiguous_adjacent_proposal_ids=("p-b",), max_confidence=0.9)
+    b = _arbitration_proposal("p-b", ambiguous_adjacent_proposal_ids=("p-a", "p-c"), max_confidence=0.2)
+    c = _arbitration_proposal("p-c", ambiguous_adjacent_proposal_ids=("p-b",), max_confidence=0.85)
+    baseline = resolve_ambiguous_boundary_arbitration([a, b, c])
+    for order in permutations([a, b, c]):
+        assert resolve_ambiguous_boundary_arbitration(list(order)) == baseline
+    assert baseline.resolved_winner_ids == frozenset({"p-a"})
+
+
+def test_arbitration_resolves_four_node_chain_to_a_single_winner() -> None:
+    """A-B, B-C, C-D: a longer chain than the minimal 3-node case, still
+    resolved as one connected component with exactly one winner -- proves
+    the traversal keeps following links rather than stopping after one
+    hop beyond the seed proposal."""
+    a = _arbitration_proposal("p-a", ambiguous_adjacent_proposal_ids=("p-b",), max_confidence=0.3)
+    b = _arbitration_proposal("p-b", ambiguous_adjacent_proposal_ids=("p-a", "p-c"), max_confidence=0.2)
+    c = _arbitration_proposal("p-c", ambiguous_adjacent_proposal_ids=("p-b", "p-d"), max_confidence=0.4)
+    d = _arbitration_proposal("p-d", ambiguous_adjacent_proposal_ids=("p-c",), max_confidence=0.95)
+    result = resolve_ambiguous_boundary_arbitration([a, b, c, d])
+    assert result.resolved_winner_ids == frozenset({"p-d"})
+    assert result.deferred_ids == frozenset()
+
+
+def test_arbitration_resolves_independent_ambiguous_components_separately() -> None:
+    """Two disjoint ambiguous pairs sharing no proposal must each resolve
+    to their own winner, completely independently of the other pair's own
+    confidence values -- a bounded component, never a single global
+    ranking across every ambiguous proposal this tick."""
+    a = _arbitration_proposal("p-a", ambiguous_adjacent_proposal_ids=("p-b",), max_confidence=0.9)
+    b = _arbitration_proposal("p-b", ambiguous_adjacent_proposal_ids=("p-a",), max_confidence=0.1)
+    c = _arbitration_proposal("p-c", ambiguous_adjacent_proposal_ids=("p-d",), max_confidence=0.2)
+    d = _arbitration_proposal("p-d", ambiguous_adjacent_proposal_ids=("p-c",), max_confidence=0.7)
+    result = resolve_ambiguous_boundary_arbitration([a, b, c, d])
+    assert result.resolved_winner_ids == frozenset({"p-a", "p-d"})
+    assert result.deferred_ids == frozenset()
+
+
+def test_arbitration_component_traversal_ignores_concurrent_sibling_ids() -> None:
+    """Multi-Subject Visit Assembly Phase 1/2's `concurrent_sibling_
+    proposal_ids` is a structurally distinct relationship (genuinely
+    simultaneous, distinct subjects) that this function must never treat
+    as an ambiguity edge -- `ProposalArbitrationFacts` does not even
+    expose that field, but a real `AssembledVisitProposal` still carries
+    it, so traversal must not accidentally reach through it anyway. `p-d`
+    shares no `ambiguous_adjacent_proposal_ids` with anyone: it must never
+    appear in either result set, and its presence -- deliberately given
+    the single highest confidence of the four -- must not change which
+    proposal wins the unrelated ambiguous chain."""
+    a = _arbitration_proposal("p-a", ambiguous_adjacent_proposal_ids=("p-b",), max_confidence=0.9)
+    b = _arbitration_proposal("p-b", ambiguous_adjacent_proposal_ids=("p-a", "p-c"), max_confidence=0.2)
+    c = _arbitration_proposal("p-c", ambiguous_adjacent_proposal_ids=("p-b",), max_confidence=0.85)
+    d = replace(
+        _arbitration_proposal("p-d", max_confidence=0.99),
+        concurrent_sibling_proposal_ids=("p-c",),
+    )
+    result = resolve_ambiguous_boundary_arbitration([a, b, c, d])
+    assert result.resolved_winner_ids == frozenset({"p-a"})
+    assert "p-d" not in result.resolved_winner_ids
+    assert "p-d" not in result.deferred_ids
+
+
+def test_arbitration_defers_whole_component_when_any_member_is_growing() -> None:
+    """The growing member need not be directly adjacent to every other
+    component member -- `p-c` here is only ever listed by `p-b`, never by
+    `p-a` -- but the whole three-proposal component must still defer: a
+    continuation tracklet merging into `p-c` could still reshape the
+    entire chain's own evidence comparison, not only `p-b`'s."""
+    a = _arbitration_proposal("p-a", ambiguous_adjacent_proposal_ids=("p-b",), max_confidence=0.9)
+    b = _arbitration_proposal("p-b", ambiguous_adjacent_proposal_ids=("p-a", "p-c"), max_confidence=0.2)
+    c = _arbitration_proposal(
+        "p-c", ambiguous_adjacent_proposal_ids=("p-b",), max_confidence=0.85, continuation_pending=True,
+    )
+    result = resolve_ambiguous_boundary_arbitration([a, b, c])
+    assert result.resolved_winner_ids == frozenset()
+    assert result.deferred_ids == frozenset({"p-a", "p-b", "p-c"})
+
+
+def test_arbitration_winner_creates_losers_stay_blocked_in_authority_gate() -> None:
+    """End-to-end proof through the real gate a live tick actually calls
+    (`engine_runtime._EngineSession._run_assembly_tick`): the resolved
+    winner of a 3-node ambiguous chain is admitted; both losers -- even
+    `p-c`, never directly compared to the winner `p-a` -- stay permanently
+    `blocked_ambiguous_boundary`, preserving "at most one Visit per
+    connected ambiguous component"."""
+    a = _arbitration_proposal("p-a", ambiguous_adjacent_proposal_ids=("p-b",), max_confidence=0.9)
+    b = _arbitration_proposal("p-b", ambiguous_adjacent_proposal_ids=("p-a", "p-c"), max_confidence=0.2)
+    c = _arbitration_proposal("p-c", ambiguous_adjacent_proposal_ids=("p-b",), max_confidence=0.85)
+    arbitration = resolve_ambiguous_boundary_arbitration([a, b, c])
+    assert arbitration.resolved_winner_ids == frozenset({"p-a"})
+
+    state = _state()
+    outcomes = {
+        proposal.proposal_id: evaluate_candidate_authority(
+            proposal, observed_at=NOW, state=state,
+            ambiguous_boundary_resolved=proposal.proposal_id in arbitration.resolved_winner_ids,
+        )
+        for proposal in (a, b, c)
+    }
+    assert outcomes["p-a"].outcome == "create"
+    assert outcomes["p-b"].outcome == "blocked_ambiguous_boundary"
+    assert outcomes["p-c"].outcome == "blocked_ambiguous_boundary"
+
+
+def test_arbitration_result_does_not_depend_on_a_previous_call() -> None:
+    """Pure function, no module-level cache/state (see "No cross-session/
+    Stream propagation," Ambiguous-Boundary Transitive Fragmentation
+    Closure v1): the identical `proposal_id` ("p-a") loses in one call and
+    wins in a completely separate, later call with different sibling
+    facts -- proving no session/tick memory leaks between calls."""
+    weak = _arbitration_proposal("p-a", ambiguous_adjacent_proposal_ids=("p-b",), max_confidence=0.1)
+    strong_rival = _arbitration_proposal("p-b", ambiguous_adjacent_proposal_ids=("p-a",), max_confidence=0.9)
+    first = resolve_ambiguous_boundary_arbitration([weak, strong_rival])
+    assert first.resolved_winner_ids == frozenset({"p-b"})
+
+    now_strong = _arbitration_proposal("p-a", ambiguous_adjacent_proposal_ids=("p-c",), max_confidence=0.9)
+    weak_rival = _arbitration_proposal("p-c", ambiguous_adjacent_proposal_ids=("p-a",), max_confidence=0.05)
+    second = resolve_ambiguous_boundary_arbitration([weak_rival, now_strong])
+    assert second.resolved_winner_ids == frozenset({"p-a"})
 
 
 def test_arbitration_missing_sibling_this_tick_is_treated_as_no_rival() -> None:
@@ -473,6 +614,124 @@ def test_arbitration_is_pure_and_deterministic() -> None:
     first = resolve_ambiguous_boundary_arbitration(proposals)
     second = resolve_ambiguous_boundary_arbitration(proposals)
     assert first == second
+
+
+# --- Real-assembler integration (mixed ambiguous/concurrent-sibling graphs) -
+#
+# The tests above hand-construct `ProposalArbitrationFacts` directly, matching
+# this file's own established convention for a pure decision function. The
+# two tests below instead drive the real, completely unmodified
+# `visit_episode_assembler.assemble_visit_episodes` -- preferred here because
+# the milestone this section implements (Ambiguous-Boundary Transitive
+# Fragmentation Closure v1) must prove its fix against the actual graph shape
+# the assembler produces, not only a graph a test author might assume.
+
+
+def _mixed_graph_tracklet(generation_id: str, start: int, end: int, **overrides: object) -> Tracklet:
+    """Terse direct-construction helper, mirroring `test_visit_episode_
+    assembler.py`'s own `_tracklet` convention (duplicated rather than
+    cross-imported between test files -- matching `visit_episode_assembler.
+    semantic_fingerprint`'s own established "small pure helper duplicated,
+    not shared" precedent). Used only by the two tests below."""
+    values: dict[str, object] = {
+        "generation_id": generation_id,
+        "stream_id": "stream-mixed",
+        "broad_class": "bird",
+        "start_offset_ms": start,
+        "end_offset_ms": end,
+        "start_bounding_box": (0.40, 0.40, 0.50, 0.50),
+        "end_bounding_box": (0.40, 0.40, 0.50, 0.50),
+        "geometry_envelope": (0.40, 0.40, 0.50, 0.50),
+        "terminal_reason": "maximum_unsupported_duration",
+        "track_ids": (f"{generation_id}-track",),
+        "supporting_frame_ids": (f"{generation_id}-frame-1",),
+        "confidence_evidence": EMPTY_CONFIDENCE_EVIDENCE,
+    }
+    values.update(overrides)
+    return Tracklet(**values)
+
+
+def test_transitive_component_and_concurrent_sibling_do_not_cross_contaminate() -> None:
+    """Mixed-graph interaction with Multi-Subject Visit Assembly Phase 1/2
+    (see "Interaction with Phase 2," Ambiguous-Boundary Transitive
+    Fragmentation Closure v1): drives the real assembler over a sequential
+    A-B-C ambiguous chain (each pairwise gap 20s, inside the 45s ambiguous
+    window, so A and C are never directly compared -- A's episode has
+    already closed by the time C is processed) where a fourth tracklet D
+    genuinely, temporally overlaps C -- a real concurrent, distinct
+    subject, never a continuation of the chain.
+
+    Proves the two mechanisms stay structurally disjoint all the way
+    through arbitration: A/B/C resolve as one connected ambiguous
+    component (a single winner); D -- deliberately given the single
+    highest confidence of the four, to catch an implementation that
+    wrongly traversed `concurrent_sibling_proposal_ids` too -- never
+    enters either arbitration result set at all."""
+    a = _mixed_graph_tracklet(
+        "gen-a", 0, 2_000, confidence_evidence=replace(EMPTY_CONFIDENCE_EVIDENCE, max_confidence=0.90),
+    )
+    b = _mixed_graph_tracklet(
+        "gen-b", 22_000, 30_000, confidence_evidence=replace(EMPTY_CONFIDENCE_EVIDENCE, max_confidence=0.20),
+    )
+    c = _mixed_graph_tracklet(
+        "gen-c", 50_000, 52_000, confidence_evidence=replace(EMPTY_CONFIDENCE_EVIDENCE, max_confidence=0.85),
+    )
+    d = _mixed_graph_tracklet(
+        "gen-d", 51_000, 54_000,
+        start_bounding_box=(0.85, 0.85, 0.95, 0.95), end_bounding_box=(0.85, 0.85, 0.95, 0.95),
+        geometry_envelope=(0.85, 0.85, 0.95, 0.95),
+        confidence_evidence=replace(EMPTY_CONFIDENCE_EVIDENCE, max_confidence=0.99),
+    )
+    result = assemble_visit_episodes((a, b, c, d))
+    assert result.assembled_proposal_count == 4
+
+    by_generation = {p.constituent_generation_ids[0]: p for p in result.proposals}
+    pa, pb, pc, pd = (
+        by_generation["gen-a"], by_generation["gen-b"], by_generation["gen-c"], by_generation["gen-d"],
+    )
+
+    # The assembler's own graph: A-B-C chained (A and C never directly
+    # listing each other), D linked to C only, and only as a concurrent
+    # sibling -- never as an ambiguous edge.
+    assert set(pa.ambiguous_adjacent_proposal_ids) == {pb.proposal_id}
+    assert set(pb.ambiguous_adjacent_proposal_ids) == {pa.proposal_id, pc.proposal_id}
+    assert set(pc.ambiguous_adjacent_proposal_ids) == {pb.proposal_id}
+    assert pd.ambiguous_adjacent_proposal_ids == ()
+    assert pc.concurrent_sibling_proposal_ids == (pd.proposal_id,)
+    assert pd.concurrent_sibling_proposal_ids == (pc.proposal_id,)
+    assert pa.concurrent_sibling_proposal_ids == ()
+    assert pb.concurrent_sibling_proposal_ids == ()
+
+    arbitration = resolve_ambiguous_boundary_arbitration(result.proposals)
+    assert arbitration.resolved_winner_ids == frozenset({pa.proposal_id})
+    assert pd.proposal_id not in arbitration.resolved_winner_ids
+    assert pd.proposal_id not in arbitration.deferred_ids
+
+
+def test_ordinary_single_episode_merge_never_reaches_arbitration() -> None:
+    """Required case 7 (Ambiguous-Boundary Transitive Fragmentation
+    Closure v1): two ordinary fragments of one real bird, close enough to
+    merge cleanly (`merge_same_visit`), must assemble into exactly one
+    proposal with an empty `ambiguous_adjacent_proposal_ids` -- arbitration
+    and the authority gate's `ambiguous_boundary_resolved` bypass are never
+    involved at all, and the ordinary `eligible_assembled_proposal` reason
+    is unchanged."""
+    a = _mixed_graph_tracklet("gen-x", 0, 4_000)
+    b = _mixed_graph_tracklet("gen-y", 5_000, 9_000)  # 1s gap, identical geometry -> merge_same_visit
+    result = assemble_visit_episodes((a, b))
+    assert result.assembled_proposal_count == 1
+    proposal = result.proposals[0]
+    assert proposal.ambiguous_adjacent_proposal_ids == ()
+
+    arbitration = resolve_ambiguous_boundary_arbitration(result.proposals)
+    assert arbitration.resolved_winner_ids == frozenset()
+    assert arbitration.deferred_ids == frozenset()
+
+    outcome = evaluate_candidate_authority(
+        proposal, observed_at=NOW, state=_state(), ambiguous_boundary_resolved=False,
+    )
+    assert outcome.outcome == "create"
+    assert outcome.reason == "eligible_assembled_proposal"
 
 
 # --- Explicit authority states (no vague boolean) ---------------------------

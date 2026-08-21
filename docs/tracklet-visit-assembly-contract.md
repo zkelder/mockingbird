@@ -435,23 +435,67 @@ would let progressively weaker evidence keep trying until something is
 admitted, exactly the "meaningless dark patch" the quality gate exists to
 prevent).
 
-### Chain scope: local, not transitive
+### Chain scope: bounded connected component (Ambiguous-Boundary Transitive
+### Fragmentation Closure v1, 2026-08-20)
 
-Arbitration compares each proposal only against its own immediately-listed
-`ambiguous_adjacent_proposal_ids`, never a transitive closure across a
-longer chain (A-B ambiguous, B-C ambiguous, A-C never directly compared).
-This is a deliberate, disclosed choice: the real shape a temporal sequence
-produces is exactly this kind of chain (the assembler only ever compares a
-tracklet against the *tail* of a still-open episode), and computing a
-strict global ranking across an unbounded chain would be materially more
-architecture than the demonstrated defect requires. The practical effect,
-verified by test: `A` and `C` can each independently win arbitration
-against their own shared neighbor `B` (which loses both comparisons and
-stays permanently blocked) even though `A` and `C` are never compared to
-each other directly -- a bounded, rare, and disclosed edge case (at most
-one extra Visit per such chain, never a runaway cascade), preferred over
-losing every member of the chain, which was the prior, unconditional
-behavior.
+Arbitration originally compared each proposal only against its own
+immediately-listed `ambiguous_adjacent_proposal_ids`, never a transitive
+closure across a longer chain (A-B ambiguous, B-C ambiguous, A-C never
+directly compared) -- a deliberate, disclosed scope boundary at the time,
+reasoned as bounded and rare (at most one extra Visit per chain, never a
+runaway cascade). Real root-cause confirmation (2026-08-20, reproduced
+deterministically against the real, unmodified assembler and arbitration
+code -- no live field session required) proved this scope boundary was the
+direct mechanism behind "one real bird -> 2-3 Visits with inconsistent
+species labels": `A` and `C` each independently won arbitration against
+their own shared neighbor `B` in their own local pairwise comparison
+(which lost both comparisons and stayed permanently blocked, exactly as
+designed), even though `A` and `C` were never compared to each other
+directly -- admitting two Visits for one connected, still-unresolved
+chain. A second, more subtle instance of the identical root cause: a
+component's own "winner" could be attempted even while a transitively- but
+not directly-linked member was still `continuation_pending` (still
+growing), since the old scope only ever checked a proposal's own
+immediately-listed siblings for growth, never the whole chain.
+
+`candidate_visit_authority.resolve_ambiguous_boundary_arbitration` now
+resolves the full bounded *connected component* reachable from each
+proposal via `ambiguous_adjacent_proposal_ids` links (`_ambiguous_
+component`: an iterative, never-recursive traversal) before ranking a
+single winner or deciding the component must defer -- contained entirely
+within that one function, no schema change, no new live incremental pass,
+no new outcome code. A proposal id absent from the current tick's own
+supplied proposal set remains a dead end exactly as before (a vanished
+sibling was, and still is, treated as no rival). The graph is always
+undirected by construction (`assemble_visit_episodes` only ever records an
+ambiguous link in both directions at once), so the resulting component --
+and therefore the winner -- is identical regardless of traversal order or
+the caller's own input order. At most one winner is now ever selected per
+connected component, not per locally-listed pairwise set, closing the "two
+Visits from one chain" defect while preserving the original "at most one
+Visit per ambiguous cluster" intent exactly.
+
+### Interaction with concurrent siblings
+
+A connected ambiguous component and a `concurrent_sibling_proposal_ids`
+relationship (see "Concurrent-sibling detection," above) never share an
+edge: `classify_boundary` returns exactly one `BoundaryDecisionKind` per
+pair, and a pair's `_temporal_overlap` check is evaluated before any
+ambiguous-boundary logic runs, so the two link sets `assemble_visit_
+episodes` builds (`ambiguous_links`/`sibling_links`) are already
+structurally disjoint before arbitration ever runs -- and the arbitration
+traversal itself has no knowledge of `concurrent_sibling_proposal_ids` at
+all (`ProposalArbitrationFacts` does not expose that field). A proposal
+genuinely concurrent with a member of an ambiguous chain -- for example
+A-B-C sequentially ambiguous while C is also concurrent with a
+simultaneous, distinct subject D -- resolves independently: A/B/C
+arbitrate as one component exactly as any other chain, and D, having no
+`ambiguous_adjacent_proposal_ids` of its own, is never visited by the
+traversal and is attempted through the ordinary, unmodified single-subject
+path regardless of the chain's own outcome -- Phase 2's own Event-reuse
+grouping is unaffected either way. Verified directly against the real,
+unmodified assembler: `test_transitive_component_and_concurrent_sibling_
+do_not_cross_contaminate` in `tests/test_candidate_visit_authority.py`.
 
 `engine_runtime._EngineSession._run_assembly_tick` and `candidate_visit_
 authority_cli.py`'s own mirrored tick both call `resolve_ambiguous_

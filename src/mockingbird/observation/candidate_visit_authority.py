@@ -87,27 +87,33 @@ class ProposalArbitrationFacts(Protocol):
 @dataclass(frozen=True)
 class AmbiguousBoundaryArbitration:
     """One deterministic, per-tick resolution of every currently-ambiguous
-    proposal's own boundary-arbitration status against its immediate
-    ambiguous-adjacent sibling(s) still present this tick (see "Ambiguous
-    boundary arbitration" in docs/tracklet-visit-assembly-contract.md).
+    proposal's own boundary-arbitration status, evaluated over its full
+    bounded *connected component* of ambiguous-adjacent relationships still
+    present this tick (see "Ambiguous boundary arbitration" in
+    docs/tracklet-visit-assembly-contract.md, and "Chain scope" there for
+    the Ambiguous-Boundary Transitive Fragmentation Closure v1 history of
+    this specific field).
 
-    `resolved_winner_ids`: proposals whose own ambiguous cluster (itself,
-    plus every one of its listed `ambiguous_adjacent_proposal_ids` that is
-    still present this tick) has fully stabilized -- none of them still
-    `continuation_pending` -- and which is the single best-evidenced member
-    of that cluster. A caller should attempt these with `evaluate_candidate_
-    authority(..., ambiguous_boundary_resolved=True)`; every other member of
-    a stabilized cluster is attempted normally and correctly still blocks.
+    `resolved_winner_ids`: proposals whose own connected ambiguous
+    component (itself, plus every proposal transitively reachable through
+    `ambiguous_adjacent_proposal_ids` links still present this tick) has
+    fully stabilized -- none of them still `continuation_pending` -- and
+    which is the single best-evidenced member of that *whole* component. A
+    caller should attempt these with `evaluate_candidate_authority(...,
+    ambiguous_boundary_resolved=True)`; every other member of a stabilized
+    component is attempted normally and correctly still blocks -- at most
+    one winner per component, never per locally-listed pairwise set.
 
-    `deferred_ids`: ambiguous proposals whose own cluster has *not* yet
-    stabilized (itself or a live sibling is still `continuation_pending`) --
-    a same-encounter continuation tracklet could still change the picture,
-    exactly the reason `continuation_pending` itself exists. A caller should
-    not attempt these at all this tick (never mark them permanently
-    attempted), so they are naturally re-offered once more of the stream has
-    been observed -- identical in spirit to how an ordinary `continuation_
-    pending` proposal is already retried, without needing a new outcome code
-    for this case.
+    `deferred_ids`: ambiguous proposals whose own connected component has
+    *not* yet stabilized (itself or any proposal anywhere in the same
+    component is still `continuation_pending`) -- a same-encounter
+    continuation tracklet could still change the picture for any member of
+    the component, exactly the reason `continuation_pending` itself exists.
+    A caller should not attempt these at all this tick (never mark them
+    permanently attempted), so they are naturally re-offered once more of
+    the stream has been observed -- identical in spirit to how an ordinary
+    `continuation_pending` proposal is already retried, without needing a
+    new outcome code for this case.
     """
 
     resolved_winner_ids: frozenset[str]
@@ -127,6 +133,40 @@ def _arbitration_key(proposal: ProposalArbitrationFacts) -> tuple[float, int, st
     return (max_confidence if max_confidence is not None else -1.0, len(proposal.constituent_generation_ids), proposal.proposal_id)
 
 
+def _ambiguous_component(seed_id: str, by_id: dict[str, ProposalArbitrationFacts]) -> list[str]:
+    """Bounded, iterative (never recursive) traversal of every proposal id
+    transitively reachable from `seed_id` by following only `ambiguous_
+    adjacent_proposal_ids` links -- never a `concurrent_sibling_proposal_ids`
+    link (this function, like `ProposalArbitrationFacts` itself, has no
+    knowledge of that field at all) and never a proposal id absent from
+    `by_id` (a sibling no longer present this tick is a dead end, identical
+    in spirit to the pre-existing "missing sibling this tick is treated as
+    no rival" rule -- see `test_arbitration_missing_sibling_this_tick_is_
+    treated_as_no_rival`). `assemble_visit_episodes` always records an
+    ambiguous link symmetrically (both directions at once), so this
+    traversal reaches the identical component regardless of which member is
+    used as the seed or what order its neighbors are visited in -- order-
+    independence comes from that graph symmetry, not from sorting here.
+
+    An explicit list-as-stack keeps this a plain, bounded loop: real
+    component sizes are a handful of temporally-adjacent tracklet fragments
+    from one encounter, never an unbounded graph, but an iterative form is
+    used regardless so stack depth can never scale with recursion depth."""
+
+    component = [seed_id]
+    seen = {seed_id}
+    stack = [seed_id]
+    while stack:
+        current = by_id[stack.pop()]
+        for neighbor_id in current.ambiguous_adjacent_proposal_ids:
+            if neighbor_id not in by_id or neighbor_id in seen:
+                continue
+            seen.add(neighbor_id)
+            component.append(neighbor_id)
+            stack.append(neighbor_id)
+    return component
+
+
 def resolve_ambiguous_boundary_arbitration(
     proposals: Sequence[ProposalArbitrationFacts],
 ) -> AmbiguousBoundaryArbitration:
@@ -137,43 +177,57 @@ def resolve_ambiguous_boundary_arbitration(
 
     Pure and deterministic: a function only of the supplied proposals'
     own already-computed facts, never a wall clock, a database, or pixel
-    content. Comparison is local to each proposal's own listed
-    `ambiguous_adjacent_proposal_ids` (never a transitive closure across a
-    longer chain) -- see "Ambiguous boundary arbitration: chain scope" in
-    docs/tracklet-visit-assembly-contract.md for why this bounded, pairwise
-    scope is a deliberate, disclosed choice rather than an oversight.
+    content.
+
+    Ambiguous-Boundary Transitive Fragmentation Closure v1: resolves the
+    full bounded *connected component* reachable from each proposal via
+    `ambiguous_adjacent_proposal_ids` links (see `_ambiguous_component`),
+    not only its immediately-listed neighbors. This replaces the prior
+    pairwise-only scope, which let a real defect through: given a temporal
+    chain A-B ambiguous, B-C ambiguous (A and C never directly listing each
+    other -- the real shape a temporal sequence produces, since the
+    assembler only ever compares a tracklet against the tail of a still-open
+    episode), the old pairwise ranking let `A` and `C` each independently
+    beat their shared neighbor `B` in their own local comparison and both
+    win arbitration -- two admitted Visits for one connected, still-
+    ambiguous chain (see "Ambiguous boundary arbitration: chain scope" in
+    docs/tracklet-visit-assembly-contract.md for the full prior account).
+    At most one winner is now ever selected per connected component,
+    preserving "at most one Visit per ambiguous cluster" as originally
+    intended rather than only per locally-listed pair.
 
     A proposal with no `ambiguous_adjacent_proposal_ids` at all is untouched
     by this function (never appears in either returned set) -- arbitration
     only ever concerns proposals the assembler itself already flagged as
-    boundary-ambiguous.
+    boundary-ambiguous. Bounded to exactly the proposals supplied this call
+    (one tick, one Stream's own session -- see "No cross-session/Stream
+    propagation"): this function holds no state between calls, and a
+    component can never include a proposal id absent from `proposals`.
     """
 
     by_id = {proposal.proposal_id: proposal for proposal in proposals}
     winners: set[str] = set()
     deferred: set[str] = set()
+    visited: set[str] = set()
 
     for proposal in proposals:
-        if not proposal.ambiguous_adjacent_proposal_ids:
+        if not proposal.ambiguous_adjacent_proposal_ids or proposal.proposal_id in visited:
             continue
-        live_siblings = [
-            by_id[sibling_id]
-            for sibling_id in proposal.ambiguous_adjacent_proposal_ids
-            if sibling_id in by_id
-        ]
-        if proposal.continuation_pending or any(sibling.continuation_pending for sibling in live_siblings):
-            # This proposal, or a sibling it is still ambiguous against, may
-            # still grow (a same-encounter continuation tracklet has not yet
-            # had its own chance to arrive and change the picture) -- defer,
-            # exactly the reason `continuation_pending` exists one layer
-            # below. Never decide a permanent winner/loser from an
-            # incomplete cluster.
-            deferred.add(proposal.proposal_id)
+        component_ids = _ambiguous_component(proposal.proposal_id, by_id)
+        visited.update(component_ids)
+        component = [by_id[member_id] for member_id in component_ids]
+        if any(member.continuation_pending for member in component):
+            # Any member of the *whole* component still growing means the
+            # component's own shape could still change -- a same-encounter
+            # continuation tracklet could still merge into any member,
+            # potentially re-linking or absorbing others -- so the entire
+            # component defers, never only the growing member's immediate
+            # neighbors. Never decide a permanent winner/loser from an
+            # incomplete component.
+            deferred.update(component_ids)
             continue
-        cluster = [proposal, *live_siblings]
-        best = max(cluster, key=_arbitration_key)
-        if best.proposal_id == proposal.proposal_id:
-            winners.add(proposal.proposal_id)
+        best = max(component, key=_arbitration_key)
+        winners.add(best.proposal_id)
 
     return AmbiguousBoundaryArbitration(resolved_winner_ids=frozenset(winners), deferred_ids=frozenset(deferred))
 

@@ -812,10 +812,52 @@ looks indistinguishable from a detection miss. See Gate A and Gate B in
   [candidate-visit-authority-contract.md](candidate-visit-authority-contract.md)
   for the persistence-side contract. Decision: **A -- implemented and
   validated**. Explicitly not addressed here (see the design doc's own
-  Phase 4): the separate, smaller *sequential*-fragmentation defect (one
-  real bird producing 2-3 Visits with inconsistent species labels, traced
-  to non-transitive ambiguous-cluster arbitration) and `EventDetailPage.
-  tsx`'s cosmetic copy pass.
+  Phase 4, closed separately below -- "Ambiguous-Boundary Transitive
+  Fragmentation Closure v1"): the separate, smaller *sequential*-
+  fragmentation defect (one real bird producing 2-3 Visits with
+  inconsistent species labels, traced to non-transitive ambiguous-cluster
+  arbitration) and `EventDetailPage.tsx`'s cosmetic copy pass (still open).
+- **Ambiguous-Boundary Transitive Fragmentation Closure v1** (2026-08-20)
+  closed the separate, smaller *sequential*-fragmentation defect the entry
+  above explicitly did not address: one real bird fragmenting across a
+  chain of ambiguous tracklets (A-B ambiguous, B-C ambiguous, A and C never
+  directly compared -- the real shape a temporal sequence produces, since
+  the assembler only ever compares a tracklet against the tail of a
+  still-open episode) could previously let `A` and `C` each independently
+  win `candidate_visit_authority.resolve_ambiguous_boundary_arbitration`'s
+  own local pairwise comparison against their shared, weaker neighbor `B`
+  -- admitting two Visits, sometimes with inconsistent species labels, for
+  one connected, still-ambiguous encounter. A second, more subtle instance
+  of the same root cause: a component's own "winner" could be attempted
+  even while a transitively-linked (but not directly-listed) member was
+  still growing. Root-caused and reproduced deterministically against the
+  real, unmodified assembler and arbitration code -- no live field session
+  needed, confirming the design doc's own Phase 4 hypothesis directly from
+  code rather than assuming it. The fix is contained entirely within
+  `resolve_ambiguous_boundary_arbitration`: it now resolves the full
+  bounded connected component reachable through chained `ambiguous_
+  adjacent_proposal_ids` links (an iterative, never-recursive traversal,
+  order-independent by construction since the assembler always records an
+  ambiguous link symmetrically) before ranking a single best-evidenced
+  winner or deciding the whole component must defer -- at most one Visit
+  per connected component, never per locally-listed pair. No schema
+  change, no new outcome code, no API/frontend change. Proven structurally
+  disjoint from Multi-Subject Visit Assembly's own concurrent-sibling
+  mechanism: the traversal never follows a `concurrent_sibling_proposal_
+  ids` link (the function has no knowledge of that field at all), verified
+  directly with a real-assembler mixed-graph test (a sequential ambiguous
+  chain alongside an independent, genuinely concurrent sibling) proving
+  neither mechanism leaks into the other, and Phase 2's own Event-reuse
+  grouping is unaffected. Nine new tests plus one updated (the pre-existing
+  test that had encoded the defect as intended behavior) in
+  `tests/test_candidate_visit_authority.py`; the full directly-affected
+  assembler/admission/repository/adapter suite (314 tests) and a full Core
+  gate (3323 passed, 0 failed) both green with zero regressions. See
+  [tracklet-visit-assembly-contract.md](tracklet-visit-assembly-contract.md)
+  "Chain scope" for the complete mechanism and
+  [multi-subject-visit-assembly-review-v1.md](multi-subject-visit-assembly-review-v1.md)
+  for the closed Phase 4 entry. Decision: **A -- implemented and
+  validated**.
 
 ## v0.1 scope freeze
 
@@ -951,13 +993,14 @@ evidenced gaps remain (none of them "the detector is bad"):
    Phase 2," below. Concurrent, genuinely simultaneous distinct subjects
    (the motivating nuthatch-plus-two-finches shape) now persist as
    independent, evidence-backed sibling Visits sharing one Event, proven
-   through the real, unmodified assembler end to end. **Still open:**
-   `EventDetailPage.tsx`'s own copy pass (cosmetic only -- its Visit-list
-   rendering already works unchanged) and the separate, smaller Phase 4
+   through the real, unmodified assembler end to end. **Phase 4**
    (transitive ambiguous-cluster arbitration for the *sequential*
    fragmentation shape -- one real bird producing 2-3 Visits with
-   inconsistent species labels -- a different failure mode from concurrent
-   siblings, not addressed by this phase).
+   inconsistent species labels, a different failure mode from concurrent
+   siblings) closed 2026-08-20 -- see "Ambiguous-Boundary Transitive
+   Fragmentation Closure v1," above. **Still open:** `EventDetailPage.tsx`'s
+   own copy pass (cosmetic only -- its Visit-list rendering already works
+   unchanged).
 3. **Background/empty evidence receiving a confident species label** -- a
    real, repeatedly-observed regression class (2/21 false Visits in the
    latest session, 5/70 in the prior large cohort, all carrying a confident

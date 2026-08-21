@@ -312,8 +312,8 @@ No re-key, no destructive step, no new table.
 | Case | Mechanism exercised | Expected outcome under this design |
 |---|---|---|
 | A — nuthatch + 2 finches simultaneously | Concurrent-sibling detection (3-way), Event reuse | 3 independent proposals -> 3 independently-admitted Visits sharing 1 Event; each independently reviewable/confirmable/unknown; Today counts 3 |
-| B — 1 real encounter -> 3 Visits, inconsistent species | Transitive-arbitration fix (not concurrent-sibling — not simultaneous) | Requires confirming via a fresh session's own evidence; likely fixed by transitive cluster closure, not concurrent-sibling grouping |
-| C — 1 real encounter -> 2 Visits | Most likely the same root cause as B; re-diagnose before assuming | Same companion fix as B, pending fresh confirmation |
+| B — 1 real encounter -> 3 Visits, inconsistent species | Transitive-arbitration fix (not concurrent-sibling — not simultaneous) | **Closed 2026-08-20**: confirmed and fixed by `resolve_ambiguous_boundary_arbitration`'s connected-component closure, not concurrent-sibling grouping — see "Ambiguous-Boundary Transitive Fragmentation Closure v1" in roadmap.md |
+| C — 1 real encounter -> 2 Visits | Most likely the same root cause as B; re-diagnose before assuming | Same fix as B, closed 2026-08-20 alongside it |
 | D — two birds cross briefly | Concurrent-sibling detection, already proven clean at assembler level (`test_crossing_animals_do_not_collapse`) | 2 Visits, 1 shared Event, no contamination of either subject's evidence |
 | E — one leaves while another remains | Concurrent-sibling detection (their overlapping window), independent tail handling per subject | 2 Visits, 1 shared Event, each with its own correct temporal span |
 | F — single bird (must not regress) | No siblings found -> unchanged code path | Byte-identical to today's behavior; zero new fields exposed; existing tests must show zero diff |
@@ -418,11 +418,24 @@ for a multi-subject case.
    copy pass is pure presentation polish, explicitly out of scope for a
    correctness-focused milestone ("A later UX polish can improve
    presentation").
-4. **Separate, smaller — transitive ambiguous-cluster arbitration fix** (can
-   run before or after 1-3). Re-diagnose Case B/C against fresh field
-   evidence first; if confirmed, fix connected-component closure in
-   `candidate_visit_authority.resolve_ambiguous_boundary_arbitration`,
-   tested in isolation from phases 1-3.
+4. **DONE (2026-08-20, Ambiguous-Boundary Transitive Fragmentation Closure
+   v1).** Re-diagnosed directly against the real, unmodified assembler and
+   arbitration code -- confirmed deterministically, no live field session
+   needed, since the defect is reproducible from the algorithm alone.
+   `resolve_ambiguous_boundary_arbitration` now resolves the full bounded
+   connected component across chained `ambiguous_adjacent_proposal_ids`
+   links (an iterative, never-recursive traversal) before ranking a single
+   winner, closing the "A and C each independently beat shared neighbor B"
+   defect described in section 3 above -- contained entirely within that
+   one function, no schema change, tested in isolation from phases 1-3
+   (nine new tests plus one updated -- the pre-existing test that had
+   encoded the defect as intended behavior -- in
+   `tests/test_candidate_visit_authority.py`, including a real-assembler
+   mixed-graph test proving no cross-contamination with concurrent-sibling
+   grouping). Full directly-affected suite (314 tests) and a full Core gate
+   (3323 passed) both green. See "Chain scope" in
+   [tracklet-visit-assembly-contract.md](tracklet-visit-assembly-contract.md)
+   for the complete mechanism.
 5. **Optional polish** — Review Queue sibling badge, Today/Place
    Intelligence copy note about legitimate multi-Visit encounters.
 
@@ -445,7 +458,7 @@ behavior change until phase 2 consumes the new field).
   `tests/fixtures/observation_stage619/tracklet_scenarios.json` (phase 1)
 - `tests/test_candidate_visit_repository.py`,
   `tests/test_candidate_visit_adapter.py` (phase 2)
-- `tests/test_candidate_visit_authority.py` (phase 4, if confirmed)
+- `tests/test_candidate_visit_authority.py` (phase 4, confirmed 2026-08-20)
 - `web/src/pages/VisitDetailPage.tsx` (phase 3 — new sibling banner)
 - `web/src/pages/EventDetailPage.tsx` (phase 3 — copy pass only)
 - `docs/tracklet-visit-assembly-contract.md`,
@@ -460,25 +473,19 @@ code, Camera Node/capture-layer code.
 
 ## Next implementation command
 
-Phases 1-3 are DONE (2026-08-19/20 — see "Implementation phases" above).
-Remaining, each independently schedulable:
+Phases 1-4 are DONE (2026-08-19/20 — see "Implementation phases" above).
+Remaining, independently schedulable, and correctness-neutral:
 
-- **Phase 4 — transitive ambiguous-cluster arbitration fix.** Re-diagnose
-  Case B/C (one real encounter fragmenting into 2-3 Visits with
-  inconsistent species labels) against a fresh session's own duplicate-Visit
-  evidence before assuming the transitive-closure hypothesis; if confirmed,
-  fix `candidate_visit_authority.resolve_ambiguous_boundary_arbitration` to
-  compute the full connected component across chained `ambiguous_adjacent_
-  proposal_ids` links. Explicitly a different mechanism from concurrent-
-  sibling grouping — do not conflate the two in implementation or tests.
 - **Phase 5 — optional polish.** `EventDetailPage.tsx`'s copy pass ("3
   subjects detected" wording); a Review Queue sibling badge; a Today/Place
   Intelligence copy note about legitimate multi-Visit encounters. None of
   these change correctness — see "Frontend sibling-awareness" above for why
   the copy pass specifically was deferred rather than folded into Phase 2.
 
-Live/hardware field validation is not a prerequisite for either — Phase 2's
-own deterministic/integration coverage (real, unmodified assembler through
-to real persisted rows) already establishes the behavior this design
-question asked; a future live session remains valuable as later
-milestone-level acceptance evidence, not as a blocker for these next steps.
+Live/hardware field validation was not a prerequisite for Phases 1-4 --
+Phase 2's own deterministic/integration coverage (real, unmodified
+assembler through to real persisted rows) and Phase 4's own deterministic
+reproduction against the real assembler and arbitration code already
+establish the behavior this design question asked; a future live session
+remains valuable as later milestone-level acceptance evidence, not as a
+blocker for Phase 5.

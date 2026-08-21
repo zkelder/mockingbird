@@ -363,6 +363,19 @@ one Visit is ever admitted per ambiguous cluster, so the original
 duplicate-Visit protection this policy exists to provide is fully
 preserved.
 
+**Chain scope closed (Ambiguous-Boundary Transitive Fragmentation Closure
+v1, 2026-08-20):** "ambiguous cluster" above now always means the full
+bounded connected component of `ambiguous_adjacent_proposal_ids` links, not
+only a proposal's own immediately-listed neighbors -- closing a real
+defect where a sequential chain (A-B ambiguous, B-C ambiguous, A-C never
+directly compared) could let both `A` and `C` independently win
+arbitration against their shared neighbor `B`, admitting two Visits for
+one connected, still-ambiguous encounter. See "Chain scope" in
+[tracklet-visit-assembly-contract.md](tracklet-visit-assembly-contract.md)
+for the complete mechanism and prior history. Contained entirely within
+`candidate_visit_authority.resolve_ambiguous_boundary_arbitration`; this
+gate's own decision order and every other check are unchanged.
+
 ## Continuation-pending policy (Visit Continuity / Provisional Admission Fix v1)
 
 A proposal whose own `continuation_pending` is `True` -- the assembler
