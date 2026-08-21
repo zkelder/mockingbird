@@ -1006,7 +1006,17 @@ evidenced gaps remain (none of them "the detector is bad"):
    latest session, 5/70 in the prior large cohort, all carrying a confident
    wrong species name because BioCLIP has no abstention path). See Gate B;
    the fix belongs partly in Gate A (credible-animal gating) and partly in
-   Gate B (abstention).
+   Gate B (abstention). **2026-08-20 update:** two more concrete instances
+   traced end-to-end (Visits 139/140, same 2026-08-20 daylight session,
+   [person-background-false-positive-attribution-v1-report.md](person-background-false-positive-attribution-v1-report.md))
+   -- a real MDv5 `animal`-class detection on a person walking a dog, at
+   confidence up to 0.877, exceeding every genuine bird Visit admitted in
+   the same session. This sharpens rather than confirms the "partly Gate
+   A" framing above: no confidence/count/geometry signal already available
+   to Gate A separates this case from real same-session birds, so the
+   credible-animal-gating half of the fix is not achievable with existing
+   signals -- the fix is Gate B (abstention), not a split. Recommended next
+   milestone: **Identification Eligibility + Abstention v1**.
 
 Gate A also owns **observation freshness / capture-to-visible latency** as a
 first-class quality concern, not merely an implementation detail: a user
@@ -1250,6 +1260,21 @@ it should not have); (3) classifier failure to abstain on non-animal
 evidence (the confirmed mechanism behind every case traced so far); (4)
 wrong source frame/crop/evidence-lineage defect; (5) delayed/stale evidence
 mismatch, where applicable.
+
+**2026-08-20, Person / Background False-Positive Attribution & Admission
+Precision v1** traced two more real instances (Visits 139/140) end-to-end
+through the full funnel, not just to the species-label symptom: cause (1)
+at the raw detector's own `animal`/`person` class boundary, compounded by
+cause (3) unchanged (BioCLIP 2's forced-choice 14-species label space has
+no open-set/abstain option at all) -- explicitly **not** (2): every
+eligibility/admission check that exists today (class-gated tracking,
+tracklet-boundary classification, evidence-geometry lineage, the authority
+and quality gates) read the detector's own `animal`-class output correctly
+and behaved exactly as designed; there was no gating error to find. See
+[person-background-false-positive-attribution-v1-report.md](person-background-false-positive-attribution-v1-report.md)
+for the full trace, a deterministic regression fixture reproducing the
+exact mechanism, and why no confidence/count-based Gate-A signal can
+separate this case from real same-session birds.
 
 v0.1 invariant: background/empty evidence must either fail the
 credible-animal gate or cause species inference to abstain/not run. If a
