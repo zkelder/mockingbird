@@ -20,12 +20,21 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from .config import CameraNodeConfig
+from .identity import ServiceClock, read_boot_id, read_os_uptime_seconds, resolve_service_version
 from .providers import (
     CameraProvider,
     NodeCamera,
     NodeCaptureProfile,
     NodeCaptureResult,
     create_camera_provider,
+)
+from .selftest import run_startup_self_test
+from .watchdog import (
+    WatchdogProgress,
+    notify_socket_path,
+    run_watchdog_loop,
+    sd_notify,
+    watchdog_ping_interval_seconds,
 )
 
 
@@ -284,6 +293,25 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
         min(_ANALYSIS_MAX_CONNECTIONS, max(1, config.max_preview_viewers))
     )
 
+    # Boot Identity + Autonomous Recovery v1: resolved once, synchronously,
+    # before this app is ever returned to uvicorn -- so the very first
+    # `/node/v1/health` response already carries them, with zero per-request
+    # cost. `boot_id`/`os_uptime_seconds` degrade to `None` off Linux or
+    # without `/proc` (see identity.py); they are never fabricated from the
+    # PID or wall clock. Self-test is bounded and never blocks startup
+    # waiting for camera hardware -- see selftest.py.
+    service_clock = ServiceClock()
+    service_started_at = datetime.now(UTC)
+    boot_id = read_boot_id()
+    service_version = resolve_service_version()
+    self_test_result = run_startup_self_test(
+        provider=provider, pairing_state_path=config.pairing_state_path,
+    )
+    watchdog_progress = WatchdogProgress(
+        enabled=bool(notify_socket_path() and watchdog_ping_interval_seconds()),
+        ping_interval_seconds=watchdog_ping_interval_seconds(),
+    )
+
     def camera_payload(camera: NodeCamera) -> dict[str, object]:
         profiles = _provider_capture_profiles(provider, camera.camera_id)
         readiness = getattr(provider, "capture_readiness", lambda _camera_id: "not_initialized")(camera.camera_id)
@@ -450,7 +478,16 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
                     f"X-MockingBird-Height: {height}\r\n"
                     f"X-MockingBird-Provider-Generation: {provider_generation}\r\n"
                     f"X-MockingBird-Node-Session: {session_id}\r\n"
-                    f"X-MockingBird-Content-Sha256: {content_hash}\r\n\r\n"
+                    f"X-MockingBird-Content-Sha256: {content_hash}\r\n"
+                    # Boot Identity + Autonomous Recovery v1: a per-connection
+                    # identity fact repeated on every part (mirroring
+                    # X-MockingBird-Provider-Generation/-Node-Session just
+                    # above), so the host learns the Node's current boot
+                    # identity from frames it is already pulling -- no
+                    # separate health poll needed. Omitted entirely (never
+                    # sent empty) when unavailable, e.g. off Linux.
+                    + (f"X-MockingBird-Node-Boot-Id: {boot_id}\r\n" if boot_id else "")
+                    + f"X-MockingBird-Node-Service-Version: {service_version}\r\n\r\n"
                 ).encode("ascii")
                 yield headers + image + b"\r\n"
                 if sequence < maximum_frames:
@@ -470,7 +507,30 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
     @app.get("/node/v1/health")
     def health() -> dict[str, object]:
         cameras = provider.cameras()
-        return {"node_id": node_id, "display_name": config.display_name, "api_version": NODE_API_VERSION, "status": "available", "camera_count": len(cameras), "available_camera_count": sum(camera.status == "available" for camera in cameras), "pairing_required": pairing.pairing_required}
+        return {
+            "node_id": node_id,
+            "display_name": config.display_name,
+            "api_version": NODE_API_VERSION,
+            "status": "available",
+            "camera_count": len(cameras),
+            "available_camera_count": sum(camera.status == "available" for camera in cameras),
+            "pairing_required": pairing.pairing_required,
+            # Boot Identity + Autonomous Recovery v1 (additive; every field
+            # above this line is unchanged so an old host client parsing
+            # this response is unaffected -- see docs/camera-node
+            # -installer-design.md). `boot_id` distinguishes "same node,
+            # same boot" from "same node, fresh reboot"; `os_uptime_seconds`
+            # is machine uptime (survives a process crash/restart, resets
+            # only on a real reboot), `service_uptime_seconds` is this
+            # process's own uptime (resets on both).
+            "boot_id": boot_id,
+            "os_uptime_seconds": read_os_uptime_seconds(),
+            "service_uptime_seconds": service_clock.uptime_seconds(),
+            "service_started_at": service_started_at.isoformat(),
+            "service_version": service_version,
+            "self_test": self_test_result.as_payload(),
+            "watchdog": watchdog_progress.as_payload(now_monotonic=time.monotonic()),
+        }
 
     @app.post("/node/v1/pair", response_model=PairResponse)
     def pair(payload: PairRequest) -> PairResponse:
@@ -657,15 +717,49 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
         print(
             "MockingBird Camera Node listening: "
             f"bind={config.bind_host} port={config.port} providers={providers} "
-            f"pairing={'loaded' if not pairing.pairing_required else 'not yet paired'}",
+            f"pairing={'loaded' if not pairing.pairing_required else 'not yet paired'} "
+            f"boot_id={boot_id or 'unavailable'} version={service_version} "
+            f"self_test={self_test_result.status}"
+            + (f" ({','.join(self_test_result.reasons)})" if self_test_result.reasons else ""),
             file=sys.stderr,
         )
 
+    @app.on_event("startup")
+    async def start_watchdog() -> None:
+        # Boot Identity + Autonomous Recovery v1: `READY=1` tells systemd
+        # (under `Type=notify`) that startup -- including the bounded
+        # self-test above -- genuinely completed, not merely that the
+        # process exec'd. Both calls are safe no-ops off systemd (see
+        # watchdog.py) -- an ordinary manual `python -m mockingbird_node`
+        # run is completely unaffected.
+        sd_notify(b"READY=1\n")
+        if watchdog_progress.enabled:
+            app.state.watchdog_task = asyncio.create_task(
+                run_watchdog_loop(
+                    progress=watchdog_progress,
+                    # A cheap, already-fast-by-construction real liveness
+                    # probe (enumeration only -- see providers.py), run off
+                    # the event loop thread so a probe that genuinely hangs
+                    # cannot block the loop that awaits it. This ties the
+                    # watchdog ping to actual Camera Node responsiveness,
+                    # never a bare timer -- see watchdog.py's module
+                    # docstring.
+                    probe=lambda: asyncio.to_thread(provider.cameras),
+                )
+            )
+
     @app.on_event("shutdown")
     def shutdown_provider() -> None:
+        watchdog_task = getattr(app.state, "watchdog_task", None)
+        if watchdog_task is not None:
+            watchdog_task.cancel()
         provider.close()
 
     app.state.analysis_parts_for_test = analysis_parts  # local contract test only; never an HTTP response
     app.state.pairing_code = pairing.code  # local launcher display/test only, never an HTTP response
     app.state.pairing_expires_at = pairing.expires_at
+    app.state.boot_id = boot_id  # local test/diagnostic access only; also in the health payload above
+    app.state.self_test_result = self_test_result
+    app.state.watchdog_progress = watchdog_progress
+    app.state.watchdog_task = None
     return app

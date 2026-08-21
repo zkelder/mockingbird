@@ -858,6 +858,73 @@ looks indistinguishable from a detection miss. See Gate A and Gate B in
   [multi-subject-visit-assembly-review-v1.md](multi-subject-visit-assembly-review-v1.md)
   for the closed Phase 4 entry. Decision: **A -- implemented and
   validated**.
+- **Camera Node Boot Identity + Autonomous Recovery v1** (2026-08-21)
+  implements the Gate D "Camera Node field hardware resilience / bad-boot
+  recovery" additions and closes most of Gate E's "Camera Node
+  field-recovery ladder" open items named after the real 2026-08-20
+  bad-boot incident (above). New `src/mockingbird_node/{identity,selftest,
+  watchdog}.py`: `boot_id` from the kernel's own
+  `/proc/sys/kernel/random/boot_id` (never fabricated from the PID/wall
+  clock), `os_uptime_seconds` versus `service_uptime_seconds` (machine
+  uptime and process uptime are kept genuinely distinct), `service_version`,
+  a bounded non-blocking startup self-test (`passed`/`degraded`, a missing
+  camera degrades it, never fails or crash-loops it), and a real
+  `sd_notify`/`WatchdogSec=30` watchdog whose ping is gated on a bounded
+  liveness probe that must actually complete -- never a bare timer thread
+  ("a stuck watchdog thread while the real work is dead" is exactly what
+  the milestone brief warned against and this does not do). All additive
+  to `/node/v1/health`; a real pre-milestone Node response (captured
+  live from the project's own reference Pi 4, still healthy and reachable
+  at the time of this milestone) was used as a real backward-compatibility
+  fixture, not only a synthetic one. Host side: `CameraSourceModel` gains
+  five nullable columns (schema 37) -- `camera_node_last_seen_at`,
+  `camera_node_boot_id`, `camera_node_boot_first_seen_at`,
+  `camera_node_service_version`, and a bounded (<=5-entry) recent-boot-
+  transition history -- checkpointed through the exact same already-
+  throttled Observation Engine exposure-checkpoint cadence
+  `record_observation_exposure_frame` already used (Today Coverage Truth
+  v1; zero new write frequency, zero new network calls). This closes the
+  disclosed "gap between a session giving up entirely and the next Start"
+  from Camera Node Connectivity & Recovery Diagnosis v1 (above) in two
+  places: `unified_status.camera_node_facts` no longer reports
+  `camera_connected: true` from static pairing/configuration completeness
+  alone once real staleness evidence exists (a genuine, found-in-passing
+  fix of exactly the "paired/configured != live/reachable" violation the
+  roadmap's own "Product-health semantics" section names), and Doctor now
+  WARNs on stale last-seen with no session open, and separately on bounded
+  restart-instability evidence (>=3 boot transitions inside 15 minutes) --
+  checked ahead of plain staleness, since a flapping node can show a
+  deceptively recent last-seen timestamp. `scripts/install_camera_node.py`:
+  the systemd unit moves to `Type=notify`/`NotifyAccess=main`/
+  `WatchdogSec=30` (Restart=on-failure/RestartSec=5/StartLimitBurst=5
+  unchanged); a new, explicit, capability-gated
+  `--enable-hardware-watchdog` writes a `system.conf.d/` drop-in
+  (`RuntimeWatchdogSec=14`) only once an already-present `/dev/watchdog`
+  proves the operator already completed the required manual
+  `dtparam=watchdog=on` step -- this installer never edits Raspberry Pi
+  OS's own boot configuration itself, since a mistake there risks the exact
+  powered-but-never-boots failure this milestone exists to diagnose.
+  Real-service-level validation (this sandbox's own genuine `systemctl
+  --user`, not a simulation): a real built artifact, installed as a real
+  `Type=notify`/`WatchdogSec=8` user unit, correctly reported
+  `active (running)` only once `READY=1` fired; `SIGSTOP`-freezing the real
+  process (a genuine hang, distinct from a crash) produced real systemd
+  output -- `Watchdog timeout (limit 8s)!` -> `Failed with result
+  'watchdog'` -> automatic respawn -- with the new process reporting the
+  *same* `boot_id` (the machine did not reboot, only the process did),
+  directly proving the "service hang -> watchdog timeout -> service restart
+  -> same boot_id" ladder rung. Also proven end-to-end over a real separate
+  OS process and a real Unix datagram socket (`tests/
+  test_camera_node_real_process.py`, extended). Hardware watchdog
+  (OS-hang recovery) remains implemented-and-tested but not live-verified
+  -- no session validating this milestone had access to real Pi hardware
+  with `/dev/watchdog` enabled; disclosed as an explicit, capability-gated,
+  documented follow-up rather than claimed. See
+  [camera-node-installer-design.md](camera-node-installer-design.md) for
+  the complete mechanism, [camera-node-install-guide.md](camera-node-install-guide.md)
+  for the operator-facing golden path, and the milestone report for exact
+  test/validation counts. Decision: **A -- boot identity and autonomous
+  service recovery implemented**.
 
 ## v0.1 scope freeze
 
@@ -1605,6 +1672,30 @@ Guided Camera Editing (above); none requires custom MockingBird hardware,
 and Raspberry Pi remains the reference implementation, not the product
 architecture (see "Scope-reopening rule," above).
 
+**Current disposition (Camera Node Boot Identity + Autonomous Recovery v1,
+2026-08-21):** the identity/self-test/heartbeat/health-semantics items
+above are implemented -- `boot_id` (`/proc/sys/kernel/random/boot_id`,
+never fabricated from the PID/wall clock), `os_uptime_seconds` versus
+`service_uptime_seconds`, `service_version`, a bounded non-blocking startup
+self-test (`passed`/`degraded`, never blocks on absent camera hardware),
+and a durable, session-independent `camera_node_last_seen_at`/boot-identity
+fact on the host (`CameraSourceModel`, schema 37) that closes the
+"paired/configured != live/reachable" gap named above -- both in
+`unified_status.camera_node_facts` (no more optimistic `camera_connected:
+true` from configuration alone once real staleness evidence exists) and in
+Doctor (a new WARN when no session is open and last-seen has gone stale,
+plus bounded recent-boot-transition evidence for restart/boot-loop
+instability suspicion). The service-level watchdog closes the "service
+hang" rung of the field-recovery ladder below (`Type=notify`/
+`WatchdogSec=30`, real `sd_notify`, gated on a genuine bounded liveness
+probe -- see [camera-node-installer-design.md](camera-node-installer-design.md)).
+Still open, disclosed rather than silently dropped: a configuration
+backup/export mechanism, the replacement-node workflow itself (node/boot
+identity is now proven compatible with one, per milestone scope, but the
+guided workflow is not built), and golden-Pi power-supply/boot-media/
+networking guidance. See [camera-node-installer-design.md](camera-node-installer-design.md)
+for the complete mechanism.
+
 ### Gate E -- Reliability / Recovery / Observability
 
 Existing structured error/diagnostics doctrine remains and now explicitly
@@ -1697,15 +1788,30 @@ has live evidence versus what is still open.
 `StartLimitBurst=5` so a persistent crash loop fails visibly instead of
 hot-restarting forever (the systemd unit, live-verified under a real `kill
 -9` -- see "Camera Node Installer / Package / Reboot Hardening v1," above).
-Open: surfacing the node's own restart count / last-failure reason to the
-paired host -- today this is visible only via direct `journalctl` access to
-the device itself.
+**Closed (Camera Node Boot Identity + Autonomous Recovery v1,
+2026-08-21):** this rung only ever covered a process that actually exits.
+A *hung* process (event loop wedged, never exits) now also recovers: the
+unit runs under `Type=notify`/`WatchdogSec=30`, and the Node pings
+`WATCHDOG=1` only after a real bounded liveness probe genuinely succeeds
+(never a bare timer -- see [camera-node-installer-design.md](camera-node-installer-design.md)
+"Watchdog"), so systemd restarts a genuinely wedged instance the same way
+it would a crash. Also closed: the node's own restart-count/last-failure
+evidence is now host-visible (bounded, <=5-entry recent-boot-transition
+history feeding Doctor's own restart-instability check -- see "Boot loop /
+repeated restart," below) without requiring direct `journalctl` access,
+though `journalctl` remains the complete, unbounded record.
 
-**OS hang.** Open, not yet built: a hardware watchdog where the platform
-supports one (Pi 4's SoC has one, `bcm2835_wdt`) is not enabled or
-acceptance-tested today. The Raspberry Pi golden path should enable and
-acceptance-test it if practical; this stays a capability-gated addition,
-not a requirement of every supported platform.
+**OS hang.** Distinct from the service hang the watchdog above now closes:
+if the machine's own *kernel* wedges, nothing running as an ordinary
+process -- systemd included -- can act; only real hardware can recover
+that. A hardware watchdog where the platform supports one (Pi 4's SoC has
+one, `bcm2835_wdt`) is documented and capability-gated
+(`scripts/install_camera_node.py --enable-hardware-watchdog`, only after
+the operator's own manual `dtparam=watchdog=on` step) but **not
+live-verified**: no session validating this milestone had access to real
+Pi hardware with the device enabled. Still open in that specific sense; see
+[camera-node-installer-design.md](camera-node-installer-design.md)
+"Hardware watchdog."
 
 **Network outage.** Already proven: bounded reconnect
 (`AnalysisStreamRetryPolicy`, 6 attempts, `backoff_seconds=12.0`), accurate
@@ -1731,26 +1837,42 @@ acceptance case; see the field acceptance matrix, below).
 **Boot failure / powered-but-not-booted.** This is the exact 2026-08-20
 case. Already proven: while a session is actively retrying, the host
 correctly and honestly classifies this as `timeout`/`camera_unavailable`
-(above) rather than a host or GPU fault. Open, and the concrete gap this
-incident exposes: once a session has already exhausted its retries and
-stopped, there is no persisted "Camera Node offline, last seen at T" state
--- Doctor's own staleness check only covers a currently-*open* exposure
-interval, a disclosed v1 scope limit (see
-[camera-node-connectivity-recovery-diagnosis-v1-report.md](camera-node-connectivity-recovery-diagnosis-v1-report.md)).
-The product must say "Camera Node offline / last seen X" in that gap,
-never merely "paired and ready," and must preserve whatever boot/health
-evidence it already had rather than discarding it the moment a session
-closes. It must never claim software recovery when the node itself did
-not boot.
+(above) rather than a host or GPU fault. **Closed (Camera Node Boot
+Identity + Autonomous Recovery v1, 2026-08-21):** the concrete gap this
+incident exposed -- once a session has already exhausted its retries and
+stopped, there was no persisted "Camera Node offline, last seen at T"
+state -- is closed. `CameraSourceModel.camera_node_last_seen_at` (schema
+37) is durable and session-independent, checkpointed at the same
+already-throttled cadence `MonitoringExposureIntervalModel` already uses
+(no new write frequency); Doctor now falls back to it exactly when no open
+exposure interval exists, and `unified_status.camera_node_facts` no longer
+reports `camera_connected: true` from configuration completeness alone
+once real staleness evidence exists (see
+[camera-node-installer-design.md](camera-node-installer-design.md)
+"Host-side state"). The product now says "Camera Node offline -- last seen
+N minute(s) ago" in exactly this gap, never merely "paired and ready," and
+never claims software recovery when the node itself did not boot. One
+disclosed, deliberate scope boundary: a Source that has *never* had a
+successful checkpoint since this fact started being tracked (a pairing
+that predates this milestone, or one that has never yet been observed)
+still defers to the pre-existing optimistic default rather than guessing
+-- self-resolving the first time the paired Stream is ever started.
 
 **Boot loop / repeated restart.** Partially proven: `systemd`'s own
 `StartLimitBurst=5`/`StartLimitIntervalSec=300` already bounds a hot-
 restart loop at the process level (above) -- it cannot loop silently
-forever. Open: nothing today exposes *evidence* of flapping (a changing
-`boot_id`, a rising restart count) through a host-visible surface, so an
-operator currently has no way to tell "the node is stuck restarting" apart
-from "the node is simply offline" without direct device access -- this is
-what the Gate D `boot_id`/identity addition (above) exists to close.
+forever. **Substantially closed (Camera Node Boot Identity + Autonomous
+Recovery v1, 2026-08-21):** a bounded (<=5-entry, newest-first) recent
+boot-transition history now lives on `CameraSourceModel`, populated
+whenever the host observes a `boot_id` genuinely different from the one
+last recorded (never an unbounded ledger). Doctor WARNs "restart/boot
+instability suspected" when 3 or more transitions land inside a bounded
+15-minute window -- checked ahead of the plain-staleness WARN, so a
+flapping node that happens to have a deceptively recent last-seen timestamp
+is still distinguishable from "simply offline," without direct device
+access. Live-hardware acceptance of a genuine repeated-reboot scenario is
+still open (no session validating this had real Pi hardware access); the
+mechanism itself is deterministically tested.
 
 **Camera-device failure.** Partially proven: a camera provider that is
 absent, permission-denied, or otherwise unusable already reports
@@ -1885,15 +2007,27 @@ the production SD card.
    as its own case.
 6. a Pi reboot -- already live-verified twice, with precise recovery
    timing (Camera Node Installer v1, above).
-7. an OS/service hang or watchdog trip, where safely testable -- open;
-   blocked on the watchdog itself being enabled first (above).
-8. powered-but-no-successful-boot / node absent -- real field evidence now
-   exists (2026-08-20, above) that the host correctly classifies this as
-   `timeout`, but it has not yet been exercised as a deliberate, repeatable
-   case, and the between-sessions "offline, last seen" gap named above
-   remains open.
-9. repeated boot/restart-loop evidence -- open; no `boot_id`/restart-count
-   evidence surface exists yet to verify against.
+7. an OS/service hang or watchdog trip -- **partially closed**: a genuine
+   *service* hang is now deterministically tested (a probe that never
+   completes withholds the watchdog ping; see "Watchdog" in
+   [camera-node-installer-design.md](camera-node-installer-design.md)) and
+   real-service-level-validated in this sandbox's own local `systemd`
+   (Camera Node Boot Identity + Autonomous Recovery v1, 2026-08-21), but not
+   against the real reference Pi. An *OS*-level hang/watchdog trip remains
+   open, blocked on real hardware-watchdog access (above).
+8. powered-but-no-successful-boot / node absent -- **closed** for the
+   between-sessions gap: real field evidence already existed (2026-08-20)
+   that the host correctly classifies an active retry as `timeout`; the
+   "offline, last seen" gap once a session has already given up is now
+   closed by the durable `camera_node_last_seen_at` fact (Camera Node Boot
+   Identity + Autonomous Recovery v1, above) -- deterministically tested,
+   not yet re-exercised as a live repeatable case against real hardware.
+9. repeated boot/restart-loop evidence -- **closed** as an evidence
+   surface: a bounded recent-boot-transition history now exists on
+   `CameraSourceModel` and Doctor's own restart-instability check reads it
+   (Camera Node Boot Identity + Autonomous Recovery v1, above) --
+   deterministically tested; live acceptance against a real repeated-reboot
+   Pi remains open.
 10. a physical camera disconnect while the node itself stays up -- open;
     not yet exercised live.
 11. a low-storage/storage-pressure condition on the node -- open; no

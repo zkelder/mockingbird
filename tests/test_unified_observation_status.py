@@ -232,6 +232,56 @@ def test_camera_node_never_started_and_paired_reports_ready_stopped() -> None:
     assert facts.setup_action is None
 
 
+def test_camera_node_never_started_with_stale_last_seen_reports_offline() -> None:
+    """Boot Identity + Autonomous Recovery v1: "paired/configured !=
+    live/reachable" -- once a real last-seen fact exists and has gone
+    stale, configuration completeness alone must not report
+    `camera_connected=True`. See "Host-side state" in
+    docs/camera-node-installer-design.md."""
+
+    now = datetime(2026, 8, 21, 12, 0, 0, tzinfo=UTC)
+    last_seen = datetime(2026, 8, 21, 11, 0, 0, tzinfo=UTC)  # 60 minutes stale
+    facts = unified_status.camera_node_facts(
+        session_status=None,
+        config=_camera_node_config(camera_node_last_seen_at=last_seen),
+        playback=_playback(status=StreamPlaybackStatusValue.live_ready, kind=StreamPlaybackKind.camera_node),
+        now=now,
+    )
+    assert facts.state == "stopped"  # Start remains the correct recovery action, never "reconfigure"
+    assert facts.observing is False
+    assert facts.camera_connected is False
+    assert facts.setup_action is None
+    assert "offline" in facts.camera_message.lower()
+    assert "60 minute" in facts.camera_message
+
+
+def test_camera_node_never_started_with_fresh_last_seen_reports_connected() -> None:
+    now = datetime(2026, 8, 21, 12, 0, 0, tzinfo=UTC)
+    last_seen = datetime(2026, 8, 21, 11, 58, 0, tzinfo=UTC)  # 2 minutes ago, well inside the threshold
+    facts = unified_status.camera_node_facts(
+        session_status=None,
+        config=_camera_node_config(camera_node_last_seen_at=last_seen),
+        playback=_playback(status=StreamPlaybackStatusValue.live_ready, kind=StreamPlaybackKind.camera_node),
+        now=now,
+    )
+    assert facts.camera_connected is True
+    assert facts.camera_message == "Camera Node is paired and ready."
+
+
+def test_camera_node_never_started_with_no_last_seen_fact_keeps_prior_optimistic_default() -> None:
+    """A Source with no last-seen fact at all (predates this milestone, or
+    a pairing that just completed) is neither confirmed reachable nor
+    confirmed offline -- a deliberate, disclosed scope boundary, not an
+    oversight. See docs/camera-node-installer-design.md."""
+
+    facts = unified_status.camera_node_facts(
+        session_status=None,
+        config=_camera_node_config(camera_node_last_seen_at=None),
+        playback=_playback(status=StreamPlaybackStatusValue.live_ready, kind=StreamPlaybackKind.camera_node),
+    )
+    assert facts.camera_connected is True
+
+
 def test_camera_node_never_started_and_unpaired_reports_needs_attention() -> None:
     facts = unified_status.camera_node_facts(
         session_status=None,

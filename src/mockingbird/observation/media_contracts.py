@@ -58,6 +58,15 @@ class AnalysisFrameEnvelope:
     payload: bytes
     content_hash: str
     timing_facts: tuple[tuple[str, str | int | float | bool | None], ...] = ()
+    # Boot Identity + Autonomous Recovery v1: optional, read from the same
+    # per-part analysis-stream headers a Node already sends (see
+    # `mockingbird_node.app.analysis_parts`). `None` for an older Node that
+    # predates this field -- never required, never fabricated. Lets a
+    # currently-observing session learn the Node's boot identity from
+    # frames it already pulls, with no extra request. See "Boot identity"
+    # in docs/camera-node-installer-design.md.
+    node_boot_id: str | None = None
+    node_service_version: str | None = None
 
     def __post_init__(self) -> None:
         if not self.stream_id or not self.node_session_id or not self.frame_id:

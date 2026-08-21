@@ -84,6 +84,15 @@ class AnalysisSourceStatus:
     # ordinary benign reconnect.
     transport_reconnect_count: int = 0
     current_connection_segment_ordinal: int = -1
+    # Boot Identity + Autonomous Recovery v1: the most recently observed
+    # Node boot identity/package version, sourced from per-frame headers an
+    # updated Node sends (see `AnalysisFrameEnvelope.node_boot_id`); `None`
+    # for an older Node or before any frame has arrived yet. "Most recently
+    # observed," not "currently live" -- a stopped source still reports the
+    # last value it saw, matching how every other field here already
+    # behaves as a last-known diagnostic fact.
+    node_boot_id: str | None = None
+    node_service_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -165,6 +174,13 @@ class CameraNodeAnalysisSource:
         self._delivered_received_at: datetime | None = None
         self._delivered_local_offset_ms: int = 0
         self._session_base_offset_ms: int = 0
+        # Boot Identity + Autonomous Recovery v1: last-known-good, updated on
+        # every accepted frame regardless of generation/reconnect state (see
+        # `_offer`) -- never cleared by a benign reconnect or a generation
+        # reset, since the Node's boot identity does not change just because
+        # the transport connection did.
+        self._node_boot_id: str | None = None
+        self._node_service_version: str | None = None
 
     def offer(
         self,
@@ -191,6 +207,10 @@ class CameraNodeAnalysisSource:
         received = received_at or datetime.now(UTC)
         if received.tzinfo is None:
             raise ValueError("analysis_receive_timestamp")
+        if envelope.node_boot_id:
+            self._node_boot_id = envelope.node_boot_id
+        if envelope.node_service_version:
+            self._node_service_version = envelope.node_service_version
         generation_changed = self._generation is not None and self._generation != envelope.provider_generation
         if self._generation is None or generation_changed:
             # A genuine observation-source reset: either the very first
@@ -367,6 +387,8 @@ class CameraNodeAnalysisSource:
             ),
             self._transport_reconnect_count,
             self._segment_ordinal,
+            self._node_boot_id,
+            self._node_service_version,
         )
 
     def reset(self) -> None:
@@ -1235,6 +1257,12 @@ def _analysis_envelope(stream_id: str, headers: dict[str, str], payload: bytes) 
         payload=payload,
         content_hash=digest,
         timing_facts=(("capture_timestamp", "supported"), ("source_monotonic", "supported")),
+        # Boot Identity + Autonomous Recovery v1: genuinely optional -- an
+        # older Node never sends these, and that must never invalidate an
+        # otherwise-well-formed frame (unlike every `_required_header` field
+        # above, which is part of this stream's core wire contract).
+        node_boot_id=_optional_header(headers, "x-mockingbird-node-boot-id"),
+        node_service_version=_optional_header(headers, "x-mockingbird-node-service-version"),
     )
 
 
@@ -1242,6 +1270,13 @@ def _required_header(headers: dict[str, str], name: str) -> str:
     value = headers.get(name, "")
     if not value or len(value) > 240 or "\r" in value or "\n" in value:
         raise CameraNodeClientError("analysis_stream_invalid")
+    return value
+
+
+def _optional_header(headers: dict[str, str], name: str) -> str | None:
+    value = headers.get(name, "")
+    if not value or len(value) > 240 or "\r" in value or "\n" in value:
+        return None
     return value
 
 

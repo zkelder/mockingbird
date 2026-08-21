@@ -53,6 +53,7 @@ from mockingbird.observation.engine_runtime import resolve_provider_config_path
 from mockingbird.observation.frame_driven_provider import FrameDrivenProviderConfiguration
 from mockingbird.observation.onnx_provider import OnnxCudaObservationProvider, OnnxModelBundle
 from mockingbird.observation.replay import ReplayValidationError
+from mockingbird.observation.unified_status import CAMERA_NODE_LAST_SEEN_STALE_AFTER_SECONDS
 from mockingbird.playback.rtsp_bridge import is_ffmpeg_available
 from mockingbird.runtime import resolve_runtime_home
 from mockingbird.species.bioclip_adapter import BioClipAdapterConfig, get_bioclip_status
@@ -110,8 +111,22 @@ _FFMPEG_DEPENDENT_SOURCE_KINDS = frozenset({"rtsp", "local_camera"})
 # (Today Coverage Truth v1) and the default bounded reconnect budget (6
 # attempts x 12s backoff = ~72s -- see `AnalysisStreamRetryPolicy`), so an
 # ordinary, already-recovering reconnect never trips this WARN; a real,
-# sustained Camera Node outage still surfaces within a few minutes.
-_CAMERA_NODE_STALE_AFTER_SECONDS = 300.0
+# sustained Camera Node outage still surfaces within a few minutes. Shared
+# with `unified_status.camera_node_facts` (Boot Identity + Autonomous
+# Recovery v1) -- see that constant's own docstring; imported rather than
+# duplicated so this judgment stays one number, not two.
+_CAMERA_NODE_STALE_AFTER_SECONDS = CAMERA_NODE_LAST_SEEN_STALE_AFTER_SECONDS
+# Boot Identity + Autonomous Recovery v1: bounded restart-instability
+# suspicion, derived only from the bounded (<=5-entry) recent-boot-
+# transition window `ProductRepository._record_camera_node_boot_observation`
+# already caps -- never an unbounded historical ledger (milestone
+# instruction #10). Three real reboots inside fifteen minutes is well
+# outside any plausible deliberate maintenance action (a normal Pi reboot
+# takes ~55s to recover -- see "Real hardware acceptance findings" in
+# docs/camera-node-installer-design.md) and is the threshold this milestone
+# treats as suspicious rather than coincidental.
+_CAMERA_NODE_INSTABILITY_MINIMUM_TRANSITIONS = 3
+_CAMERA_NODE_INSTABILITY_WINDOW_SECONDS = 900.0
 
 
 class DoctorStatus(str, Enum):
@@ -679,6 +694,23 @@ def _gather_camera_node(engine: Engine) -> dict[str, Any]:
     with engine.connect() as connection:
         sources = connection.execute(select(CameraSourceModel.id, CameraSourceModel.kind)).all()
         stream_count = len(connection.execute(select(StreamModel.id)).all())
+        # Boot Identity + Autonomous Recovery v1: the durable, session-
+        # independent facts `ProductRepository.record_observation_exposure_
+        # frame` now checkpoints on `CameraSourceModel` -- read here purely
+        # to let Doctor answer honestly during the exact gap its own prior
+        # milestone (Camera Node Connectivity & Recovery Diagnosis v1)
+        # disclosed as open: "the gap between a session giving up entirely
+        # and the next Start," where no open `MonitoringExposureInterval`
+        # exists at all for the staleness check above to read.
+        camera_node_sources = connection.execute(
+            select(
+                CameraSourceModel.id,
+                CameraSourceModel.camera_node_last_seen_at,
+                CameraSourceModel.camera_node_boot_id,
+                CameraSourceModel.camera_node_service_version,
+                CameraSourceModel.camera_node_recent_boot_transitions_json,
+            ).where(CameraSourceModel.kind == _CAMERA_NODE_SOURCE_KIND)
+        ).all()
         open_interval_stream_ids = {
             row[0]
             for row in connection.execute(
@@ -737,7 +769,63 @@ def _gather_camera_node(engine: Engine) -> dict[str, Any]:
         "stalest_camera_node_fresh_at": (
             normalize_utc(stalest_camera_node_interval[1]).isoformat() if stalest_camera_node_interval else None
         ),
+        # Boot Identity + Autonomous Recovery v1: durable, session-
+        # independent facts -- valid (and often the *only* evidence
+        # available) even when no Observation Engine session has run
+        # recently enough to leave an open exposure interval above. Picks
+        # the single most-recently-seen camera_node Source when more than
+        # one is configured (today's supported shape is one Camera Node per
+        # Source, but this stays correct if that ever changes); raw
+        # timestamps only, matching `stalest_camera_node_fresh_at`'s own
+        # convention -- all datetime math stays in `_interpret_camera_node`.
+        "camera_node_last_seen_at": (
+            normalize_utc(
+                max((row[1] for row in camera_node_sources if row[1] is not None), default=None)
+            ).isoformat()
+            if any(row[1] is not None for row in camera_node_sources)
+            else None
+        ),
+        "camera_node_boot_id": next((row[2] for row in camera_node_sources if row[2]), None),
+        "camera_node_service_version": next((row[3] for row in camera_node_sources if row[3]), None),
+        "camera_node_recent_boot_transitions_json": next(
+            (row[4] for row in camera_node_sources if row[4]), None
+        ),
     }
+
+
+def _recent_camera_node_boot_transitions(
+    transitions_json: str | None, *, now: datetime
+) -> list[dict[str, Any]]:
+    """Parse the bounded (<=5-entry) recent-boot-transition JSON and return
+    only the entries within `_CAMERA_NODE_INSTABILITY_WINDOW_SECONDS` of
+    `now`. Never raises on malformed/legacy data -- an unreadable or absent
+    history is honestly "no instability evidence available," not a Doctor
+    failure."""
+
+    if not transitions_json:
+        return []
+    import json
+
+    try:
+        entries = json.loads(transitions_json)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(entries, list):
+        return []
+    recent: list[dict[str, Any]] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        first_seen_at_raw = entry.get("first_seen_at")
+        if not isinstance(first_seen_at_raw, str):
+            continue
+        try:
+            first_seen_at = normalize_utc(datetime.fromisoformat(first_seen_at_raw))
+        except ValueError:
+            continue
+        if (now - first_seen_at).total_seconds() <= _CAMERA_NODE_INSTABILITY_WINDOW_SECONDS:
+            recent.append(entry)
+    return recent
 
 
 def _interpret_camera_node(gathered: dict[str, Any], *, now: datetime) -> DoctorCheckResult:
@@ -770,6 +858,36 @@ def _interpret_camera_node(gathered: dict[str, Any], *, now: datetime) -> Doctor
             user_action="Open the affected Stream's camera health details, check its network/cable connection, or restart its Camera Node.",
             diagnostic_context=context,
         )
+    if gathered.get("camera_node_boot_id"):
+        context["camera_node_boot_id"] = gathered["camera_node_boot_id"]
+    if gathered.get("camera_node_service_version"):
+        context["camera_node_service_version"] = gathered["camera_node_service_version"]
+    # Boot Identity + Autonomous Recovery v1: bounded (<=5-entry) recent
+    # boot-transition evidence -- see `ProductRepository._record_camera_
+    # node_boot_observation`. Checked ahead of the staleness branches below:
+    # a Node that keeps coming back only to reboot again can show a
+    # deceptively *recent* last-seen timestamp while still being genuinely
+    # unstable, so this must be distinguishable from plain "offline" --
+    # exactly the gap named in "Boot loop / repeated restart" in
+    # docs/camera-node-installer-design.md.
+    recent_transitions = _recent_camera_node_boot_transitions(
+        gathered.get("camera_node_recent_boot_transitions_json"), now=now,
+    )
+    if len(recent_transitions) >= _CAMERA_NODE_INSTABILITY_MINIMUM_TRANSITIONS:
+        context["recent_boot_transition_count"] = len(recent_transitions)
+        return DoctorCheckResult(
+            code=DoctorCheckCode.CAMERA_NODE,
+            component="Camera Node",
+            status=DoctorStatus.WARN,
+            summary=(
+                f"Camera Node restart/boot instability suspected -- "
+                f"{len(recent_transitions)} reboots observed recently."
+            ),
+            detail="The Node's boot identity has changed several times in a short window.",
+            recoverability=DoctorRecoverability.DEGRADED,
+            user_action="Check the Camera Node's power supply, boot media, and journal (journalctl -u mockingbird-camera-node) for a repeated startup failure.",
+            diagnostic_context=context,
+        )
     # Camera Node Connectivity & Recovery Diagnosis v1: the camera_node
     # Observation Engine lane's own honest freshness signal, independent of
     # `StreamRuntimeCheckpointModel` above (that lane never writes it -- see
@@ -799,6 +917,32 @@ def _interpret_camera_node(gathered: dict[str, Any], *, now: datetime) -> Doctor
                 detail="A Stream is still marked as observing, but no fresh frame has arrived recently.",
                 recoverability=DoctorRecoverability.DEGRADED,
                 user_action="Check the affected Stream's camera health details, its network/cable connection, or restart its Camera Node.",
+                diagnostic_context=context,
+            )
+    elif gathered.get("camera_node_last_seen_at"):
+        # Boot Identity + Autonomous Recovery v1: closes the gap the prior
+        # milestone explicitly disclosed as open -- "the gap between a
+        # session giving up entirely... and the next Start," where no open
+        # exposure interval exists at all for the branch above to read.
+        # `camera_node_last_seen_at` is durable and session-independent
+        # (see `_gather_camera_node`), so it remains valid evidence exactly
+        # in that gap. Never fabricates a specific cause (SD corruption,
+        # power failure) from mere unreachability -- only "offline, last
+        # seen" -- see "Product-health semantics" in
+        # docs/camera-node-installer-design.md.
+        last_seen_at = datetime.fromisoformat(gathered["camera_node_last_seen_at"])
+        staleness_seconds = (now - last_seen_at).total_seconds()
+        context["camera_node_last_seen_staleness_minutes"] = round(staleness_seconds / 60, 1)
+        if staleness_seconds > _CAMERA_NODE_STALE_AFTER_SECONDS:
+            staleness_minutes = max(1, round(staleness_seconds / 60))
+            return DoctorCheckResult(
+                code=DoctorCheckCode.CAMERA_NODE,
+                component="Camera Node",
+                status=DoctorStatus.WARN,
+                summary=f"Camera Node offline -- last seen ~{staleness_minutes} minute(s) ago.",
+                detail="No Observation Engine session is currently open for this Camera Node, and its last confirmed contact has gone stale.",
+                recoverability=DoctorRecoverability.DEGRADED,
+                user_action="Check the Camera Node's power, network connection, and journal (journalctl -u mockingbird-camera-node).",
                 diagnostic_context=context,
             )
     return DoctorCheckResult(

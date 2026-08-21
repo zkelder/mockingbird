@@ -42,7 +42,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 36
+CURRENT_DATABASE_SCHEMA_VERSION = 37
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -927,6 +927,40 @@ def _migrate_to_concurrent_sibling_lineage(connection: Connection) -> None:
         )
 
 
+def _migrate_to_camera_node_boot_identity(connection: Connection) -> None:
+    """Add the Boot Identity + Autonomous Recovery v1 durable last-seen/
+    boot-identity columns to the existing `camera_sources` table (see
+    "Host-side state" in docs/camera-node-installer-design.md).
+
+    Nullable, no default, additive only -- exactly the same shape as
+    `_migrate_to_concurrent_sibling_lineage`. Every Source created before
+    this column existed (a `camera_node` Source or otherwise) reads back
+    `camera_node_last_seen_at=None`/`camera_node_boot_id=None`: the honest
+    "not tracked yet" fact, never a fabricated timestamp or boot id. The
+    next real Observation Engine checkpoint for that Stream (see
+    `ProductRepository.record_observation_exposure_frame`) populates them
+    going forward; this migration writes no data of its own.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Camera Node boot-identity migration requires local SQLite storage."
+        )
+    if not inspect(connection).has_table("camera_sources"):
+        return
+    columns = {column["name"] for column in inspect(connection).get_columns("camera_sources")}
+    additions = (
+        ("camera_node_last_seen_at", "DATETIME"),
+        ("camera_node_boot_id", "TEXT"),
+        ("camera_node_boot_first_seen_at", "DATETIME"),
+        ("camera_node_service_version", "TEXT"),
+        ("camera_node_recent_boot_transitions_json", "TEXT"),
+    )
+    for name, sql_type in additions:
+        if name not in columns:
+            connection.exec_driver_sql(f"ALTER TABLE camera_sources ADD COLUMN {name} {sql_type}")
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -963,6 +997,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     34: _migrate_to_scene_confusor_regions,
     35: _migrate_to_per_stream_observation_authority,
     36: _migrate_to_concurrent_sibling_lineage,
+    37: _migrate_to_camera_node_boot_identity,
 }
 
 

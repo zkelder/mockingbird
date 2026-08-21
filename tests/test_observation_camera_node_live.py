@@ -969,6 +969,82 @@ def test_multipart_header_and_jpeg_parsers_use_wire_bytes() -> None:
     assert envelope.sequence == 1
     assert envelope.content_hash == digest
     assert _jpeg_dimensions(payload) == (32, 24)
+    # Boot Identity + Autonomous Recovery v1: an older Node's response
+    # shape (no boot-id/service-version headers at all) must still parse
+    # cleanly -- these are optional, never required.
+    assert envelope.node_boot_id is None
+    assert envelope.node_service_version is None
+
+
+def test_multipart_header_parser_reads_optional_boot_identity_headers() -> None:
+    image = BytesIO()
+    Image.new("RGB", (32, 24), color="white").save(image, format="JPEG")
+    payload = image.getvalue()
+    digest = hashlib.sha256(payload).hexdigest()
+    headers = (
+        "Content-Type: image/jpeg\r\n"
+        f"Content-Length: {len(payload)}\r\n"
+        "X-MockingBird-Sequence: 1\r\n"
+        "X-MockingBird-Frame-Id: frame-1\r\n"
+        "X-MockingBird-Captured-At: 2026-08-04T00:00:00+00:00\r\n"
+        "X-MockingBird-Source-Monotonic-Ns: 100\r\n"
+        "X-MockingBird-Width: 32\r\n"
+        "X-MockingBird-Height: 24\r\n"
+        "X-MockingBird-Provider-Generation: generation-a\r\n"
+        "X-MockingBird-Node-Session: session-a\r\n"
+        f"X-MockingBird-Content-Sha256: {digest}\r\n"
+        "X-MockingBird-Node-Boot-Id: e52fe936-ae14-4232-b761-d51c5a2ac3b2\r\n"
+        "X-MockingBird-Node-Service-Version: 0.1.0\r\n\r\n"
+    ).encode("ascii")
+    parsed = CameraNodeHttpTransport._read_part_headers(BytesIO(headers))
+    envelope = _analysis_envelope("stream-yard", parsed, payload)
+    assert envelope.node_boot_id == "e52fe936-ae14-4232-b761-d51c5a2ac3b2"
+    assert envelope.node_service_version == "0.1.0"
+
+
+def test_analysis_source_status_tracks_the_most_recently_observed_boot_identity() -> None:
+    source = CameraNodeAnalysisSource("stream-yard")
+    received = datetime(2026, 8, 4, 12, tzinfo=UTC)
+    envelope = AnalysisFrameEnvelope(
+        **{**_frame(1).__dict__, "node_boot_id": "boot-A", "node_service_version": "0.1.0"}
+    )
+    source.offer(envelope, received_at=received)
+    status = source.status(now=received)
+    assert status.node_boot_id == "boot-A"
+    assert status.node_service_version == "0.1.0"
+
+    # A benign reconnect (fresh node_session_id, same provider_generation)
+    # must not lose the last-known boot identity even if the next frame
+    # happens to omit it.
+    reconnected = AnalysisFrameEnvelope(
+        **{**_frame(2).__dict__, "node_session_id": "node-session-b"}
+    )
+    source.offer(reconnected, received_at=received + timedelta(milliseconds=5))
+    assert source.status(now=received).node_boot_id == "boot-A"
+
+
+def test_analysis_source_status_reports_a_fresh_boot_id_once_observed() -> None:
+    """A genuinely new boot id arriving mid-session (the Node rebooted and
+    the host's bounded reconnect recovered) must be visible immediately --
+    this is what lets the host tell a process restart (same boot_id) apart
+    from a machine reboot (new boot_id)."""
+
+    source = CameraNodeAnalysisSource("stream-yard")
+    received = datetime(2026, 8, 4, 12, tzinfo=UTC)
+    source.offer(
+        AnalysisFrameEnvelope(**{**_frame(1).__dict__, "node_boot_id": "boot-A"}),
+        received_at=received,
+    )
+    source.offer(
+        AnalysisFrameEnvelope(
+            **{
+                **_frame(1, generation="generation-b", node_session_id="node-session-b").__dict__,
+                "node_boot_id": "boot-B",
+            }
+        ),
+        received_at=received + timedelta(seconds=60),
+    )
+    assert source.status(now=received).node_boot_id == "boot-B"
 
 
 # --------------------------------------------------------------------------

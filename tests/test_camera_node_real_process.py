@@ -114,6 +114,21 @@ def test_real_subprocess_serves_health_over_a_real_socket_and_shuts_down_cleanly
         assert payload["api_version"] == "v1"
         assert payload["camera_count"] == 1  # the synthetic test camera
         assert payload["pairing_required"] is True
+        # Boot Identity + Autonomous Recovery v1: real values from a real,
+        # separate OS process -- not merely the in-process ASGITransport
+        # suite (`tests/test_camera_node_boot_identity.py`), which cannot
+        # prove `/proc` reads or process uptime behave correctly outside a
+        # single shared Python interpreter.
+        assert payload["service_version"]
+        assert isinstance(payload["service_uptime_seconds"], (float, int))
+        assert payload["service_uptime_seconds"] >= 0
+        assert payload["self_test"]["status"] == "passed"  # synthetic camera is always available
+        assert payload["self_test"]["camera_available"] is True
+        assert payload["watchdog"]["enabled"] is False  # no NOTIFY_SOCKET in this environment
+        # `boot_id` itself is platform-dependent (present on a real Linux
+        # host, `None` where `/proc` is unavailable) -- assert only that the
+        # field exists and is honestly typed, never a fabricated string.
+        assert payload["boot_id"] is None or isinstance(payload["boot_id"], str)
 
         # The real capabilities/pairing round trip also works over the real
         # socket, not only the health check. `urlopen` raises `HTTPError`
@@ -158,6 +173,57 @@ def test_real_subprocess_serves_health_over_a_real_socket_and_shuts_down_cleanly
     assert "providers=synthetic" in stderr
     assert "pairing=not yet paired" in stderr
     assert "MockingBird Camera Node pairing code:" in stderr
+    # Boot Identity + Autonomous Recovery v1: the enriched startup line
+    # (never the credential or its digest).
+    assert "self_test=passed" in stderr
+    assert "version=" in stderr
+    assert "boot_id=" in stderr
+
+
+def test_real_subprocess_pings_a_real_watchdog_over_a_real_notify_socket(tmp_path) -> None:
+    """Genuine end-to-end proof, over a real separate OS process and a real
+    Unix datagram socket, of exactly what `systemd`'s own `Type=notify` +
+    `WatchdogSec=` will rely on in production: `READY=1` once, then
+    `WATCHDOG=1` on a real bounded cadence -- see `mockingbird_node.
+    watchdog` and "Watchdog" in docs/camera-node-installer-design.md."""
+
+    python = _venv_python(tmp_path, name="node-watchdog-env")
+    port = _free_local_port()
+    notify_socket_path = str(tmp_path / "notify.sock")
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    server.bind(notify_socket_path)
+    server.settimeout(1.0)
+
+    environment = _real_node_environment(tmp_path)
+    environment["MOCKINGBIRD_NODE_PORT"] = str(port)
+    environment["NOTIFY_SOCKET"] = notify_socket_path
+    environment["WATCHDOG_USEC"] = "2000000"  # 2s -> ~1s real ping cadence
+
+    process = subprocess.Popen(
+        [python, "-m", "mockingbird_node"], env=environment,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    try:
+        _wait_for_health(port, timeout_seconds=_START_TIMEOUT_SECONDS)
+        messages: list[bytes] = []
+        deadline = time.monotonic() + 6.0
+        while time.monotonic() < deadline and len(messages) < 3:
+            try:
+                data, _ = server.recvfrom(4096)
+                messages.append(data)
+            except socket.timeout:
+                continue
+    finally:
+        server.close()
+        process.terminate()
+        try:
+            process.communicate(timeout=_STOP_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate(timeout=_STOP_TIMEOUT_SECONDS)
+
+    assert messages[:1] == [b"READY=1\n"]
+    assert messages.count(b"WATCHDOG=1\n") >= 2
 
 
 def test_real_subprocess_reports_a_clean_config_error_and_exits_promptly(tmp_path) -> None:

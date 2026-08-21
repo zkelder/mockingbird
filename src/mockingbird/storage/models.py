@@ -39,6 +39,31 @@ class CameraSourceModel(Base):
     kind: Mapped[str] = mapped_column(String, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
+    # Boot Identity + Autonomous Recovery v1 (schema 37): a durable,
+    # session-independent "last seen" fact for a paired Camera Node --
+    # updated wherever the host already talks to the Node (today: the
+    # existing, already-throttled Observation Engine exposure checkpoint;
+    # see `ProductRepository.record_observation_exposure_frame`), never a
+    # new poller. Nullable/no default: every Source predating this column,
+    # and any non-Camera-Node Source, correctly reads back
+    # `camera_node_last_seen_at=None` -- "not tracked," never a fabricated
+    # timestamp. See "Host-side state" in docs/camera-node-installer
+    # -design.md.
+    camera_node_last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    camera_node_boot_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # When the *current* `camera_node_boot_id` was first observed -- only
+    # advances when the boot id actually changes, so this doubles as
+    # "how long (from the host's own observation) has this boot been
+    # running."
+    camera_node_boot_first_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    camera_node_service_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Bounded (<=5 entries) JSON list of the most recent boot-id
+    # transitions -- `[{"boot_id": ..., "first_seen_at": ...}, ...]`,
+    # newest first -- deliberately not an unbounded historical ledger (see
+    # milestone instruction #10). Restart/boot-loop instability is
+    # interpreted from this bounded window, never stored as its own
+    # separately-growing fact.
+    camera_node_recent_boot_transitions_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class StreamModel(Base):

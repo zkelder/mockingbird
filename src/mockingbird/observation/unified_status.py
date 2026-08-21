@@ -29,7 +29,7 @@ picks which existing runtime's facts to present.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 
 from mockingbird.api.schemas import (
@@ -66,6 +66,20 @@ LIVE_MONITORING_STREAM_TYPES = frozenset({"rtsp", LOCAL_USB_STREAM_TYPE, WINDOWS
 ProviderSupportLevel = Literal[
     "observation_supported", "observation_setup_required", "observation_unavailable", "development_only",
 ]
+
+# Boot Identity + Autonomous Recovery v1: shared with
+# `mockingbird.diagnostics.doctor` (which imports this constant rather than
+# keeping its own copy) so "how long since last contact before this stops
+# reading as normal and starts reading as offline" is one judgment call,
+# not two independently-tuned thresholds. Comfortably longer than both the
+# ~45s normal exposure-checkpoint cadence (Today Coverage Truth v1) and the
+# default bounded reconnect budget (6 attempts x 12s backoff = ~72s -- see
+# `AnalysisStreamRetryPolicy`), so an ordinary, already-recovering
+# reconnect never reads as "offline." Originally established by Camera Node
+# Connectivity & Recovery Diagnosis v1 for Doctor's own open-interval
+# staleness check; reused here unchanged for the same judgment applied to
+# the durable last-seen fact instead.
+CAMERA_NODE_LAST_SEEN_STALE_AFTER_SECONDS = 300.0
 
 # Grounds the product support-matrix report in actual repository capability
 # (see `source-provider-configuration-contract.md`'s provider-definition
@@ -172,12 +186,21 @@ def camera_node_facts(
     session_status: ObservationEngineSessionStatus | None,
     config: StreamLivePlaybackConfig,
     playback: StreamPlaybackStatus | None,
+    now: datetime | None = None,
 ) -> ObservationPanelFacts:
     """Camera Node lane: pass the accepted engine's own session status
     through unchanged (only its wire-level state name is normalized to the
     unified vocabulary); before a session ever starts, report a real
     pairing-based health fact instead of a generic placeholder, still
-    without starting anything."""
+    without starting anything.
+
+    Boot Identity + Autonomous Recovery v1: "no session currently running"
+    previously reported `camera_connected=True` from configuration
+    completeness alone -- exactly the "paired/configured != live/reachable"
+    violation named in docs/camera-node-installer-design.md. This function
+    stays pure/side-effect-free (see the module docstring) -- `now` and
+    `config.camera_node_last_seen_at` are both already-resolved facts the
+    caller supplies, never a live probe from here."""
 
     if session_status is not None:
         wire_state = "needs_attention" if session_status.state == "error" else session_status.state
@@ -209,6 +232,33 @@ def camera_node_facts(
     paired = _camera_node_paired(config)
     ready = paired and playback is not None and playback.status == StreamPlaybackStatusValue.live_ready
     if ready:
+        last_seen_at = config.camera_node_last_seen_at
+        reference = now or datetime.now(UTC)
+        # `last_seen_at is None` means this Source has never yet had a
+        # successful checkpoint since this fact started being tracked --
+        # neither confirmed reachable nor confirmed offline. Rather than
+        # guess, this keeps the pre-existing optimistic "paired and ready"
+        # wording (a freshly-completed pairing itself just proved
+        # reachability moments ago) -- a deliberate, disclosed scope
+        # boundary; see docs/camera-node-installer-design.md. Once any real
+        # contact has been recorded, staleness against it is authoritative.
+        stale = (
+            last_seen_at is not None
+            and (reference - last_seen_at).total_seconds() > CAMERA_NODE_LAST_SEEN_STALE_AFTER_SECONDS
+        )
+        if stale:
+            minutes = max(1, round((reference - last_seen_at).total_seconds() / 60))
+            return ObservationPanelFacts(
+                state="stopped",
+                observing=False,
+                message="Not observing.",
+                camera_connected=False,
+                camera_message=f"Camera Node offline -- last seen {minutes} minute(s) ago.",
+                engine_available=False,
+                engine_message="Observation Engine has not started yet.",
+                runtime_available=True,
+                advanced={"runtime_kind": RUNTIME_KIND_CAMERA_NODE},
+            )
         return ObservationPanelFacts(
             state="stopped",
             observing=False,

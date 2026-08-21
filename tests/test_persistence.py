@@ -20,7 +20,9 @@ from mockingbird.storage.database import (
 )
 from mockingbird.storage.models import (
     BioClipIdentificationAttemptModel,
+    CameraSourceModel,
     MediaAssetModel,
+    StreamModel,
 )
 
 STREAM_ID = "stream-backyard-feeder"
@@ -554,3 +556,92 @@ def test_corrupted_database_is_refused_without_modification_and_recoverable_from
         transaction.commit()
     finally:
         restored.close()
+
+
+def test_schema_37_adds_camera_node_boot_identity_columns_without_data_loss(
+    tmp_path: Path,
+) -> None:
+    """Boot Identity + Autonomous Recovery v1: `camera_sources` gains five
+    new nullable columns. A pre-existing installation's own Source rows
+    (any kind, not only `camera_node`) must survive the migration
+    byte-identical on every pre-existing field, reading back `None`/
+    "not tracked yet" for every new one -- see
+    `_migrate_to_camera_node_boot_identity` in storage/database.py."""
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = repository_for(db_path)
+    with repository.session_factory() as session:
+        source_id = session.get(StreamModel, STREAM_ID).source_id
+        original = session.get(CameraSourceModel, source_id)
+        original_name, original_kind, original_status = (
+            original.name,
+            original.kind,
+            original.status,
+        )
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        # Mirror `test_schema_two_migrates_motion_evidence_to_optional_zone_
+        # without_data_loss`'s exact rebuild-in-place idiom: recreate
+        # `camera_sources` in its pre-migration (five-column) shape, copy
+        # every existing row across unchanged, then roll the recorded
+        # schema version back to 36 so the next open must migrate forward
+        # for real.
+        connection.exec_driver_sql(
+            """
+            CREATE TABLE camera_sources_schema_36 (
+                id VARCHAR NOT NULL PRIMARY KEY,
+                name VARCHAR NOT NULL,
+                kind VARCHAR NOT NULL,
+                status VARCHAR NOT NULL,
+                description TEXT NOT NULL
+            )
+            """
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO camera_sources_schema_36 (id, name, kind, status, description) "
+            "SELECT id, name, kind, status, description FROM camera_sources"
+        )
+        connection.exec_driver_sql("DROP TABLE camera_sources")
+        connection.exec_driver_sql(
+            "ALTER TABLE camera_sources_schema_36 RENAME TO camera_sources"
+        )
+        connection.exec_driver_sql(
+            "UPDATE mockingbird_schema SET version = 36 WHERE singleton_id = 1"
+        )
+    engine.dispose()
+
+    migrated = repository_for(db_path)
+    try:
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+        with migrated.session_factory() as session:
+            source = session.get(CameraSourceModel, source_id)
+            assert source is not None
+            # Every pre-existing field survives untouched.
+            assert (source.name, source.kind, source.status) == (
+                original_name,
+                original_kind,
+                original_status,
+            )
+            # Every new field reads back the honest "not tracked yet" state
+            # -- never a fabricated timestamp or boot id.
+            assert source.camera_node_last_seen_at is None
+            assert source.camera_node_boot_id is None
+            assert source.camera_node_boot_first_seen_at is None
+            assert source.camera_node_service_version is None
+            assert source.camera_node_recent_boot_transitions_json is None
+
+        with migrated.engine.connect() as connection:
+            columns = {
+                row[1] for row in connection.exec_driver_sql("PRAGMA table_info(camera_sources)")
+            }
+        assert {
+            "camera_node_last_seen_at",
+            "camera_node_boot_id",
+            "camera_node_boot_first_seen_at",
+            "camera_node_service_version",
+            "camera_node_recent_boot_transitions_json",
+        } <= columns
+    finally:
+        migrated.close()

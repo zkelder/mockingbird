@@ -118,7 +118,7 @@ the first time this particular surface needed one of its own.
 | Database | `database_schema` | Recorded schema version vs. `CURRENT_DATABASE_SCHEMA_VERSION`; `SKIPPED` if connectivity failed | **Yes** |
 | Storage | `storage` | Media root exists, is writable (`probe_local_storage_disk`'s bounded write-then-delete probe), and has enough free space (reuses the existing `LOW_DISK_FREE_BYTES_THRESHOLD`/`LOW_DISK_FREE_RATIO_THRESHOLD` -- the same 1 GB / 5% policy `/api/product/health` already uses) | **Yes** |
 | Backup | `backup` | Whether a backup exists and how old the most recent one is (via the real `LocalBackupManager.list_backups()`, never a second implementation) | No |
-| Camera Node | `camera_node` | Configured Source/Stream counts, currently-monitored count (`MonitoringExposureIntervalModel`'s open-interval signal, which -- unlike the legacy `armed`-policy check -- is accurate for a paired Camera Node Stream too), and legacy runtime checkpoints in `blocked`/`interrupted` state | No |
+| Camera Node | `camera_node` | Configured Source/Stream counts, currently-monitored count (`MonitoringExposureIntervalModel`'s open-interval signal, which -- unlike the legacy `armed`-policy check -- is accurate for a paired Camera Node Stream too), legacy runtime checkpoints in `blocked`/`interrupted` state, staleness of the durable `camera_node_last_seen_at` fact when no session is currently open (Boot Identity + Autonomous Recovery v1 -- closes the gap disclosed below the open-interval check alone could not), and bounded recent-boot-transition evidence (`camera_node_recent_boot_transitions_json`, capped at 5 entries) for restart/boot-loop instability suspicion | No |
 | FFmpeg | `ffmpeg` | `ffmpeg` binary availability, capability-gated: only escalates to `WARN` when a configured Source kind (`rtsp`/`local_camera`) plausibly needs it | No |
 | Detector model | `detector_model` | Observation Engine provider-config + model-bundle presence and integrity (`FrameDrivenProviderConfiguration.load` + `OnnxModelBundle.load`), capability-aware on whether a Camera Node Stream is configured | No |
 | Species identification | `species_identification` | BioCLIP runtime status via the existing `get_bioclip_status` | No |
@@ -250,8 +250,14 @@ by default:
   `SourceProviderField`'s own definition and are sanitized to the literal
   string `"configured"` by `_sanitize_source_provider_config` wherever the
   product already surfaces them). The Camera Node check reads only
-  `CameraSourceModel.kind`/counts and `MonitoringExposureIntervalModel`'s
-  open-interval signal -- structural facts, never connection details.
+  `CameraSourceModel.kind`/counts, `MonitoringExposureIntervalModel`'s
+  open-interval signal, and (Boot Identity + Autonomous Recovery v1)
+  `CameraSourceModel.camera_node_last_seen_at`/`camera_node_boot_id`/
+  `camera_node_service_version`/`camera_node_recent_boot_transitions_json`
+  -- structural/identity facts, never connection details or a credential. A
+  `boot_id` is a kernel-generated UUID meaningful only in relation to a
+  specific Node's own boot history; it authenticates nothing and is not
+  itself sensitive.
 - Local filesystem paths (the database path, the media root, the log path)
   are included un-redacted, matching the existing, already-shipped
   precedent: `ProductHealthStatus.log_path` already does the same for this

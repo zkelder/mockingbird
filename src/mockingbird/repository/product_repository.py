@@ -1775,6 +1775,34 @@ class StreamLivePlaybackConfig:
     camera_node_id: str | None = None
     camera_node_monitoring_profile_id: str | None = None
     camera_node_evidence_profile_id: str | None = None
+    # Boot Identity + Autonomous Recovery v1: the durable, session-
+    # independent last-seen fact for this Stream's Camera Node Source (see
+    # `CameraSourceModel.camera_node_last_seen_at`) -- `None` for a Source
+    # that predates this milestone or has never yet had a successful
+    # Observation Engine checkpoint. Lets `unified_status.camera_node_facts`
+    # tell "paired and recently confirmed reachable" apart from "paired,
+    # but nothing has actually confirmed it's still there" without a live
+    # network call from a pure status-composition function.
+    camera_node_last_seen_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class CameraNodeBootObservationOutcome:
+    """Result of one attempt to durably record a Camera Node's last-seen/
+    boot-identity facts -- see
+    `ProductRepository.record_observation_exposure_frame` and
+    "Host-side state" in docs/camera-node-installer-design.md.
+
+    `recorded=False` only when the Stream/Source no longer exists (a
+    genuine no-op, matching `_checkpoint_monitoring_exposure_interval`'s own
+    defensive shape); `boot_transition_detected=True` means the observed
+    boot id genuinely differs from the last one durably recorded for this
+    Source -- "same node, fresh reboot," never a benign reconnect (which
+    keeps the same boot id).
+    """
+
+    recorded: bool
+    boot_transition_detected: bool = False
 
 
 class MotionEvidenceModel(Base):
@@ -8019,7 +8047,9 @@ class ProductRepository:
         runtime_generation_id: str,
         healthy_at: datetime,
         now: datetime,
-    ) -> None:
+        node_boot_id: str | None = None,
+        node_service_version: str | None = None,
+    ) -> "CameraNodeBootObservationOutcome":
         """Checkpoint durable monitoring-exposure history for the
         Observation Engine path -- the camera_node-canonical counterpart to
         `mark_monitoring_running`'s own exposure bookkeeping. Writes the
@@ -8034,7 +8064,19 @@ class ProductRepository:
         `_EngineSession`) so a rotated/duplicate session correctly closes and
         replaces any interval an earlier, now-abandoned session left open,
         exactly like the legacy path's own generation rotation. See
-        docs/todays-coverage-truth-contract.md."""
+        docs/todays-coverage-truth-contract.md.
+
+        Boot Identity + Autonomous Recovery v1: also reuses this exact
+        already-throttled call (never a new write cadence) to durably
+        record the Camera Node's own `camera_node_last_seen_at`/boot
+        identity on `CameraSourceModel`, independent of whether an
+        Observation Engine session happens to be running later -- see
+        `_record_camera_node_boot_observation` and "Host-side state" in
+        docs/camera-node-installer-design.md. `node_boot_id`/
+        `node_service_version` are optional and `None` for a caller that
+        has none to report (every pre-existing call site); a non-camera_node
+        Stream, or one whose Source no longer exists, is a safe no-op.
+        """
 
         with self.session_factory() as session:
             with session.begin():
@@ -8045,6 +8087,71 @@ class ProductRepository:
                     healthy_at=healthy_at,
                     now=now,
                 )
+                return self._record_camera_node_boot_observation(
+                    session,
+                    stream_id=stream_id,
+                    observed_at=_as_utc(healthy_at),
+                    node_boot_id=node_boot_id,
+                    node_service_version=node_service_version,
+                )
+
+    _MAX_RECENT_CAMERA_NODE_BOOT_TRANSITIONS = 5
+
+    @staticmethod
+    def _record_camera_node_boot_observation(
+        session: Session,
+        *,
+        stream_id: str,
+        observed_at: datetime,
+        node_boot_id: str | None,
+        node_service_version: str | None,
+    ) -> "CameraNodeBootObservationOutcome":
+        """Durable, session-independent "last seen" plus a bounded recent
+        boot-transition window for one Stream's Camera Node Source.
+
+        `camera_node_last_seen_at` advances unconditionally on every call --
+        real evidence the host just successfully talked to this Node.
+        `camera_node_boot_id` only changes, and the bounded transition
+        history only grows, when the observed boot id genuinely differs
+        from the last one recorded; the very first observation of a boot id
+        (nothing recorded yet) is not itself a "transition" -- there is
+        nothing to have transitioned from. The history is capped at
+        `_MAX_RECENT_CAMERA_NODE_BOOT_TRANSITIONS` entries (never an
+        unbounded ledger -- milestone instruction #10), newest first, and is
+        the only evidence `_interpret_camera_node`-style restart-instability
+        suspicion in Doctor can be derived from.
+        """
+
+        stream = session.get(StreamModel, stream_id)
+        if stream is None:
+            return CameraNodeBootObservationOutcome(recorded=False)
+        source = session.get(CameraSourceModel, stream.source_id)
+        if source is None:
+            return CameraNodeBootObservationOutcome(recorded=False)
+
+        source.camera_node_last_seen_at = observed_at
+        boot_transition_detected = bool(
+            node_boot_id
+            and source.camera_node_boot_id is not None
+            and node_boot_id != source.camera_node_boot_id
+        )
+        if node_boot_id and node_boot_id != source.camera_node_boot_id:
+            if boot_transition_detected:
+                try:
+                    history = json.loads(source.camera_node_recent_boot_transitions_json or "[]")
+                    if not isinstance(history, list):
+                        history = []
+                except (TypeError, ValueError):
+                    history = []
+                history.insert(0, {"boot_id": node_boot_id, "first_seen_at": observed_at.isoformat()})
+                source.camera_node_recent_boot_transitions_json = json.dumps(
+                    history[: ProductRepository._MAX_RECENT_CAMERA_NODE_BOOT_TRANSITIONS]
+                )
+            source.camera_node_boot_id = node_boot_id
+            source.camera_node_boot_first_seen_at = observed_at
+        if node_service_version:
+            source.camera_node_service_version = node_service_version
+        return CameraNodeBootObservationOutcome(recorded=True, boot_transition_detected=boot_transition_detected)
 
     def close_observation_exposure(
         self,
@@ -8576,6 +8683,17 @@ class ProductRepository:
             model = session.get(SourceProviderConfigurationModel, stream.source_id)
             provider_key = model.provider_key if model is not None else None
             config = json.loads(model.config_json) if model is not None else {}
+            camera_source = session.get(CameraSourceModel, stream.source_id)
+            # SQLite's `DateTime(timezone=True)` does not itself preserve
+            # tzinfo across a write/read round trip -- the same gotcha
+            # Doctor's own `_gather_camera_node` already had to guard
+            # against; see storage/database.py's documented convention for
+            # this exact column shape.
+            camera_node_last_seen_at = (
+                normalize_optional_utc(camera_source.camera_node_last_seen_at)
+                if camera_source is not None
+                else None
+            )
             live_url = (config.get("live_stream_url") or "").strip() or None
             live_type = _normalize_live_stream_type(
                 config.get("live_stream_type"),
@@ -8634,6 +8752,7 @@ class ProductRepository:
                 camera_node_evidence_profile_id=(
                     (config.get("node_evidence_profile_id") or "").strip() or None
                 ),
+                camera_node_last_seen_at=camera_node_last_seen_at,
             )
 
     def streams_for_source(self, source_id: str) -> list[Stream]:

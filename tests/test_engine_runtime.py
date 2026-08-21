@@ -2960,3 +2960,43 @@ def test_batch_internal_burst_capture_no_longer_starves_an_early_generations_evi
     # proving its evidence really was captured.
     assert "blocked_missing_evidence" not in suppressed
     assert status.counts.candidates_created == generation_count
+
+
+# =============================================================================
+# Boot Identity + Autonomous Recovery v1 (see docs/camera-node-installer
+# -design.md): `_checkpoint_observation_exposure` reuses the exact existing
+# ~45s-throttled exposure checkpoint to also durably record the Camera
+# Node's boot identity, and surfaces a detected boot transition into
+# `advanced` for the currently-running session -- "same node, fresh
+# reboot," distinguishable from an ordinary benign reconnect (same
+# boot_id).
+# =============================================================================
+
+
+def test_checkpoint_surfaces_a_detected_boot_transition_into_advanced(repository: ProductRepository) -> None:
+    session = _tick_session(repository)
+    first = datetime.now(UTC)
+    session._checkpoint_observation_exposure(repository, healthy_at=first, node_boot_id="boot-A")
+    assert "camera_node_fresh_boot_detected" not in session._advanced  # first observation is not a transition
+
+    rebooted = first + timedelta(minutes=1)
+    session._checkpoint_observation_exposure(repository, healthy_at=rebooted, node_boot_id="boot-B")
+    assert session._advanced["camera_node_fresh_boot_detected"] is True
+    assert session._advanced["camera_node_boot_transitions_this_session"] == 1
+
+    # A benign reconnect back to the same already-known boot id must not
+    # count as a second transition.
+    reconnected = rebooted + timedelta(seconds=30)
+    session._checkpoint_observation_exposure(repository, healthy_at=reconnected, node_boot_id="boot-B")
+    assert session._advanced["camera_node_boot_transitions_this_session"] == 1
+
+
+def test_checkpoint_without_a_boot_id_never_reports_a_transition(repository: ProductRepository) -> None:
+    """An older Node (or a transport hop that omitted the header) reports
+    no boot id at all -- this must never be misread as a transition."""
+
+    session = _tick_session(repository)
+    healthy_at = datetime.now(UTC)
+    session._checkpoint_observation_exposure(repository, healthy_at=healthy_at)
+    assert "camera_node_fresh_boot_detected" not in session._advanced
+    assert "camera_node_boot_transitions_this_session" not in session._advanced

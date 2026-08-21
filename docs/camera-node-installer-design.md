@@ -124,18 +124,23 @@ practice.
 milestone -- see "Reproducibility hardening," below) produces:
 
 - `mockingbird_camera_node-<version>-py3-none-any.whl` -- the slim package
-  (`mockingbird_node/{__init__,__main__,app,config,providers}.py` only; no
+  (`mockingbird_node/{__init__,__main__,app,config,identity,providers,
+  selftest,watchdog}.py` only -- `identity.py`/`selftest.py`/`watchdog.py`
+  added by Boot Identity + Autonomous Recovery v1, see below; no
   `mockingbird`, `web`, `tests`, or `data` paths; no SQLAlchemy or any main-app
   dependency -- enforced by the existing `test_camera_node_artifact_is_slim_and_launcher_checks_without_starting`).
 - `requirements.txt` -- the Node's own runtime dependencies
   (`fastapi`/`pydantic`/`uvicorn[standard]`), independent of the main app's
-  `pyproject.toml`.
+  `pyproject.toml`. Boot identity/self-test/watchdog add no new dependency:
+  `identity.py` reads `/proc` and `importlib.metadata`; `watchdog.py` speaks
+  the `sd_notify` Unix-datagram-socket protocol directly, both standard
+  library only.
 - `camera-node.env.example` -- a starting configuration.
 - `manifest.json` -- artifact identity, now including verifiable source
   provenance (see below).
 - `SHA256SUMS` -- checksums of all of the above.
 
-This four/five-file directory *is* "a versioned Camera Node artifact" in the
+This seven/eight-file directory *is* "a versioned Camera Node artifact" in the
 target install flow ("obtain artifact -> install dependencies -> configure
 -> install/enable service"). It is produced on a developer/CI machine (this
 build needs nothing beyond Python's standard library) and copied onto the
@@ -417,7 +422,8 @@ StartLimitIntervalSec=300
 StartLimitBurst=5
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
 User=mockingbird-node
 Group=mockingbird-node
 EnvironmentFile=/etc/mockingbird-camera-node/node.env
@@ -429,6 +435,7 @@ Restart=on-failure
 RestartSec=5
 TimeoutStartSec=30
 TimeoutStopSec=15
+WatchdogSec=30
 KillSignal=SIGTERM
 NoNewPrivileges=true
 PrivateTmp=true
@@ -496,6 +503,157 @@ Design notes, most already justified above:
   renumbers or adds a device class could silently break capture) for no
   additional access actually being denied. This is a deliberate choice, not
   an oversight.
+- **`Type=notify`/`NotifyAccess=main`/`WatchdogSec=30`** (Boot Identity +
+  Autonomous Recovery v1): closes a real gap `Restart=on-failure` alone
+  cannot -- a *hung* process (the event loop wedged, never exits) never
+  triggers `Restart=on-failure`, which only fires on process exit. Under
+  `Type=notify`, `systemd` additionally requires `READY=1` within
+  `TimeoutStartSec=30` (the Node sends it right after its bounded startup
+  self-test runs -- see "Startup self-test," below) and, once
+  `WatchdogSec=30` is set, a `WATCHDOG=1` ping at least every 15s or it
+  restarts the unit exactly as if the process had crashed -- same bounded
+  `RestartSec=5`/`StartLimitBurst=5` governs the respawn. See "Watchdog,"
+  below, for what actually gates each ping (never a bare timer). This
+  closes the "service hang" rung of the field-recovery ladder; an OS/kernel
+  hang (where systemd itself cannot run either) is a different failure
+  class -- see "Hardware watchdog," below.
+
+## Boot identity
+
+`/node/v1/health` gains additive fields (every pre-existing field is
+unchanged, so an older host client parsing this response is unaffected):
+`boot_id`, `os_uptime_seconds`, `service_uptime_seconds`,
+`service_started_at`, `service_version`, `self_test`, `watchdog`. New
+`src/mockingbird_node/identity.py`:
+
+- `boot_id` reads `/proc/sys/kernel/random/boot_id` -- the kernel's own
+  fresh random UUID every real boot, stable for the machine's entire
+  uptime. `None` on any platform/permission/format problem; never
+  fabricated from this process's PID or the wall clock. This is what lets
+  the host tell "same node, same boot" apart from "same node, fresh
+  reboot," and (via the bounded transition history below) "process restart"
+  (same `boot_id`) apart from "machine reboot" (new `boot_id`).
+- `os_uptime_seconds` reads `/proc/uptime`'s first field -- machine uptime,
+  resets only on a real reboot, unaffected by this process's own restart.
+  `service_uptime_seconds` is a separate, monotonic-clock-only measurement
+  (`time.monotonic()` deltas, never wall-clock time) of how long *this
+  process* has been running -- resets on both a process restart and a
+  machine reboot. The two are deliberately never conflated.
+- `service_version` resolves via `importlib.metadata.version(...)` against
+  the real installed wheel's own `.dist-info` (present on every real
+  installed Node); a development checkout that never installed the
+  separate slim wheel falls back to `mockingbird_node.__version__`.
+- The Node's `node_id` (pre-existing, unchanged) is already a stable
+  identity distinct from the pairing credential: deterministic from
+  `display_name`, so it survives reinstall/update as long as `node.env`'s
+  `MOCKINGBIRD_NODE_NAME` is untouched -- which the installer already
+  guarantees (`ensure_config_file` never overwrites an existing file). No
+  change was needed here.
+
+The per-part analysis-stream headers (`analysis_parts` in `app.py`) also
+carry `X-MockingBird-Node-Boot-Id`/`X-MockingBird-Node-Service-Version` on
+every frame, mirroring the existing per-part
+`X-MockingBird-Provider-Generation`/`-Node-Session` duplication -- so a
+currently-observing host learns the Node's boot identity from frames it is
+already pulling, with zero extra requests (see "Host-side state," below).
+
+## Startup self-test
+
+New `src/mockingbird_node/selftest.py`, run once, synchronously, inside
+`create_node_app` -- before the app is ever returned to `uvicorn`, so the
+very first `/node/v1/health` response already carries the result. Checks,
+each already fast by construction and additionally wrapped in a short
+bounded timeout so a truly wedged driver call cannot hang the whole process
+before it ever binds its listening socket:
+
+- the configured provider(s) can enumerate cameras (`provider.cameras()` --
+  enumeration only, never a full capture or warm-session);
+- at least one camera reports `available`;
+- the configured pairing-state directory is writable.
+
+Status is `passed` or `degraded` -- **never `failed`**: the Node's own HTTP
+surface (pairing, health, revocation) works regardless of camera state, so
+no shape of camera trouble should ever look like the Node itself is broken
+or push it toward a restart loop. Camera absence/permission problems
+degrade with a bounded reason code (`no_camera_available`,
+`provider_enumeration_timed_out`, `provider_enumeration_failed`,
+`pairing_state_path_unwritable`), never block startup, and never crash-loop
+the service.
+
+## Watchdog
+
+New `src/mockingbird_node/watchdog.py` -- a minimal, dependency-free
+`sd_notify` client (the protocol is a handful of bytes written to a
+`SOCK_DGRAM` Unix socket at the path in `$NOTIFY_SOCKET`; no
+`sdnotify`/`systemd-python` package, keeping the artifact's runtime
+requirements unchanged). Every function is a safe no-op off systemd (a
+manual `python -m mockingbird_node` run, or any environment lacking
+`NOTIFY_SOCKET`) -- never raises, never blocks.
+
+- `READY=1` is sent once at startup, after the bounded self-test above has
+  already run -- so "started," under `Type=notify`, genuinely means
+  "self-test ran and the HTTP server is serving," not merely "the process
+  exec'd."
+- A long-lived `asyncio.Task` (started in a FastAPI startup handler,
+  cancelled cleanly on shutdown) pings `WATCHDOG=1` on an interval derived
+  from systemd's own `WATCHDOG_USEC` (half the configured `WatchdogSec`,
+  systemd's own documented convention) -- but **only after a real, bounded
+  liveness probe genuinely completes**: `provider.cameras()`, run off the
+  event loop thread (`asyncio.to_thread`) with its own timeout shorter than
+  the ping interval. If the probe hangs or fails, that cycle's ping is
+  simply withheld; if it keeps hanging, `WatchdogSec` eventually elapses
+  and `systemd` restarts the unit exactly as a crash would. This is the
+  "meaningful progress" requirement stated in the milestone brief: the
+  watchdog signal corresponds to real Camera Node responsiveness (the event
+  loop scheduling a real off-thread call and getting an answer), never a
+  bare timer thread that stays alive while the real work is dead. `service
+  alive` (this) is deliberately a different fact from `camera producing
+  frames` (which this milestone does not require merely to prove
+  liveness).
+- `/node/v1/health`'s `watchdog` object (`enabled`, `ping_interval_seconds`,
+  `seconds_since_last_probe`, `last_probe_ok`, `consecutive_probe_failures`)
+  exposes the watchdog's own evidence, not just "the process is still
+  running" on faith.
+
+This closes the **service hang** rung of the field-recovery ladder
+(`docs/roadmap.md`'s "Camera Node field-recovery ladder"): `service hang ->
+watchdog timeout -> service restart -> same boot_id` (the machine did not
+reboot; only the process did). It does **not** close the **OS hang** rung --
+see "Hardware watchdog," next.
+
+## Hardware watchdog
+
+Distinct from the service-level watchdog above: if the machine's own
+*kernel* wedges, nothing running as an ordinary process -- including
+`systemd` itself -- can act; only a piece of hardware that resets the SoC
+regardless of software state can recover that. Raspberry Pi 4's SoC has one
+(`bcm2835_wdt`), matching `docs/roadmap.md`'s "OS hang" rung.
+
+This installer never edits Raspberry Pi OS's boot-time
+`/boot/firmware/config.txt` itself: a mistake there risks the exact
+powered-but-never-boots failure this whole milestone exists to diagnose --
+categorically worse than leaving the hardware watchdog off, and the
+opposite of what "do not enable destructive or poorly understood hardware
+behavior blindly" (the milestone's own instruction) asks for.
+`dtparam=watchdog=on` therefore stays a manual, documented, one-time
+operator action (see the install guide) -- but once that step has made
+`/dev/watchdog` appear, `scripts/install_camera_node.py
+--enable-hardware-watchdog` writes the smallest safe systemd-level
+configuration that pets it: a `system.conf.d/` drop-in
+(`RuntimeWatchdogSec=14`, systemd's own machine-wide mechanism -- `PID 1`
+pets the device directly, which is why this is not a per-unit `[Service]`
+option), idempotent, refusing clearly and writing nothing if the device is
+still absent. This takes effect after the next reboot or
+`systemctl daemon-reexec`; `--status` reports the device's presence,
+read-only, on every run.
+
+**Disclosed limit:** this piece was implemented and hermetically tested
+(the drop-in writer and capability probe, both rooted under an injectable
+prefix exactly like the rest of this installer), but not live-verified
+against a real hardware watchdog device -- no session validating this
+milestone had access to real Pi hardware with `/dev/watchdog` enabled. It
+remains a documented, capability-gated, explicitly opt-in golden path, not
+something the installer enables on its own.
 
 ## Diagnostics implementation
 
@@ -1011,3 +1169,172 @@ scope:
   WSL/Windows interop (slow real CUDA/ONNX cold start racing the
   verification timeout); re-querying `--status` immediately afterward
   self-corrected. Not a defect in this milestone's own code.
+
+## Camera Node Boot Identity + Autonomous Recovery v1 (2026-08-21)
+
+Follow-on milestone, layered on the design above. Implements the "Bounded
+additions to the Camera Node golden path" and closes most of the "Camera
+Node field-recovery ladder" open items in [roadmap.md](roadmap.md) Gate D/E
+-- see that document's own dated "Current status" entry for the complete
+narrative and the exact 2026-08-20 incident this responds to. The design
+sections above ("Boot identity," "Startup self-test," "Watchdog," "Hardware
+watchdog") already describe the resulting current-state design; this
+section is the validation/provenance record.
+
+### Files touched
+
+- `src/mockingbird_node/{identity,selftest,watchdog}.py` (new)
+- `src/mockingbird_node/{app,__init__}.py` (wiring; additive
+  `/node/v1/health` fields, per-part analysis-stream boot-identity headers,
+  startup/shutdown event handlers, `__version__` fallback)
+- `scripts/build_camera_node_artifact.py` (`NODE_FILES` gains the three new
+  modules -- the one real defect this milestone found in its own work:
+  the artifact silently omitted them until caught by the real-process
+  test, see "Real service-level validation," below)
+- `scripts/install_camera_node.py` (`Type=notify`/`WatchdogSec=30`;
+  `--enable-hardware-watchdog`, `hardware_watchdog_device_present`,
+  `--status` reports device presence)
+- `src/mockingbird/observation/media_contracts.py`
+  (`AnalysisFrameEnvelope.node_boot_id`/`node_service_version`)
+- `src/mockingbird/observation/camera_node_live.py` (optional header
+  parsing; `AnalysisSourceStatus` gains the same two fields, tracked in
+  `CameraNodeAnalysisSource._offer`)
+- `src/mockingbird/observation/engine_runtime.py`
+  (`_checkpoint_observation_exposure` threads boot identity through and
+  surfaces a detected transition into `advanced`)
+- `src/mockingbird/repository/product_repository.py`
+  (`record_observation_exposure_frame` extended;
+  `_record_camera_node_boot_observation`;
+  `CameraNodeBootObservationOutcome`; `StreamLivePlaybackConfig.
+  camera_node_last_seen_at`)
+- `src/mockingbird/storage/models.py` (`CameraSourceModel` gains five
+  nullable columns)
+- `src/mockingbird/storage/database.py` (schema 36 -> 37,
+  `_migrate_to_camera_node_boot_identity`)
+- `src/mockingbird/observation/unified_status.py`
+  (`CAMERA_NODE_LAST_SEEN_STALE_AFTER_SECONDS`; `camera_node_facts` no
+  longer reports `camera_connected: true` from configuration alone once
+  real staleness evidence exists)
+- `src/mockingbird/diagnostics/doctor.py` (imports the shared staleness
+  constant rather than keeping a private copy; `_gather_camera_node`/
+  `_interpret_camera_node` read the new durable facts; new restart-
+  instability and no-open-session-staleness branches)
+- `docs/camera-node-install-guide.md`, `docs/
+  mockingbird-doctor-operational-health-contract.md`, `docs/roadmap.md`
+  (this document; operator guide; Doctor contract; roadmap status)
+- New tests: `tests/test_camera_node_boot_identity.py`; extended
+  `tests/test_persistence.py`, `tests/test_engine_runtime.py`, `tests/
+  test_observation_camera_node_live.py`, `tests/test_doctor.py`, `tests/
+  test_install_camera_node.py`, `tests/test_camera_node_real_process.py`,
+  `tests/test_unified_observation_status.py`
+- Six pre-existing tests' hardcoded `CURRENT_DATABASE_SCHEMA_VERSION == 36`
+  sentinels bumped to `37` (`test_camera_health.py`, `test_camera_node.py`,
+  `test_candidate_visit_repository.py` x4, `test_visit_tags.py`, `test_
+  species_candidate_packs.py`, `test_visit_collections.py`, `test_yard_
+  map.py` -- 14 assertions across 8 files total), mirroring the identical,
+  expected mechanical fix the schema-36 migration itself required.
+
+### Validation
+
+- **Tier 1/2 focused sweep** (every Camera Node/Doctor/observation-
+  recovery/host-status file above, plus every file whose hardcoded schema
+  sentinel needed bumping): **504 passed, 0 failed**.
+- **Core gate** (`python scripts/verify_core.py`, the whole backend suite
+  minus `slow`): **3569 passed, 2 skipped, 11 deselected, 11 xfailed, 0
+  failed** in 540.71s (9m01s).
+- **`slow`-tier Camera Node tests** (real venv + real subprocess):
+  `test_camera_node_real_process.py` (extended) and `test_camera_node_
+  packaging.py` (`NODE_FILES` assertion) both green.
+- **Lint**: every newly-created file (`identity.py`, `selftest.py`,
+  `watchdog.py`, `test_camera_node_boot_identity.py`) is `ruff check`
+  clean. Every *modified* file was diffed against its own `HEAD` version's
+  lint output (via a parallel checkout of just the `HEAD` copies) to
+  isolate genuinely new findings from pre-existing ones at shifted line
+  numbers -- one real new finding (`test_camera_node_boot_identity.py`'s
+  own unused `threading` import) was found and fixed; every remaining
+  finding (an unrelated pre-existing `product_repository.py` cluster,
+  plus a handful of pre-existing fixture-class semicolons/unused imports
+  in `test_camera_node.py`/`test_engine_runtime.py`/`test_observation_
+  camera_node_live.py`) was confirmed, by `git diff`, to sit outside every
+  line this milestone actually changed.
+
+### Real service-level validation
+
+Not performed against the real reference Pi 4 -- deliberately. That device
+is currently paired, healthy, and serving the project's real ongoing field
+monitoring (confirmed live via a single read-only `GET /node/v1/health`
+probe at the start of this session); deploying new/experimental boot-
+identity code to it, or rebooting it, was judged disproportionate to a
+task that deterministic tests plus one bounded, safe, *local* service-level
+check could establish just as rigorously -- see "Confirm first" in this
+project's own operating guardrails. Live redeploy/reboot acceptance against
+the real reference Pi remains a natural, low-risk follow-up, not performed
+here without explicit direction.
+
+Instead, this sandbox's own genuine `systemctl --user` (real `systemd
+255`, not a simulation) was used directly:
+
+1. Built a real artifact (`build_camera_node_artifact.py
+   --allow-dirty-source`) and a real venv; installing it into the venv
+   *first* surfaced the one real defect this milestone's own work
+   introduced: `NODE_FILES` had not been updated for the three new
+   modules, so the installed package raised `ModuleNotFoundError:
+   No module named 'mockingbird_node.identity'` at import time. Fixed
+   immediately (see "Files touched," above); every subsequent step used
+   the corrected artifact.
+2. Installed the corrected build as a real, temporary `Type=notify`/
+   `WatchdogSec=8`/`NotifyAccess=main` user-level unit (root/system-level
+   privileges are not available in this sandbox; a user unit exercises
+   identical `Type=notify`/watchdog systemd semantics). `systemctl --user
+   status` correctly reported `active (running)` only once the real
+   process sent `READY=1`; the real journal showed the enriched startup
+   line (`boot_id=... version=0.1.0 self_test=passed`) and a real `GET
+   /node/v1/health` returned every new field correctly, including
+   `watchdog.enabled: true, ping_interval_seconds: 4.0` (half of the
+   configured `WatchdogSec=8`, exactly as designed).
+3. **The core proof**: `kill -STOP` on the real main PID -- a genuine
+   process hang (frozen, never exits), distinct from every crash/`kill -9`
+   case already proven by the original installer milestone. Real `systemd`
+   output, unedited:
+
+   ```
+   systemd[793]: mockingbird-camera-node-test.service: Watchdog timeout (limit 8s)!
+   systemd[793]: mockingbird-camera-node-test.service: Killing process <pid> (python) with signal SIGABRT.
+   systemd[793]: mockingbird-camera-node-test.service: Main process exited, code=dumped, status=6/ABRT
+   systemd[793]: mockingbird-camera-node-test.service: Failed with result 'watchdog'.
+   systemd[793]: mockingbird-camera-node-test.service: Scheduled restart job, restart counter is at 1.
+   ```
+
+   The respawned process answered `/node/v1/health` with the identical
+   `boot_id` as before (the machine never rebooted, only the process did)
+   -- direct, real proof of the "service hang -> watchdog timeout ->
+   service restart -> same boot_id" ladder rung, not merely an assertion
+   about it. `NRestarts` read back `1`; `Result 'watchdog'` is `systemd`'s
+   own diagnostic, distinguishable in `journalctl` from `Result 'signal'`
+   (a real crash, per the original milestone's own findings above).
+4. Cleaned up completely: unit stopped, disabled, removed, `daemon-reload`d;
+   `systemctl --user status` afterward reports the unit does not exist.
+   No residual state left on this machine.
+
+This is a genuine, real-`systemd`, real-process validation of exactly the
+mechanism production will use -- not a simulation of one -- and is the
+"one bounded service-level check" the milestone's own validation
+instructions called for.
+
+### Decision
+
+**A -- Boot identity and autonomous service recovery implemented.** The
+Camera Node exposes real boot/service identity (never fabricated),
+recovers automatically from every software-level failure it actually
+controls -- a process crash (pre-existing `Restart=on-failure`) and now
+also a genuine process hang (new `sd_notify`/`WatchdogSec` watchdog,
+real-`systemd`-verified) -- and the host now diagnoses and reconnects
+correctly, including through the specific gap ("offline, last seen") the
+real 2026-08-20 incident exposed. Hardware-watchdog (OS-hang) recovery is
+implemented and hermetically tested but explicitly not live-verified, and
+is disclosed as exactly that rather than folded into the "A" claim by
+omission; per the milestone's own instructions, this does not on its own
+force a "B" -- the service-level watchdog this milestone actually shipped
+is real, working, and closes the failure class it targets. The Camera Node
+never claims to recover a machine that never boots at all -- see "Never-
+boots boundary" in [roadmap.md](roadmap.md).

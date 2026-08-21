@@ -108,6 +108,19 @@ class InstallPaths:
     def unit_path(self) -> Path:
         return self.prefix / "etc" / "systemd" / "system" / f"{SERVICE_NAME}.service"
 
+    @property
+    def hardware_watchdog_device(self) -> Path:
+        return self.prefix / "dev" / "watchdog"
+
+    @property
+    def systemd_watchdog_dropin_path(self) -> Path:
+        # A machine-wide `system.conf.d/` drop-in, not a `[Service]` unit
+        # option: `RuntimeWatchdogSec=` is a `systemd-system.conf(5)`
+        # setting owned by PID 1 itself (it pets the hardware device
+        # directly), not something an individual unit file can configure --
+        # see "Hardware watchdog" in docs/camera-node-installer-design.md.
+        return self.prefix / "etc" / "systemd" / "system.conf.d" / f"{SERVICE_NAME}-watchdog.conf"
+
 
 # --- System prerequisites ---------------------------------------------------
 
@@ -311,7 +324,8 @@ StartLimitIntervalSec=300
 StartLimitBurst=5
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
 User={SERVICE_USER}
 Group={SERVICE_GROUP}
 EnvironmentFile={paths.env_file}
@@ -323,6 +337,7 @@ Restart=on-failure
 RestartSec=5
 TimeoutStartSec=30
 TimeoutStopSec=15
+WatchdogSec=30
 KillSignal=SIGTERM
 NoNewPrivileges=true
 PrivateTmp=true
@@ -359,6 +374,68 @@ def install_systemd_unit(paths: InstallPaths, *, runner: CommandRunner) -> bool:
     os.chmod(paths.unit_path, 0o644)
     _systemctl("daemon-reload", runner=runner)
     return True
+
+
+# --- Hardware watchdog (OS-hang recovery; optional, capability-gated) -------
+#
+# Distinct from the service-level `WatchdogSec=`/`sd_notify` watchdog above,
+# which only recovers a *hung Camera Node process* while the kernel and
+# systemd itself are still scheduling normally. If the machine's own kernel
+# wedges, nothing running as an ordinary process -- including systemd -- can
+# act; only a piece of hardware that resets the SoC regardless of software
+# state can recover that. Raspberry Pi 4's SoC has one (`bcm2835_wdt`). See
+# "Hardware watchdog" in docs/camera-node-installer-design.md.
+#
+# This installer never edits boot-time configuration (Raspberry Pi OS's
+# `/boot/firmware/config.txt`): a mistake there risks the exact
+# powered-but-never-boots failure this whole milestone exists to diagnose,
+# which is categorically worse than leaving the hardware watchdog off. The
+# `dtparam=watchdog=on` step therefore stays a manual, documented, one-time
+# operator action (see the install guide); this installer only acts *after*
+# that already-manual step has made `/dev/watchdog` appear, and only when
+# explicitly requested with `--enable-hardware-watchdog`.
+
+def hardware_watchdog_device_present(paths: InstallPaths) -> bool:
+    """Read-only capability probe -- never mutates anything. Safe to call
+    from `--status` on every run."""
+
+    return paths.hardware_watchdog_device.exists()
+
+
+def enable_hardware_watchdog(paths: InstallPaths) -> str:
+    """Write the smallest safe systemd-level configuration that pets an
+    *already-present* hardware watchdog device -- refuses clearly, and
+    writes nothing, if the device does not exist yet (the operator has not
+    completed the manual `dtparam=watchdog=on` step). Idempotent: an
+    unchanged drop-in is left untouched, matching `install_systemd_unit`'s
+    own "no unnecessary churn" convention.
+
+    `RuntimeWatchdogSec=14` is comfortably shorter than most hardware
+    watchdog maximum timeouts (`bcm2835_wdt`'s default is 15s) while still
+    generous for a healthy, merely momentarily busy system -- PID 1 pets it
+    on its own schedule, unrelated to this Node's own `WatchdogSec=30`
+    above.
+    """
+
+    if not hardware_watchdog_device_present(paths):
+        return (
+            "Hardware watchdog device not found "
+            f"({paths.hardware_watchdog_device}). Add `dtparam=watchdog=on` to "
+            "/boot/firmware/config.txt yourself, reboot, then re-run with "
+            "--enable-hardware-watchdog. This installer never edits boot "
+            "configuration itself -- see docs/camera-node-install-guide.md."
+        )
+    content = "[Manager]\nRuntimeWatchdogSec=14\n"
+    if paths.systemd_watchdog_dropin_path.is_file() and paths.systemd_watchdog_dropin_path.read_text(encoding="utf-8") == content:
+        return f"Hardware watchdog already configured ({paths.systemd_watchdog_dropin_path}); no change needed."
+    paths.systemd_watchdog_dropin_path.parent.mkdir(parents=True, exist_ok=True)
+    paths.systemd_watchdog_dropin_path.write_text(content, encoding="utf-8")
+    os.chmod(paths.systemd_watchdog_dropin_path, 0o644)
+    return (
+        f"Wrote {paths.systemd_watchdog_dropin_path}. This takes effect after "
+        "the next reboot (or `systemctl daemon-reexec`, run as root) -- systemd "
+        "PID 1 only reads system.conf.d/ at its own startup."
+    )
 
 
 # --- Health check --------------------------------------------------------
@@ -527,6 +604,7 @@ def status(
     lines: list = [
         f"service enabled: {service_is_enabled(runner=runner)}",
         f"service active: {service_is_active(runner=runner)}",
+        f"hardware watchdog device present: {hardware_watchdog_device_present(paths)}",
     ]
     if paths.manifest_path.is_file():
         try:
@@ -569,11 +647,22 @@ def main() -> None:
     )
     parser.add_argument("--status", action="store_true", help="read-only report; makes no changes")
     parser.add_argument("--rollback", action="store_true", help="swap back to the previously installed version")
+    parser.add_argument(
+        "--enable-hardware-watchdog", action="store_true",
+        help=(
+            "opt in to systemd's own OS-hang recovery via an already-present "
+            "/dev/watchdog device; never edits boot configuration itself -- "
+            "see 'Hardware watchdog' in docs/camera-node-installer-design.md"
+        ),
+    )
     parser.add_argument("--prefix", type=Path, default=Path("/"), help=argparse.SUPPRESS)
     arguments = parser.parse_args()
     paths = InstallPaths(prefix=arguments.prefix)
 
     try:
+        if arguments.enable_hardware_watchdog:
+            print(enable_hardware_watchdog(paths))
+            return
         if arguments.status:
             report = status(paths=paths)
             print("\n".join(report.lines))

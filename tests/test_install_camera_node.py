@@ -34,6 +34,8 @@ install_or_update_venv = _MODULE["install_or_update_venv"]
 parse_env_file = _MODULE["parse_env_file"]
 SERVICE_USER = _MODULE["SERVICE_USER"]
 CAMERA_GROUP = _MODULE["CAMERA_GROUP"]
+hardware_watchdog_device_present = _MODULE["hardware_watchdog_device_present"]
+enable_hardware_watchdog = _MODULE["enable_hardware_watchdog"]
 
 
 def _result(returncode: int, *, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:
@@ -210,6 +212,63 @@ def test_rendered_unit_uses_dedicated_user_and_hardening_directives(tmp_path) ->
     assert "NoNewPrivileges=true" in unit
     assert f"EnvironmentFile={tmp_path}/etc/mockingbird-camera-node/node.env" in unit
     assert f"ExecStart={tmp_path}/opt/mockingbird-camera-node/venv/bin/python -m mockingbird_node" in unit
+
+
+def test_rendered_unit_enables_the_service_watchdog(tmp_path) -> None:
+    """Boot Identity + Autonomous Recovery v1: `Type=notify` + `WatchdogSec=`
+    let systemd detect and restart a genuinely *hung* Camera Node process
+    (the event loop wedged but never exits) -- something `Restart=on-failure`
+    alone (bare process exit) cannot catch. See "Watchdog" in
+    docs/camera-node-installer-design.md and `mockingbird_node.watchdog`."""
+
+    unit = render_systemd_unit(InstallPaths(prefix=tmp_path))
+    assert "Type=notify" in unit
+    assert "NotifyAccess=main" in unit
+    assert "WatchdogSec=30" in unit
+    # Unchanged: a genuine process crash/exit is still bounded exactly as
+    # before -- the watchdog is additive, not a replacement.
+    assert "Restart=on-failure" in unit
+    assert "RestartSec=5" in unit
+    assert "StartLimitIntervalSec=300" in unit
+
+
+# --- Hardware watchdog (OS-hang recovery; optional, capability-gated) -------
+
+
+def test_hardware_watchdog_device_absent_by_default(tmp_path) -> None:
+    assert hardware_watchdog_device_present(InstallPaths(prefix=tmp_path)) is False
+
+
+def test_enable_hardware_watchdog_refuses_without_touching_boot_config(tmp_path) -> None:
+    """This installer never edits `/boot/firmware/config.txt` itself --
+    the one boot-critical file a mistake in could reproduce the exact
+    powered-but-never-boots failure this whole milestone exists to
+    diagnose. Refuses clearly, writes nothing, when the device is absent."""
+
+    paths = InstallPaths(prefix=tmp_path)
+    message = enable_hardware_watchdog(paths)
+    assert "not found" in message.lower()
+    assert "dtparam=watchdog=on" in message
+    assert not paths.systemd_watchdog_dropin_path.exists()
+
+
+def test_enable_hardware_watchdog_writes_a_drop_in_once_the_device_exists(tmp_path) -> None:
+    paths = InstallPaths(prefix=tmp_path)
+    paths.hardware_watchdog_device.parent.mkdir(parents=True, exist_ok=True)
+    paths.hardware_watchdog_device.write_bytes(b"")
+
+    assert hardware_watchdog_device_present(paths) is True
+    message = enable_hardware_watchdog(paths)
+    assert "wrote" in message.lower()
+    content = paths.systemd_watchdog_dropin_path.read_text(encoding="utf-8")
+    assert "[Manager]" in content
+    assert "RuntimeWatchdogSec=" in content
+
+    # Idempotent: re-running with an unchanged drop-in reports no change,
+    # matching `install_systemd_unit`'s own "no unnecessary churn" convention.
+    second_message = enable_hardware_watchdog(paths)
+    assert "already configured" in second_message.lower()
+    assert paths.systemd_watchdog_dropin_path.read_text(encoding="utf-8") == content
 
 
 # --- Venv install/update/idempotency -----------------------------------------

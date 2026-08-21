@@ -506,6 +506,197 @@ def test_interpret_camera_node_recent_freshness_is_pass() -> None:
     assert result.recoverability is None
 
 
+def test_interpret_camera_node_stale_last_seen_with_no_open_session_warns() -> None:
+    """Boot Identity + Autonomous Recovery v1: closes the gap Camera Node
+    Connectivity & Recovery Diagnosis v1 explicitly disclosed as open --
+    "the gap between a session giving up entirely... and the next Start,"
+    where no open exposure interval exists at all for the pre-existing
+    check above to read. `camera_node_last_seen_at` is durable and
+    session-independent, so it remains valid evidence exactly in that gap."""
+
+    now = datetime.now(UTC)
+    stale = now - timedelta(seconds=doctor._CAMERA_NODE_STALE_AFTER_SECONDS + 300)
+    result = doctor._interpret_camera_node(
+        {
+            "source_count": 1,
+            "source_kinds": ["integration"],
+            "stream_count": 1,
+            "currently_monitored_count": 0,
+            "attention_count": 0,
+            "stalest_camera_node_stream_id": None,
+            "stalest_camera_node_fresh_at": None,  # no open interval at all
+            "camera_node_last_seen_at": stale.isoformat(),
+        },
+        now=now,
+    )
+    assert result.status == DoctorStatus.WARN
+    assert result.recoverability == DoctorRecoverability.DEGRADED
+    assert "offline" in result.summary.lower()
+    assert "minute" in result.summary.lower()
+    assert result.user_action
+
+
+def test_interpret_camera_node_recent_last_seen_with_no_open_session_is_pass() -> None:
+    now = datetime.now(UTC)
+    recent = now - timedelta(seconds=30)
+    result = doctor._interpret_camera_node(
+        {
+            "source_count": 1,
+            "source_kinds": ["integration"],
+            "stream_count": 1,
+            "currently_monitored_count": 0,
+            "attention_count": 0,
+            "stalest_camera_node_fresh_at": None,
+            "camera_node_last_seen_at": recent.isoformat(),
+        },
+        now=now,
+    )
+    assert result.status == DoctorStatus.PASS
+
+
+def test_interpret_camera_node_no_last_seen_fact_at_all_is_pass() -> None:
+    """A Source that predates this milestone (or has never had a
+    checkpoint) has no evidence either way -- honest silence, never a
+    fabricated WARN."""
+
+    result = doctor._interpret_camera_node(
+        {
+            "source_count": 1,
+            "source_kinds": ["integration"],
+            "stream_count": 1,
+            "currently_monitored_count": 0,
+            "attention_count": 0,
+            "stalest_camera_node_fresh_at": None,
+            "camera_node_last_seen_at": None,
+        },
+        now=datetime.now(UTC),
+    )
+    assert result.status == DoctorStatus.PASS
+
+
+def test_interpret_camera_node_surfaces_boot_id_and_service_version_in_context() -> None:
+    result = doctor._interpret_camera_node(
+        {
+            "source_count": 1,
+            "source_kinds": ["integration"],
+            "stream_count": 1,
+            "currently_monitored_count": 1,
+            "attention_count": 0,
+            "stalest_camera_node_fresh_at": datetime.now(UTC).isoformat(),
+            "camera_node_boot_id": "b2f1c9de-1234-5678-9abc-def012345678",
+            "camera_node_service_version": "0.1.0",
+        },
+        now=datetime.now(UTC),
+    )
+    assert result.diagnostic_context["camera_node_boot_id"] == "b2f1c9de-1234-5678-9abc-def012345678"
+    assert result.diagnostic_context["camera_node_service_version"] == "0.1.0"
+
+
+def _boot_transitions_json(*, count: int, now: datetime, within_seconds: float) -> str:
+    return json.dumps(
+        [
+            {
+                "boot_id": f"boot-{index}",
+                "first_seen_at": (now - timedelta(seconds=within_seconds * index / max(count, 1))).isoformat(),
+            }
+            for index in range(count)
+        ]
+    )
+
+
+def test_interpret_camera_node_repeated_recent_reboots_suspects_instability() -> None:
+    """Boot Identity + Autonomous Recovery v1: three real reboots inside
+    the bounded fifteen-minute window is the "boot loop / repeated
+    restart" evidence docs/camera-node-installer-design.md names as
+    previously unavailable -- an operator could not tell "stuck
+    restarting" apart from "simply offline" without direct device access."""
+
+    now = datetime.now(UTC)
+    result = doctor._interpret_camera_node(
+        {
+            "source_count": 1,
+            "source_kinds": ["integration"],
+            "stream_count": 1,
+            "currently_monitored_count": 1,
+            "attention_count": 0,
+            "stalest_camera_node_fresh_at": now.isoformat(),  # even with a fresh checkpoint...
+            "camera_node_recent_boot_transitions_json": _boot_transitions_json(
+                count=3, now=now, within_seconds=600
+            ),
+        },
+        now=now,
+    )
+    assert result.status == DoctorStatus.WARN
+    assert "instability" in result.summary.lower()
+    assert result.diagnostic_context["recent_boot_transition_count"] == 3
+
+
+def test_interpret_camera_node_two_recent_reboots_is_not_yet_suspicious() -> None:
+    """Bounded threshold: two reboots is not, by itself, treated as
+    instability -- avoids over-alarming on one ordinary maintenance
+    restart plus one real recovery."""
+
+    now = datetime.now(UTC)
+    result = doctor._interpret_camera_node(
+        {
+            "source_count": 1,
+            "source_kinds": ["integration"],
+            "stream_count": 1,
+            "currently_monitored_count": 1,
+            "attention_count": 0,
+            "stalest_camera_node_fresh_at": now.isoformat(),
+            "camera_node_recent_boot_transitions_json": _boot_transitions_json(
+                count=2, now=now, within_seconds=600
+            ),
+        },
+        now=now,
+    )
+    assert result.status == DoctorStatus.PASS
+
+
+def test_interpret_camera_node_old_reboots_outside_window_are_not_suspicious() -> None:
+    """A bounded window, not merely a bounded count: three reboots spread
+    across days (well outside `_CAMERA_NODE_INSTABILITY_WINDOW_SECONDS`)
+    is ordinary operational history, not instability evidence."""
+
+    now = datetime.now(UTC)
+    old_transitions = json.dumps(
+        [
+            {"boot_id": f"boot-{i}", "first_seen_at": (now - timedelta(days=i + 1)).isoformat()}
+            for i in range(3)
+        ]
+    )
+    result = doctor._interpret_camera_node(
+        {
+            "source_count": 1,
+            "source_kinds": ["integration"],
+            "stream_count": 1,
+            "currently_monitored_count": 1,
+            "attention_count": 0,
+            "stalest_camera_node_fresh_at": now.isoformat(),
+            "camera_node_recent_boot_transitions_json": old_transitions,
+        },
+        now=now,
+    )
+    assert result.status == DoctorStatus.PASS
+
+
+def test_interpret_camera_node_malformed_boot_transitions_json_is_safely_ignored() -> None:
+    result = doctor._interpret_camera_node(
+        {
+            "source_count": 1,
+            "source_kinds": ["integration"],
+            "stream_count": 1,
+            "currently_monitored_count": 1,
+            "attention_count": 0,
+            "stalest_camera_node_fresh_at": datetime.now(UTC).isoformat(),
+            "camera_node_recent_boot_transitions_json": "{not valid json",
+        },
+        now=datetime.now(UTC),
+    )
+    assert result.status == DoctorStatus.PASS
+
+
 def test_run_doctor_survives_a_real_open_camera_node_exposure_interval(tmp_path: Path) -> None:
     """Real-database regression guard: every test above calls
     `_interpret_camera_node` directly with a hand-built dict whose
@@ -562,6 +753,64 @@ def test_run_doctor_survives_a_real_open_camera_node_exposure_interval(tmp_path:
     # Freshly checkpointed -- well within the staleness window -- so this
     # must PASS, not WARN and not fail with an unexpected exception.
     assert camera_result.status == DoctorStatus.PASS
+
+
+def test_run_doctor_reads_camera_node_last_seen_after_session_closes(tmp_path: Path) -> None:
+    """Boot Identity + Autonomous Recovery v1, real-database regression
+    guard: the same naive-datetime SQLite round trip as the test above, but
+    for `CameraSourceModel.camera_node_last_seen_at` specifically, and
+    exercised in exactly the state this milestone's new fallback branch
+    targets -- the exposure interval already *closed* (no session
+    currently observing), so only the durable last-seen fact remains."""
+
+    runtime_home = _initialized_runtime_home(tmp_path)
+    db_path = runtime_home / "data" / "mockingbird.sqlite3"
+    repository = ProductRepository(
+        db_url=f"sqlite:///{db_path}", media_root=runtime_home / "data" / "media" / "imports"
+    )
+    try:
+        with repository.session_factory() as session, session.begin():
+            session.add(
+                CameraSourceModel(
+                    id="source-real-camera-node",
+                    name="Real Camera Node",
+                    kind="integration",
+                    status="connected",
+                    description="Real paired Camera Node fixture.",
+                )
+            )
+            session.add(
+                StreamModel(
+                    id="stream-real-camera-node",
+                    source_id="source-real-camera-node",
+                    name="Real Camera Node stream",
+                    description="Real paired Camera Node fixture.",
+                    is_live=True,
+                )
+            )
+        healthy_at = datetime.now(UTC)
+        repository.record_observation_exposure_frame(
+            stream_id="stream-real-camera-node",
+            runtime_generation_id="generation-real",
+            healthy_at=healthy_at,
+            now=healthy_at,
+            node_boot_id="boot-real-1",
+            node_service_version="0.1.0",
+        )
+        repository.close_observation_exposure(
+            stream_id="stream-real-camera-node",
+            close_reason="stop_requested",
+            now=datetime.now(UTC),
+            last_healthy_at=healthy_at,
+        )
+    finally:
+        repository.close()
+
+    report = run_doctor(runtime_home=runtime_home)  # must not raise TypeError
+    camera_result = next(c for c in report.checks if c.code == DoctorCheckCode.CAMERA_NODE)
+    assert camera_result.status == DoctorStatus.PASS
+    assert camera_result.diagnostic_context["camera_node_boot_id"] == "boot-real-1"
+    assert camera_result.diagnostic_context["camera_node_service_version"] == "0.1.0"
 
 
 # --------------------------------------------------------------------------

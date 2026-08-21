@@ -131,9 +131,17 @@ curl http://127.0.0.1:8787/node/v1/health
 ```
 
 reports `status`, `camera_count`, `available_camera_count`, and whether
-pairing is still required. `sudo python3 scripts/install_camera_node.py
---status` reports the same, plus which build is installed and whether a
-rollback target exists.
+pairing is still required, plus (Boot Identity + Autonomous Recovery v1):
+`boot_id` (the kernel's own per-boot identity -- changes only on a real
+reboot, not a service restart), `os_uptime_seconds` (machine uptime) versus
+`service_uptime_seconds` (this process's own uptime), `service_version`,
+`self_test` (`passed`/`degraded` plus bounded reason codes -- a missing
+camera degrades this, it never fails it), and `watchdog` (whether the
+systemd watchdog is active and when it last successfully pinged). `sudo
+python3 scripts/install_camera_node.py --status` reports the installer's
+own view (which build is installed, whether a rollback target exists, and
+whether a hardware watchdog device is present) alongside a live health
+probe.
 
 ## 7. Inspect logs
 
@@ -142,12 +150,63 @@ sudo journalctl -u mockingbird-camera-node -f
 ```
 
 follows the live log. A normal startup shows a line naming the bind
-address/port, configured providers, and whether pairing state was already
-loaded -- deterministic and independent of log verbosity. Raise verbosity
-temporarily for more detail (per-request access logs) by setting
+address/port, configured providers, whether pairing state was already
+loaded, this boot's `boot_id`, the installed `service_version`, and the
+self-test outcome -- deterministic and independent of log verbosity. Raise
+verbosity temporarily for more detail (per-request access logs) by setting
 `MOCKINGBIRD_NODE_LOG_LEVEL=info` in `node.env` and restarting; the default
 (`warning`) is intentionally conservative. No credential or pairing digest
 ever appears in the log -- only the pairing code itself, by design.
+
+## 7a. Service-level recovery (crash and hang)
+
+A genuine process crash (`kill -9`, an unhandled exception) is bounded and
+automatic: `systemd` respawns it after `RestartSec=5`, capped by
+`StartLimitBurst=5` restarts per `StartLimitIntervalSec=300` so a
+persistent failure surfaces as a stopped, `failed` unit rather than looping
+forever -- `systemctl status mockingbird-camera-node` shows this plainly.
+
+A *hung* process (the service stays running but its event loop is wedged)
+is a different failure `Restart=on-failure` alone cannot see, since nothing
+ever exits. The service also runs under `Type=notify` with `WatchdogSec=30`:
+it pings systemd only after a real, bounded check of its own
+responsiveness genuinely succeeds, so a wedged process simply stops
+pinging and systemd restarts it the same way it would a crash -- same
+`boot_id`, since the machine itself never rebooted. `watchdog.enabled` in
+`/node/v1/health` (or `journalctl`, which shows the watchdog-triggered
+restart the same way it shows a crash) confirms this is active.
+
+**What this does not cover:** if the machine's own *kernel* hangs, nothing
+running as an ordinary process -- systemd included -- can act. That
+requires a real hardware watchdog; see the next section.
+
+## 7b. Hardware watchdog (optional, recovers from a genuine OS/kernel hang)
+
+Raspberry Pi 4's SoC has a hardware watchdog (`bcm2835_wdt`) that can
+hard-reset the machine if the kernel itself stops responding -- something no
+software running on the wedged machine, including `systemd`, can do for
+itself. This installer never enables it automatically or edits boot
+configuration on your behalf -- a mistake in
+`/boot/firmware/config.txt` risks the device never booting again, which is
+worse than leaving this off. Enabling it is a deliberate, two-step, manual
+opt-in:
+
+1. Add `dtparam=watchdog=on` to `/boot/firmware/config.txt` yourself, then
+   reboot. Confirm it took effect: `test -e /dev/watchdog && echo present`.
+2. Once present, let the installer configure systemd to use it:
+
+   ```sh
+   sudo python3 scripts/install_camera_node.py --enable-hardware-watchdog
+   ```
+
+   This writes a small systemd drop-in (`RuntimeWatchdogSec=14`) that takes
+   effect after your next reboot or `sudo systemctl daemon-reexec`. It only
+   ever writes this file when `/dev/watchdog` already exists; run before
+   step 1, it refuses clearly and changes nothing.
+
+This is genuinely optional -- the service-level watchdog above already
+recovers from a hung Camera Node process without it. Only a real, rare
+kernel-level hang needs this extra layer.
 
 ## 8. Reboot safely
 
@@ -157,7 +216,9 @@ sudo reboot
 
 The service starts automatically after `network-online.target` is reached
 and reconnects to the paired MockingBird host without any manual step or
-re-pairing.
+re-pairing. `curl http://127.0.0.1:8787/node/v1/health | grep boot_id`
+before and after confirms a genuinely fresh `boot_id` -- MockingBird itself
+also observes this automatically once it reconnects.
 
 ## 9. Updating
 
@@ -210,7 +271,13 @@ to roll back to). Configuration and pairing state are unaffected either way.
 ## Advanced diagnostics
 
 - Full read-only report: `sudo python3 scripts/install_camera_node.py --status`
+  (includes whether a hardware watchdog device is present)
 - Rendered systemd unit: `systemctl cat mockingbird-camera-node`
+- Repeated recent restarts, whether from a crash or a watchdog timeout:
+  `systemctl show mockingbird-camera-node -p NRestarts`, and
+  `journalctl -u mockingbird-camera-node` for each one's own reason
+  (`Failed with result 'signal'`/`'watchdog'` versus a normal
+  `Result=success`).
 - Every environment variable the running service actually loaded:
   `systemctl show mockingbird-camera-node -p EnvironmentFiles`, then
   inspect `/etc/mockingbird-camera-node/node.env` directly (root only --

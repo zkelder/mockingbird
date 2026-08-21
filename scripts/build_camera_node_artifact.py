@@ -18,13 +18,22 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE_PACKAGE = ROOT / "src" / "mockingbird_node"
-NODE_FILES = ("__init__.py", "__main__.py", "app.py", "config.py", "providers.py")
+NODE_FILES = (
+    "__init__.py",
+    "__main__.py",
+    "app.py",
+    "config.py",
+    "identity.py",
+    "providers.py",
+    "selftest.py",
+    "watchdog.py",
+)
 RUNTIME_REQUIREMENTS = (
     "fastapi>=0.111,<0.116",
     "pydantic>=2.7,<3.0",
     "uvicorn[standard]>=0.30,<1.0",
 )
-#: This builder's entire input surface: it reads exactly these five files by
+#: This builder's entire input surface: it reads exactly these eight files by
 #: fixed name (`NODE_FILES`, never a directory glob), so an untracked stray
 #: file under `src/mockingbird_node/` was already structurally unable to
 #: enter the wheel -- unlike `scripts/build_local_product.py`'s `pip wheel .`

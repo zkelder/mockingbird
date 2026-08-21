@@ -1074,7 +1074,13 @@ class _EngineSession:
                     # cadence), never during a recoverable retry/backoff
                     # window above, so a bounded reconnect never fragments or
                     # prematurely closes this session's coverage interval.
-                    self._checkpoint_observation_exposure(repository, healthy_at=self._clock())
+                    node_status = source.status()
+                    self._checkpoint_observation_exposure(
+                        repository,
+                        healthy_at=self._clock(),
+                        node_boot_id=node_status.node_boot_id,
+                        node_service_version=node_status.node_service_version,
+                    )
                     for result in results:
                         all_track_updates.extend(result.track_updates)
                         all_evidence_candidates.extend(result.evidence_candidates)
@@ -1312,25 +1318,52 @@ class _EngineSession:
         except Exception:  # pragma: no cover - defensive: must never break Stop
             pass
 
-    def _checkpoint_observation_exposure(self, repository: ProductRepository, *, healthy_at: datetime) -> None:
+    def _checkpoint_observation_exposure(
+        self,
+        repository: ProductRepository,
+        *,
+        healthy_at: datetime,
+        node_boot_id: str | None = None,
+        node_service_version: str | None = None,
+    ) -> None:
         """Today Coverage Truth v1 (see docs/todays-coverage-truth-contract
         .md): record one durable monitoring-exposure checkpoint for a batch
         that just delivered at least one real frame -- never a raw transport
         retry/backoff window (see `_await_transport_retry`, which never
         calls this). Best-effort, matching every other per-batch bookkeeping
         call in this loop: exposure accounting must never be able to break
-        live analysis."""
+        live analysis.
+
+        Boot Identity + Autonomous Recovery v1: also reuses this exact
+        already-throttled checkpoint (never a new write cadence -- see
+        "Performance" in docs/camera-node-installer-design.md) to persist
+        the Node's last-seen boot identity, independent of whether a
+        session happens to be running later -- see
+        `ProductRepository.record_observation_exposure_frame`. A detected
+        boot transition (same node, fresh reboot mid-session) is surfaced
+        into `advanced` so the host can tell that apart from an ordinary
+        benign reconnect (same boot_id) -- see "same node + new boot" in
+        the milestone's deterministic test list.
+        """
 
         self._last_healthy_frame_at = healthy_at
         try:
-            repository.record_observation_exposure_frame(
+            outcome = repository.record_observation_exposure_frame(
                 stream_id=self.stream_id,
                 runtime_generation_id=self._runtime_generation_id,
                 healthy_at=healthy_at,
                 now=healthy_at,
+                node_boot_id=node_boot_id,
+                node_service_version=node_service_version,
             )
         except Exception:  # pragma: no cover - defensive: must never break analysis
-            pass
+            return
+        if outcome is not None and outcome.boot_transition_detected:
+            with self._state_lock:
+                self._advanced["camera_node_boot_transitions_this_session"] = (
+                    int(self._advanced.get("camera_node_boot_transitions_this_session", 0)) + 1
+                )
+                self._advanced["camera_node_fresh_boot_detected"] = True
 
     def _close_observation_exposure(self, repository: ProductRepository) -> None:
         """Close this session's own open durable monitoring-exposure
