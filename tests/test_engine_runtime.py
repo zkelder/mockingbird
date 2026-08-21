@@ -46,7 +46,11 @@ from mockingbird.repository.product_repository import (
     ProductRepository,
     StreamLivePlaybackConfig,
 )
-from mockingbird.source_providers.camera_node import CameraNodeClientError
+from mockingbird.source_providers.camera_node import (
+    CameraNodeCamera,
+    CameraNodeCaptureProfile,
+    CameraNodeClientError,
+)
 from mockingbird.storage.models import MonitoringExposureIntervalModel
 
 STREAM_ID = "stream-backyard-feeder"
@@ -81,6 +85,135 @@ def _non_camera_node_config() -> StreamLivePlaybackConfig:
 
 def _manager(repository: ProductRepository, **kwargs: object) -> ObservationEngineSessionManager:
     return ObservationEngineSessionManager(repository_factory=lambda: repository, **kwargs)
+
+
+# --------------------------------------------------------------------------
+# _default_capture_profile_alignment (Source-Resolution + Multi-Frame
+# Species Evidence v1): the one bounded, session-start Camera Node metadata
+# fetch that resolves whether this Stream's monitoring/evidence capture
+# profiles are FOV-aligned. Never blocks/fails Observation Engine startup.
+# --------------------------------------------------------------------------
+
+
+def _capture_profile(
+    *, profile_id: str, purposes: tuple[str, ...], width: int, height: int,
+    geometry_group: str | None, same_fov: bool,
+) -> CameraNodeCaptureProfile:
+    return CameraNodeCaptureProfile(
+        profile_id=profile_id, purposes=purposes, width=width, height=height,
+        jpeg_supported=True, max_expected_bytes=16_000_000, capture_class="warm_concurrent",
+        geometry_group=geometry_group, orientation="normal", mirrored=False, same_fov=same_fov,
+    )
+
+
+def _fake_camera_node_client(cameras: list[CameraNodeCamera]):
+    class _FakeClient:
+        def cameras(self, *, base_address: str, credential: str):
+            return cameras
+
+    return lambda: _FakeClient()
+
+
+def test_capture_profile_alignment_missing_config_returns_none_without_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        engine_runtime, "CameraNodeClient",
+        lambda: (_ for _ in ()).throw(AssertionError("must not contact the Node")),
+    )
+    config = _camera_node_config(camera_node_monitoring_profile_id=None)
+    assert engine_runtime._default_capture_profile_alignment(config) is None
+
+
+def test_capture_profile_alignment_resolves_aligned_when_profiles_prove_shared_fov(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    camera = CameraNodeCamera(
+        camera_id="cam-1", display_name="Cam", status="available", snapshot_supported=True,
+        capture_profiles=(
+            _capture_profile(
+                profile_id="monitoring-profile", purposes=("monitoring", "preview"),
+                width=1920, height=1440, geometry_group="shared-fov", same_fov=True,
+            ),
+            _capture_profile(
+                profile_id="evidence-profile", purposes=("evidence",),
+                width=4624, height=3472, geometry_group="shared-fov", same_fov=True,
+            ),
+        ),
+    )
+    monkeypatch.setattr(engine_runtime, "CameraNodeClient", _fake_camera_node_client([camera]))
+    decision = engine_runtime._default_capture_profile_alignment(_camera_node_config())
+    assert decision is not None
+    assert decision.status == "aligned"
+    assert decision.transform is not None
+
+
+def test_capture_profile_alignment_is_none_when_geometry_groups_differ(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    camera = CameraNodeCamera(
+        camera_id="cam-1", display_name="Cam", status="available", snapshot_supported=True,
+        capture_profiles=(
+            _capture_profile(
+                profile_id="monitoring-profile", purposes=("monitoring", "preview"),
+                width=1920, height=1440, geometry_group="fov-a", same_fov=True,
+            ),
+            _capture_profile(
+                profile_id="evidence-profile", purposes=("evidence",),
+                width=4624, height=3472, geometry_group="fov-b", same_fov=True,
+            ),
+        ),
+    )
+    monkeypatch.setattr(engine_runtime, "CameraNodeClient", _fake_camera_node_client([camera]))
+    decision = engine_runtime._default_capture_profile_alignment(_camera_node_config())
+    assert decision is not None
+    assert decision.status == "full_only"
+
+
+def test_capture_profile_alignment_none_when_profile_id_not_advertised(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    camera = CameraNodeCamera(
+        camera_id="cam-1", display_name="Cam", status="available", snapshot_supported=True,
+        capture_profiles=(
+            _capture_profile(
+                profile_id="some-other-profile", purposes=("monitoring",),
+                width=1920, height=1440, geometry_group="fov-a", same_fov=True,
+            ),
+        ),
+    )
+    monkeypatch.setattr(engine_runtime, "CameraNodeClient", _fake_camera_node_client([camera]))
+    assert engine_runtime._default_capture_profile_alignment(_camera_node_config()) is None
+
+
+def test_capture_profile_alignment_none_when_camera_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(engine_runtime, "CameraNodeClient", _fake_camera_node_client([]))
+    assert engine_runtime._default_capture_profile_alignment(_camera_node_config()) is None
+
+
+def test_capture_profile_alignment_none_on_client_error_never_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Camera Node that is temporarily unreachable at session start must
+    never block/fail Observation Engine startup -- see "Camera/provider
+    failure behavior" in the milestone contract."""
+
+    class _RaisingClient:
+        def cameras(self, *, base_address: str, credential: str):
+            raise CameraNodeClientError("node_unavailable")
+
+    monkeypatch.setattr(engine_runtime, "CameraNodeClient", lambda: _RaisingClient())
+    assert engine_runtime._default_capture_profile_alignment(_camera_node_config()) is None
+
+
+def test_capture_profile_alignment_none_for_non_camera_node_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        engine_runtime, "CameraNodeClient",
+        lambda: (_ for _ in ()).throw(AssertionError("must not contact the Node")),
+    )
+    assert engine_runtime._default_capture_profile_alignment(_non_camera_node_config()) is None
 
 
 def _wait_until(predicate, *, timeout: float = 5.0, interval: float = 0.02) -> bool:

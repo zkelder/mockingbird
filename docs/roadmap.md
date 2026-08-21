@@ -1370,6 +1370,34 @@ while the higher-native-resolution burst crop classified it wrong, plausibly
 a capture-timing/pose-alignment effect rather than a resolution effect --
 recorded as a future species-quality lead, not acted on.
 
+**2026-08-21 update:** Source-Resolution + Multi-Frame Species Evidence v1
+closes the concrete gap this subsection named: the automatic species-assist
+path (`classifier_input.py`'s "proof, not proximity" tier 2) could only ever
+safely crop the analysis-stream-resolution `classifier_same_frame` asset --
+the Camera Node's separately-captured, genuinely higher-resolution
+`high_resolution_burst` evidence was structurally always `same_frame=False`,
+so it was never used for automatic cropping at all. A new, honest
+`resolution_provenance` vocabulary (`exact_same_frame`/`synchronized`/
+`near_time_capture`/`fallback`, on `GeometryAttribution`) lets a burst image
+earn the same "safe to crop" trust as a same-frame image once the Camera
+Node's own real capture-profile metadata *proves* it shares the analysis
+frame's field of view (reusing, not duplicating, the already-tested
+`mockingbird.motion.high_resolution_evidence.resolve_alignment` from the
+legacy live-view path) -- see
+[source-resolution-multi-frame-species-evidence-contract.md](source-resolution-multi-frame-species-evidence-contract.md).
+Real-cohort result (98 real paired native/derived-crop Visits from this
+product's own database): median native-to-analysis-equivalent subject
+pixel area ratio 22.7x; 34/98 (35%) real subjects cross the resolution-
+eligibility floor only at native resolution. Multi-frame consensus
+(`evaluate_multi_frame_consensus`) is implemented and tested as pure,
+invokable infrastructure, and used by a new governed benchmark, but **not**
+wired into the live, mutating identification path -- current data cannot
+yet show multiple genuinely distinct native candidate frames accumulating
+often enough in the field to justify that promotion (Decision B, not
+forced to A). The "multi-frame reconstruction... not attempted" gap this
+subsection named is now attempted and honestly scoped, not closed to
+production.
+
 ### Gate C -- Today / Report-First / Place Intelligence
 
 Detection work must not pull the product back into being a detector

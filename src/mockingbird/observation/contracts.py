@@ -440,6 +440,42 @@ class GeometryAttribution:
     `0` when `same_frame` is `True`; the real measured `|delta|` in
     milliseconds between the evidence image's own moment and the geometry's
     source moment when `False` and known).
+
+    Source-Resolution + Multi-Frame Species Evidence v1 additions (all
+    optional/additive -- `None` for every pre-existing call site, never
+    retroactively guessed): `same_frame` alone only distinguishes "the exact
+    analysis frame" from "everything else," which collapses a
+    genuinely-higher-resolution, FOV-proven-aligned evidence image (for
+    example a Camera Node's synchronized `main`/`lores` dual-stream capture)
+    together with an image that has no proven spatial correspondence at all.
+    These three fields answer that more precisely, without weakening
+    `same_frame`'s own existing meaning:
+
+    - `fov_alignment_proven`: `True` only when a Camera Node's own capture-
+      profile metadata *proves* the evidence image shares the same field of
+      view as the geometry's source image (matching `geometry_group`, see
+      `mockingbird.motion.high_resolution_evidence.resolve_alignment`) --
+      never inferred from normalized-coordinate reuse alone. `False` when
+      alignment was checked and failed/unproven; `None` when it was never
+      checked (a provider or call site that predates this fact).
+    - `geometry_transform_id`: the `NormalizedGeometryTransform.transform_id`
+      that was actually applied (or would be an identity mapping) to carry
+      `subject_geometry` from the geometry's own source image onto this
+      evidence image, when `fov_alignment_proven` is `True`. `None` when no
+      transform was computed or alignment was not proven.
+    - `resolution_provenance`: the evidence's own place in the milestone's
+      four-state vocabulary (see "Resolution/provenance vocabulary" in
+      docs/source-resolution-multi-frame-species-evidence-contract.md) --
+      `"exact_same_frame"` (mirrors `same_frame is True`, never set to any
+      other value when `same_frame` is `True`), `"synchronized"` (FOV-proven
+      aligned, real measured gap within the bounded misalignment threshold --
+      the Camera Node dual-stream case), `"near_time_capture"` (a real,
+      bounded-gap capture without a proven FOV match -- honest, but not safe
+      to crop a reused subject box against), or `"fallback"` (no usable
+      correspondence at all -- gap unknown/excessive, or no evidence image
+      available). Computed once, by the one caller with the real facts
+      (`localization_attribution.geometry_attribution_for_burst`), never
+      re-derived downstream.
     """
 
     geometry_source: Literal["detector", "tracker", "carried_forward"] | None
@@ -448,6 +484,11 @@ class GeometryAttribution:
     geometry_source_confidence: float | None
     same_frame: bool | None
     geometry_evidence_gap_ms: int | None
+    fov_alignment_proven: bool | None = None
+    geometry_transform_id: str | None = None
+    resolution_provenance: (
+        Literal["exact_same_frame", "synchronized", "near_time_capture", "fallback"] | None
+    ) = None
 
     def __post_init__(self) -> None:
         if self.geometry_evidence_gap_ms is not None and self.geometry_evidence_gap_ms < 0:
@@ -458,6 +499,16 @@ class GeometryAttribution:
             self.geometry_source_confidence is not None
             and not 0.0 <= self.geometry_source_confidence <= 1.0
         ):
+            raise ValueError("invalid_geometry_attribution")
+        if self.resolution_provenance == "exact_same_frame" and self.same_frame is not True:
+            raise ValueError("invalid_geometry_attribution")
+        if (
+            self.same_frame is True
+            and self.resolution_provenance is not None
+            and self.resolution_provenance != "exact_same_frame"
+        ):
+            raise ValueError("invalid_geometry_attribution")
+        if self.resolution_provenance == "synchronized" and self.fov_alignment_proven is not True:
             raise ValueError("invalid_geometry_attribution")
 
 

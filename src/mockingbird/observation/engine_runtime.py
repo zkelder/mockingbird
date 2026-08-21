@@ -125,8 +125,9 @@ from mockingbird.observation.frame_driven_provider import (
 from mockingbird.observation.onnx_provider import OnnxCudaObservationProvider, OnnxModelBundle
 from mockingbird.observation.visit_episode_assembler import assemble_visit_episodes, build_tracklets
 from mockingbird.repository.product_repository import ProductRepository, StreamLivePlaybackConfig
-from mockingbird.source_providers.camera_node import CameraNodeClientError
+from mockingbird.source_providers.camera_node import CameraNodeClient, CameraNodeClientError
 from mockingbird.species.automatic_identification import AutomaticReviewIdentificationAssist
+from mockingbird.motion.high_resolution_evidence import AlignmentDecision, CaptureProfileGeometry, resolve_alignment
 from mockingbird.web_app import find_workspace_root
 
 PROVIDER_CONFIG_PATH_ENV = "MOCKINGBIRD_OBSERVATION_PROVIDER_CONFIG_PATH"
@@ -195,6 +196,88 @@ def _default_transport_factory(config: StreamLivePlaybackConfig, stream_id: str)
         stream_id=stream_id,
         evidence_profile_id=config.camera_node_evidence_profile_id,
     )
+
+
+CaptureProfileAlignmentFactory = Callable[[StreamLivePlaybackConfig], AlignmentDecision | None]
+
+
+def _default_capture_profile_alignment(
+    config: StreamLivePlaybackConfig,
+) -> AlignmentDecision | None:
+    """Fetch this Stream's real monitoring/evidence capture-profile geometry
+    once, at session start, and honestly resolve whether they are FOV-
+    aligned (Source-Resolution + Multi-Frame Species Evidence v1) -- never
+    per-frame, never guessed from normalized-coordinate reuse alone. Mirrors
+    `api.main._high_resolution_capture_claim_profile_lineage`'s identical
+    fetch-and-build shape for the legacy live-view capture path (a small,
+    obviously-correct duplication of six field mappings rather than a
+    reverse `api` -> `observation` import).
+
+    Returns `None` -- never raises -- for any incomplete configuration,
+    network failure, or missing/unsupported profile: alignment is an
+    optional, additive upgrade to resolution provenance, and a Camera Node
+    that is temporarily unreachable at session start must never block
+    Observation Engine startup or degrade to anything other than today's
+    unchanged `near_time_capture`/`fallback` behavior (see "Camera/provider
+    failure behavior" in
+    docs/source-resolution-multi-frame-species-evidence-contract.md).
+    """
+
+    if (
+        config.provider_key != "camera_node"
+        or not config.camera_node_base_address
+        or not config.camera_node_credential
+        or not config.camera_node_camera_id
+        or not config.camera_node_monitoring_profile_id
+        or not config.camera_node_evidence_profile_id
+    ):
+        return None
+    try:
+        camera = next(
+            (
+                item
+                for item in CameraNodeClient().cameras(
+                    base_address=config.camera_node_base_address,
+                    credential=config.camera_node_credential,
+                )
+                if item.camera_id == config.camera_node_camera_id
+            ),
+            None,
+        )
+        if camera is None:
+            return None
+        profiles_by_id = {profile.profile_id: profile for profile in camera.capture_profiles}
+        monitoring = profiles_by_id.get(config.camera_node_monitoring_profile_id)
+        evidence = profiles_by_id.get(config.camera_node_evidence_profile_id)
+        if (
+            monitoring is None
+            or evidence is None
+            or not monitoring.supports_monitoring
+            or not evidence.supports_evidence
+        ):
+            return None
+        return resolve_alignment(
+            CaptureProfileGeometry(
+                profile_id=monitoring.profile_id,
+                width=monitoring.width,
+                height=monitoring.height,
+                geometry_group=monitoring.geometry_group,
+                orientation=monitoring.orientation,
+                mirrored=monitoring.mirrored,
+                same_fov=monitoring.same_fov,
+            ),
+            CaptureProfileGeometry(
+                profile_id=evidence.profile_id,
+                width=evidence.width,
+                height=evidence.height,
+                geometry_group=evidence.geometry_group,
+                orientation=evidence.orientation,
+                mirrored=evidence.mirrored,
+                same_fov=evidence.same_fov,
+            ),
+        )
+    except CameraNodeClientError:
+        return None
 
 
 def packaged_observation_runtime_root() -> Path:
@@ -464,6 +547,7 @@ class _EngineSession:
         repository_factory: Callable[[], ProductRepository],
         provider_loader: ProviderLoader = _load_real_provider,
         transport_factory: TransportFactory = _default_transport_factory,
+        capture_profile_alignment_factory: CaptureProfileAlignmentFactory = _default_capture_profile_alignment,
         live_camera_sessions: LiveCameraSessionCoordinator | None = None,
         automatic_identification_assist: AutomaticReviewIdentificationAssist | None = None,
         analysis_stream_retry_policy: AnalysisStreamRetryPolicy | None = None,
@@ -477,6 +561,7 @@ class _EngineSession:
         self._repository_factory = repository_factory
         self._provider_loader = provider_loader
         self._transport_factory = transport_factory
+        self._capture_profile_alignment_factory = capture_profile_alignment_factory
         self._live_camera_sessions = live_camera_sessions
         self._automatic_identification_assist = automatic_identification_assist
         self._retry_policy = analysis_stream_retry_policy or AnalysisStreamRetryPolicy()
@@ -806,9 +891,21 @@ class _EngineSession:
                 self.stream_id, analysis_excluded_regions=self._privacy_ignore_regions,
             )
             transport = self._transport_factory(config, self.stream_id)
+            # Source-Resolution + Multi-Frame Species Evidence v1: resolved
+            # once here (a bounded, already-timeout-protected Camera Node
+            # metadata call, mirroring the pairing/health checks this same
+            # startup path already performs) -- never per-frame. `None` on
+            # any failure/incomplete configuration; the session degrades to
+            # exactly its pre-milestone behavior in that case, never blocked.
+            resolution_alignment = self._capture_profile_alignment_factory(config)
+            with self._state_lock:
+                self._advanced["resolution_alignment_status"] = (
+                    resolution_alignment.status if resolution_alignment is not None else "not_checked"
+                )
             session = LiveCameraNodeShadowSession(
                 source=source, transport=transport, provider=provider,
                 evidence_profile_id=config.camera_node_evidence_profile_id,
+                resolution_alignment=resolution_alignment,
             )
             adapter = CandidateVisitAuthorityAdapter(
                 repository, detector_provenance=detector.provider_id, tracker_provenance=provider.provider_id,
@@ -1593,6 +1690,7 @@ class ObservationEngineSessionManager:
         repository_factory: Callable[[], ProductRepository],
         provider_loader: ProviderLoader = _load_real_provider,
         transport_factory: TransportFactory = _default_transport_factory,
+        capture_profile_alignment_factory: CaptureProfileAlignmentFactory = _default_capture_profile_alignment,
         live_camera_sessions: LiveCameraSessionCoordinator | None = None,
         automatic_identification_assist: AutomaticReviewIdentificationAssist | None = None,
         analysis_stream_retry_policy: AnalysisStreamRetryPolicy | None = None,
@@ -1603,6 +1701,7 @@ class ObservationEngineSessionManager:
         self._repository_factory = repository_factory
         self._provider_loader = provider_loader
         self._transport_factory = transport_factory
+        self._capture_profile_alignment_factory = capture_profile_alignment_factory
         self._live_camera_sessions = live_camera_sessions
         self._automatic_identification_assist = automatic_identification_assist
         self._analysis_stream_retry_policy = analysis_stream_retry_policy or AnalysisStreamRetryPolicy()
@@ -1661,6 +1760,7 @@ class ObservationEngineSessionManager:
                 repository_factory=self._repository_factory,
                 provider_loader=self._provider_loader,
                 transport_factory=self._transport_factory,
+                capture_profile_alignment_factory=self._capture_profile_alignment_factory,
                 live_camera_sessions=self._live_camera_sessions,
                 automatic_identification_assist=self._automatic_identification_assist,
                 analysis_stream_retry_policy=self._analysis_stream_retry_policy,

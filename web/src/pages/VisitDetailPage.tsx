@@ -1411,7 +1411,18 @@ export function VisitDetailPage({
                         : "MockingBird's species suggestion was based on this frame -- not the Visit evidence image above."}
                     </span>
                   </div>
-                  <EvidenceBadge label="Supporting evidence" tone="evidence" />
+                  <EvidenceBadge
+                    label={
+                      // Source-Resolution + Multi-Frame Species Evidence v1:
+                      // plain language only -- normal users do not need
+                      // "resolution_provenance"/"synchronized" jargon, just
+                      // whether a genuinely higher-resolution photo was used.
+                      detail.classifier_supporting_evidence.input_type === "native_resolution_crop"
+                        ? "Higher-resolution photo"
+                        : "Supporting evidence"
+                    }
+                    tone="evidence"
+                  />
                 </div>
                 <VisitEvidenceSequence frames={[detail.classifier_supporting_evidence.frame]} />
               </section>

@@ -137,6 +137,14 @@ async def test_observation_engine_status_is_read_only_and_names_snapshot_provide
         assert payload["provider_id"] == "snapshot"
         assert payload["capabilities"]["timer_driven"] is True
         assert payload["capabilities"]["emits_detection_observations"] is False
+        # Source-Resolution + Multi-Frame Species Evidence v1: this
+        # capability now reaches the wire (previously computed on the
+        # dataclass but silently dropped by the response model's own field
+        # list) -- `False` here is the honest fact for the snapshot
+        # provider; `test_observation_frame_driven.py` already proves
+        # `FrameDrivenObservationProvider.capabilities.high_resolution_
+        # burst is True` at the dataclass level.
+        assert payload["capabilities"]["high_resolution_burst"] is False
         assert payload["health"]["state"] == "idle"
         assert payload["creates_truth"] is False
     finally:

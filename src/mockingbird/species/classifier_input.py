@@ -33,14 +33,30 @@ decodes and crops pixels, exactly the way `product_repository.py`'s existing
 `_load_bioclip_input_image` already separates crop-box decision from pixel
 work for today's `_ReviewSpeciesCropContext`.
 
-Not wired into the automatic species-assist path as of this module's
-introduction (see docs -- 2026-08-14 subject-centric-crop field evidence):
-DB-wide, zero real MediaAssets have ever had `same_frame=True` or a
-persisted derived crop, because the live Observation Engine's evidence
-capture is a separate, later high-resolution burst by construction
-(`geometry_attribution_for_burst`) -- so tier 2 below is correct, tested,
-and currently always inert on real data. Kept as small, honest, ready-to-
-activate infrastructure rather than wired-in dead weight.
+Wired into the automatic species-assist path since Same-Frame Species
+Evidence v1 (`product_repository._classifier_input_override`, see
+docs/same-frame-species-evidence-contract.md) -- not the "always inert"
+infrastructure this module's introduction described. Tier 2 below is
+regularly reachable on real data once a Visit has a persisted
+`classifier_same_frame` asset.
+
+Source-Resolution + Multi-Frame Species Evidence v1 adds one more tier,
+`native_resolution_subject_box` (`resolve_native_resolution_subject_crop`):
+the live Observation Engine's separate, later high-resolution burst
+(`geometry_attribution_for_burst`) is never `same_frame`, but can now carry
+its own honest `GeometryAttribution.resolution_provenance` fact -- when a
+Camera Node's real capture-profile metadata *proves* the burst image shares
+the analysis frame's field of view (`resolution_provenance == "synchronized"`,
+see `mockingbird.observation.localization_attribution`), its own subject box
+is exactly as safe to crop against as an `exact_frame_subject_box` --
+proximity in time is never enough on its own (still gated on the bounded
+misalignment threshold), and a genuinely higher-resolution crop is the
+entire point of this milestone. The same "proof, not a bounded gap
+tolerance" rule below applies unchanged to *this* tier's `same_frame=False`
+evidence: `resolution_provenance` must be the structurally stronger
+`"synchronized"`, never merely `"near_time_capture"` (FOV alignment
+unproven) -- see docs/source-resolution-multi-frame-species-evidence
+-contract.md.
 """
 
 from __future__ import annotations
@@ -68,6 +84,7 @@ PERSISTED_CROP_EVIDENCE_ROLES = frozenset({"activity_crop", "user_refined_crop"}
 
 ClassifierInputSource = Literal[
     "persisted_subject_crop",
+    "native_resolution_subject_box",
     "exact_frame_subject_box",
     "full_frame",
 ]
@@ -130,6 +147,7 @@ def resolve_classifier_input(
     *,
     subject_frame: ClassifierInputSubjectFrame,
     persisted_crop_candidates: tuple[ClassifierInputCropAsset, ...] = (),
+    native_resolution_candidates: tuple[ClassifierInputSubjectFrame, ...] = (),
     padding_ratio: float = DEFAULT_CROP_PADDING_RATIO,
     min_crop_size_ratio: float = DEFAULT_MIN_CROP_SIZE_RATIO,
 ) -> ClassifierInputPlan:
@@ -145,19 +163,30 @@ def resolve_classifier_input(
        label alone is never trusted, matching "no using a box merely because
        it exists" in the product's safety rule). Used as-is, never
        re-cropped -- generating a second derivative of an already-good crop
-       would just add another lossy step.
-    2. `exact_frame_subject_box` -- the subject frame is not itself a derived
-       crop (`parent_media_asset_id is None`, so a full-FOV-relative box is
-       meaningful on its own pixels -- the same precondition
-       `_frame_local_subject_box` already applies elsewhere), it has a
-       `normalized_track_box`, and that box's own lineage *proves* it
+       would just add another lossy step. Preferred over resolution: reusing
+       an asset a human or an earlier deliberate step already curated
+       outranks an automated resolution optimization.
+    2. `native_resolution_subject_box` (Source-Resolution + Multi-Frame
+       Species Evidence v1) -- the first of `native_resolution_candidates`
+       (already caller-ordered, best-first) whose own subject box is safe to
+       crop against: not itself a derived crop, has a `normalized_track_box`,
+       and `geometry_attribution.resolution_provenance == "synchronized"` --
+       see `resolve_native_resolution_subject_crop`. Ranked above tier 3
+       precisely because it is genuinely higher-resolution evidence with an
+       equally strong (FOV-proof-backed, not merely proximate) correspondence
+       guarantee -- the product requirement this milestone exists to satisfy.
+    3. `exact_frame_subject_box` -- the *primary* `subject_frame` is not
+       itself a derived crop (`parent_media_asset_id is None`, so a
+       full-FOV-relative box is meaningful on its own pixels -- the same
+       precondition `_frame_local_subject_box` already applies elsewhere), it
+       has a `normalized_track_box`, and that box's own lineage *proves* it
        belongs to this exact image (`geometry_attribution.same_frame is
        True`) -- never a bounded-gap approximation. Expanded with the
        existing, already-reviewed `plan_activity_crop` padding/min-size
        convention and clamped to image bounds.
-    3. `full_frame` -- the honest fallback, always available.
+    4. `full_frame` -- the honest fallback, always available.
 
-    Real diagnostic evidence for why tier 2 requires *proof*, not a bounded
+    Real diagnostic evidence for why tier 3 requires *proof*, not a bounded
     gap tolerance (2026-08-14, real archived/fresh field evidence, 8 real
     bird encounters, out-of-band manual comparison -- never wired into
     production, see project memory): padding a same_frame=False box (the
@@ -166,7 +195,9 @@ def resolve_classifier_input(
     4/8 cases; the other 4/8 produced an empty-background or near-empty
     crop indistinguishable, by geometry metadata alone, from a good one.
     Proof, not proximity, is what keeps this resolver from doing that
-    silently.
+    silently -- tier 2 above applies the identical discipline to
+    higher-resolution evidence (a proven `resolution_provenance ==
+    "synchronized"`, never a bare "captured soon after").
     """
     persisted_crop = _first_usable_persisted_crop(persisted_crop_candidates)
     if persisted_crop is not None:
@@ -185,6 +216,13 @@ def resolve_classifier_input(
             input_width=persisted_crop.image_width,
             input_height=persisted_crop.image_height,
         )
+
+    for candidate in native_resolution_candidates:
+        native_plan = resolve_native_resolution_subject_crop(
+            candidate, padding_ratio=padding_ratio, min_crop_size_ratio=min_crop_size_ratio,
+        )
+        if native_plan is not None:
+            return native_plan
 
     eligible, reason = _exact_frame_box_eligibility(subject_frame)
     if eligible:
@@ -245,14 +283,84 @@ def apply_classifier_input_plan(image: Any, plan: ClassifierInputPlan) -> Any:
     Returns `image` unchanged for a `full_frame` plan, and for a
     `persisted_subject_crop` plan (the caller already opened *that* asset's
     own file directly -- this never re-crops an already-derived crop). Crops
-    for `exact_frame_subject_box`. Never decodes, opens, or closes a file;
-    that stays the caller's job, exactly like `bioclip_adapter.
-    run_bioclip_on_image` already expects an in-memory image, not a path.
+    for `exact_frame_subject_box` and `native_resolution_subject_box`. Never
+    decodes, opens, or closes a file; that stays the caller's job, exactly
+    like `bioclip_adapter.run_bioclip_on_image` already expects an in-memory
+    image, not a path.
     """
     if plan.crop_box_pixels is None:
         return image
     box = plan.crop_box_pixels
     return image.crop((box.left, box.top, box.right, box.bottom))
+
+
+def resolve_native_resolution_subject_crop(
+    subject_frame: ClassifierInputSubjectFrame,
+    *,
+    padding_ratio: float = DEFAULT_CROP_PADDING_RATIO,
+    min_crop_size_ratio: float = DEFAULT_MIN_CROP_SIZE_RATIO,
+) -> ClassifierInputPlan | None:
+    """Build a `native_resolution_subject_box` plan for one candidate
+    higher-resolution evidence frame (typically a persisted
+    `high_resolution_burst` MediaAsset), or `None` when it is not safe to
+    crop against -- never a fallback plan itself; the caller (`resolve_
+    classifier_input`, or the multi-frame candidate builder in
+    `product_repository.py`) decides what to do with `None`.
+
+    Eligible only when `subject_frame` is not itself a derived crop
+    (`parent_media_asset_id is None`), has a `normalized_track_box`, and its
+    lineage *proves* a genuinely aligned correspondence --
+    `geometry_attribution.resolution_provenance == "synchronized"` (real,
+    FOV-proven-aligned, bounded-gap capture -- see
+    `mockingbird.observation.localization_attribution.
+    resolution_provenance_for_burst`). Deliberately stricter than
+    `"near_time_capture"` (a real capture within the bounded gap, but with no
+    proven field-of-view match): the same "proof, not proximity" rule
+    `_exact_frame_box_eligibility` already enforces for `same_frame`, applied
+    identically here so a genuinely higher-resolution image never gets a
+    weaker safety bar than a same-resolution one.
+    """
+    eligible, _ = _native_resolution_box_eligibility(subject_frame)
+    if not eligible:
+        return None
+    box = subject_frame.normalized_track_box
+    assert box is not None
+    plan = plan_activity_crop(
+        source_media_asset_id=subject_frame.media_asset_id,
+        image_width=subject_frame.image_width,
+        image_height=subject_frame.image_height,
+        left=box[0],
+        top=box[1],
+        right=box[2],
+        bottom=box[3],
+        crop_reason="activity_motion",
+        padding_ratio=padding_ratio,
+        min_crop_size_ratio=min_crop_size_ratio,
+    )
+    if plan.is_full_frame_fallback:
+        # A degenerate box after padding is exactly as unsafe here as it is
+        # for `exact_frame_subject_box` -- never silently promote it to a
+        # full-frame *native-resolution* plan; the caller's own full_frame
+        # fallback (on whatever asset it considers primary) already covers
+        # that honestly.
+        return None
+    return ClassifierInputPlan(
+        source="native_resolution_subject_box",
+        media_asset_id=subject_frame.media_asset_id,
+        used_full_frame_fallback=False,
+        crop_method="native_resolution_subject_box_padded",
+        selection_reason=(
+            "Subject box proven resolution_provenance=synchronized "
+            "(FOV-aligned, bounded-gap higher-resolution capture); "
+            "expanded with generous context and clamped to image bounds."
+        ),
+        original_width=subject_frame.image_width,
+        original_height=subject_frame.image_height,
+        input_width=plan.crop_box_pixels.width,
+        input_height=plan.crop_box_pixels.height,
+        crop_box_normalized=plan.crop_box_normalized,
+        crop_box_pixels=plan.crop_box_pixels,
+    )
 
 
 def _first_usable_persisted_crop(
@@ -296,6 +404,21 @@ def _exact_frame_box_eligibility(
     return True, "exact_frame_subject_box_eligible"
 
 
+def _native_resolution_box_eligibility(
+    subject_frame: ClassifierInputSubjectFrame,
+) -> tuple[bool, str]:
+    if subject_frame.parent_media_asset_id is not None:
+        return False, "subject_frame_is_itself_a_derived_crop"
+    if subject_frame.normalized_track_box is None:
+        return False, "no_subject_box_recorded_for_this_media_asset"
+    attribution = subject_frame.geometry_attribution
+    if attribution is None:
+        return False, "no_geometry_attribution_lineage_for_this_media_asset"
+    if attribution.resolution_provenance != "synchronized":
+        return False, "resolution_provenance_not_proven_synchronized"
+    return True, "native_resolution_subject_box_eligible"
+
+
 __all__ = [
     "CLASSIFIER_INPUT_RESOLVER_VERSION",
     "PERSISTED_CROP_EVIDENCE_ROLES",
@@ -305,4 +428,5 @@ __all__ = [
     "ClassifierInputSubjectFrame",
     "apply_classifier_input_plan",
     "resolve_classifier_input",
+    "resolve_native_resolution_subject_crop",
 ]

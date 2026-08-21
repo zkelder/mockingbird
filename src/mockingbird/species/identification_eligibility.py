@@ -215,14 +215,20 @@ def classifier_input_tier(
     """Map the existing crop-provenance vocabulary
     (`_ReviewSpeciesCropContext.source` / `.classifier_input_type`) onto the
     two abstention tiers above. `classifier_input_type` (`same_frame_crop` /
-    `persisted_crop`) is set only for the Same-Frame Species Evidence v1
-    override tier; a plain `crop_source` of `"megadetector"` or `"activity"`
-    is also a real, deliberately-isolated subject box (just from an older
-    lineage), so both count as `subject_focused`. Only the honest
-    `"full_frame"` fallback -- no subject isolation attempted at all -- gets
-    the stricter tier."""
+    `persisted_crop` / `native_resolution_crop`) is set only for the
+    Same-Frame Species Evidence v1 / Source-Resolution + Multi-Frame Species
+    Evidence v1 override tiers; a plain `crop_source` of `"megadetector"` or
+    `"activity"` is also a real, deliberately-isolated subject box (just
+    from an older lineage), so all count as `subject_focused`.
+    `native_resolution_crop` is, if anything, a *stronger* subject-focused
+    crop than the others (a genuinely higher-resolution image with an
+    equally proven correspondence guarantee -- see `GeometryAttribution.
+    resolution_provenance == "synchronized"`), never a weaker one; it is
+    never given a stricter bar than an ordinary subject-focused crop. Only
+    the honest `"full_frame"` fallback -- no subject isolation attempted at
+    all -- gets the stricter tier."""
 
-    if classifier_input_type in {"same_frame_crop", "persisted_crop"}:
+    if classifier_input_type in {"same_frame_crop", "persisted_crop", "native_resolution_crop"}:
         return "subject_focused"
     if crop_source in {"megadetector", "activity"}:
         return "subject_focused"
@@ -264,20 +270,227 @@ def evaluate_classification_abstention(
     )
 
 
+# --- Multi-frame consensus (Source-Resolution + Multi-Frame Species -------
+# --- Evidence v1) --------------------------------------------------------
+
+# Version stamp for the consensus policy specifically -- persisted alongside
+# (never instead of) `IDENTIFICATION_ELIGIBILITY_POLICY_VERSION`, the same
+# "reproducible/comparable, never silent" convention as the module docstring
+# already establishes for the eligibility/abstention policies above.
+MULTI_FRAME_CONSENSUS_POLICY_VERSION = "multi-frame-consensus-v1"
+
+ConsensusBasis = Literal[
+    "single_frame",
+    "unanimous_agreement",
+    "majority_agreement",
+    "no_confident_frame",
+    "cross_frame_disagreement",
+]
+ConsensusReasonCode = Literal["no_confident_frame_result", "cross_frame_disagreement"]
+
+
+@dataclass(frozen=True)
+class FrameClassificationResult:
+    """One already-run classifier result for one candidate evidence frame --
+    the minimal shape `evaluate_multi_frame_consensus` needs, deliberately
+    not the real BioCLIP/ORM types (same "caller adapts" convention as
+    `ScoredCandidate` above). `candidates` must already be ranked best-first
+    and non-empty, exactly like `evaluate_classification_abstention`
+    requires on its own.
+
+    `media_asset_id` is carried through purely for provenance/reporting
+    (which real persisted evidence this result came from) -- never
+    interpreted or compared by this module.
+    """
+
+    media_asset_id: str
+    tier: ClassifierInputTier
+    candidates: tuple[ScoredCandidate, ...]
+
+    def __post_init__(self) -> None:
+        if not self.candidates:
+            raise ValueError("frame_classification_result_requires_at_least_one_candidate")
+
+
+@dataclass(frozen=True)
+class MultiFrameConsensusDecision:
+    """Whether several already-evaluated candidate frames, taken together,
+    are strong and specific enough to present as one species suggestion.
+
+    Reuses `evaluate_classification_abstention`'s own per-tier score/margin
+    floors for each frame independently -- this module never invents a
+    second, softer bar for multi-frame evidence, and never blends/averages
+    raw scores across frames (see "Multi-frame species inference" in
+    docs/source-resolution-multi-frame-species-evidence-contract.md).
+    `top1_score`/`margin` (when not abstained) are the *reported* frame's own
+    real, unmodified values -- the best-quality frame that actually agrees,
+    never a synthesized aggregate.
+    """
+
+    abstained: bool
+    reason_code: ConsensusReasonCode | None
+    consensus_basis: ConsensusBasis
+    top1_label: str | None
+    top1_score: float | None
+    margin: float | None
+    reporting_media_asset_id: str | None
+    frame_count: int
+    confident_frame_count: int
+    agreeing_frame_count: int
+    per_frame: tuple[AbstentionDecision, ...]
+    policy_version: str = MULTI_FRAME_CONSENSUS_POLICY_VERSION
+
+    def __post_init__(self) -> None:
+        if self.abstained and self.reason_code is None:
+            raise ValueError("abstained consensus decision must carry a reason_code")
+        if not self.abstained and self.reason_code is not None:
+            raise ValueError("non-abstained consensus decision must not carry a reason_code")
+        if self.frame_count < 1:
+            raise ValueError("invalid_multi_frame_consensus_decision")
+        if not 0 <= self.confident_frame_count <= self.frame_count:
+            raise ValueError("invalid_multi_frame_consensus_decision")
+        if not 0 <= self.agreeing_frame_count <= self.confident_frame_count:
+            raise ValueError("invalid_multi_frame_consensus_decision")
+
+
+def evaluate_multi_frame_consensus(
+    frame_results: tuple[FrameClassificationResult, ...],
+) -> MultiFrameConsensusDecision:
+    """Combine independently-evaluated candidate-frame classifications into
+    one honest decision, without blindly averaging softmax scores across
+    frames.
+
+    `frame_results` must be non-empty and already ordered best-quality-first
+    (the same order the multi-frame candidate builder already produces --
+    see `ProductRepository.species_multi_frame_candidate_plans`): when
+    multiple frames agree, the *first* (best-quality) agreeing frame's own
+    real score/margin is reported, never a synthesized average -- this is
+    the one place frame order affects the outcome, and it is a deliberate
+    quality-priority choice, not an arbitrary dependency (see "Source-
+    resolution metadata deterministic regardless of candidate ordering" --
+    that invariant is about *provenance* fields, not this reporting choice).
+
+    Policy (see "Consensus/abstention policy" in
+    docs/source-resolution-multi-frame-species-evidence-contract.md):
+
+    1. Each frame is independently scored via `evaluate_classification_
+       abstention`, using *that frame's own* tier floor -- a native-
+       resolution frame gets no softer (or stricter) bar than any other
+       subject-focused frame.
+    2. A single evaluated frame (`len(frame_results) == 1`) degenerates to
+       exactly that frame's own decision -- the existing single-frame
+       behavior is unchanged, never a new "multi-frame" code path for a
+       Visit that only ever had one usable frame.
+    3. No confident (non-abstained) frame at all -> abstain
+       (`no_confident_frame_result`) -- honest "not clear enough," not a
+       forced guess from a weak frame.
+    4. Every confident frame agrees on the same top-1 label -> suggest
+       (`unanimous_agreement`).
+    5. A strict majority (> half) of confident frames agree on one label ->
+       suggest (`majority_agreement`) -- "one anomalous frame cannot
+       overpower several strong contradictory frames," but a real majority,
+       never a plurality (a 2-2 split among four confident frames has no
+       majority and abstains, not merely "the largest group").
+    6. Otherwise (a genuine, no-majority split) -> abstain
+       (`cross_frame_disagreement`) -- disagreement is treated as positive
+       evidence for abstention, not discarded.
+    """
+    if not frame_results:
+        raise ValueError("evaluate_multi_frame_consensus requires at least one frame result")
+
+    per_frame = tuple(
+        evaluate_classification_abstention(result.candidates, tier=result.tier)
+        for result in frame_results
+    )
+    confident = [
+        (result, decision)
+        for result, decision in zip(frame_results, per_frame)
+        if not decision.abstained
+    ]
+
+    def _decision(
+        *,
+        abstained: bool,
+        reason_code: ConsensusReasonCode | None,
+        consensus_basis: ConsensusBasis,
+        reported: tuple[FrameClassificationResult, AbstentionDecision] | None,
+        agreeing_frame_count: int,
+    ) -> MultiFrameConsensusDecision:
+        return MultiFrameConsensusDecision(
+            abstained=abstained,
+            reason_code=reason_code,
+            consensus_basis=consensus_basis,
+            top1_label=reported[1].top1_label if reported is not None else None,
+            top1_score=reported[1].top1_score if reported is not None else None,
+            margin=reported[1].margin if reported is not None else None,
+            reporting_media_asset_id=reported[0].media_asset_id if reported is not None else None,
+            frame_count=len(frame_results),
+            confident_frame_count=len(confident),
+            agreeing_frame_count=agreeing_frame_count,
+            per_frame=per_frame,
+        )
+
+    if not confident:
+        return _decision(
+            abstained=True, reason_code="no_confident_frame_result",
+            consensus_basis="no_confident_frame", reported=None, agreeing_frame_count=0,
+        )
+
+    if len(frame_results) == 1:
+        result, decision = confident[0]
+        return _decision(
+            abstained=False, reason_code=None, consensus_basis="single_frame",
+            reported=(result, decision), agreeing_frame_count=1,
+        )
+
+    label_counts: dict[str, int] = {}
+    first_by_label: dict[str, tuple[FrameClassificationResult, AbstentionDecision]] = {}
+    for result, decision in confident:
+        label = decision.top1_label
+        assert label is not None  # non-abstained AbstentionDecision always carries one
+        label_counts[label] = label_counts.get(label, 0) + 1
+        first_by_label.setdefault(label, (result, decision))
+
+    if len(label_counts) == 1:
+        (label,) = label_counts
+        return _decision(
+            abstained=False, reason_code=None, consensus_basis="unanimous_agreement",
+            reported=first_by_label[label], agreeing_frame_count=len(confident),
+        )
+
+    majority_label, majority_count = max(label_counts.items(), key=lambda item: item[1])
+    if majority_count * 2 > len(confident):
+        return _decision(
+            abstained=False, reason_code=None, consensus_basis="majority_agreement",
+            reported=first_by_label[majority_label], agreeing_frame_count=majority_count,
+        )
+
+    return _decision(
+        abstained=True, reason_code="cross_frame_disagreement",
+        consensus_basis="cross_frame_disagreement", reported=None, agreeing_frame_count=0,
+    )
+
+
 __all__ = [
     "AbstentionDecision",
     "AbstentionReasonCode",
     "ClassifierInputTier",
+    "ConsensusBasis",
+    "ConsensusReasonCode",
     "EligibilityDecision",
     "EligibilityReasonCode",
+    "FrameClassificationResult",
     "FULL_FRAME_MARGIN_FLOOR",
     "FULL_FRAME_SCORE_FLOOR",
     "IDENTIFICATION_ELIGIBILITY_POLICY_VERSION",
     "MINIMUM_CLASSIFIER_INPUT_DIMENSION_PX",
+    "MULTI_FRAME_CONSENSUS_POLICY_VERSION",
+    "MultiFrameConsensusDecision",
     "ScoredCandidate",
     "SUBJECT_FOCUSED_MARGIN_FLOOR",
     "SUBJECT_FOCUSED_SCORE_FLOOR",
     "classifier_input_tier",
     "evaluate_classification_abstention",
     "evaluate_identification_eligibility",
+    "evaluate_multi_frame_consensus",
 ]

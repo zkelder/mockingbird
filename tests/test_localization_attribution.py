@@ -170,6 +170,126 @@ def test_burst_attribution_with_unknown_capture_latency_is_still_honestly_unalig
 
 
 # --------------------------------------------------------------------------
+# resolution_provenance (Source-Resolution + Multi-Frame Species Evidence v1)
+# --------------------------------------------------------------------------
+
+
+def test_same_frame_attribution_is_always_exact_same_frame_provenance() -> None:
+    update = _update(support_state="strong_detector_supported", source_offset_ms=1_000, bounding_box_source_offset_ms=1_000)
+    attribution = geometry_attribution_for_update(update, same_frame=True, evidence_source_offset_ms=1_000)
+    assert attribution.resolution_provenance == "exact_same_frame"
+    assert attribution.fov_alignment_proven is None
+    assert attribution.geometry_transform_id is None
+
+
+def test_burst_with_proven_alignment_and_bounded_gap_is_synchronized() -> None:
+    """The Camera Node dual-stream case: a real, later capture, but FOV-
+    proven aligned with a tightly bounded, honestly measured gap."""
+    update = _update(support_state="strong_detector_supported", source_offset_ms=1_000, bounding_box_source_offset_ms=1_000)
+    attribution = geometry_attribution_for_burst(
+        update, request_to_capture_ms=340, fov_alignment_proven=True, geometry_transform_id="normalized-fov-abc123",
+    )
+    assert attribution.same_frame is False
+    assert attribution.resolution_provenance == "synchronized"
+    assert attribution.fov_alignment_proven is True
+    assert attribution.geometry_transform_id == "normalized-fov-abc123"
+
+
+@pytest.mark.parametrize("fov_alignment_proven", [None, False])
+def test_burst_with_bounded_gap_but_unproven_alignment_is_near_time_capture(
+    fov_alignment_proven: bool | None,
+) -> None:
+    """A real, bounded-gap capture is honestly retained as evidence, but
+    never called 'synchronized' without a proven field-of-view match --
+    proximity in time alone is not spatial correspondence."""
+    update = _update(support_state="strong_detector_supported", source_offset_ms=1_000, bounding_box_source_offset_ms=1_000)
+    attribution = geometry_attribution_for_burst(
+        update, request_to_capture_ms=340, fov_alignment_proven=fov_alignment_proven,
+    )
+    assert attribution.resolution_provenance == "near_time_capture"
+
+
+@pytest.mark.parametrize("request_to_capture_ms", [None, DEFAULT_MISALIGNMENT_GAP_THRESHOLD_MS + 1])
+def test_burst_with_unknown_or_excessive_gap_is_fallback_even_when_aligned(
+    request_to_capture_ms: int | None,
+) -> None:
+    """A proven FOV match cannot rescue an unknown or excessive gap -- both
+    a real temporal *and* spatial correspondence claim are required for
+    anything stronger than the honest fallback tier."""
+    update = _update(support_state="strong_detector_supported", source_offset_ms=1_000, bounding_box_source_offset_ms=1_000)
+    attribution = geometry_attribution_for_burst(
+        update, request_to_capture_ms=request_to_capture_ms, fov_alignment_proven=True,
+    )
+    assert attribution.resolution_provenance == "fallback"
+
+
+def test_resolution_provenance_synchronized_boundary_is_inclusive() -> None:
+    update = _update(support_state="strong_detector_supported", source_offset_ms=1_000, bounding_box_source_offset_ms=1_000)
+    at_threshold = geometry_attribution_for_burst(
+        update, request_to_capture_ms=DEFAULT_MISALIGNMENT_GAP_THRESHOLD_MS, fov_alignment_proven=True,
+    )
+    assert at_threshold.resolution_provenance == "synchronized"
+
+
+def test_geometry_attribution_rejects_exact_same_frame_provenance_without_same_frame() -> None:
+    with pytest.raises(ValueError):
+        GeometryAttribution(
+            geometry_source="detector",
+            geometry_source_offset_ms=1_000,
+            geometry_source_observation_id=None,
+            geometry_source_confidence=None,
+            same_frame=False,
+            geometry_evidence_gap_ms=200,
+            resolution_provenance="exact_same_frame",
+        )
+
+
+def test_geometry_attribution_rejects_non_exact_provenance_when_same_frame_true() -> None:
+    with pytest.raises(ValueError):
+        GeometryAttribution(
+            geometry_source="detector",
+            geometry_source_offset_ms=1_000,
+            geometry_source_observation_id=None,
+            geometry_source_confidence=None,
+            same_frame=True,
+            geometry_evidence_gap_ms=0,
+            resolution_provenance="synchronized",
+        )
+
+
+def test_geometry_attribution_rejects_synchronized_without_proven_alignment() -> None:
+    with pytest.raises(ValueError):
+        GeometryAttribution(
+            geometry_source="detector",
+            geometry_source_offset_ms=1_000,
+            geometry_source_observation_id=None,
+            geometry_source_confidence=None,
+            same_frame=False,
+            geometry_evidence_gap_ms=200,
+            resolution_provenance="synchronized",
+            fov_alignment_proven=False,
+        )
+
+
+def test_pre_milestone_call_sites_default_to_no_resolution_provenance_fact() -> None:
+    """Every pre-existing positional/keyword `GeometryAttribution(...)` call
+    site remains valid and reports the honest 'not computed' default -- this
+    milestone never retroactively guesses a provenance tier for a record
+    that predates it."""
+    attribution = GeometryAttribution(
+        geometry_source="detector",
+        geometry_source_offset_ms=1_000,
+        geometry_source_observation_id=None,
+        geometry_source_confidence=None,
+        same_frame=False,
+        geometry_evidence_gap_ms=200,
+    )
+    assert attribution.resolution_provenance is None
+    assert attribution.fov_alignment_proven is None
+    assert attribution.geometry_transform_id is None
+
+
+# --------------------------------------------------------------------------
 # geometry_attribution_from_json
 # --------------------------------------------------------------------------
 

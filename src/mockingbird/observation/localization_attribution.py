@@ -131,6 +131,9 @@ def geometry_attribution_for_update(
     same_frame: bool,
     evidence_source_offset_ms: int | None = None,
     measured_gap_ms: int | None = None,
+    fov_alignment_proven: bool | None = None,
+    geometry_transform_id: str | None = None,
+    misalignment_gap_threshold_ms: int = DEFAULT_MISALIGNMENT_GAP_THRESHOLD_MS,
 ) -> GeometryAttribution:
     """Build the `GeometryAttribution` fact for one `EvidenceCandidate` whose
     `subject_geometry` is `update.bounding_box`.
@@ -144,17 +147,32 @@ def geometry_attribution_for_update(
     `geometry_attribution_for_burst`); otherwise it is derived from
     `evidence_source_offset_ms - update.bounding_box_source_offset_ms` when
     both are known, and left honestly `None` when neither is available.
+
+    `fov_alignment_proven`/`geometry_transform_id` (Source-Resolution +
+    Multi-Frame Species Evidence v1, additive) are only ever consulted when
+    `same_frame` is `False` -- an exact same-frame capture is always
+    `resolution_provenance="exact_same_frame"` regardless of any alignment
+    fact, matching `GeometryAttribution`'s own cross-field invariant.
     """
     source = geometry_source_from_support_state(update.support_state)
     sample = _matching_confidence_sample(update) if source == "detector" else None
     if same_frame:
         gap_ms: int | None = 0
-    elif measured_gap_ms is not None:
-        gap_ms = measured_gap_ms
-    elif evidence_source_offset_ms is not None and update.bounding_box_source_offset_ms is not None:
-        gap_ms = abs(evidence_source_offset_ms - update.bounding_box_source_offset_ms)
+        resolution_provenance: (
+            Literal["exact_same_frame", "synchronized", "near_time_capture", "fallback"]
+        ) = "exact_same_frame"
     else:
-        gap_ms = None
+        if measured_gap_ms is not None:
+            gap_ms = measured_gap_ms
+        elif evidence_source_offset_ms is not None and update.bounding_box_source_offset_ms is not None:
+            gap_ms = abs(evidence_source_offset_ms - update.bounding_box_source_offset_ms)
+        else:
+            gap_ms = None
+        resolution_provenance = resolution_provenance_for_burst(
+            fov_alignment_proven=fov_alignment_proven,
+            gap_ms=gap_ms,
+            misalignment_gap_threshold_ms=misalignment_gap_threshold_ms,
+        )
     return GeometryAttribution(
         geometry_source=source,
         geometry_source_offset_ms=update.bounding_box_source_offset_ms,
@@ -162,11 +180,66 @@ def geometry_attribution_for_update(
         geometry_source_confidence=sample.confidence if sample is not None else None,
         same_frame=same_frame,
         geometry_evidence_gap_ms=gap_ms,
+        fov_alignment_proven=fov_alignment_proven if not same_frame else None,
+        geometry_transform_id=geometry_transform_id if not same_frame else None,
+        resolution_provenance=resolution_provenance,
     )
 
 
+# Source-Resolution + Multi-Frame Species Evidence v1: the same bounded gap
+# already used to decide whether a burst's geometry is trustworthy *at all*
+# (`DEFAULT_MISALIGNMENT_GAP_THRESHOLD_MS`, reused rather than a second
+# invented number) also gates the stricter "synchronized" resolution-
+# provenance tier -- a real, FOV-proven-aligned dual-stream capture is only
+# ever called "synchronized" when its own measured gap is inside the exact
+# same bound `classify_localization_attribution` already uses to decide the
+# geometry is not misaligned; a proven-aligned capture with an excessive gap
+# is `"near_time_capture"`, never a contradiction between the two facts.
+
+
+def resolution_provenance_for_burst(
+    *,
+    fov_alignment_proven: bool | None,
+    gap_ms: int | None,
+    misalignment_gap_threshold_ms: int = DEFAULT_MISALIGNMENT_GAP_THRESHOLD_MS,
+) -> Literal["synchronized", "near_time_capture", "fallback"]:
+    """Classify a genuinely-separate (never `same_frame`) evidence capture's
+    own place in the milestone's resolution-provenance vocabulary (see
+    `GeometryAttribution.resolution_provenance` and "Resolution/provenance
+    vocabulary" in docs/source-resolution-multi-frame-species-evidence
+    -contract.md), from plain, already-computed facts only -- never imports
+    `mockingbird.motion.high_resolution_evidence` itself (this module stays
+    free of that module's OpenCV/NumPy dependency; a caller that already
+    called `resolve_alignment` passes in only its boolean verdict).
+
+    - `"synchronized"`: FOV alignment is proven (`fov_alignment_proven is
+      True`) *and* the measured gap is known and within the bounded
+      misalignment threshold -- a real, later capture, but from a
+      continuously-configured dual-stream session showing the identical
+      field of view, with a tightly bounded, honestly-measured delta.
+    - `"near_time_capture"`: a real, bounded-gap capture that is not proven
+      to share the same field of view (alignment unproven, or the provider
+      never reports the fact at all) -- honestly retained as evidence, but
+      never safe to crop a reused subject box against.
+    - `"fallback"`: the gap is unknown or exceeds the bounded threshold --
+      no defensible temporal *or* spatial correspondence claim.
+    """
+    if misalignment_gap_threshold_ms < 0:
+        raise ValueError("invalid_misalignment_gap_threshold")
+    if gap_ms is None or gap_ms > misalignment_gap_threshold_ms:
+        return "fallback"
+    if fov_alignment_proven is True:
+        return "synchronized"
+    return "near_time_capture"
+
+
 def geometry_attribution_for_burst(
-    update: TrackUpdate, *, request_to_capture_ms: int | None,
+    update: TrackUpdate,
+    *,
+    request_to_capture_ms: int | None,
+    fov_alignment_proven: bool | None = None,
+    geometry_transform_id: str | None = None,
+    misalignment_gap_threshold_ms: int = DEFAULT_MISALIGNMENT_GAP_THRESHOLD_MS,
 ) -> GeometryAttribution:
     """`GeometryAttribution` for a high-resolution Camera Node evidence
     burst (`camera_node_live.py`): a genuinely separate, later real capture
@@ -174,9 +247,25 @@ def geometry_attribution_for_burst(
     update that supplied `subject_geometry` -- see `EvidenceBurstFrame.
     request_to_capture_ms` (`media_contracts.py`), which is already the
     exact, real, transport-measured delta and needs no offset-origin
-    reconstruction."""
+    reconstruction.
+
+    `fov_alignment_proven`/`geometry_transform_id` are the caller's already-
+    computed `mockingbird.motion.high_resolution_evidence.resolve_alignment`
+    facts for this Stream's monitoring/evidence capture-profile pair (`None`
+    when alignment was never checked -- for example a provider that does not
+    report capture-profile geometry at all). Used only to compute the
+    honest `resolution_provenance` tier below; never to fabricate a mapped
+    box here (a caller that wants an actually-transformed `subject_geometry`
+    applies `NormalizedGeometryTransform.map_box` itself before building the
+    `EvidenceCandidate`, using the exact transform this `geometry_transform_id`
+    names)."""
     return geometry_attribution_for_update(
-        update, same_frame=False, measured_gap_ms=request_to_capture_ms,
+        update,
+        same_frame=False,
+        measured_gap_ms=request_to_capture_ms,
+        fov_alignment_proven=fov_alignment_proven,
+        geometry_transform_id=geometry_transform_id,
+        misalignment_gap_threshold_ms=misalignment_gap_threshold_ms,
     )
 
 
@@ -205,6 +294,12 @@ def geometry_attribution_from_json(payload: str | None) -> GeometryAttribution |
             geometry_source_confidence=data.get("geometry_source_confidence"),
             same_frame=data.get("same_frame"),
             geometry_evidence_gap_ms=data.get("geometry_evidence_gap_ms"),
+            # Source-Resolution + Multi-Frame Species Evidence v1: `.get(...)`
+            # honestly returns `None` for any record persisted before these
+            # fields existed -- never a guessed/backfilled value.
+            fov_alignment_proven=data.get("fov_alignment_proven"),
+            geometry_transform_id=data.get("geometry_transform_id"),
+            resolution_provenance=data.get("resolution_provenance"),
         )
     except (ValueError, TypeError):
         return None

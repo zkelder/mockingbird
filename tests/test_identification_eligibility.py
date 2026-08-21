@@ -27,17 +27,30 @@ from mockingbird.species.identification_eligibility import (
     FULL_FRAME_MARGIN_FLOOR,
     FULL_FRAME_SCORE_FLOOR,
     MINIMUM_CLASSIFIER_INPUT_DIMENSION_PX,
+    FrameClassificationResult,
     ScoredCandidate,
     SUBJECT_FOCUSED_MARGIN_FLOOR,
     SUBJECT_FOCUSED_SCORE_FLOOR,
     classifier_input_tier,
     evaluate_classification_abstention,
     evaluate_identification_eligibility,
+    evaluate_multi_frame_consensus,
 )
 
 
 def _c(label: str, score: float) -> ScoredCandidate:
     return ScoredCandidate(label=label, score=score)
+
+
+def _frame(
+    media_asset_id: str, label: str, score: float, *, second_label: str = "other_species", second_score: float = 0.02,
+    tier: str = "subject_focused",
+) -> FrameClassificationResult:
+    return FrameClassificationResult(
+        media_asset_id=media_asset_id,
+        tier=tier,
+        candidates=(_c(label, score), _c(second_label, second_score)),
+    )
 
 
 # --- Evidence eligibility ---------------------------------------------------
@@ -369,3 +382,167 @@ class TestPolicyVersionAndFloorsAreExposed:
     def test_full_frame_floors_are_stricter_than_subject_focused(self) -> None:
         assert FULL_FRAME_SCORE_FLOOR > SUBJECT_FOCUSED_SCORE_FLOOR
         assert FULL_FRAME_MARGIN_FLOOR > SUBJECT_FOCUSED_MARGIN_FLOOR
+
+
+class TestMultiFrameConsensus:
+    """Source-Resolution + Multi-Frame Species Evidence v1: combining
+    several independently-evaluated candidate-frame classifications into
+    one honest decision, without blindly averaging softmax scores."""
+
+    def test_empty_frame_results_raises(self) -> None:
+        with pytest.raises(ValueError):
+            evaluate_multi_frame_consensus(())
+
+    def test_single_confident_frame_degenerates_to_its_own_decision(self) -> None:
+        decision = evaluate_multi_frame_consensus((
+            _frame("asset-1", "house_finch", 0.93),
+        ))
+        assert decision.abstained is False
+        assert decision.consensus_basis == "single_frame"
+        assert decision.top1_label == "house_finch"
+        assert decision.top1_score == pytest.approx(0.93)
+        assert decision.reporting_media_asset_id == "asset-1"
+        assert decision.frame_count == 1
+        assert decision.confident_frame_count == 1
+        assert len(decision.per_frame) == 1
+
+    def test_single_weak_frame_abstains_exactly_like_todays_single_frame_path(self) -> None:
+        decision = evaluate_multi_frame_consensus((
+            _frame("asset-1", "house_finch", 0.5, second_score=0.45),
+        ))
+        assert decision.abstained is True
+        assert decision.reason_code == "no_confident_frame_result"
+        assert decision.consensus_basis == "no_confident_frame"
+        assert decision.top1_label is None
+
+    def test_unanimous_agreement_across_frames_suggests_and_reports_first_frame(self) -> None:
+        decision = evaluate_multi_frame_consensus((
+            _frame("asset-native", "house_finch", 0.91),
+            _frame("asset-same-frame", "house_finch", 0.78),
+        ))
+        assert decision.abstained is False
+        assert decision.consensus_basis == "unanimous_agreement"
+        assert decision.top1_label == "house_finch"
+        # Reports the *first* (best-quality, caller-ordered) agreeing
+        # frame's own real score -- never an average of 0.91 and 0.78.
+        assert decision.top1_score == pytest.approx(0.91)
+        assert decision.reporting_media_asset_id == "asset-native"
+        assert decision.agreeing_frame_count == 2
+
+    def test_one_anomalous_frame_cannot_overpower_a_strong_majority(self) -> None:
+        """The exact scenario the milestone names: two strong agreeing
+        frames plus one contradictory outlier still yields a majority
+        suggestion, not an abstention."""
+
+        decision = evaluate_multi_frame_consensus((
+            _frame("asset-1", "house_finch", 0.90),
+            _frame("asset-2", "house_finch", 0.85),
+            _frame("asset-3", "tufted_titmouse", 0.88),
+        ))
+        assert decision.abstained is False
+        assert decision.consensus_basis == "majority_agreement"
+        assert decision.top1_label == "house_finch"
+        assert decision.top1_score == pytest.approx(0.90)
+        assert decision.agreeing_frame_count == 2
+
+    def test_tied_split_with_no_majority_abstains(self) -> None:
+        decision = evaluate_multi_frame_consensus((
+            _frame("asset-1", "house_finch", 0.90),
+            _frame("asset-2", "house_finch", 0.85),
+            _frame("asset-3", "tufted_titmouse", 0.88),
+            _frame("asset-4", "tufted_titmouse", 0.83),
+        ))
+        assert decision.abstained is True
+        assert decision.reason_code == "cross_frame_disagreement"
+        assert decision.consensus_basis == "cross_frame_disagreement"
+        assert decision.top1_label is None
+        assert decision.top1_score is None
+
+    def test_two_frame_disagreement_has_no_majority_and_abstains(self) -> None:
+        decision = evaluate_multi_frame_consensus((
+            _frame("asset-1", "house_finch", 0.90),
+            _frame("asset-2", "tufted_titmouse", 0.88),
+        ))
+        assert decision.abstained is True
+        assert decision.reason_code == "cross_frame_disagreement"
+
+    def test_non_confident_frames_are_excluded_from_the_agreement_count(self) -> None:
+        """A weak/ambiguous frame does not count as a 'vote' either way --
+        only frames that individually clear their own tier's floor
+        participate in the majority calculation."""
+
+        decision = evaluate_multi_frame_consensus((
+            _frame("asset-1", "house_finch", 0.91),
+            _frame("asset-2", "house_finch", 0.80),
+            _frame("asset-3", "tufted_titmouse", 0.50, second_score=0.48),  # weak, abstains individually
+        ))
+        assert decision.abstained is False
+        assert decision.consensus_basis == "unanimous_agreement"
+        assert decision.frame_count == 3
+        assert decision.confident_frame_count == 2
+        assert decision.agreeing_frame_count == 2
+        assert len(decision.per_frame) == 3
+
+    def test_all_frames_individually_weak_abstains(self) -> None:
+        decision = evaluate_multi_frame_consensus((
+            _frame("asset-1", "house_finch", 0.5, second_score=0.45),
+            _frame("asset-2", "tufted_titmouse", 0.4, second_score=0.35),
+        ))
+        assert decision.abstained is True
+        assert decision.reason_code == "no_confident_frame_result"
+        assert decision.confident_frame_count == 0
+
+    def test_full_frame_tier_uses_its_own_stricter_floor_per_frame(self) -> None:
+        """A full-frame-tier frame is judged by the full-frame floor, not
+        silently relaxed just because it is being evaluated alongside other
+        frames."""
+
+        decision = evaluate_multi_frame_consensus((
+            _frame("asset-1", "house_finch", 0.80, tier="full_frame"),  # clears subject-focused but not full-frame floor
+        ))
+        assert decision.abstained is True
+        assert decision.reason_code == "no_confident_frame_result"
+
+    def test_decision_is_deterministic_for_the_same_input(self) -> None:
+        frames = (
+            _frame("asset-1", "house_finch", 0.90),
+            _frame("asset-2", "tufted_titmouse", 0.88),
+            _frame("asset-3", "house_finch", 0.85),
+        )
+        first = evaluate_multi_frame_consensus(frames)
+        second = evaluate_multi_frame_consensus(frames)
+        assert first == second
+
+    def test_per_frame_decisions_are_preserved_in_order(self) -> None:
+        decision = evaluate_multi_frame_consensus((
+            _frame("asset-1", "house_finch", 0.91),
+            _frame("asset-2", "tufted_titmouse", 0.50, second_score=0.48),
+        ))
+        assert len(decision.per_frame) == 2
+        assert decision.per_frame[0].top1_label == "house_finch"
+        assert decision.per_frame[0].abstained is False
+        assert decision.per_frame[1].abstained is True
+
+    def test_policy_version_is_exposed_and_distinct_from_abstention_version(self) -> None:
+        decision = evaluate_multi_frame_consensus((_frame("asset-1", "house_finch", 0.91),))
+        assert decision.policy_version == "multi-frame-consensus-v1"
+
+    def test_frame_classification_result_rejects_empty_candidates(self) -> None:
+        with pytest.raises(ValueError):
+            FrameClassificationResult(media_asset_id="asset-1", tier="subject_focused", candidates=())
+
+    def test_consensus_decision_rejects_inconsistent_abstained_reason_pairing(self) -> None:
+        from mockingbird.species.identification_eligibility import MultiFrameConsensusDecision
+
+        with pytest.raises(ValueError):
+            MultiFrameConsensusDecision(
+                abstained=True, reason_code=None, consensus_basis="no_confident_frame",
+                top1_label=None, top1_score=None, margin=None, reporting_media_asset_id=None,
+                frame_count=1, confident_frame_count=0, agreeing_frame_count=0, per_frame=(),
+            )
+        with pytest.raises(ValueError):
+            MultiFrameConsensusDecision(
+                abstained=False, reason_code="no_confident_frame_result", consensus_basis="single_frame",
+                top1_label="house_finch", top1_score=0.9, margin=0.8, reporting_media_asset_id="asset-1",
+                frame_count=1, confident_frame_count=1, agreeing_frame_count=1, per_frame=(),
+            )

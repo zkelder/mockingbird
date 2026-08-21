@@ -35,6 +35,12 @@ from mockingbird.observation.contracts import (
     TrackUpdate,
 )
 from mockingbird.observation.frame_driven_provider import FrameDrivenObservationProvider, FrameDrivenSettings
+from mockingbird.motion.high_resolution_evidence import (
+    AlignmentDecision,
+    CaptureProfileGeometry,
+    NormalizedGeometryTransform,
+    resolve_alignment,
+)
 from mockingbird.observation.media_contracts import (
     AnalysisFrameEnvelope,
     AnalysisStreamCapability,
@@ -376,6 +382,169 @@ async def test_live_shadow_burst_evidence_carries_geometry_attribution_with_real
     assert same_frame_attribution.geometry_evidence_gap_ms == 0
     assert same_frame_attribution.geometry_source == "detector"
     assert same_frame_attribution.geometry_source_confidence == 0.95
+    session.stop()
+
+
+# --------------------------------------------------------------------------
+# Source-Resolution + Multi-Frame Species Evidence v1: `resolution_alignment`
+# is the caller's already-computed, already-tested `resolve_alignment`
+# result for this Stream's monitoring/evidence capture-profile pair --
+# fetched once, at session start, never per-frame (see
+# `engine_runtime._default_capture_profile_alignment`).
+# --------------------------------------------------------------------------
+
+
+def _aligned_decision(*, rotation: int = 0, mirrored: bool = False) -> AlignmentDecision:
+    return resolve_alignment(
+        CaptureProfileGeometry(
+            profile_id="monitoring", width=1920, height=1440,
+            geometry_group="shared-fov", orientation="normal", mirrored=False, same_fov=True,
+        ),
+        CaptureProfileGeometry(
+            profile_id="evidence", width=4624, height=3472, geometry_group="shared-fov",
+            orientation={0: "normal", 90: "rotate_90", 180: "rotate_180", 270: "rotate_270"}[rotation],
+            mirrored=mirrored, same_fov=True,
+        ),
+    )
+
+
+@pytest.mark.anyio
+async def test_burst_evidence_is_mapped_and_synchronized_when_alignment_is_proven() -> None:
+    """A real, later burst capture whose Camera Node capture-profile
+    metadata proves it shares the analysis frame's field of view gets its
+    own honestly-mapped subject box and the strongest non-exact provenance
+    tier -- never the un-transformed analysis-frame coordinates passed
+    through silently."""
+    frame_one = _frame(1)
+    provider = _FakeSameFrameProvider({
+        frame_one.frame_id: (_confirmed_update(
+            generation_id="gen-1", frame_id=frame_one.frame_id, source_offset_ms=0,
+            box=(0.2, 0.2, 0.4, 0.4),
+        ),),
+    })
+    decision = _aligned_decision()
+    assert decision.status == "aligned"
+    session = LiveCameraNodeShadowSession(
+        source=CameraNodeAnalysisSource("stream-yard", maximum_frame_bytes=4096),
+        transport=_BurstTransport(), provider=provider, evidence_profile_id="evidence-large",
+        scheduler=_generous_scheduler(), resolution_alignment=decision,
+    )
+    session.start()
+    result = await session.process_envelope(frame_one, received_at=datetime(2026, 8, 4, tzinfo=UTC))
+    assert result is not None
+    burst = next(item for item in result.evidence_candidates if item.role == "high_resolution_burst")
+    # No rotation/mirror between these two profiles -- the transform is a
+    # real (not skipped) identity mapping, not the same object as the raw box.
+    assert burst.subject_geometry == (0.2, 0.2, 0.4, 0.4)
+    attribution = burst.geometry_attribution
+    assert attribution is not None
+    assert attribution.same_frame is False
+    assert attribution.fov_alignment_proven is True
+    assert attribution.resolution_provenance == "synchronized"
+    assert attribution.geometry_transform_id == decision.transform.transform_id
+    session.stop()
+
+
+@pytest.mark.anyio
+async def test_burst_evidence_applies_a_real_rotation_transform_not_a_pass_through() -> None:
+    """The strongest possible proof the mapping is genuinely applied (not a
+    coincidental no-op): a 90-degree orientation difference between the
+    monitoring and evidence profiles produces a demonstrably different,
+    correctly-rotated box."""
+    frame_one = _frame(1)
+    provider = _FakeSameFrameProvider({
+        frame_one.frame_id: (_confirmed_update(
+            generation_id="gen-1", frame_id=frame_one.frame_id, source_offset_ms=0,
+            box=(0.2, 0.2, 0.4, 0.4),
+        ),),
+    })
+    decision = _aligned_decision(rotation=90)
+    assert decision.status == "aligned"
+    session = LiveCameraNodeShadowSession(
+        source=CameraNodeAnalysisSource("stream-yard", maximum_frame_bytes=4096),
+        transport=_BurstTransport(), provider=provider, evidence_profile_id="evidence-large",
+        scheduler=_generous_scheduler(), resolution_alignment=decision,
+    )
+    session.start()
+    result = await session.process_envelope(frame_one, received_at=datetime(2026, 8, 4, tzinfo=UTC))
+    assert result is not None
+    burst = next(item for item in result.evidence_candidates if item.role == "high_resolution_burst")
+    assert burst.subject_geometry == pytest.approx((0.6, 0.2, 0.8, 0.4))
+    assert burst.subject_geometry != (0.2, 0.2, 0.4, 0.4)
+    session.stop()
+
+
+@pytest.mark.anyio
+async def test_burst_evidence_keeps_raw_box_and_unproven_provenance_without_alignment() -> None:
+    """The default, pre-milestone behavior: no `resolution_alignment` at all
+    (a provider that never reports capture-profile geometry, or a Camera
+    Node that was unreachable at session start) leaves `subject_geometry`
+    exactly as it was before this milestone, and never claims a proven
+    field-of-view match."""
+    frame_one = _frame(1)
+    provider = _FakeSameFrameProvider({
+        frame_one.frame_id: (_confirmed_update(
+            generation_id="gen-1", frame_id=frame_one.frame_id, source_offset_ms=0,
+            box=(0.2, 0.2, 0.4, 0.4),
+        ),),
+    })
+    session = LiveCameraNodeShadowSession(
+        source=CameraNodeAnalysisSource("stream-yard", maximum_frame_bytes=4096),
+        transport=_BurstTransport(), provider=provider, evidence_profile_id="evidence-large",
+        scheduler=_generous_scheduler(),
+    )
+    assert session.resolution_alignment is None
+    session.start()
+    result = await session.process_envelope(frame_one, received_at=datetime(2026, 8, 4, tzinfo=UTC))
+    assert result is not None
+    burst = next(item for item in result.evidence_candidates if item.role == "high_resolution_burst")
+    assert burst.subject_geometry == (0.2, 0.2, 0.4, 0.4)
+    attribution = burst.geometry_attribution
+    assert attribution is not None
+    assert attribution.fov_alignment_proven is None
+    assert attribution.geometry_transform_id is None
+    assert attribution.resolution_provenance in ("near_time_capture", "fallback")
+    session.stop()
+
+
+@pytest.mark.anyio
+async def test_burst_evidence_stays_unmapped_when_alignment_is_unproven_geometry() -> None:
+    """An explicit, checked-but-failed alignment (different geometry groups
+    -- for example a mode-switched evidence profile with no proven FOV
+    match) behaves exactly like no alignment at all for box-mapping
+    purposes: never a guessed transform."""
+    frame_one = _frame(1)
+    provider = _FakeSameFrameProvider({
+        frame_one.frame_id: (_confirmed_update(
+            generation_id="gen-1", frame_id=frame_one.frame_id, source_offset_ms=0,
+            box=(0.2, 0.2, 0.4, 0.4),
+        ),),
+    })
+    decision = resolve_alignment(
+        CaptureProfileGeometry(
+            profile_id="monitoring", width=1920, height=1440,
+            geometry_group="fov-a", orientation="normal", mirrored=False, same_fov=True,
+        ),
+        CaptureProfileGeometry(
+            profile_id="evidence", width=4624, height=3472,
+            geometry_group="fov-b", orientation="normal", mirrored=False, same_fov=True,
+        ),
+    )
+    assert decision.status == "full_only"
+    session = LiveCameraNodeShadowSession(
+        source=CameraNodeAnalysisSource("stream-yard", maximum_frame_bytes=4096),
+        transport=_BurstTransport(), provider=provider, evidence_profile_id="evidence-large",
+        scheduler=_generous_scheduler(), resolution_alignment=decision,
+    )
+    session.start()
+    result = await session.process_envelope(frame_one, received_at=datetime(2026, 8, 4, tzinfo=UTC))
+    assert result is not None
+    burst = next(item for item in result.evidence_candidates if item.role == "high_resolution_burst")
+    assert burst.subject_geometry == (0.2, 0.2, 0.4, 0.4)
+    attribution = burst.geometry_attribution
+    assert attribution is not None
+    assert attribution.fov_alignment_proven is False
+    assert attribution.resolution_provenance in ("near_time_capture", "fallback")
     session.stop()
 
 

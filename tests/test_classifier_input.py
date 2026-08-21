@@ -28,6 +28,7 @@ from mockingbird.species.classifier_input import (
     ClassifierInputSubjectFrame,
     apply_classifier_input_plan,
     resolve_classifier_input,
+    resolve_native_resolution_subject_crop,
 )
 
 
@@ -36,6 +37,8 @@ def _attribution(
     same_frame: bool | None,
     gap_ms: int | None = None,
     source: str | None = "detector",
+    resolution_provenance: str | None = None,
+    fov_alignment_proven: bool | None = None,
 ) -> GeometryAttribution:
     return GeometryAttribution(
         geometry_source=source,
@@ -44,11 +47,26 @@ def _attribution(
         geometry_source_confidence=0.79,
         same_frame=same_frame,
         geometry_evidence_gap_ms=gap_ms,
+        resolution_provenance=resolution_provenance,
+        fov_alignment_proven=fov_alignment_proven,
+    )
+
+
+def _synchronized_attribution(*, gap_ms: int = 340) -> GeometryAttribution:
+    """A genuinely higher-resolution capture whose lineage proves it shares
+    the analysis frame's field of view -- the one attribution shape
+    `resolve_native_resolution_subject_crop` accepts."""
+    return _attribution(
+        same_frame=False,
+        gap_ms=gap_ms,
+        resolution_provenance="synchronized",
+        fov_alignment_proven=True,
     )
 
 
 def _subject_frame(
     *,
+    media_asset_id: str = "media-candidate-999",
     parent_media_asset_id: str | None = None,
     normalized_track_box: tuple[float, float, float, float] | None = (0.46, 0.59, 0.51, 0.63),
     geometry_attribution: GeometryAttribution | None = None,
@@ -56,7 +74,7 @@ def _subject_frame(
     image_height: int = 2160,
 ) -> ClassifierInputSubjectFrame:
     return ClassifierInputSubjectFrame(
-        media_asset_id="media-candidate-999",
+        media_asset_id=media_asset_id,
         image_width=image_width,
         image_height=image_height,
         parent_media_asset_id=parent_media_asset_id,
@@ -160,7 +178,163 @@ def test_no_persisted_crop_candidates_falls_through_to_next_tier() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Tier 2: exact-frame geometry eligibility / rejection of cross-frame geometry
+# Tier 2: native-resolution subject box (Source-Resolution + Multi-Frame
+# Species Evidence v1) -- a genuinely higher-resolution candidate frame whose
+# lineage proves FOV-aligned, bounded-gap correspondence.
+# ---------------------------------------------------------------------------
+
+
+def test_synchronized_native_candidate_is_preferred_over_same_frame_analysis_tier() -> None:
+    """A proven higher-resolution candidate outranks the same-resolution
+    exact-frame tier -- resolution first, given honest correspondence."""
+    native_box = (0.40, 0.55, 0.60, 0.75)
+    native_candidate = _subject_frame(
+        media_asset_id="media-native-burst-1",
+        normalized_track_box=native_box,
+        geometry_attribution=_synchronized_attribution(),
+        image_width=4624,
+        image_height=3472,
+    )
+    plan = resolve_classifier_input(
+        subject_frame=_subject_frame(geometry_attribution=_attribution(same_frame=True, gap_ms=0)),
+        native_resolution_candidates=(native_candidate,),
+    )
+    assert plan.source == "native_resolution_subject_box"
+    assert plan.media_asset_id == "media-native-burst-1"
+    assert plan.used_full_frame_fallback is False
+    assert plan.crop_method == "native_resolution_subject_box_padded"
+    assert plan.original_width == 4624
+    assert plan.original_height == 3472
+
+    expected = plan_activity_crop(
+        source_media_asset_id="media-native-burst-1",
+        image_width=4624,
+        image_height=3472,
+        left=native_box[0],
+        top=native_box[1],
+        right=native_box[2],
+        bottom=native_box[3],
+        crop_reason="activity_motion",
+    )
+    assert plan.crop_box_normalized == expected.crop_box_normalized
+    assert plan.crop_box_pixels == expected.crop_box_pixels
+
+
+def test_persisted_crop_still_outranks_native_resolution_candidate() -> None:
+    """Tier 1 (an already-curated derived crop) stays first regardless of
+    resolution -- respecting prior deliberate curation outranks an automated
+    resolution optimization."""
+    native_candidate = _subject_frame(
+        media_asset_id="media-native-burst-1",
+        geometry_attribution=_synchronized_attribution(),
+        image_width=4624,
+        image_height=3472,
+    )
+    plan = resolve_classifier_input(
+        subject_frame=_subject_frame(geometry_attribution=_attribution(same_frame=True, gap_ms=0)),
+        persisted_crop_candidates=(_crop_asset(),),
+        native_resolution_candidates=(native_candidate,),
+    )
+    assert plan.source == "persisted_subject_crop"
+
+
+@pytest.mark.parametrize(
+    "resolution_provenance,fov_alignment_proven",
+    [
+        ("near_time_capture", None),
+        ("near_time_capture", False),
+        ("fallback", None),
+        (None, None),
+    ],
+)
+def test_native_resolution_requires_proven_synchronized_not_merely_near_time(
+    resolution_provenance: str | None, fov_alignment_proven: bool | None,
+) -> None:
+    """The same 'proof, not proximity' discipline as the same-frame tier: a
+    real, bounded-gap capture without a *proven* FOV match is never eligible
+    to crop against, no matter how small the gap."""
+    native_candidate = _subject_frame(
+        media_asset_id="media-native-burst-1",
+        geometry_attribution=_attribution(
+            same_frame=False,
+            gap_ms=200,
+            resolution_provenance=resolution_provenance,
+            fov_alignment_proven=fov_alignment_proven,
+        ),
+        image_width=4624,
+        image_height=3472,
+    )
+    plan = resolve_classifier_input(
+        subject_frame=_subject_frame(geometry_attribution=_attribution(same_frame=True, gap_ms=0)),
+        native_resolution_candidates=(native_candidate,),
+    )
+    # Falls through to the (still-eligible) exact-frame tier on the primary
+    # subject_frame, never the rejected native candidate.
+    assert plan.source == "exact_frame_subject_box"
+
+
+def test_native_resolution_rejects_a_candidate_that_is_itself_a_derived_crop() -> None:
+    native_candidate = _subject_frame(
+        media_asset_id="media-native-burst-1",
+        parent_media_asset_id="media-native-parent",
+        geometry_attribution=_synchronized_attribution(),
+    )
+    assert resolve_native_resolution_subject_crop(native_candidate) is None
+
+
+def test_native_resolution_rejects_a_candidate_with_no_subject_box() -> None:
+    native_candidate = _subject_frame(
+        media_asset_id="media-native-burst-1",
+        normalized_track_box=None,
+        geometry_attribution=_synchronized_attribution(),
+    )
+    assert resolve_native_resolution_subject_crop(native_candidate) is None
+
+
+def test_native_resolution_picks_the_first_eligible_candidate_in_caller_order() -> None:
+    """The candidate tuple is caller-ordered (best-first, by whatever quality
+    ranking the caller already applied); this resolver never re-ranks it."""
+    ineligible_first = _subject_frame(
+        media_asset_id="media-native-burst-ineligible",
+        geometry_attribution=_attribution(same_frame=False, gap_ms=9_000, resolution_provenance="fallback"),
+    )
+    eligible_second = _subject_frame(
+        media_asset_id="media-native-burst-eligible",
+        geometry_attribution=_synchronized_attribution(),
+    )
+    plan = resolve_classifier_input(
+        subject_frame=_subject_frame(geometry_attribution=_attribution(same_frame=True, gap_ms=0)),
+        native_resolution_candidates=(ineligible_first, eligible_second),
+    )
+    assert plan.source == "native_resolution_subject_box"
+    assert plan.media_asset_id == "media-native-burst-eligible"
+
+
+def test_native_resolution_degenerate_box_falls_through_honestly() -> None:
+    native_candidate = _subject_frame(
+        media_asset_id="media-native-burst-1",
+        normalized_track_box=(0.5, 0.5, 0.5, 0.5),  # degenerate: zero area
+        geometry_attribution=_synchronized_attribution(),
+    )
+    assert resolve_native_resolution_subject_crop(native_candidate) is None
+    plan = resolve_classifier_input(
+        subject_frame=_subject_frame(geometry_attribution=_attribution(same_frame=True, gap_ms=0)),
+        native_resolution_candidates=(native_candidate,),
+    )
+    assert plan.source == "exact_frame_subject_box"
+
+
+def test_no_native_resolution_candidates_falls_through_unchanged() -> None:
+    """Default, empty `native_resolution_candidates` reproduces exactly
+    today's pre-milestone tier order -- existing callers are unaffected."""
+    plan = resolve_classifier_input(
+        subject_frame=_subject_frame(geometry_attribution=_attribution(same_frame=True, gap_ms=0)),
+    )
+    assert plan.source == "exact_frame_subject_box"
+
+
+# ---------------------------------------------------------------------------
+# Tier 3: exact-frame geometry eligibility / rejection of cross-frame geometry
 # ---------------------------------------------------------------------------
 
 

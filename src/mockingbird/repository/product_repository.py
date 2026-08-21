@@ -112,9 +112,11 @@ from mockingbird.observation.scene_confusor import (
 )
 from mockingbird.species.classifier_input import (
     ClassifierInputCropAsset,
+    ClassifierInputPlan,
     ClassifierInputSubjectFrame,
     PERSISTED_CROP_EVIDENCE_ROLES,
     resolve_classifier_input,
+    resolve_native_resolution_subject_crop,
 )
 from mockingbird.species.identification_eligibility import (
     IDENTIFICATION_ELIGIBILITY_POLICY_VERSION,
@@ -20904,6 +20906,109 @@ class ProductRepository:
         assets = [session.get(MediaAssetModel, link.media_asset_id) for link in links]
         return [asset for asset in assets if asset is not None]
 
+    def _native_resolution_candidate_assets_for_visit(
+        self, session: Session, visit_id: str,
+    ) -> list[MediaAssetModel]:
+        """Every already-persisted evidence MediaAsset linked to this Visit
+        whose own lineage proves genuinely higher-resolution, FOV-aligned
+        correspondence (`GeometryAttribution.resolution_provenance ==
+        "synchronized"` -- Source-Resolution + Multi-Frame Species Evidence
+        v1). Deliberately not filtered by `evidence_role`: a winning
+        `high_resolution_burst`-origin `EvidenceCandidate` is persisted under
+        whichever role `evidence_scoring.score_proposal_evidence` assigned it
+        (`identification`/`context`/`alternate`), never the origin role
+        string itself -- see `candidate_visit_adapter._build_evidence_items`.
+        `resolution_provenance` is the one signal that survives that
+        relabeling, and only a genuine burst-origin candidate can ever carry
+        it, so this needs no separate role check.
+
+        Ordered by `VisitEvidenceLinkModel.created_at`/id -- the exact order
+        `_build_evidence_items` inserted them in (identification pick first,
+        then context, then alternates by identification score) -- reusing
+        the Stage 6 scorer's already-computed quality ranking rather than
+        re-deriving one here (see "Quality ranking" in
+        docs/source-resolution-multi-frame-species-evidence-contract.md)."""
+
+        links = session.scalars(
+            select(VisitEvidenceLinkModel)
+            .where(VisitEvidenceLinkModel.visit_id == visit_id)
+            .order_by(VisitEvidenceLinkModel.created_at, VisitEvidenceLinkModel.id)
+        ).all()
+        candidates: list[MediaAssetModel] = []
+        for link in links:
+            asset = session.get(MediaAssetModel, link.media_asset_id)
+            if asset is None:
+                continue
+            attribution = geometry_attribution_from_json(asset.geometry_attribution_json)
+            if attribution is not None and attribution.resolution_provenance == "synchronized":
+                candidates.append(asset)
+        return candidates
+
+    def _native_resolution_subject_frames_for_visit(
+        self, session: Session, visit_id: str,
+    ) -> tuple[ClassifierInputSubjectFrame, ...]:
+        """`_native_resolution_candidate_assets_for_visit`, projected into
+        the pure resolver's own input shape -- the one seam both the
+        single-best-frame override below and the multi-frame candidate
+        builder (`species_multi_frame_candidate_plans`) share, so neither
+        can silently diverge on which assets count."""
+
+        assets = self._native_resolution_candidate_assets_for_visit(session, visit_id)
+        frames = (
+            _classifier_input_subject_frame_from_asset(asset) for asset in assets
+        )
+        return tuple(frame for frame in frames if frame is not None)
+
+    def species_multi_frame_candidate_plans(
+        self, visit_id: str, *, max_candidates: int = MAX_LIVE_VISIT_EVIDENCE_FRAMES,
+    ) -> tuple[ClassifierInputPlan, ...]:
+        """Bounded, quality-ranked classifier-input plans for every
+        genuinely distinct, safe-to-crop evidence frame this Visit has --
+        the same-frame analysis-resolution asset (if any) plus native-
+        resolution candidates, each independently resolved via the exact
+        same pure resolver tiers `_classifier_input_override` uses for its
+        single-best pick (never a second, parallel selection system).
+
+        Read-only and side-effect-free: never runs a model, never persists
+        anything, never mutates a Visit. The one seam a multi-frame species-
+        identification consumer (today: the governed benchmark in
+        `scripts/benchmark_source_resolution_species_evidence.py`; a future
+        production consensus pass would use the identical seam) builds its
+        candidate set from.
+
+        `max_candidates` defaults to `MAX_LIVE_VISIT_EVIDENCE_FRAMES` (4) --
+        not an arbitrary new number, but the existing, already-measured
+        ceiling on how many evidence frames a Visit ever retains at all
+        (see that constant's own definition); a real Visit can supply at
+        most one same-frame asset and `MAX_LIVE_VISIT_EVIDENCE_FRAMES - 1`
+        distinct native-resolution alternates today. Order is best-quality-
+        first (same-frame, when eligible, then native candidates in
+        `_native_resolution_subject_frames_for_visit`'s already-established
+        evidence-scoring-derived order) -- the exact order a consensus
+        policy should evaluate/report from.
+        """
+
+        if max_candidates < 1:
+            raise ValueError("invalid_max_candidates")
+        with self.session_factory() as session:
+            plans: list[ClassifierInputPlan] = []
+            same_frame_asset = self._classifier_same_frame_asset_for_visit(session, visit_id)
+            if same_frame_asset is not None:
+                subject_frame = _classifier_input_subject_frame_from_asset(same_frame_asset)
+                if subject_frame is not None:
+                    plan = resolve_classifier_input(subject_frame=subject_frame)
+                    if not plan.used_full_frame_fallback:
+                        plans.append(plan)
+            for native_frame in self._native_resolution_subject_frames_for_visit(session, visit_id):
+                if len(plans) >= max_candidates:
+                    break
+                native_plan = resolve_native_resolution_subject_crop(native_frame)
+                if native_plan is not None and native_plan.media_asset_id not in {
+                    plan.media_asset_id for plan in plans
+                }:
+                    plans.append(native_plan)
+            return tuple(plans[:max_candidates])
+
     def _classifier_input_override(
         self,
         session: Session,
@@ -20930,13 +21035,30 @@ class ProductRepository:
         tiers need a Visit-linked MediaAsset only the Observation Engine's
         candidate-Visit path can ever produce -- a legacy Event-only Review
         Queue item safely short-circuits on the very first check below.
+
+        Source-Resolution + Multi-Frame Species Evidence v1 adds a third
+        input source here, `native_resolution_candidates` -- this Visit's
+        already-persisted, genuinely higher-resolution evidence whose own
+        lineage proves FOV-aligned correspondence (see
+        `_native_resolution_subject_frames_for_visit`). `resolve_classifier_
+        input` ranks it ahead of the same-frame/full-frame tiers on the
+        *primary* `subject_frame` below, but never ahead of tier 1 (an
+        already-curated persisted crop) -- see that resolver's own decision
+        order.
         """
         if item.visit_id is None:
             return None
         try:
             same_frame_asset = self._classifier_same_frame_asset_for_visit(session, item.visit_id)
             persisted_crop_assets = self._persisted_subject_crop_assets_for_visit(session, item.visit_id)
-            if same_frame_asset is None and not persisted_crop_assets:
+            native_resolution_candidates = self._native_resolution_subject_frames_for_visit(
+                session, item.visit_id,
+            )
+            if (
+                same_frame_asset is None
+                and not persisted_crop_assets
+                and not native_resolution_candidates
+            ):
                 return None
             subject_asset = same_frame_asset or session.get(MediaAssetModel, media_asset_id)
             if subject_asset is None:
@@ -20948,7 +21070,9 @@ class ProductRepository:
                 _classifier_input_crop_asset_from_model(asset) for asset in persisted_crop_assets
             )
             plan = resolve_classifier_input(
-                subject_frame=subject_frame, persisted_crop_candidates=persisted_candidates,
+                subject_frame=subject_frame,
+                persisted_crop_candidates=persisted_candidates,
+                native_resolution_candidates=native_resolution_candidates,
             )
             if plan.used_full_frame_fallback:
                 return None
@@ -20966,15 +21090,18 @@ class ProductRepository:
             if plan.crop_box_normalized is not None
             else BoundingBox(x=0.0, y=0.0, width=1.0, height=1.0)
         )
-        input_type = "same_frame_crop" if plan.source == "exact_frame_subject_box" else "persisted_crop"
+        input_type = {
+            "exact_frame_subject_box": "same_frame_crop",
+            "native_resolution_subject_box": "native_resolution_crop",
+        }.get(plan.source, "persisted_crop")
+        label = {
+            "same_frame_crop": "Same-frame subject crop (classifier evidence)",
+            "native_resolution_crop": "Native-resolution subject crop (classifier evidence)",
+        }.get(input_type, "Reused persisted subject crop (classifier evidence)")
         return _ReviewSpeciesCropContext(
             source="activity",
             box_normalized=box_normalized,
-            label=(
-                "Same-frame subject crop (classifier evidence)"
-                if input_type == "same_frame_crop"
-                else "Reused persisted subject crop (classifier evidence)"
-            ),
+            label=label,
             classifier_input_media_asset_id=override_asset.id,
             classifier_input_local_path=str(override_path),
             classifier_input_size_bytes=override_stat.st_size,
@@ -20988,8 +21115,16 @@ class ProductRepository:
             # Honest "not applicable" (`None`), never a fabricated `False`,
             # for a reused persisted crop -- `same_frame` is a fact about
             # *this* resolution's own tier 2 proof, not a property a reused
-            # tier-1 crop asset is being asked to re-prove here.
-            classifier_input_same_frame=(True if input_type == "same_frame_crop" else None),
+            # tier-1 crop asset is being asked to re-prove here. A native-
+            # resolution crop *positively* proves `same_frame=False` (that
+            # is exactly what `resolution_provenance == "synchronized"`
+            # means -- a genuinely separate, later capture), so it reports
+            # the real fact rather than "not applicable."
+            classifier_input_same_frame=(
+                True if input_type == "same_frame_crop"
+                else False if input_type == "native_resolution_crop"
+                else None
+            ),
             classifier_input_crop_method=plan.crop_method,
             classifier_input_selection_reason=plan.selection_reason,
         )

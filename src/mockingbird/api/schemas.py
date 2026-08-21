@@ -1323,6 +1323,15 @@ class ObservationProviderCapabilitiesResponse(BaseModel):
     emits_track_updates: bool
     emits_evidence_candidates: bool
     emits_visit_proposals: bool
+    # Source-Resolution + Multi-Frame Species Evidence v1: previously
+    # computed on `ObservationProviderCapabilities` (see
+    # `mockingbird.observation.contracts`) but never exposed through this
+    # public response model -- "can this provider ever produce a genuinely
+    # higher-resolution evidence capture at all" is exactly the honest,
+    # capability-driven fact "Capability-aware UX" in product-doctrine.md
+    # calls for. `False` (the dataclass default) for any provider kind that
+    # predates or never implements this, never fabricated `True`.
+    high_resolution_burst: bool = False
 
 
 class ObservationProviderHealthResponse(BaseModel):
@@ -2184,9 +2193,10 @@ class ClassifierSupportingEvidence(BaseModel):
     species_suggestion_id: str
     # Mirrors `classifier_input.same_frame`/`.input_type` from the
     # suggestion's own `evidence_region_json` (Same-Frame Species Evidence
-    # v1): whether the resolver proved this exact frame (not merely a
+    # v1; Source-Resolution + Multi-Frame Species Evidence v1 adds a third
+    # tier): whether the resolver proved this exact frame (not merely a
     # nearby one), and which resolver tier supplied it
-    # (`same_frame_crop` | `persisted_crop`).
+    # (`same_frame_crop` | `persisted_crop` | `native_resolution_crop`).
     same_frame: bool | None = None
     input_type: str | None = None
 

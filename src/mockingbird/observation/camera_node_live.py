@@ -48,6 +48,7 @@ from mockingbird.source_providers.camera_node import (
     UrlLibCameraNodeRequester,
     normalize_camera_node_address,
 )
+from mockingbird.motion.high_resolution_evidence import AlignmentDecision
 
 
 DEFAULT_MAXIMUM_QUEUE_FRAMES = 4
@@ -690,6 +691,7 @@ class LiveCameraNodeShadowSession:
         burst_deadline_ms: int = 10_000,
         minimum_burst_interval_ms: int = 1_000,
         scheduler: BurstScheduler | None = None,
+        resolution_alignment: AlignmentDecision | None = None,
     ) -> None:
         if (
             not evidence_profile_id
@@ -701,6 +703,17 @@ class LiveCameraNodeShadowSession:
         self.transport = transport
         self.provider = provider
         self.evidence_profile_id = evidence_profile_id
+        # Source-Resolution + Multi-Frame Species Evidence v1: the caller's
+        # already-computed, already-tested FOV-alignment proof between this
+        # Stream's monitoring and evidence capture profiles (see
+        # `mockingbird.motion.high_resolution_evidence.resolve_alignment`),
+        # fetched once at session start -- never per-frame, and never
+        # computed here. `None` (the default, and every pre-existing
+        # constructor call site's implicit value) honestly means "alignment
+        # was never checked," which resolves to exactly today's unchanged
+        # `resolution_provenance` behavior (`near_time_capture`/`fallback`
+        # by gap alone) -- see `_process_frame`.
+        self.resolution_alignment = resolution_alignment
         self.burst_deadline_ms = burst_deadline_ms
         self.minimum_burst_interval_ms = minimum_burst_interval_ms
         # A caller may supply a pre-built scheduler (for example to share one
@@ -903,6 +916,39 @@ class LiveCameraNodeShadowSession:
             self._temporary_payloads.move_to_end(item.content_hash)
             while len(self._temporary_payloads) > 8:
                 self._temporary_payloads.popitem(last=False)
+            # Source-Resolution + Multi-Frame Species Evidence v1: only ever
+            # remap the box when this Stream's monitoring/evidence capture
+            # profiles have an already-proven `resolve_alignment` result
+            # (fetched once at session start -- see `resolution_alignment`),
+            # never per-frame and never guessed. `fov_alignment_proven`
+            # describes the *evidence image itself* (its field of view is
+            # proven to match the analysis frame's), independent of whether
+            # this specific box happens to map cleanly -- a structurally
+            # invalid box is dropped (never persisted un-transformed under a
+            # "synchronized" claim, which would silently misstate its own
+            # correspondence). Preserves the honest three-way distinction
+            # `GeometryAttribution.fov_alignment_proven` documents: `None`
+            # when alignment was never checked at all (no `resolution_
+            # alignment` supplied), `False` when it was checked and failed/
+            # unproven, `True` only when actually proven.
+            fov_alignment_proven: bool | None = (
+                None
+                if self.resolution_alignment is None
+                else self.resolution_alignment.status == "aligned"
+            )
+            geometry_transform_id: str | None = None
+            burst_subject_geometry = request.subject_geometry
+            if (
+                fov_alignment_proven
+                and self.resolution_alignment.transform is not None
+                and request.subject_geometry is not None
+            ):
+                mapped = self.resolution_alignment.transform.map_box(request.subject_geometry)
+                if mapped is not None:
+                    burst_subject_geometry = mapped
+                    geometry_transform_id = self.resolution_alignment.transform.transform_id
+                else:
+                    burst_subject_geometry = None
             burst_evidence.append(EvidenceCandidate(
                 media_asset_id=f"shadow-burst:{item.content_hash}",
                 stream_id=frame.stream_id,
@@ -912,7 +958,7 @@ class LiveCameraNodeShadowSession:
                 source_offset_ms=frame.source_offset_ms,
                 width=item.width,
                 height=item.height,
-                subject_geometry=request.subject_geometry,
+                subject_geometry=burst_subject_geometry,
                 track_generation_id=request.track_generation_id,
                 detector_provenance="onnx-cuda",
                 tracker_provenance=FRAME_DRIVEN_PROVIDER_VERSION,
@@ -936,8 +982,16 @@ class LiveCameraNodeShadowSession:
                 # `request_to_capture_ms` is the exact, already-measured
                 # round-trip the transport computed from two real
                 # timestamps; reused here rather than re-derived.
+                #
+                # Source-Resolution + Multi-Frame Species Evidence v1:
+                # `fov_alignment_proven`/`geometry_transform_id` are this
+                # Stream's own already-proven capture-profile alignment
+                # facts, never recomputed per-frame.
                 geometry_attribution=geometry_attribution_for_burst(
-                    update, request_to_capture_ms=item.request_to_capture_ms,
+                    update,
+                    request_to_capture_ms=item.request_to_capture_ms,
+                    fov_alignment_proven=fov_alignment_proven,
+                    geometry_transform_id=geometry_transform_id,
                 ),
             ))
             # Same-Frame Species Evidence v1 (see docs/same-frame-species-
