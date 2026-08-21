@@ -278,6 +278,17 @@ class ReviewIdentificationStatus(str, Enum):
     proposal_created = "proposal_created"
     no_proposal = "no_proposal"
     failed = "failed"
+    # Identification Eligibility + Abstention v1: a real, honest outcome --
+    # not an error. Either subject evidence did not meet the identification
+    # eligibility floor, or a real model result was too ambiguous/unspecific
+    # to present as a named species. Distinguished from `unsupported_media`
+    # (a media-type/zone problem) and `failed` (an adapter/runtime problem):
+    # this is a considered "not enough support to name a species" verdict,
+    # honest uncertainty rather than a malfunction. See `unavailable_reason`
+    # for the specific bounded reason code
+    # (`bioclip_identification_evidence_ineligible` /
+    # `bioclip_identification_ambiguous`).
+    identification_uncertain = "identification_uncertain"
 
 
 class FocusCropSource(str, Enum):

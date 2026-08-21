@@ -1215,6 +1215,18 @@ pipeline's own stage 12; see [architecture.md](architecture.md) "Detection
 Quality Accounting"). Representative species-level correction truth (30-100
 reviewed examples) to actually validate accuracy also remains uncollected.
 
+**2026-08-21 update:** Identification Eligibility + Abstention v1 closed
+the "no abstention path at all" gap -- a canonical, versioned, benchmarked
+eligibility/abstention decision boundary
+(`mockingbird.species.identification_eligibility`) now runs before and
+after every BioCLIP call; see
+[identification-eligibility-abstention-v1-report.md](identification-eligibility-abstention-v1-report.md)
+for the full empirical benchmark and its honestly-disclosed residual limit
+(a static, recurring background region can still score confidently and
+consistently, which score/margin structurally cannot catch -- addressed by
+Scene Confusor Suppression v1's separate admission-layer mechanism, not
+solved twice here).
+
 **Requirements the eventual abstention/eligibility mechanism must satisfy**
 (named now so a future implementer does not have to rediscover them from
 scratch): one canonical species-inference eligibility policy, not a
@@ -1288,6 +1300,18 @@ rejected (see
 false-positive-rejection and real-animal-recall conditions together). This
 regression class is now a standing cohort for the eventual fix, not a
 one-off finding.
+
+**2026-08-21 update:** Identification Eligibility + Abstention v1 wires
+exactly this invariant into the species-inference layer -- both real
+Visits 139/140 and the real full-frame Red-bellied-Woodpecker/Tufted-
+Titmouse difficult-case cohort correctly abstain under the new policy,
+benchmarked against real reviewed/adjudicated evidence rather than a
+theoretical threshold. See
+[identification-eligibility-abstention-v1-report.md](identification-eligibility-abstention-v1-report.md).
+The raw MDv5 detector still genuinely misclassifies a person as `animal`-
+class at real, non-marginal confidence -- that root cause is untouched and
+remains a future detector-model precision tranche, not solved by species-
+layer abstention.
 
 #### SpeciesNet / BioCLIP history (accurate record, preserved)
 

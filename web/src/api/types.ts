@@ -141,7 +141,12 @@ export type ReviewIdentificationStatus =
   | "suggestion_created"
   | "proposal_created"
   | "no_proposal"
-  | "failed";
+  | "failed"
+  // Identification Eligibility + Abstention v1: a real, honest outcome, not
+  // an error -- evidence did not meet the identification eligibility floor,
+  // or a real model result was too ambiguous to name a species. See
+  // `unavailable_reason` for the specific bounded reason code.
+  | "identification_uncertain";
 export type FocusCropSource = "zone" | "activity" | "detector" | "manual" | "none";
 export type ExportStatus = "ready" | "building" | "failed";
 export type DetectionSource = "manual" | "demo_rule" | "future_model" | "integration";

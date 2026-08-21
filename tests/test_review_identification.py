@@ -1058,7 +1058,7 @@ async def test_review_identification_prefers_bioclip_and_uses_padded_megadetecto
     mark_megadetector_available(monkeypatch)
     mark_bioclip_available(monkeypatch, tmp_path)
     prediction = bioclip_prediction(
-        ("northern cardinal (Cardinalis cardinalis)", None, None, 0.61),
+        ("northern cardinal (Cardinalis cardinalis)", None, None, 0.91),
         ("blue jay (Cyanocitta cristata)", None, None, 0.19),
         ("song sparrow (Melospiza melodia)", None, None, 0.09),
         ("bird", "bird", None, 0.07),
@@ -1096,7 +1096,7 @@ async def test_review_identification_prefers_bioclip_and_uses_padded_megadetecto
     assert suggestion["suggested_label"] == "northern_cardinal"
     assert suggestion["suggested_common_name"] == "northern cardinal"
     assert suggestion["suggested_scientific_name"] == "Cardinalis cardinalis"
-    assert suggestion["confidence"] == pytest.approx(0.61)
+    assert suggestion["confidence"] == pytest.approx(0.91)
     assert suggestion["rank"] == 1
     assert [item["rank"] for item in suggestion["alternatives"]] == [2, 3, 4, 5]
     assert suggestion["alternatives"][0] == {
@@ -1276,7 +1276,7 @@ async def test_review_identification_bioclip_activity_crop_supersedes_only_prior
     crops = mock_bioclip_run(
         monkeypatch,
         bioclip_prediction(
-            ("northern cardinal (Cardinalis cardinalis)", None, None, 0.55),
+            ("northern cardinal (Cardinalis cardinalis)", None, None, 0.85),
             ("blue jay (Cyanocitta cristata)", None, None, 0.25),
         ),
     )
@@ -1297,7 +1297,7 @@ async def test_review_identification_bioclip_activity_crop_supersedes_only_prior
     mock_bioclip_run(
         monkeypatch,
         bioclip_prediction(
-            ("blue jay (Cyanocitta cristata)", None, None, 0.64),
+            ("blue jay (Cyanocitta cristata)", None, None, 0.90),
             ("northern cardinal (Cardinalis cardinalis)", None, None, 0.24),
         ),
     )
@@ -1354,7 +1354,7 @@ async def test_review_identification_bioclip_reuses_completed_exact_input(
     )
     mark_bioclip_available(monkeypatch, tmp_path)
     prediction = bioclip_prediction(
-        ("northern cardinal (Cardinalis cardinalis)", None, None, 0.62),
+        ("northern cardinal (Cardinalis cardinalis)", None, None, 0.90),
         ("blue jay (Cyanocitta cristata)", None, None, 0.22),
     )
     monkeypatch.setattr(
@@ -1399,7 +1399,7 @@ async def test_assistant_reuses_completed_bioclip_evidence_without_a_prior_assis
     )
     mark_bioclip_available(monkeypatch, tmp_path)
     prediction = bioclip_prediction(
-        ("northern cardinal (Cardinalis cardinalis)", None, None, 0.62),
+        ("northern cardinal (Cardinalis cardinalis)", None, None, 0.90),
         ("blue jay (Cyanocitta cristata)", None, None, 0.22),
     )
     monkeypatch.setattr(
@@ -1460,7 +1460,7 @@ async def test_review_identification_bioclip_pack_change_forces_new_evidence(
     )
     mark_bioclip_available(monkeypatch, tmp_path)
     first_prediction = bioclip_prediction(
-        ("northern cardinal (Cardinalis cardinalis)", None, None, 0.62),
+        ("northern cardinal (Cardinalis cardinalis)", None, None, 0.90),
         ("blue jay (Cyanocitta cristata)", None, None, 0.22),
     )
     second_prediction = bioclip_prediction(
@@ -1571,11 +1571,11 @@ async def test_review_identification_bioclip_supersedes_when_model_artifact_chan
     )
     mark_bioclip_available(monkeypatch, tmp_path)
     first_prediction = bioclip_prediction(
-        ("northern cardinal (Cardinalis cardinalis)", None, None, 0.64),
+        ("northern cardinal (Cardinalis cardinalis)", None, None, 0.90),
         ("blue jay (Cyanocitta cristata)", None, None, 0.24),
     )
     second_base = bioclip_prediction(
-        ("blue jay (Cyanocitta cristata)", None, None, 0.66),
+        ("blue jay (Cyanocitta cristata)", None, None, 0.90),
         ("northern cardinal (Cardinalis cardinalis)", None, None, 0.21),
     )
     second_prediction = BioClipPrediction(
@@ -1635,7 +1635,7 @@ async def test_review_identification_bioclip_preserves_exact_event_target(
     mock_bioclip_run(
         monkeypatch,
         bioclip_prediction(
-            ("blue jay (Cyanocitta cristata)", None, None, 0.68),
+            ("blue jay (Cyanocitta cristata)", None, None, 0.90),
             ("unknown bird", "unknown bird", None, 0.32),
         ),
     )
@@ -1747,8 +1747,8 @@ async def test_review_identification_bioclip_uses_full_frame_without_restricted_
     crops = mock_bioclip_run(
         monkeypatch,
         bioclip_prediction(
-            ("blue jay (Cyanocitta cristata)", None, None, 0.48),
-            ("bird", "bird", None, 0.22),
+            ("blue jay (Cyanocitta cristata)", None, None, 0.90),
+            ("bird", "bird", None, 0.10),
         ),
     )
     before_truth = await truth_snapshot(client)
@@ -1793,7 +1793,7 @@ async def test_review_identification_bioclip_rechecks_late_privacy_zone_before_w
     visit_id = imported["visit"]["id"]
     mark_bioclip_available(monkeypatch, tmp_path)
     prediction = bioclip_prediction(
-        ("northern cardinal (Cardinalis cardinalis)", None, None, 0.58),
+        ("northern cardinal (Cardinalis cardinalis)", None, None, 0.90),
     )
 
     monkeypatch.setattr(
@@ -1868,7 +1868,7 @@ async def test_review_identification_bioclip_rechecks_media_file_before_write(
     media_path = Path(imported["media_asset"]["local_path"])
     mark_bioclip_available(monkeypatch, tmp_path)
     prediction = bioclip_prediction(
-        ("northern cardinal (Cardinalis cardinalis)", None, None, 0.58),
+        ("northern cardinal (Cardinalis cardinalis)", None, None, 0.90),
     )
     monkeypatch.setattr(
         product_repository,
@@ -1978,7 +1978,7 @@ async def test_review_identification_bioclip_failure_is_atomic_and_keeps_pending
     mock_bioclip_run(
         monkeypatch,
         bioclip_prediction(
-            ("northern cardinal (Cardinalis cardinalis)", None, None, 0.62),
+            ("northern cardinal (Cardinalis cardinalis)", None, None, 0.90),
         ),
     )
     successful = await client.post(
@@ -2353,7 +2353,7 @@ async def test_review_identification_bioclip_persistence_failure_rolls_back_supe
     mock_bioclip_run(
         monkeypatch,
         bioclip_prediction(
-            ("northern cardinal (Cardinalis cardinalis)", None, None, 0.62),
+            ("northern cardinal (Cardinalis cardinalis)", None, None, 0.90),
         ),
     )
     successful = await client.post(
@@ -2368,7 +2368,7 @@ async def test_review_identification_bioclip_persistence_failure_rolls_back_supe
     mock_bioclip_run(
         monkeypatch,
         bioclip_prediction(
-            ("blue jay (Cyanocitta cristata)", None, None, 0.66),
+            ("blue jay (Cyanocitta cristata)", None, None, 0.90),
         ),
     )
 

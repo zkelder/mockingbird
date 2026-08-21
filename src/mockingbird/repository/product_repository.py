@@ -105,6 +105,13 @@ from mockingbird.species.classifier_input import (
     PERSISTED_CROP_EVIDENCE_ROLES,
     resolve_classifier_input,
 )
+from mockingbird.species.identification_eligibility import (
+    IDENTIFICATION_ELIGIBILITY_POLICY_VERSION,
+    ScoredCandidate as IdentificationScoredCandidate,
+    classifier_input_tier,
+    evaluate_classification_abstention,
+    evaluate_identification_eligibility,
+)
 from mockingbird import review_provenance
 from mockingbird.wildlife_taxonomy import is_wildlife_category
 from mockingbird.species.bioclip_adapter import (
@@ -814,6 +821,19 @@ _BIOCLIP_ATTEMPT_ERROR_FIELDS: dict[
         "no_result",
         "output_parsing",
         "BioCLIP completed without a usable ranked result.",
+    ),
+    # Identification Eligibility + Abstention v1 (docs/identification-
+    # eligibility-abstention-v1-report.md). Two distinct, deliberately
+    # separate reasons -- do not merge them:
+    "bioclip_identification_evidence_ineligible": (
+        "unsupported",
+        "crop_preparation",
+        "Subject evidence did not meet the identification eligibility floor.",
+    ),
+    "bioclip_identification_ambiguous": (
+        "no_result",
+        "output_parsing",
+        "BioCLIP's ranked candidates were too ambiguous to present as a species suggestion.",
     ),
     "bioclip_configuration_error": (
         "unsupported",
@@ -20082,6 +20102,40 @@ class ProductRepository:
                 raise BioClipNoResultError(
                     "BioCLIP completed without a usable ranked suggestion."
                 )
+            # Identification Eligibility + Abstention v1: classification
+            # abstention -- "even given a real result, is it strong and
+            # specific enough to present as a species suggestion?" -- runs
+            # here, after inference, distinct from the evidence-eligibility
+            # check already applied before inference in
+            # `_review_species_run_context`. Never averages/discards raw
+            # candidates; only decides whether to present rank 1 at all.
+            abstention = evaluate_classification_abstention(
+                tuple(
+                    IdentificationScoredCandidate(label=candidate.label, score=candidate.score)
+                    for candidate in prediction.suggestions
+                ),
+                tier=classifier_input_tier(
+                    classifier_input_type=run_context.crop.classifier_input_type,
+                    crop_source=run_context.crop.source,
+                ),
+            )
+            # Recorded on `crop_observation` -- already threaded through to
+            # both the success (`SpeciesSuggestionModel.evidence_region_json`)
+            # and failure (`bioclip_identification_attempts.crop_provenance_
+            # json`) persistence paths below -- so the policy decision is
+            # honestly recorded either way, never only on success.
+            crop_observation["identification_policy"] = {
+                "policy_version": IDENTIFICATION_ELIGIBILITY_POLICY_VERSION,
+                "tier": abstention.tier,
+                "top1_label": abstention.top1_label,
+                "top1_score": abstention.top1_score,
+                "margin": abstention.margin,
+                "score_floor": abstention.score_floor,
+                "margin_floor": abstention.margin_floor,
+                "abstained": abstention.abstained,
+            }
+            if abstention.abstained:
+                raise ValueError("bioclip_identification_ambiguous")
             suggestion_payload = _bioclip_species_suggestion_payload(
                 prediction,
                 run_context=run_context,
@@ -20349,6 +20403,25 @@ class ProductRepository:
             crop=crop,
         ):
             raise ValueError("identification_zone_suppressed")
+        # Identification Eligibility + Abstention v1 (docs/identification-
+        # eligibility-abstention-v1-report.md): evidence eligibility is
+        # evaluated once, here, before any model call -- "is this evidence
+        # good enough to attempt identification?" -- distinct from
+        # classification abstention (evaluated after inference, in
+        # `_identify_review_queue_with_bioclip`, "is the result strong
+        # enough to present?"). A structural floor only; do not add a
+        # tuned small-subject cutoff here -- real field data proved bbox
+        # coverage does not separate real animals from background evidence
+        # (see the report).
+        classifier_input_width, classifier_input_height = (
+            _classifier_input_pixel_dimensions(crop, media_asset)
+        )
+        eligibility = evaluate_identification_eligibility(
+            classifier_input_width=classifier_input_width,
+            classifier_input_height=classifier_input_height,
+        )
+        if not eligibility.eligible:
+            raise ValueError("bioclip_identification_evidence_ineligible")
 
         pack_model, _pack_warning, _selected_pack_id = (
             self._effective_species_candidate_pack_for_stream(session, item.stream_id)
@@ -21570,6 +21643,20 @@ class ProductRepository:
             message = (
                 "Identification is blocked by an active Privacy or Ignore Zone. "
                 "No analyzer or full-frame fallback ran."
+            )
+        elif reason == "bioclip_identification_evidence_ineligible":
+            status = ReviewIdentificationStatus.identification_uncertain
+            message = (
+                "Evidence is insufficient for species assistance. No model call was "
+                "made, and no truth was created. This Visit remains a valid, unreviewed "
+                "candidate -- species identification is separate from Visit correctness."
+            )
+        elif reason == "bioclip_identification_ambiguous":
+            status = ReviewIdentificationStatus.identification_uncertain
+            message = (
+                "Bird or wildlife activity is present, but the species is uncertain: "
+                "BioCLIP's ranked candidates were too close or too weak to name a "
+                "species. The attempt was recorded and no truth was created."
             )
         elif reason in unsupported_errors:
             status = ReviewIdentificationStatus.unsupported_media
@@ -29364,6 +29451,34 @@ def _review_species_suggestion_focus_fields(
     )
 
 
+def _classifier_input_pixel_dimensions(
+    crop: "_ReviewSpeciesCropContext",
+    media_asset: MediaAssetModel,
+) -> tuple[int | None, int | None]:
+    """The real pixel dimensions of whatever image region would actually be
+    handed to BioCLIP, for `identification_eligibility.
+    evaluate_identification_eligibility`. The same-frame/persisted-crop
+    override tier already records its own exact dimensions
+    (`classifier_input_width`/`_height`); the other tiers (MegaDetector
+    proposal, legacy activity focus, full-frame fallback) only carry a
+    normalized `box_normalized`, so this derives real pixel size from that
+    box against the source media's own real dimensions -- for the
+    full-frame tier, `box_normalized` is exactly `[0, 0, 1, 1]`, so this
+    correctly returns the full source frame size, never a guessed value.
+    `None` only when the source media's own dimensions are unknown -- an
+    already-existing, separately-handled data gap, not this function's
+    concern."""
+
+    if crop.classifier_input_width is not None and crop.classifier_input_height is not None:
+        return crop.classifier_input_width, crop.classifier_input_height
+    if media_asset.image_width is None or media_asset.image_height is None:
+        return None, None
+    box = crop.box_normalized
+    width = round(box.width * media_asset.image_width)
+    height = round(box.height * media_asset.image_height)
+    return width, height
+
+
 def _valid_detection_proposal_bbox(
     proposal: DetectionProposalModel,
 ) -> BoundingBox | None:
@@ -30081,6 +30196,13 @@ def _bioclip_species_suggestion_payload(
     classifier_input = crop_provenance.get("classifier_input")
     if isinstance(classifier_input, dict):
         evidence_region["classifier_input"] = classifier_input
+    # Identification Eligibility + Abstention v1: honest calibration/policy
+    # provenance on every suggestion actually presented -- which policy
+    # version decided this was strong/specific enough, and the real score/
+    # margin that cleared its floor. See `identification_eligibility.py`.
+    identification_policy = crop_provenance.get("identification_policy")
+    if isinstance(identification_policy, dict):
+        evidence_region["identification_policy"] = identification_policy
     generated_notes = (
         "BioCLIP 2 Review Queue shadow suggestion; scores are candidate-relative "
         "and uncalibrated, not reviewed truth or calibrated probability. "
