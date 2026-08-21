@@ -691,6 +691,28 @@ looks indistinguishable from a detection miss. See Gate A and Gate B in
   deployments. Planning-only: no code change, no new gate, no new v0.1
   requirement. See "Independent Power / Node Supervisor" under Gate E and
   the extended "Power / solar" lane, below.
+- **Cache-128 Live Daylight Acceptance v1 (2026-08-20) closes the "current
+  recommended next action" above.** After the Camera Node recovery blocker
+  was cleared (bad-boot amendment above, then a clean post-power-cycle
+  short proof), a real 90m23s daylight field session on the raised
+  128-entry evidence-cache bound produced a materially busier cohort than
+  the 32-entry-era reference (289 vs. 227 proposals; 250 delayed-handling
+  suppression events). Direct, repeated, same-session evidence that
+  previously-harvested evidence survives delayed admission at delays up to
+  324.2s -- 2.8x longer than the one residual case that could not be
+  conclusively attributed either way after a strong-track/independent-
+  visual/cache-volume-timing analysis. The historical 32-bound-era
+  eviction signature (a real, strong, delayed proposal *provably* losing
+  its own already-captured evidence) does not clearly or systematically
+  recur. **Decision A -- accepted.** Also surfaced, disclosed, and
+  explicitly deferred rather than fixed here: a real pattern where several
+  confirmed real-bird tracks produced no persistable evidence despite low
+  cache-volume pressure, more likely attributable to the burst-scheduler's
+  own issuance/fairness decision than to cache capacity -- a genuinely
+  different, upstream mechanism, named as a candidate for future bounded
+  investigation, not a reason to reopen this bound again. See
+  [cache-128-live-daylight-acceptance-v1-report.md](cache-128-live-daylight-acceptance-v1-report.md)
+  for the complete accounting.
 
 ## v0.1 scope freeze
 
