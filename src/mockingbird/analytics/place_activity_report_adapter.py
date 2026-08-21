@@ -190,5 +190,6 @@ def place_activity_report_response(
         ),
         activity_by_hour=[_hour_entry_response(entry) for entry in report.activity_by_hour],
         coverage=_coverage_response(report.coverage),
+        maturity=report.maturity,
         warnings=warnings,
     )

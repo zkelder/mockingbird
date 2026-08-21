@@ -292,6 +292,48 @@ class CoverageSummary:
     gaps_truncated: bool
 
 
+# The smallest useful maturity classification a Daily Place Report needs:
+# whether there is enough durable monitoring coverage behind it to trust a
+# summary at all. Deliberately not "normal"/"unusual"/"declining" -- those
+# require a historical baseline this module does not have (see "Baselines /
+# trends" in the module docstring and docs/place-activity-report-contract.md).
+ReportMaturity = Literal["no_data", "sparse", "usable"]
+
+# Reuses the exact 2-hour boundary `mockingbird.analytics.zone_insights.
+# quality_status` already established for its own "limited_monitoring"
+# status (`healthy_monitored_seconds < 2 * 60 * 60`) -- one precedented
+# product judgment call about "how much monitoring is enough to trust," not
+# a second, unrelated threshold invented here.
+_SPARSE_COVERAGE_THRESHOLD_SECONDS = 2 * 60 * 60
+
+
+def compute_report_maturity(coverage: CoverageSummary | None) -> ReportMaturity:
+    """Classify how much confidence a caller may place in this report.
+
+    Purely a function of monitoring coverage, never of how much wildlife was
+    recorded: a quiet, well-monitored day is "usable" with zero wildlife, and
+    a busy-looking but barely-monitored window is "sparse" even with several
+    Visits already counted, since a handful of Visits during two hours of
+    real coverage says nothing trustworthy about the other twenty-two.
+
+    - "no_data" -- no durable monitoring exposure history exists at all for
+      the reported scope (`coverage` itself omitted, or its own
+      `monitored_seconds` is `None`; see `CoverageSummary`'s docstring for
+      why that is a distinct, honest "not yet computable" state, never a
+      fabricated zero).
+    - "sparse" -- real coverage exists but is below the threshold this
+      codebase already uses elsewhere for "not enough to trust yet" (see
+      `_SPARSE_COVERAGE_THRESHOLD_SECONDS`).
+    - "usable" -- enough monitoring occurred to summarize the day.
+    """
+
+    if coverage is None or coverage.monitored_seconds is None:
+        return "no_data"
+    if coverage.monitored_seconds < _SPARSE_COVERAGE_THRESHOLD_SECONDS:
+        return "sparse"
+    return "usable"
+
+
 @dataclass(frozen=True)
 class PlaceActivityReport:
     """Deterministic current-period activity facts for a Place.
@@ -346,6 +388,12 @@ class PlaceActivityReport:
     # `compute_coverage_summary`) -- distinct from a `CoverageSummary` whose
     # own `monitored_seconds` is `None` because no durable history exists.
     coverage: CoverageSummary | None
+
+    # See `compute_report_maturity` -- the smallest useful classification of
+    # whether this report's own monitoring coverage is sufficient to
+    # summarize the day with any confidence. Purely a function of coverage,
+    # never of activity counts.
+    maturity: ReportMaturity
 
 
 def compute_place_activity_report(
@@ -489,6 +537,7 @@ def compute_place_activity_report(
         busiest_zone=busiest_zone,
         activity_by_hour=activity_by_hour,
         coverage=coverage,
+        maturity=compute_report_maturity(coverage),
     )
 
 

@@ -1370,6 +1370,39 @@ a.secondary-action {
   font-weight: 800;
 }
 
+.today-report-species-name {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+/* Overrides the bold/ellipsis default above -- this is secondary, quiet
+   detail (when a species was seen), not the identity itself. */
+.today-report-species-list li .today-report-species-meta {
+  overflow: visible;
+  color: #627168;
+  font-size: 0.78rem;
+  font-weight: 500;
+  white-space: normal;
+}
+
+.today-report-species-count {
+  display: grid;
+  flex: 0 0 auto;
+  justify-items: end;
+  gap: 1px;
+}
+
+/* A confirmed species can also carry extra, not-yet-reviewed sightings --
+   shown quietly, never blended into the confirmed count above it. */
+.today-report-species-list li .today-report-species-likely {
+  overflow: visible;
+  color: #7a8a70;
+  font-size: 0.74rem;
+  font-weight: 600;
+  white-space: normal;
+}
+
 .today-report-facts {
   display: flex;
   flex-wrap: wrap;

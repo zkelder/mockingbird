@@ -4593,6 +4593,12 @@ class PlaceActivityReportResponse(BaseModel):
     )
 
     coverage: PlaceActivityReportCoverage
+    # The smallest useful classification of whether `coverage` is sufficient
+    # to trust a summary at all -- never a claim about how much wildlife
+    # appeared, and never "normal"/"unusual"/"declining" (those need a
+    # historical baseline this report does not compute). See
+    # `mockingbird.analytics.place_activity_report.compute_report_maturity`.
+    maturity: Literal["no_data", "sparse", "usable"]
     warnings: list[str] = Field(default_factory=list, max_length=10)
 
 

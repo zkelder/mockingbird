@@ -23,6 +23,7 @@ from mockingbird.analytics.place_activity_report import (
     VisitFact,
     compute_coverage_summary,
     compute_place_activity_report,
+    compute_report_maturity,
 )
 from mockingbird.analytics.zone_insights import TimeInterval
 
@@ -86,6 +87,9 @@ def test_no_activity_returns_honest_zeroes_not_fabricated_facts() -> None:
     assert report.taxa == []
     assert report.distinct_taxa_count == 0
     assert report.distinct_species_count == 0
+    # No coverage was supplied at all -- honestly "no_data," never "usable"
+    # merely because there also happens to be no wildlife to report.
+    assert report.maturity == "no_data"
     assert report.first_activity_at is None
     assert report.last_activity_at is None
     assert report.activity_by_zone == []
@@ -622,6 +626,87 @@ def test_coverage_gaps_are_bounded_with_a_truncation_flag() -> None:
 
     assert len(summary.gaps) == 3
     assert summary.gaps_truncated is True
+
+
+# Report maturity ---------------------------------------------------------
+#
+# The smallest useful classification of whether a report's own coverage is
+# sufficient to trust a summary at all -- purely a function of `coverage`,
+# never of Visit/wildlife counts. See `compute_report_maturity`.
+
+
+def test_maturity_is_no_data_when_coverage_is_omitted_entirely() -> None:
+    assert compute_report_maturity(None) == "no_data"
+
+
+def test_maturity_is_no_data_when_no_durable_history_exists() -> None:
+    summary = compute_coverage_summary(
+        period_start_at=PERIOD_START,
+        period_end_at=PERIOD_END,
+        monitored_intervals=[],
+        history_available_from=None,
+    )
+
+    assert summary.monitored_seconds is None
+    assert compute_report_maturity(summary) == "no_data"
+
+
+def test_maturity_is_sparse_just_under_the_two_hour_threshold() -> None:
+    summary = compute_coverage_summary(
+        period_start_at=PERIOD_START,
+        period_end_at=PERIOD_END,
+        monitored_intervals=[TimeInterval(PERIOD_START, PERIOD_START + timedelta(hours=2) - timedelta(seconds=1))],
+        history_available_from=PERIOD_START,
+    )
+
+    assert compute_report_maturity(summary) == "sparse"
+
+
+def test_maturity_is_usable_at_exactly_the_two_hour_threshold() -> None:
+    summary = compute_coverage_summary(
+        period_start_at=PERIOD_START,
+        period_end_at=PERIOD_END,
+        monitored_intervals=[TimeInterval(PERIOD_START, PERIOD_START + timedelta(hours=2))],
+        history_available_from=PERIOD_START,
+    )
+
+    assert compute_report_maturity(summary) == "usable"
+
+
+def test_maturity_is_usable_well_past_the_threshold() -> None:
+    summary = compute_coverage_summary(
+        period_start_at=PERIOD_START,
+        period_end_at=PERIOD_END,
+        monitored_intervals=[TimeInterval(PERIOD_START, PERIOD_END)],
+        history_available_from=PERIOD_START,
+    )
+
+    assert compute_report_maturity(summary) == "usable"
+
+
+def test_maturity_ignores_wildlife_activity_and_only_reflects_coverage() -> None:
+    """A handful of Visits during two sparsely-monitored hours says nothing
+    trustworthy about the other twenty-two -- maturity must not be swayed
+    by how much (or how little) wildlife was recorded."""
+
+    sparse_coverage = compute_coverage_summary(
+        period_start_at=PERIOD_START,
+        period_end_at=PERIOD_END,
+        monitored_intervals=[TimeInterval(PERIOD_START, PERIOD_START + timedelta(minutes=30))],
+        history_available_from=PERIOD_START,
+    )
+
+    busy_report = _report(
+        [
+            _visit("v1", at=PERIOD_START + timedelta(minutes=5), confirmed=NORTHERN_CARDINAL),
+            _visit("v2", at=PERIOD_START + timedelta(minutes=10), confirmed=NORTHERN_CARDINAL),
+            _visit("v3", at=PERIOD_START + timedelta(minutes=15), confirmed=HOUSE_FINCH),
+        ],
+        coverage=sparse_coverage,
+    )
+
+    assert busy_report.total_visit_count == 3
+    assert busy_report.maturity == "sparse"
 
 
 # DST-correct local-time bucketing ---------------------------------------

@@ -1386,9 +1386,46 @@ context may explain and enrich; they never become observational authority
 (see "Language models" in product-doctrine.md). **Current disposition:**
 substantially delivered as Today in Your Yard, with Place Intelligence's
 backend hardening also complete (DST-correct bucketing, wildlife-eligibility
-denylist, taxonomy N+1 eliminated, union-based coverage); the frontend
-surface for that newer Place Intelligence work is the open piece -- see
-Phase 5, below.
+denylist, taxonomy N+1 eliminated, union-based coverage). Product
+Experience / UI Cohesion v1 Phase 1 (predates this roadmap entry catching
+up to it) already rebuilt Today in Your Yard as a report-first surface
+directly on that hardened backend, replacing a 13-section admin-console-
+style page built from a separate, ad hoc `dashboard_summary` aggregation.
+
+**2026-08-21 update:** Gate C -- Daily Place Report v1 closed the
+remaining truth-boundary gap that rebuild had left open: the species list
+was ranking and displaying each taxon's *combined* confirmed+provisional
+Visit count as one undifferentiated number (the backend already kept
+`confirmed_visit_count`/`provisional_visit_count` separate specifically so
+a consumer would not do this -- see "Report truth precedence" in
+[place-activity-report-contract.md](place-activity-report-contract.md) --
+but the frontend blended them back together). "Top visitors" is now
+confirmed-Visit-count-ranked and confirmed-only: a species backed solely by
+an AI suggestion is never named there, only reflected in aggregate through
+the existing quiet "N items worth reviewing" affordance; a species that is
+confirmed but also has additional unreviewed sightings shows its confirmed
+count as the primary figure with a small "+N likely" annotation, never
+blended. Also added: first/last-seen at both the report and per-species
+level (previously only the report-level "last visit" was shown); a new,
+small `maturity` field (`no_data`/`sparse`/`usable`, a pure function of
+monitoring coverage alone, reusing `zone_insights.quality_status`'s
+existing 2-hour "enough to trust" precedent) so a barely-monitored day
+reads "not enough monitoring yet to say" instead of a falsely confident
+"no wildlife visits yet"; and a distinct state for wildlife that is
+confirmed-present but not yet species-identified (an "unknown_bird"/
+"unknown_animal" correction), rather than reading the same as "nothing
+confirmed at all." Backend change was purely additive (one new field,
+zero schema/migration, zero change to existing truth-precedence logic);
+10 new tests plus 5 extended existing ones (pure computation, repository,
+and e2e) all pass, alongside the full pre-existing suite unmodified. Not done here, and named as the
+natural next bounded slice: per-species Zone breakdown (today's "busiest
+area" is report-wide only) and a representative evidence image per species
+card (the adjacent "Best moments" panel already covers evidence-backed
+representative Visits at the report level, so this is an enhancement, not
+a gap). What remains open beyond that is Place Intelligence proper --
+new-vs-regular, baselines/trends, seasonality, year-over-year -- which
+needs accumulated history this module deliberately does not compute yet;
+see Phase 5, below.
 
 **Temporal correctness surfaces this gate must preserve, named explicitly:**
 event time (source capture) vs. ingestion time vs. processing-completion

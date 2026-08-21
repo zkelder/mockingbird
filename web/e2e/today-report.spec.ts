@@ -65,6 +65,9 @@ async function mockPlaceActivityReport(page: Page, overrides: Record<string, unk
       gaps: [] as unknown[],
       gaps_truncated: false,
     },
+    // Most scenarios below represent a well-monitored day; scenarios that
+    // specifically exercise sparse/no-data maturity override this.
+    maturity: "usable" as string,
     warnings: [
       "Visits are activity sessions, not estimates of unique animals. The same animal may create more than one Visit if it leaves and returns.",
     ],
@@ -170,8 +173,17 @@ test("Today's report shows species, visit counts, activity timing, and the busie
   await expect(speciesList.nth(1)).toContainText("5 visits");
   await expect(speciesList.nth(2)).toContainText("House Finch");
   await expect(speciesList.nth(2)).toContainText("4 visits");
-  // No per-row "Likely" nagging on ordinary confirmed species rows.
+  // No per-row "Likely" nagging on ordinary confirmed species rows, and no
+  // blended "+N likely" annotation when a species has zero provisional
+  // Visits.
   await expect(reportPanel.getByText("Likely Northern Cardinal")).toHaveCount(0);
+  await expect(speciesList.locator(".today-report-species-likely")).toHaveCount(0);
+  // Per-species timing (first_activity_at == last_activity_at in this
+  // fixture, so each row reads "Seen <time>" rather than a redundant range).
+  await expect(speciesList.nth(0)).toContainText("Seen");
+
+  // Report-level first/last activity are both shown, not just the last.
+  await expect(reportPanel.getByText("First visit", { exact: false })).toBeVisible();
 
   // Activity timing: the single busiest hour bucket (7:00-7:59 -> "7–8 AM"),
   // never a fabricated multi-hour "peak window."
@@ -281,6 +293,143 @@ test("unresolved and provisional activity stays a quiet affordance, never the ce
   await expect(page.getByRole("heading", { name: "Review Queue" })).toBeVisible();
 });
 
+test("a species' provisional Visits never blend into its confirmed count, and a never-confirmed species never appears by name", async ({
+  page,
+}) => {
+  // Gate C: Daily Place Report v1 regression. The backend keeps confirmed_
+  // visit_count/provisional_visit_count separate on every taxon precisely
+  // so a UI never blends them (see "Report truth precedence" in
+  // docs/place-activity-report-contract.md) -- this proves the frontend
+  // actually honors that separation instead of summing total_visit_count.
+  await completeSetup(page);
+  const seenAt = new Date().toISOString();
+  await mockPlaceActivityReport(page, {
+    total_visit_count: 12,
+    confirmed_wildlife_visit_count: 6,
+    provisional_wildlife_visit_count: 6,
+    wildlife_visit_count: 12,
+    distinct_taxa_count: 2,
+    distinct_species_count: 2,
+    first_activity_at: seenAt,
+    last_activity_at: seenAt,
+    taxa: [
+      {
+        // Confirmed several times, but also has two additional, not-yet-
+        // reviewed sightings -- the confirmed count must stay primary.
+        label: "northern_cardinal",
+        display_name: "Northern Cardinal",
+        category: "bird",
+        is_species: true,
+        confirmed_visit_count: 6,
+        provisional_visit_count: 2,
+        total_visit_count: 8,
+        first_activity_at: seenAt,
+        last_activity_at: seenAt,
+      },
+      {
+        // Never human-confirmed at all -- an AI suggestion only.
+        label: "house_finch",
+        display_name: "House Finch",
+        category: "bird",
+        is_species: true,
+        confirmed_visit_count: 0,
+        provisional_visit_count: 4,
+        total_visit_count: 4,
+        first_activity_at: seenAt,
+        last_activity_at: seenAt,
+      },
+    ],
+  });
+
+  await page.goto("/");
+  const reportPanel = page.locator("section.today-report");
+  await expect(reportPanel).toBeVisible();
+
+  // Headline reflects confirmed truth only: 1 confirmed species, 6
+  // confirmed visits -- never the blended 2/12.
+  await expect(reportPanel.getByText("1", { exact: true })).toBeVisible();
+  await expect(reportPanel.getByText("species", { exact: true })).toBeVisible();
+  await expect(reportPanel.getByText("6", { exact: true })).toBeVisible();
+  await expect(reportPanel.getByText("wildlife visits", { exact: true })).toBeVisible();
+
+  const speciesList = reportPanel.locator(".today-report-species-list li");
+  await expect(speciesList).toHaveCount(1);
+  await expect(speciesList.first()).toContainText("Northern Cardinal");
+  await expect(speciesList.first()).toContainText("6 visits");
+  // The extra, not-yet-reviewed sightings are disclosed quietly, never
+  // folded into "8 visits."
+  await expect(speciesList.first()).toContainText("+2 likely");
+  await expect(speciesList.first()).not.toContainText("8 visits");
+
+  // House Finch has zero confirmed Visits -- never named in Top visitors,
+  // anywhere on the page.
+  await expect(page.getByText("House Finch")).toHaveCount(0);
+
+  // Its 4 provisional Visits still count toward the quiet review affordance
+  // (2 + 4 = 6), without ever naming the species there either.
+  await expect(reportPanel.getByRole("button", { name: "6 items worth reviewing" })).toBeVisible();
+});
+
+test("insufficient monitoring today says so honestly, instead of a confident 'no wildlife' claim", async ({
+  page,
+}) => {
+  // Gate C: Daily Place Report v1 regression -- report maturity. Distinct
+  // from the coverage pill above (which answers "how complete was today"):
+  // this answers "is there even enough monitoring behind a claim of
+  // silence yet," so a camera that only just started today does not read
+  // as a confident "No wildlife visits yet."
+  await completeSetup(page);
+  await mockDashboardHeadline(page, { monitored_stream_count: 1, configured_stream_count: 1 });
+  await mockPlaceActivityReport(page, {
+    maturity: "sparse",
+    coverage: {
+      period_seconds: 86_400,
+      monitored_seconds: 1_800,
+      coverage_ratio: 1_800 / 86_400,
+      history_available_from: new Date().toISOString(),
+      history_is_partial: false,
+      gaps: [] as unknown[],
+      gaps_truncated: false,
+    },
+  });
+
+  await page.goto("/");
+  const reportPanel = page.locator("section.today-report");
+  await expect(reportPanel).toBeVisible();
+
+  await expect(reportPanel.getByText("Not enough monitoring yet to say")).toBeVisible();
+  await expect(reportPanel.getByText("No wildlife visits yet today")).toHaveCount(0);
+});
+
+test("confirmed-but-unidentified wildlife is distinguished from nothing confirmed at all", async ({
+  page,
+}) => {
+  // Gate C: Daily Place Report v1 regression. A human explicitly confirming
+  // "an animal was here" while abstaining on species (an "unknown_bird"/
+  // "unknown_animal" correction) is real confirmed truth -- it must not
+  // read the same as a day with zero human review at all, and it must
+  // never be silently promoted into a fabricated species entry. See
+  // "Unknown / unresolved" in docs/place-activity-report-contract.md.
+  await completeSetup(page);
+  await mockPlaceActivityReport(page, {
+    total_visit_count: 2,
+    confirmed_wildlife_visit_count: 2,
+    confirmed_species_unresolved_visit_count: 2,
+    wildlife_visit_count: 2,
+    distinct_taxa_count: 0,
+    distinct_species_count: 0,
+    taxa: [] as unknown[],
+  });
+
+  await page.goto("/");
+  const reportPanel = page.locator("section.today-report");
+  await expect(reportPanel).toBeVisible();
+
+  await expect(reportPanel.getByText("Confirmed wildlife — species not yet identified")).toBeVisible();
+  await expect(reportPanel.getByText("2 visits confirmed today", { exact: false })).toBeVisible();
+  await expect(reportPanel.getByText("Wildlife activity recorded — nothing confirmed yet")).toHaveCount(0);
+});
+
 test("a quiet, intentional empty state appears when there is no wildlife activity yet today", async ({
   page,
 }) => {
@@ -325,6 +474,7 @@ test("Dashboard's real request to the Place Activity Report endpoint succeeds ag
   expect(Array.isArray(payload.activity_by_hour)).toBe(true);
   expect(payload.activity_by_hour).toHaveLength(24);
   expect(payload.coverage).toBeTruthy();
+  expect(["no_data", "sparse", "usable"]).toContain(payload.maturity);
 
   await expect(page.locator("section.today-report")).toBeVisible();
 });

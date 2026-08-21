@@ -615,6 +615,7 @@ def test_coverage_fully_withheld_only_when_no_in_scope_stream_has_any_history(
     assert report.coverage.monitored_seconds is None
     assert report.coverage.coverage_ratio is None
     assert report.coverage.history_available_from is None
+    assert report.maturity == "no_data"
     assert any(
         "No durable monitoring exposure has been recorded for any Stream yet"
         in warning
@@ -739,9 +740,13 @@ def test_api_serialization_contract_exposes_only_documented_fields(
         "busiest_zone",
         "activity_by_hour",
         "coverage",
+        "maturity",
         "warnings",
     }
     assert body["total_visit_count"] == 1
+    # A full day of durable exposure on both Streams is well past the
+    # sparse-coverage threshold -- see compute_report_maturity.
+    assert body["maturity"] == "usable"
     [taxon] = body["taxa"]
     assert set(taxon.keys()) == {
         "label",
@@ -1201,6 +1206,32 @@ def test_sixty_minutes_of_observation_yields_about_sixty_minutes_of_coverage(
     assert len(report.coverage.gaps) == 1
     assert report.coverage.gaps[0].start_at == window_start + timedelta(minutes=60)
     assert report.coverage.gaps[0].end_at == window_end
+    # 60 real monitored minutes is above zero but still below the 2-hour
+    # maturity threshold -- real, honest coverage, just not yet enough to
+    # call the report "usable."
+    assert report.maturity == "sparse"
+
+
+def test_maturity_reaches_usable_once_real_coverage_crosses_two_hours(
+    repository: ProductRepository,
+) -> None:
+    """Repository-level proof (not just the pure-module unit test) that
+    crossing the same 2-hour threshold through a real recorded Observation
+    Engine session flips maturity from "sparse" to "usable"."""
+
+    window_start = PERIOD_START
+    window_end = PERIOD_START + timedelta(hours=3)
+    _observe(repository, stream_id=STREAM_A, generation="gen-1", healthy_at=window_start)
+    _observe(
+        repository, stream_id=STREAM_A, generation="gen-1",
+        healthy_at=window_start + timedelta(hours=2),
+    )
+    _stop_observing(repository, stream_id=STREAM_A, now=window_start + timedelta(hours=2, seconds=1))
+
+    report = _report(repository, start_at=window_start, end_at=window_end)
+
+    assert report.coverage.monitored_seconds == pytest.approx(2 * 3600)
+    assert report.maturity == "usable"
 
 
 def test_stop_closes_the_interval_and_later_time_is_not_counted_as_coverage(

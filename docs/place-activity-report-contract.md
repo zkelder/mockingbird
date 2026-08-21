@@ -224,6 +224,29 @@ tests/test_place_activity_report_repository.py's
 `test_coverage_fully_withheld_only_when_no_in_scope_stream_has_any_history`,
 and `test_coverage_survives_a_new_stream_added_midway_through_a_long_period`.
 
+## Report maturity
+
+`maturity` (`"no_data" | "sparse" | "usable"`, `compute_report_maturity`) is
+the smallest useful classification of whether `coverage` is sufficient to
+trust a summary at all -- purely a function of `coverage.monitored_seconds`,
+never of Visit or wildlife counts. A quiet, well-monitored day is
+`"usable"` with zero wildlife; a busy-looking but barely-monitored window
+(a handful of Visits during, say, thirty real monitored minutes) is
+`"sparse"`, since that says nothing trustworthy about the other
+twenty-three and a half hours. `"no_data"` mirrors `coverage.monitored_
+seconds is None` exactly (no durable exposure history at all for the
+reported scope). The `"sparse"`/`"usable"` boundary reuses the exact
+2-hour threshold `mockingbird.analytics.zone_insights.quality_status`
+already established for its own `"limited_monitoring"` status
+(`healthy_monitored_seconds < 2 * 60 * 60`) -- one precedented product
+judgment call about "how much monitoring is enough to trust," not a
+second, unrelated threshold invented here.
+
+This is deliberately not the same thing as "Baselines / trends" below:
+maturity answers "is there enough of *today* to summarize," never "is
+today normal" -- it requires no history beyond the current period and
+computes nothing that needs more than one day's coverage figure.
+
 ## Baselines / trends
 
 Not implemented here, deliberately. "Higher than normal," "regular

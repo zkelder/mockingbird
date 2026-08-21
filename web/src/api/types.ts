@@ -4002,6 +4002,11 @@ export interface PlaceActivityReportResponse {
   activity_by_hour: PlaceActivityReportHourActivity[];
 
   coverage: PlaceActivityReportCoverage;
+  // The smallest useful classification of whether `coverage` is sufficient
+  // to trust a summary at all -- never a claim about how much wildlife
+  // appeared, and never "normal"/"unusual"/"declining" (those need a
+  // historical baseline this report does not compute).
+  maturity: "no_data" | "sparse" | "usable";
   warnings: string[];
 }
 
