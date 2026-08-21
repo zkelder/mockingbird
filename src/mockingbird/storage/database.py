@@ -42,7 +42,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 35
+CURRENT_DATABASE_SCHEMA_VERSION = 36
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -895,6 +895,38 @@ def _migrate_to_per_stream_observation_authority(connection: Connection) -> None
     Base.metadata.tables["observation_authority_settings"].create(bind=connection, checkfirst=True)
 
 
+def _migrate_to_concurrent_sibling_lineage(connection: Connection) -> None:
+    """Add the Multi-Subject Visit Assembly & Review v1, Phase 2 diagnostic
+    lineage column to the existing `observation_candidate_visits` table (see
+    docs/multi-subject-visit-assembly-review-v1.md).
+
+    Nullable, no default: every row created before this column existed reads
+    back `concurrent_sibling_proposal_ids_json=None` -- the honest "this
+    candidate predates concurrent-sibling bookkeeping" fact, never a
+    fabricated relationship. This migration writes no data of its own and
+    never re-groups a pre-existing candidate's `event_id` retroactively --
+    Event-reuse only ever happens at the moment a *new* candidate is
+    created, never as a backfill. Mirrors `_migrate_to_observation_geometry_
+    lineage`'s own additive-column pattern exactly. `observation_candidate_
+    visits` predates this migration (schema v28), so a real upgrading
+    database always already has it by the time this runs -- the existence
+    check below is defensive only, for the same reason that migration's own
+    `has_table` check is.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Concurrent-sibling lineage migration requires local SQLite storage."
+        )
+    if not inspect(connection).has_table("observation_candidate_visits"):
+        return
+    columns = {column["name"] for column in inspect(connection).get_columns("observation_candidate_visits")}
+    if "concurrent_sibling_proposal_ids_json" not in columns:
+        connection.exec_driver_sql(
+            "ALTER TABLE observation_candidate_visits ADD COLUMN concurrent_sibling_proposal_ids_json TEXT"
+        )
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -930,6 +962,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     33: _migrate_to_observation_geometry_lineage,
     34: _migrate_to_scene_confusor_regions,
     35: _migrate_to_per_stream_observation_authority,
+    36: _migrate_to_concurrent_sibling_lineage,
 }
 
 

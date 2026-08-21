@@ -456,3 +456,265 @@ def test_at_most_one_same_frame_evidence_persisted_when_multiple_generations_mer
         links = session.query(VisitEvidenceLinkModel).filter_by(visit_id=ledger.visit_id).all()
         same_frame_links = [link for link in links if link.evidence_role == CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE]
         assert len(same_frame_links) == 1
+
+
+# =============================================================================
+# Multi-Subject Visit Assembly & Review v1, Phase 2 (see docs/multi-subject-
+# visit-assembly-review-v1.md): full pipeline (real Tracklet -> real
+# assemble_visit_episodes, unmodified -> real adapter -> real repository)
+# coverage for concurrent-sibling Event reuse. Complements the repository-
+# transaction-level tests in test_candidate_visit_repository.py by proving
+# the actual assembler-produced `concurrent_sibling_proposal_ids` -- never
+# hand-built facts -- drives the same grouping end to end.
+# =============================================================================
+
+
+def _evidence_candidates_for(
+    generation_id: str, suffix: str, *, box: tuple[float, float, float, float],
+) -> tuple[EvidenceCandidate, ...]:
+    """A per-subject identification/context pair, mirroring `_evidence_
+    candidates()` but parametrized so several simultaneous subjects can each
+    carry their own distinct, non-colliding evidence."""
+
+    return (
+        EvidenceCandidate(
+            media_asset_id=f"shadow-burst:hash-{suffix}-id",
+            stream_id=STREAM_ID,
+            role="high_resolution_burst",
+            captured_at=NOW,
+            frame_id=f"{generation_id}-frame-1",
+            source_offset_ms=500,
+            width=1920,
+            height=1080,
+            subject_geometry=box,
+            track_generation_id=generation_id,
+            quality_facts=(("decodable", True), ("temporal_alignment", "aligned"), ("track_supported", True)),
+        ),
+        EvidenceCandidate(
+            media_asset_id=f"shadow-burst:hash-{suffix}-ctx",
+            stream_id=STREAM_ID,
+            role="context",
+            captured_at=NOW,
+            frame_id=f"{generation_id}-frame-2",
+            source_offset_ms=100,
+            width=1920,
+            height=1080,
+            subject_geometry=box,
+            track_generation_id=generation_id,
+            quality_facts=(("decodable", True), ("temporal_alignment", "aligned"), ("track_supported", True)),
+        ),
+    )
+
+
+def test_two_simultaneous_subjects_produce_two_visits_sharing_one_event(repository: ProductRepository) -> None:
+    """Case D (docs/multi-subject-visit-assembly-review-v1.md "Design
+    acceptance cases"): two genuinely overlapping tracklets -> the real,
+    unmodified `assemble_visit_episodes` recognizes them as concurrent
+    siblings (Phase 1) -> the real adapter/repository must persist two
+    distinct Visits sharing one Event, with zero evidence cross-
+    contamination."""
+
+    left = _tracklet(
+        "gen-left", 0, 8000,
+        start_bounding_box=(0.05, 0.05, 0.2, 0.2), end_bounding_box=(0.05, 0.05, 0.2, 0.2),
+        evidence_candidate_ids=("shadow-burst:hash-left-id", "shadow-burst:hash-left-ctx"),
+        source_capture_frame_ids=("gen-left-frame-1", "gen-left-frame-2"),
+    )
+    right = _tracklet(
+        "gen-right", 2000, 10000,
+        start_bounding_box=(0.8, 0.8, 0.95, 0.95), end_bounding_box=(0.8, 0.8, 0.95, 0.95),
+        evidence_candidate_ids=("shadow-burst:hash-right-id", "shadow-burst:hash-right-ctx"),
+        source_capture_frame_ids=("gen-right-frame-1", "gen-right-frame-2"),
+    )
+    result = assemble_visit_episodes((left, right))
+    assert result.assembled_proposal_count == 2
+    left_proposal = next(p for p in result.proposals if p.constituent_generation_ids == ("gen-left",))
+    right_proposal = next(p for p in result.proposals if p.constituent_generation_ids == ("gen-right",))
+    assert left_proposal.concurrent_sibling_proposal_ids == (right_proposal.proposal_id,)
+
+    _activate(repository)
+    candidates = _evidence_candidates_for("gen-left", "left", box=(0.05, 0.05, 0.2, 0.2)) + _evidence_candidates_for(
+        "gen-right", "right", box=(0.8, 0.8, 0.95, 0.95),
+    )
+    evidence_bytes = {candidate.media_asset_id: JPEG_BYTES for candidate in candidates}
+    adapter = _adapter(repository)
+    left_outcome = adapter.attempt_candidate(
+        left_proposal, evidence_candidates=candidates, evidence_bytes=evidence_bytes, observed_at=NOW,
+    )
+    right_outcome = adapter.attempt_candidate(
+        right_proposal, evidence_candidates=candidates, evidence_bytes=evidence_bytes, observed_at=NOW,
+    )
+    assert left_outcome.created and right_outcome.created
+    assert left_outcome.visit_id != right_outcome.visit_id
+    assert left_outcome.event_id == right_outcome.event_id
+
+    with repository.session_factory() as session:
+        left_links = {
+            link.media_asset_id for link in session.query(VisitEvidenceLinkModel).filter_by(visit_id=left_outcome.visit_id)
+        }
+        right_links = {
+            link.media_asset_id for link in session.query(VisitEvidenceLinkModel).filter_by(visit_id=right_outcome.visit_id)
+        }
+        assert left_links.isdisjoint(right_links)  # each subject's own evidence, never a sibling's
+        left_visit = session.get(VisitModel, left_outcome.visit_id)
+        right_visit = session.get(VisitModel, right_outcome.visit_id)
+        # Gate B (species quality) is explicitly not this milestone -- both
+        # subjects must independently stay unidentified at creation time.
+        assert left_visit.species_guess is None and right_visit.species_guess is None
+
+
+def test_three_simultaneous_subjects_share_one_event_nuthatch_and_two_finches(repository: ProductRepository) -> None:
+    """Hard regression target (docs/roadmap.md "Multi-subject Visit
+    correctness"): the real observed encounter shape -- one nuthatch, two
+    finches, all present at once -- must produce three independent,
+    evidence-backed subject Visits sharing one encounter Event, never
+    collapsed to fewer, attempted out of admission order to prove the
+    shared Event never depends on which subject is admitted first."""
+
+    nuthatch = _tracklet(
+        "nuthatch-center", 0, 9000,
+        start_bounding_box=(0.4, 0.4, 0.5, 0.5), end_bounding_box=(0.4, 0.4, 0.5, 0.5),
+        evidence_candidate_ids=("shadow-burst:hash-nuthatch-id", "shadow-burst:hash-nuthatch-ctx"),
+        source_capture_frame_ids=("nuthatch-frame-1", "nuthatch-frame-2"),
+    )
+    finch_left = _tracklet(
+        "finch-left", 1000, 6000,
+        start_bounding_box=(0.05, 0.05, 0.2, 0.2), end_bounding_box=(0.05, 0.05, 0.2, 0.2),
+        evidence_candidate_ids=("shadow-burst:hash-finch-left-id", "shadow-burst:hash-finch-left-ctx"),
+        source_capture_frame_ids=("finch-left-frame-1", "finch-left-frame-2"),
+    )
+    finch_right = _tracklet(
+        "finch-right", 2000, 7000,
+        start_bounding_box=(0.8, 0.8, 0.95, 0.95), end_bounding_box=(0.8, 0.8, 0.95, 0.95),
+        evidence_candidate_ids=("shadow-burst:hash-finch-right-id", "shadow-burst:hash-finch-right-ctx"),
+        source_capture_frame_ids=("finch-right-frame-1", "finch-right-frame-2"),
+    )
+    result = assemble_visit_episodes((nuthatch, finch_left, finch_right))
+    assert result.assembled_proposal_count == 3
+    by_generation = {p.constituent_generation_ids[0]: p for p in result.proposals}
+    assert set(by_generation) == {"nuthatch-center", "finch-left", "finch-right"}
+    for proposal in by_generation.values():
+        assert len(proposal.concurrent_sibling_proposal_ids) == 2  # full mutual recognition -- a 3-clique
+
+    _activate(repository)
+    candidates = (
+        _evidence_candidates_for("nuthatch-center", "nuthatch", box=(0.4, 0.4, 0.5, 0.5))
+        + _evidence_candidates_for("finch-left", "finch-left", box=(0.05, 0.05, 0.2, 0.2))
+        + _evidence_candidates_for("finch-right", "finch-right", box=(0.8, 0.8, 0.95, 0.95))
+    )
+    evidence_bytes = {candidate.media_asset_id: JPEG_BYTES for candidate in candidates}
+    adapter = _adapter(repository)
+    # Attempted out of "natural" order (finch-right, nuthatch, finch-left)
+    # to prove the shared Event never depends on admission order.
+    outcomes = {
+        "finch-right": adapter.attempt_candidate(
+            by_generation["finch-right"], evidence_candidates=candidates, evidence_bytes=evidence_bytes, observed_at=NOW,
+        ),
+        "nuthatch-center": adapter.attempt_candidate(
+            by_generation["nuthatch-center"], evidence_candidates=candidates, evidence_bytes=evidence_bytes, observed_at=NOW,
+        ),
+        "finch-left": adapter.attempt_candidate(
+            by_generation["finch-left"], evidence_candidates=candidates, evidence_bytes=evidence_bytes, observed_at=NOW,
+        ),
+    }
+    assert all(outcome.created for outcome in outcomes.values())
+    event_ids = {outcome.event_id for outcome in outcomes.values()}
+    assert len(event_ids) == 1  # one shared encounter
+    visit_ids = {outcome.visit_id for outcome in outcomes.values()}
+    assert len(visit_ids) == 3  # three distinct subjects, never collapsed
+
+    expected_boxes = {
+        "nuthatch-center": (0.4, 0.4, 0.5, 0.5),
+        "finch-left": (0.05, 0.05, 0.2, 0.2),
+        "finch-right": (0.8, 0.8, 0.95, 0.95),
+    }
+    with repository.session_factory() as session:
+        for name, outcome in outcomes.items():
+            ledger = session.get(ObservationCandidateVisitModel, outcome.proposal_id)
+            assert json.loads(ledger.concurrent_sibling_proposal_ids_json) != []
+            identification_media = session.get(MediaAssetModel, ledger.selected_identification_media_asset_id)
+            assert identification_media is not None
+            # Each Visit's own primary evidence box matches only its own
+            # subject -- never silently substituted from a sibling's.
+            assert tuple(json.loads(identification_media.normalized_track_box_json)) == expected_boxes[name]
+        visits = session.query(VisitModel).filter_by(event_id=next(iter(event_ids))).all()
+        assert len(visits) == 3
+        assert all(visit.species_guess is None for visit in visits)
+
+
+def test_one_bird_fragmented_across_merging_tracklets_produces_one_visit_no_sibling_grouping(
+    repository: ProductRepository,
+) -> None:
+    """Regression target (docs/multi-subject-visit-assembly-review-v1.md
+    "Design acceptance cases", F): ordinary sequential tracklet fragments of
+    one real bird -- close enough in time/geometry for the real, unmodified
+    assembler to merge them into one proposal -- must remain exactly one
+    Visit, with an empty `concurrent_sibling_proposal_ids`, minting its own
+    Event exactly as before this milestone. Fragmentation must never become
+    worse merely because sibling-grouping metadata now exists."""
+
+    first = _tracklet("gen-1", 0, 1500)
+    second = _tracklet("gen-2", 6000, 7500)  # within merge_gap_ms(15000) of gen-1's end
+    result = assemble_visit_episodes((first, second))
+    assert result.assembled_proposal_count == 1
+    proposal = result.proposals[0]
+    assert proposal.concurrent_sibling_proposal_ids == ()
+
+    _activate(repository)
+    evidence_bytes = {"shadow-burst:hash-id": JPEG_BYTES, "shadow-burst:hash-ctx": JPEG_BYTES}
+    outcome = _adapter(repository).attempt_candidate(
+        proposal, evidence_candidates=_evidence_candidates(), evidence_bytes=evidence_bytes, observed_at=NOW,
+    )
+    assert outcome.created
+    assert outcome.reason == "candidate_visit_created"  # its own new Event -- never a shared/grouped one
+    # Not an absolute-count check: a fresh repository auto-seeds its own
+    # demo walkthrough graph (`seed_if_empty`), so other Events/Visits
+    # legitimately already exist. The correctness claim is that this one
+    # merged proposal's own Event has exactly one Visit -- itself.
+    with repository.session_factory() as session:
+        visits = session.query(VisitModel).filter_by(event_id=outcome.event_id).all()
+        assert [visit.id for visit in visits] == [outcome.visit_id]
+
+
+def test_staggered_arrival_while_encounter_remains_active_shares_one_event(repository: ProductRepository) -> None:
+    """Case E (docs/multi-subject-visit-assembly-review-v1.md "Design
+    acceptance cases"): one subject leaves while another, later-arriving
+    subject remains present -- a staggered, not fully nested, temporal
+    overlap -- must still produce two Visits sharing one Event, each
+    retaining its own correct temporal span."""
+
+    early = _tracklet(
+        "gen-early", 0, 4000,
+        start_bounding_box=(0.05, 0.05, 0.2, 0.2), end_bounding_box=(0.05, 0.05, 0.2, 0.2),
+        evidence_candidate_ids=("shadow-burst:hash-early-id", "shadow-burst:hash-early-ctx"),
+        source_capture_frame_ids=("gen-early-frame-1", "gen-early-frame-2"),
+    )
+    late = _tracklet(
+        "gen-late", 3000, 9000,
+        start_bounding_box=(0.8, 0.8, 0.95, 0.95), end_bounding_box=(0.8, 0.8, 0.95, 0.95),
+        evidence_candidate_ids=("shadow-burst:hash-late-id", "shadow-burst:hash-late-ctx"),
+        source_capture_frame_ids=("gen-late-frame-1", "gen-late-frame-2"),
+    )
+    result = assemble_visit_episodes((early, late))
+    assert result.assembled_proposal_count == 2
+    early_proposal = next(p for p in result.proposals if p.constituent_generation_ids == ("gen-early",))
+    late_proposal = next(p for p in result.proposals if p.constituent_generation_ids == ("gen-late",))
+    assert early_proposal.concurrent_sibling_proposal_ids == (late_proposal.proposal_id,)
+    assert early_proposal.start_offset_ms == 0 and early_proposal.end_offset_ms == 4000
+    assert late_proposal.start_offset_ms == 3000 and late_proposal.end_offset_ms == 9000
+
+    _activate(repository)
+    candidates = _evidence_candidates_for("gen-early", "early", box=(0.05, 0.05, 0.2, 0.2)) + _evidence_candidates_for(
+        "gen-late", "late", box=(0.8, 0.8, 0.95, 0.95),
+    )
+    evidence_bytes = {candidate.media_asset_id: JPEG_BYTES for candidate in candidates}
+    adapter = _adapter(repository)
+    early_outcome = adapter.attempt_candidate(
+        early_proposal, evidence_candidates=candidates, evidence_bytes=evidence_bytes, observed_at=NOW,
+    )
+    late_outcome = adapter.attempt_candidate(
+        late_proposal, evidence_candidates=candidates, evidence_bytes=evidence_bytes, observed_at=NOW,
+    )
+    assert early_outcome.created and late_outcome.created
+    assert early_outcome.event_id == late_outcome.event_id
+    assert early_outcome.visit_id != late_outcome.visit_id

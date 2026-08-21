@@ -3414,6 +3414,9 @@ export interface VisitDetail {
   correction_history: VisitReviewHistoryEntry[];
   curation_history: VisitCurationHistoryEntry[];
   resulting_visits: Visit[];
+  // Multi-Subject Visit Assembly & Review v1, Phase 2: other Visits sharing
+  // this Visit's own Event -- empty for the ordinary single-subject case.
+  sibling_visits: Visit[];
   eligible_zones: Zone[];
   review_state_token: string;
   dataset_ready: boolean;

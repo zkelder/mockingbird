@@ -774,6 +774,42 @@ export function VisitDetailPage({
         />
       </div>
 
+      {/*
+        Multi-Subject Visit Assembly & Review v1, Phase 2 (see docs/multi-
+        subject-visit-assembly-review-v1.md): a reviewer usually lands on a
+        Visit directly (Review Queue, Bird Log), not via its Event, so this
+        is the one place that needs to surface "this Visit is one of
+        several subjects from the same encounter" -- empty, and therefore
+        invisible, for the ordinary single-subject case. Each sibling
+        remains its own independently reviewable Visit; this banner is
+        navigation/context only, never a shared correction surface.
+      */}
+      {detail.sibling_visits.length > 0 ? (
+        <div className="notice-panel">
+          <EvidenceBadge label="Shared encounter" tone="evidence" />
+          <p>
+            {detail.sibling_visits.length} other subject{detail.sibling_visits.length === 1 ? "" : "s"} detected in
+            this same encounter.
+          </p>
+          <div className="detail-actions">
+            {detail.sibling_visits.map((sibling) => (
+              <button
+                className="secondary-action"
+                key={sibling.id}
+                onClick={() => onOpenVisit(sibling.id)}
+                type="button"
+              >
+                {displayTaxonomyLabel(
+                  sibling.reviewed_label ?? sibling.species_guess ?? sibling.subject_label,
+                  taxonomyLabels,
+                )}{" "}
+                ({formatLabel(sibling.review_status)})
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       {message ? <div className="notice-panel">{message}</div> : null}
 
       {/*

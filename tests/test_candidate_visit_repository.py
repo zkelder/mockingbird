@@ -25,6 +25,7 @@ from mockingbird.repository.product_repository import (
     ObservationCandidateVisitModel,
     ProductRepository,
     ReviewLabelModel,
+    VisitEvidenceLinkModel,
     VisitModel,
 )
 from mockingbird.storage.database import CURRENT_DATABASE_SCHEMA_VERSION, create_database_engine
@@ -52,6 +53,7 @@ def _facts(
     source_capture_frame_ids: tuple[str, ...] = ("frame-1", "frame-2"),
     supporting_frame_ids: tuple[str, ...] = ("frame-1", "frame-2"),
     ambiguous_adjacent_proposal_ids: tuple[str, ...] = (),
+    concurrent_sibling_proposal_ids: tuple[str, ...] = (),
     confidence_evidence_json: str | None = None,
 ) -> CandidateVisitProposalFacts:
     return CandidateVisitProposalFacts(
@@ -68,6 +70,7 @@ def _facts(
         evidence_candidate_ids=("shadow-burst:hash-1",),
         limitation_facts=("assembled_from_multiple_tracklets",),
         ambiguous_adjacent_proposal_ids=ambiguous_adjacent_proposal_ids,
+        concurrent_sibling_proposal_ids=concurrent_sibling_proposal_ids,
         assembler_version="tracklet-visit-assembler-v1",
         detector_provenance="onnx-cuda",
         tracker_provenance="frame-driven-onnx-cuda-v1",
@@ -134,7 +137,7 @@ def test_schema_v34_adds_scene_confusor_regions_table_empty_and_unseeded(tmp_pat
 
     db_path = tmp_path / "schema-v34.sqlite3"
     repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 35
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 36
     _activate(repository)
     outcome = repository.create_candidate_visit_from_proposal(
         CreateCandidateVisitRequest(
@@ -153,7 +156,7 @@ def test_schema_v34_adds_scene_confusor_regions_table_empty_and_unseeded(tmp_pat
 
     migrated = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
     try:
-        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 35
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 36
         from sqlalchemy import inspect as sa_inspect
 
         from mockingbird.repository.product_repository import SceneConfusorRegionModel
@@ -184,7 +187,7 @@ def test_schema_v31_adds_confidence_evidence_column_without_fabricating_legacy_d
     # path below always exercises "roll back to just before this column
     # existed, then migrate all the way forward to current," regardless of
     # how many later schema versions have been added since.
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 35
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 36
     _activate(repository)
     pre_migration_outcome = repository.create_candidate_visit_from_proposal(
         CreateCandidateVisitRequest(
@@ -207,7 +210,7 @@ def test_schema_v31_adds_confidence_evidence_column_without_fabricating_legacy_d
 
     migrated = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
     try:
-        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 35
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 36
         with migrated.session_factory() as session:
             pre_ledger = session.get(ObservationCandidateVisitModel, "visit-episode:pre-migration")
             assert pre_ledger is not None
@@ -802,7 +805,7 @@ def test_schema_v33_adds_geometry_attribution_column_without_fabricating_legacy_
 
     db_path = tmp_path / "schema-v33.sqlite3"
     repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 35
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 36
     _activate(repository)
     pre_migration_outcome = repository.create_candidate_visit_from_proposal(
         CreateCandidateVisitRequest(
@@ -826,7 +829,7 @@ def test_schema_v33_adds_geometry_attribution_column_without_fabricating_legacy_
 
     migrated = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
     try:
-        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 35
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 36
         with migrated.session_factory() as session:
             pre_media = session.get(MediaAssetModel, pre_migration_media_id)
             assert pre_media is not None
@@ -850,6 +853,68 @@ def test_schema_v33_adds_geometry_attribution_column_without_fabricating_legacy_
             post_media = session.get(MediaAssetModel, post_migration_outcome.persisted_media_asset_ids[0])
             assert post_media is not None
             assert json.loads(post_media.geometry_attribution_json) == json.loads(payload)
+    finally:
+        migrated.close()
+
+
+def test_schema_v36_adds_concurrent_sibling_column_without_fabricating_legacy_data(
+    tmp_path: Path,
+) -> None:
+    """Multi-Subject Visit Assembly & Review v1, Phase 2 (see docs/multi-
+    subject-visit-assembly-review-v1.md): a candidate created *before* this
+    column existed must read back `concurrent_sibling_proposal_ids_json is
+    None` after migrating forward -- never a fabricated relationship --
+    while a candidate created *after* migration genuinely persists its own
+    sibling list. Mirrors `test_schema_v33_adds_geometry_attribution_
+    column_without_fabricating_legacy_data` exactly, one column over."""
+
+    db_path = tmp_path / "schema-v36.sqlite3"
+    repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 36
+    _activate(repository)
+    pre_migration_outcome = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=_facts(proposal_id="visit-episode:pre-migration-sibling"),
+            observed_at=NOW,
+            evidence_items=(_evidence(),),
+        )
+    )
+    assert pre_migration_outcome.outcome == "created"
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "ALTER TABLE observation_candidate_visits DROP COLUMN concurrent_sibling_proposal_ids_json"
+        )
+        connection.exec_driver_sql("UPDATE mockingbird_schema SET version = 35 WHERE singleton_id = 1")
+    engine.dispose()
+
+    migrated = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
+    try:
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 36
+        with migrated.session_factory() as session:
+            pre_ledger = session.get(ObservationCandidateVisitModel, "visit-episode:pre-migration-sibling")
+            assert pre_ledger is not None
+            # No fabricated relationship for a legacy record.
+            assert pre_ledger.concurrent_sibling_proposal_ids_json is None
+
+        _activate(migrated)
+        post_migration_outcome = migrated.create_candidate_visit_from_proposal(
+            CreateCandidateVisitRequest(
+                proposal=_facts(
+                    proposal_id="visit-episode:post-migration-sibling",
+                    concurrent_sibling_proposal_ids=("visit-episode:some-other-proposal",),
+                ),
+                observed_at=NOW,
+                evidence_items=(_evidence(),),
+            )
+        )
+        assert post_migration_outcome.outcome == "created"
+        with migrated.session_factory() as session:
+            post_ledger = session.get(ObservationCandidateVisitModel, "visit-episode:post-migration-sibling")
+            assert post_ledger is not None
+            assert json.loads(post_ledger.concurrent_sibling_proposal_ids_json) == ["visit-episode:some-other-proposal"]
     finally:
         migrated.close()
 
@@ -1111,3 +1176,282 @@ def test_diagnostics_track_attempts_creates_repeats_and_suppressions(repository:
     assert status.suppressed_count == 1
     assert status.last_candidate_visit_id is not None
     assert status.last_proposal_id == "visit-episode:fixture-1"
+
+
+# =============================================================================
+# Multi-Subject Visit Assembly & Review v1, Phase 2 (see docs/multi-subject-
+# visit-assembly-review-v1.md): concurrent-sibling Event reuse. Admission
+# (everything `create_candidate_visit_from_proposal` already checks above
+# this boundary) is completely unmodified and re-exercised unchanged by
+# every test above this section; these tests cover only the new grouping
+# behavior in `_create_candidate_visit_locked`/`_event_id_for_concurrent_
+# siblings`.
+# =============================================================================
+
+
+def test_single_subject_behavior_is_byte_identical_when_no_siblings_are_named(
+    repository: ProductRepository,
+) -> None:
+    """The overwhelming common case -- `concurrent_sibling_proposal_ids`
+    defaults to `()`, matching `AssembledVisitProposal`'s own Phase 1
+    default -- must mint a new Event exactly as before this milestone."""
+
+    _activate(repository)
+    outcome = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(proposal=_facts(), observed_at=NOW, evidence_items=(_evidence(),))
+    )
+    assert outcome.outcome == "created"
+    assert outcome.reason == "candidate_visit_created"  # unchanged reason string for the ordinary path
+    with repository.session_factory() as session:
+        ledger = session.get(ObservationCandidateVisitModel, outcome.proposal_id)
+        assert ledger is not None
+        assert json.loads(ledger.concurrent_sibling_proposal_ids_json) == []
+
+
+def test_two_mutual_siblings_share_one_event_as_two_distinct_visits(repository: ProductRepository) -> None:
+    """Two proposals that mutually list each other as concurrent siblings
+    (Phase 1's own symmetric relationship -- see `test_two_simultaneous_
+    animals_remain_separate` in test_visit_episode_assembler.py) must
+    persist as two distinct Visits sharing exactly one Event."""
+
+    _activate(repository)
+    first = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=_facts(
+                proposal_id="visit-episode:left-bird", concurrent_sibling_proposal_ids=("visit-episode:right-bird",),
+            ),
+            observed_at=NOW, evidence_items=(_evidence(),),
+        )
+    )
+    second = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=_facts(
+                proposal_id="visit-episode:right-bird", concurrent_sibling_proposal_ids=("visit-episode:left-bird",),
+            ),
+            observed_at=NOW, evidence_items=(_evidence(),),
+        )
+    )
+    assert first.outcome == "created" and second.outcome == "created"
+    assert first.visit_id != second.visit_id  # two distinct subject Visits ...
+    assert first.event_id == second.event_id  # ... sharing one encounter container
+    assert second.reason == "candidate_visit_created_shared_event"  # observably distinct from a fresh Event
+    with repository.session_factory() as session:
+        # Not an absolute-count check: a fresh repository auto-seeds its own
+        # demo walkthrough graph (`seed_if_empty`), so other Events/Visits
+        # legitimately already exist. The correctness claim is that these
+        # two specific outcomes converge on exactly one shared Event whose
+        # own Visits are exactly these two -- not that the whole table has
+        # exactly one row.
+        visits = session.scalars(select(VisitModel).where(VisitModel.event_id == first.event_id)).all()
+        assert {visit.id for visit in visits} == {first.visit_id, second.visit_id}
+
+
+def test_three_mutual_siblings_share_one_event_regardless_of_admission_order(
+    repository: ProductRepository,
+) -> None:
+    """Hard regression target -- nuthatch + two finches (see docs/multi-
+    subject-visit-assembly-review-v1.md "Design acceptance cases", case A):
+    three mutually-overlapping proposals must persist as three distinct
+    Visits sharing exactly one Event. Attempted out of order (2nd, 3rd,
+    1st) to prove the shared Event never depends on which sibling happens
+    to be admitted first."""
+
+    _activate(repository)
+    proposal_ids = ("visit-episode:nuthatch-center", "visit-episode:finch-left", "visit-episode:finch-right")
+
+    def _attempt(this_id: str):
+        siblings = tuple(other for other in proposal_ids if other != this_id)
+        return repository.create_candidate_visit_from_proposal(
+            CreateCandidateVisitRequest(
+                proposal=_facts(proposal_id=this_id, concurrent_sibling_proposal_ids=siblings),
+                observed_at=NOW, evidence_items=(_evidence(),),
+            )
+        )
+
+    second_outcome = _attempt(proposal_ids[1])
+    third_outcome = _attempt(proposal_ids[2])
+    first_outcome = _attempt(proposal_ids[0])
+
+    outcomes = (first_outcome, second_outcome, third_outcome)
+    assert all(outcome.outcome == "created" for outcome in outcomes)
+    assert len({outcome.event_id for outcome in outcomes}) == 1  # one shared encounter
+    assert len({outcome.visit_id for outcome in outcomes}) == 3  # three distinct subjects, never collapsed
+    # Not an absolute-count check -- see the identical comment in
+    # test_two_mutual_siblings_share_one_event_as_two_distinct_visits: a
+    # fresh repository auto-seeds its own demo walkthrough graph.
+    with repository.session_factory() as session:
+        shared_event_visits = session.scalars(
+            select(VisitModel).where(VisitModel.event_id == first_outcome.event_id)
+        ).all()
+        assert {visit.id for visit in shared_event_visits} == {outcome.visit_id for outcome in outcomes}
+
+
+def test_sibling_never_persisted_mints_its_own_new_event(repository: ProductRepository) -> None:
+    """A proposal listing a sibling that was never itself persisted (never
+    attempted, still pending, or rejected) must mint its own new Event --
+    exactly the ordinary single-subject path -- never block, delay, or fail
+    waiting for a sibling that may never arrive."""
+
+    _activate(repository)
+    outcome = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=_facts(
+                proposal_id="visit-episode:only-subject-actually-admitted",
+                concurrent_sibling_proposal_ids=("visit-episode:never-persisted-sibling",),
+            ),
+            observed_at=NOW, evidence_items=(_evidence(),),
+        )
+    )
+    assert outcome.outcome == "created"
+    assert outcome.reason == "candidate_visit_created"  # a genuinely new Event, not a shared one
+    with repository.session_factory() as session:
+        event = session.get(EventModel, outcome.event_id)
+        assert event is not None
+
+
+def test_one_sibling_rejected_other_still_admits_independently(repository: ProductRepository) -> None:
+    """One sibling failing admission (here: no persistable evidence bytes)
+    must never destroy, block, or degrade a different, independently
+    evidence-backed sibling."""
+
+    _activate(repository)
+    rejected = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=_facts(
+                proposal_id="visit-episode:evidence-poor-sibling",
+                concurrent_sibling_proposal_ids=("visit-episode:evidence-backed-sibling",),
+            ),
+            observed_at=NOW, evidence_items=(),  # no evidence at all
+        )
+    )
+    assert rejected.outcome == "blocked_missing_evidence"
+    admitted = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=_facts(
+                proposal_id="visit-episode:evidence-backed-sibling",
+                concurrent_sibling_proposal_ids=("visit-episode:evidence-poor-sibling",),
+            ),
+            observed_at=NOW, evidence_items=(_evidence(),),
+        )
+    )
+    assert admitted.outcome == "created"  # unaffected by its sibling's own rejection
+    with repository.session_factory() as session:
+        assert session.get(ObservationCandidateVisitModel, "visit-episode:evidence-poor-sibling") is None
+        assert session.get(ObservationCandidateVisitModel, "visit-episode:evidence-backed-sibling") is not None
+
+
+def test_sibling_grouping_never_leaks_evidence_between_visits(repository: ProductRepository) -> None:
+    """Recognizing two candidates as siblings sharing one Event must never
+    leak one subject's own evidence into the other's -- each Visit's own
+    evidence links must reference only media created for that exact
+    candidate."""
+
+    _activate(repository)
+    first = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=_facts(
+                proposal_id="visit-episode:left-subject", concurrent_sibling_proposal_ids=("visit-episode:right-subject",),
+            ),
+            observed_at=NOW, evidence_items=(_evidence(engine_media_id="shadow-burst:hash-left"),),
+        )
+    )
+    second = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=_facts(
+                proposal_id="visit-episode:right-subject", concurrent_sibling_proposal_ids=("visit-episode:left-subject",),
+            ),
+            observed_at=NOW, evidence_items=(_evidence(engine_media_id="shadow-burst:hash-right"),),
+        )
+    )
+    assert first.event_id == second.event_id
+    assert set(first.persisted_media_asset_ids).isdisjoint(set(second.persisted_media_asset_ids))
+    with repository.session_factory() as session:
+        first_links = session.scalars(
+            select(VisitEvidenceLinkModel).where(VisitEvidenceLinkModel.visit_id == first.visit_id)
+        ).all()
+        second_links = session.scalars(
+            select(VisitEvidenceLinkModel).where(VisitEvidenceLinkModel.visit_id == second.visit_id)
+        ).all()
+        assert {link.media_asset_id for link in first_links}.isdisjoint(
+            {link.media_asset_id for link in second_links}
+        )
+
+
+def test_sibling_ledger_row_retains_its_own_concurrent_sibling_lineage(repository: ProductRepository) -> None:
+    """The ledger row's own `concurrent_sibling_proposal_ids_json` is
+    diagnostic lineage, retained independently of whether the sibling it
+    names was ever itself found/reused -- proven for both directions of a
+    genuinely shared pair."""
+
+    _activate(repository)
+    first = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=_facts(
+                proposal_id="visit-episode:lineage-a", concurrent_sibling_proposal_ids=("visit-episode:lineage-b",),
+            ),
+            observed_at=NOW, evidence_items=(_evidence(),),
+        )
+    )
+    second = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=_facts(
+                proposal_id="visit-episode:lineage-b", concurrent_sibling_proposal_ids=("visit-episode:lineage-a",),
+            ),
+            observed_at=NOW, evidence_items=(_evidence(),),
+        )
+    )
+    assert first.outcome == "created" and second.outcome == "created"
+    with repository.session_factory() as session:
+        ledger_a = session.get(ObservationCandidateVisitModel, "visit-episode:lineage-a")
+        ledger_b = session.get(ObservationCandidateVisitModel, "visit-episode:lineage-b")
+        assert json.loads(ledger_a.concurrent_sibling_proposal_ids_json) == ["visit-episode:lineage-b"]
+        assert json.loads(ledger_b.concurrent_sibling_proposal_ids_json) == ["visit-episode:lineage-a"]
+
+
+def test_sibling_event_reuse_never_crosses_streams(repository: ProductRepository) -> None:
+    """Defense in depth (mirroring the Privacy/Ignore Zone check's own
+    layered convention just above it in `_create_candidate_visit_locked`):
+    even a proposal that names a sibling id resolving to a *different*
+    Stream's persisted candidate -- which `classify_boundary` structurally
+    never produces in real use (see "Structural incompatibility" in docs/
+    tracklet-visit-assembly-contract.md) -- must never share an Event
+    across Streams."""
+
+    other_stream_id = "stream-other-camera"
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                CameraSourceModel(
+                    id="source-other-camera", name="Other camera", kind="integration",
+                    status="connected", description="Second, independent fixture Source.",
+                )
+            )
+            session.add(
+                StreamModel(
+                    id=other_stream_id, source_id="source-other-camera", name="Other stream",
+                    description="Second, independent fixture Stream.", is_live=True,
+                )
+            )
+
+    _activate(repository)
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=other_stream_id, now=NOW)
+    other_stream_outcome = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=_facts(proposal_id="visit-episode:other-stream-proposal", stream_id=other_stream_id, zone_id=None),
+            observed_at=NOW, evidence_items=(_evidence(),),
+        )
+    )
+    assert other_stream_outcome.outcome == "created"
+
+    this_stream_outcome = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=_facts(
+                proposal_id="visit-episode:this-stream-proposal",
+                concurrent_sibling_proposal_ids=("visit-episode:other-stream-proposal",),
+            ),
+            observed_at=NOW, evidence_items=(_evidence(),),
+        )
+    )
+    assert this_stream_outcome.outcome == "created"
+    assert this_stream_outcome.reason == "candidate_visit_created"  # its own new Event, not the other Stream's
+    assert this_stream_outcome.event_id != other_stream_outcome.event_id

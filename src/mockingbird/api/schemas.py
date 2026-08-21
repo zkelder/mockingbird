@@ -5496,6 +5496,16 @@ class VisitDetail(BaseModel):
     correction_history: list[VisitReviewHistoryEntry] = Field(default_factory=list)
     curation_history: list[VisitCurationHistoryEntry] = Field(default_factory=list)
     resulting_visits: list[Visit] = Field(default_factory=list)
+    # Multi-Subject Visit Assembly & Review v1, Phase 2 (see docs/multi-
+    # subject-visit-assembly-review-v1.md): every other Visit sharing this
+    # Visit's own Event, when there is more than one -- the common
+    # single-subject case reports an empty list, byte-identical to today.
+    # A reviewer usually reaches a Visit directly (Review Queue, Bird Log),
+    # not via its Event, so this is the one place `VisitDetail` needs to
+    # expose the encounter/sibling relationship `EventDetail.visits` already
+    # carries; this never changes review/correction/truth semantics -- each
+    # sibling remains an independently reviewable `Visit`.
+    sibling_visits: list[Visit] = Field(default_factory=list)
     eligible_zones: list[Zone] = Field(default_factory=list)
     review_state_token: str
     dataset_ready: bool

@@ -137,6 +137,12 @@ class CandidateVisitAuthorityAdapter:
             evidence_candidate_ids=proposal.evidence_candidate_ids,
             limitation_facts=proposal.limitation_facts,
             ambiguous_adjacent_proposal_ids=proposal.ambiguous_adjacent_proposal_ids,
+            # Multi-Subject Visit Assembly & Review v1, Phase 2: copied
+            # verbatim, never recomputed here -- the assembler alone owns
+            # this fact (see docs/multi-subject-visit-assembly-review-v1.md
+            # and docs/tracklet-visit-assembly-contract.md "Concurrent-
+            # sibling detection").
+            concurrent_sibling_proposal_ids=proposal.concurrent_sibling_proposal_ids,
             # Visit Continuity / Provisional Admission Fix v1: copied
             # verbatim, never recomputed here -- the assembler alone owns
             # this fact (see docs/tracklet-visit-assembly-contract.md).

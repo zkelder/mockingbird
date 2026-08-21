@@ -1908,6 +1908,15 @@ class ObservationCandidateVisitModel(Base):
     persisted_media_asset_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     limitation_facts_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     ambiguous_adjacent_proposal_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    # Multi-Subject Visit Assembly & Review v1, Phase 2 (schema 36, see
+    # docs/multi-subject-visit-assembly-review-v1.md): the proposal's own
+    # `concurrent_sibling_proposal_ids` as of the moment *this* candidate was
+    # created -- diagnostic lineage only, never re-read to decide grouping
+    # for a *different* candidate (that lookup queries this table by
+    # `proposal_id`, the primary key, directly; see `_create_candidate_visit_
+    # locked`). Nullable with no default: a row created before this concept
+    # existed reads back `None`, never a fabricated relationship.
+    concurrent_sibling_proposal_ids_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     # Detection Quality Accounting v1 (schema 31, see
     # docs/detection-quality-accounting-contract.md): one serialized
@@ -2093,6 +2102,17 @@ class CandidateVisitProposalFacts:
     limitation_facts: tuple[str, ...]
     ambiguous_adjacent_proposal_ids: tuple[str, ...]
     assembler_version: str
+    # Multi-Subject Visit Assembly & Review v1, Phase 2 (see
+    # docs/multi-subject-visit-assembly-review-v1.md): copied verbatim from
+    # `AssembledVisitProposal.concurrent_sibling_proposal_ids` by the adapter
+    # -- never recomputed here, matching `ambiguous_adjacent_proposal_ids`'s
+    # own boundary-crossing convention. Names every other proposal this one
+    # was classified `incompatible`/`temporal_overlap` against (genuinely
+    # concurrent, distinct subjects sharing one encounter) -- structurally
+    # disjoint from `ambiguous_adjacent_proposal_ids` above, never the same
+    # relationship. Defaults `()`, matching `AssembledVisitProposal`'s own
+    # default, so a caller that predates this field is unaffected.
+    concurrent_sibling_proposal_ids: tuple[str, ...] = ()
     # Ordinary per-track frame identity (Stage 4+, always populated live or
     # replay) -- distinct from `source_capture_frame_ids` (Stage 6.14's
     # reviewed-source identity, only ever populated when a proposal was
@@ -3171,19 +3191,42 @@ class ProductRepository:
                 "blocked_missing_evidence", "no_persistable_evidence_bytes", None, None, proposal.proposal_id, (),
             )
 
-        event_id = self._next_id(session, EventModel, "event-observation-candidate")
-        session.add(
-            EventModel(
-                id=event_id,
-                stream_id=stream_model.id,
-                title=f"Machine-observed {proposal.broad_class} activity (needs review)",
-                event_type="observation_engine_candidate",
-                started_at=observed_at,
-                ended_at=observed_at,
-                primary_zone_id=zone_model.id if zone_model is not None else None,
-                review_status=ReviewStatus.needs_review.value,
-            )
+        # Multi-Subject Visit Assembly & Review v1, Phase 2 (see docs/multi-
+        # subject-visit-assembly-review-v1.md): if this proposal's own
+        # concurrent-sibling relationship (Phase 1, `visit_episode_
+        # assembler.assemble_visit_episodes` -- genuinely simultaneous/
+        # crossing distinct subjects, never a continuation-timing question)
+        # names another proposal that has *already* been persisted as a
+        # candidate, reuse that sibling's own `event_id` instead of minting
+        # a new one, so the two Visits render as one shared encounter
+        # through the existing, already-plural `EventDetail.visits`/
+        # `visits_for_event`. Admission -- everything above this point in
+        # this method, plus the whole gate in `create_candidate_visit_from_
+        # proposal` -- already ran unmodified, per-proposal: grouping only
+        # ever happens *after* independent admission, never as a reason to
+        # admit. A sibling this proposal lists that was never itself
+        # persisted (rejected, not yet attempted, or genuinely absent)
+        # simply means this candidate mints its own new Event exactly as
+        # before -- one sibling's fate never blocks or delays another's.
+        shared_event_id = self._event_id_for_concurrent_siblings(
+            session, proposal.concurrent_sibling_proposal_ids, stream_id=stream_model.id,
         )
+        if shared_event_id is not None:
+            event_id = shared_event_id
+        else:
+            event_id = self._next_id(session, EventModel, "event-observation-candidate")
+            session.add(
+                EventModel(
+                    id=event_id,
+                    stream_id=stream_model.id,
+                    title=f"Machine-observed {proposal.broad_class} activity (needs review)",
+                    event_type="observation_engine_candidate",
+                    started_at=observed_at,
+                    ended_at=observed_at,
+                    primary_zone_id=zone_model.id if zone_model is not None else None,
+                    review_status=ReviewStatus.needs_review.value,
+                )
+            )
         visit_id = self._next_id(session, VisitModel, "visit-observation-candidate")
         primary_media_id = next(
             (media.id for item, media in persisted if item.role == "identification"),
@@ -3247,6 +3290,7 @@ class ProductRepository:
                 persisted_media_asset_ids_json=json.dumps([media.id for _, media in persisted]),
                 limitation_facts_json=json.dumps(list(proposal.limitation_facts)),
                 ambiguous_adjacent_proposal_ids_json=json.dumps(list(proposal.ambiguous_adjacent_proposal_ids)),
+                concurrent_sibling_proposal_ids_json=json.dumps(list(proposal.concurrent_sibling_proposal_ids)),
                 created_at=observed_at,
                 confidence_evidence_json=proposal.confidence_evidence_json,
             )
@@ -3256,9 +3300,55 @@ class ProductRepository:
         if visit_for_alert is not None:
             self._sync_review_alert(session, visit_for_alert, observed_at)
         return CandidateVisitCreationOutcome(
-            "created", "candidate_visit_created", visit_id, event_id, proposal.proposal_id,
+            "created",
+            "candidate_visit_created_shared_event" if shared_event_id is not None else "candidate_visit_created",
+            visit_id, event_id, proposal.proposal_id,
             tuple(media.id for _, media in persisted),
         )
+
+    def _event_id_for_concurrent_siblings(
+        self, session: Session, sibling_proposal_ids: tuple[str, ...], *, stream_id: str,
+    ) -> str | None:
+        """Bounded lookup: does any of `sibling_proposal_ids` already have a
+        persisted candidate? If so, return that row's own `event_id` so the
+        caller can reuse it instead of minting a new one (see "Multi-Subject
+        Visit Assembly & Review v1, Phase 2" immediately above in
+        `_create_candidate_visit_locked`). `proposal_id` is this ledger's own
+        primary key, so this is a single indexed `IN (...)` lookup -- no new
+        table, no secondary index. Side-effect-free.
+
+        Order-independent by construction: whichever sibling happens to be
+        persisted *first* is found by whichever sibling is persisted
+        *second* or *third*, regardless of attempt order -- see the design
+        doc's own worked three-subject example. `stream_id` is re-checked
+        defensively (mirroring the Privacy/Ignore Zone check earlier in the
+        caller): `concurrent_sibling_proposal_ids` can never legitimately
+        name a different Stream's proposal (`classify_boundary` already
+        refuses to compare tracklets across streams before any sibling
+        bookkeeping runs), but this boundary never trusts an upstream
+        invariant alone when a cheap local check can confirm it.
+
+        Deterministic even if more than one listed sibling already has a row
+        (a genuine three-or-more-subject encounter attempted out of order):
+        orders by `created_at` then `proposal_id` and takes the first --
+        which specific existing Event wins is immaterial, only that every
+        sibling converges on the *same* one, which the transactional,
+        single-flight nature of every call into this method already
+        guarantees (see "Persistence adapter boundary" in
+        docs/candidate-visit-authority-contract.md)."""
+
+        if not sibling_proposal_ids:
+            return None
+        row = session.scalars(
+            select(ObservationCandidateVisitModel)
+            .where(
+                ObservationCandidateVisitModel.proposal_id.in_(sibling_proposal_ids),
+                ObservationCandidateVisitModel.stream_id == stream_id,
+            )
+            .order_by(ObservationCandidateVisitModel.created_at.asc(), ObservationCandidateVisitModel.proposal_id.asc())
+            .limit(1)
+        ).first()
+        return row.event_id if row is not None else None
 
     # -------------------------------------------------------------------
     # Scene confusor suspicion (see docs/scene-confusor-suspicion-

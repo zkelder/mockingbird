@@ -763,6 +763,59 @@ looks indistinguishable from a detection miss. See Gate A and Gate B in
   since it is not the path any real field session actually runs. See
   [harvested-evidence-issuance-missing-evidence-closure-v1-report.md](harvested-evidence-issuance-missing-evidence-closure-v1-report.md)
   for the complete case-by-case accounting and code trace.
+- **Multi-Subject Visit Assembly Phase 2** (2026-08-20) consumed Phase 1's
+  `concurrent_sibling_proposal_ids` (2026-08-19, pure/additive, no
+  persisted-behavior change on its own) to close the schema/persistence gap
+  "Multi-subject Visit correctness" (above) named: genuinely simultaneous,
+  distinct subjects from one real encounter (the motivating nuthatch-plus-
+  two-finches shape) now persist as independent, evidence-backed sibling
+  Visits sharing one `Event` -- never collapsed to fewer, never merged,
+  never cross-contaminated -- while ordinary single-subject Visits and
+  ordinary sequential tracklet fragmentation remain completely unaffected.
+  Confirmed the schema already supported this (`VisitModel.event_id` was
+  already a plain, non-unique foreign key; `EventDetail.visits`/
+  `visits_for_event` were already plural and already rendered by
+  `EventDetailPage.tsx`) -- the only real gap was `_create_candidate_visit_
+  locked` unconditionally minting a brand-new `Event` per candidate. Fixed
+  with one small, bounded lookup (`_event_id_for_concurrent_siblings`, a
+  `proposal_id IN (...)` query against the existing Stage 7 ledger's own
+  primary key, defensively scoped to `stream_id`) that reuses an
+  already-persisted sibling's `event_id` when one exists, run immediately
+  before minting a new `Event` -- never a reason to admit, since every
+  existing admission gate (authority, lineage, ambiguity/continuation-
+  pending, evidence quality, scene-confusor suspicion) still runs completely
+  unmodified, per-proposal, before this check is ever reached. One
+  additive, nullable schema-36 column
+  (`observation_candidate_visits.concurrent_sibling_proposal_ids_json`,
+  diagnostic lineage only, following the schema-33 geometry-lineage
+  migration's exact pattern) and one additive `VisitDetail.sibling_visits`
+  API field (surfaced as a small conditional banner on
+  `VisitDetailPage.tsx`, reusing existing primitives) round out the change;
+  `VisitModel`'s own shape, `ReviewLabel.target_type`, species-suggestion
+  code, and every export/classifier-manifest path are untouched, so review,
+  correction, and species assistance remain fully independent per sibling
+  by construction. Verified deterministically -- no live field session was
+  required or attempted, matching this milestone's own explicit operating
+  mode: the real, unmodified `visit_episode_assembler`/`candidate_visit_
+  adapter` pipeline (never hand-built facts) drives the nuthatch-plus-two-
+  finches shape, two/three-way order-independent grouping, one-sibling-
+  rejected/one-admitted independence, zero evidence cross-contamination, a
+  cross-Stream defense-in-depth check, and an explicit one-bird-
+  fragmentation non-regression case (thirteen new tests: one schema
+  migration plus twelve sibling-behavior/end-to-end tests); the full Core
+  gate and a clean `tsc --noEmit && vite build` both passed with zero
+  regressions.
+  See
+  [multi-subject-visit-assembly-review-v1.md](multi-subject-visit-assembly-review-v1.md)
+  for the complete design record (now updated with Phase 2's "as-built"
+  detail) and "Concurrent-sibling Event reuse" in
+  [candidate-visit-authority-contract.md](candidate-visit-authority-contract.md)
+  for the persistence-side contract. Decision: **A -- implemented and
+  validated**. Explicitly not addressed here (see the design doc's own
+  Phase 4): the separate, smaller *sequential*-fragmentation defect (one
+  real bird producing 2-3 Visits with inconsistent species labels, traced
+  to non-transitive ambiguous-cluster arbitration) and `EventDetailPage.
+  tsx`'s cosmetic copy pass.
 
 ## v0.1 scope freeze
 
@@ -888,15 +941,23 @@ evidenced gaps remain (none of them "the detector is bad"):
    build (`c5278cb`, includes the fix) is healthy and ready for the next
    daylight attempt without a rebuild.
 2. **Multi-subject Visit correctness** -- see the dedicated subsection
-   immediately below. New, hard requirement; current schema/UI cannot
-   represent it. A concrete, repository-grounded implementation design now
+   immediately below. A concrete, repository-grounded implementation design
    exists:
    [multi-subject-visit-assembly-review-v1.md](multi-subject-visit-assembly-review-v1.md).
-   **Phase 1** (assembly-layer `concurrent_sibling_proposal_ids` detection,
-   pure/additive, no schema/persistence change) implemented 2026-08-19. The
-   schema/UI gap this subsection describes is **not yet closed** -- Phase 2
-   (Event-reuse persistence, schema 36) and Phase 3 (frontend) remain not
-   started; Phase 1 alone does not change which Visits are created.
+   **Phase 1** (assembly-layer `concurrent_sibling_proposal_ids` detection)
+   implemented 2026-08-19; **Phase 2** (Event-reuse persistence, schema 36)
+   and the sibling-awareness slice of Phase 3 (`VisitDetailPage.tsx`
+   banner) implemented 2026-08-20 -- see "Multi-Subject Visit Assembly
+   Phase 2," below. Concurrent, genuinely simultaneous distinct subjects
+   (the motivating nuthatch-plus-two-finches shape) now persist as
+   independent, evidence-backed sibling Visits sharing one Event, proven
+   through the real, unmodified assembler end to end. **Still open:**
+   `EventDetailPage.tsx`'s own copy pass (cosmetic only -- its Visit-list
+   rendering already works unchanged) and the separate, smaller Phase 4
+   (transitive ambiguous-cluster arbitration for the *sequential*
+   fragmentation shape -- one real bird producing 2-3 Visits with
+   inconsistent species labels -- a different failure mode from concurrent
+   siblings, not addressed by this phase).
 3. **Background/empty evidence receiving a confident species label** -- a
    real, repeatedly-observed regression class (2/21 false Visits in the
    latest session, 5/70 in the prior large cohort, all carrying a confident
@@ -949,8 +1010,11 @@ encounter, accidental subject merges, one species label applied to every
 animal in the frame, or contradictory species labels for duplicated
 representations of the same subject.
 
-**Current state, verified directly against the domain model, not assumed:
-the schema and UI cannot represent this today.**
+**Original state (2026-08-19), verified directly against the domain model,
+not assumed: the schema and UI could not represent this at all.** Preserved
+below as the evidence trail that motivated this requirement; see "Multi-
+Subject Visit Assembly Phase 2" further down for the current, closed state
+of the concurrent-subject case specifically.
 
 - `visit_episode_assembler.classify_boundary`'s documented "structural
   incompatibility" rule treats *any* temporal overlap between two confirmed

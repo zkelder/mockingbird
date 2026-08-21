@@ -357,17 +357,67 @@ for a multi-subject case.
    already sits above Visit, already plural, already rendered) held up
    against current code without needing revision. This phase does not fix
    duplicate-Visit persistence -- that is Phase 2.
-2. **Persistence-layer Event reuse + schema 36.** Thread the new field
-   through `ProposalLineage`/`CandidateVisitProposalFacts`, add the additive
-   migration, implement the sibling-lookup-and-reuse change in
-   `_create_candidate_visit_locked`. Tests extend
-   `test_candidate_visit_repository.py`/`test_candidate_visit_adapter.py`
-   using their existing `repository`/`_facts`/`_evidence`/`_counts` fixture
-   idioms — the first tests in the suite to drive two simultaneous proposals
-   through to real persisted `VisitModel` rows (a confirmed, currently-empty
-   gap in coverage). Tier: Core gate required (Visit admission/migration).
-3. **Frontend sibling-awareness + Event-page copy.** `VisitDetailPage.tsx`
-   banner, `EventDetailPage.tsx` copy pass. Frontend type-check + build.
+2. **DONE (2026-08-20, Multi-Subject Visit Assembly Phase 2).**
+   **Persistence-layer Event reuse + schema 36.** Threaded the new field
+   through `CandidateVisitProposalFacts` and the durable ledger
+   (`ObservationCandidateVisitModel.concurrent_sibling_proposal_ids_json`,
+   additive nullable column) — **not** through the pure `ProposalLineage`
+   Protocol in `candidate_visit_authority.py`, a deliberate, verified
+   refinement of this plan: `evaluate_candidate_authority` has exactly one
+   call site (`create_candidate_visit_from_proposal`), never needs sibling
+   information for its own decision, and `_create_candidate_visit_locked`
+   already receives the concrete `CandidateVisitProposalFacts` dataclass
+   directly (never the Protocol type) — so threading the field there would
+   have added coupling the actual call graph does not require.
+   `_create_candidate_visit_locked` now calls a new, small, side-effect-free
+   helper (`_event_id_for_concurrent_siblings`) immediately before minting
+   an `EventModel`: a bounded `proposal_id IN (...)` lookup (defensively
+   filtered to the same `stream_id`) against the existing ledger's own
+   primary key — no new table, no secondary index — reusing the first
+   already-persisted sibling's `event_id` when found, otherwise minting a
+   new `EventModel` exactly as before. Admission is completely unmodified:
+   grouping only ever happens after independent per-proposal admission
+   already said "create," never as a reason to admit, and one sibling's
+   rejection never blocks, delays, or affects another's. The `"created"`
+   outcome's own `reason` string now distinguishes
+   `candidate_visit_created` (new Event — the unchanged, ordinary
+   single-subject string) from `candidate_visit_created_shared_event`
+   (reused Event), giving this the minimum new observability the milestone
+   asked for without a new counter/table. `candidate_visit_adapter.py`
+   copies the field verbatim from `AssembledVisitProposal`, one line,
+   mirroring exactly how `ambiguous_adjacent_proposal_ids` already crosses
+   this boundary — `admission_replay.py` (the Perception Replay Regression
+   Harness's own admission layer) calls the same unmodified
+   `adapter.attempt_candidate`, so it inherits this fix with zero changes of
+   its own. `VisitDetail` gained one additive field,
+   `sibling_visits: list[Visit]` (every other Visit sharing this Visit's
+   Event, empty for the ordinary case), populated in `get_visit_detail` from
+   the already-existing `visits_for_event` — no new repository method.
+   Tests extended `test_candidate_visit_repository.py` (nine new tests:
+   schema migration, two/three-way sibling grouping order-independence, an
+   unpersisted-sibling no-op, one-rejected/one-admitted independence,
+   zero evidence cross-contamination, ledger lineage retention,
+   cross-Stream defense in depth) and `test_candidate_visit_adapter.py`
+   (four new tests driving the real, unmodified assembler — including the
+   named nuthatch-plus-two-finches encounter shape — through the real
+   adapter and repository to real persisted `VisitModel` rows, closing the
+   confirmed gap this design doc's own Phase 2 entry named). Core gate:
+   3310 passed. Frontend: `tsc --noEmit && vite build` clean.
+3. **Frontend sibling-awareness (folded into Phase 2 above, 2026-08-20).**
+   `VisitDetailPage.tsx` gained a small, conditional "N other subjects
+   detected in this same encounter" banner (rendered only when
+   `sibling_visits` is non-empty — invisible for every ordinary
+   single-subject Visit) reusing existing `EvidenceBadge`/`notice-panel`/
+   `detail-actions`/`secondary-action` primitives and this same page's own
+   `onOpenVisit` navigation convention (already used for `resulting_visits`)
+   — no new CSS, no new component. `EventDetailPage.tsx`'s copy pass (the
+   "3 subjects detected" wording polish) was deliberately **not** done in
+   this milestone — the page's existing `detail.visits.map(...)` rendering
+   and empty state already function correctly for a multi-Visit Event with
+   zero code change (verified directly against current source), so the
+   copy pass is pure presentation polish, explicitly out of scope for a
+   correctness-focused milestone ("A later UX polish can improve
+   presentation").
 4. **Separate, smaller — transitive ambiguous-cluster arbitration fix** (can
    run before or after 1-3). Re-diagnose Case B/C against fresh field
    evidence first; if confirmed, fix connected-component closure in
@@ -410,13 +460,25 @@ code, Camera Node/capture-layer code.
 
 ## Next implementation command
 
-Implement phase 1 (assembly-layer `concurrent_sibling_proposal_ids`
-detection) as its own bounded task packet: pure, additive, no schema
-change, RED/GREEN tests extending `test_visit_episode_assembler.py`. Do not
-bundle phase 2 (persistence/schema 36) into the same commit — phase 2 is the
-first tier-escalating (Core gate) change and deserves its own isolated
-validation pass. Start from a known-good Gate A baseline: this design was
-produced concurrently with an interrupted (nighttime-start, no usable
-denominator) attempt at the cache-128 live proof — confirm that proof has
-since passed before starting phase 2 specifically, since phase 2 touches the
-same candidate-visit persistence boundary the cache fix lives in.
+Phases 1-3 are DONE (2026-08-19/20 — see "Implementation phases" above).
+Remaining, each independently schedulable:
+
+- **Phase 4 — transitive ambiguous-cluster arbitration fix.** Re-diagnose
+  Case B/C (one real encounter fragmenting into 2-3 Visits with
+  inconsistent species labels) against a fresh session's own duplicate-Visit
+  evidence before assuming the transitive-closure hypothesis; if confirmed,
+  fix `candidate_visit_authority.resolve_ambiguous_boundary_arbitration` to
+  compute the full connected component across chained `ambiguous_adjacent_
+  proposal_ids` links. Explicitly a different mechanism from concurrent-
+  sibling grouping — do not conflate the two in implementation or tests.
+- **Phase 5 — optional polish.** `EventDetailPage.tsx`'s copy pass ("3
+  subjects detected" wording); a Review Queue sibling badge; a Today/Place
+  Intelligence copy note about legitimate multi-Visit encounters. None of
+  these change correctness — see "Frontend sibling-awareness" above for why
+  the copy pass specifically was deferred rather than folded into Phase 2.
+
+Live/hardware field validation is not a prerequisite for either — Phase 2's
+own deterministic/integration coverage (real, unmodified assembler through
+to real persisted rows) already establishes the behavior this design
+question asked; a future live session remains valuable as later
+milestone-level acceptance evidence, not as a blocker for these next steps.

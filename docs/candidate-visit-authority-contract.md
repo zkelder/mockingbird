@@ -263,6 +263,65 @@ using existing fields alone, with no duplicate concept introduced:
   own id (`uq_observation_candidate_visit_visit`) -- the authoritative,
   queryable "this Visit was Stage-7-created" fact and full lineage record.
 
+### Concurrent-sibling Event reuse (Multi-Subject Visit Assembly & Review v1, Phase 2)
+
+`AssembledVisitProposal.concurrent_sibling_proposal_ids` (Phase 1, see
+"Concurrent-sibling detection" in
+[tracklet-visit-assembly-contract.md](tracklet-visit-assembly-contract.md))
+names every other proposal this one was classified `incompatible`/
+`temporal_overlap` against -- genuinely simultaneous, distinct subjects
+sharing one real encounter, never a continuation-timing question. Phase 2
+(schema 36, 2026-08-20) is what gives that fact product consequence:
+`_create_candidate_visit_locked` calls a new, small, side-effect-free
+helper, `_event_id_for_concurrent_siblings`, immediately before minting an
+`EventModel` -- a bounded `proposal_id IN (...)` lookup (defensively
+re-filtered to the same `stream_id`, mirroring the Privacy/Ignore Zone
+check just above it) against the existing ledger's own primary key. If any
+listed sibling already has a persisted candidate, this candidate reuses
+that sibling's own `event_id` instead of minting a new one; otherwise it
+mints a new `EventModel` exactly as before this milestone. No new table, no
+secondary index, no change to `VisitModel`'s own shape.
+
+This is grouping, never a reason to admit: everything above this point in
+`_create_candidate_visit_locked` -- authority mode, activation boundary,
+lineage validity, the ambiguity/continuation-pending policies below, rate
+budgets, evidence-quality admission, and scene-confusor suspicion -- already
+ran unmodified, per-proposal, before this check is ever reached. One
+sibling's own rejection (missing evidence, scene-confusor suspicion, a
+budget exhausted) never blocks, delays, or degrades a different,
+independently evidence-backed sibling; a sibling this proposal lists that
+was never itself persisted (rejected, not yet attempted, or genuinely
+absent) simply means this candidate mints its own new Event, identical to
+the ordinary single-subject path. Order-independent by construction: for a
+three-or-more-subject encounter, whichever sibling is persisted first is
+found by whichever is persisted next, regardless of attempt order -- proven
+directly for a real nuthatch-plus-two-finches encounter shape, attempted
+out of order, in `tests/test_candidate_visit_adapter.py`.
+
+The ledger row's own `concurrent_sibling_proposal_ids_json` (schema 36,
+additive nullable column, mirroring `_migrate_to_observation_geometry_
+lineage`'s exact pattern) retains this candidate's own sibling relationship
+as diagnostic lineage -- never re-read to decide grouping for a *different*
+candidate, which always looks the sibling up directly by `proposal_id`
+instead. `None` for a ledger row that predates this concept; never a
+fabricated relationship. The `"created"` outcome's own `reason` string
+distinguishes `candidate_visit_created` (a new Event -- the unchanged,
+ordinary single-subject string, byte-identical to every pre-Phase-2 Visit)
+from `candidate_visit_created_shared_event` (a reused Event) -- the minimum
+new observability this milestone needed, reusing the existing free-text
+`reason` field rather than a new counter or table.
+
+Species identity remains exactly as isolated per sibling as it already is
+per any Visit: `VisitModel.species_guess`/`reviewed_label` stay `None` on
+creation for every sibling, identically. Review/correction remains
+per-Visit and per-sibling: reviewing one sibling Visit never implicitly
+confirms, reviews, or touches another sibling's own `review_status` or
+`ReviewLabel` history -- this was already true of every Visit under the
+existing, completely unmodified `create_review_label` path, and sharing an
+`event_id` changes nothing about it (see "Authority and limitations,"
+below, and "Review Decision Provenance" in
+[architecture.md](architecture.md)).
+
 ## Ambiguity policy
 
 A proposal whose own `ambiguous_adjacent_proposal_ids` is non-empty -- the

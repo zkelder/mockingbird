@@ -205,9 +205,14 @@ which tracklets merge, which proposals result, or which are admitted --
 verified directly: every existing test in `test_visit_episode_assembler.py`
 passes unchanged, and a real 2026-08-19 field fixture replayed through the
 Perception Replay Regression Harness before/after this change classified
-every admission/assembly metric `equivalent`. Phase 2 (Event-reuse
-persistence, schema 36, not yet implemented) is what gives this fact
-product consequence.
+every admission/assembly metric `equivalent`. **Phase 2 (Event-reuse
+persistence, schema 36) shipped 2026-08-20** -- `_create_candidate_visit_
+locked` now reuses an already-persisted sibling's `event_id` instead of
+minting a new one when this field is non-empty (see "Candidate Visit
+semantics" in
+[candidate-visit-authority-contract.md](candidate-visit-authority-contract.md)
+for the persistence-side mechanism); this field itself, and this module,
+remain completely unchanged by that consumption.
 
 ### Bounded gap windows -- reused, not invented
 

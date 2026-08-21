@@ -12433,6 +12433,12 @@ async def get_visit_detail(visit_id: str) -> VisitDetail:
     if review_history is None:
         raise _not_found("Visit", visit_id)
     media_asset = repository.media_asset_for_path(visit.representative_media_path)
+    # Multi-Subject Visit Assembly & Review v1, Phase 2: every other Visit
+    # sharing this Event -- empty for the common single-subject case, since
+    # `visits_for_event` then returns only this Visit itself.
+    sibling_visits = [
+        sibling for sibling in repository.visits_for_event(event.id) if sibling.id != visit.id
+    ]
     return VisitDetail(
         visit=visit.model_copy(update={"representative_media_path": None}),
         event=event,
@@ -12463,6 +12469,7 @@ async def get_visit_detail(visit_id: str) -> VisitDetail:
         correction_history=review_history.entries,
         curation_history=repository.visit_curation_history(visit.id),
         resulting_visits=repository.resulting_visits_for(visit.id),
+        sibling_visits=sibling_visits,
         eligible_zones=[
             zone
             for zone in repository.zones_for_stream(event.stream_id)
