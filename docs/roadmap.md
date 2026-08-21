@@ -713,6 +713,56 @@ looks indistinguishable from a detection miss. See Gate A and Gate B in
   investigation, not a reason to reopen this bound again. See
   [cache-128-live-daylight-acceptance-v1-report.md](cache-128-live-daylight-acceptance-v1-report.md)
   for the complete accounting.
+- **Harvested Evidence Issuance / Missing-Evidence Closure v1 (2026-08-20)**
+  investigated the disclosed finding immediately above -- 4 of the same
+  session's 7 `blocked_missing_evidence` cases showed only 8-22% of the
+  128-entry cache's own capacity in use during their delay window, too low
+  for that cache's own eviction to plausibly explain them. Traced the exact
+  real production path (confirmed track -> burst scheduler -> capture ->
+  harvest -> assembly tick -> admission) and found a concrete, different,
+  previously-undiscovered defect rather than confirming the burst
+  -scheduler-fairness hypothesis the prior milestone's report suggested:
+  `LiveCameraNodeShadowSession._temporary_payloads`/`_same_frame_temporary_
+  payloads` (`camera_node_live.py`) are each their own small, fixed,
+  content-hash-keyed cache, hardcoded to 8 entries -- entirely independent
+  of, and never touched by, either the 8->32 or 32->128 fix -- and were
+  only ever harvested into the properly-sized cache once per whole
+  `session.run()` *batch*, after the entire up-to-20-frame batch had
+  already returned, not "the moment... observed" as the code's own
+  pre-existing comment already claimed. A batch busy enough for more than 8
+  separate frames to each successfully capture a burst (several concurrent
+  generations, or several distinct subjects in sequence -- correlated with,
+  but not exclusively caused by, 2 of the 4 real multi-subject-rich moments
+  this same session's own independent review flagged) silently evicted an
+  early capture from that small cache before the harvest loop ever reached
+  it -- so a proposal could legitimately reach admission with its own
+  evidence already captured, and already lost, long before the much larger
+  cache under test in the milestone above ever had a chance to hold it.
+  Fixed by harvesting immediately, per frame, via a new `on_result`
+  callback on `LiveCameraNodeShadowSession.run()` -- not by enlarging any
+  cache, preserving this milestone's own governing "no magic cache-size
+  increase" constraint. Reproduced deterministically through the real,
+  unmodified production path (`ObservationEngineSessionManager.start()` ->
+  `_run_async` -> `session.run()`): a RED test (independently verified
+  against the pre-fix source via `git stash`, not merely reasoned about)
+  showed the first of 9 distinct, single-frame, real-tracker-shape
+  generations reaching exactly `blocked_missing_evidence` despite a real,
+  proven burst capture and an outer cache nowhere near its own bound; GREEN
+  after the fix. Added one new bounded diagnostic,
+  `advanced.evidence_harvest_misses`, directly closing the field report's
+  own disclosed "no surviving log/API signal distinguishes 'never
+  harvested' from 'harvested then evicted'" limitation for any future
+  session. Zero regression: the full Core suite (3301 passed, 2 skipped, 10
+  deselected, 11 xfailed) and all three existing evidence-cache-capacity
+  regression tests (8->32, 32->128, and the headroom-margin test) passed
+  unmodified. Decision: **A -- issuance/harvest defect proven and fixed**.
+  Also disclosed, not fixed: `candidate_visit_authority_cli.py`'s own
+  separate, bounded, operator-driven trial tool has a differently-shaped
+  instance of the identical root cause (lazy per-10-second-tick lookup
+  rather than per-batch), left as a genuine but lower-priority follow-up
+  since it is not the path any real field session actually runs. See
+  [harvested-evidence-issuance-missing-evidence-closure-v1-report.md](harvested-evidence-issuance-missing-evidence-closure-v1-report.md)
+  for the complete case-by-case accounting and code trace.
 
 ## v0.1 scope freeze
 

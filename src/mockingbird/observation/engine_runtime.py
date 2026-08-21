@@ -519,6 +519,21 @@ class _EngineSession:
         self._engine_message = "Observation Engine has not started yet."
         self._counts = ObservationEngineCounts()
         self._suppressed: dict[str, int] = {}
+        # Harvested Evidence Issuance / Missing-Evidence Closure v1: a
+        # bounded lifetime counter of every already-captured burst/same-
+        # frame candidate whose content hash was no longer found in the
+        # live session's own small temporary cache at harvest time -- by
+        # construction, always a genuine "captured, then lost before
+        # harvest" fact, never "never captured" (see `_harvest_burst_bytes`/
+        # `_harvest_same_frame_bytes`'s own return-value docstring). Before
+        # this milestone, nothing distinguished this from "the burst
+        # scheduler never issued a request" after the fact -- see docs/
+        # cache-128-live-daylight-acceptance-v1-report.md §7's own disclosed
+        # "no surviving log/API signal" limitation. A non-zero value here in
+        # a future session is a direct, immediate signal that this exact
+        # category is recurring, without needing another forensic
+        # reconstruction from the counterfactual ledger.
+        self._evidence_harvest_misses = 0
         self._last_candidate_visit_id: str | None = None
         # Visit Authority Budget + Ambiguous-Boundary Recall Closure v1: a
         # candidate budget legitimately running out mid-session must be
@@ -614,6 +629,9 @@ class _EngineSession:
             )
             advanced = dict(self._advanced)
             advanced["counterfactual_ledger"] = self._counterfactual_summary()
+            # Harvested Evidence Issuance / Missing-Evidence Closure v1: see
+            # `self._evidence_harvest_misses`'s own docstring at assignment.
+            advanced["evidence_harvest_misses"] = self._evidence_harvest_misses
             # Camera Node Connectivity & Recovery Diagnosis v1: the best
             # in-memory known-good frame time (see `_checkpoint_observation_
             # exposure`), so a caller diagnosing a stalled/degraded session
@@ -830,6 +848,37 @@ class _EngineSession:
             # observed, not lazily at assembly-tick time.
             same_frame_bytes_cache: dict[str, bytes] = {}
 
+            def _harvest_immediately(result: ObservationResult) -> None:
+                # Harvested Evidence Issuance / Missing-Evidence Closure v1:
+                # `session.run()`'s own `on_result` calls this the instant
+                # each frame's result is produced -- never deferred until
+                # the whole up-to-`_BATCH_FRAMES`-frame batch below returns.
+                # `LiveCameraNodeShadowSession._temporary_payloads`/`_same_
+                # frame_temporary_payloads` are each their own small, fixed,
+                # content-hash-keyed cache (capped at 8, independent of
+                # `_MAX_CACHED_BURST_BYTES`/`_MAX_CACHED_SAME_FRAME_BYTES`
+                # below) -- a busy batch in which more than 8 *separate*
+                # frames each successfully capture a burst (several
+                # concurrent generations, or several distinct subjects in
+                # sequence, well within one real ~10-20-frame batch) used to
+                # silently evict an early capture from that small cache
+                # before the old, once-per-batch harvest loop further down
+                # ever got to copy it into this much larger, properly-sized
+                # cache -- a real proposal could then legitimately reach
+                # `blocked_missing_evidence` with this larger cache nowhere
+                # near full, because its own evidence was never lost from
+                # *this* cache; it never survived long enough to arrive.
+                # Harvesting per-frame, immediately, closes that gap
+                # structurally rather than by enlarging any cache further.
+                # See docs/candidate-visit-authority-contract.md "Evidence-
+                # cache capacity" and `LiveCameraNodeShadowSession.run`'s own
+                # `on_result` docstring.
+                misses = _harvest_burst_bytes(session, result.evidence_candidates, burst_bytes_cache)
+                misses += _harvest_same_frame_bytes(session, result.evidence_candidates, same_frame_bytes_cache)
+                if misses:
+                    with self._state_lock:
+                        self._evidence_harvest_misses += misses
+
             try:
                 # Right before this session starts actually pulling frames
                 # from the Node -- the earliest point it can collide with an
@@ -864,7 +913,7 @@ class _EngineSession:
                 consecutive_transport_failures = 0
                 while not self._stop_event.is_set():
                     try:
-                        results = await session.run(maximum_frames=_BATCH_FRAMES)
+                        results = await session.run(maximum_frames=_BATCH_FRAMES, on_result=_harvest_immediately)
                     except (CameraNodeClientError, ValueError) as error:
                         code = _sanitized(error)
                         # Camera Node Connectivity & Recovery Diagnosis v1:
@@ -932,8 +981,19 @@ class _EngineSession:
                     for result in results:
                         all_track_updates.extend(result.track_updates)
                         all_evidence_candidates.extend(result.evidence_candidates)
-                        _harvest_burst_bytes(session, result.evidence_candidates, burst_bytes_cache)
-                        _harvest_same_frame_bytes(session, result.evidence_candidates, same_frame_bytes_cache)
+                        # Harmless, near-always-redundant fallback: `on_result`
+                        # above already harvested this exact result the
+                        # instant it was produced. Kept as defense in depth
+                        # (idempotent -- `in cache: continue` -- and cheap)
+                        # rather than removed, in case a future caller of
+                        # `session.run()` ever omits `on_result`.
+                        misses = _harvest_burst_bytes(session, result.evidence_candidates, burst_bytes_cache)
+                        misses += _harvest_same_frame_bytes(
+                            session, result.evidence_candidates, same_frame_bytes_cache,
+                        )
+                        if misses:
+                            with self._state_lock:
+                                self._evidence_harvest_misses += misses
                         # Rejected / Suppressed Detection Attribution v1: the
                         # one place this session previously discarded
                         # `result.detection_observations`/`detector_ran`
@@ -1022,8 +1082,13 @@ class _EngineSession:
                 for result in final_results:
                     all_track_updates.extend(result.track_updates)
                     all_evidence_candidates.extend(result.evidence_candidates)
-                    _harvest_burst_bytes(session, result.evidence_candidates, burst_bytes_cache)
-                    _harvest_same_frame_bytes(session, result.evidence_candidates, same_frame_bytes_cache)
+                    misses = _harvest_burst_bytes(session, result.evidence_candidates, burst_bytes_cache)
+                    misses += _harvest_same_frame_bytes(
+                        session, result.evidence_candidates, same_frame_bytes_cache,
+                    )
+                    if misses:
+                        with self._state_lock:
+                            self._evidence_harvest_misses += misses
                     self._counterfactual.observe_result(result)
                     for packet in result.frame_packets:
                         if packet.source_offset_ms is not None:
@@ -1455,13 +1520,25 @@ def _harvest_burst_bytes(
     session: LiveCameraNodeShadowSession,
     candidates: tuple[EvidenceCandidate, ...],
     cache: dict[str, bytes],
-) -> None:
+) -> int:
     """Copy any new burst-role candidate's bytes out of the session's own
     temporary payload cache immediately, while the session is still live --
     see the "burst_bytes_cache" note in `_run_async` for why this cannot be
-    deferred to assembly-tick time. Bounded the same way the session's own
-    `temporary_burst_payload` cache already is."""
+    deferred to assembly-tick time, and `LiveCameraNodeShadowSession.run`'s
+    `on_result` docstring for why it also cannot wait for a whole batch.
+    Bounded the same way the session's own `temporary_burst_payload` cache
+    already is.
 
+    Returns the count of candidates in this call whose content hash was not
+    found in the session's own cache. This is always a genuine "captured,
+    then lost before harvest" fact, never "never captured": a
+    `high_resolution_burst`-role `EvidenceCandidate` only ever exists after
+    `LiveCameraNodeShadowSession._process_frame` has already inserted its
+    payload into that same cache at least once. See `_EngineSession.
+    _evidence_harvest_misses` for where callers accumulate and surface
+    this."""
+
+    misses = 0
     for candidate in candidates:
         if candidate.role != "high_resolution_burst" or candidate.media_asset_id in cache:
             continue
@@ -1470,21 +1547,25 @@ def _harvest_burst_bytes(
             continue
         payload = session.temporary_burst_payload(content_hash)
         if not payload:
+            misses += 1
             continue
         cache[candidate.media_asset_id] = payload
         while len(cache) > _MAX_CACHED_BURST_BYTES:
             cache.pop(next(iter(cache)))
+    return misses
 
 
 def _harvest_same_frame_bytes(
     session: LiveCameraNodeShadowSession,
     candidates: tuple[EvidenceCandidate, ...],
     cache: dict[str, bytes],
-) -> None:
+) -> int:
     """Same-Frame Species Evidence v1: mirrors `_harvest_burst_bytes` exactly
     for the `classifier_same_frame` role and `session.
-    temporary_same_frame_payload`'s own independently-bounded cache."""
+    temporary_same_frame_payload`'s own independently-bounded cache,
+    including its return-value meaning."""
 
+    misses = 0
     for candidate in candidates:
         if candidate.role != CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE or candidate.media_asset_id in cache:
             continue
@@ -1493,10 +1574,12 @@ def _harvest_same_frame_bytes(
             continue
         payload = session.temporary_same_frame_payload(content_hash)
         if not payload:
+            misses += 1
             continue
         cache[candidate.media_asset_id] = payload
         while len(cache) > _MAX_CACHED_SAME_FRAME_BYTES:
             cache.pop(next(iter(cache)))
+    return misses
 
 
 class ObservationEngineSessionManager:

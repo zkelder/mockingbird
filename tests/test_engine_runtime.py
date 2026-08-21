@@ -22,7 +22,13 @@ from PIL import Image
 from mockingbird.observation import engine_runtime
 from mockingbird.observation.candidate_visit_adapter import CandidateVisitAuthorityAdapter
 from mockingbird.observation.candidate_visit_authority import ObservationAuthorityMode
-from mockingbird.observation.contracts import DetectionObservation, EvidenceCandidate, FramePacket, TrackUpdate
+from mockingbird.observation.contracts import (
+    DetectionObservation,
+    EvidenceCandidate,
+    FramePacket,
+    ObservationResult,
+    TrackUpdate,
+)
 from mockingbird.observation.engine_runtime import (
     ObservationEngineSessionManager,
     resolve_provider_config_path,
@@ -2584,3 +2590,240 @@ def test_idle_configured_stream_never_started_records_no_exposure(
     camera is never counted as coverage."""
 
     assert _intervals(repository, STREAM_ID) == []
+
+
+# =============================================================================
+# Harvested Evidence Issuance / Missing-Evidence Closure v1: a real, distinct
+# defect from the evidence-cache-capacity section above, found while
+# investigating the 2026-08-20 field session's own 4 real-bird
+# `blocked_missing_evidence` cases that showed only 8-22% of the 128-entry
+# cache's own capacity in use during their delay window -- too low for that
+# cache's own eviction to plausibly explain them (see
+# docs/cache-128-live-daylight-acceptance-v1-report.md §7). Root cause:
+# `LiveCameraNodeShadowSession._temporary_payloads`/`_same_frame_temporary_
+# payloads` (camera_node_live.py) are each their OWN small, fixed,
+# content-hash-keyed cache -- capped at 8, entirely independent of
+# `_MAX_CACHED_BURST_BYTES`/`_MAX_CACHED_SAME_FRAME_BYTES` above -- and were
+# only ever harvested into this module's own longer-lived caches once per
+# whole `session.run()` *batch* (`for result in results: _harvest_burst_
+# bytes(...)`, reached only after the entire up-to-`_BATCH_FRAMES`-frame
+# batch had already returned). A batch busy enough for more than 8 *separate*
+# frames to each successfully capture a burst -- several concurrent
+# generations, or several distinct subjects in sequence, well within one
+# real ~20-frame batch -- silently evicted an early capture from that small
+# cache before the old harvest loop ever got to copy it out, so a proposal
+# could legitimately reach admission with its own evidence already captured
+# and already lost, long before the much larger, properly-sized cache this
+# module owns ever had a chance to hold it. Fixed by harvesting immediately,
+# per frame, via `LiveCameraNodeShadowSession.run`'s new `on_result`
+# callback -- not by enlarging any cache. See "Evidence-cache capacity" in
+# docs/candidate-visit-authority-contract.md.
+# =============================================================================
+
+
+class _ManyGenerationsProvider:
+    """Fake Observation Engine provider giving one exact, hand-scripted pair
+    of `TrackUpdate`s per `frame_id` -- deliberately sidesteps real tracker
+    matching/expiry internals so this test can precisely control how many
+    *separate* track generations each successfully capture evidence within
+    one `session.run()` batch, which is exactly the real mechanism under
+    test below. Mirrors `_FakeSameFrameProvider` in
+    tests/test_observation_camera_node_live.py, the established pattern for
+    this exact kind of precise-control fixture."""
+
+    provider_id = "fixture-many-generations"
+
+    def __init__(self, updates_by_frame_id: dict[str, tuple[TrackUpdate, TrackUpdate]]) -> None:
+        self._updates_by_frame_id = updates_by_frame_id
+        self.settings = FrameDrivenSettings(
+            source_nominal_fps=5, baseline_detector_fps=5, candidate_detector_fps=5,
+            strong_detection_threshold=0.8, minimum_detector_confirmations=2,
+            minimum_tracker_support_frames=1, maximum_missed_frames=2, maximum_frame_gap_ms=2000,
+            tracker_expiry_ms=2000, maximum_track_duration_ms=30000, maximum_active_tracks=16,
+            evidence_ring_size=4, pretrigger_frame_count=1,
+        )
+        self.live_reset_count = 0
+
+    def start_live(self, stream_id: str) -> None:
+        pass
+
+    async def observe_live_frame(self, frame: FramePacket) -> ObservationResult:
+        updates = self._updates_by_frame_id.get(frame.frame_id, ())
+        return ObservationResult(
+            "fixture-many-generations", "live_shadow", frame.stream_id, frame.captured_at,
+            frame_packets=(frame,), track_updates=updates, detector_ran=True,
+        )
+
+    def stop_live(self, reason: str = "provider_reset") -> tuple[ObservationResult, ...]:
+        return ()
+
+    def close(self) -> None:
+        pass
+
+
+def _burst_trigger_updates(
+    generation_id: str, frame_id: str, index: int,
+) -> tuple[TrackUpdate, TrackUpdate]:
+    """A `started`+`confirmed` update (the sole "meaningful" one -- it alone
+    triggers exactly one burst opportunity) immediately followed by its own
+    terminal `ended` update, both delivered on this generation's single
+    triggering frame: a brief, single-instant sighting, exactly the real
+    "single generation" shape several of the real field session's own
+    `blocked_missing_evidence` cases share (see docs/cache-128-live-
+    daylight-acceptance-v1-report.md §7, "Gens: 1"). Each generation is
+    logically 60 real seconds apart from the next -- comfortably beyond
+    both `merge_gap_ms` and `ambiguous_gap_ms` -- so `assemble_visit_
+    episodes` treats every one as its own independent encounter rather than
+    a continuation/ambiguity candidate; only this logical spacing matters,
+    never real wall-clock test-execution time, which stays a fraction of a
+    second regardless. Subject geometry also shifts per `index`: distinct
+    enough (IoU/centroid) that the real, unmodified burst scheduler treats
+    every generation as its own new recurrence group rather than a
+    suppressed repeat of the same static geometry, which is not what this
+    test is about."""
+
+    offset = index * 0.05
+    box = (0.05 + offset, 0.05 + offset, 0.12 + offset, 0.12 + offset)
+    start_ms = index * 60_000
+    # Deliberately a *different* id from the real envelope's own `frame_id`
+    # (the dict key this update is registered under) -- not the same value.
+    # `_process_frame`'s same-frame-capture eligibility requires `update.
+    # frame_id == frame.frame_id` (proof the geometry and the pixels come
+    # from the identical captured frame); every envelope in this test
+    # shares one fixed, identical `payload` (see `_envelope`'s own
+    # default), so if same-frame capture *were* eligible here, all 9
+    # generations' same-frame candidates would collide on one identical
+    # content hash and trivially "never evict" regardless of the real
+    # defect -- masking the exact terminal reason this test exists to
+    # prove. Mismatching the id keeps this test isolated to the
+    # `high_resolution_burst` mechanism alone, which is what the real
+    # field session's own `blocked_missing_evidence` cases actually are.
+    unrelated_frame_id = f"{frame_id}-not-same-frame-eligible"
+    started = TrackUpdate(
+        track_id=f"{generation_id}-track", generation_id=generation_id,
+        captured_at=NOW + timedelta(milliseconds=start_ms), status="started",
+        lifecycle_state="confirmed", frame_id=unrelated_frame_id, source_offset_ms=start_ms,
+        broad_class="animal", bounding_box=box, confidence=0.9,
+        supporting_frame_ids=(unrelated_frame_id,), support_state="weak_detector_supported", detector_ran=True,
+    )
+    ended = TrackUpdate(
+        track_id=f"{generation_id}-track", generation_id=generation_id,
+        captured_at=NOW + timedelta(milliseconds=start_ms + 40), status="ended",
+        lifecycle_state="ended", frame_id=unrelated_frame_id, source_offset_ms=start_ms + 40,
+        broad_class="animal", bounding_box=box, supporting_frame_ids=(unrelated_frame_id,),
+        support_state="weak_detector_supported", detector_ran=True,
+        terminal_reason="maximum_unsupported_duration",
+    )
+    return started, ended
+
+
+def _distinct_burst_jpeg(index: int) -> bytes:
+    """A genuinely distinct, real, decodable JPEG per capture -- large
+    enough to clear the evidence scorer's own minimum-subject-size floor
+    (see `HIGH_RESOLUTION_BURST_SIZE`'s own comment) -- mirroring how a
+    real Camera Node always returns a genuinely distinct frame per burst,
+    which matters here because `_temporary_payloads` is keyed by content
+    hash: an identical payload on every request would silently collapse
+    every capture onto one dict entry instead of exercising its real,
+    insertion-count-based FIFO bound."""
+
+    buffer = BytesIO()
+    color = (index * 20 % 256, (index * 53) % 256, (index * 97) % 256)
+    Image.new("RGB", HIGH_RESOLUTION_BURST_SIZE, color=color).save(buffer, format="JPEG")
+    return buffer.getvalue()
+
+
+class _ManyGenerationsTransport:
+    """Paced (never-instant) frame delivery -- see `_FixtureTransport.
+    _paced_frames`'s own docstring for why real-time pacing, not an
+    artificial coalescing workaround, is required for `session.run()` to
+    actually process each of several distinct frames rather than
+    coalescing all but the newest away. Ends deterministically the same way
+    `_FixtureTransport` does: once every scripted frame has been served, the
+    next call raises the one unambiguous terminal condition
+    (`authentication_rejected`) rather than blocking forever."""
+
+    def __init__(self, envelopes: list[AnalysisFrameEnvelope]) -> None:
+        self._envelopes = envelopes
+        self._served = False
+        self.burst_requests: list[object] = []
+        self.closed = False
+
+    def iter_analysis_frames(self, *, maximum_frames: int):
+        if self._served:
+            raise CameraNodeClientError("authentication_rejected")
+        self._served = True
+        return self._paced_frames()
+
+    def _paced_frames(self):
+        for envelope in self._envelopes:
+            time.sleep(0.06)
+            yield envelope
+
+    def request_evidence_burst(self, request):
+        self.burst_requests.append(request)
+        payload = _distinct_burst_jpeg(len(self.burst_requests))
+        width, height = HIGH_RESOLUTION_BURST_SIZE
+        frame = EvidenceBurstFrame(
+            1, request.trigger_captured_at + timedelta(milliseconds=5), width, height, "image/jpeg",
+            sha256(payload).hexdigest(), payload, request.trigger_frame_id, "generation-a", 5, "supported",
+        )
+        return EvidenceBurstResult(request.request_id, "captured", (frame,))
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def test_batch_internal_burst_capture_no_longer_starves_an_early_generations_evidence(
+    repository: ProductRepository,
+) -> None:
+    """Direct reproduction, through the real, unmodified production path
+    (`ObservationEngineSessionManager.start()` -> `_EngineSession._run_
+    async` -> `LiveCameraNodeShadowSession.run()`), of the real 2026-08-20
+    field defect: a real, confirmed, single-generation bird can reach
+    terminal `blocked_missing_evidence` even though the outer 128-entry
+    evidence cache is nowhere near full -- because its own already-captured
+    evidence was lost one stage further upstream, inside the live session's
+    own small internal cache, before this module's harvest ever ran.
+
+    9 distinct, single-frame, real (fake-tracker-scripted) track generations
+    land in one `session.run()` batch, each successfully capturing a burst.
+    `gen-early` -- the first to capture -- is the one whose evidence the old,
+    once-per-batch harvest lost to the other 8's later-in-the-same-batch
+    captures; the other 8 are unaffected."""
+
+    generation_count = 9
+    generations = ["gen-early"] + [f"gen-unrelated-{i}" for i in range(generation_count - 1)]
+
+    updates_by_frame_id: dict[str, tuple[TrackUpdate, TrackUpdate]] = {}
+    envelopes: list[AnalysisFrameEnvelope] = []
+    for index, generation_id in enumerate(generations):
+        envelope = _envelope(index + 1)
+        envelopes.append(envelope)
+        updates_by_frame_id[envelope.frame_id] = _burst_trigger_updates(generation_id, envelope.frame_id, index)
+
+    provider = _ManyGenerationsProvider(updates_by_frame_id)
+    transport = _ManyGenerationsTransport(envelopes)
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: (provider, provider),
+        transport_factory=lambda config, stream_id: transport,
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "stopped", timeout=10.0)
+
+    status = manager.status(STREAM_ID)
+    # A real burst request happened for every one of the 9 generations,
+    # `gen-early` included -- ruling out "the scheduler never issued a
+    # request for it" as the cause of whatever its own outcome turns out
+    # to be.
+    assert len(transport.burst_requests) == generation_count
+
+    suppressed = dict(status.counts.suppressed_reasons)
+    # THE FIX: every generation's own evidence survives to admission --
+    # `gen-early`'s included -- because harvesting no longer waits for the
+    # whole batch to finish. Before the fix, `gen-early` alone reached
+    # `blocked_missing_evidence` here despite `transport.burst_requests`
+    # proving its evidence really was captured.
+    assert "blocked_missing_evidence" not in suppressed
+    assert status.counts.candidates_created == generation_count

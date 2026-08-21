@@ -10,7 +10,7 @@ from http.client import HTTPConnection, HTTPSConnection
 import json
 import socket
 import threading
-from typing import Iterator, Protocol
+from typing import Callable, Iterator, Protocol
 
 from mockingbird.observation.burst_scheduler import (
     RESET_GENERATION_REPLACEMENT,
@@ -1017,8 +1017,33 @@ class LiveCameraNodeShadowSession:
             result, evidence_candidates=result.evidence_candidates + tuple(burst_evidence)
         )
 
-    async def run(self, *, maximum_frames: int) -> tuple[ObservationResult, ...]:
-        """Receive concurrently with inference and coalesce to bounded newest work."""
+    async def run(
+        self,
+        *,
+        maximum_frames: int,
+        on_result: Callable[[ObservationResult], None] | None = None,
+    ) -> tuple[ObservationResult, ...]:
+        """Receive concurrently with inference and coalesce to bounded newest work.
+
+        `on_result`, when supplied, is called synchronously with each
+        frame's `ObservationResult` the instant it is produced -- before
+        this method goes on to receive/process this batch's next frame --
+        never batched until the whole call returns. This exists for a
+        caller that must rescue a just-captured burst/same-frame payload
+        out of this session's own bounded, content-hash-keyed temporary
+        cache (`_temporary_payloads`/`_same_frame_temporary_payloads`,
+        capped independently of any caller-side cache) before a *later*
+        capture *within this same batch* has a chance to evict it: a batch
+        can span `maximum_frames` frames, several of which can each
+        independently capture a burst (concurrent generations, or several
+        distinct subjects in sequence), so waiting for this whole method to
+        return before harvesting -- the pre-existing behavior when
+        `on_result` is omitted -- lets an early capture in a busy batch be
+        evicted before any caller-side harvest ever sees it, even though a
+        much larger caller-side cache still has ample headroom. See
+        `engine_runtime._harvest_burst_bytes`, its own call site in
+        `_run_async`, and docs/candidate-visit-authority-contract.md
+        "Evidence-cache capacity" for the full mechanism this closes."""
         import asyncio
 
         if not 1 <= maximum_frames <= 1200:
@@ -1049,7 +1074,10 @@ class LiveCameraNodeShadowSession:
                 available.clear()
                 frame = self.source.pop_latest()
                 if frame is not None:
-                    results.append(await self._process_frame(frame))
+                    result = await self._process_frame(frame)
+                    results.append(result)
+                    if on_result is not None:
+                        on_result(result)
             if errors:
                 raise errors[0]
             return tuple(results)
