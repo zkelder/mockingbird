@@ -1422,10 +1422,36 @@ natural next bounded slice: per-species Zone breakdown (today's "busiest
 area" is report-wide only) and a representative evidence image per species
 card (the adjacent "Best moments" panel already covers evidence-backed
 representative Visits at the report level, so this is an enhancement, not
-a gap). What remains open beyond that is Place Intelligence proper --
-new-vs-regular, baselines/trends, seasonality, year-over-year -- which
-needs accumulated history this module deliberately does not compute yet;
-see Phase 5, below.
+a gap).
+
+**2026-08-21 update (Historical Baseline Maturity + New/Regular Species
+v1):** the first bounded slice of Place Intelligence proper -- see
+[historical-baseline-maturity-contract.md](historical-baseline-maturity-contract.md).
+A new pure module, `mockingbird.analytics.historical_baseline`, computes a
+Place-wide `insufficient`/`developing`/`established` baseline maturity
+(purely a function of accumulated *usable* monitored days, never raw
+calendar age or Visit/taxa counts) and, per authoritatively-confirmed
+taxon, whether today's confirmation is `"new"` (baseline established),
+`"first_record"` (baseline immature -- never implies ecological novelty it
+can't support), `"regular"` (confirmed on >= 3 distinct usable days within
+a bounded 366-day window, coverage-aware -- never raw Visit count), or
+`"seen_before"`. Reuses `place_activity_report`'s own `VisitFact`/
+`_classify` truth precedence and `zone_insights`' interval-union math
+directly rather than re-deriving either; a provisional SpeciesSuggestion
+can never establish or extend historical status. Wired additively into
+`PlaceActivityReportResponse` (Today's concise per-species status) and
+`WildlifeJournalOverviewResponse`/`WildlifeJournalHistoryResponse` (Bird
+Log's deeper regularity/baseline facts) -- zero schema/migration, zero
+new API routes. 42 new pure tests, 16 new repository/API integration
+tests, and 5 new/extended frontend e2e tests all pass, alongside the full
+pre-existing suite (Core gate) unmodified. Explicitly not attempted:
+anomaly/change detection, "more/less than normal" language, seasonality,
+year-over-year comparison, or unifying this with the older, differently-
+scoped `_dashboard_today_summary` "New today"/"Recent regulars" panels --
+see "Known limitations" in the new contract doc. What remains open beyond
+this is the rest of Place Intelligence -- seasonality, year-over-year,
+cautious anomalies -- which needs more accumulated real history than this
+young a product has yet; see Phase 5, below.
 
 **Temporal correctness surfaces this gate must preserve, named explicitly:**
 event time (source capture) vs. ingestion time vs. processing-completion

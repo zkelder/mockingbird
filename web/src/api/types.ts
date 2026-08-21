@@ -3935,6 +3935,19 @@ export interface PlaceActivityReportRequest {
   end_at: string;
 }
 
+// Historical Baseline Maturity + New/Regular Species v1 -- see
+// docs/historical-baseline-maturity-contract.md. Present only when this
+// taxon has at least one authoritative (reviewed, non-superseded)
+// confirmation; never populated from a provisional SpeciesSuggestion alone.
+export interface PlaceActivityReportTaxonHistoricalStatus {
+  first_confirmed_at: string;
+  last_confirmed_at: string;
+  distinct_confirmed_days: number;
+  distinct_confirmed_usable_days: number;
+  total_confirmed_count: number;
+  status: "new" | "first_record" | "regular" | "seen_before";
+}
+
 export interface PlaceActivityReportTaxonEntry {
   label: string;
   display_name: string;
@@ -3945,6 +3958,21 @@ export interface PlaceActivityReportTaxonEntry {
   total_visit_count: number;
   first_activity_at: string;
   last_activity_at: string;
+  historical_status?: PlaceActivityReportTaxonHistoricalStatus | null;
+}
+
+// Place-wide historical baseline facts, bounded to a trailing window ending
+// at this report's own period_end_at -- see
+// docs/historical-baseline-maturity-contract.md.
+export interface PlaceActivityReportHistoricalBaseline {
+  window_start_at: string;
+  window_end_at: string;
+  usable_day_count: number;
+  total_monitored_seconds?: number | null;
+  maturity: "insufficient" | "developing" | "established";
+  distinct_taxa_count: number;
+  earliest_authoritative_record_at?: string | null;
+  latest_authoritative_record_at?: string | null;
 }
 
 export interface PlaceActivityReportZoneActivity {
@@ -4007,6 +4035,10 @@ export interface PlaceActivityReportResponse {
   // appeared, and never "normal"/"unusual"/"declining" (those need a
   // historical baseline this report does not compute).
   maturity: "no_data" | "sparse" | "usable";
+  // A *different* maturity concept from the coverage one above -- whether
+  // accumulated history is deep enough to trust a new-vs-regular species
+  // claim. See docs/historical-baseline-maturity-contract.md.
+  historical_baseline: PlaceActivityReportHistoricalBaseline;
   warnings: string[];
 }
 
@@ -4086,11 +4118,20 @@ export interface WildlifeJournalLabelSummary {
   zone_count: number;
   recent_activity: WildlifeJournalRecentDay[];
   representative?: WildlifeJournalRepresentative | null;
+  // Historical Baseline Maturity + New/Regular Species v1 -- distinct
+  // genuinely-monitored days this label was confirmed on, within the
+  // trailing historical window; never raw observation_count. See
+  // docs/historical-baseline-maturity-contract.md.
+  distinct_confirmed_usable_days: number;
+  is_regular: boolean;
 }
 
 export interface WildlifeJournalOverviewResponse {
   order: WildlifeJournalOrder;
   labels: WildlifeJournalLabelSummary[];
+  // Place-wide baseline maturity, as of now -- see
+  // docs/historical-baseline-maturity-contract.md.
+  baseline_maturity: "insufficient" | "developing" | "established";
 }
 
 // Bird Log's provisional counterpart to the confirmed-only Wildlife Journal
@@ -4160,6 +4201,12 @@ export interface WildlifeJournalHistoryResponse {
   zone_breakdown: WildlifeJournalBreakdown[];
   activity_by_hour: WildlifeJournalHourBucket[];
   is_new_label_in_range: boolean;
+  // Historical Baseline Maturity + New/Regular Species v1 -- see
+  // `WildlifeJournalLabelSummary.distinct_confirmed_usable_days`/
+  // `is_regular` and docs/historical-baseline-maturity-contract.md.
+  distinct_confirmed_usable_days: number;
+  is_regular: boolean;
+  baseline_maturity: "insufficient" | "developing" | "established";
   activity_library_drilldown: WildlifeJournalDrilldown;
   gallery: WildlifeJournalGallery;
 }

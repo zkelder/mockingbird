@@ -68,6 +68,22 @@ async function mockPlaceActivityReport(page: Page, overrides: Record<string, unk
     // Most scenarios below represent a well-monitored day; scenarios that
     // specifically exercise sparse/no-data maturity override this.
     maturity: "usable" as string,
+    // Historical Baseline Maturity + New/Regular Species v1: most scenarios
+    // below don't care about Place-wide baseline maturity itself (only
+    // individual `taxa[].historical_status` entries, overridden per-test);
+    // this default is deliberately "established" so a scenario that adds a
+    // `historical_status` without also overriding this field still gets the
+    // "new" (not "first_record") wording by default.
+    historical_baseline: {
+      window_start_at: new Date(now.getTime() - 366 * 24 * 3600 * 1000).toISOString(),
+      window_end_at: now.toISOString(),
+      usable_day_count: 10,
+      total_monitored_seconds: 10 * 2 * 3600,
+      maturity: "established" as string,
+      distinct_taxa_count: 3,
+      earliest_authoritative_record_at: new Date(now.getTime() - 300 * 24 * 3600 * 1000).toISOString(),
+      latest_authoritative_record_at: now.toISOString(),
+    },
     warnings: [
       "Visits are activity sessions, not estimates of unique animals. The same animal may create more than one Visit if it leaves and returns.",
     ],
@@ -201,6 +217,134 @@ test("Today's report shows species, visit counts, activity timing, and the busie
 
   // Healthy coverage stays quiet/secondary -- a small pill, not a warning.
   await expect(reportPanel.getByText("Fully observed today")).toBeVisible();
+});
+
+test("historical status badges read New/First confirmed/Regular honestly, and a plain species row stays unbadged", async ({
+  page,
+}) => {
+  // Historical Baseline Maturity + New/Regular Species v1 (see
+  // docs/historical-baseline-maturity-contract.md): the backend already
+  // resolved the maturity-appropriate wording into `taxon.historical_
+  // status.status` -- this only proves the frontend renders exactly what
+  // it was given, never re-deriving the new-vs-regular judgment itself.
+  await completeSetup(page);
+  const now = new Date().toISOString();
+  await mockPlaceActivityReport(page, {
+    total_visit_count: 4,
+    confirmed_wildlife_visit_count: 4,
+    wildlife_visit_count: 4,
+    distinct_taxa_count: 4,
+    distinct_species_count: 4,
+    last_activity_at: now,
+    first_activity_at: now,
+    historical_baseline: {
+      window_start_at: new Date(Date.now() - 366 * 24 * 3600 * 1000).toISOString(),
+      window_end_at: now,
+      usable_day_count: 10,
+      total_monitored_seconds: 10 * 2 * 3600,
+      maturity: "established",
+      distinct_taxa_count: 4,
+      earliest_authoritative_record_at: new Date(Date.now() - 300 * 24 * 3600 * 1000).toISOString(),
+      latest_authoritative_record_at: now,
+    },
+    taxa: [
+      {
+        label: "white_breasted_nuthatch",
+        display_name: "White-breasted Nuthatch",
+        category: "bird",
+        is_species: true,
+        confirmed_visit_count: 1,
+        provisional_visit_count: 0,
+        total_visit_count: 1,
+        first_activity_at: now,
+        last_activity_at: now,
+        historical_status: {
+          first_confirmed_at: now,
+          last_confirmed_at: now,
+          distinct_confirmed_days: 1,
+          distinct_confirmed_usable_days: 1,
+          total_confirmed_count: 1,
+          status: "new",
+        },
+      },
+      {
+        label: "carolina_wren",
+        display_name: "Carolina Wren",
+        category: "bird",
+        is_species: true,
+        confirmed_visit_count: 1,
+        provisional_visit_count: 0,
+        total_visit_count: 1,
+        first_activity_at: now,
+        last_activity_at: now,
+        historical_status: {
+          first_confirmed_at: now,
+          last_confirmed_at: now,
+          distinct_confirmed_days: 1,
+          distinct_confirmed_usable_days: 1,
+          total_confirmed_count: 1,
+          status: "first_record",
+        },
+      },
+      {
+        label: "northern_cardinal",
+        display_name: "Northern Cardinal",
+        category: "bird",
+        is_species: true,
+        confirmed_visit_count: 6,
+        provisional_visit_count: 0,
+        total_visit_count: 6,
+        first_activity_at: now,
+        last_activity_at: now,
+        historical_status: {
+          first_confirmed_at: new Date(Date.now() - 20 * 24 * 3600 * 1000).toISOString(),
+          last_confirmed_at: now,
+          distinct_confirmed_days: 5,
+          distinct_confirmed_usable_days: 3,
+          total_confirmed_count: 11,
+          status: "regular",
+        },
+      },
+      {
+        label: "house_finch",
+        display_name: "House Finch",
+        category: "bird",
+        is_species: true,
+        confirmed_visit_count: 1,
+        provisional_visit_count: 0,
+        total_visit_count: 1,
+        first_activity_at: now,
+        last_activity_at: now,
+        // No historical_status at all: a purely-provisional-until-now
+        // species that was JUST confirmed does still get one (backend
+        // guarantee); this row instead models the calm, ordinary
+        // "seen_before" case by omitting the field, which the frontend
+        // must treat identically to an explicit "seen_before" -- no badge.
+      },
+    ],
+  });
+
+  await page.goto("/");
+  const reportPanel = page.locator("section.today-report");
+  const speciesList = reportPanel.locator(".today-report-species-list li");
+  await expect(speciesList).toHaveCount(4);
+
+  const nuthatchRow = speciesList.filter({ hasText: "White-breasted Nuthatch" });
+  await expect(nuthatchRow.getByText("New to your reviewed history")).toBeVisible();
+
+  const wrenRow = speciesList.filter({ hasText: "Carolina Wren" });
+  await expect(wrenRow.getByText("First confirmed record so far")).toBeVisible();
+  // Never implies ecological novelty language when the baseline itself
+  // said so via "first_record" rather than "new".
+  await expect(wrenRow.getByText("New to your reviewed history")).toHaveCount(0);
+
+  const cardinalRow = speciesList.filter({ hasText: "Northern Cardinal" });
+  await expect(cardinalRow.getByText("Regular here")).toBeVisible();
+
+  const finchRow = speciesList.filter({ hasText: "House Finch" });
+  await expect(finchRow.getByText("Regular here")).toHaveCount(0);
+  await expect(finchRow.getByText("New to your reviewed history")).toHaveCount(0);
+  await expect(finchRow.getByText("First confirmed record so far")).toHaveCount(0);
 });
 
 test("a Stream with older exposure history but zero coverage this period shows Partial, never Fully observed", async ({
@@ -475,6 +619,13 @@ test("Dashboard's real request to the Place Activity Report endpoint succeeds ag
   expect(payload.activity_by_hour).toHaveLength(24);
   expect(payload.coverage).toBeTruthy();
   expect(["no_data", "sparse", "usable"]).toContain(payload.maturity);
+  // Historical Baseline Maturity + New/Regular Species v1: a real,
+  // demo-seeded database with no Visits "today" still returns an honest
+  // (likely "insufficient") baseline, never a missing field.
+  expect(payload.historical_baseline).toBeTruthy();
+  expect(["insufficient", "developing", "established"]).toContain(
+    payload.historical_baseline.maturity,
+  );
 
   await expect(page.locator("section.today-report")).toBeVisible();
 });

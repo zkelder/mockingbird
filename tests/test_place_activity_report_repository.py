@@ -741,6 +741,7 @@ def test_api_serialization_contract_exposes_only_documented_fields(
         "activity_by_hour",
         "coverage",
         "maturity",
+        "historical_baseline",
         "warnings",
     }
     assert body["total_visit_count"] == 1
@@ -758,9 +759,24 @@ def test_api_serialization_contract_exposes_only_documented_fields(
         "total_visit_count",
         "first_activity_at",
         "last_activity_at",
+        "historical_status",
     }
     assert taxon["label"] == "northern_cardinal"
     assert taxon["category"] == "bird"
+    # A single confirmation with no accumulated monitoring history at all
+    # (this fixture never seeds MonitoringExposureIntervalModel rows before
+    # PERIOD_START) is honestly its own all-time-first record, under an
+    # insufficient baseline -- see Historical Baseline Maturity + New/
+    # Regular Species v1, docs/historical-baseline-maturity-contract.md.
+    assert set(taxon["historical_status"].keys()) == {
+        "first_confirmed_at",
+        "last_confirmed_at",
+        "distinct_confirmed_days",
+        "distinct_confirmed_usable_days",
+        "total_confirmed_count",
+        "status",
+    }
+    assert taxon["historical_status"]["status"] == "first_record"
     assert len(body["activity_by_hour"]) == 24
     assert set(body["coverage"].keys()) == {
         "period_seconds",
@@ -772,6 +788,17 @@ def test_api_serialization_contract_exposes_only_documented_fields(
         "gaps_truncated",
     }
     assert body["coverage"]["coverage_ratio"] == pytest.approx(1.0)
+    assert set(body["historical_baseline"].keys()) == {
+        "window_start_at",
+        "window_end_at",
+        "usable_day_count",
+        "total_monitored_seconds",
+        "maturity",
+        "distinct_taxa_count",
+        "earliest_authoritative_record_at",
+        "latest_authoritative_record_at",
+    }
+    assert body["historical_baseline"]["maturity"] == "insufficient"
     # No raw internal ORM identifiers (visit_id, event_id, zone/stream
     # ORM ids on the taxon, SQLAlchemy state) ever leak into the response.
     assert "visit_id" not in taxon

@@ -75,6 +75,7 @@ FAST_FILES = [
     "test_field_trial_launcher.py",
     "test_frame_sampler.py",
     "test_frame_tracker.py",
+    "test_historical_baseline.py",
     "test_install_camera_node.py",
     "test_live_camera_session.py",
     "test_live_preview_leases.py",

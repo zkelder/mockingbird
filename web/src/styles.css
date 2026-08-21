@@ -1403,6 +1403,28 @@ a.secondary-action {
   white-space: normal;
 }
 
+/* Historical Baseline Maturity + New/Regular Species v1: a StatusPill
+   ("New to your reviewed history" / "First confirmed record so far" /
+   "Regular here") sits inside .today-report-species-name alongside the
+   blanket `li span` rule above -- restore its normal pill presentation
+   (readable regardless of tone) and undo the bold/ellipsis/nowrap meant
+   for the species name itself, matching the identical override pattern
+   already used for .today-report-species-meta/-likely just above. */
+.today-report-species-list li .status-pill {
+  overflow: visible;
+  font-size: 0.72rem;
+  font-weight: 800;
+  white-space: normal;
+}
+
+.today-report-species-list li .status-good {
+  color: #245436;
+}
+
+.today-report-species-list li .status-quiet {
+  color: #536258;
+}
+
 .today-report-facts {
   display: flex;
   flex-wrap: wrap;

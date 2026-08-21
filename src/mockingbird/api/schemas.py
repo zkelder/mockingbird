@@ -4498,6 +4498,40 @@ class PlaceActivityReportRequest(BaseModel):
         return self
 
 
+class PlaceActivityReportTaxonHistoricalStatus(BaseModel):
+    """One confirmed taxon's Place-history status (Historical Baseline
+    Maturity + New/Regular Species v1; see
+    docs/historical-baseline-maturity-contract.md). Present only when this
+    taxon has at least one authoritative (reviewed, non-superseded)
+    confirmation -- never populated from a provisional SpeciesSuggestion
+    alone; see `PlaceActivityReportTaxonEntry.historical_status`.
+
+    `first_confirmed_at`/`last_confirmed_at` are all-time facts. `distinct_
+    confirmed_days`/`distinct_confirmed_usable_days`/`total_confirmed_count`
+    are bounded to the trailing historical window (see `historical_
+    baseline.HISTORICAL_BASELINE_WINDOW_DAYS`) ending at this report's own
+    `period_end_at` -- how present this taxon has been *recently*, not
+    cumulatively over the Place's entire lifetime.
+    """
+
+    first_confirmed_at: datetime
+    last_confirmed_at: datetime
+    distinct_confirmed_days: int = Field(ge=0)
+    distinct_confirmed_usable_days: int = Field(ge=0)
+    total_confirmed_count: int = Field(ge=0)
+    # "new"/"first_record" are the same underlying fact (this taxon's
+    # all-time-earliest confirmed record falls within this report's own
+    # period) presented with maturity-appropriate language -- "new" only
+    # when the Place's own historical_baseline.maturity is "established"
+    # (an ecological-novelty claim is supportable); "first_record"
+    # otherwise (a true first record, without implying deep Place history).
+    # "regular" requires confirmation on at least `historical_baseline.
+    # MIN_DISTINCT_USABLE_DAYS_FOR_REGULAR` distinct genuinely-monitored
+    # days -- never raw Visit count. "seen_before" is the calm default:
+    # confirmed previously, neither new this period nor yet regular.
+    status: Literal["new", "first_record", "regular", "seen_before"]
+
+
 class PlaceActivityReportTaxonEntry(BaseModel):
     """One represented taxon and its Visit-count backing. `confirmed_visit_
     count`/`provisional_visit_count` are always kept separate -- see "Report
@@ -4512,6 +4546,12 @@ class PlaceActivityReportTaxonEntry(BaseModel):
     total_visit_count: int = Field(ge=0)
     first_activity_at: datetime
     last_activity_at: datetime
+    # `None` when this taxon has never been authoritatively confirmed at
+    # this Place (only a provisional SpeciesSuggestion backs it in today's
+    # report) -- the truth contract forbids a provisional suggestion from
+    # ever establishing historical status. See
+    # docs/historical-baseline-maturity-contract.md.
+    historical_status: PlaceActivityReportTaxonHistoricalStatus | None = None
 
 
 class PlaceActivityReportZoneActivity(BaseModel):
@@ -4550,6 +4590,35 @@ class PlaceActivityReportCoverage(BaseModel):
     history_is_partial: bool = False
     gaps: list[PlaceActivityReportCoverageGap] = Field(default_factory=list, max_length=20)
     gaps_truncated: bool = False
+
+
+class PlaceActivityReportHistoricalBaseline(BaseModel):
+    """Place-wide historical baseline facts (Historical Baseline Maturity +
+    New/Regular Species v1; see docs/historical-baseline-maturity-contract.md).
+    Bounded to a trailing window ending at this report's own `period_end_at`
+    -- not "now" -- so a report for a past period always reproduces the same
+    historical facts, regardless of when it is re-viewed.
+
+    `total_monitored_seconds` is `None` specifically when no durable
+    monitoring exposure history exists at all (mirrors `PlaceActivityReport
+    Coverage.monitored_seconds`'s identical convention), distinct from a
+    real, known zero for a Place monitored heavily long ago but not at all
+    within this window.
+    """
+
+    window_start_at: datetime
+    window_end_at: datetime
+    usable_day_count: int = Field(ge=0)
+    total_monitored_seconds: float | None = Field(default=None, ge=0)
+    # The smallest useful classification of whether accumulated monitoring
+    # history is deep enough to make a new-vs-regular species statement
+    # useful at all -- purely a function of usable_day_count, never of taxa
+    # or Visit counts (mirrors `maturity`'s identical discipline below) and
+    # never of raw calendar age alone.
+    maturity: Literal["insufficient", "developing", "established"]
+    distinct_taxa_count: int = Field(ge=0)
+    earliest_authoritative_record_at: datetime | None = None
+    latest_authoritative_record_at: datetime | None = None
 
 
 class PlaceActivityReportResponse(BaseModel):
@@ -4599,6 +4668,12 @@ class PlaceActivityReportResponse(BaseModel):
     # historical baseline this report does not compute). See
     # `mockingbird.analytics.place_activity_report.compute_report_maturity`.
     maturity: Literal["no_data", "sparse", "usable"]
+    # Place-wide historical baseline facts -- a *different* maturity concept
+    # from `maturity` above (that one is "is today's coverage enough to
+    # trust today's summary"; this one is "is accumulated history deep
+    # enough to trust a new-vs-regular species claim"). See
+    # docs/historical-baseline-maturity-contract.md.
+    historical_baseline: PlaceActivityReportHistoricalBaseline
     warnings: list[str] = Field(default_factory=list, max_length=10)
 
 
@@ -4710,11 +4785,28 @@ class WildlifeJournalLabelSummary(BaseModel):
     zone_count: int = Field(ge=0)
     recent_activity: list[WildlifeJournalRecentDay] = Field(default_factory=list, max_length=14)
     representative: WildlifeJournalRepresentative | None = None
+    # Historical Baseline Maturity + New/Regular Species v1 (see
+    # docs/historical-baseline-maturity-contract.md): distinct genuinely-
+    # monitored days, within the trailing historical window, this label was
+    # confirmed on -- never raw observation_count, which one busy afternoon
+    # could inflate. `is_regular` is that count meeting the same coverage-
+    # aware bar `PlaceActivityReportTaxonHistoricalStatus.status ==
+    # "regular"` uses. See `baseline_maturity` on the overview response for
+    # whether this Place's own accumulated history is deep enough to trust
+    # either figure.
+    distinct_confirmed_usable_days: int = Field(default=0, ge=0)
+    is_regular: bool = False
 
 
 class WildlifeJournalOverviewResponse(BaseModel):
     order: WildlifeJournalOrder
     labels: list[WildlifeJournalLabelSummary] = Field(default_factory=list, max_length=100)
+    # Place-wide baseline maturity, as of now -- see `WildlifeJournalLabelSummary.
+    # is_regular` and docs/historical-baseline-maturity-contract.md. Repeated
+    # here (rather than only on the Today report) so Bird Log can word a
+    # first-ever label honestly ("First confirmed record so far" vs. "New to
+    # your reviewed history") without a second round trip.
+    baseline_maturity: Literal["insufficient", "developing", "established"] = "insufficient"
 
 
 class LikelySpeciesOverviewResponse(BaseModel):
@@ -4789,6 +4881,14 @@ class WildlifeJournalHistoryResponse(BaseModel):
     zone_breakdown: list[WildlifeJournalBreakdown] = Field(default_factory=list, max_length=50)
     activity_by_hour: list[WildlifeJournalHourBucket] = Field(default_factory=list, max_length=24)
     is_new_label_in_range: bool = False
+    # Historical Baseline Maturity + New/Regular Species v1 -- see
+    # `WildlifeJournalLabelSummary.distinct_confirmed_usable_days`/
+    # `is_regular` and `WildlifeJournalOverviewResponse.baseline_maturity`,
+    # repeated here so this independently-fetched per-label detail view
+    # does not have to re-derive them from the overview response.
+    distinct_confirmed_usable_days: int = Field(default=0, ge=0)
+    is_regular: bool = False
+    baseline_maturity: Literal["insufficient", "developing", "established"] = "insufficient"
     activity_library_drilldown: WildlifeJournalDrilldown
     gallery: WildlifeJournalGallery
 

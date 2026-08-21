@@ -20,6 +20,12 @@ testable unit, matching this milestone's architecture goals.
 
 from __future__ import annotations
 
+from typing import Mapping
+
+from mockingbird.analytics.historical_baseline import (
+    HistoricalPlaceBaseline,
+    SpeciesHistoricalStatus,
+)
 from mockingbird.analytics.place_activity_report import (
     CoverageSummary,
     HourActivityEntry,
@@ -34,9 +40,11 @@ from mockingbird.api.schemas import (
     LabelCategory,
     PlaceActivityReportCoverage,
     PlaceActivityReportCoverageGap,
+    PlaceActivityReportHistoricalBaseline,
     PlaceActivityReportHourActivity,
     PlaceActivityReportResponse,
     PlaceActivityReportTaxonEntry,
+    PlaceActivityReportTaxonHistoricalStatus,
     PlaceActivityReportZoneActivity,
     ReviewStatus,
     StreamVisitSummary,
@@ -98,7 +106,24 @@ def visit_fact_from_stream_visit_summary(
     )
 
 
-def _taxon_entry_response(entry: TaxonReportEntry) -> PlaceActivityReportTaxonEntry:
+def _species_historical_status_response(
+    status: SpeciesHistoricalStatus,
+) -> PlaceActivityReportTaxonHistoricalStatus:
+    return PlaceActivityReportTaxonHistoricalStatus(
+        first_confirmed_at=status.first_confirmed_at,
+        last_confirmed_at=status.last_confirmed_at,
+        distinct_confirmed_days=status.distinct_confirmed_days,
+        distinct_confirmed_usable_days=status.distinct_confirmed_usable_days,
+        total_confirmed_count=status.total_confirmed_count,
+        status=status.status,
+    )
+
+
+def _taxon_entry_response(
+    entry: TaxonReportEntry,
+    *,
+    historical_status: SpeciesHistoricalStatus | None,
+) -> PlaceActivityReportTaxonEntry:
     return PlaceActivityReportTaxonEntry(
         label=entry.label,
         display_name=entry.display_name,
@@ -109,6 +134,11 @@ def _taxon_entry_response(entry: TaxonReportEntry) -> PlaceActivityReportTaxonEn
         total_visit_count=entry.total_visit_count,
         first_activity_at=entry.first_activity_at,
         last_activity_at=entry.last_activity_at,
+        historical_status=(
+            _species_historical_status_response(historical_status)
+            if historical_status is not None
+            else None
+        ),
     )
 
 
@@ -146,11 +176,28 @@ def _coverage_response(coverage: CoverageSummary) -> PlaceActivityReportCoverage
     )
 
 
+def _historical_baseline_response(
+    baseline: HistoricalPlaceBaseline,
+) -> PlaceActivityReportHistoricalBaseline:
+    return PlaceActivityReportHistoricalBaseline(
+        window_start_at=baseline.window_start_at,
+        window_end_at=baseline.window_end_at,
+        usable_day_count=baseline.usable_day_count,
+        total_monitored_seconds=baseline.total_monitored_seconds,
+        maturity=baseline.maturity,
+        distinct_taxa_count=baseline.distinct_taxa_count,
+        earliest_authoritative_record_at=baseline.earliest_authoritative_record_at,
+        latest_authoritative_record_at=baseline.latest_authoritative_record_at,
+    )
+
+
 def place_activity_report_response(
     report: PlaceActivityReport,
     *,
     timezone_name: str,
     warnings: list[str],
+    historical_baseline: HistoricalPlaceBaseline,
+    species_historical_statuses: Mapping[str, SpeciesHistoricalStatus],
 ) -> PlaceActivityReportResponse:
     """Adapt one pure `PlaceActivityReport` into its typed API response.
     Field-for-field only -- see the module docstring. `report.coverage` is
@@ -158,7 +205,16 @@ def place_activity_report_response(
     a `CoverageSummary` (its own `monitored_seconds`/`coverage_ratio` are
     `None` when durable history is unavailable, which is a different,
     honest fact from the caller omitting coverage entirely -- see
-    `CoverageSummary`'s docstring)."""
+    `CoverageSummary`'s docstring).
+
+    `historical_baseline`/`species_historical_statuses` are required for the
+    same reason: `ProductRepository.place_activity_report` always computes
+    them (Historical Baseline Maturity + New/Regular Species v1; see
+    docs/historical-baseline-maturity-contract.md). `species_historical_
+    statuses` is keyed by taxon label; a `report.taxa` entry with no match
+    (a purely-provisional taxon, never authoritatively confirmed) correctly
+    gets `historical_status=None` -- see `_taxon_entry_response`.
+    """
 
     if report.coverage is None:
         raise ValueError(
@@ -181,7 +237,12 @@ def place_activity_report_response(
         wildlife_visit_count=report.wildlife_visit_count,
         distinct_taxa_count=report.distinct_taxa_count,
         distinct_species_count=report.distinct_species_count,
-        taxa=[_taxon_entry_response(entry) for entry in report.taxa],
+        taxa=[
+            _taxon_entry_response(
+                entry, historical_status=species_historical_statuses.get(entry.label)
+            )
+            for entry in report.taxa
+        ],
         first_activity_at=report.first_activity_at,
         last_activity_at=report.last_activity_at,
         activity_by_zone=[_zone_entry_response(entry) for entry in report.activity_by_zone],
@@ -191,5 +252,6 @@ def place_activity_report_response(
         activity_by_hour=[_hour_entry_response(entry) for entry in report.activity_by_hour],
         coverage=_coverage_response(report.coverage),
         maturity=report.maturity,
+        historical_baseline=_historical_baseline_response(historical_baseline),
         warnings=warnings,
     )

@@ -26,6 +26,17 @@ from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, Index, Inte
 from sqlalchemy import Engine, and_, delete, func, or_, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
+from mockingbird.analytics.historical_baseline import (
+    HISTORICAL_BASELINE_WINDOW_DAYS,
+    MIN_DISTINCT_USABLE_DAYS_FOR_REGULAR,
+    HistoricalPlaceBaseline,
+    SpeciesHistoricalStatus,
+    bucket_intervals_by_local_day,
+    compute_baseline_maturity,
+    compute_historical_place_baseline,
+    compute_species_historical_statuses,
+    usable_dates_from_daily_monitored_seconds,
+)
 from mockingbird.analytics.place_activity_report import (
     CoverageSummary,
     TaxonFact,
@@ -22877,9 +22888,16 @@ class ProductRepository:
                 ).all()
             )
 
+            # Always preloaded now (previously only when stream_ids was
+            # non-empty): Historical Baseline Maturity + New/Regular Species
+            # v1's own historical-facts lookup below needs it regardless of
+            # whether any Stream is currently configured, and the taxonomy
+            # table is always small and bounded -- one extra query only in
+            # the rare zero-Stream first-run state.
+            taxonomy_index = self._taxonomy_label_index(session)
+
             visit_facts: list[VisitFact] = []
             if stream_ids:
-                taxonomy_index = self._taxonomy_label_index(session)
 
                 def resolve_taxon(label: str | None) -> TaxonFact | None:
                     if not label:
@@ -22935,6 +22953,23 @@ class ProductRepository:
                 period_end_at=period_end_at,
             )
 
+            # Historical Baseline Maturity + New/Regular Species v1 (see
+            # docs/historical-baseline-maturity-contract.md). window_end_at
+            # is deliberately this report's own period_end_at, not "now" --
+            # see `_historical_place_baseline_and_species_statuses`'s
+            # docstring for why a past-period report must stay reproducible.
+            historical_baseline, species_historical_statuses = (
+                self._historical_place_baseline_and_species_statuses(
+                    session,
+                    stream_ids=stream_ids,
+                    taxonomy_index=taxonomy_index,
+                    window_end_at=period_end_at,
+                    local_timezone=resolved_local_timezone,
+                    period_start_at=period_start_at,
+                    period_end_at=period_end_at,
+                )
+            )
+
         report = compute_place_activity_report(
             visit_facts,
             period_start_at=period_start_at,
@@ -22975,6 +23010,8 @@ class ProductRepository:
             report,
             timezone_name=timezone_name,
             warnings=warnings,
+            historical_baseline=historical_baseline,
+            species_historical_statuses=species_historical_statuses,
         )
 
     def _taxonomy_label_index(self, session: Session) -> dict[str, TaxonomyLabelModel]:
@@ -23089,16 +23126,52 @@ class ProductRepository:
         materiality judgment here.
         """
 
-        if not stream_ids:
-            return (
-                compute_coverage_summary(
-                    period_start_at=period_start_at,
-                    period_end_at=period_end_at,
-                    monitored_intervals=[],
-                    history_available_from=None,
-                ),
-                False,
+        monitored_intervals, history_available_from, streams_without_history = (
+            self._monitoring_exposure_intervals_and_history(
+                session,
+                stream_ids=stream_ids,
+                period_start_at=period_start_at,
+                period_end_at=period_end_at,
             )
+        )
+        return (
+            compute_coverage_summary(
+                period_start_at=period_start_at,
+                period_end_at=period_end_at,
+                monitored_intervals=monitored_intervals,
+                history_available_from=history_available_from,
+            ),
+            streams_without_history,
+        )
+
+    def _monitoring_exposure_intervals_and_history(
+        self,
+        session: Session,
+        *,
+        stream_ids: list[str],
+        period_start_at: datetime,
+        period_end_at: datetime,
+    ) -> tuple[list[TimeInterval], datetime | None, bool]:
+        """Raw durable `MonitoringExposureIntervalModel` history for one
+        `[period_start_at, period_end_at)` window across `stream_ids`: the
+        overlapping intervals themselves, the earliest durable history among
+        Streams that have any (`None` if none do), and whether any in-scope
+        Stream lacks durable history entirely.
+
+        Extracted from `_place_activity_coverage_summary` (its sole caller
+        until Historical Baseline Maturity + New/Regular Species v1 added a
+        second one, `_historical_usable_dates` -- see
+        docs/historical-baseline-maturity-contract.md) so both compute their
+        history-availability figure from the exact same "grouped MIN + one
+        ranged interval fetch" query shape rather than two independently-
+        written queries that could silently drift apart. Pure extraction:
+        `_place_activity_coverage_summary`'s own observable behavior is
+        unchanged (proven by its full pre-existing test suite passing
+        unmodified).
+        """
+
+        if not stream_ids:
+            return [], None, False
 
         history_starts = dict(
             session.execute(
@@ -23115,19 +23188,13 @@ class ProductRepository:
             # No in-scope Stream has ever recorded any durable exposure --
             # an honest, full "not yet computable," not a partial figure
             # with nothing durable behind it at all.
-            return (
-                compute_coverage_summary(
-                    period_start_at=period_start_at,
-                    period_end_at=period_end_at,
-                    monitored_intervals=[],
-                    history_available_from=None,
-                ),
-                streams_without_history,
-            )
-        # The earliest durable history among Streams that have any --
-        # a Stream with none contributes nothing here either way (see the
-        # docstring above), so it is simply excluded from this min() rather
-        # than forcing the whole figure to None.
+            return [], None, streams_without_history
+
+        # The earliest durable history among Streams that have any -- a
+        # Stream with none contributes nothing here either way (see
+        # `_place_activity_coverage_summary`'s own docstring), so it is
+        # simply excluded from this min() rather than forcing the whole
+        # figure to None.
         history_available_from = _as_utc(min(history_starts.values()))
 
         rows = session.scalars(
@@ -23150,15 +23217,207 @@ class ProductRepository:
             )
             for row in rows
         ]
-        return (
-            compute_coverage_summary(
-                period_start_at=period_start_at,
-                period_end_at=period_end_at,
-                monitored_intervals=monitored_intervals,
-                history_available_from=history_available_from,
-            ),
-            streams_without_history,
+        return monitored_intervals, history_available_from, streams_without_history
+
+    def _historical_usable_dates(
+        self,
+        session: Session,
+        *,
+        stream_ids: list[str],
+        window_end_at: datetime,
+        local_timezone: tzinfo,
+    ) -> tuple[frozenset[date], bool, float]:
+        """Place-local usable-day facts for the trailing
+        `HISTORICAL_BASELINE_WINDOW_DAYS`-day window ending at
+        `window_end_at`, from the same durable `MonitoringExposureIntervalModel`
+        ledger `_place_activity_coverage_summary` reads -- never inferred
+        from Visit timestamps or current runtime state. Shared by both the
+        Place-wide `HistoricalPlaceBaseline` and Bird Log's per-label
+        regularity figures, so both always agree on the same usable-day set
+        (see `usable_dates_from_daily_monitored_seconds`'s docstring).
+
+        Returns `(usable_dates, has_any_monitoring_history, total_monitored_
+        seconds_in_window)`. `has_any_monitoring_history` is a separate
+        signal from an empty `usable_dates` set -- see
+        `compute_historical_place_baseline`'s docstring for why a Place
+        monitored heavily outside this window still has a real, known
+        (possibly zero) total for the window, not a fabricated "not yet
+        computable" absence.
+        """
+
+        window_start_at = window_end_at - timedelta(days=HISTORICAL_BASELINE_WINDOW_DAYS)
+        monitored_intervals, history_available_from, _streams_without_history = (
+            self._monitoring_exposure_intervals_and_history(
+                session,
+                stream_ids=stream_ids,
+                period_start_at=window_start_at,
+                period_end_at=window_end_at,
+            )
         )
+        daily_monitored_seconds = bucket_intervals_by_local_day(
+            monitored_intervals,
+            window_start_at=window_start_at,
+            window_end_at=window_end_at,
+            local_timezone=local_timezone,
+        )
+        usable_dates = usable_dates_from_daily_monitored_seconds(daily_monitored_seconds)
+        total_monitored_seconds = sum(daily_monitored_seconds.values())
+        return usable_dates, history_available_from is not None, total_monitored_seconds
+
+    def _historical_place_baseline_and_species_statuses(
+        self,
+        session: Session,
+        *,
+        stream_ids: list[str],
+        taxonomy_index: dict[str, TaxonomyLabelModel],
+        window_end_at: datetime,
+        local_timezone: tzinfo,
+        period_start_at: datetime,
+        period_end_at: datetime,
+    ) -> tuple[HistoricalPlaceBaseline, dict[str, SpeciesHistoricalStatus]]:
+        """Compute the Place-wide `HistoricalPlaceBaseline` and every
+        all-time-confirmed taxon's `SpeciesHistoricalStatus`, for
+        `ProductRepository.place_activity_report`'s own Today integration
+        (Historical Baseline Maturity + New/Regular Species v1; see
+        docs/historical-baseline-maturity-contract.md). Read-only, like
+        every other method in this file's reporting family.
+
+        `window_end_at` anchors the trailing `HISTORICAL_BASELINE_WINDOW_
+        DAYS`-day regularity window -- deliberately the caller's own report
+        `period_end_at`, not "now", so a report for a past period always
+        reproduces the same historical facts regardless of when it is
+        re-viewed (see product-doctrine.md's "Derived insights... must
+        remain reproducible from persisted facts"). `period_start_at`/
+        `period_end_at` are the window used only for the per-taxon "is this
+        confirmation this taxon's all-time-first" check -- ordinarily the
+        same as the report's own period.
+
+        Two bounded queries beyond the shared usable-dates lookup: one cheap
+        `GROUP BY reviewed_label` aggregate for all-time first/last-confirmed
+        per taxon (independent of Visit volume -- bounded by distinct
+        confirmed-label count, not Visit count), and one Visit query scoped
+        to the trailing window (mirroring `place_activity_report`'s own
+        bounded Visit query shape) for distinct-usable-day/regularity
+        accounting. Both reuse the caller's already-preloaded `taxonomy_
+        index` -- no second per-row taxonomy lookup.
+        """
+
+        usable_dates, has_any_monitoring_history, total_monitored_seconds = (
+            self._historical_usable_dates(
+                session,
+                stream_ids=stream_ids,
+                window_end_at=window_end_at,
+                local_timezone=local_timezone,
+            )
+        )
+
+        def resolve_wildlife_taxon(label: str) -> TaxonFact | None:
+            taxonomy = taxonomy_index.get(_taxonomy_key(label))
+            if taxonomy is None:
+                return None
+            taxon = taxon_fact_from_taxonomy_label(_taxonomy_label_from_model(taxonomy))
+            # Mirrors `place_activity_report._classify`'s CONFIRMED_WILDLIFE
+            # branch exactly (`is_wildlife_category` alone already excludes
+            # both "false_positive" and "unknown" -- see
+            # `mockingbird.wildlife_taxonomy`'s denylist) -- never a second,
+            # independently-drifting truth-precedence rule.
+            return taxon if is_wildlife_category(taxon.category) else None
+
+        taxa: dict[str, TaxonFact] = {}
+        all_time_first_confirmed_at: dict[str, datetime] = {}
+        all_time_last_confirmed_at: dict[str, datetime] = {}
+        if stream_ids:
+            all_time_rows = session.execute(
+                select(
+                    VisitModel.reviewed_label,
+                    func.min(EventModel.started_at),
+                    func.max(EventModel.started_at),
+                )
+                .join(EventModel, VisitModel.event_id == EventModel.id)
+                .where(
+                    VisitModel.is_superseded.is_(False),
+                    VisitModel.review_status == ReviewStatus.reviewed.value,
+                    VisitModel.reviewed_label.is_not(None),
+                    EventModel.stream_id.in_(stream_ids),
+                )
+                .group_by(VisitModel.reviewed_label)
+            ).all()
+            for reviewed_label, first_at, last_at in all_time_rows:
+                taxon = resolve_wildlife_taxon(reviewed_label)
+                if taxon is None:
+                    continue
+                # A data-hygiene edge case (two raw labels normalizing to the
+                # same taxon) merges honestly rather than picking one
+                # arbitrarily -- matches every other taxonomy-normalizing
+                # aggregate in this file.
+                taxa[taxon.label] = taxon
+                first_at, last_at = _as_utc(first_at), _as_utc(last_at)
+                if taxon.label not in all_time_first_confirmed_at or first_at < all_time_first_confirmed_at[taxon.label]:
+                    all_time_first_confirmed_at[taxon.label] = first_at
+                if taxon.label not in all_time_last_confirmed_at or last_at > all_time_last_confirmed_at[taxon.label]:
+                    all_time_last_confirmed_at[taxon.label] = last_at
+
+        distinct_taxa_count = len(taxa)
+        earliest_authoritative_record_at = (
+            min(all_time_first_confirmed_at.values()) if all_time_first_confirmed_at else None
+        )
+        latest_authoritative_record_at = (
+            max(all_time_last_confirmed_at.values()) if all_time_last_confirmed_at else None
+        )
+
+        baseline = compute_historical_place_baseline(
+            window_start_at=window_end_at - timedelta(days=HISTORICAL_BASELINE_WINDOW_DAYS),
+            window_end_at=window_end_at,
+            usable_dates=usable_dates,
+            has_any_monitoring_history=has_any_monitoring_history,
+            total_monitored_seconds=total_monitored_seconds,
+            distinct_taxa_count=distinct_taxa_count,
+            earliest_authoritative_record_at=earliest_authoritative_record_at,
+            latest_authoritative_record_at=latest_authoritative_record_at,
+        )
+
+        window_visits: list[VisitFact] = []
+        if taxa and stream_ids:
+            window_start_at = window_end_at - timedelta(days=HISTORICAL_BASELINE_WINDOW_DAYS)
+            window_rows = session.execute(
+                select(VisitModel.id, VisitModel.reviewed_label, EventModel.started_at)
+                .join(EventModel, VisitModel.event_id == EventModel.id)
+                .where(
+                    VisitModel.is_superseded.is_(False),
+                    VisitModel.review_status == ReviewStatus.reviewed.value,
+                    VisitModel.reviewed_label.is_not(None),
+                    EventModel.stream_id.in_(stream_ids),
+                    EventModel.started_at >= window_start_at,
+                    EventModel.started_at < window_end_at,
+                )
+            ).all()
+            for visit_id, reviewed_label, started_at in window_rows:
+                taxon = resolve_wildlife_taxon(reviewed_label)
+                if taxon is None:
+                    continue
+                window_visits.append(
+                    VisitFact(
+                        visit_id=visit_id,
+                        zone_id=None,
+                        zone_name=None,
+                        activity_started_at=_as_utc(started_at),
+                        resolution="reviewed",
+                        confirmed_taxon=taxon,
+                    )
+                )
+
+        statuses = compute_species_historical_statuses(
+            window_visits,
+            taxa=taxa,
+            all_time_first_confirmed_at=all_time_first_confirmed_at,
+            all_time_last_confirmed_at=all_time_last_confirmed_at,
+            usable_dates=usable_dates,
+            local_timezone=local_timezone,
+            period_start_at=period_start_at,
+            period_end_at=period_end_at,
+            baseline_maturity=baseline.maturity,
+        )
+        return baseline, {status.taxon.label: status for status in statuses}
 
     def list_likely_species_overview(self, *, limit: int = 20) -> LikelySpeciesOverviewResponse:
         """Bird Log's provisional counterpart to `wildlife_journal_overview`
@@ -23224,6 +23483,26 @@ class ProductRepository:
         recent_start = recent_end - timedelta(days=13)
 
         with self.session_factory() as session:
+            # Historical Baseline Maturity + New/Regular Species v1 (see
+            # docs/historical-baseline-maturity-contract.md): Place-wide
+            # usable-day facts, anchored to "now" (unlike `place_activity_
+            # report`'s own period-anchored window) -- Bird Log is a live
+            # view, not a fixed past report, so "regular as of right now" is
+            # the correct question here.
+            stream_ids = list(
+                session.scalars(
+                    select(StreamModel.id)
+                    .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+                    .where(CameraSourceModel.status != SourceStatus.archived.value)
+                ).all()
+            )
+            window_end_at = _as_utc(local_now)
+            window_start_at = window_end_at - timedelta(days=HISTORICAL_BASELINE_WINDOW_DAYS)
+            usable_dates, _has_history, _total_seconds = self._historical_usable_dates(
+                session, stream_ids=stream_ids, window_end_at=window_end_at, local_timezone=local_timezone
+            )
+            baseline_maturity = compute_baseline_maturity(len(usable_dates))
+
             records = self._wildlife_journal_confirmed_records(session)
             grouped: dict[str, list[dict[str, Any]]] = {}
             for record in records:
@@ -23239,6 +23518,21 @@ class ProductRepository:
                     <= record["observed_at"].astimezone(local_timezone).date()
                     <= recent_end
                 )
+                # Distinct genuinely-monitored days this label was confirmed
+                # on, within the same trailing historical window -- never
+                # raw observation_count, which one busy afternoon could
+                # inflate. Reuses the exact same `usable_dates` set (and the
+                # exact same `MIN_DISTINCT_USABLE_DAYS_FOR_REGULAR` bar) the
+                # Today report's own `SpeciesHistoricalStatus.status ==
+                # "regular"` uses, applied to this surface's own
+                # already-fetched confirmed-bird records rather than a
+                # second Visit query.
+                confirmed_dates_in_window = {
+                    record["observed_at"].astimezone(local_timezone).date()
+                    for record in ordered
+                    if window_start_at <= record["observed_at"] < window_end_at
+                }
+                distinct_confirmed_usable_days = len(confirmed_dates_in_window & usable_dates)
                 summaries.append(
                     WildlifeJournalLabelSummary(
                         label=label,
@@ -23262,6 +23556,8 @@ class ProductRepository:
                             for offset in range(14)
                         ],
                         representative=self._wildlife_journal_representative(ordered),
+                        distinct_confirmed_usable_days=distinct_confirmed_usable_days,
+                        is_regular=distinct_confirmed_usable_days >= MIN_DISTINCT_USABLE_DAYS_FOR_REGULAR,
                     )
                 )
 
@@ -23292,7 +23588,9 @@ class ProductRepository:
                     ),
                     reverse=True,
                 )
-            return WildlifeJournalOverviewResponse(order=payload.order, labels=summaries[:100])
+            return WildlifeJournalOverviewResponse(
+                order=payload.order, labels=summaries[:100], baseline_maturity=baseline_maturity
+            )
 
     def wildlife_journal_history(
         self,
@@ -23333,6 +23631,37 @@ class ProductRepository:
                 for record in self._wildlife_journal_confirmed_records(session)
                 if record["label"] == canonical_label
             ]
+
+            # Historical Baseline Maturity + New/Regular Species v1 (see
+            # docs/historical-baseline-maturity-contract.md) -- same
+            # now-anchored usable-day facts `wildlife_journal_overview`
+            # computes, reused here rather than re-derived, since this is an
+            # independently-fetched detail view for one label.
+            stream_ids = list(
+                session.scalars(
+                    select(StreamModel.id)
+                    .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+                    .where(CameraSourceModel.status != SourceStatus.archived.value)
+                ).all()
+            )
+            history_window_end_at = _as_utc(local_now)
+            history_window_start_at = history_window_end_at - timedelta(
+                days=HISTORICAL_BASELINE_WINDOW_DAYS
+            )
+            usable_dates, _has_history, _total_seconds = self._historical_usable_dates(
+                session,
+                stream_ids=stream_ids,
+                window_end_at=history_window_end_at,
+                local_timezone=local_timezone,
+            )
+            baseline_maturity = compute_baseline_maturity(len(usable_dates))
+            confirmed_dates_in_window = {
+                record["observed_at"].astimezone(local_timezone).date()
+                for record in all_label_records
+                if history_window_start_at <= record["observed_at"] < history_window_end_at
+            }
+            distinct_confirmed_usable_days = len(confirmed_dates_in_window & usable_dates)
+            is_regular = distinct_confirmed_usable_days >= MIN_DISTINCT_USABLE_DAYS_FOR_REGULAR
             records = [
                 record
                 for record in self._wildlife_journal_confirmed_records(
@@ -23559,6 +23888,9 @@ class ProductRepository:
                     for hour in range(24)
                 ],
                 is_new_label_in_range=is_new_label_in_range,
+                distinct_confirmed_usable_days=distinct_confirmed_usable_days,
+                is_regular=is_regular,
+                baseline_maturity=baseline_maturity,
                 activity_library_drilldown=WildlifeJournalDrilldown(
                     confirmed_label=canonical_label,
                     start_date=start_date,

@@ -84,6 +84,29 @@ function speciesTimeRange(taxon: PlaceActivityReportTaxonEntry): string {
   return `First ${first} · Last ${formatTimeOnly(taxon.last_activity_at)}`;
 }
 
+// Historical Baseline Maturity + New/Regular Species v1 (see
+// docs/historical-baseline-maturity-contract.md): the backend already
+// picked the maturity-appropriate wording (`historical_status.status`
+// itself distinguishes "new" from "first_record" using `historical_
+// baseline.maturity` -- this component never re-derives that judgment). A
+// taxon with no historical_status (purely provisional today, never
+// authoritatively confirmed) or "seen_before" status gets no badge at all
+// -- keep the row calm rather than annotating every species every day.
+function historicalStatusBadge(
+  taxon: PlaceActivityReportTaxonEntry,
+): { label: string; tone: "good" | "quiet" } | null {
+  switch (taxon.historical_status?.status) {
+    case "new":
+      return { label: "New to your reviewed history", tone: "quiet" };
+    case "first_record":
+      return { label: "First confirmed record so far", tone: "quiet" };
+    case "regular":
+      return { label: "Regular here", tone: "good" };
+    default:
+      return null;
+  }
+}
+
 // The single busiest hour; the earliest hour wins a tie so the result is
 // deterministic across otherwise-equal buckets.
 function busiestHour(
@@ -253,22 +276,28 @@ export function TodayReportPanel({
                     </button>
                   </div>
                   <ol className="today-report-species-list">
-                    {topTaxa.map((taxon) => (
-                      <li key={taxon.label}>
-                        <div className="today-report-species-name">
-                          <span>{taxon.display_name}</span>
-                          <span className="today-report-species-meta">{speciesTimeRange(taxon)}</span>
-                        </div>
-                        <div className="today-report-species-count">
-                          <strong>{plural(taxon.confirmed_visit_count, "visit")}</strong>
-                          {taxon.provisional_visit_count > 0 ? (
-                            <span className="today-report-species-likely">
-                              +{taxon.provisional_visit_count} likely
-                            </span>
-                          ) : null}
-                        </div>
-                      </li>
-                    ))}
+                    {topTaxa.map((taxon) => {
+                      const historicalBadge = historicalStatusBadge(taxon);
+                      return (
+                        <li key={taxon.label}>
+                          <div className="today-report-species-name">
+                            <span>{taxon.display_name}</span>
+                            <span className="today-report-species-meta">{speciesTimeRange(taxon)}</span>
+                            {historicalBadge ? (
+                              <StatusPill label={historicalBadge.label} tone={historicalBadge.tone} />
+                            ) : null}
+                          </div>
+                          <div className="today-report-species-count">
+                            <strong>{plural(taxon.confirmed_visit_count, "visit")}</strong>
+                            {taxon.provisional_visit_count > 0 ? (
+                              <span className="today-report-species-likely">
+                                +{taxon.provisional_visit_count} likely
+                              </span>
+                            ) : null}
+                          </div>
+                        </li>
+                      );
+                    })}
                   </ol>
                   {extraTaxaCount > 0 ? (
                     <span className="meta-text">+{extraTaxaCount} more species</span>

@@ -631,7 +631,11 @@ export function BirdLogPage({
                 </button>
                 <div className="journal-label-card-body">
                   <div className="section-heading">
-                    <div><h2>{item.display_name}</h2><span className="meta-text">{item.observation_count} reviewed observation{item.observation_count === 1 ? "" : "s"}</span></div>
+                    <div>
+                      <h2>{item.display_name}</h2>
+                      <span className="meta-text">{item.observation_count} reviewed observation{item.observation_count === 1 ? "" : "s"}</span>
+                      {item.is_regular ? <StatusPill label="Regular here" tone="good" /> : null}
+                    </div>
                     <Sparkline activity={item.recent_activity} />
                   </div>
                   <div className="journal-label-facts">
@@ -753,13 +757,34 @@ export function BirdLogPage({
             />
           ) : (
             <>
+              {activeHistory.is_regular ? (
+                <div className="section-heading">
+                  <span className="meta-text">
+                    Confirmed on {activeHistory.distinct_confirmed_usable_days} well-monitored days in this Place's recent history
+                  </span>
+                  <StatusPill label="Regular here" tone="good" />
+                </div>
+              ) : null}
               <section className="metric-grid journal-metrics">
                 <MetricCard label="Observations" value={activeHistory.observation_count} detail="current reviewed truth" />
                 <MetricCard label="Busiest Stream" value={activeHistory.busiest_stream?.name ?? "—"} detail={activeHistory.busiest_stream ? `${activeHistory.busiest_stream.count} observations` : "No activity"} />
                 <MetricCard label="Busiest Zone" value={activeHistory.busiest_zone?.name ?? "—"} detail={activeHistory.busiest_zone ? `${activeHistory.busiest_zone.count} observations` : "No Zone context"} />
                 <MetricCard label="Peak hour" value={activeHistory.peak_activity_hour == null ? "—" : hourLabel(activeHistory.peak_activity_hour)} detail="local time" />
               </section>
-              {activeHistory.is_new_label_in_range ? <div className="notice-panel"><strong>New Journal label in this range</strong><span>This is a local MockingBird record milestone, not an ecological claim.</span></div> : null}
+              {activeHistory.is_new_label_in_range ? (
+                <div className="notice-panel">
+                  <strong>
+                    {activeHistory.baseline_maturity === "established"
+                      ? "New to your reviewed history in this range"
+                      : "First confirmed record so far in this range"}
+                  </strong>
+                  <span>
+                    {activeHistory.baseline_maturity === "established"
+                      ? "This is a local MockingBird record milestone, not an ecological claim."
+                      : "MockingBird hasn't accumulated enough monitored history yet to call this ecologically new -- just the first time it's been confirmed here."}
+                  </span>
+                </div>
+              ) : null}
               <section className="journal-history-grid">
                 <div className="panel"><h2>First recorded</h2>{activeHistory.first_observation ? <button className="journal-observation-link" onClick={() => onOpenVisit(activeHistory.first_observation!.visit_id)} type="button">{formatDateTime(activeHistory.first_observation.observed_at)} · {activeHistory.first_observation.stream_name}</button> : null}</div>
                 <div className="panel"><h2>Most recent</h2>{activeHistory.latest_observation ? <button className="journal-observation-link" onClick={() => onOpenVisit(activeHistory.latest_observation!.visit_id)} type="button">{formatDateTime(activeHistory.latest_observation.observed_at)} · {activeHistory.latest_observation.stream_name}</button> : null}</div>
