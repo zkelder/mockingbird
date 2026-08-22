@@ -4223,7 +4223,12 @@ class CameraConfigurationApplicationService:
             revision=result.revision,
             idempotent=result.idempotent,
             message=(
-                "Camera configuration saved. Monitoring restart was requested through the local supervisor."
+                "Camera Node hardware replacement confirmed. This camera's Place, Stream, "
+                "Zones, monitoring history, and reviewed truth stay attached. Review Zones "
+                "-- MockingBird cannot verify the replacement camera's framing matches the "
+                "original."
+                if result.hardware_replacement_just_confirmed
+                else "Camera configuration saved. Monitoring restart was requested through the local supervisor."
                 if result.revision.restart_requested
                 else "Camera configuration saved. Monitoring remains at its existing saved intent."
             ),
@@ -10350,7 +10355,7 @@ def _camera_configuration_http_error(error: Exception) -> HTTPException:
         "camera_setup_invalid_node_address": "Enter a valid local LAN Camera Node address.",
         "camera_node_pairing_required": "Pair a Camera Node and select an advertised camera before saving.",
         "camera_node_pairing_expired": "Camera Node pairing expired. Pair the Node again before saving.",
-        "camera_node_identity_changed": "This paired Node has a different identity. Add it as a separate camera instead.",
+        "camera_node_identity_changed": "This paired Node has a different identity than the one currently attached to this camera. If you intentionally replaced the Camera Node hardware, confirm the replacement to reattach it to this existing camera; otherwise add it as a separate camera instead.",
         "authentication_rejected": "Camera Node pairing is no longer accepted. Pair the Node again before saving.",
         "node_unavailable": "Camera Node is unavailable. Check the local Node before saving.",
     }

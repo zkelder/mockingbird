@@ -268,6 +268,99 @@ to roll back to). Configuration and pairing state are unaffected either way.
   `127.0.0.1` (which would make the Node unreachable from any other
   device -- see "Configure," above).
 
+## 12. Backing up, reinstalling, and replacing a Node
+
+A Camera Node is replaceable field infrastructure. Your Place's history,
+Zones, reviewed Observations, and analytics live on the MockingBird host,
+not the Node -- none of that is at risk from an SD card failure, an OS
+reinstall, or swapping in different hardware. See
+[camera-node-reprovision-recovery-design.md](camera-node-reprovision-recovery-design.md)
+for the full contract; this section is the practical walkthrough.
+
+**Back up your configuration now, before anything fails:**
+
+```sh
+sudo python3 scripts/install_camera_node.py --export-config backup.json
+```
+
+This writes a small, human-readable JSON file with your Node's display
+name, network settings, and provider selection -- no credential or secret
+of any kind (pairing always requires a fresh one-time code regardless, so
+there is nothing to protect here). Keep a copy of `backup.json` somewhere
+that survives the Node itself -- your development machine, the same place
+you keep `dist/camera-node-artifact/`, or any ordinary backup you already
+trust.
+
+**Reinstalling on the same Pi and camera** (SD card died, OS reinstalled):
+
+```sh
+sudo python3 scripts/install_camera_node.py /home/you/camera-node-artifact --import-config backup.json
+```
+
+Restoring the same display name reproduces the same `node_id` the host
+already remembers, so MockingBird's own "Pair or repair Node" (in Edit
+Camera Setup) reattaches automatically -- no confirmation step needed. This
+is the same guided repair path already used for a lost credential; see
+"An already-paired Node," above.
+
+**Replacing the Pi and/or camera with different hardware:**
+
+1. Install fresh (step 1-2, above) on the new device, restoring
+   `backup.json` if you have it -- optional but recommended, since it saves
+   re-entering your network/provider settings by hand.
+2. Retrieve the new device's pairing code (step 5, above).
+3. In MockingBird, open the affected camera's **Edit Camera Setup** and use
+   "Pair or repair Node" with the new device's address and code.
+4. Because this is different physical hardware, MockingBird will ask you to
+   confirm it is a deliberate replacement (not an accidental wrong-device
+   pairing) and lets you note why, optionally. Confirming reattaches the new
+   hardware to this *same* camera -- your Zones, history, and reviewed
+   truth stay exactly where they are. It does not create a second camera.
+5. MockingBird re-checks the replacement hardware's actual capabilities
+   live -- it never assumes the new camera matches the old one's resolution
+   or capture support. Review your Zones afterward: MockingBird cannot
+   automatically verify the replacement camera's framing/field of view
+   matches the original, and will remind you to check for about a week
+   after the swap.
+
+**What cannot be recovered:** if a Node never boots again and you have no
+`backup.json`, nothing is *lost* on the host side -- Place history, Zones,
+and reviewed truth are all still there -- but you will need to re-enter the
+Node's network/provider settings by hand on the replacement device, exactly
+like a first-time install.
+
+## Hardware guidance (reference path, not product architecture)
+
+The following applies specifically to the Raspberry Pi reference
+deployment -- MockingBird's architecture does not require this hardware
+(see "Scope-reopening rule" in [roadmap.md](roadmap.md)), but these are the
+most common real causes of an avoidable Node failure in the field.
+
+- **Power quality.** Use the official (or an equivalently rated) power
+  supply for your Pi model. An undersized or marginal USB charger is one of
+  the most common causes of an unreliable, randomly-rebooting Node --
+  `vcgencmd get_throttled` (if available) reports undervoltage/throttling
+  history directly on the device.
+- **Storage media.** Prefer a high-endurance card rated for sustained write
+  workloads (commonly marketed as "high endurance" or "application class,"
+  not a bargain consumer card) -- an ordinary consumer SD card under a
+  continuously-running service is a real, common field failure mode, not a
+  theoretical one. This is guidance for the golden path, not something the
+  installer enforces or can detect.
+- **Networking.** Wired Ethernet is more reliable than Wi-Fi for an
+  unattended, always-on device where it is practical to run a cable. If
+  using Wi-Fi, a strong, stable signal matters more for this always-on
+  service than for an ordinary intermittently-used device.
+- **Safe shutdown / power loss.** Prefer `sudo shutdown -h now` (or a
+  physical shutdown button, where your case provides one) over simply
+  pulling power when you need to move or service the device. An abrupt
+  power removal risks filesystem corruption in a way an orderly shutdown
+  does not -- this is exactly the "abrupt Pi power removal" case named as
+  open in [roadmap.md](roadmap.md)'s field-failure acceptance matrix.
+  `node.env` itself is written atomically (temp file + `fsync` + rename),
+  so an interrupted write can never leave it half-written, but this
+  protection does not extend to the rest of the filesystem/OS.
+
 ## Advanced diagnostics
 
 - Full read-only report: `sudo python3 scripts/install_camera_node.py --status`

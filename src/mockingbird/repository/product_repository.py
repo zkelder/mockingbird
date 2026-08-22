@@ -207,6 +207,8 @@ from mockingbird.api.schemas import (
     CameraConfigurationRevision,
     CameraConfigurationSecretAction,
     CameraConfigurationValidationSummary,
+    CameraNodeHardwareReplacementSummary,
+    CameraNodeIdentityReplacementImpact,
     CameraNodePendingSetupDraftUpdate,
     CameraSetupCompleteRequest,
     CameraSetupCompletionResponse,
@@ -2101,6 +2103,13 @@ class CameraConfigurationApplyResult:
     revision: CameraConfigurationRevision
     preview: CameraConfigurationImpactPreview
     idempotent: bool
+    # True only for the one transaction that just confirmed a Camera Node
+    # hardware replacement -- an in-process fact, deliberately not derived
+    # from comparing persisted timestamps after a round trip through
+    # SQLite's `DateTime(timezone=True)` (which does not preserve tzinfo;
+    # see doctor.py's own documented convention for that exact gotcha).
+    # Always False for an idempotent replay, matching every other field here.
+    hardware_replacement_just_confirmed: bool = False
 
 
 # =============================================================================
@@ -4990,6 +4999,28 @@ class ProductRepository:
                 else "not_configured"
                 for field in editable_fields
             }
+            # `node_display_name` is deliberately non-secret (see
+            # `SOURCE_PROVIDER_DEFINITIONS`): surfacing it read-only lets an
+            # operator reprovisioning a replacement Node see what display
+            # name to give it. Naming the new Node identically makes its
+            # `node_id` (a hash of that name) match this Source's existing
+            # one, so ordinary repair-pairing reattaches it without needing
+            # to confirm a hardware replacement at all. See "Host-driven
+            # reprovision package" in docs/camera-node-reprovision-recovery
+            # -design.md.
+            node_expected_display_name = (
+                (config.get("node_display_name") or "").strip() or None
+                if provider_key == "camera_node"
+                else None
+            )
+            hardware_replacement = (
+                CameraNodeHardwareReplacementSummary(
+                    replaced_at=source.camera_node_identity_replaced_at,
+                    reason=source.camera_node_replacement_reason,
+                )
+                if source.camera_node_identity_replaced_at is not None
+                else None
+            )
 
         monitoring_policy = self.get_stream_monitoring_policy(stream_id)
         runtime = self.get_stream_runtime_status(stream_id)
@@ -5018,6 +5049,8 @@ class ProductRepository:
             monitoring_policy=monitoring_policy,
             runtime=runtime,
             health=health.health,
+            node_expected_display_name=node_expected_display_name,
+            hardware_replacement=hardware_replacement,
             message=(
                 "Edit this camera in place. Saved provider values remain masked."
                 if editable
@@ -5083,6 +5116,28 @@ class ProductRepository:
                 source_name=payload.source_name,
                 stream_name=payload.stream_name,
             )
+            replacement_detected = _camera_node_identity_replacement_detected(
+                definition=definition,
+                existing_config=config,
+                proposed_config=proposed_config,
+            )
+            node_identity_replacement = (
+                CameraNodeIdentityReplacementImpact(
+                    previous_node_id=config.get("node_id", ""),
+                    new_node_id=proposed_config.get("node_id", ""),
+                    zones_review_recommended=True,
+                    message=(
+                        "This confirms a Camera Node hardware replacement, not a credential "
+                        "repair. This camera's Place, Stream, Zones, monitoring history, and "
+                        "reviewed truth stay attached and unchanged. The previous Node's "
+                        "pairing will no longer be trusted. MockingBird cannot verify whether "
+                        "the replacement camera's framing/field of view matches the original "
+                        "-- review Zones after saving."
+                    ),
+                )
+                if replacement_detected
+                else None
+            )
 
         runtime = self.get_stream_runtime_status(stream_id)
         health = self.get_stream_camera_health(stream_id)
@@ -5108,6 +5163,7 @@ class ProductRepository:
             open_activity_session_count=health.health.open_activity_session_count,
             preview_may_be_briefly_unavailable=restart_required,
             preservation_summary=_camera_configuration_preservation_summary(),
+            node_identity_replacement=node_identity_replacement,
             validation=validation,
             message=(
                 "No saved settings would change."
@@ -5294,6 +5350,33 @@ class ProductRepository:
                     source.name = payload.source_name
                 if payload.stream_name is not None:
                     stream.name = payload.stream_name
+                replacement_confirmed = _camera_node_identity_replacement_detected(
+                    definition=definition,
+                    existing_config=config,
+                    proposed_config=proposed_config,
+                )
+                if replacement_confirmed:
+                    # Confirmed hardware replacement (the guard in
+                    # `_camera_configuration_proposed_config` already proved
+                    # `payload.confirm_node_identity_change` was set). Record
+                    # bounded "most recent transition" provenance -- never a
+                    # growing ledger -- and clear the *prior* physical node's
+                    # boot-identity facts rather than let them read as if the
+                    # new hardware produced that boot history. The very next
+                    # real Observation Engine checkpoint against the new Node
+                    # repopulates them honestly, exactly like a Source that
+                    # never had boot identity tracked at all. See "Logical-
+                    # vs-physical identity" in
+                    # docs/camera-node-reprovision-recovery-design.md.
+                    source.camera_node_prior_node_id = config.get("node_id")
+                    source.camera_node_identity_replaced_at = now
+                    source.camera_node_replacement_reason = (
+                        payload.replacement_reason.strip() if payload.replacement_reason else None
+                    ) or None
+                    source.camera_node_boot_id = None
+                    source.camera_node_boot_first_seen_at = None
+                    source.camera_node_last_seen_at = None
+                    source.camera_node_recent_boot_transitions_json = None
                 model.config_json = json.dumps(proposed_config, sort_keys=True)
                 model.updated_at = now
                 if model.provider_key == "camera_node" and payload.node_pairing_token:
@@ -5387,6 +5470,7 @@ class ProductRepository:
             revision=revision,
             preview=preview,
             idempotent=False,
+            hardware_replacement_just_confirmed=replacement_confirmed,
         )
 
     def list_camera_configuration_history(
@@ -28310,9 +28394,38 @@ def _camera_configuration_proposed_config(
         definition.provider_key == "camera_node"
         and (existing_config.get("node_id") or "").strip()
         and proposed.get("node_id") != existing_config.get("node_id")
+        and not payload.confirm_node_identity_change
     ):
+        # A different physical Node answering for an already-paired camera is
+        # ordinarily a mistake (wrong Node's address/code entered) and must
+        # stay blocked by default. `confirm_node_identity_change` is the
+        # deliberate, operator-confirmed override for a genuine hardware
+        # replacement/reprovision -- see "Replacement workflow" in
+        # docs/camera-node-reprovision-recovery-design.md. Ordinary same-
+        # identity credential repair (docs/camera-node-pairing-persistence
+        # -design.md) never sets this flag and is unaffected.
         raise ValueError("camera_node_identity_changed")
     return proposed
+
+
+def _camera_node_identity_replacement_detected(
+    *,
+    definition: SourceProviderDefinition,
+    existing_config: dict[str, str],
+    proposed_config: dict[str, str],
+) -> bool:
+    """True only for a *confirmed* Camera Node hardware swap on an already-
+    paired camera -- never for first pairing (no existing `node_id` yet) and
+    never for an ordinary same-identity credential repair (`node_id`
+    unchanged). Mirrors the exact condition `_camera_configuration_proposed
+    _config` already gates on, so preview/apply agree with the guard by
+    construction rather than by a second, potentially-drifting check."""
+
+    return (
+        definition.provider_key == "camera_node"
+        and bool((existing_config.get("node_id") or "").strip())
+        and proposed_config.get("node_id") != existing_config.get("node_id")
+    )
 
 
 def _camera_configuration_validation_summary(

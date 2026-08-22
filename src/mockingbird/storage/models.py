@@ -64,6 +64,18 @@ class CameraSourceModel(Base):
     # interpreted from this bounded window, never stored as its own
     # separately-growing fact.
     camera_node_recent_boot_transitions_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Reprovision / Replacement Recovery v1 (schema 38): bounded, "most
+    # recent transition only" provenance -- never a growing hardware-asset
+    # ledger (see milestone instruction #15). Set only by a *confirmed*
+    # `camera_node_identity_changed` override (see
+    # `_camera_configuration_proposed_config`); an ordinary same-identity
+    # credential repair never touches these. Nullable/no default: a Source
+    # whose Camera Node was never replaced correctly reads back
+    # `camera_node_identity_replaced_at=None` -- "never replaced," not a
+    # fabricated event. See docs/camera-node-reprovision-recovery-design.md.
+    camera_node_prior_node_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    camera_node_identity_replaced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    camera_node_replacement_reason: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class StreamModel(Base):

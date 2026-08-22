@@ -541,6 +541,14 @@ but was never saved before an interruption. Repair now distinguishes the two
 rejection reasons and can resume an orphaned, already-succeeded pairing. See
 [camera-node-boundary-design.md](camera-node-boundary-design.md).
 
+That same repair path stayed intentionally scoped to the *same* physical
+Node (its `node_id` unchanged). A genuine hardware swap -- a different
+physical Node deliberately reattached to the same existing Source/Stream,
+with bounded provenance and honest live capability rediscovery rather than
+copying assumptions from the replaced device -- is a separate, explicit,
+operator-confirmed override of that same guard. See
+[camera-node-reprovision-recovery-design.md](camera-node-reprovision-recovery-design.md).
+
 ### Capability-aware UX
 
 Provider abstractions stay hardware-agnostic underneath, but status/health

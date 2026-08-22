@@ -575,6 +575,15 @@ class CameraConfigurationValidationSummary(BaseModel):
     can_apply: bool
 
 
+class CameraNodeHardwareReplacementSummary(BaseModel):
+    """Bounded, "most recent transition only" provenance -- never a growing
+    hardware-asset ledger. Present only once this camera's Camera Node
+    hardware has actually been replaced through a confirmed reprovision."""
+
+    replaced_at: datetime
+    reason: str | None = None
+
+
 class CameraConfigurationEditResponse(BaseModel):
     """A secret-safe edit contract that intentionally omits saved provider values."""
 
@@ -593,6 +602,12 @@ class CameraConfigurationEditResponse(BaseModel):
     monitoring_policy: StreamMonitoringPolicyResponse
     runtime: StreamRuntimeStatusResponse
     health: CameraHealthSummary
+    # Non-secret (see `SOURCE_PROVIDER_DEFINITIONS`'s `node_display_name`):
+    # the display name a replacement Camera Node should be given so its
+    # `node_id` matches this Source's existing one, reattaching through
+    # ordinary repair-pairing without confirming a hardware replacement.
+    node_expected_display_name: str | None = None
+    hardware_replacement: CameraNodeHardwareReplacementSummary | None = None
     message: str
 
 
@@ -608,6 +623,14 @@ class CameraConfigurationChangeRequest(BaseModel):
     source_name: str | None = Field(default=None, max_length=120)
     stream_name: str | None = Field(default=None, max_length=120)
     expected_state_token: str = Field(min_length=16, max_length=160)
+    # Reprovision / Replacement Recovery v1: a deliberate, operator-confirmed
+    # override for a genuine Camera Node hardware swap on an already-paired
+    # camera. Present on the shared base (not apply-only) so preview can
+    # describe the swap's impact honestly instead of erroring exactly like
+    # apply would. Ordinary same-identity credential repair never needs it.
+    # See docs/camera-node-reprovision-recovery-design.md.
+    confirm_node_identity_change: bool = False
+    replacement_reason: str | None = Field(default=None, max_length=280)
 
     @field_validator("source_name", "stream_name")
     @classmethod
@@ -619,9 +642,26 @@ class CameraConfigurationChangeRequest(BaseModel):
             raise ValueError("Camera and Stream names cannot be blank when changed.")
         return normalized
 
+    @field_validator("replacement_reason")
+    @classmethod
+    def normalize_replacement_reason(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        return normalized or None
+
 
 class CameraConfigurationImpactPreviewRequest(CameraConfigurationChangeRequest):
     pass
+
+
+class CameraNodeIdentityReplacementImpact(BaseModel):
+    """Impact of a confirmed Camera Node hardware swap, shown before apply."""
+
+    previous_node_id: str
+    new_node_id: str
+    zones_review_recommended: bool
+    message: str
 
 
 class CameraConfigurationImpactPreview(BaseModel):
@@ -638,6 +678,7 @@ class CameraConfigurationImpactPreview(BaseModel):
     open_activity_session_count: int = Field(ge=0)
     preview_may_be_briefly_unavailable: bool
     preservation_summary: list[str] = Field(default_factory=list)
+    node_identity_replacement: CameraNodeIdentityReplacementImpact | None = None
     validation: CameraConfigurationValidationSummary
     message: str
 

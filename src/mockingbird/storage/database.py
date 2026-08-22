@@ -42,7 +42,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 37
+CURRENT_DATABASE_SCHEMA_VERSION = 38
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -961,6 +961,37 @@ def _migrate_to_camera_node_boot_identity(connection: Connection) -> None:
             connection.exec_driver_sql(f"ALTER TABLE camera_sources ADD COLUMN {name} {sql_type}")
 
 
+def _migrate_to_camera_node_replacement_provenance(connection: Connection) -> None:
+    """Add the Reprovision / Replacement Recovery v1 bounded hardware-
+    replacement provenance columns to `camera_sources` (see "Provenance" in
+    docs/camera-node-reprovision-recovery-design.md).
+
+    Nullable, no default, additive only -- exactly the same shape as
+    `_migrate_to_camera_node_boot_identity`. Every Source predating this
+    column, and any Source whose Camera Node was never replaced, reads back
+    `camera_node_identity_replaced_at=None`: honest "never replaced," never
+    a fabricated event. Only a confirmed replacement (see
+    `_camera_configuration_proposed_config`'s `confirm_node_identity_change`
+    override) ever writes these; this migration writes no data of its own.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Camera Node replacement-provenance migration requires local SQLite storage."
+        )
+    if not inspect(connection).has_table("camera_sources"):
+        return
+    columns = {column["name"] for column in inspect(connection).get_columns("camera_sources")}
+    additions = (
+        ("camera_node_prior_node_id", "TEXT"),
+        ("camera_node_identity_replaced_at", "DATETIME"),
+        ("camera_node_replacement_reason", "TEXT"),
+    )
+    for name, sql_type in additions:
+        if name not in columns:
+            connection.exec_driver_sql(f"ALTER TABLE camera_sources ADD COLUMN {name} {sql_type}")
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -998,6 +1029,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     35: _migrate_to_per_stream_observation_authority,
     36: _migrate_to_concurrent_sibling_lineage,
     37: _migrate_to_camera_node_boot_identity,
+    38: _migrate_to_camera_node_replacement_provenance,
 }
 
 

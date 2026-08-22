@@ -697,6 +697,89 @@ def test_interpret_camera_node_malformed_boot_transitions_json_is_safely_ignored
     assert result.status == DoctorStatus.PASS
 
 
+def test_interpret_camera_node_recent_replacement_warns_and_recommends_zone_review() -> None:
+    """Reprovision / Replacement Recovery v1: a confirmed hardware swap is a
+    bounded, one-time operator reminder -- lowest priority (only surfaces
+    once nothing more urgent, like offline/instability, is wrong)."""
+
+    now = datetime.now(UTC)
+    result = doctor._interpret_camera_node(
+        {
+            "source_count": 1,
+            "source_kinds": ["integration"],
+            "stream_count": 1,
+            "currently_monitored_count": 1,
+            "attention_count": 0,
+            "stalest_camera_node_fresh_at": now.isoformat(),
+            "camera_node_identity_replaced_at": (now - timedelta(days=1)).isoformat(),
+        },
+        now=now,
+    )
+    assert result.status == DoctorStatus.WARN
+    assert "replaced" in result.summary.lower()
+    assert "zone" in result.user_action.lower()
+    assert result.recoverability == DoctorRecoverability.DEGRADED
+
+
+def test_interpret_camera_node_replacement_reason_surfaces_in_detail_and_context() -> None:
+    now = datetime.now(UTC)
+    result = doctor._interpret_camera_node(
+        {
+            "source_count": 1,
+            "source_kinds": ["integration"],
+            "stream_count": 1,
+            "currently_monitored_count": 1,
+            "attention_count": 0,
+            "stalest_camera_node_fresh_at": now.isoformat(),
+            "camera_node_identity_replaced_at": (now - timedelta(hours=2)).isoformat(),
+            "camera_node_replacement_reason": "SD card failed",
+        },
+        now=now,
+    )
+    assert "SD card failed" in result.detail
+    assert result.diagnostic_context["camera_node_replacement_reason"] == "SD card failed"
+
+
+def test_interpret_camera_node_old_replacement_outside_review_window_is_pass() -> None:
+    now = datetime.now(UTC)
+    result = doctor._interpret_camera_node(
+        {
+            "source_count": 1,
+            "source_kinds": ["integration"],
+            "stream_count": 1,
+            "currently_monitored_count": 1,
+            "attention_count": 0,
+            "stalest_camera_node_fresh_at": now.isoformat(),
+            "camera_node_identity_replaced_at": (now - timedelta(days=30)).isoformat(),
+        },
+        now=now,
+    )
+    assert result.status == DoctorStatus.PASS
+
+
+def test_interpret_camera_node_offline_outranks_a_recent_replacement_reminder() -> None:
+    """A live fault is always more urgent than a one-time reminder about a
+    past, already-completed replacement."""
+
+    now = datetime.now(UTC)
+    result = doctor._interpret_camera_node(
+        {
+            "source_count": 1,
+            "source_kinds": ["integration"],
+            "stream_count": 1,
+            "currently_monitored_count": 0,
+            "attention_count": 0,
+            "stalest_camera_node_fresh_at": None,
+            "camera_node_last_seen_at": (now - timedelta(hours=1)).isoformat(),
+            "camera_node_identity_replaced_at": (now - timedelta(minutes=30)).isoformat(),
+        },
+        now=now,
+    )
+    assert result.status == DoctorStatus.WARN
+    assert "offline" in result.summary.lower()
+    assert "replaced" not in result.summary.lower()
+
+
 def test_run_doctor_survives_a_real_open_camera_node_exposure_interval(tmp_path: Path) -> None:
     """Real-database regression guard: every test above calls
     `_interpret_camera_node` directly with a hand-built dict whose

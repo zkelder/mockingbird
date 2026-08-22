@@ -33,6 +33,8 @@ function configurationPayload(
   streamName: string,
   nodePairing: CameraNodePairResponse | null,
   selectedNodeCameraId: string,
+  confirmReplacement: boolean,
+  replacementReason: string,
 ) {
   const config: Record<string, string | null> = {};
   if (configuration.provider_key === "camera_node" && nodePairing) {
@@ -45,6 +47,8 @@ function configurationPayload(
       source_name: sourceName.trim() || null,
       stream_name: streamName.trim() || null,
       expected_state_token: configuration.state_token,
+      confirm_node_identity_change: confirmReplacement,
+      replacement_reason: replacementReason.trim() || null,
     };
   }
   for (const field of configuration.editable_fields) {
@@ -90,6 +94,11 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
   const [isCheckingNodeResume, setIsCheckingNodeResume] = useState(false);
   const [nodePairingNeedsRenewal, setNodePairingNeedsRenewal] = useState(false);
   const [isCancelingNodePairing, setIsCancelingNodePairing] = useState(false);
+  // Reprovision / Replacement Recovery v1: deliberate, operator-confirmed
+  // override for a genuine Camera Node hardware swap -- see
+  // docs/camera-node-reprovision-recovery-design.md.
+  const [confirmReplacement, setConfirmReplacement] = useState(false);
+  const [replacementReason, setReplacementReason] = useState("");
 
   const canSave = Boolean(preview?.validation.can_apply && preview.changed_fields.length > 0);
   const secretFields = useMemo(
@@ -118,6 +127,8 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
       setHistory(nextHistory.items.map((item) => item.changed_fields));
       setPreview(null);
       setRestartMonitoring(false);
+      setConfirmReplacement(false);
+      setReplacementReason("");
       setError(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Camera configuration could not be loaded.");
@@ -185,7 +196,7 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
     try {
       setPreview(await apiClient.previewCameraConfiguration(
         streamId,
-        configurationPayload(configuration, values, secretActions, sourceName, streamName, nodePairing, selectedNodeCameraId),
+        configurationPayload(configuration, values, secretActions, sourceName, streamName, nodePairing, selectedNodeCameraId, confirmReplacement, replacementReason),
       ));
     } catch (caught) {
       setPreview(null);
@@ -253,7 +264,7 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
     setError(null);
     try {
       const result = await apiClient.applyCameraConfiguration(streamId, {
-        ...configurationPayload(configuration, values, secretActions, sourceName, streamName, nodePairing, selectedNodeCameraId),
+        ...configurationPayload(configuration, values, secretActions, sourceName, streamName, nodePairing, selectedNodeCameraId, confirmReplacement, replacementReason),
         preview_token: preview.preview_token,
         idempotency_key: idempotencyKey(),
         restart_monitoring: restartMonitoring,
@@ -265,6 +276,8 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
       setSecretActions(
         Object.fromEntries(secretFields.map((field) => [field.key, "keep"])),
       );
+      setConfirmReplacement(false);
+      setReplacementReason("");
       setMessage(result.message);
       await onSaved();
       await load();
@@ -299,7 +312,12 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
             <label>Stream name<input value={streamName} onChange={(event) => { setStreamName(event.target.value); setPreview(null); }} /></label>
             {configuration.provider_key === "camera_node" ? <div className="notice-panel">
               <strong>Repair or change Camera Node view</strong>
-              <span>Pairing is explicit. Enter the Node’s address and one-time local code to repair pairing or choose another advertised camera from the same Node. The saved address and credential remain masked.</span>
+              <span>Pairing is explicit. Enter the Node’s address and one-time local code to repair pairing, replace this camera's hardware, or choose another advertised camera from the same Node. The saved address and credential remain masked.</span>
+              {configuration.hardware_replacement ? <div className="notice-panel">
+                <strong>Hardware replaced {formatDateTime(configuration.hardware_replacement.replaced_at)}</strong>
+                <span>This camera's Zones, monitoring history, and reviewed truth stayed attached across the swap. MockingBird could not verify the replacement camera's framing matches the original — review Zones if you have not already.{configuration.hardware_replacement.reason ? ` Reason given: ${configuration.hardware_replacement.reason}` : ""}</span>
+              </div> : null}
+              {configuration.node_expected_display_name ? <span className="meta-text">Reinstalling the same Node? Give it the name “{configuration.node_expected_display_name}” to reattach automatically without confirming a hardware replacement below.</span> : null}
               {isCheckingNodeResume ? <span className="meta-text">Checking for an already-paired repair attempt…</span> : null}
               {nodePairingNeedsRenewal ? <div className="error-panel">
                 <strong>Pairing needs to be renewed</strong>
@@ -314,6 +332,8 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
                   <option value="">Choose an advertised camera</option>
                   {nodePairing.cameras.map((camera) => <option disabled={camera.status !== "available" || !camera.snapshot_supported} key={camera.camera_id} value={camera.camera_id}>{camera.display_name}{camera.provider_type ? ` (${camera.provider_type})` : ""} — {camera.status.replace(/_/g, " ")}</option>)}
                 </select></label>
+                <label><input checked={confirmReplacement} onChange={(event) => { setConfirmReplacement(event.target.checked); setPreview(null); }} type="checkbox" /> This is a different physical Camera Node (hardware replacement), not the same device</label>
+                {confirmReplacement ? <label>Reason (optional)<input onChange={(event) => { setReplacementReason(event.target.value); setPreview(null); }} placeholder="e.g. SD card failed, upgraded to a new Pi" value={replacementReason} /></label> : null}
                 <button className="secondary-action" disabled={isCancelingNodePairing} onClick={() => void cancelNodePairingAttempt()} type="button">{isCancelingNodePairing ? "Canceling…" : "Cancel this pairing attempt"}</button>
                 <span className="meta-text">Canceling revokes this not-yet-saved pairing at the Camera Node so it stops advertising it as paired; a new one-time code will be needed afterward.</span>
               </> : <span className="meta-text">You can still rename this Camera or Stream without re-pairing.</span>}
@@ -346,6 +366,7 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
             <span><strong>Monitoring desired:</strong> {formatLabel(preview.monitoring_desired)} · <strong>actual:</strong> {formatLabel(preview.monitoring_actual)}</span>
             <span><strong>Open activity sessions:</strong> {preview.open_activity_session_count}</span>
             {preview.restart_required ? <div className="notice-panel"><strong>Brief preview interruption expected.</strong><span>MockingBird will stop the current local session before storing this runtime-affecting change. Existing reviewed activity and saved history are preserved.</span>{preview.requires_explicit_restart_choice ? <label><input checked={restartMonitoring} onChange={(event) => setRestartMonitoring(event.target.checked)} type="checkbox" /> Restart the already-enabled monitor after saving</label> : null}</div> : <span className="meta-text">This edit does not require a local camera restart.</span>}
+            {preview.node_identity_replacement ? <div className="notice-panel"><strong>Camera Node hardware replacement</strong><span>{preview.node_identity_replacement.message}</span></div> : null}
             <div className="page-stack"><strong>Preserved</strong>{preview.preservation_summary.map((item) => <span className="meta-text" key={item}>{item}</span>)}</div>
             <button className="primary-action" disabled={!canSave || isSaving} onClick={() => void save()} type="button">{isSaving ? "Saving…" : preview.restart_required && restartMonitoring ? "Save and restart monitoring" : "Save camera configuration"}</button>
           </section> : null}

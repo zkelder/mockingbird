@@ -127,6 +127,13 @@ _CAMERA_NODE_STALE_AFTER_SECONDS = CAMERA_NODE_LAST_SEEN_STALE_AFTER_SECONDS
 # treats as suspicious rather than coincidental.
 _CAMERA_NODE_INSTABILITY_MINIMUM_TRANSITIONS = 3
 _CAMERA_NODE_INSTABILITY_WINDOW_SECONDS = 900.0
+# Reprovision / Replacement Recovery v1: a one-time operator reminder, not a
+# live fault -- bounded so an old, already-reviewed replacement does not
+# degrade Doctor's health forever with no way to clear it (see "Diagnostics"
+# in docs/camera-node-reprovision-recovery-design.md). Seven days is ample
+# time to notice and review Zones after a routine hardware swap without
+# requiring a dedicated acknowledge action for this milestone's bounded scope.
+_CAMERA_NODE_REPLACEMENT_REVIEW_WINDOW_SECONDS = 7 * 24 * 60 * 60.0
 
 
 class DoctorStatus(str, Enum):
@@ -709,6 +716,8 @@ def _gather_camera_node(engine: Engine) -> dict[str, Any]:
                 CameraSourceModel.camera_node_boot_id,
                 CameraSourceModel.camera_node_service_version,
                 CameraSourceModel.camera_node_recent_boot_transitions_json,
+                CameraSourceModel.camera_node_identity_replaced_at,
+                CameraSourceModel.camera_node_replacement_reason,
             ).where(CameraSourceModel.kind == _CAMERA_NODE_SOURCE_KIND)
         ).all()
         open_interval_stream_ids = {
@@ -752,6 +761,15 @@ def _gather_camera_node(engine: Engine) -> dict[str, Any]:
             .order_by(MonitoringExposureIntervalModel.last_confirmed_fresh_at.asc())
             .limit(1)
         ).first()
+    # Reprovision / Replacement Recovery v1: the single most-recently-
+    # replaced camera_node Source's provenance, matching every other field
+    # here's "pick the most-recent across sources" convention -- `reason` is
+    # read from that *same* row below, never mixed across different sources.
+    most_recently_replaced_source = max(
+        (row for row in camera_node_sources if row[5] is not None),
+        key=lambda row: row[5],
+        default=None,
+    )
     return {
         "source_count": len(sources),
         "source_kinds": [row[1] for row in sources],
@@ -789,6 +807,14 @@ def _gather_camera_node(engine: Engine) -> dict[str, Any]:
         "camera_node_service_version": next((row[3] for row in camera_node_sources if row[3]), None),
         "camera_node_recent_boot_transitions_json": next(
             (row[4] for row in camera_node_sources if row[4]), None
+        ),
+        "camera_node_identity_replaced_at": (
+            normalize_utc(most_recently_replaced_source[5]).isoformat()
+            if most_recently_replaced_source
+            else None
+        ),
+        "camera_node_replacement_reason": (
+            most_recently_replaced_source[6] if most_recently_replaced_source else None
         ),
     }
 
@@ -943,6 +969,35 @@ def _interpret_camera_node(gathered: dict[str, Any], *, now: datetime) -> Doctor
                 detail="No Observation Engine session is currently open for this Camera Node, and its last confirmed contact has gone stale.",
                 recoverability=DoctorRecoverability.DEGRADED,
                 user_action="Check the Camera Node's power, network connection, and journal (journalctl -u mockingbird-camera-node).",
+                diagnostic_context=context,
+            )
+    # Reprovision / Replacement Recovery v1: lowest priority by design -- an
+    # actively offline/unstable Node above is always the more urgent signal.
+    # Bounded to a review window (see the constant's docstring) rather than
+    # surfaced forever, so a routine hardware swap reviewed weeks ago does
+    # not permanently degrade Doctor with no way to clear it.
+    replaced_at_raw = gathered.get("camera_node_identity_replaced_at")
+    if replaced_at_raw:
+        replaced_at = datetime.fromisoformat(replaced_at_raw)
+        replacement_age_seconds = (now - replaced_at).total_seconds()
+        if 0 <= replacement_age_seconds <= _CAMERA_NODE_REPLACEMENT_REVIEW_WINDOW_SECONDS:
+            context["camera_node_identity_replaced_at"] = replaced_at_raw
+            reason = gathered.get("camera_node_replacement_reason")
+            if reason:
+                context["camera_node_replacement_reason"] = reason
+            return DoctorCheckResult(
+                code=DoctorCheckCode.CAMERA_NODE,
+                component="Camera Node",
+                status=DoctorStatus.WARN,
+                summary=f"Camera Node hardware was replaced on {replaced_at.date().isoformat()}.",
+                detail=(
+                    "This camera's Place, Stream, Zones, and history stay attached to the "
+                    "replacement hardware. MockingBird cannot verify the replacement camera's "
+                    "framing/field of view matches the original."
+                    + (f" Reason given: {reason}" if reason else "")
+                ),
+                recoverability=DoctorRecoverability.DEGRADED,
+                user_action="Review this camera's Zones and confirm they still match what the camera actually sees.",
                 diagnostic_context=context,
             )
     return DoctorCheckResult(

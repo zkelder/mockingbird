@@ -338,6 +338,11 @@ export interface CameraConfigurationValidationSummary {
   can_apply: boolean;
 }
 
+export interface CameraNodeHardwareReplacementSummary {
+  replaced_at: string;
+  reason: string | null;
+}
+
 export interface CameraConfigurationEditResponse {
   stream_id: string;
   source_id: string;
@@ -354,6 +359,11 @@ export interface CameraConfigurationEditResponse {
   monitoring_policy: StreamMonitoringPolicy;
   runtime: StreamRuntimeStatus;
   health: CameraHealthSummary;
+  // Non-secret: the display name a replacement Camera Node should be given
+  // so its node_id matches this Source's existing one -- see "Host-driven
+  // reprovision package" in docs/camera-node-reprovision-recovery-design.md.
+  node_expected_display_name: string | null;
+  hardware_replacement: CameraNodeHardwareReplacementSummary | null;
   message: string;
 }
 
@@ -365,6 +375,17 @@ export interface CameraConfigurationImpactPreviewRequest {
   source_name?: string | null;
   stream_name?: string | null;
   expected_state_token: string;
+  // Deliberate operator confirmation of a genuine Camera Node hardware
+  // swap -- see docs/camera-node-reprovision-recovery-design.md.
+  confirm_node_identity_change?: boolean;
+  replacement_reason?: string | null;
+}
+
+export interface CameraNodeIdentityReplacementImpact {
+  previous_node_id: string;
+  new_node_id: string;
+  zones_review_recommended: boolean;
+  message: string;
 }
 
 export interface CameraConfigurationImpactPreview {
@@ -381,6 +402,7 @@ export interface CameraConfigurationImpactPreview {
   open_activity_session_count: number;
   preview_may_be_briefly_unavailable: boolean;
   preservation_summary: string[];
+  node_identity_replacement: CameraNodeIdentityReplacementImpact | null;
   validation: CameraConfigurationValidationSummary;
   message: string;
 }

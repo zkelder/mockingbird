@@ -1689,12 +1689,27 @@ instability suspicion). The service-level watchdog closes the "service
 hang" rung of the field-recovery ladder below (`Type=notify`/
 `WatchdogSec=30`, real `sd_notify`, gated on a genuine bounded liveness
 probe -- see [camera-node-installer-design.md](camera-node-installer-design.md)).
-Still open, disclosed rather than silently dropped: a configuration
-backup/export mechanism, the replacement-node workflow itself (node/boot
-identity is now proven compatible with one, per milestone scope, but the
-guided workflow is not built), and golden-Pi power-supply/boot-media/
-networking guidance. See [camera-node-installer-design.md](camera-node-installer-design.md)
-for the complete mechanism.
+See [camera-node-installer-design.md](camera-node-installer-design.md) for
+the complete mechanism. **Current disposition (Camera Node Configuration
+Backup + Reprovision / Replacement Recovery v1, 2026-08-21):** the three
+items disclosed as open above are now closed. A versioned, secret-free
+`node.env` configuration export/import (`scripts/install_camera_node.py
+--export-config`/`--import-config`) makes a same-hardware SD-card-died
+reinstall reattach through ordinary repair-pairing with no manual
+reconstruction, restoring the same `node_id`-producing display name; a new
+`confirm_node_identity_change` override on Guided Camera Editing's existing
+preview/apply flow adds the guided replacement-node workflow itself,
+reattaching genuinely different physical hardware to the existing logical
+Source/Stream with bounded provenance (prior `node_id`, transition
+timestamp, operator-supplied reason), honest live capability rediscovery
+(never copied from the replaced device), and an unconditional
+"Zones may need review" surfaced in the preview, the apply response, and a
+bounded 7-day Doctor reminder (no stored baseline ever existed to safely
+claim otherwise). Golden-Pi power-supply/boot-media/networking guidance,
+plus the backup/restore/replace walkthrough itself, is now in
+[camera-node-install-guide.md](camera-node-install-guide.md). See
+[camera-node-reprovision-recovery-design.md](camera-node-reprovision-recovery-design.md)
+for the full contract.
 
 ### Gate E -- Reliability / Recovery / Observability
 
@@ -2032,12 +2047,17 @@ the production SD card.
     not yet exercised live.
 11. a low-storage/storage-pressure condition on the node -- open; no
     node-side storage check exists yet to exercise.
-12. replacement/reprovision of a Camera Node -- partially evidenced: a
-    real credential re-pair through Guided Camera Editing's repair flow is
-    live-proven (Camera Node Installer v1's "Pairing with the real host,"
-    above), but a genuine physical-device swap preserving Place/history
-    and provenance lineage end to end is not yet a deliberate acceptance
-    case.
+12. replacement/reprovision of a Camera Node -- the same-identity credential
+    re-pair remains live-proven on real hardware (Camera Node Installer
+    v1's "Pairing with the real host," above); a genuine physical-device
+    swap preserving Place/history and provenance lineage end to end is now
+    a deliberate, hermetically-tested capability (Camera Node Configuration
+    Backup + Reprovision / Replacement Recovery v1, above) exercised
+    through the same real backend/API/DB stack every other camera_node test
+    in this codebase already uses -- but, per that milestone's own scoped
+    validation tiers, not yet exercised as a real destructive swap against
+    the physical reference Pi. Retiring this item fully still wants that
+    live pass; it is not blocked on anything further to build.
 
 #### Product-health semantics: paired/configured != live/reachable
 

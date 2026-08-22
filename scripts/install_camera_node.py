@@ -14,19 +14,27 @@ Usage (on the Camera Node device itself, as root):
     sudo python3 scripts/install_camera_node.py /path/to/artifact
     sudo python3 scripts/install_camera_node.py --status
     sudo python3 scripts/install_camera_node.py --rollback
+    sudo python3 scripts/install_camera_node.py --export-config backup.json
+    sudo python3 scripts/install_camera_node.py /path/to/artifact --import-config backup.json
 
 Safe to re-run: an unchanged artifact is a no-op beyond ensuring the service
 is enabled/running; a changed artifact keeps exactly one prior version for
-`--rollback`. An existing `node.env` or paired state is never overwritten.
+`--rollback`. An existing `node.env` or paired state is never overwritten --
+`--import-config` extends that same guarantee rather than replacing it: it
+only ever materializes `node.env` when one does not already exist. See
+"Configuration Backup + Reprovision" in docs/camera-node-reprovision-
+recovery-design.md.
 """
 
 from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import secrets
 import shutil
 import subprocess
 import sys
@@ -47,6 +55,38 @@ STATE_DIRECTORY_NAME = "mockingbird-camera-node"
 #: No other group (gpio, render, i2c, spi, dialout, plugdev) is load-bearing.
 REQUIRED_APT_PACKAGES = ("python3-venv",)
 OPTIONAL_APT_PACKAGES = ("python3-picamera2", "python3-opencv")
+
+#: Versioned, explicit -- see "Configuration export/import contract" in
+#: docs/camera-node-reprovision-recovery-design.md. Bump only for a breaking
+#: `node_env` shape change; `import_node_config_if_absent` accepts any
+#: version <= this one and refuses a newer one honestly rather than guessing.
+CONFIG_BUNDLE_VERSION = 1
+CONFIG_BUNDLE_KIND = "mockingbird_camera_node_config"
+#: The portable *intent* subset of `node.env` -- display name, network bind,
+#: provider selection, camera/image bounds, pairing TTL, preview cap, log
+#: level. Deliberately excludes `MOCKINGBIRD_NODE_PAIRING_STATE_PATH` (an
+#: install-path detail recomputed fresh for the current install, never
+#: trusted from an old bundle -- see `_normalize_config_bundle`) and
+#: `MOCKINGBIRD_NODE_TESTING` (a test-only escape hatch, never worth
+#: preserving across a backup). Contains no secret: pairing credentials live
+#: only in `pairing.json` (node-local, hash-only) and the host's own
+#: database -- never in `node.env` at all.
+PORTABLE_NODE_ENV_KEYS = (
+    "MOCKINGBIRD_NODE_NAME",
+    "MOCKINGBIRD_NODE_BIND",
+    "MOCKINGBIRD_NODE_PORT",
+    "MOCKINGBIRD_NODE_PROVIDERS",
+    "MOCKINGBIRD_NODE_CAMERA",
+    "MOCKINGBIRD_NODE_MAX_IMAGE_BYTES",
+    "MOCKINGBIRD_NODE_MAX_IMAGE_WIDTH",
+    "MOCKINGBIRD_NODE_MAX_IMAGE_HEIGHT",
+    "MOCKINGBIRD_NODE_EVIDENCE_MAX_IMAGE_BYTES",
+    "MOCKINGBIRD_NODE_EVIDENCE_MAX_IMAGE_WIDTH",
+    "MOCKINGBIRD_NODE_EVIDENCE_MAX_IMAGE_HEIGHT",
+    "MOCKINGBIRD_NODE_PAIRING_TTL_SECONDS",
+    "MOCKINGBIRD_NODE_MAX_PREVIEW_VIEWERS",
+    "MOCKINGBIRD_NODE_LOG_LEVEL",
+)
 
 CommandRunner = Callable[[list], "subprocess.CompletedProcess"]
 HealthChecker = Callable[[str], "tuple[bool, str]"]
@@ -233,16 +273,68 @@ def _default_node_env_content(paths: InstallPaths) -> str:
     return "\n".join(lines) + "\n"
 
 
-def ensure_config_file(paths: InstallPaths) -> bool:
+def atomic_write_text(path: Path, content: str, *, mode: int) -> None:
+    """Write-temp-then-rename so a crash/power-loss mid-write can never leave
+    a partially-written file behind -- see "Configuration-write safety" in
+    docs/camera-node-reprovision-recovery-design.md. Same O_EXCL + fsync +
+    `os.replace` shape as the Node's own `_PairingState._persist_state`
+    (`src/mockingbird_node/app.py`), the only precedent for this in the
+    codebase; there was previously no shared, importable helper for it."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    os.chmod(path, mode)
+
+
+def _render_node_env(values: dict, paths: InstallPaths, *, header: list) -> str:
+    """Shared rendering for both a fresh default `node.env` and one
+    materialized from an imported backup bundle -- one template, not two
+    diverging copies. `MOCKINGBIRD_NODE_PAIRING_STATE_PATH` is always
+    recomputed for *this* install rather than trusted from a bundle (see
+    `PORTABLE_NODE_ENV_KEYS`'s docstring)."""
+
+    lines = list(header)
+    for key in PORTABLE_NODE_ENV_KEYS:
+        if key in values:
+            lines.append(f"{key}={values[key]}")
+    lines.append(f"MOCKINGBIRD_NODE_PAIRING_STATE_PATH={paths.state_dir}/pairing.json")
+    return "\n".join(lines) + "\n"
+
+
+def ensure_config_file(paths: InstallPaths, *, import_bundle_path: "Path | None" = None) -> bool:
     """Never overwrites an existing file -- "an update must not overwrite
     existing operator configuration." Returns whether a new file was
-    written."""
+    written. When `import_bundle_path` names a valid exported configuration
+    bundle (see `export_node_config`) and no `node.env` exists yet, the new
+    file is materialized from it instead of the hardcoded template -- this
+    is what lets a same-hardware reinstall recover its prior display name
+    (and therefore its prior `node_id`, and therefore ordinary repair-
+    pairing) without manual reconstruction. See "Reinstall same hardware" in
+    docs/camera-node-reprovision-recovery-design.md."""
 
     if paths.env_file.exists():
         return False
-    paths.env_file.parent.mkdir(parents=True, exist_ok=True)
-    paths.env_file.write_text(_default_node_env_content(paths), encoding="utf-8")
-    os.chmod(paths.env_file, 0o600)
+    if import_bundle_path is not None:
+        values = _normalized_config_bundle_values(_load_config_bundle(import_bundle_path))
+        header = [
+            "# Local-only MockingBird Camera Node configuration.",
+            f"# Restored from a configuration backup ({import_bundle_path.name}) by",
+            "# scripts/install_camera_node.py -- see docs/camera-node-install-guide.md.",
+            "# An update never overwrites this file once it exists.",
+        ]
+        content = _render_node_env(values, paths, header=header)
+    else:
+        content = _default_node_env_content(paths)
+    atomic_write_text(paths.env_file, content, mode=0o600)
     return True
 
 
@@ -255,6 +347,108 @@ def parse_env_file(path: Path) -> dict:
         key, _, value = stripped.partition("=")
         values[key.strip()] = value.strip()
     return values
+
+
+# --- Configuration backup / export / import ---------------------------------
+#
+# Node-local configuration (node.env) never contains a secret: the pairing
+# credential lives only in pairing.json (node-local, hash-only -- see
+# _PairingState) and the host's own database, neither of which is portable
+# or reusable off-device anyway. Reprovisioning always requires fresh
+# pairing regardless of what is restored here (Model A -- see "Secrets" in
+# docs/camera-node-reprovision-recovery-design.md), so the export bundle
+# below is safe to inspect, copy, and store without any redaction step.
+
+def export_node_config(paths: InstallPaths) -> dict:
+    """Read-only: the current `node.env`'s portable intent fields, wrapped in
+    a small versioned envelope. Raises `InstallerError` if no configuration
+    exists yet -- nothing to back up."""
+
+    if not paths.env_file.is_file():
+        raise InstallerError(f"No configuration exists yet at {paths.env_file}; nothing to export.")
+    current = parse_env_file(paths.env_file)
+    node_env = {key: current[key] for key in PORTABLE_NODE_ENV_KEYS if key in current}
+    manifest_summary = None
+    if paths.manifest_path.is_file():
+        try:
+            manifest = json.loads(paths.manifest_path.read_text(encoding="utf-8"))
+            manifest_summary = manifest.get("provenance", {}).get("build_id")
+        except (OSError, ValueError):
+            manifest_summary = None
+    return {
+        "bundle_version": CONFIG_BUNDLE_VERSION,
+        "bundle_kind": CONFIG_BUNDLE_KIND,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "installed_build_id": manifest_summary,
+        "node_env": node_env,
+    }
+
+
+def _load_config_bundle(bundle_path: Path) -> dict:
+    try:
+        data = json.loads(bundle_path.read_text(encoding="utf-8"))
+    except OSError as error:
+        raise InstallerError(f"Could not read configuration backup {bundle_path}: {error}") from None
+    except ValueError as error:
+        raise InstallerError(f"Configuration backup {bundle_path} is not valid JSON: {error}") from None
+    if not isinstance(data, dict):
+        raise InstallerError(f"Configuration backup {bundle_path} is malformed (expected a JSON object).")
+    return data
+
+
+def _normalized_config_bundle_values(data: dict) -> dict:
+    """Validate a loaded bundle and return its safe, ready-to-render
+    `node_env` values. Every rejection is a clear `InstallerError` raised
+    before anything is written -- see "Configuration validation" in
+    docs/camera-node-reprovision-recovery-design.md. An unknown *future*
+    bundle version is refused outright (this installer cannot safely
+    interpret a shape it has never seen); an unknown *key* inside an
+    otherwise-valid bundle is dropped with a printed notice rather than
+    failing the whole import, so an older installer stays forward-
+    compatible with a newer one's bundle where practical."""
+
+    version = data.get("bundle_version")
+    if not isinstance(version, int) or version < 1:
+        raise InstallerError("Configuration backup is missing a valid bundle_version.")
+    if version > CONFIG_BUNDLE_VERSION:
+        raise InstallerError(
+            f"Configuration backup was created by a newer format (version {version}); "
+            f"this installer supports up to version {CONFIG_BUNDLE_VERSION}. Use a matching "
+            "or newer scripts/install_camera_node.py to import it."
+        )
+    if data.get("bundle_kind") != CONFIG_BUNDLE_KIND:
+        raise InstallerError("Configuration backup does not look like a Camera Node configuration bundle.")
+    node_env = data.get("node_env")
+    if not isinstance(node_env, dict):
+        raise InstallerError("Configuration backup is missing its node_env settings.")
+
+    values: dict = {}
+    for key, value in node_env.items():
+        if key not in PORTABLE_NODE_ENV_KEYS:
+            print(f"note: ignoring unrecognized configuration key {key!r} from backup", file=sys.stderr)
+            continue
+        if not isinstance(value, str):
+            raise InstallerError(f"Configuration backup value for {key} must be a string.")
+        if "\n" in value or "\r" in value or "\x00" in value:
+            raise InstallerError(f"Configuration backup value for {key} contains an unsafe character.")
+        values[key] = value
+    return values
+
+
+def import_node_config_if_absent(bundle_path: Path, paths: InstallPaths) -> str:
+    """Standalone entry point for `--import-config` without a fresh install
+    under way -- validates then delegates to `ensure_config_file` so the
+    "never overwrite an existing node.env" guarantee has exactly one
+    implementation. Returns an operator-facing outcome message."""
+
+    _normalized_config_bundle_values(_load_config_bundle(bundle_path))  # validate before any write
+    if paths.env_file.exists():
+        return (
+            f"{paths.env_file} already exists; import skipped to avoid overwriting existing "
+            "configuration. Remove it first (or edit it directly) to replace it."
+        )
+    ensure_config_file(paths, import_bundle_path=bundle_path)
+    return f"Restored {paths.env_file} from {bundle_path}."
 
 
 # --- Package install/update/rollback ----------------------------------------
@@ -487,12 +681,19 @@ def install(
     runner: CommandRunner = real_command_runner,
     is_root: Callable[[], bool] = _real_is_root,
     health_checker: HealthChecker = wait_for_health,
+    import_config_path: "Path | None" = None,
 ) -> InstallReport:
     if not is_root():
         raise InstallerError(
             "This installer must be run as root, e.g.: "
             "sudo python3 scripts/install_camera_node.py <artifact_dir>"
         )
+    if import_config_path is not None:
+        # Validate up front, before any other step runs, so a malformed
+        # backup fails the whole install cleanly rather than leaving a
+        # half-configured Node -- see "Failure/recovery semantics" in
+        # docs/camera-node-reprovision-recovery-design.md.
+        _normalized_config_bundle_values(_load_config_bundle(import_config_path))
 
     steps: list = []
     prerequisites = ensure_system_prerequisites(runner=runner)
@@ -509,12 +710,14 @@ def install(
     venv_outcome = install_or_update_venv(artifact_dir, paths, runner=runner)
     steps.append(f"package: {venv_outcome.message}")
 
-    config_written = ensure_config_file(paths)
-    steps.append(
-        "configuration: wrote new node.env from example"
-        if config_written
-        else "configuration: existing node.env preserved untouched"
-    )
+    config_written = ensure_config_file(paths, import_bundle_path=import_config_path)
+    if config_written and import_config_path is not None:
+        step = f"configuration: restored node.env from {import_config_path}"
+    elif config_written:
+        step = "configuration: wrote new node.env from example"
+    else:
+        step = "configuration: existing node.env preserved untouched"
+    steps.append(step)
 
     unit_changed = install_systemd_unit(paths, runner=runner)
     steps.append("systemd unit: installed/updated" if unit_changed else "systemd unit: unchanged")
@@ -655,6 +858,19 @@ def main() -> None:
             "see 'Hardware watchdog' in docs/camera-node-installer-design.md"
         ),
     )
+    parser.add_argument(
+        "--export-config", type=Path, default=None, metavar="PATH",
+        help="read-only: write the current node.env's portable settings to PATH as a backup bundle",
+    )
+    parser.add_argument(
+        "--import-config", type=Path, default=None, metavar="PATH",
+        help=(
+            "restore node.env from a bundle written by --export-config; only ever "
+            "materializes node.env when one does not already exist, same as a fresh "
+            "install -- combine with artifact_dir to restore during install, or use alone "
+            "on an already-installed node"
+        ),
+    )
     parser.add_argument("--prefix", type=Path, default=Path("/"), help=argparse.SUPPRESS)
     arguments = parser.parse_args()
     paths = InstallPaths(prefix=arguments.prefix)
@@ -663,16 +879,31 @@ def main() -> None:
         if arguments.enable_hardware_watchdog:
             print(enable_hardware_watchdog(paths))
             return
+        if arguments.export_config is not None:
+            if not _real_is_root():
+                raise InstallerError("Exporting the configuration must be run as root (node.env is root-only).")
+            bundle = export_node_config(paths)
+            atomic_write_text(arguments.export_config, json.dumps(bundle, indent=2, sort_keys=True) + "\n", mode=0o600)
+            print(f"Wrote configuration backup to {arguments.export_config} (bundle_version {bundle['bundle_version']}).")
+            return
         if arguments.status:
             report = status(paths=paths)
             print("\n".join(report.lines))
             return
         if arguments.rollback:
             result = rollback(paths=paths)
+        elif arguments.artifact_dir is None:
+            if arguments.import_config is not None:
+                if not _real_is_root():
+                    raise InstallerError("Importing the configuration must be run as root.")
+                print(import_node_config_if_absent(arguments.import_config, paths))
+                return
+            parser.error(
+                "artifact_dir is required unless --status, --rollback, --export-config, "
+                "or a standalone --import-config is given"
+            )
         else:
-            if arguments.artifact_dir is None:
-                parser.error("artifact_dir is required unless --status or --rollback is given")
-            result = install(artifact_dir=arguments.artifact_dir, paths=paths)
+            result = install(artifact_dir=arguments.artifact_dir, paths=paths, import_config_path=arguments.import_config)
         for step in result.steps:
             print(f"- {step}")
         if not result.healthy:

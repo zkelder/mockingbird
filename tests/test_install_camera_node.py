@@ -12,6 +12,7 @@ docs/camera-node-installer-design.md.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import runpy
 import subprocess
@@ -36,6 +37,12 @@ SERVICE_USER = _MODULE["SERVICE_USER"]
 CAMERA_GROUP = _MODULE["CAMERA_GROUP"]
 hardware_watchdog_device_present = _MODULE["hardware_watchdog_device_present"]
 enable_hardware_watchdog = _MODULE["enable_hardware_watchdog"]
+atomic_write_text = _MODULE["atomic_write_text"]
+export_node_config = _MODULE["export_node_config"]
+import_node_config_if_absent = _MODULE["import_node_config_if_absent"]
+CONFIG_BUNDLE_VERSION = _MODULE["CONFIG_BUNDLE_VERSION"]
+CONFIG_BUNDLE_KIND = _MODULE["CONFIG_BUNDLE_KIND"]
+PORTABLE_NODE_ENV_KEYS = _MODULE["PORTABLE_NODE_ENV_KEYS"]
 
 
 def _result(returncode: int, *, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:
@@ -465,3 +472,245 @@ def test_status_never_mutates_anything(tmp_path) -> None:
     # status only issues read-only systemctl queries (is-active/is-enabled).
     new_calls = runner.calls[mutating_calls_before:]
     assert all(call[1] in {"is-active", "is-enabled"} for call in new_calls if call[0] == "systemctl")
+
+
+# --- Configuration backup / export / import ----------------------------------
+# See docs/camera-node-reprovision-recovery-design.md.
+
+def test_export_config_produces_a_versioned_bundle_with_no_secrets(tmp_path) -> None:
+    paths = InstallPaths(prefix=tmp_path / "root")
+    ensure_config_file(paths)
+    edited = paths.env_file.read_text(encoding="utf-8").replace(
+        "MOCKINGBIRD_NODE_NAME=Pi Camera Node", "MOCKINGBIRD_NODE_NAME=Backyard Feeder Node"
+    )
+    paths.env_file.write_text(edited, encoding="utf-8")
+
+    bundle = export_node_config(paths)
+
+    assert bundle["bundle_version"] == CONFIG_BUNDLE_VERSION
+    assert bundle["bundle_kind"] == CONFIG_BUNDLE_KIND
+    assert bundle["node_env"]["MOCKINGBIRD_NODE_NAME"] == "Backyard Feeder Node"
+    assert bundle["node_env"]["MOCKINGBIRD_NODE_BIND"] == "0.0.0.0"
+    # Install-path detail, deliberately never exported -- see
+    # PORTABLE_NODE_ENV_KEYS's docstring.
+    assert "MOCKINGBIRD_NODE_PAIRING_STATE_PATH" not in bundle["node_env"]
+    # node.env never contains a credential in the first place (see
+    # "Secrets" in docs/camera-node-reprovision-recovery-design.md); this is
+    # a belt-and-suspenders confirmation, not a redaction step.
+    serialized = json.dumps(bundle)
+    assert "credential" not in serialized.lower()
+    assert "pairing.json" not in serialized
+
+
+def test_export_config_refuses_when_nothing_is_configured_yet(tmp_path) -> None:
+    paths = InstallPaths(prefix=tmp_path / "root")
+    with pytest.raises(InstallerError, match="[Nn]othing to export"):
+        export_node_config(paths)
+
+
+def test_import_config_restores_the_display_name_so_repair_pairing_reattaches(tmp_path) -> None:
+    """The whole point of export/import: a same-hardware reinstall that
+    restores the same MOCKINGBIRD_NODE_NAME produces the same node_id
+    (sha256 of the display name -- see mockingbird_node/app.py), so ordinary
+    repair-pairing reattaches without ever needing to confirm a hardware
+    replacement."""
+
+    old_paths = InstallPaths(prefix=tmp_path / "old-sd-card")
+    ensure_config_file(old_paths)
+    old_paths.env_file.write_text(
+        old_paths.env_file.read_text(encoding="utf-8").replace(
+            "MOCKINGBIRD_NODE_NAME=Pi Camera Node", "MOCKINGBIRD_NODE_NAME=Backyard Feeder Node"
+        ),
+        encoding="utf-8",
+    )
+    bundle_path = tmp_path / "backup.json"
+    atomic_write_text(bundle_path, json.dumps(export_node_config(old_paths)), mode=0o600)
+
+    # The old SD card is gone; a fresh install starts from nothing.
+    new_paths = InstallPaths(prefix=tmp_path / "fresh-sd-card")
+    message = import_node_config_if_absent(bundle_path, new_paths)
+
+    assert "Restored" in message
+    restored = parse_env_file(new_paths.env_file)
+    assert restored["MOCKINGBIRD_NODE_NAME"] == "Backyard Feeder Node"
+    # Recomputed for *this* install, never trusted from the old bundle.
+    assert restored["MOCKINGBIRD_NODE_PAIRING_STATE_PATH"] == f"{new_paths.state_dir}/pairing.json"
+
+
+def test_import_config_never_overwrites_an_existing_node_env(tmp_path) -> None:
+    paths = InstallPaths(prefix=tmp_path / "root")
+    paths.config_dir.mkdir(parents=True)
+    paths.env_file.write_text("MOCKINGBIRD_NODE_MAX_IMAGE_WIDTH=3840\n", encoding="utf-8")
+    bundle_path = tmp_path / "backup.json"
+    atomic_write_text(
+        bundle_path,
+        json.dumps({
+            "bundle_version": CONFIG_BUNDLE_VERSION,
+            "bundle_kind": CONFIG_BUNDLE_KIND,
+            "node_env": {"MOCKINGBIRD_NODE_NAME": "Someone Else's Node"},
+        }),
+        mode=0o600,
+    )
+
+    message = import_node_config_if_absent(bundle_path, paths)
+
+    assert "already exists" in message
+    assert paths.env_file.read_text(encoding="utf-8") == "MOCKINGBIRD_NODE_MAX_IMAGE_WIDTH=3840\n"
+
+
+def test_import_config_rejects_a_newer_bundle_version_honestly(tmp_path) -> None:
+    paths = InstallPaths(prefix=tmp_path / "root")
+    bundle_path = tmp_path / "backup.json"
+    atomic_write_text(
+        bundle_path,
+        json.dumps({"bundle_version": CONFIG_BUNDLE_VERSION + 1, "bundle_kind": CONFIG_BUNDLE_KIND, "node_env": {}}),
+        mode=0o600,
+    )
+
+    with pytest.raises(InstallerError, match="newer format"):
+        import_node_config_if_absent(bundle_path, paths)
+    assert not paths.env_file.exists()
+
+
+@pytest.mark.parametrize(
+    "bundle",
+    [
+        {"bundle_kind": CONFIG_BUNDLE_KIND, "node_env": {}},  # missing bundle_version
+        {"bundle_version": CONFIG_BUNDLE_VERSION, "node_env": {}},  # missing/wrong bundle_kind
+        {"bundle_version": CONFIG_BUNDLE_VERSION, "bundle_kind": CONFIG_BUNDLE_KIND},  # missing node_env
+        {"bundle_version": CONFIG_BUNDLE_VERSION, "bundle_kind": CONFIG_BUNDLE_KIND, "node_env": "not-a-dict"},
+        {"bundle_version": "one", "bundle_kind": CONFIG_BUNDLE_KIND, "node_env": {}},  # wrong type
+    ],
+)
+def test_import_config_rejects_malformed_bundles_without_writing_anything(tmp_path, bundle) -> None:
+    paths = InstallPaths(prefix=tmp_path / "root")
+    bundle_path = tmp_path / "backup.json"
+    atomic_write_text(bundle_path, json.dumps(bundle), mode=0o600)
+
+    with pytest.raises(InstallerError):
+        import_node_config_if_absent(bundle_path, paths)
+    assert not paths.env_file.exists()
+
+
+def test_import_config_rejects_a_value_with_an_embedded_newline(tmp_path) -> None:
+    """An EnvironmentFile= value containing a raw newline could inject an
+    extra, attacker/corruption-controlled line into node.env -- reject the
+    whole bundle rather than writing it."""
+
+    paths = InstallPaths(prefix=tmp_path / "root")
+    bundle_path = tmp_path / "backup.json"
+    atomic_write_text(
+        bundle_path,
+        json.dumps({
+            "bundle_version": CONFIG_BUNDLE_VERSION,
+            "bundle_kind": CONFIG_BUNDLE_KIND,
+            "node_env": {"MOCKINGBIRD_NODE_NAME": "evil\nMOCKINGBIRD_NODE_BIND=0.0.0.0"},
+        }),
+        mode=0o600,
+    )
+
+    with pytest.raises(InstallerError, match="unsafe"):
+        import_node_config_if_absent(bundle_path, paths)
+    assert not paths.env_file.exists()
+
+
+def test_import_config_drops_unrecognized_keys_with_a_notice_not_a_failure(tmp_path, capsys) -> None:
+    """Forward-compatible: an older installer importing a newer bundle skips
+    what it does not understand instead of refusing the whole restore."""
+
+    paths = InstallPaths(prefix=tmp_path / "root")
+    bundle_path = tmp_path / "backup.json"
+    atomic_write_text(
+        bundle_path,
+        json.dumps({
+            "bundle_version": CONFIG_BUNDLE_VERSION,
+            "bundle_kind": CONFIG_BUNDLE_KIND,
+            "node_env": {
+                "MOCKINGBIRD_NODE_NAME": "Backyard Feeder Node",
+                "MOCKINGBIRD_NODE_SOME_FUTURE_SETTING": "not-yet-invented",
+                # A rogue/hand-edited install-path override must never win
+                # over this install's own computed path either.
+                "MOCKINGBIRD_NODE_PAIRING_STATE_PATH": "/tmp/not-this-installs-path/pairing.json",
+            },
+        }),
+        mode=0o600,
+    )
+
+    import_node_config_if_absent(bundle_path, paths)
+
+    restored = parse_env_file(paths.env_file)
+    assert restored["MOCKINGBIRD_NODE_NAME"] == "Backyard Feeder Node"
+    assert "MOCKINGBIRD_NODE_SOME_FUTURE_SETTING" not in restored
+    assert restored["MOCKINGBIRD_NODE_PAIRING_STATE_PATH"] == f"{paths.state_dir}/pairing.json"
+    assert "ignoring unrecognized" in capsys.readouterr().err
+
+
+def test_install_with_import_config_restores_before_the_first_health_check(tmp_path) -> None:
+    artifact_dir = _write_fake_artifact(tmp_path / "artifact")
+    old_paths = InstallPaths(prefix=tmp_path / "old-sd-card")
+    ensure_config_file(old_paths)
+    old_paths.env_file.write_text(
+        old_paths.env_file.read_text(encoding="utf-8").replace(
+            "MOCKINGBIRD_NODE_NAME=Pi Camera Node", "MOCKINGBIRD_NODE_NAME=Backyard Feeder Node"
+        ),
+        encoding="utf-8",
+    )
+    bundle_path = tmp_path / "backup.json"
+    atomic_write_text(bundle_path, json.dumps(export_node_config(old_paths)), mode=0o600)
+
+    new_paths = InstallPaths(prefix=tmp_path / "fresh-sd-card")
+    report = install(
+        artifact_dir=artifact_dir, paths=new_paths, runner=FakeCommandRunner(),
+        is_root=lambda: True, health_checker=_fake_healthy, import_config_path=bundle_path,
+    )
+
+    assert any("restored node.env from" in step for step in report.steps)
+    assert parse_env_file(new_paths.env_file)["MOCKINGBIRD_NODE_NAME"] == "Backyard Feeder Node"
+
+
+def test_install_with_malformed_import_config_refuses_before_touching_anything(tmp_path) -> None:
+    """Interrupted/invalid replacement leaves recoverable state: a bad
+    backup must fail before prerequisites, the service account, or the venv
+    are touched -- not partway through."""
+
+    artifact_dir = _write_fake_artifact(tmp_path / "artifact")
+    paths = InstallPaths(prefix=tmp_path / "root")
+    bundle_path = tmp_path / "backup.json"
+    atomic_write_text(bundle_path, json.dumps({"bundle_version": "not-a-version"}), mode=0o600)
+    runner = FakeCommandRunner()
+
+    with pytest.raises(InstallerError):
+        install(
+            artifact_dir=artifact_dir, paths=paths, runner=runner,
+            is_root=lambda: True, health_checker=_fake_healthy, import_config_path=bundle_path,
+        )
+    assert runner.calls == []  # refused before issuing a single system command
+    assert not paths.env_file.exists()
+
+
+def test_atomic_write_never_leaves_a_partial_file_on_a_mid_write_failure(tmp_path, monkeypatch) -> None:
+    target = tmp_path / "node.env"
+    target.write_text("MOCKINGBIRD_NODE_NAME=Original\n", encoding="utf-8")
+
+    real_replace = os.replace
+
+    def _failing_replace(*args, **kwargs):
+        raise OSError("simulated power loss before rename completed")
+
+    monkeypatch.setattr(os, "replace", _failing_replace)
+    with pytest.raises(OSError, match="simulated power loss"):
+        atomic_write_text(target, "MOCKINGBIRD_NODE_NAME=Corrupted\n", mode=0o600)
+    monkeypatch.setattr(os, "replace", real_replace)
+
+    # The original file is untouched, and no stray temp file survives.
+    assert target.read_text(encoding="utf-8") == "MOCKINGBIRD_NODE_NAME=Original\n"
+    assert list(tmp_path.glob(".*.tmp")) == []
+
+
+def test_atomic_write_round_trips_content_and_permissions(tmp_path) -> None:
+    target = tmp_path / "nested" / "node.env"
+    atomic_write_text(target, "MOCKINGBIRD_NODE_NAME=Roundtrip\n", mode=0o600)
+
+    assert target.read_text(encoding="utf-8") == "MOCKINGBIRD_NODE_NAME=Roundtrip\n"
+    assert (target.stat().st_mode & 0o777) == 0o600
+    assert list(target.parent.glob(".*.tmp")) == []

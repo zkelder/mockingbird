@@ -1338,3 +1338,59 @@ force a "B" -- the service-level watchdog this milestone actually shipped
 is real, working, and closes the failure class it targets. The Camera Node
 never claims to recover a machine that never boots at all -- see "Never-
 boots boundary" in [roadmap.md](roadmap.md).
+
+## Camera Node Configuration Backup + Reprovision / Replacement Recovery v1 (2026-08-21)
+
+Closes the two items the prior milestone's own disposition left explicitly
+open: "a configuration backup/export mechanism" and "the replacement-node
+workflow itself." Full contract, state inventory, and design rationale live
+in
+[camera-node-reprovision-recovery-design.md](camera-node-reprovision-recovery-design.md);
+this section records only what changed in this document's own areas
+(installer, configuration paths, atomic-write safety).
+
+### Configuration export/import
+
+`scripts/install_camera_node.py --export-config PATH` / `--import-config
+PATH`. The exported bundle is the portable subset of `node.env` (display
+name, bind, port, providers, camera/image bounds, pairing TTL,
+preview-viewer cap, log level) wrapped in a small versioned JSON envelope --
+never `MOCKINGBIRD_NODE_PAIRING_STATE_PATH` (recomputed fresh for whichever
+install imports it) or the pairing-state directory itself (node-local,
+hash-only, not portable). Import extends -- never weakens -- "Never
+overwrites this file once it exists": it only ever writes `node.env` when
+none exists yet, exactly like a fresh install's own default-template write.
+
+### Configuration-write safety (audit finding)
+
+This milestone's own instructions required auditing every pairing/config
+write this work touched for atomicity. `ensure_config_file`'s `node.env`
+write was found to be a plain `Path.write_text` -- not atomic. Fixed with a
+new `atomic_write_text` helper (temp file in the same directory, `O_EXCL`
+create, `fsync`, `os.replace`, then `chmod`), mirroring the exact shape
+`mockingbird_node.app._PairingState._persist_state` already used for
+`pairing.json` -- the only existing precedent in the codebase, previously
+not shared/importable. Both the default-template write and an imported-
+bundle write now go through it.
+
+### Replacement confirmation (mechanism lives in product_repository.py)
+
+`node_id`'s existing role as "opaque identity used to reject an
+incompatible replacement Node" is preserved as the *default*; Guided Camera
+Editing's preview/apply requests gained one new field,
+`confirm_node_identity_change`, that deliberately overrides that guard for
+a genuine hardware swap. See "Logical-vs-physical identity" and
+"Provenance" in the linked design doc for the full mechanism -- this stays
+entirely inside the existing transactional apply, not a new endpoint or a
+parallel pairing path.
+
+### Decision
+
+**A -- Reprovision/replacement recovery implemented.** Configuration
+backup/export/import, a confirmed hardware-replacement path that reattaches
+new physical infrastructure to an existing logical Source/Stream, bounded
+provenance, honest capability rediscovery, and a Doctor reminder to review
+Zones are all implemented and tested. A real destructive Pi reprovision
+against the reference device was not performed (not required by this
+milestone's own validation tiers); see the milestone report for the exact
+sandboxed/hermetic proof this rested on instead.
