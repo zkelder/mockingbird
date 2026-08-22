@@ -145,6 +145,179 @@ period-spanning tests (real read path) for the ordinary-period,
 spring-forward, fall-back, repeated-local-hour, and period-spanning-
 transition cases this was proven against.
 
+## Per-species Zone and time patterns
+
+Gate C -- Per-Species Zone + Time Pattern Intelligence v1 answers a
+narrower, per-taxon question the report-wide `activity_by_zone`/`activity_
+by_hour` above cannot: for one authoritatively-confirmed taxon, where and
+when has it been recorded at this Place? These are observational summaries
+of MockingBird's own reviewed history ("7 reviewed visits at the Feeder,
+most often 7-8 AM"), never behavioral or ecological claims ("prefers the
+feeder," "feeds at 7 AM") -- see "Place Intelligence" in
+product-doctrine.md for that same boundary applied elsewhere.
+
+### Truth contract
+
+Reviewed truth only, with zero exception: `mockingbird.analytics.
+place_activity_report.compute_taxon_place_patterns` reuses `_classify`
+verbatim, so only a Visit that resolves to `CONFIRMED_WILDLIFE` (an
+authority-eligible `ReviewLabel` resolving to a real, wildlife-category,
+non-"unknown" taxon) contributes to a named taxon's pattern. A provisional
+`SpeciesSuggestion` can never establish or shape a Cardinal Zone count or a
+Cardinal hourly pattern; an "unknown_bird"/"unknown_animal" abstention is
+real confirmed wildlife activity but has no species identity to attach a
+per-taxon pattern to, so it never appears under its own label either --
+"generic activity only," per this milestone's own worked example. A human
+correction automatically moves the derived pattern to the corrected taxon
+on the very next read; nothing is cached or persisted (see "Schema"
+below).
+
+### Zone attribution and multi-subject correctness
+
+Reuses the exact same `zone_id`/`zone_name` fields every other Visit-level
+feature already reads -- no second point-in-polygon interpretation. One
+deliberate difference from the canonical `_stream_visit_summary_from_
+models` resolver `zone_insights`/`place_activity_report`'s own
+current-period facts use: this computation never falls back from a
+Visit's own (absent) `zone_id` to its `Event.primary_zone_id`. That
+fallback is safe in the single-subject-per-Event world this product
+started in, but Multi-Subject Visit Assembly
+(docs/multi-subject-visit-assembly-review-v1.md) can now put several
+independently-geometried sibling Visits on one Event; an Event-level
+fallback would silently lend the Event-founding sibling's Zone to a later
+sibling that was genuinely never inside it (or was outside every drawn
+Zone entirely) -- exactly the "sibling evidence/geometry borrowing" this
+milestone forbids. A Visit's own `zone_id == None` is honestly "No Zone"
+here, full stop, regardless of what Zone its Event's founding sibling
+happened to match. See
+`tests/test_place_activity_report_repository.py::
+test_multi_subject_event_keeps_each_siblings_zone_pattern_independent` for
+the direct proof (a Blue Jay sibling with no Zone of its own, sharing an
+Event with a Feeder-founding Cardinal, correctly reads "No Zone").
+
+### No-Zone and partial-Zone semantics
+
+A Stream (or an entire Place) with zero configured Zones is a normal,
+fully-supported state, never a degraded or "setup incomplete" one -- this
+module has no opinion about whether Zones are configured at all (see
+"Critical invariant: Zones are optional," this milestone's own charter). A
+Visit outside every configured Zone is never silently discarded: it lands
+in the same `"No Zone"` bucket (`NO_ZONE_LABEL`) the report-wide
+aggregation above already established, so Today and Bird Log describe the
+same concept with the same words. `"No Zone"` can appear in
+`zone_activity` but is never `most_active_zone`, mirroring
+`PlaceActivityReport.busiest_zone`'s identical rule -- only a real,
+user-drawn Zone can be "most active."
+
+### Minimum support
+
+`zone_activity`/`hour_activity` are always honest raw counts, however few
+-- a single reviewed Visit is a real fact, never an overconfident claim.
+`most_active_zone`/`most_active_hour` are different: a "most active" claim
+made from one or two Visits would manufacture confidence the evidence
+doesn't support, so both are withheld below
+`MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN` (5) -- reusing the exact
+threshold `mockingbird.analytics.zone_insights`'s own `busiest_supported_
+hour` already established for a very similar claim, not a second,
+unrelated number invented here. Below the floor, a caller sees the real
+count ("3 reviewed visits recorded") without a manufactured favorite Zone
+or time.
+
+### Time-of-day buckets
+
+Plain 1-hour local buckets (`local_hour`, 0-23), the same granularity the
+report-wide `activity_by_hour` above already uses -- deliberately not a
+second, wider "2-hour window" concept. `TodayReportPanel`'s existing
+`formatHourRange` helper already renders a single hour bucket as its own
+honest span ("7:00-7:59" reads "7-8 AM"), so a per-species "Most active
+7-8 AM" fact needed no new frontend time-bucketing logic at all.
+
+### Historical window
+
+Computed from the same trailing `HISTORICAL_BASELINE_WINDOW_DAYS`-day
+window (366 days, ending at the report's own `period_end_at`)
+`historical_status`/`change_status` already use -- not a new, arbitrary
+window, and deliberately not scoped to just today's own report period (a
+single day's handful of Visits would almost never clear the
+minimum-support floor). The one query this milestone extended,
+`ProductRepository._historical_place_baseline_and_species_statuses`'s own
+`window_rows` fetch, now also joins `ZoneModel` on the Visit's own
+`zone_id` (see "Zone attribution" above) -- zero additional queries beyond
+what that method already issued.
+
+### API shape
+
+Additive fields on each `PlaceActivityReportTaxonEntry`
+(`POST /api/analytics/place-activity-report`):
+
+- `zone_activity: [{zone_id, display_name, reviewed_visit_count}]` --
+  every Zone (plus `"No Zone"` where applicable) with at least one
+  reviewed Visit, sorted by count.
+- `hour_activity: [{local_hour, reviewed_visit_count}]` -- every local
+  hour with at least one reviewed Visit (never zero-padded to 24 entries
+  the way the report-wide `activity_by_hour` is -- a single taxon's
+  reviewed history is typically sparse).
+- `most_active_zone`/`most_active_hour` -- `null` below the minimum-support
+  floor, or when this taxon was never authoritatively confirmed anywhere
+  in the historical window (matches `historical_status`'s identical `null`
+  condition).
+
+### Today integration
+
+`TodayReportPanel` adds at most one small secondary fact per species row
+(`speciesPlacePattern`), reusing the exact `formatHourRange`/" · "
+wording conventions already established on that row -- "Backyard feeder ·
+7-8 AM" when both are supported, "Mostly recorded at Backyard feeder" or
+"Most active 7-8 AM" when only one is, and nothing at all below the
+support floor. With no Zones configured, `most_active_zone` is always
+`null` for every species, so this degrades to time-only wording
+automatically -- no separate "no Zones" branch was needed in the
+frontend.
+
+### Bird Log integration
+
+`wildlife_journal_history`'s own `busiest_zone`/`zone_breakdown`/`peak_
+activity_hour` predate this milestone (an independent, per-label,
+caller-filterable computation -- date range/Stream/Zone/favorites/tag
+scoped, not the fixed 366-day historical window above, so it is not
+replaced by `compute_taxon_place_patterns`). This milestone closed two
+correctness gaps found in it: (1) `zone_breakdown` silently dropped every
+Visit outside a Zone instead of bucketing it as `"No Zone"`; (2)
+`busiest_zone`/`peak_activity_hour` had no minimum-support floor at all --
+a single reviewed Visit could crown itself "busiest Zone." Both now match
+Today's exact conventions (the same `"No Zone"` wording, the same
+`MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN` floor imported from this
+module), so Today and Bird Log never disagree about how much reviewed
+history earns a "most active" statement. `zone_breakdown`/`stream_
+breakdown`/`activity_by_hour` themselves remain ungated, exactly like
+`zone_activity`/`hour_activity` above.
+
+### Schema
+
+No migration. Every fact this milestone reads (`VisitModel.zone_id`,
+`EventModel.stream_id`, `ReviewLabelModel`, `TaxonomyLabelModel`) already
+existed and was already durable. "Most active Zone"/"most active time" are
+never persisted as permanent truth -- both are recomputed from scratch on
+every read, so a correction or a newly-configured Zone is reflected on the
+very next report with no backfill step.
+
+### Known limitations
+
+- Bird Log's per-label breakdown (a pre-existing, independent computation
+  operating on `StreamVisitSummary` dicts, not `VisitFact`s) was hardened
+  in place rather than unified onto `compute_taxon_place_patterns` -- a
+  larger refactor than this milestone's bounded scope, and not required to
+  close the correctness gaps found (see "Bird Log integration" above).
+- No per-Zone monitoring-coverage denominator: a Zone visible for more of
+  the reporting window than another is not corrected for, since camera
+  monitoring coverage is only measured Stream-wide today (see "Monitoring
+  coverage" below) -- `zone_activity`/`most_active_zone` report raw
+  reviewed counts, never a claim normalized by exposure.
+- No week/month/year Zone-pattern dashboards, digests, or heatmaps --
+  explicitly out of this milestone's scope; the computation is designed (a
+  pure function over an arbitrary bounded `VisitFact` list) so a future
+  digest/report surface can reuse it directly.
+
 ## Monitoring coverage
 
 `compute_coverage_summary` is a real, tested computation, not a stub: it

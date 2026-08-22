@@ -3989,6 +3989,21 @@ export interface PlaceActivityReportTaxonChangeStatus {
     | "lower_recent_presence";
 }
 
+// Gate C -- Per-Species Zone + Time Pattern Intelligence v1: where and when
+// this taxon has been reviewed at this Place, over the same bounded
+// trailing historical window as historical_status/change_status (not just
+// today's period) -- see docs/place-activity-report-contract.md.
+export interface PlaceActivityReportTaxonZoneActivity {
+  zone_id?: string | null;
+  display_name: string;
+  reviewed_visit_count: number;
+}
+
+export interface PlaceActivityReportTaxonHourActivity {
+  local_hour: number;
+  reviewed_visit_count: number;
+}
+
 export interface PlaceActivityReportTaxonEntry {
   label: string;
   display_name: string;
@@ -4001,6 +4016,13 @@ export interface PlaceActivityReportTaxonEntry {
   last_activity_at: string;
   historical_status?: PlaceActivityReportTaxonHistoricalStatus | null;
   change_status?: PlaceActivityReportTaxonChangeStatus | null;
+  zone_activity: PlaceActivityReportTaxonZoneActivity[];
+  hour_activity: PlaceActivityReportTaxonHourActivity[];
+  // `null` below this milestone's minimum-support floor, even when
+  // zone_activity/hour_activity are non-empty -- see "Minimum support" in
+  // docs/place-activity-report-contract.md. Never the "No Zone" bucket.
+  most_active_zone?: PlaceActivityReportTaxonZoneActivity | null;
+  most_active_hour?: PlaceActivityReportTaxonHourActivity | null;
 }
 
 // Place-wide historical baseline facts, bounded to a trailing window ending

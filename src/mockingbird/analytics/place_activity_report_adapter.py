@@ -31,7 +31,10 @@ from mockingbird.analytics.place_activity_report import (
     HourActivityEntry,
     PlaceActivityReport,
     TaxonFact,
+    TaxonHourActivityEntry,
+    TaxonPlacePattern,
     TaxonReportEntry,
+    TaxonZoneActivityEntry,
     VisitFact,
     VisitResolution,
     ZoneActivityEntry,
@@ -54,6 +57,8 @@ from mockingbird.api.schemas import (
     PlaceActivityReportTaxonChangeStatus,
     PlaceActivityReportTaxonEntry,
     PlaceActivityReportTaxonHistoricalStatus,
+    PlaceActivityReportTaxonHourActivity,
+    PlaceActivityReportTaxonZoneActivity,
     PlaceActivityReportZoneActivity,
     ReviewStatus,
     StreamVisitSummary,
@@ -173,11 +178,31 @@ def _overall_change_status_response(
     )
 
 
+def _taxon_zone_activity_response(
+    entry: TaxonZoneActivityEntry,
+) -> PlaceActivityReportTaxonZoneActivity:
+    return PlaceActivityReportTaxonZoneActivity(
+        zone_id=entry.zone_id,
+        display_name=entry.zone_name,
+        reviewed_visit_count=entry.reviewed_visit_count,
+    )
+
+
+def _taxon_hour_activity_response(
+    entry: TaxonHourActivityEntry,
+) -> PlaceActivityReportTaxonHourActivity:
+    return PlaceActivityReportTaxonHourActivity(
+        local_hour=entry.local_hour,
+        reviewed_visit_count=entry.reviewed_visit_count,
+    )
+
+
 def _taxon_entry_response(
     entry: TaxonReportEntry,
     *,
     historical_status: SpeciesHistoricalStatus | None,
     change_status: TaxonChangeStatus | None,
+    place_pattern: TaxonPlacePattern | None,
 ) -> PlaceActivityReportTaxonEntry:
     return PlaceActivityReportTaxonEntry(
         label=entry.label,
@@ -195,6 +220,31 @@ def _taxon_entry_response(
             else None
         ),
         change_status=taxon_change_status_response(change_status),
+        # `place_pattern` is `None` under the identical truth-contract
+        # condition as `historical_status` above (a purely-provisional
+        # taxon was never authoritatively confirmed anywhere in the
+        # historical window, so it has no reviewed Zone/hour pattern to
+        # report) -- see docs/place-activity-report-contract.md.
+        zone_activity=(
+            [_taxon_zone_activity_response(zone) for zone in place_pattern.zone_activity]
+            if place_pattern is not None
+            else []
+        ),
+        hour_activity=(
+            [_taxon_hour_activity_response(hour) for hour in place_pattern.hour_activity]
+            if place_pattern is not None
+            else []
+        ),
+        most_active_zone=(
+            _taxon_zone_activity_response(place_pattern.most_active_zone)
+            if place_pattern is not None and place_pattern.most_active_zone is not None
+            else None
+        ),
+        most_active_hour=(
+            _taxon_hour_activity_response(place_pattern.most_active_hour)
+            if place_pattern is not None and place_pattern.most_active_hour is not None
+            else None
+        ),
     )
 
 
@@ -255,6 +305,7 @@ def place_activity_report_response(
     historical_baseline: HistoricalPlaceBaseline,
     species_historical_statuses: Mapping[str, SpeciesHistoricalStatus],
     change_summary: PlaceChangeSummary,
+    taxon_place_patterns: Mapping[str, TaxonPlacePattern],
 ) -> PlaceActivityReportResponse:
     """Adapt one pure `PlaceActivityReport` into its typed API response.
     Field-for-field only -- see the module docstring. `report.coverage` is
@@ -277,6 +328,13 @@ def place_activity_report_response(
     docs/meaningful-change-detection-contract.md); `change_summary.taxa` is
     matched to `report.taxa` by taxon label the same way `species_
     historical_statuses` already is.
+
+    `taxon_place_patterns` is required for the identical reason again (Gate
+    C -- Per-Species Zone + Time Pattern Intelligence v1; see "Per-species
+    Zone and time patterns" in docs/place-activity-report-contract.md),
+    keyed by taxon label the same way; a `report.taxa` entry with no match
+    (never authoritatively confirmed anywhere in the historical window)
+    correctly gets an empty/absent pattern -- see `_taxon_entry_response`.
     """
 
     if report.coverage is None:
@@ -308,6 +366,7 @@ def place_activity_report_response(
                 entry,
                 historical_status=species_historical_statuses.get(entry.label),
                 change_status=change_status_by_label.get(entry.label),
+                place_pattern=taxon_place_patterns.get(entry.label),
             )
             for entry in report.taxa
         ],

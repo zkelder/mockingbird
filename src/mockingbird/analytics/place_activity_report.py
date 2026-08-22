@@ -255,6 +255,67 @@ class HourActivityEntry:
     wildlife_visit_count: int
 
 
+# Gate C -- Per-Species Zone + Time Pattern Intelligence v1 (see "Per-species
+# Zone and time patterns" in docs/place-activity-report-contract.md). Reuses
+# the exact 5-reviewed-Visit floor `mockingbird.analytics.zone_insights`
+# already established for its own `busiest_supported_hour` claim -- one
+# precedented "how much evidence before a 'most active' statement is
+# trustworthy" judgment call, not a second, unrelated number invented here
+# for a very similar claim. Below this floor, `zone_activity`/`hour_activity`
+# still report their honest raw counts (a fact, never an overconfident
+# claim); only `most_active_zone`/`most_active_hour` are withheld.
+MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN = 5
+
+
+@dataclass(frozen=True)
+class TaxonZoneActivityEntry:
+    """One Zone's share of a single taxon's reviewed Visits. Deliberately a
+    distinct type from `ZoneActivityEntry` above, even though the shape
+    looks similar: that one's `wildlife_visit_count` mixes confirmed and
+    provisional wildlife Visits of every taxon (the report-wide, truth-
+    agnostic aggregate); `reviewed_visit_count` here is authoritatively-
+    confirmed Visits of *this one taxon* only -- see `compute_taxon_place_
+    patterns`'s truth contract. Reusing the older type's field name for a
+    narrower meaning would silently blur that boundary for a future reader."""
+
+    zone_id: str | None
+    zone_name: str
+    reviewed_visit_count: int
+
+
+@dataclass(frozen=True)
+class TaxonHourActivityEntry:
+    local_hour: int
+    reviewed_visit_count: int
+
+
+@dataclass(frozen=True)
+class TaxonPlacePattern:
+    """Where and when one authoritatively-confirmed taxon has been reviewed
+    at this Place -- an observational summary of MockingBird's own reviewed
+    history ("7 reviewed visits at the Feeder, most often 7-8 AM"), never a
+    behavioral or ecological claim ("prefers the feeder," "feeds at 7 AM").
+    See "Per-species Zone and time patterns" in
+    docs/place-activity-report-contract.md.
+
+    `zone_activity`/`hour_activity` list only buckets that actually
+    occurred (unlike `activity_by_hour` above, which always returns 24
+    entries) -- a single taxon's reviewed history is typically sparse, so
+    padding it with dozens of zero-count rows would obscure the real signal
+    rather than clarify it.
+    """
+
+    reviewed_visit_count: int
+    zone_activity: list[TaxonZoneActivityEntry]
+    hour_activity: list[TaxonHourActivityEntry]
+    # `None` below MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN -- see
+    # "Minimum support" in docs/place-activity-report-contract.md. Never the
+    # "No Zone" bucket, mirroring `PlaceActivityReport.busiest_zone`'s
+    # identical rule: only a real, user-drawn Zone can be "most active."
+    most_active_zone: TaxonZoneActivityEntry | None
+    most_active_hour: TaxonHourActivityEntry | None
+
+
 @dataclass(frozen=True)
 class CoverageGap:
     """One sub-window of the reporting period with no durable monitored
@@ -539,6 +600,99 @@ def compute_place_activity_report(
         coverage=coverage,
         maturity=compute_report_maturity(coverage),
     )
+
+
+def compute_taxon_place_patterns(
+    visits: Iterable[VisitFact],
+    *,
+    local_timezone: tzinfo = UTC,
+) -> dict[str, TaxonPlacePattern]:
+    """Compute each authoritatively-confirmed taxon's Zone/time-of-day
+    pattern from already-resolved Visit facts (Gate C -- Per-Species Zone +
+    Time Pattern Intelligence v1; see "Per-species Zone and time patterns"
+    in docs/place-activity-report-contract.md). Keyed by taxon label.
+
+    Truth contract: reuses `_classify` verbatim, so only a Visit `_classify`
+    resolves to `CONFIRMED_WILDLIFE` (`resolution == "reviewed"` and a
+    resolved, wildlife-category, non-"unknown" taxon) contributes. A
+    provisional `SpeciesSuggestion`, an unresolved Visit, and a confirmed
+    but taxonomically-unresolved ("unknown_bird"/"unknown_animal")
+    abstention are all excluded -- the identical boundary `compute_place_
+    activity_report`'s own per-taxon accumulation already enforces, so this
+    can never independently drift from it. Callers wanting generic,
+    truth-agnostic wildlife activity should read `PlaceActivityReport.
+    activity_by_zone`/`activity_by_hour` instead; this function answers a
+    narrower, per-species question those fields cannot.
+
+    Zone attribution reuses each Visit's own `zone_id`/`zone_name` exactly
+    as given -- unlike some callers of the canonical per-Visit resolver,
+    this function never falls back to an Event-level Zone when a Visit's
+    own is absent. That fallback exists for the single-subject Visit/Event
+    history this product started with; Multi-Subject Visit Assembly
+    (docs/multi-subject-visit-assembly-review-v1.md) can now put several
+    independently-geometried sibling Visits on one Event, and an Event-level
+    fallback would silently lend the Event-founding sibling's Zone to a
+    later sibling that was genuinely never inside it (or was outside every
+    drawn Zone entirely) -- exactly the "sibling evidence/geometry
+    borrowing" this milestone forbids. A Visit with its own `zone_id ==
+    None` is honestly "No Zone" here, full stop.
+
+    Callers pass whichever bounded Visit set they want a pattern computed
+    over (today's report period, a trailing historical window, or a
+    per-label Bird Log scope) -- this function has no period/window concept
+    of its own.
+    """
+
+    zone_counts: dict[str, dict[tuple[str | None, str], int]] = {}
+    hour_counts: dict[str, dict[int, int]] = {}
+    taxon_by_label: dict[str, TaxonFact] = {}
+
+    for visit in visits:
+        if _classify(visit) is not _Classification.CONFIRMED_WILDLIFE:
+            continue
+        taxon = visit.confirmed_taxon
+        assert taxon is not None
+        taxon_by_label.setdefault(taxon.label, taxon)
+
+        zone_key = (visit.zone_id, visit.zone_name or NO_ZONE_LABEL)
+        zone_bucket = zone_counts.setdefault(taxon.label, {})
+        zone_bucket[zone_key] = zone_bucket.get(zone_key, 0) + 1
+
+        local_hour = visit.activity_started_at.astimezone(local_timezone).hour
+        hour_bucket = hour_counts.setdefault(taxon.label, {})
+        hour_bucket[local_hour] = hour_bucket.get(local_hour, 0) + 1
+
+    patterns: dict[str, TaxonPlacePattern] = {}
+    for label in taxon_by_label:
+        zone_entries = [
+            TaxonZoneActivityEntry(zone_id=zone_id, zone_name=zone_name, reviewed_visit_count=count)
+            for (zone_id, zone_name), count in sorted(
+                zone_counts[label].items(),
+                key=lambda item: (-item[1], item[0][1], item[0][0] or ""),
+            )
+        ]
+        hour_entries = [
+            TaxonHourActivityEntry(local_hour=hour, reviewed_visit_count=count)
+            for hour, count in sorted(
+                hour_counts[label].items(),
+                key=lambda item: (-item[1], item[0]),
+            )
+        ]
+        reviewed_visit_count = sum(zone_counts[label].values())
+        has_support = reviewed_visit_count >= MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN
+
+        most_active_zone = next((entry for entry in zone_entries if entry.zone_id is not None), None)
+        most_active_hour = hour_entries[0] if hour_entries else None
+
+        patterns[label] = TaxonPlacePattern(
+            reviewed_visit_count=reviewed_visit_count,
+            zone_activity=zone_entries,
+            hour_activity=hour_entries,
+            most_active_zone=most_active_zone if has_support else None,
+            most_active_hour=most_active_hour if has_support else None,
+        )
+
+    return patterns
 
 
 def compute_coverage_summary(

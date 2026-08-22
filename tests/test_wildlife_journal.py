@@ -7,6 +7,7 @@ import httpx
 import pytest
 from sqlalchemy import select
 
+from mockingbird.analytics.place_activity_report import MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN
 from mockingbird.api.main import app, configure_repository
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.storage.models import (
@@ -117,7 +118,7 @@ def add_visit(
     started_at: datetime,
     stream_id: str = STREAM_A,
     source_id: str = SOURCE_A,
-    zone_id: str = ZONE_A,
+    zone_id: str | None = ZONE_A,
     is_superseded: bool = False,
     with_media: bool = False,
     species_guess: str | None = "unknown_bird",
@@ -654,3 +655,93 @@ async def test_likely_species_overview_finds_a_suggestion_even_without_species_g
     species = likely.json()["species"]
     assert [item["label"] for item in species] == ["house_finch"]
     assert species[0]["latest_visit"]["id"] == "visit-no-species-guess"
+
+
+# Gate C -- Per-Species Zone + Time Pattern Intelligence v1 ------------------
+#
+# Bird Log's own busiest_zone/zone_breakdown/peak_activity_hour predate this
+# milestone; these tests close the two correctness gaps this milestone
+# found in them (see docs/place-activity-report-contract.md's "Per-species
+# Zone and time patterns") without changing anything else about the
+# surface. Exact local-hour values are deliberately not asserted here (this
+# route resolves the *host's* local time, not a test-controllable one --
+# unlike the Today report's own `local_timezone` test override); the
+# pure-computation and Today-repository suites already prove hour-bucketing
+# correctness (including DST) directly.
+
+
+async def test_bird_log_withholds_busiest_zone_and_peak_hour_below_the_support_floor(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    """A "busiest"/"peak" claim is superlative and must share Today's exact
+    minimum-support floor; the raw zone_breakdown/activity_by_hour counts
+    stay honest and ungated regardless -- see "Minimum support" in
+    docs/place-activity-report-contract.md."""
+
+    add_graph(isolated_repository)
+    below_floor = MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN - 1
+    for i in range(below_floor):
+        visit_id = f"below-floor-{i}"
+        add_visit(isolated_repository, visit_id=visit_id, started_at=datetime(2026, 7, 1, 7, i, tzinfo=UTC))
+        await review(client, visit_id, "northern_cardinal")
+
+    history = await client.get("/api/bird-log/journal/northern_cardinal")
+    assert history.status_code == 200
+    payload = history.json()
+
+    assert payload["observation_count"] == below_floor
+    assert payload["zone_breakdown"] == [{"id": ZONE_A, "name": "Garden edge", "count": below_floor}]
+    assert any(bucket["count"] > 0 for bucket in payload["activity_by_hour"])
+    assert payload["busiest_zone"] is None
+    assert payload["peak_activity_hour"] is None
+
+
+async def test_bird_log_surfaces_busiest_zone_and_peak_hour_once_supported(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    add_graph(isolated_repository)
+    for i in range(MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN):
+        visit_id = f"at-floor-{i}"
+        add_visit(isolated_repository, visit_id=visit_id, started_at=datetime(2026, 7, 1, 7, i, tzinfo=UTC))
+        await review(client, visit_id, "northern_cardinal")
+
+    history = await client.get("/api/bird-log/journal/northern_cardinal")
+    payload = history.json()
+
+    assert payload["busiest_zone"] == {
+        "id": ZONE_A,
+        "name": "Garden edge",
+        "count": MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN,
+    }
+    assert isinstance(payload["peak_activity_hour"], int)
+
+
+async def test_bird_log_zone_breakdown_buckets_visits_outside_every_zone_instead_of_dropping_them(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    """A Visit outside every configured Zone must not silently disappear
+    from zone_breakdown -- see "Partial-Zone semantics" in
+    docs/place-activity-report-contract.md. "No Zone" is also never
+    crowned busiest, even with enough support."""
+
+    add_graph(isolated_repository)
+    for i in range(MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN):
+        visit_id = f"no-zone-{i}"
+        add_visit(
+            isolated_repository,
+            visit_id=visit_id,
+            started_at=datetime(2026, 7, 1, 7, i, tzinfo=UTC),
+            zone_id=None,
+        )
+        await review(client, visit_id, "northern_cardinal")
+
+    history = await client.get("/api/bird-log/journal/northern_cardinal")
+    payload = history.json()
+
+    assert payload["zone_breakdown"] == [
+        {"id": "no-zone", "name": "No Zone", "count": MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN}
+    ]
+    assert payload["busiest_zone"] is None

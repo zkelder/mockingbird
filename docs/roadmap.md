@@ -1580,6 +1580,45 @@ doc. What remains open beyond this: seasonality and year-over-year
 comparison, which still need more accumulated real history than this young
 a product has yet.
 
+**2026-08-21 update (Gate C -- Per-Species Zone + Time Pattern Intelligence
+v1):** closed the exact "per-species Zone breakdown" gap the Daily Place
+Report update above named. A new pure function, `mockingbird.analytics.
+place_activity_report.compute_taxon_place_patterns`, reuses `_classify`'s
+own truth precedence verbatim: only authoritatively-confirmed Visits shape
+a named taxon's Zone/hour pattern -- a provisional SpeciesSuggestion or an
+"unknown_bird"/"unknown_animal" abstention never does. Zone attribution
+reuses each Visit's own `zone_id` directly rather than the canonical
+resolver's `Event.primary_zone_id` fallback, a deliberate divergence:
+Multi-Subject Visit Assembly can put several independently-geometried
+sibling Visits on one Event, and that fallback would otherwise lend the
+Event-founding sibling's Zone to a later sibling that was never actually
+inside it -- confirmed both as a real, previously-untested risk and as
+correctly avoided by a dedicated multi-subject regression (see "Zone
+attribution and multi-subject correctness" in
+[place-activity-report-contract.md](place-activity-report-contract.md)).
+A minimum-support floor (5 reviewed Visits, reusing zone_insights' own
+`busiest_supported_hour` precedent) gates only the derived "most active"
+claim, never the honest raw counts. Computed over the same 366-day
+historical window `historical_status`/`change_status` already use, wired
+additively into `PlaceActivityReportResponse` (one concise secondary fact
+per Today species row) with zero schema/migration and zero new queries
+beyond extending one existing join. Also hardened, in place, two
+correctness gaps this milestone found in Bird Log's own pre-existing
+per-label `busiest_zone`/`zone_breakdown`/`peak_activity_hour` (silently
+dropped no-Zone Visits instead of bucketing them; no minimum-support floor
+at all) so Today and Bird Log never disagree about how much reviewed
+history earns a "most active" statement. A Stream/Place with zero
+configured Zones remains fully useful throughout -- time-of-day patterns
+still compute, and no wording anywhere implies setup is incomplete. 15 new
+pure tests, 5 new repository/API integration tests, 3 new Bird Log
+integration tests, and 3 new frontend e2e tests (including a dedicated
+no-Zones scenario) all pass, alongside the full pre-existing suite (Core
+gate, 3663 tests) unmodified. Explicitly not attempted: unifying Bird Log's
+own breakdown onto the new pure function (a larger refactor than this
+milestone's bounded scope), a per-Zone monitoring-coverage denominator, and
+week/month/year Zone-pattern dashboards or digests -- see "Known
+limitations" in the contract doc.
+
 **Temporal correctness surfaces this gate must preserve, named explicitly:**
 event time (source capture) vs. ingestion time vs. processing-completion
 time vs. presentation/UI freshness must stay distinguishable, not collapsed

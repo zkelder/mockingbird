@@ -241,6 +241,147 @@ test("Today's report shows species, visit counts, activity timing, and the busie
   await expect(reportPanel.getByText("Fully observed today")).toBeVisible();
 });
 
+// Gate C -- Per-Species Zone + Time Pattern Intelligence v1: a species row's
+// own "where/when it's usually recorded" secondary fact, from
+// `taxa[].most_active_zone`/`most_active_hour` (see
+// docs/place-activity-report-contract.md). These scenarios are additive to
+// the report contract above -- taxa entries omitting these fields (every
+// other scenario in this file) simply render no such line, proven
+// implicitly by every test above continuing to pass unmodified.
+
+test("a species row shows its usual Zone and time-of-day pattern once there is enough reviewed history", async ({
+  page,
+}) => {
+  await completeSetup(page);
+  const lastVisitAt = new Date().toISOString();
+  await mockPlaceActivityReport(page, {
+    total_visit_count: 6,
+    confirmed_wildlife_visit_count: 6,
+    wildlife_visit_count: 6,
+    distinct_taxa_count: 1,
+    distinct_species_count: 1,
+    last_activity_at: lastVisitAt,
+    first_activity_at: lastVisitAt,
+    taxa: [
+      {
+        label: "northern_cardinal",
+        display_name: "Northern Cardinal",
+        category: "bird",
+        is_species: true,
+        confirmed_visit_count: 6,
+        provisional_visit_count: 0,
+        total_visit_count: 6,
+        first_activity_at: lastVisitAt,
+        last_activity_at: lastVisitAt,
+        zone_activity: [{ zone_id: "zone-feeder-1", display_name: "Backyard feeder", reviewed_visit_count: 6 }],
+        hour_activity: [{ local_hour: 7, reviewed_visit_count: 6 }],
+        most_active_zone: { zone_id: "zone-feeder-1", display_name: "Backyard feeder", reviewed_visit_count: 6 },
+        most_active_hour: { local_hour: 7, reviewed_visit_count: 6 },
+      },
+    ],
+  });
+
+  await page.goto("/");
+  const speciesRow = page.locator(".today-report-species-list li").first();
+  await expect(speciesRow).toBeVisible();
+  // Combined Zone + time, in plain human-facing wording -- no internal IDs.
+  await expect(speciesRow.getByText("Backyard feeder · 7–8 AM")).toBeVisible();
+  await expect(speciesRow.getByText("zone-feeder-1")).toHaveCount(0);
+});
+
+test("a species row shows time-only pattern wording with no Zones configured, never implying setup is incomplete", async ({
+  page,
+}) => {
+  await completeSetup(page);
+  const lastVisitAt = new Date().toISOString();
+  await mockPlaceActivityReport(page, {
+    total_visit_count: 5,
+    confirmed_wildlife_visit_count: 5,
+    wildlife_visit_count: 5,
+    distinct_taxa_count: 1,
+    distinct_species_count: 1,
+    last_activity_at: lastVisitAt,
+    first_activity_at: lastVisitAt,
+    // Place-wide: no Zone was ever recorded either -- the ordinary,
+    // fully-supported "no Zones configured" state, not an error state.
+    activity_by_zone: [],
+    busiest_zone: null,
+    taxa: [
+      {
+        label: "house_finch",
+        display_name: "House Finch",
+        category: "bird",
+        is_species: true,
+        confirmed_visit_count: 5,
+        provisional_visit_count: 0,
+        total_visit_count: 5,
+        first_activity_at: lastVisitAt,
+        last_activity_at: lastVisitAt,
+        zone_activity: [{ zone_id: null, display_name: "No Zone", reviewed_visit_count: 5 }],
+        hour_activity: [{ local_hour: 16, reviewed_visit_count: 5 }],
+        most_active_zone: null,
+        most_active_hour: { local_hour: 16, reviewed_visit_count: 5 },
+      },
+    ],
+  });
+
+  await page.goto("/");
+  const reportPanel = page.locator("section.today-report");
+  const speciesRow = page.locator(".today-report-species-list li").first();
+  await expect(speciesRow).toBeVisible();
+  await expect(speciesRow.getByText("Most active 4–5 PM")).toBeVisible();
+  // Never a fabricated Zone claim, and never wording that implies Zone
+  // setup is missing or incomplete.
+  await expect(speciesRow.getByText("No Zone")).toHaveCount(0);
+  await expect(reportPanel.getByText("Busiest area")).toHaveCount(0);
+  await expect(page.getByText(/set ?up.*incomplete/i)).toHaveCount(0);
+  await expect(page.getByText(/no zones? configured/i)).toHaveCount(0);
+});
+
+test("a species row omits pattern copy below the minimum-support floor instead of guessing a favorite", async ({
+  page,
+}) => {
+  await completeSetup(page);
+  const lastVisitAt = new Date().toISOString();
+  await mockPlaceActivityReport(page, {
+    total_visit_count: 1,
+    confirmed_wildlife_visit_count: 1,
+    wildlife_visit_count: 1,
+    distinct_taxa_count: 1,
+    distinct_species_count: 1,
+    last_activity_at: lastVisitAt,
+    first_activity_at: lastVisitAt,
+    taxa: [
+      {
+        label: "blue_jay",
+        display_name: "Blue Jay",
+        category: "bird",
+        is_species: true,
+        confirmed_visit_count: 1,
+        provisional_visit_count: 0,
+        total_visit_count: 1,
+        first_activity_at: lastVisitAt,
+        last_activity_at: lastVisitAt,
+        // A single reviewed Visit: the backend reports the honest raw
+        // count but withholds any "most active" claim -- see "Minimum
+        // support" in docs/place-activity-report-contract.md.
+        zone_activity: [{ zone_id: "zone-feeder-1", display_name: "Backyard feeder", reviewed_visit_count: 1 }],
+        hour_activity: [{ local_hour: 7, reviewed_visit_count: 1 }],
+        most_active_zone: null,
+        most_active_hour: null,
+      },
+    ],
+  });
+
+  await page.goto("/");
+  const speciesRow = page.locator(".today-report-species-list li").first();
+  await expect(speciesRow).toBeVisible();
+  await expect(speciesRow.getByText("Blue Jay")).toBeVisible();
+  await expect(speciesRow.getByText("Backyard feeder", { exact: false })).toHaveCount(0);
+  await expect(speciesRow.getByText("Most active", { exact: false })).toHaveCount(0);
+  await expect(speciesRow.getByText("Mostly recorded", { exact: false })).toHaveCount(0);
+});
+
 test("historical status badges read New/First confirmed/Regular honestly, and a plain species row stays unbadged", async ({
   page,
 }) => {

@@ -38,11 +38,15 @@ from mockingbird.analytics.historical_baseline import (
     usable_dates_from_daily_monitored_seconds,
 )
 from mockingbird.analytics.place_activity_report import (
+    MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN,
+    NO_ZONE_LABEL,
     CoverageSummary,
     TaxonFact,
+    TaxonPlacePattern,
     VisitFact,
     compute_coverage_summary,
     compute_place_activity_report,
+    compute_taxon_place_patterns,
 )
 from mockingbird.analytics.place_activity_report_adapter import (
     place_activity_report_response,
@@ -23298,7 +23302,7 @@ class ProductRepository:
             # is deliberately this report's own period_end_at, not "now" --
             # see `_historical_place_baseline_and_species_statuses`'s
             # docstring for why a past-period report must stay reproducible.
-            historical_baseline, species_historical_statuses, change_summary = (
+            historical_baseline, species_historical_statuses, change_summary, taxon_place_patterns = (
                 self._historical_place_baseline_and_species_statuses(
                     session,
                     stream_ids=stream_ids,
@@ -23353,6 +23357,7 @@ class ProductRepository:
             historical_baseline=historical_baseline,
             species_historical_statuses=species_historical_statuses,
             change_summary=change_summary,
+            taxon_place_patterns=taxon_place_patterns,
         )
 
     def _taxonomy_label_index(self, session: Session) -> dict[str, TaxonomyLabelModel]:
@@ -23615,20 +23620,28 @@ class ProductRepository:
         local_timezone: tzinfo,
         period_start_at: datetime,
         period_end_at: datetime,
-    ) -> tuple[HistoricalPlaceBaseline, dict[str, SpeciesHistoricalStatus], PlaceChangeSummary]:
+    ) -> tuple[
+        HistoricalPlaceBaseline,
+        dict[str, SpeciesHistoricalStatus],
+        PlaceChangeSummary,
+        dict[str, TaxonPlacePattern],
+    ]:
         """Compute the Place-wide `HistoricalPlaceBaseline`, every
-        all-time-confirmed taxon's `SpeciesHistoricalStatus`, and the Gate C
-        -- Meaningful Change Detection v1 `PlaceChangeSummary` (see
-        docs/meaningful-change-detection-contract.md), for `ProductRepository.
+        all-time-confirmed taxon's `SpeciesHistoricalStatus`, the Gate C --
+        Meaningful Change Detection v1 `PlaceChangeSummary` (see
+        docs/meaningful-change-detection-contract.md), and Gate C --
+        Per-Species Zone + Time Pattern Intelligence v1's per-taxon
+        `TaxonPlacePattern` (see "Per-species Zone and time patterns" in
+        docs/place-activity-report-contract.md), for `ProductRepository.
         place_activity_report`'s own Today integration and (independently
         anchored) `wildlife_journal_overview`/`wildlife_journal_history`'s
         Bird Log integration. Read-only, like every other method in this
         file's reporting family.
 
-        The change summary is computed from the exact same `usable_dates`/
-        `window_visits`/`taxa` this method already fetches for historical
-        baseline -- zero additional queries beyond what this method already
-        issued before Gate C existed.
+        The change summary and taxon place patterns are both computed from
+        the exact same `usable_dates`/`window_visits`/`taxa` this method
+        already fetches for historical baseline -- zero additional queries
+        beyond what this method already issued before Gate C existed.
 
         `window_end_at` anchors the trailing `HISTORICAL_BASELINE_WINDOW_
         DAYS`-day regularity window -- deliberately the caller's own report
@@ -23749,9 +23762,32 @@ class ProductRepository:
         # species has ever been confirmed at this Place.
         if stream_ids:
             window_start_at = window_end_at - timedelta(days=HISTORICAL_BASELINE_WINDOW_DAYS)
+            # Gate C -- Per-Species Zone + Time Pattern Intelligence v1 needs
+            # each Visit's own Zone alongside its taxon/timestamp, so this
+            # query now also joins ZoneModel -- deliberately on the Visit's
+            # own `zone_id` only, never coalesced with `EventModel.
+            # primary_zone_id` the way the canonical `_stream_visit_summary_
+            # from_models` resolver does for its own, different purpose. See
+            # `compute_taxon_place_patterns`'s docstring for why an
+            # Event-level fallback would risk lending a multi-subject
+            # Event's founding sibling's Zone to another sibling that was
+            # never actually inside it.
             window_rows = session.execute(
-                select(VisitModel.id, VisitModel.reviewed_label, EventModel.started_at)
+                select(
+                    VisitModel.id,
+                    VisitModel.reviewed_label,
+                    EventModel.started_at,
+                    ZoneModel.id,
+                    ZoneModel.name,
+                )
                 .join(EventModel, VisitModel.event_id == EventModel.id)
+                .outerjoin(
+                    ZoneModel,
+                    and_(
+                        ZoneModel.id == VisitModel.zone_id,
+                        ZoneModel.stream_id == EventModel.stream_id,
+                    ),
+                )
                 .where(
                     VisitModel.is_superseded.is_(False),
                     VisitModel.review_status == ReviewStatus.reviewed.value,
@@ -23761,15 +23797,15 @@ class ProductRepository:
                     EventModel.started_at < window_end_at,
                 )
             ).all()
-            for visit_id, reviewed_label, started_at in window_rows:
+            for visit_id, reviewed_label, started_at, zone_id, zone_name in window_rows:
                 taxon = resolve_any_taxon(reviewed_label)
                 if taxon is None:
                     continue
                 window_visits.append(
                     VisitFact(
                         visit_id=visit_id,
-                        zone_id=None,
-                        zone_name=None,
+                        zone_id=zone_id,
+                        zone_name=zone_name,
                         activity_started_at=_as_utc(started_at),
                         resolution="reviewed",
                         confirmed_taxon=taxon,
@@ -23794,7 +23830,15 @@ class ProductRepository:
             local_timezone=local_timezone,
             window_end_at=window_end_at,
         )
-        return baseline, {status.taxon.label: status for status in statuses}, change_summary
+        taxon_place_patterns = compute_taxon_place_patterns(
+            window_visits, local_timezone=local_timezone
+        )
+        return (
+            baseline,
+            {status.taxon.label: status for status in statuses},
+            change_summary,
+            taxon_place_patterns,
+        )
 
     def list_likely_species_overview(self, *, limit: int = 20) -> LikelySpeciesOverviewResponse:
         """Bird Log's provisional counterpart to `wildlife_journal_overview`
@@ -23891,7 +23935,7 @@ class ProductRepository:
             # this surface's own `baseline_maturity`/`is_regular` above are
             # unchanged and remain the source of truth for this response.
             taxonomy_index = self._taxonomy_label_index(session)
-            _historical_baseline, _species_historical_statuses, change_summary = (
+            _historical_baseline, _species_historical_statuses, change_summary, _taxon_place_patterns = (
                 self._historical_place_baseline_and_species_statuses(
                     session,
                     stream_ids=stream_ids,
@@ -24071,7 +24115,7 @@ class ProductRepository:
             # additive computation rather than a change to the historical-
             # baseline facts above.
             taxonomy_index = self._taxonomy_label_index(session)
-            _historical_baseline, _species_historical_statuses, change_summary = (
+            _historical_baseline, _species_historical_statuses, change_summary, _taxon_place_patterns = (
                 self._historical_place_baseline_and_species_statuses(
                     session,
                     stream_ids=stream_ids,
@@ -24115,6 +24159,21 @@ class ProductRepository:
             zone_breakdown = self._wildlife_journal_breakdown(ordered, grouping="zone")[:50]
             hour_counts = Counter(
                 record["observed_at"].astimezone(local_timezone).hour for record in ordered
+            )
+            # Gate C -- Per-Species Zone + Time Pattern Intelligence v1: the
+            # raw breakdown/hour-count facts above stay ungated (an honest
+            # count is never overconfident), but "busiest"/"peak" are
+            # superlative claims -- reuse the exact same reviewed-Visit floor
+            # `compute_taxon_place_patterns` applies to its own `most_active_
+            # zone`/`most_active_hour`, so Today and Bird Log never disagree
+            # on how much reviewed history earns a "most active" statement.
+            # "No Zone" is bucketed in zone_breakdown (see `_wildlife_journal_
+            # breakdown`) but, like `PlaceActivityReport.busiest_zone`, can
+            # never itself be crowned busiest.
+            has_pattern_support = len(ordered) >= MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN
+            busiest_zone_entry = next(
+                (entry for entry in zone_breakdown if entry.id != self._NO_ZONE_BREAKDOWN_ID),
+                None,
             )
             tagged_visit_ids = set()
             if payload.tag_id is not None and records:
@@ -24298,10 +24357,10 @@ class ProductRepository:
                 ),
                 representative=self._wildlife_journal_representative(ordered),
                 busiest_stream=stream_breakdown[0] if stream_breakdown else None,
-                busiest_zone=zone_breakdown[0] if zone_breakdown else None,
+                busiest_zone=busiest_zone_entry if has_pattern_support else None,
                 peak_activity_hour=(
                     max(hour_counts, key=lambda hour: (hour_counts[hour], -hour))
-                    if hour_counts
+                    if hour_counts and has_pattern_support
                     else None
                 ),
                 stream_breakdown=stream_breakdown,
@@ -24403,6 +24462,18 @@ class ProductRepository:
             primary_evidence=summary.primary_evidence,
         )
 
+    # Gate C -- Per-Species Zone + Time Pattern Intelligence v1: a Visit
+    # outside every configured Zone must not be silently dropped from
+    # `zone_breakdown` (see "Partial-Zone semantics" in
+    # docs/place-activity-report-contract.md) -- it is bucketed under the
+    # exact same "No Zone" wording `place_activity_report.py` already
+    # established (`NO_ZONE_LABEL`), so Today and Bird Log describe the
+    # same concept with the same words. This sentinel id can never collide
+    # with a real `ZoneModel.id` (a normal id-prefixed identifier), and is
+    # never shown to a user -- `WildlifeJournalBreakdown.id` only ever
+    # backs a React list key on the frontend.
+    _NO_ZONE_BREAKDOWN_ID = "no-zone"
+
     @staticmethod
     def _wildlife_journal_breakdown(
         records: list[dict[str, Any]],
@@ -24414,9 +24485,9 @@ class ProductRepository:
             summary: StreamVisitSummary = record["summary"]
             if grouping == "stream":
                 key, name = summary.stream_id, record["stream_name"]
+            elif summary.zone_id is None:
+                key, name = ProductRepository._NO_ZONE_BREAKDOWN_ID, NO_ZONE_LABEL
             else:
-                if summary.zone_id is None:
-                    continue
                 key, name = summary.zone_id, summary.zone_name or "Current Zone unavailable"
             existing = grouped.get(key)
             grouped[key] = (name, (existing[1] if existing is not None else 0) + 1)

@@ -25,9 +25,12 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import event, func, select
 
+from mockingbird.analytics.place_activity_report import MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN
 from mockingbird.api.main import app, configure_repository
 from mockingbird.api.schemas import (
     PlaceActivityReportRequest,
+    PlaceActivityReportTaxonHourActivity,
+    PlaceActivityReportTaxonZoneActivity,
     ReviewCorrectionCreate,
     SpeciesSuggestionCreateRequest,
 )
@@ -47,6 +50,9 @@ ARCHIVED_SOURCE_ID = "source-place-report-archived"
 STREAM_A = "stream-place-report-a"
 STREAM_B = "stream-place-report-b"
 ARCHIVED_STREAM = "stream-place-report-archived"
+# Deliberately never given any ZoneModel row -- see "Critical invariant:
+# Zones are optional" in docs/place-activity-report-contract.md.
+STREAM_NO_ZONES = "stream-place-report-no-zones"
 ZONE_FEEDER = "zone-place-report-feeder"
 ZONE_YARD_A = "zone-place-report-yard-a"
 ZONE_YARD_B = "zone-place-report-yard-b"
@@ -109,6 +115,13 @@ def repository(tmp_path: Path) -> ProductRepository:
                         description="Excluded-from-Place fixture stream.",
                         is_live=False,
                     ),
+                    StreamModel(
+                        id=STREAM_NO_ZONES,
+                        source_id=SOURCE_ID,
+                        name="Yard stream with no Zones configured",
+                        description="Critical-invariant fixture: never given a Zone.",
+                        is_live=False,
+                    ),
                 ]
             )
             session.add_all(
@@ -164,31 +177,48 @@ def _add_visit(
     stream_id: str = STREAM_A,
     zone_id: str | None = None,
     duration_seconds: int = 20,
+    event_id: str | None = None,
+    event_primary_zone_id: str | None = None,
 ) -> None:
     """Create one bare needs_review Visit -- the real creation state.
     Confirmed/provisional truth is layered on afterward through the real
     `create_review_label`/`create_species_suggestion` write paths, never by
-    hand-setting `VisitModel.reviewed_label` -- see the module docstring."""
+    hand-setting `VisitModel.reviewed_label` -- see the module docstring.
 
-    event_id = f"event-{visit_id}"
+    `event_id` defaults to a fresh, per-Visit Event (this fixture's
+    original, one-Visit-per-Event shape). Passing the *same* `event_id` for
+    two different `visit_id`s simulates two sibling Visits sharing one
+    multi-subject Event (Multi-Subject Visit Assembly Phase 1/2, see
+    docs/multi-subject-visit-assembly-review-v1.md) without exercising the
+    full admission pipeline: only this helper's own Event-row creation is
+    skipped on the second call (`event_primary_zone_id` sets the founding
+    sibling's Event-level Zone) -- each Visit's own `zone_id` is still
+    stamped independently, matching the real per-sibling admission behavior
+    this fixture stands in for.
+    """
+
+    resolved_event_id = event_id or f"event-{visit_id}"
     with repository.session_factory() as session:
         with session.begin():
-            session.add(
-                EventModel(
-                    id=event_id,
-                    stream_id=stream_id,
-                    title=f"Place report fixture {visit_id}",
-                    event_type="manual_media_import",
-                    started_at=at,
-                    ended_at=at + timedelta(seconds=duration_seconds),
-                    primary_zone_id=zone_id,
-                    review_status="needs_review",
+            if session.get(EventModel, resolved_event_id) is None:
+                session.add(
+                    EventModel(
+                        id=resolved_event_id,
+                        stream_id=stream_id,
+                        title=f"Place report fixture {visit_id}",
+                        event_type="manual_media_import",
+                        started_at=at,
+                        ended_at=at + timedelta(seconds=duration_seconds),
+                        primary_zone_id=(
+                            event_primary_zone_id if event_primary_zone_id is not None else zone_id
+                        ),
+                        review_status="needs_review",
+                    )
                 )
-            )
             session.add(
                 VisitModel(
                     id=visit_id,
-                    event_id=event_id,
+                    event_id=resolved_event_id,
                     subject_label="unknown_bird",
                     species_guess=None,
                     confidence=None,
@@ -763,9 +793,23 @@ def test_api_serialization_contract_exposes_only_documented_fields(
         "last_activity_at",
         "historical_status",
         "change_status",
+        "zone_activity",
+        "hour_activity",
+        "most_active_zone",
+        "most_active_hour",
     }
     assert taxon["label"] == "northern_cardinal"
     assert taxon["category"] == "bird"
+    # Gate C -- Per-Species Zone + Time Pattern Intelligence v1: a single
+    # reviewed Visit is honestly reported as a raw fact (one Feeder Visit)
+    # but is below MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN, so no
+    # "most active" claim is manufactured from it -- see "Minimum support"
+    # in docs/place-activity-report-contract.md.
+    assert taxon["zone_activity"] == [
+        {"zone_id": ZONE_FEEDER, "display_name": "Feeder", "reviewed_visit_count": 1}
+    ]
+    assert taxon["most_active_zone"] is None
+    assert taxon["most_active_hour"] is None
     # A single confirmation with no accumulated monitoring history at all
     # (this fixture never seeds MonitoringExposureIntervalModel rows before
     # PERIOD_START) is honestly its own all-time-first record, under an
@@ -1420,3 +1464,137 @@ def test_observation_engine_coverage_present_without_any_legacy_supervisor_state
 
     assert report.coverage.coverage_ratio == pytest.approx(1 / 24)
     assert repository.list_enabled_monitoring_candidates(limit=10) == []
+
+
+# Gate C -- Per-Species Zone + Time Pattern Intelligence v1 ------------------
+
+
+def test_reviewed_visit_in_a_real_zone_produces_a_taxon_zone_pattern(
+    repository: ProductRepository,
+) -> None:
+    _add_visit(repository, visit_id="feeder-cardinal", at=PERIOD_START + timedelta(hours=8), zone_id=ZONE_FEEDER)
+    _confirm(repository, visit_id="feeder-cardinal", label="northern_cardinal")
+
+    report = _report(repository)
+
+    [taxon] = report.taxa
+    assert taxon.label == "northern_cardinal"
+    assert taxon.zone_activity == [
+        PlaceActivityReportTaxonZoneActivity(zone_id=ZONE_FEEDER, display_name="Feeder", reviewed_visit_count=1)
+    ]
+
+
+def test_provisional_suggestion_alone_never_establishes_a_named_zone_pattern(
+    repository: ProductRepository,
+) -> None:
+    """Matches `historical_status`/`change_status`'s identical truth
+    contract -- see docs/place-activity-report-contract.md."""
+
+    _add_visit(repository, visit_id="suggested-only", at=PERIOD_START + timedelta(hours=8), zone_id=ZONE_FEEDER)
+    _suggest(repository, visit_id="suggested-only", stream_id=STREAM_A, label="house_finch")
+
+    report = _report(repository)
+
+    [taxon] = report.taxa
+    assert taxon.label == "house_finch"
+    assert taxon.zone_activity == []
+    assert taxon.most_active_zone is None
+    assert taxon.most_active_hour is None
+
+
+def test_corrected_review_moves_the_pattern_to_the_corrected_taxon(
+    repository: ProductRepository,
+) -> None:
+    """Human correction must automatically move the derived Zone/time
+    pattern -- never leave a stale pattern under the original, now-wrong
+    taxon. See "Truth semantics" in docs/place-activity-report-contract.md."""
+
+    _add_visit(repository, visit_id="mislabeled", at=PERIOD_START + timedelta(hours=8), zone_id=ZONE_FEEDER)
+    _confirm(repository, visit_id="mislabeled", label="house_finch")
+
+    before = {taxon.label: taxon for taxon in _report(repository).taxa}
+    assert before["house_finch"].zone_activity[0].zone_id == ZONE_FEEDER
+    assert "northern_cardinal" not in before
+
+    _confirm(repository, visit_id="mislabeled", label="northern_cardinal")  # a corrected review
+
+    after = {taxon.label: taxon for taxon in _report(repository).taxa}
+    assert "house_finch" not in after
+    assert after["northern_cardinal"].zone_activity[0].zone_id == ZONE_FEEDER
+
+
+def test_stream_with_no_zones_configured_still_reports_and_computes_time_pattern(
+    repository: ProductRepository,
+) -> None:
+    """Zones are optional enrichment, never a monitoring prerequisite. A
+    Stream with zero ZoneModel rows anywhere in the system must still
+    produce a full, successful report, and a taxon's time-of-day pattern
+    must still compute even though its Zone pattern honestly has nothing
+    to report. See "Critical invariant: Zones are optional" in
+    docs/place-activity-report-contract.md."""
+
+    for i in range(MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN):
+        visit_id = f"no-zone-stream-cardinal-{i}"
+        _add_visit(
+            repository,
+            visit_id=visit_id,
+            at=PERIOD_START.replace(hour=7, minute=i * 5),
+            stream_id=STREAM_NO_ZONES,
+        )
+        _confirm(repository, visit_id=visit_id, label="northern_cardinal")
+
+    report = _report(repository, local_timezone=UTC)
+
+    [taxon] = report.taxa
+    assert taxon.label == "northern_cardinal"
+    assert taxon.zone_activity == [
+        PlaceActivityReportTaxonZoneActivity(zone_id=None, display_name="No Zone", reviewed_visit_count=5)
+    ]
+    assert taxon.most_active_zone is None  # "No Zone" is never crowned busiest
+    assert taxon.most_active_hour == PlaceActivityReportTaxonHourActivity(local_hour=7, reviewed_visit_count=5)
+
+
+def test_multi_subject_event_keeps_each_siblings_zone_pattern_independent(
+    repository: ProductRepository,
+) -> None:
+    """The mandatory multi-subject scenario this milestone names explicitly
+    ("Multi-subject Zone correctness"): one Event, four simultaneous
+    sibling Visits -- a Cardinal in the Feeder Zone (the Event-founding
+    sibling), a Finch in the Yard Zone, a Blue Jay with no Zone match of
+    its own, and an unresolved bird. No sibling may borrow another's Zone
+    merely because they share an Event -- especially the Blue Jay, whose
+    own `zone_id` is `None` while the Event's `primary_zone_id` (set by the
+    founding Cardinal) is the Feeder: reading that Event-level fallback
+    instead of the Visit's own Zone would silently relabel the Blue Jay as
+    a Feeder bird. See `compute_taxon_place_patterns`'s own docstring for
+    why this is deliberately never done."""
+
+    shared_event = "event-shared-multi-subject"
+    at = PERIOD_START + timedelta(hours=8)
+    _add_visit(
+        repository, visit_id="cardinal-sibling", at=at, zone_id=ZONE_FEEDER,
+        event_id=shared_event, event_primary_zone_id=ZONE_FEEDER,
+    )
+    _add_visit(repository, visit_id="finch-sibling", at=at, zone_id=ZONE_YARD_A, event_id=shared_event)
+    _add_visit(repository, visit_id="blue-jay-sibling", at=at, zone_id=None, event_id=shared_event)
+    _add_visit(repository, visit_id="unresolved-sibling", at=at, zone_id=None, event_id=shared_event)
+    _confirm(repository, visit_id="cardinal-sibling", label="northern_cardinal")
+    _confirm(repository, visit_id="finch-sibling", label="house_finch")
+    _confirm(repository, visit_id="blue-jay-sibling", label="blue_jay")
+    _confirm(repository, visit_id="unresolved-sibling", label="unknown_bird")
+
+    report = _report(repository)
+
+    by_label = {taxon.label: taxon for taxon in report.taxa}
+    # "unknown_bird" is real confirmed wildlife but never fabricates a named
+    # taxon entry -- "Unresolved: generic activity only," per this
+    # milestone's own worked example.
+    assert set(by_label) == {"northern_cardinal", "house_finch", "blue_jay"}
+
+    assert {entry.zone_id for entry in by_label["northern_cardinal"].zone_activity} == {ZONE_FEEDER}
+    assert {entry.zone_id for entry in by_label["house_finch"].zone_activity} == {ZONE_YARD_A}
+    # The critical case: a sibling with no Zone of its own reads "No Zone,"
+    # never the Event-founding Cardinal's Feeder.
+    blue_jay_zones = by_label["blue_jay"].zone_activity
+    assert {entry.zone_id for entry in blue_jay_zones} == {None}
+    assert blue_jay_zones[0].display_name == "No Zone"

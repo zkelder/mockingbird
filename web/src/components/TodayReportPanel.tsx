@@ -129,6 +129,33 @@ function overallChangeMessage(status: PlaceActivityReportResponse["overall_chang
   }
 }
 
+// Gate C -- Per-Species Zone + Time Pattern Intelligence v1: one concise,
+// observational secondary fact about where/when this taxon is usually
+// recorded, from the same bounded historical window `historical_status`/
+// `change_status` above already use -- never a behavioral or ecological
+// claim ("prefers the feeder," "feeds at 7 AM"), only what MockingBird's
+// own reviewed history shows. `null` below this milestone's minimum-support
+// floor (see "Minimum support" in docs/place-activity-report-contract.md)
+// -- the row simply omits this line rather than manufacturing a pattern
+// from too little evidence. With no Zones configured, `most_active_zone`
+// is always null for every species and this naturally degrades to
+// time-only wording -- no separate "no Zones" handling needed here (see
+// "Critical invariant: Zones are optional").
+function speciesPlacePattern(taxon: PlaceActivityReportTaxonEntry): string | null {
+  const zone = taxon.most_active_zone;
+  const hour = taxon.most_active_hour;
+  if (zone && hour) {
+    return `${zone.display_name} · ${formatHourRange(hour.local_hour)}`;
+  }
+  if (zone) {
+    return `Mostly recorded at ${zone.display_name}`;
+  }
+  if (hour) {
+    return `Most active ${formatHourRange(hour.local_hour)}`;
+  }
+  return null;
+}
+
 // The single busiest hour; the earliest hour wins a tie so the result is
 // deterministic across otherwise-equal buckets.
 function busiestHour(
@@ -303,11 +330,15 @@ export function TodayReportPanel({
                     {topTaxa.map((taxon) => {
                       const historicalBadge = historicalStatusBadge(taxon);
                       const changeBadge = changeStatusBadge(taxon.change_status);
+                      const placePattern = speciesPlacePattern(taxon);
                       return (
                         <li key={taxon.label}>
                           <div className="today-report-species-name">
                             <span>{taxon.display_name}</span>
                             <span className="today-report-species-meta">{speciesTimeRange(taxon)}</span>
+                            {placePattern ? (
+                              <span className="today-report-species-meta">{placePattern}</span>
+                            ) : null}
                             {historicalBadge ? (
                               <StatusPill label={historicalBadge.label} tone={historicalBadge.tone} />
                             ) : null}

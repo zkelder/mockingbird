@@ -4616,6 +4616,23 @@ class PlaceActivityReportTaxonChangeStatus(BaseModel):
     ]
 
 
+class PlaceActivityReportTaxonZoneActivity(BaseModel):
+    """One Zone's share of a single taxon's *reviewed* Visits (Gate C --
+    Per-Species Zone + Time Pattern Intelligence v1). `zone_id is None` is
+    the "No Zone" bucket -- it can appear here but is never `most_active_
+    zone` on `PlaceActivityReportTaxonEntry`, matching `PlaceActivityReport
+    ZoneActivity`'s identical rule for the report-wide busiest_zone."""
+
+    zone_id: str | None = None
+    display_name: str
+    reviewed_visit_count: int = Field(ge=0)
+
+
+class PlaceActivityReportTaxonHourActivity(BaseModel):
+    local_hour: int = Field(ge=0, le=23)
+    reviewed_visit_count: int = Field(ge=0)
+
+
 class PlaceActivityReportTaxonEntry(BaseModel):
     """One represented taxon and its Visit-count backing. `confirmed_visit_
     count`/`provisional_visit_count` are always kept separate -- see "Report
@@ -4639,6 +4656,21 @@ class PlaceActivityReportTaxonEntry(BaseModel):
     # `None` under the identical condition as `historical_status` above.
     # See docs/meaningful-change-detection-contract.md.
     change_status: PlaceActivityReportTaxonChangeStatus | None = None
+    # Gate C -- Per-Species Zone + Time Pattern Intelligence v1: where and
+    # when this taxon has been reviewed at this Place, computed over the
+    # same bounded trailing historical window as `historical_status`/
+    # `change_status` above (not just today's period) -- see "Per-species
+    # Zone and time patterns" in docs/place-activity-report-contract.md.
+    # Always `[]`/`[]`/`None`/`None` under the identical truth-contract
+    # condition as `historical_status` (never populated from a provisional
+    # SpeciesSuggestion alone). `zone_activity`/`hour_activity` list only
+    # buckets that occurred (never zero-padded); `most_active_zone`/
+    # `most_active_hour` are `None` below this milestone's minimum-support
+    # floor, even when `zone_activity`/`hour_activity` are non-empty.
+    zone_activity: list[PlaceActivityReportTaxonZoneActivity] = Field(default_factory=list)
+    hour_activity: list[PlaceActivityReportTaxonHourActivity] = Field(default_factory=list)
+    most_active_zone: PlaceActivityReportTaxonZoneActivity | None = None
+    most_active_hour: PlaceActivityReportTaxonHourActivity | None = None
 
 
 class PlaceActivityReportZoneActivity(BaseModel):

@@ -19,11 +19,15 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from mockingbird.analytics.place_activity_report import (
+    MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN,
     TaxonFact,
+    TaxonHourActivityEntry,
+    TaxonZoneActivityEntry,
     VisitFact,
     compute_coverage_summary,
     compute_place_activity_report,
     compute_report_maturity,
+    compute_taxon_place_patterns,
 )
 from mockingbird.analytics.zone_insights import TimeInterval
 
@@ -837,3 +841,277 @@ def test_report_period_spanning_the_spring_forward_transition() -> None:
     assert by_hour[6] == 1
     # just_after = SPRING_FORWARD_INSTANT + 30m = 2026-03-08T07:30:00Z = 03:30 EDT.
     assert by_hour[3] == 1
+
+
+# Gate C -- Per-Species Zone + Time Pattern Intelligence v1 ------------------
+#
+# `compute_taxon_place_patterns` is a standalone pure function, deliberately
+# separate from `compute_place_activity_report`'s own per-taxon
+# accumulation above: a caller passes whichever bounded Visit set it wants
+# a pattern computed over (see the function's own docstring for why). These
+# tests call it directly with hand-built VisitFacts, matching this file's
+# existing pure-computation style.
+
+
+def test_one_reviewed_visit_in_one_zone_is_counted() -> None:
+    pattern = compute_taxon_place_patterns(
+        [_visit("v1", at=PERIOD_START, confirmed=NORTHERN_CARDINAL, zone_id="zone-feeder", zone_name="Feeder")]
+    )["northern_cardinal"]
+
+    assert pattern.reviewed_visit_count == 1
+    assert pattern.zone_activity == [
+        TaxonZoneActivityEntry(zone_id="zone-feeder", zone_name="Feeder", reviewed_visit_count=1)
+    ]
+
+
+def test_provisional_suggestion_never_creates_a_named_zone_pattern() -> None:
+    """A SpeciesSuggestion-only Visit must never establish a Cardinal Zone
+    pattern -- named-species patterns are reviewed truth only. See "Truth
+    semantics" in docs/place-activity-report-contract.md."""
+
+    patterns = compute_taxon_place_patterns(
+        [
+            _visit(
+                "v1",
+                at=PERIOD_START,
+                resolution="needs_review",
+                provisional=NORTHERN_CARDINAL,
+                zone_id="zone-feeder",
+                zone_name="Feeder",
+            )
+        ]
+    )
+
+    assert "northern_cardinal" not in patterns
+
+
+def test_unresolved_wildlife_never_creates_a_named_species_pattern() -> None:
+    """A confirmed "unknown_bird"/"unknown_animal" abstention is real
+    wildlife activity but has no species to attach a per-taxon pattern to."""
+
+    patterns = compute_taxon_place_patterns(
+        [_visit("v1", at=PERIOD_START, confirmed=UNKNOWN_ANIMAL, zone_id="zone-feeder", zone_name="Feeder")]
+    )
+
+    assert patterns == {}
+
+
+def test_confirmed_truth_overrides_a_stale_provisional_suggestion_for_patterns() -> None:
+    """The same Visit carries both a confirmed taxon and an independent,
+    stale provisional suggestion for a *different* taxon: only the
+    confirmed taxon's pattern is established, mirroring `_classify`'s own
+    truth-precedence rule."""
+
+    patterns = compute_taxon_place_patterns(
+        [
+            _visit(
+                "v1",
+                at=PERIOD_START,
+                confirmed=NORTHERN_CARDINAL,
+                provisional=HOUSE_FINCH,
+                zone_id="zone-feeder",
+                zone_name="Feeder",
+            )
+        ]
+    )
+
+    assert set(patterns) == {"northern_cardinal"}
+
+
+def test_several_visits_in_one_zone_aggregate_correctly() -> None:
+    visits = [
+        _visit(
+            f"v{i}",
+            at=PERIOD_START + timedelta(hours=i),
+            confirmed=NORTHERN_CARDINAL,
+            zone_id="zone-feeder",
+            zone_name="Feeder",
+        )
+        for i in range(4)
+    ]
+
+    pattern = compute_taxon_place_patterns(visits)["northern_cardinal"]
+
+    assert pattern.reviewed_visit_count == 4
+    assert pattern.zone_activity == [
+        TaxonZoneActivityEntry(zone_id="zone-feeder", zone_name="Feeder", reviewed_visit_count=4)
+    ]
+
+
+def test_same_species_across_several_zones_aggregates_independently() -> None:
+    visits = [
+        _visit("feeder-1", at=PERIOD_START, confirmed=NORTHERN_CARDINAL, zone_id="zone-feeder", zone_name="Feeder"),
+        _visit(
+            "feeder-2",
+            at=PERIOD_START + timedelta(hours=1),
+            confirmed=NORTHERN_CARDINAL,
+            zone_id="zone-feeder",
+            zone_name="Feeder",
+        ),
+        _visit(
+            "ground-1",
+            at=PERIOD_START + timedelta(hours=2),
+            confirmed=NORTHERN_CARDINAL,
+            zone_id="zone-ground",
+            zone_name="Ground",
+        ),
+    ]
+
+    pattern = compute_taxon_place_patterns(visits)["northern_cardinal"]
+
+    assert pattern.reviewed_visit_count == 3
+    by_zone = {entry.zone_id: entry.reviewed_visit_count for entry in pattern.zone_activity}
+    assert by_zone == {"zone-feeder": 2, "zone-ground": 1}
+
+
+def test_visit_outside_every_zone_is_bucketed_not_dropped() -> None:
+    """A Visit with no Zone must not be silently discarded -- see
+    "Partial-Zone semantics" in docs/place-activity-report-contract.md."""
+
+    pattern = compute_taxon_place_patterns(
+        [_visit("v1", at=PERIOD_START, confirmed=NORTHERN_CARDINAL)]  # no zone_id/zone_name
+    )["northern_cardinal"]
+
+    assert pattern.reviewed_visit_count == 1
+    [entry] = pattern.zone_activity
+    assert entry.zone_id is None
+    assert entry.zone_name == "No Zone"
+
+
+def test_below_support_floor_reports_counts_without_a_most_active_claim() -> None:
+    """One (or a few) reviewed Visit(s) is an honest raw count, never an
+    overconfident "most active" pattern -- see "Minimum support" in
+    docs/place-activity-report-contract.md."""
+
+    visits = [
+        _visit(
+            f"v{i}",
+            at=PERIOD_START + timedelta(hours=i),
+            confirmed=NORTHERN_CARDINAL,
+            zone_id="zone-feeder",
+            zone_name="Feeder",
+        )
+        for i in range(MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN - 1)
+    ]
+
+    pattern = compute_taxon_place_patterns(visits)["northern_cardinal"]
+
+    assert pattern.reviewed_visit_count == MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN - 1
+    assert pattern.zone_activity  # the raw count is still honestly reported
+    assert pattern.most_active_zone is None
+    assert pattern.most_active_hour is None
+
+
+def test_at_support_floor_a_clear_zone_pattern_surfaces() -> None:
+    visits = [
+        _visit(
+            f"v{i}",
+            at=PERIOD_START + timedelta(hours=i),
+            confirmed=NORTHERN_CARDINAL,
+            zone_id="zone-feeder",
+            zone_name="Feeder",
+        )
+        for i in range(MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN)
+    ]
+
+    pattern = compute_taxon_place_patterns(visits)["northern_cardinal"]
+
+    assert pattern.most_active_zone == TaxonZoneActivityEntry(
+        zone_id="zone-feeder",
+        zone_name="Feeder",
+        reviewed_visit_count=MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN,
+    )
+
+
+def test_most_active_zone_never_crowns_the_no_zone_bucket() -> None:
+    visits = [
+        _visit(f"no-zone-{i}", at=PERIOD_START + timedelta(hours=i), confirmed=NORTHERN_CARDINAL)
+        for i in range(10)
+    ] + [
+        _visit(
+            "one-real-zone",
+            at=PERIOD_START + timedelta(hours=11),
+            confirmed=NORTHERN_CARDINAL,
+            zone_id="zone-feeder",
+            zone_name="Feeder",
+        )
+    ]
+
+    pattern = compute_taxon_place_patterns(visits)["northern_cardinal"]
+
+    assert pattern.most_active_zone is not None
+    assert pattern.most_active_zone.zone_id == "zone-feeder"
+
+
+def test_clear_repeated_hour_pattern_surfaces_once_supported() -> None:
+    visits = [
+        _visit(f"morning-{i}", at=PERIOD_START.replace(hour=7) + timedelta(days=i), confirmed=NORTHERN_CARDINAL)
+        for i in range(MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN)
+    ] + [_visit("afternoon", at=PERIOD_START.replace(hour=15), confirmed=NORTHERN_CARDINAL)]
+
+    pattern = compute_taxon_place_patterns(visits)["northern_cardinal"]
+
+    assert pattern.most_active_hour == TaxonHourActivityEntry(
+        local_hour=7, reviewed_visit_count=MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN
+    )
+
+
+def test_multiple_taxa_stay_independent() -> None:
+    visits = [
+        _visit("cardinal-1", at=PERIOD_START, confirmed=NORTHERN_CARDINAL, zone_id="zone-feeder", zone_name="Feeder"),
+        _visit(
+            "finch-1",
+            at=PERIOD_START + timedelta(hours=1),
+            confirmed=HOUSE_FINCH,
+            zone_id="zone-ground",
+            zone_name="Ground",
+        ),
+    ]
+
+    patterns = compute_taxon_place_patterns(visits)
+
+    assert set(patterns) == {"northern_cardinal", "house_finch"}
+    assert patterns["northern_cardinal"].zone_activity[0].zone_id == "zone-feeder"
+    assert patterns["house_finch"].zone_activity[0].zone_id == "zone-ground"
+
+
+def test_result_is_independent_of_input_ordering() -> None:
+    visits = [
+        _visit("a", at=PERIOD_START, confirmed=NORTHERN_CARDINAL, zone_id="zone-feeder", zone_name="Feeder"),
+        _visit(
+            "b", at=PERIOD_START + timedelta(hours=1), confirmed=NORTHERN_CARDINAL, zone_id="zone-ground", zone_name="Ground"
+        ),
+        _visit("c", at=PERIOD_START + timedelta(hours=2), confirmed=HOUSE_FINCH, zone_id="zone-feeder", zone_name="Feeder"),
+    ]
+
+    forward = compute_taxon_place_patterns(visits)
+    backward = compute_taxon_place_patterns(list(reversed(visits)))
+    shuffled = compute_taxon_place_patterns([visits[1], visits[2], visits[0]])
+
+    assert forward == backward == shuffled
+
+
+def test_dst_spring_forward_hour_bucketing_for_taxon_patterns() -> None:
+    just_after = SPRING_FORWARD_INSTANT + timedelta(minutes=30)  # 2026-03-08T07:30:00Z = 03:30 EDT
+
+    pattern = compute_taxon_place_patterns(
+        [_visit("v1", at=just_after, confirmed=NORTHERN_CARDINAL)],
+        local_timezone=NY,
+    )["northern_cardinal"]
+
+    assert pattern.hour_activity == [TaxonHourActivityEntry(local_hour=3, reviewed_visit_count=1)]
+
+
+def test_dst_fall_back_repeated_local_hour_both_count_together() -> None:
+    first_1am = FALL_BACK_INSTANT - timedelta(minutes=30)  # 01:30 EDT, before the fall-back
+    second_1am = FALL_BACK_INSTANT + timedelta(minutes=30)  # 01:30 EST, the repeated local hour
+
+    pattern = compute_taxon_place_patterns(
+        [
+            _visit("first", at=first_1am, confirmed=NORTHERN_CARDINAL),
+            _visit("second", at=second_1am, confirmed=NORTHERN_CARDINAL),
+        ],
+        local_timezone=NY,
+    )["northern_cardinal"]
+
+    assert pattern.hour_activity == [TaxonHourActivityEntry(local_hour=1, reviewed_visit_count=2)]
