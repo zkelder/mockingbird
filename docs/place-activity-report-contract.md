@@ -318,6 +318,26 @@ very next report with no backfill step.
   pure function over an arbitrary bounded `VisitFact` list) so a future
   digest/report surface can reuse it directly.
 
+## Representative species evidence
+
+Gate C -- Representative Species Evidence v1 (see
+[representative-species-evidence-contract.md](representative-species-evidence-contract.md)
+for the full contract) answers the "per-species representative evidence
+image" gap the Daily Place Report update named as this reporting family's
+next bounded slice. Each `PlaceActivityReportTaxonEntry` gains an additive
+`representative_evidence` field: the single best already-persisted evidence
+image from that taxon's own confirmed Visits *in this report's own period*
+-- never a historical fallback, never a sibling Visit's evidence, never
+built from a provisional `SpeciesSuggestion` alone, and `null` whenever no
+confirmed Visit this period has safe, present evidence (a completely valid,
+non-error report state). Selection is a pure, deterministic ranking
+(`mockingbird.analytics.representative_evidence.select_representative_
+evidence`) reused unmodified by Bird Log's own per-label representative
+(`wildlife_journal_overview`), so the two surfaces never disagree about
+which image represents a species. No schema change, no additional queries
+beyond what this report already issues -- gathered in the same per-Visit
+pass that already resolves `VisitFact`s.
+
 ## Monitoring coverage
 
 `compute_coverage_summary` is a real, tested computation, not a stub: it

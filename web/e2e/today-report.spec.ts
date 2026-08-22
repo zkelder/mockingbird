@@ -1013,3 +1013,174 @@ test("Bird Log is reachable from the persistent nav without enabling Developer M
   await expect(page).toHaveURL(/\/bird-log$/);
   await expect(page.getByRole("heading", { name: "Wildlife Journal" })).toBeVisible();
 });
+
+
+// Gate C -- Representative Species Evidence v1 (see docs/representative-
+// species-evidence-contract.md). `TodayReportPanel` never selects an image
+// itself -- it only renders whatever `taxa[].representative_evidence` the
+// backend already computed -- so these scenarios exercise the frontend
+// presentation contract with synthetic, schema-shaped fixtures, the same
+// house convention this whole file already uses. Backend selection/truth
+// correctness (provisional-suggestion exclusion, multi-subject isolation,
+// missing-media handling, corrected-review eligibility, no-Zone
+// selection) is covered by tests/test_place_activity_report_repository.py.
+
+const TINY_JPEG_BASE64 =
+  "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAIBAQEBAQIBAQECAgICAgQDAgICAgUEBAMEBgUGBgYFBgYGBwkIBgcJBwYGCAsICQoKCgoKBggLDAsKDAkKCgr/2wBDAQICAgICAgUDAwUKBwYHCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgr/wAARCAAIAAgDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDyuiiivxM/ns//2Q==";
+
+async function routeMediaPreview(page: Page, mediaAssetId: string) {
+  await page.route(`**/api/media/${mediaAssetId}/preview`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "image/jpeg",
+      body: Buffer.from(TINY_JPEG_BASE64, "base64"),
+    }),
+  );
+}
+
+function representativeEvidence(visitId: string, mediaAssetId: string, capturedAt: string) {
+  return {
+    visit_id: visitId,
+    evidence: {
+      media_asset_id: mediaAssetId,
+      preview_url: `/api/media/${mediaAssetId}/preview`,
+      captured_at: capturedAt,
+      relative_position: 0,
+      frame_sequence: 0,
+      is_primary: true,
+      content_type: "image/jpeg",
+      width: 1920,
+      height: 1080,
+      evidence_role: "identification",
+      normalized_crop_box: null,
+      normalized_track_box: null,
+      resolution_provenance: null,
+    },
+  };
+}
+
+test("Today shows a representative image only for species that actually have one, each row its own, never a broken placeholder", async ({
+  page,
+}) => {
+  await completeSetup(page);
+  const lastVisitAt = new Date().toISOString();
+  await routeMediaPreview(page, "media-cardinal-today");
+  await routeMediaPreview(page, "media-finch-today");
+  // Deliberately never routed -- the real backend 404s for an unknown id,
+  // proving the frontend degrades gracefully rather than showing a broken
+  // image icon.
+  const brokenMediaAssetId = "media-does-not-exist";
+
+  await mockPlaceActivityReport(page, {
+    total_visit_count: 12,
+    confirmed_wildlife_visit_count: 12,
+    wildlife_visit_count: 12,
+    distinct_taxa_count: 4,
+    distinct_species_count: 4,
+    last_activity_at: lastVisitAt,
+    first_activity_at: lastVisitAt,
+    taxa: [
+      {
+        label: "northern_cardinal",
+        display_name: "Northern Cardinal",
+        category: "bird",
+        is_species: true,
+        confirmed_visit_count: 6,
+        provisional_visit_count: 0,
+        total_visit_count: 6,
+        first_activity_at: lastVisitAt,
+        last_activity_at: lastVisitAt,
+        representative_evidence: representativeEvidence("visit-cardinal-today", "media-cardinal-today", lastVisitAt),
+      },
+      {
+        // A taxon with no confirmed Visit this period that has safe,
+        // present evidence -- a completely normal state, never an error.
+        label: "carolina_wren",
+        display_name: "Carolina Wren",
+        category: "bird",
+        is_species: true,
+        confirmed_visit_count: 3,
+        provisional_visit_count: 0,
+        total_visit_count: 3,
+        first_activity_at: lastVisitAt,
+        last_activity_at: lastVisitAt,
+        representative_evidence: null,
+      },
+      {
+        // Distinct from the Cardinal above -- proves each row renders its
+        // own evidence, never a shared/mixed-up image (the frontend-level
+        // analog of the backend's multi-subject-isolation regression).
+        label: "house_finch",
+        display_name: "House Finch",
+        category: "bird",
+        is_species: true,
+        confirmed_visit_count: 2,
+        provisional_visit_count: 0,
+        total_visit_count: 2,
+        first_activity_at: lastVisitAt,
+        last_activity_at: lastVisitAt,
+        representative_evidence: representativeEvidence("visit-finch-today", "media-finch-today", lastVisitAt),
+        // No-Zone fixture: this taxon's own Zone/time pattern has no Zone
+        // support at all -- proves the thumbnail renders correctly
+        // alongside (and independently of) Zone/time pattern wording.
+        most_active_zone: null,
+        most_active_hour: { local_hour: 7, reviewed_visit_count: 2 },
+      },
+      {
+        // Evidence metadata references a real-looking id, but the preview
+        // route was deliberately never mocked -- proves a failed image
+        // load degrades to no thumbnail, never a broken-image icon.
+        label: "blue_jay",
+        display_name: "Blue Jay",
+        category: "bird",
+        is_species: true,
+        confirmed_visit_count: 1,
+        provisional_visit_count: 0,
+        total_visit_count: 1,
+        first_activity_at: lastVisitAt,
+        last_activity_at: lastVisitAt,
+        representative_evidence: representativeEvidence("visit-jay-today", brokenMediaAssetId, lastVisitAt),
+      },
+    ],
+    activity_by_zone: [{ zone_id: null, zone_name: "No Zone", wildlife_visit_count: 12 }],
+    busiest_zone: null,
+    activity_by_hour: activityByHour({ 7: 8, 14: 4 }),
+  });
+
+  await page.goto("/");
+  const reportPanel = page.locator("section.today-report");
+  await expect(reportPanel).toBeVisible();
+  const speciesList = reportPanel.locator(".today-report-species-list li");
+  await expect(speciesList).toHaveCount(4);
+
+  // Northern Cardinal: image present, with honest alt text naming the
+  // reviewed taxon -- never model speculation.
+  const cardinalRow = speciesList.filter({ hasText: "Northern Cardinal" });
+  const cardinalImage = cardinalRow.locator("img.today-report-species-thumb");
+  await expect(cardinalImage).toBeVisible();
+  await expect(cardinalImage).toHaveAttribute("src", new RegExp("media-cardinal-today"));
+  await expect(cardinalImage).toHaveAttribute("alt", /Northern Cardinal, reviewed observation/);
+
+  // Carolina Wren: image absent -- no thumbnail element at all, species
+  // name/count still fully readable, no error shown.
+  const wrenRow = speciesList.filter({ hasText: "Carolina Wren" });
+  await expect(wrenRow.locator("img.today-report-species-thumb")).toHaveCount(0);
+  await expect(wrenRow).toContainText("Carolina Wren");
+  await expect(wrenRow).toContainText("3 visits");
+
+  // House Finch: its own distinct image, not the Cardinal's -- and the
+  // no-Zone time-only pattern renders alongside it without conflict.
+  const finchRow = speciesList.filter({ hasText: "House Finch" });
+  const finchImage = finchRow.locator("img.today-report-species-thumb");
+  await expect(finchImage).toBeVisible();
+  await expect(finchImage).toHaveAttribute("src", new RegExp("media-finch-today"));
+  await expect(finchImage).not.toHaveAttribute("src", new RegExp("media-cardinal-today"));
+  await expect(finchRow).toContainText("Most active 7");
+
+  // Blue Jay: the backend claimed evidence, but the image genuinely fails
+  // to load -- the thumbnail must disappear entirely, never a broken-image
+  // icon left in the row.
+  const jayRow = speciesList.filter({ hasText: "Blue Jay" });
+  await expect(jayRow.locator("img.today-report-species-thumb")).toHaveCount(0);
+  await expect(jayRow).toContainText("Blue Jay");
+});

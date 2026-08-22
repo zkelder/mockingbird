@@ -1563,6 +1563,28 @@ export interface VisitEvidenceFrame {
    * frame's box.
    */
   normalized_track_box?: number[] | null;
+  /**
+   * This asset's own persisted `GeometryAttribution.resolution_provenance`
+   * (see docs/source-resolution-multi-frame-species-evidence-contract.md),
+   * read back verbatim -- `null`/absent for an asset with no recorded
+   * attribution (the ordinary case). Only `"synchronized"` means a
+   * genuinely proven higher-resolution capture; the other values describe
+   * temporal/identity trust, not resolution -- never render any value here
+   * as a "native resolution" claim except `"synchronized"`.
+   */
+  resolution_provenance?: "exact_same_frame" | "synchronized" | "near_time_capture" | "fallback" | null;
+}
+
+/**
+ * Gate C -- Representative Species Evidence v1 (see
+ * docs/representative-species-evidence-contract.md): the one persisted
+ * evidence image that currently best represents a reviewed taxon, chosen
+ * from that taxon's own confirmed Visits only. Reuses the exact
+ * `VisitEvidenceFrame` shape the Evidence Gallery/Bird Log already use.
+ */
+export interface RepresentativeEvidence {
+  visit_id: string;
+  evidence: VisitEvidenceFrame;
 }
 
 /**
@@ -4023,6 +4045,14 @@ export interface PlaceActivityReportTaxonEntry {
   // docs/place-activity-report-contract.md. Never the "No Zone" bucket.
   most_active_zone?: PlaceActivityReportTaxonZoneActivity | null;
   most_active_hour?: PlaceActivityReportTaxonHourActivity | null;
+  // Gate C -- Representative Species Evidence v1 (see
+  // docs/representative-species-evidence-contract.md). `null` whenever no
+  // confirmed Visit *in this report's own period* has safe, present
+  // evidence -- including a purely-provisional taxon. Never a historical
+  // fallback: Today only ever shows today's own evidence, so a `null` here
+  // is a completely normal, valid state -- omit the image, never show an
+  // error.
+  representative_evidence?: RepresentativeEvidence | null;
 }
 
 // Place-wide historical baseline facts, bounded to a trailing window ending

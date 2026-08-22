@@ -18,7 +18,7 @@ import shutil
 import struct
 import threading
 import time
-from typing import Any, Iterable
+from typing import Any, Iterable, Sequence
 from urllib.parse import urlsplit, urlunsplit
 import uuid
 
@@ -55,6 +55,10 @@ from mockingbird.analytics.place_activity_report_adapter import (
     visit_fact_from_stream_visit_summary,
 )
 from mockingbird.analytics.place_change_summary import PlaceChangeSummary, compute_place_change_summary
+from mockingbird.analytics.representative_evidence import (
+    EvidenceCandidateFact,
+    select_representative_evidence,
+)
 from mockingbird.analytics.zone_insights import (
     TimeInterval,
     interval_seconds,
@@ -483,6 +487,7 @@ from mockingbird.api.schemas import (
     VisitEvidenceCurationResponse,
     RefinedCropCreateRequest,
     RefinedCropResponse,
+    RepresentativeEvidence,
     VisitCropHistoryEntry,
     VisitEvidenceFrame,
     VisitMergeCandidate,
@@ -633,6 +638,12 @@ SUPPORTED_MEDIA_CONTENT_TYPES = {
 # Live evidence is a short review aid, never a video archive. Keep a read-side
 # cap as a safeguard even if malformed historical scoring metadata is present.
 MAX_LIVE_VISIT_EVIDENCE_FRAMES = 4
+# Gate C -- Representative Species Evidence v1: bounds how many of one
+# taxon's most-recent confirmed Visits are ever considered when ranking a
+# representative image, so a long reviewed history (Bird Log, which is
+# unbounded by report period) never becomes an unbounded scan -- see
+# "Performance" in docs/representative-species-evidence-contract.md.
+MAX_REPRESENTATIVE_EVIDENCE_CANDIDATES = 20
 MAX_VISIT_MERGE_CANDIDATES = 10
 MAX_VISIT_MERGE_GAP = timedelta(minutes=30)
 MAX_ACTIVITY_LIBRARY_SAVED_VIEWS = 15
@@ -15221,6 +15232,15 @@ class ProductRepository:
                 or _normalized_box_from_json(asset.normalized_padded_crop_box_json)
             ),
             normalized_track_box=normalized_track_box,
+            # Read back verbatim from this asset's own already-persisted
+            # attribution -- `None` when it never had one recorded. See
+            # docs/source-resolution-multi-frame-species-evidence-contract.md.
+            resolution_provenance=(
+                attribution.resolution_provenance
+                if (attribution := geometry_attribution_from_json(asset.geometry_attribution_json))
+                is not None
+                else None
+            ),
         )
 
     def classifier_supporting_evidence(self, visit_id: str) -> ClassifierSupportingEvidence | None:
@@ -23241,6 +23261,18 @@ class ProductRepository:
             taxonomy_index = self._taxonomy_label_index(session)
 
             visit_facts: list[VisitFact] = []
+            # Gate C -- Representative Species Evidence v1: gathered in the
+            # same pass as `visit_facts` above so this costs zero additional
+            # queries beyond what this report already issues -- `summary.
+            # primary_evidence` is already resolved by `_stream_visit_
+            # summary_from_models` regardless. Keyed by confirmed taxon
+            # label only, mirroring `_classify`'s own CONFIRMED_WILDLIFE
+            # branch exactly (never populated from a provisional
+            # SpeciesSuggestion alone -- see "Truth contract" in
+            # docs/representative-species-evidence-contract.md), and
+            # deliberately scoped to this report's own period only -- see
+            # "Time scope" in that contract doc.
+            confirmed_summaries_by_label: dict[str, list[StreamVisitSummary]] = {}
             if stream_ids:
 
                 def resolve_taxon(label: str | None) -> TaxonFact | None:
@@ -23282,13 +23314,34 @@ class ProductRepository:
                     summary = self._stream_visit_summary_from_models(
                         session, visit, event, taxonomy_index=taxonomy_index
                     )
+                    confirmed_taxon = resolve_taxon(summary.reviewed_label)
                     visit_facts.append(
                         visit_fact_from_stream_visit_summary(
                             summary,
-                            confirmed_taxon=resolve_taxon(summary.reviewed_label),
+                            confirmed_taxon=confirmed_taxon,
                             provisional_taxon=resolve_taxon(summary.suggested_label),
                         )
                     )
+                    if (
+                        summary.review_status == ReviewStatus.reviewed
+                        and confirmed_taxon is not None
+                        and is_wildlife_category(confirmed_taxon.category)
+                    ):
+                        confirmed_summaries_by_label.setdefault(confirmed_taxon.label, []).append(summary)
+
+            # Gate C -- Representative Species Evidence v1: the same
+            # canonical selector Bird Log uses (`_representative_evidence_
+            # response`), run once per taxon that had a confirmed Visit
+            # this period. A label absent here (no qualifying Visit, or no
+            # candidate had safe/present evidence) correctly yields no
+            # representative_evidence below -- see "No-image semantics" in
+            # docs/representative-species-evidence-contract.md.
+            representative_evidence_by_label: dict[str, RepresentativeEvidence] = {
+                label: response
+                for label, summaries_for_label in confirmed_summaries_by_label.items()
+                if (response := self._representative_evidence_response(session, summaries_for_label))
+                is not None
+            }
 
             coverage, streams_without_history = self._place_activity_coverage_summary(
                 session,
@@ -23358,6 +23411,7 @@ class ProductRepository:
             species_historical_statuses=species_historical_statuses,
             change_summary=change_summary,
             taxon_place_patterns=taxon_place_patterns,
+            representative_evidence=representative_evidence_by_label,
         )
 
     def _taxonomy_label_index(self, session: Session) -> dict[str, TaxonomyLabelModel]:
@@ -24000,7 +24054,7 @@ class ProductRepository:
                             )
                             for offset in range(14)
                         ],
-                        representative=self._wildlife_journal_representative(ordered),
+                        representative=self._wildlife_journal_representative(session, ordered),
                         distinct_confirmed_usable_days=distinct_confirmed_usable_days,
                         is_regular=distinct_confirmed_usable_days >= MIN_DISTINCT_USABLE_DAYS_FOR_REGULAR,
                         change_status=taxon_change_status_response(change_status_by_label.get(label)),
@@ -24346,16 +24400,16 @@ class ProductRepository:
                 ),
                 observation_count=len(ordered),
                 first_observation=(
-                    self._wildlife_journal_representative([first_record])
+                    self._wildlife_journal_representative(session, [first_record])
                     if first_record is not None
                     else None
                 ),
                 latest_observation=(
-                    self._wildlife_journal_representative([latest_record])
+                    self._wildlife_journal_representative(session, [latest_record])
                     if latest_record is not None
                     else None
                 ),
-                representative=self._wildlife_journal_representative(ordered),
+                representative=self._wildlife_journal_representative(session, ordered),
                 busiest_stream=stream_breakdown[0] if stream_breakdown else None,
                 busiest_zone=busiest_zone_entry if has_pattern_support else None,
                 peak_activity_hour=(
@@ -24430,23 +24484,117 @@ class ProductRepository:
             key=lambda record: (record["observed_at"], record["summary"].id),
         )
 
+    def _representative_evidence_candidate(
+        self,
+        session: Session,
+        summary: StreamVisitSummary,
+    ) -> EvidenceCandidateFact | None:
+        """One Visit's contribution to representative-evidence ranking, or
+        `None` when this Visit has nothing safe to offer -- see "Evidence
+        contract" and "No-image semantics" in docs/representative-species-
+        evidence-contract.md. Reuses `summary.primary_evidence` verbatim
+        (the same already-resolved, already-Visit-scoped pick the Evidence
+        Gallery/Bird Log/Wildlife Insights all already use, see docs/
+        multi-subject-visit-assembly-review-v1.md for why this can never
+        cross into a sibling Visit's own evidence) rather than re-deriving
+        which frame is primary. `session.get` is a same-session identity-map
+        lookup here, not a new query: `summary.primary_evidence` was already
+        resolved from this exact `MediaAssetModel` row earlier in the same
+        request (see "Backend architecture" in the contract doc).
+        """
+
+        frame = summary.primary_evidence
+        if frame is None:
+            return None
+        asset = session.get(MediaAssetModel, frame.media_asset_id)
+        if asset is None or not Path(asset.local_path).is_file():
+            # Deleted/missing media since this frame was linked: this Visit
+            # honestly contributes no candidate rather than pointing a
+            # report at a broken image (regression: missing/deleted media
+            # gracefully yields no representative).
+            return None
+        subject_box = frame.normalized_track_box or frame.normalized_crop_box
+        subject_width: int | None = None
+        subject_height: int | None = None
+        if subject_box is not None and frame.width and frame.height:
+            left, top, right, bottom = subject_box
+            subject_width = round((right - left) * frame.width)
+            subject_height = round((bottom - top) * frame.height)
+        return EvidenceCandidateFact(
+            visit_id=summary.id,
+            media_asset_id=frame.media_asset_id,
+            captured_at=frame.captured_at,
+            is_native_resolution=frame.resolution_provenance == "synchronized",
+            has_subject_region=subject_width is not None and subject_height is not None,
+            subject_pixel_area=(subject_width or 0) * (subject_height or 0),
+            asset_pixel_area=(frame.width or 0) * (frame.height or 0),
+        )
+
+    def _representative_evidence_response(
+        self,
+        session: Session,
+        summaries: Sequence[StreamVisitSummary],
+    ) -> RepresentativeEvidence | None:
+        """The one canonical per-taxon representative-evidence selector --
+        reused, unmodified, by both `place_activity_report` (Today) and
+        `wildlife_journal_overview` (Bird Log); see "Backend architecture"
+        in docs/representative-species-evidence-contract.md. `summaries`
+        must already be truth-filtered to exactly the confirmed Visits
+        eligible to represent one taxon -- this method resolves no truth of
+        its own. Bounded to the most recent `MAX_REPRESENTATIVE_EVIDENCE_
+        CANDIDATES` summaries so an unbounded reviewed history (Bird Log has
+        no period limit) cannot make this an unbounded scan.
+        """
+
+        bounded = (
+            summaries[-MAX_REPRESENTATIVE_EVIDENCE_CANDIDATES:]
+            if len(summaries) > MAX_REPRESENTATIVE_EVIDENCE_CANDIDATES
+            else summaries
+        )
+        candidates: list[EvidenceCandidateFact] = []
+        frame_by_visit_id: dict[str, VisitEvidenceFrame] = {}
+        for summary in bounded:
+            candidate = self._representative_evidence_candidate(session, summary)
+            if candidate is None:
+                continue
+            candidates.append(candidate)
+            assert summary.primary_evidence is not None  # implied by candidate is not None
+            frame_by_visit_id[summary.id] = summary.primary_evidence
+        winner = select_representative_evidence(candidates)
+        if winner is None:
+            return None
+        return RepresentativeEvidence(
+            visit_id=winner.visit_id,
+            evidence=frame_by_visit_id[winner.visit_id],
+        )
+
     def _wildlife_journal_representative(
         self,
+        session: Session,
         records: list[dict[str, Any]],
     ) -> WildlifeJournalRepresentative | None:
         if not records:
             return None
         ordered = self._wildlife_journal_ordered_records(records)
-        # Prefer the latest safe primary evidence, then keep the latest current
-        # reviewed observation visible even when that Visit no longer has media.
-        selected = next(
-            (
-                record
-                for record in reversed(ordered)
-                if record["summary"].primary_evidence is not None
-            ),
-            ordered[-1],
+        # Gate C -- Representative Species Evidence v1: delegates the actual
+        # "which Visit's evidence wins" decision to the same canonical
+        # selector Today uses, so Bird Log never independently picks a
+        # "prettier" image -- see "Time scope" in docs/representative-
+        # species-evidence-contract.md.
+        representative_evidence = self._representative_evidence_response(
+            session, [record["summary"] for record in ordered]
         )
+        if representative_evidence is not None:
+            selected = next(
+                record for record in ordered if record["summary"].id == representative_evidence.visit_id
+            )
+            primary_evidence = representative_evidence.evidence
+        else:
+            # No recent confirmed Visit for this label has safe, present
+            # evidence -- keep the latest reviewed observation visible even
+            # without media, exactly as before this milestone.
+            selected = ordered[-1]
+            primary_evidence = None
         summary: StreamVisitSummary = selected["summary"]
         return WildlifeJournalRepresentative(
             visit_id=summary.id,
@@ -24459,7 +24607,7 @@ class ProductRepository:
             label=selected["label"],
             display_name=selected["display_name"],
             observed_at=selected["observed_at"],
-            primary_evidence=summary.primary_evidence,
+            primary_evidence=primary_evidence,
         )
 
     # Gate C -- Per-Species Zone + Time Pattern Intelligence v1: a Visit

@@ -271,3 +271,140 @@ test("a label's history detail omits change facts entirely when no change_status
   await expect(page.getByText("More often recently")).toHaveCount(0);
   await expect(page.getByText("Fewer recent visits")).toHaveCount(0);
 });
+
+// Gate C -- Representative Species Evidence v1 (see docs/representative-
+// species-evidence-contract.md). `BirdLogPage`'s label cards render
+// whatever `labels[].representative` the backend already computed --
+// unchanged frontend code, since this milestone only upgraded the
+// backend's *selection* (now the same canonical, quality-aware ranking
+// Today uses, not merely "most recent Visit with any evidence") and added
+// `resolution_provenance` to the existing evidence shape. No existing e2e
+// spec previously exercised a non-null `representative` here (every prior
+// scenario used the base fixture's `representative: null`); this closes
+// that real, pre-existing coverage gap for the presentation contract these
+// scenarios matter for: image present, image absent, each card showing
+// only its own evidence (the frontend-observable shape of "a corrected
+// review's evidence follows the corrected taxon"), and a zero-Zone label
+// unaffected by the thumbnail.
+
+const TINY_JPEG_BASE64 =
+  "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAIBAQEBAQIBAQECAgICAgQDAgICAgUEBAMEBgUGBgYFBgYGBwkIBgcJBwYGCAsICQoKCgoKBggLDAsKDAkKCgr/2wBDAQICAgICAgUDAwUKBwYHCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgr/wAARCAAIAAgDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDyuiiivxM/ns//2Q==";
+
+async function routeMediaPreview(page: Page, mediaAssetId: string) {
+  await page.route(`**/api/media/${mediaAssetId}/preview`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "image/jpeg",
+      body: Buffer.from(TINY_JPEG_BASE64, "base64"),
+    }),
+  );
+}
+
+function representative(visitId: string, mediaAssetId: string, observedAt: string) {
+  return {
+    visit_id: visitId,
+    event_id: `event-${visitId}`,
+    stream_id: "stream-journal",
+    stream_name: "Backyard stream",
+    source_name: "Backyard camera",
+    zone_id: null,
+    zone_name: null,
+    label: "placeholder",
+    display_name: "Placeholder",
+    observed_at: observedAt,
+    primary_evidence: {
+      media_asset_id: mediaAssetId,
+      preview_url: `/api/media/${mediaAssetId}/preview`,
+      captured_at: observedAt,
+      relative_position: 0,
+      frame_sequence: 0,
+      is_primary: true,
+      content_type: "image/jpeg",
+      width: 1920,
+      height: 1080,
+      evidence_role: "identification",
+      normalized_crop_box: null,
+      normalized_track_box: null,
+      resolution_provenance: "synchronized",
+    },
+  };
+}
+
+test("Bird Log shows each label's own representative image, omits the thumbnail honestly when there is none, and a Zone-less label is unaffected", async ({
+  page,
+}) => {
+  await completeSetup(page);
+  const now = new Date().toISOString();
+  await routeMediaPreview(page, "media-cardinal-journal");
+  await routeMediaPreview(page, "media-finch-journal");
+
+  await mockJournalOverview(page, {
+    labels: [
+      {
+        label: "northern_cardinal",
+        display_name: "Northern Cardinal",
+        observation_count: 6,
+        first_observed_at: new Date(Date.now() - 20 * 24 * 3600 * 1000).toISOString(),
+        latest_observed_at: now,
+        stream_count: 1,
+        zone_count: 1,
+        recent_activity: [],
+        representative: representative("visit-cardinal-journal", "media-cardinal-journal", now),
+        distinct_confirmed_usable_days: 3,
+        is_regular: true,
+      },
+      {
+        // No confirmed Visit for this label has safe, present evidence --
+        // a completely normal state; the fallback placeholder renders,
+        // never an error.
+        label: "carolina_wren",
+        display_name: "Carolina Wren",
+        observation_count: 2,
+        first_observed_at: new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString(),
+        latest_observed_at: now,
+        stream_count: 1,
+        zone_count: 1,
+        recent_activity: [],
+        representative: null,
+        distinct_confirmed_usable_days: 1,
+        is_regular: false,
+      },
+      {
+        // No-Zone fixture: zero Zones recorded for this label, but it has
+        // its own distinct representative image -- proves the thumbnail is
+        // unaffected by Zone configuration.
+        label: "house_finch",
+        display_name: "House Finch",
+        observation_count: 1,
+        first_observed_at: now,
+        latest_observed_at: now,
+        stream_count: 1,
+        zone_count: 0,
+        recent_activity: [],
+        representative: representative("visit-finch-journal", "media-finch-journal", now),
+        distinct_confirmed_usable_days: 1,
+        is_regular: false,
+      },
+    ],
+  });
+
+  await page.goto("/bird-log");
+  const cardinalCard = page.locator(".journal-label-card", { hasText: "Northern Cardinal" });
+  const wrenCard = page.locator(".journal-label-card", { hasText: "Carolina Wren" });
+  const finchCard = page.locator(".journal-label-card", { hasText: "House Finch" });
+
+  const cardinalImage = cardinalCard.locator(".journal-label-image img");
+  await expect(cardinalImage).toBeVisible();
+  await expect(cardinalImage).toHaveAttribute("src", new RegExp("media-cardinal-journal"));
+  await expect(cardinalImage).toHaveAttribute("alt", /Northern Cardinal, reviewed observation/);
+
+  await expect(wrenCard.locator(".journal-label-image img")).toHaveCount(0);
+  await expect(wrenCard.locator(".journal-thumbnail-fallback")).toBeVisible();
+  await expect(wrenCard.locator(".journal-thumbnail-fallback")).toContainText("No saved thumbnail");
+
+  const finchImage = finchCard.locator(".journal-label-image img");
+  await expect(finchImage).toBeVisible();
+  await expect(finchImage).toHaveAttribute("src", new RegExp("media-finch-journal"));
+  await expect(finchImage).not.toHaveAttribute("src", new RegExp("media-cardinal-journal"));
+  await expect(finchCard).toContainText("0 Zones");
+});

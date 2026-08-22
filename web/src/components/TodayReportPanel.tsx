@@ -1,8 +1,10 @@
+import { useEffect, useState } from "react";
 import type {
   PlaceActivityReportHourActivity,
   PlaceActivityReportResponse,
   PlaceActivityReportTaxonEntry,
 } from "../api/types";
+import { apiClient } from "../api/client";
 import { EmptyState } from "./EmptyState";
 import { StatusPill } from "./StatusPill";
 import { changeStatusBadge, formatDateTime } from "../utils";
@@ -154,6 +156,40 @@ function speciesPlacePattern(taxon: PlaceActivityReportTaxonEntry): string | nul
     return `Most active ${formatHourRange(hour.local_hour)}`;
   }
   return null;
+}
+
+// Gate C -- Representative Species Evidence v1 (see docs/representative-
+// species-evidence-contract.md). Alt text is built from the reviewed taxon
+// name and real capture context this component already has -- never model
+// speculation, and never information a screen-reader user could not get
+// any other way (the species name and visit count are already plain text
+// on this same row).
+function representativeAlt(taxon: PlaceActivityReportTaxonEntry): string {
+  const capturedAt = taxon.representative_evidence?.evidence.captured_at;
+  return capturedAt
+    ? `${taxon.display_name}, reviewed observation ${formatDateTime(capturedAt)}`
+    : `${taxon.display_name}, reviewed observation`;
+}
+
+// Compact, non-interactive thumbnail for one species row. Deliberately no
+// click-through: Today stays report-first and calm (see "Today UI" in the
+// milestone brief), not a photo grid. Renders nothing at all -- no
+// placeholder box -- when this taxon has no representative evidence; a
+// missing/failed image degrades the same way, never an error state.
+function SpeciesThumbnail({ taxon }: { taxon: PlaceActivityReportTaxonEntry }) {
+  const [failed, setFailed] = useState(false);
+  const evidence = taxon.representative_evidence?.evidence;
+  useEffect(() => setFailed(false), [evidence?.media_asset_id]);
+  if (!evidence || failed) return null;
+  return (
+    <img
+      alt={representativeAlt(taxon)}
+      className="today-report-species-thumb"
+      loading="lazy"
+      onError={() => setFailed(true)}
+      src={`${apiClient.baseUrl}${evidence.preview_url}`}
+    />
+  );
 }
 
 // The single busiest hour; the earliest hour wins a tie so the result is
@@ -333,6 +369,7 @@ export function TodayReportPanel({
                       const placePattern = speciesPlacePattern(taxon);
                       return (
                         <li key={taxon.label}>
+                          <SpeciesThumbnail taxon={taxon} />
                           <div className="today-report-species-name">
                             <span>{taxon.display_name}</span>
                             <span className="today-report-species-meta">{speciesTimeRange(taxon)}</span>

@@ -60,6 +60,7 @@ from mockingbird.api.schemas import (
     PlaceActivityReportTaxonHourActivity,
     PlaceActivityReportTaxonZoneActivity,
     PlaceActivityReportZoneActivity,
+    RepresentativeEvidence,
     ReviewStatus,
     StreamVisitSummary,
     TaxonomyLabel,
@@ -203,6 +204,7 @@ def _taxon_entry_response(
     historical_status: SpeciesHistoricalStatus | None,
     change_status: TaxonChangeStatus | None,
     place_pattern: TaxonPlacePattern | None,
+    representative_evidence: RepresentativeEvidence | None,
 ) -> PlaceActivityReportTaxonEntry:
     return PlaceActivityReportTaxonEntry(
         label=entry.label,
@@ -245,6 +247,7 @@ def _taxon_entry_response(
             if place_pattern is not None and place_pattern.most_active_hour is not None
             else None
         ),
+        representative_evidence=representative_evidence,
     )
 
 
@@ -306,6 +309,7 @@ def place_activity_report_response(
     species_historical_statuses: Mapping[str, SpeciesHistoricalStatus],
     change_summary: PlaceChangeSummary,
     taxon_place_patterns: Mapping[str, TaxonPlacePattern],
+    representative_evidence: Mapping[str, RepresentativeEvidence],
 ) -> PlaceActivityReportResponse:
     """Adapt one pure `PlaceActivityReport` into its typed API response.
     Field-for-field only -- see the module docstring. `report.coverage` is
@@ -335,6 +339,14 @@ def place_activity_report_response(
     keyed by taxon label the same way; a `report.taxa` entry with no match
     (never authoritatively confirmed anywhere in the historical window)
     correctly gets an empty/absent pattern -- see `_taxon_entry_response`.
+
+    `representative_evidence` (Gate C -- Representative Species Evidence v1;
+    see docs/representative-species-evidence-contract.md) is keyed by taxon
+    label the same way as the three mappings above; a `report.taxa` entry
+    with no match (no confirmed Visit this period had safe, present
+    evidence -- including every purely-provisional taxon) correctly gets
+    `representative_evidence=None`, never an error and never a dropped
+    taxon.
     """
 
     if report.coverage is None:
@@ -367,6 +379,7 @@ def place_activity_report_response(
                 historical_status=species_historical_statuses.get(entry.label),
                 change_status=change_status_by_label.get(entry.label),
                 place_pattern=taxon_place_patterns.get(entry.label),
+                representative_evidence=representative_evidence.get(entry.label),
             )
             for entry in report.taxa
         ],

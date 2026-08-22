@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -9,6 +11,7 @@ from sqlalchemy import select
 
 from mockingbird.analytics.place_activity_report import MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN
 from mockingbird.api.main import app, configure_repository
+from mockingbird.observation.contracts import GeometryAttribution
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.storage.models import (
     CameraSourceModel,
@@ -122,6 +125,9 @@ def add_visit(
     is_superseded: bool = False,
     with_media: bool = False,
     species_guess: str | None = "unknown_bird",
+    width: int | None = None,
+    height: int | None = None,
+    resolution_provenance: str | None = None,
 ) -> None:
     event_id = f"event-{visit_id}"
     with repository.session_factory() as session:
@@ -138,6 +144,17 @@ def add_visit(
                     review_status="needs_review",
                 )
             )
+            # A real (if tiny) backing file, not a fake path string --
+            # Gate C -- Representative Species Evidence v1's selector
+            # checks `Path(local_path).is_file()` (see "missing/deleted
+            # media gracefully yields no representative" in docs/
+            # representative-species-evidence-contract.md), matching the
+            # real-file fixture convention already established in
+            # tests/test_alerts_inbox.py.
+            media_path = repository.media_root / f"{visit_id}.jpg"
+            if with_media:
+                media_path.parent.mkdir(parents=True, exist_ok=True)
+                media_path.write_bytes(b"fixture-jpeg-bytes")
             session.add(
                 VisitModel(
                     id=visit_id,
@@ -147,13 +164,31 @@ def add_visit(
                     confidence=None,
                     reviewed_label=None,
                     review_status="needs_review",
-                    representative_media_path=(f"fixture/{visit_id}.jpg" if with_media else None),
+                    representative_media_path=(str(media_path) if with_media else None),
                     zone_id=zone_id,
                     is_superseded=is_superseded,
                 )
             )
             if with_media:
                 media_id = f"media-{visit_id}"
+                geometry_attribution_json = None
+                if resolution_provenance is not None:
+                    geometry_attribution_json = json.dumps(
+                        asdict(
+                            GeometryAttribution(
+                                geometry_source="detector",
+                                geometry_source_offset_ms=500,
+                                geometry_source_observation_id=f"obs-{visit_id}",
+                                geometry_source_confidence=0.9,
+                                same_frame=(resolution_provenance == "exact_same_frame"),
+                                geometry_evidence_gap_ms=(
+                                    0 if resolution_provenance == "exact_same_frame" else 300
+                                ),
+                                fov_alignment_proven=(resolution_provenance == "synchronized"),
+                                resolution_provenance=resolution_provenance,
+                            )
+                        )
+                    )
                 session.add(
                     MediaAssetModel(
                         id=media_id,
@@ -162,11 +197,14 @@ def add_visit(
                         filename=f"{media_id}.jpg",
                         content_type="image/jpeg",
                         media_type="image",
-                        local_path=f"fixture/{visit_id}.jpg",
+                        local_path=str(media_path),
                         original_filename=f"{media_id}.jpg",
                         file_size_bytes=12,
                         created_at=started_at,
                         notes="Wildlife Journal fixture evidence.",
+                        image_width=width,
+                        image_height=height,
+                        geometry_attribution_json=geometry_attribution_json,
                     )
                 )
                 session.add(
@@ -745,3 +783,64 @@ async def test_bird_log_zone_breakdown_buckets_visits_outside_every_zone_instead
         {"id": "no-zone", "name": "No Zone", "count": MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN}
     ]
     assert payload["busiest_zone"] is None
+
+
+# ---------------------------------------------------------------------------
+# Gate C -- Representative Species Evidence v1
+# (see docs/representative-species-evidence-contract.md)
+# ---------------------------------------------------------------------------
+
+
+async def test_bird_log_representative_can_come_from_old_reviewed_history(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    """Unlike Today (period-scoped -- see "Time scope" in the contract
+    doc), Bird Log is a historical browsing surface with no period limit:
+    a reviewed Visit from many months ago is still a completely valid
+    representative."""
+
+    add_graph(isolated_repository)
+    long_ago = datetime(2025, 11, 1, 9, tzinfo=UTC)
+    add_visit(isolated_repository, visit_id="cardinal-long-ago", started_at=long_ago, with_media=True)
+    await review(client, "cardinal-long-ago", "northern_cardinal")
+
+    overview = await client.get("/api/bird-log/journal?order=alphabetical")
+    labels = overview.json()["labels"]
+    cardinal = next(row for row in labels if row["label"] == "northern_cardinal")
+    assert cardinal["representative"]["visit_id"] == "cardinal-long-ago"
+    assert cardinal["representative"]["primary_evidence"]["media_asset_id"] == "media-cardinal-long-ago"
+    # Bird Log's own `observed_at` on the representative already carries
+    # honest temporal provenance -- the frontend can tell this was not
+    # captured today.
+    assert cardinal["representative"]["observed_at"].startswith("2025-11-01")
+
+
+async def test_bird_log_representative_prefers_better_evidence_over_merely_newer_visit(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    """Bird Log must reuse the exact same canonical representative-
+    evidence semantics Today uses -- never a separately, more simply
+    (recency-only) computed "prettier" image. A materially better, older
+    Visit must still beat a merely-newer, ordinary one."""
+
+    add_graph(isolated_repository)
+    earlier = datetime(2026, 7, 1, 9, tzinfo=UTC)
+    later = datetime(2026, 7, 2, 9, tzinfo=UTC)
+    add_visit(
+        isolated_repository, visit_id="cardinal-native-older", started_at=earlier, with_media=True,
+        width=4000, height=3000, resolution_provenance="synchronized",
+    )
+    add_visit(
+        isolated_repository, visit_id="cardinal-ordinary-newer", started_at=later, with_media=True,
+        width=1920, height=1080,
+    )
+    await review(client, "cardinal-native-older", "northern_cardinal")
+    await review(client, "cardinal-ordinary-newer", "northern_cardinal")
+
+    overview = await client.get("/api/bird-log/journal?order=alphabetical")
+    labels = overview.json()["labels"]
+    cardinal = next(row for row in labels if row["label"] == "northern_cardinal")
+    assert cardinal["representative"]["visit_id"] == "cardinal-native-older"
+    assert cardinal["representative"]["primary_evidence"]["resolution_provenance"] == "synchronized"

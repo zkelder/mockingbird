@@ -16,6 +16,8 @@ full write -> read pipeline agrees with the pure module's own contract.
 
 from __future__ import annotations
 
+import json
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from time import perf_counter
@@ -34,13 +36,16 @@ from mockingbird.api.schemas import (
     ReviewCorrectionCreate,
     SpeciesSuggestionCreateRequest,
 )
+from mockingbird.observation.contracts import GeometryAttribution
 from mockingbird.repository.product_repository import ProductRepository, SpeciesSuggestionModel
 from mockingbird.storage.models import (
     CameraSourceModel,
     EventModel,
+    MediaAssetModel,
     MonitoringExposureIntervalModel,
     ReviewLabelModel,
     StreamModel,
+    VisitEvidenceLinkModel,
     VisitModel,
     ZoneModel,
 )
@@ -797,9 +802,14 @@ def test_api_serialization_contract_exposes_only_documented_fields(
         "hour_activity",
         "most_active_zone",
         "most_active_hour",
+        "representative_evidence",
     }
     assert taxon["label"] == "northern_cardinal"
     assert taxon["category"] == "bird"
+    # This fixture's Visit has no evidence at all (`_add_visit` never
+    # attaches media) -- a completely valid, non-error state; see "No-image
+    # semantics" in docs/representative-species-evidence-contract.md.
+    assert taxon["representative_evidence"] is None
     # Gate C -- Per-Species Zone + Time Pattern Intelligence v1: a single
     # reviewed Visit is honestly reported as a raw fact (one Feeder Visit)
     # but is below MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN, so no
@@ -1598,3 +1608,378 @@ def test_multi_subject_event_keeps_each_siblings_zone_pattern_independent(
     blue_jay_zones = by_label["blue_jay"].zone_activity
     assert {entry.zone_id for entry in blue_jay_zones} == {None}
     assert blue_jay_zones[0].display_name == "No Zone"
+
+
+# ---------------------------------------------------------------------------
+# Gate C -- Representative Species Evidence v1
+# (see docs/representative-species-evidence-contract.md)
+# ---------------------------------------------------------------------------
+
+
+def _attach_primary_evidence(
+    repository: ProductRepository,
+    *,
+    visit_id: str,
+    captured_at: datetime,
+    stream_id: str = STREAM_A,
+    width: int = 800,
+    height: int = 600,
+    subject_box: tuple[float, float, float, float] | None = None,
+    resolution_provenance: str | None = None,
+    missing_file: bool = False,
+) -> str:
+    """Attach one real, persisted, `is_primary` evidence frame to an
+    already-created Visit -- a real backing file (see tests/
+    test_alerts_inbox.py's established convention), never a fake path
+    string, since the representative-evidence selector honestly checks
+    `Path(local_path).is_file()`. Returns the created `media_asset_id`.
+    """
+
+    media_id = f"media-{visit_id}"
+    media_path = repository.media_root / f"{visit_id}.jpg"
+    if not missing_file:
+        media_path.parent.mkdir(parents=True, exist_ok=True)
+        media_path.write_bytes(b"fixture-jpeg-bytes")
+    geometry_attribution_json = None
+    if resolution_provenance is not None:
+        geometry_attribution_json = json.dumps(
+            asdict(
+                GeometryAttribution(
+                    geometry_source="detector",
+                    geometry_source_offset_ms=500,
+                    geometry_source_observation_id=f"obs-{visit_id}",
+                    geometry_source_confidence=0.9,
+                    same_frame=(resolution_provenance == "exact_same_frame"),
+                    geometry_evidence_gap_ms=(0 if resolution_provenance == "exact_same_frame" else 300),
+                    fov_alignment_proven=(resolution_provenance == "synchronized"),
+                    resolution_provenance=resolution_provenance,
+                )
+            )
+        )
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                MediaAssetModel(
+                    id=media_id,
+                    source_id=SOURCE_ID,
+                    stream_id=stream_id,
+                    filename=f"{media_id}.jpg",
+                    content_type="image/jpeg",
+                    media_type="image",
+                    local_path=str(media_path),
+                    original_filename=f"{media_id}.jpg",
+                    file_size_bytes=12,
+                    created_at=captured_at,
+                    image_width=width,
+                    image_height=height,
+                    normalized_track_box_json=(json.dumps(list(subject_box)) if subject_box else None),
+                    geometry_attribution_json=geometry_attribution_json,
+                )
+            )
+            session.add(
+                VisitEvidenceLinkModel(
+                    id=f"link-{visit_id}",
+                    visit_id=visit_id,
+                    media_asset_id=media_id,
+                    captured_at=captured_at,
+                    frame_sequence=0,
+                    sort_order=0,
+                    is_primary=True,
+                    evidence_role="identification",
+                    created_at=captured_at,
+                )
+            )
+    return media_id
+
+
+def test_reviewed_taxon_gets_its_own_valid_representative_evidence(
+    repository: ProductRepository,
+) -> None:
+    at = PERIOD_START + timedelta(hours=1)
+    _add_visit(repository, visit_id="cardinal-with-evidence", at=at, zone_id=ZONE_FEEDER)
+    _attach_primary_evidence(repository, visit_id="cardinal-with-evidence", captured_at=at)
+    _confirm(repository, visit_id="cardinal-with-evidence", label="northern_cardinal")
+
+    report = _report(repository)
+
+    [taxon] = report.taxa
+    assert taxon.label == "northern_cardinal"
+    assert taxon.representative_evidence is not None
+    assert taxon.representative_evidence.visit_id == "cardinal-with-evidence"
+    assert taxon.representative_evidence.evidence.media_asset_id == "media-cardinal-with-evidence"
+    assert taxon.representative_evidence.evidence.preview_url == "/api/media/media-cardinal-with-evidence/preview"
+
+
+def test_provisional_suggestion_alone_cannot_create_a_representative(
+    repository: ProductRepository,
+) -> None:
+    at = PERIOD_START + timedelta(hours=1)
+    _add_visit(repository, visit_id="cardinal-suggested-only", at=at, zone_id=ZONE_FEEDER)
+    _attach_primary_evidence(repository, visit_id="cardinal-suggested-only", captured_at=at)
+    _suggest(repository, visit_id="cardinal-suggested-only", stream_id=STREAM_A, label="northern_cardinal")
+
+    report = _report(repository)
+
+    [taxon] = report.taxa
+    assert taxon.label == "northern_cardinal"
+    assert taxon.confirmed_visit_count == 0
+    assert taxon.provisional_visit_count == 1
+    # The mandatory truth-contract regression: a SpeciesSuggestion alone,
+    # even with real, high-quality persisted evidence attached, must never
+    # establish "this is the representative Northern Cardinal."
+    assert taxon.representative_evidence is None
+
+
+def test_reviewed_correction_moves_representative_eligibility_to_the_corrected_taxon(
+    repository: ProductRepository,
+) -> None:
+    at = PERIOD_START + timedelta(hours=1)
+    _add_visit(repository, visit_id="corrected-visit", at=at, zone_id=ZONE_FEEDER)
+    _attach_primary_evidence(repository, visit_id="corrected-visit", captured_at=at)
+    _confirm(repository, visit_id="corrected-visit", label="northern_cardinal")
+
+    before = _report(repository)
+    by_label_before = {taxon.label: taxon for taxon in before.taxa}
+    assert by_label_before["northern_cardinal"].representative_evidence is not None
+    assert by_label_before["northern_cardinal"].representative_evidence.visit_id == "corrected-visit"
+
+    _confirm(repository, visit_id="corrected-visit", label="house_finch")  # a corrected review
+
+    after = _report(repository)
+    by_label_after = {taxon.label: taxon for taxon in after.taxa}
+    assert "northern_cardinal" not in by_label_after
+    assert by_label_after["house_finch"].representative_evidence is not None
+    assert by_label_after["house_finch"].representative_evidence.visit_id == "corrected-visit"
+
+
+def test_multi_subject_sibling_representative_evidence_never_crosses_visits(
+    repository: ProductRepository,
+) -> None:
+    """Mandatory multi-subject regression: for one Event containing a
+    Cardinal sibling and a Finch sibling, each taxon's representative image
+    must come only from its own Visit's own evidence -- no "best image from
+    the Event" shortcut. The Cardinal sibling's evidence is deliberately
+    made *higher quality* (native resolution, larger) than the Finch
+    sibling's, so a bug that picked "the Event's best evidence regardless
+    of Visit" would be caught by the Finch assertion below."""
+
+    shared_event = "event-representative-siblings"
+    at = PERIOD_START + timedelta(hours=8)
+    _add_visit(
+        repository, visit_id="cardinal-rep-sibling", at=at, zone_id=ZONE_FEEDER,
+        event_id=shared_event, event_primary_zone_id=ZONE_FEEDER,
+    )
+    _add_visit(repository, visit_id="finch-rep-sibling", at=at, zone_id=ZONE_YARD_A, event_id=shared_event)
+    _attach_primary_evidence(
+        repository, visit_id="cardinal-rep-sibling", captured_at=at,
+        width=4000, height=3000, resolution_provenance="synchronized",
+    )
+    _attach_primary_evidence(
+        repository, visit_id="finch-rep-sibling", captured_at=at, width=200, height=150,
+    )
+    _confirm(repository, visit_id="cardinal-rep-sibling", label="northern_cardinal")
+    _confirm(repository, visit_id="finch-rep-sibling", label="house_finch")
+
+    report = _report(repository)
+    by_label = {taxon.label: taxon for taxon in report.taxa}
+
+    cardinal_rep = by_label["northern_cardinal"].representative_evidence
+    finch_rep = by_label["house_finch"].representative_evidence
+    assert cardinal_rep is not None and cardinal_rep.visit_id == "cardinal-rep-sibling"
+    assert cardinal_rep.evidence.media_asset_id == "media-cardinal-rep-sibling"
+    # The critical assertion: despite sharing an Event with a much
+    # higher-quality sibling, the Finch's representative is still its own,
+    # visibly lower-quality evidence -- never borrowed from the Cardinal.
+    assert finch_rep is not None and finch_rep.visit_id == "finch-rep-sibling"
+    assert finch_rep.evidence.media_asset_id == "media-finch-rep-sibling"
+
+
+def test_native_resolution_evidence_wins_deterministically_over_a_weaker_visit(
+    repository: ProductRepository,
+) -> None:
+    at = PERIOD_START + timedelta(hours=1)
+    later = at + timedelta(minutes=5)
+    _add_visit(repository, visit_id="cardinal-native", at=at, zone_id=ZONE_FEEDER)
+    _add_visit(repository, visit_id="cardinal-ordinary-newer", at=later, zone_id=ZONE_FEEDER)
+    _attach_primary_evidence(
+        repository, visit_id="cardinal-native", captured_at=at,
+        width=4000, height=3000, resolution_provenance="synchronized",
+    )
+    _attach_primary_evidence(
+        repository, visit_id="cardinal-ordinary-newer", captured_at=later, width=1920, height=1080,
+    )
+    _confirm(repository, visit_id="cardinal-native", label="northern_cardinal")
+    _confirm(repository, visit_id="cardinal-ordinary-newer", label="northern_cardinal")
+
+    report = _report(repository)
+
+    [taxon] = report.taxa
+    # Proven native/source resolution outranks a merely-newer, ordinary
+    # analysis-resolution Visit -- quality beats recency.
+    assert taxon.representative_evidence is not None
+    assert taxon.representative_evidence.visit_id == "cardinal-native"
+    assert taxon.representative_evidence.evidence.resolution_provenance == "synchronized"
+
+
+def test_analysis_resolution_evidence_is_a_valid_fallback_with_no_native_evidence(
+    repository: ProductRepository,
+) -> None:
+    at = PERIOD_START + timedelta(hours=1)
+    _add_visit(repository, visit_id="cardinal-ordinary-only", at=at, zone_id=ZONE_FEEDER)
+    _attach_primary_evidence(repository, visit_id="cardinal-ordinary-only", captured_at=at, width=1920, height=1080)
+    _confirm(repository, visit_id="cardinal-ordinary-only", label="northern_cardinal")
+
+    report = _report(repository)
+
+    [taxon] = report.taxa
+    assert taxon.representative_evidence is not None
+    assert taxon.representative_evidence.evidence.resolution_provenance is None
+    assert taxon.representative_evidence.evidence.width == 1920
+
+
+def test_missing_media_file_yields_no_representative_from_that_visit(
+    repository: ProductRepository,
+) -> None:
+    at = PERIOD_START + timedelta(hours=1)
+    later = at + timedelta(minutes=10)
+    _add_visit(repository, visit_id="cardinal-deleted-media", at=later, zone_id=ZONE_FEEDER)
+    _attach_primary_evidence(
+        repository, visit_id="cardinal-deleted-media", captured_at=later, missing_file=True,
+    )
+    _add_visit(repository, visit_id="cardinal-real-media", at=at, zone_id=ZONE_FEEDER)
+    _attach_primary_evidence(repository, visit_id="cardinal-real-media", captured_at=at)
+    _confirm(repository, visit_id="cardinal-deleted-media", label="northern_cardinal")
+    _confirm(repository, visit_id="cardinal-real-media", label="northern_cardinal")
+
+    report = _report(repository)
+
+    [taxon] = report.taxa
+    # The newer Visit's media is gone from disk -- it must gracefully
+    # contribute no candidate, never a broken image, and the older Visit
+    # with genuinely present media wins instead.
+    assert taxon.representative_evidence is not None
+    assert taxon.representative_evidence.visit_id == "cardinal-real-media"
+
+
+def test_taxon_with_zero_evidence_still_appears_with_no_representative(
+    repository: ProductRepository,
+) -> None:
+    at = PERIOD_START + timedelta(hours=1)
+    _add_visit(repository, visit_id="cardinal-no-evidence", at=at, zone_id=ZONE_FEEDER)
+    _confirm(repository, visit_id="cardinal-no-evidence", label="northern_cardinal")
+
+    report = _report(repository)
+
+    [taxon] = report.taxa
+    assert taxon.label == "northern_cardinal"
+    assert taxon.confirmed_visit_count == 1
+    assert taxon.representative_evidence is None
+
+
+def test_representative_evidence_selection_is_deterministic_regardless_of_row_order(
+    repository: ProductRepository,
+) -> None:
+    at = PERIOD_START + timedelta(hours=1)
+    later = at + timedelta(minutes=5)
+    # Insert the *later*, weaker Visit first and the earlier, stronger one
+    # second -- selection must depend only on the facts, never on insertion/
+    # retrieval order.
+    _add_visit(repository, visit_id="cardinal-order-b", at=later, zone_id=ZONE_FEEDER)
+    _attach_primary_evidence(repository, visit_id="cardinal-order-b", captured_at=later, width=200, height=150)
+    _add_visit(repository, visit_id="cardinal-order-a", at=at, zone_id=ZONE_FEEDER)
+    _attach_primary_evidence(
+        repository, visit_id="cardinal-order-a", captured_at=at,
+        width=4000, height=3000, resolution_provenance="synchronized",
+    )
+    _confirm(repository, visit_id="cardinal-order-b", label="northern_cardinal")
+    _confirm(repository, visit_id="cardinal-order-a", label="northern_cardinal")
+
+    report = _report(repository)
+
+    [taxon] = report.taxa
+    assert taxon.representative_evidence is not None
+    assert taxon.representative_evidence.visit_id == "cardinal-order-a"
+
+
+def test_today_period_scoped_evidence_is_preferred_and_out_of_period_evidence_never_shown(
+    repository: ProductRepository,
+) -> None:
+    yesterday = PERIOD_START - timedelta(hours=2)
+    today = PERIOD_START + timedelta(hours=1)
+    _add_visit(repository, visit_id="cardinal-yesterday", at=yesterday, zone_id=ZONE_FEEDER)
+    _attach_primary_evidence(repository, visit_id="cardinal-yesterday", captured_at=yesterday)
+    _confirm(repository, visit_id="cardinal-yesterday", label="northern_cardinal")
+    _add_visit(repository, visit_id="cardinal-today", at=today, zone_id=ZONE_FEEDER)
+    _attach_primary_evidence(repository, visit_id="cardinal-today", captured_at=today)
+    _confirm(repository, visit_id="cardinal-today", label="northern_cardinal")
+
+    report = _report(repository)
+
+    # Today's report only ever considers this report period's own Visits
+    # (see "Time scope" in docs/representative-species-evidence-contract.md)
+    # -- the taxon entry itself, from `compute_place_activity_report`, is
+    # also period-scoped, so yesterday's Visit contributes nothing at all.
+    [taxon] = report.taxa
+    assert taxon.confirmed_visit_count == 1
+    assert taxon.representative_evidence is not None
+    assert taxon.representative_evidence.visit_id == "cardinal-today"
+
+
+def test_no_zone_configuration_has_no_effect_on_representative_selection(
+    repository: ProductRepository,
+) -> None:
+    at = PERIOD_START + timedelta(hours=1)
+    _add_visit(repository, visit_id="cardinal-no-zone-stream", at=at, stream_id=STREAM_NO_ZONES, zone_id=None)
+    _attach_primary_evidence(
+        repository, visit_id="cardinal-no-zone-stream", captured_at=at, stream_id=STREAM_NO_ZONES,
+    )
+    _confirm(repository, visit_id="cardinal-no-zone-stream", label="northern_cardinal")
+
+    report = _report(repository)
+
+    [taxon] = report.taxa
+    assert taxon.representative_evidence is not None
+    assert taxon.representative_evidence.visit_id == "cardinal-no-zone-stream"
+
+
+def test_representative_evidence_reuses_the_existing_privacy_boundary_not_a_new_one(
+    repository: ProductRepository,
+) -> None:
+    """Representative evidence must reuse the existing privacy/restricted-
+    zone policy, never invent a second, different one (see "Privacy" in
+    docs/representative-species-evidence-contract.md and
+    docs/privacy-ignore-zone-contract.md). That documented contract is
+    trigger-level exclusion only: a Privacy/Ignore Zone prevents activity
+    *there* from creating a Visit in the first place, but a Visit that was
+    legitimately admitted is displayed exactly like any other -- MockingBird
+    does not redact or hide already-admitted evidence after the fact. This
+    proves representative-evidence selection matches that exact contract
+    (not a stricter, invented one, and not a bypass of it): a confirmed
+    Visit whose own Zone is Privacy-type still gets its evidence shown,
+    the same as the identical Evidence Gallery/Bird Log path already would.
+    """
+
+    privacy_zone_id = "zone-place-report-privacy"
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                ZoneModel(
+                    id=privacy_zone_id,
+                    stream_id=STREAM_A,
+                    name="Window",
+                    zone_type="privacy",
+                    polygon_json="[]",
+                    is_active=True,
+                    monitoring_policy_json=None,
+                )
+            )
+    at = PERIOD_START + timedelta(hours=1)
+    _add_visit(repository, visit_id="cardinal-in-privacy-zone", at=at, zone_id=privacy_zone_id)
+    _attach_primary_evidence(repository, visit_id="cardinal-in-privacy-zone", captured_at=at)
+    _confirm(repository, visit_id="cardinal-in-privacy-zone", label="northern_cardinal")
+
+    report = _report(repository)
+
+    [taxon] = report.taxa
+    assert taxon.representative_evidence is not None
+    assert taxon.representative_evidence.visit_id == "cardinal-in-privacy-zone"

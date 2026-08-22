@@ -1619,6 +1619,49 @@ milestone's bounded scope), a per-Zone monitoring-coverage denominator, and
 week/month/year Zone-pattern dashboards or digests -- see "Known
 limitations" in the contract doc.
 
+**2026-08-21 update (Gate C -- Representative Species Evidence v1):**
+closed the "representative evidence image per species card" gap the Daily
+Place Report update above named -- see
+[representative-species-evidence-contract.md](representative-species-evidence-contract.md).
+A new pure module, `mockingbird.analytics.representative_evidence.
+select_representative_evidence`, ranks one taxon's already-confirmed
+Visits' own already-resolved primary evidence by genuine proven native
+resolution, subject-region presence, subject/asset pixel size, and capture
+recency -- reused unmodified by both `place_activity_report` (Today,
+strictly scoped to the report's own period, never a historical fallback)
+and `wildlife_journal_overview` (Bird Log, upgrading its own pre-existing
+recency-only representative selection to the same quality-aware ranking).
+Reviewed truth alone establishes taxon eligibility (a provisional
+SpeciesSuggestion can never seed a representative); evidence is
+Visit-scoped by construction, so a multi-subject Event's sibling Visits can
+never borrow each other's evidence (dedicated regression proves this with
+the *higher-quality* evidence deliberately on the wrong sibling). Reuses
+the existing media-serving/privacy boundary as-is (no new check was
+needed or added -- verified directly that no route filters by Zone at read
+time, matching the documented trigger-level-only Privacy Zone contract).
+`VisitEvidenceFrame` gained one additive field, `resolution_provenance`
+(read back from already-persisted `GeometryAttribution`, benefiting every
+existing evidence-frame consumer for free, not only this milestone).
+`PlaceActivityReportTaxonEntry.representative_evidence` is a new field;
+`WildlifeJournalLabelSummary.representative` is unchanged in shape -- only
+its selection algorithm improved, so Bird Log's existing frontend
+benefited from more accurate selection with zero required frontend code
+change. No schema migration, no additional queries (gathered in the same
+per-Visit pass `place_activity_report` already runs; a same-session
+identity-map lookup, not a new round trip, resolves each candidate's
+attribution/file-existence facts). 10 new pure tests, 9 new repository/API
+integration tests (including the mandatory multi-subject and reviewed-
+correction regressions), 2 new Bird Log integration tests, and 2 new
+frontend e2e tests (Today and Bird Log, each covering image-present/
+image-absent/failed-image/no-Zone scenarios) all pass, alongside the full
+pre-existing suite (Core gate, 3687 tests) unmodified. Explicitly not
+attempted: a second, taxon-level persisted-primary concept (deliberately
+kept fully derived); re-deriving sharpness/exposure at report time
+(would require decoding image bytes, forbidden by this module's own
+performance contract); click-through navigation from Today's compact
+thumbnail (judged not trivial enough to add for this milestone) -- see
+"Known limitations" in the new contract doc.
+
 **Temporal correctness surfaces this gate must preserve, named explicitly:**
 event time (source capture) vs. ingestion time vs. processing-completion
 time vs. presentation/UI freshness must stay distinguishable, not collapsed

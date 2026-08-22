@@ -1354,6 +1354,21 @@ a.secondary-action {
   background: #ffffff;
 }
 
+/* Gate C -- Representative Species Evidence v1: a compact, fixed-size
+   preview so a species row with an image never shifts a row without one --
+   see docs/representative-species-evidence-contract.md. `align-self` is
+   set explicitly because the row itself uses `align-items: baseline` for
+   its text children, which an image has no meaningful baseline for. */
+.today-report-species-thumb {
+  flex: 0 0 auto;
+  align-self: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: #eaf0e8;
+}
+
 .today-report-species-list li span {
   min-width: 0;
   overflow: hidden;

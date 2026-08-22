@@ -2210,6 +2210,33 @@ class VisitEvidenceFrame(BaseModel):
     # A derived/cropped frame (e.g. `activity_crop`) omits this rather than
     # reprojecting a box computed for a different frame's own pixels.
     normalized_track_box: list[float] | None = None
+    # This asset's own persisted `GeometryAttribution.resolution_provenance`
+    # (see docs/source-resolution-multi-frame-species-evidence-contract.md),
+    # read back verbatim -- `None` for an asset with no recorded geometry
+    # attribution (the ordinary case), never fabricated. Only `"synchronized"`
+    # means a genuinely proven higher-resolution capture; the other values
+    # describe temporal/identity trust, not resolution.
+    resolution_provenance: (
+        Literal["exact_same_frame", "synchronized", "near_time_capture", "fallback"] | None
+    ) = None
+
+
+class RepresentativeEvidence(BaseModel):
+    """Gate C -- Representative Species Evidence v1 (see docs/representative-
+    species-evidence-contract.md): the one persisted evidence image that
+    currently best represents a reviewed taxon, chosen by `mockingbird.
+    analytics.representative_evidence.select_representative_evidence` from
+    that taxon's own confirmed Visits only. Deliberately reuses the exact
+    `VisitEvidenceFrame` shape/serialization the Evidence Gallery and Bird
+    Log already use -- never a second, drifting evidence representation --
+    adding only the one fact a bare frame does not carry on its own: which
+    Visit it belongs to. Always derived, never persisted (see "Schema" in
+    the contract doc); recomputed on every report read, so a reviewed
+    correction is reflected on the very next read with no backfill.
+    """
+
+    visit_id: str
+    evidence: VisitEvidenceFrame
 
 
 class ClassifierSupportingEvidence(BaseModel):
@@ -4671,6 +4698,18 @@ class PlaceActivityReportTaxonEntry(BaseModel):
     hour_activity: list[PlaceActivityReportTaxonHourActivity] = Field(default_factory=list)
     most_active_zone: PlaceActivityReportTaxonZoneActivity | None = None
     most_active_hour: PlaceActivityReportTaxonHourActivity | None = None
+    # Gate C -- Representative Species Evidence v1 (see docs/representative-
+    # species-evidence-contract.md): `None` whenever this taxon has no
+    # confirmed Visit in *this report period* with safe, still-present
+    # evidence -- including when this taxon is provisional-only (never
+    # populated from a SpeciesSuggestion alone) or every candidate's media
+    # is missing/deleted. A taxon with `representative_evidence is None`
+    # remains a completely normal report entry; the frontend omits the
+    # image rather than treating this as an error. Deliberately scoped to
+    # this report's own period only -- never a historical fallback -- so
+    # Today can never present old evidence as though captured today; see
+    # "Time scope" in the contract doc.
+    representative_evidence: RepresentativeEvidence | None = None
 
 
 class PlaceActivityReportZoneActivity(BaseModel):
