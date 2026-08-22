@@ -142,6 +142,51 @@ def _fake_provider_loader_factory(detections_by_frame_id: dict[str, tuple[Detect
     return _loader, fake
 
 
+async def test_decode_failure_is_logged_with_the_stable_taxonomy_code(
+    repository: ProductRepository, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Pre-Freeze Operability Gap Closure v1 ("A2 frame-decode failures --
+    recorded/offline media"): disclosed as absent in
+    docs/observability-error-taxonomy-contract.md. Reuses the already-
+    registered `OFFLINE_INGEST` taxonomy codes rather than a new one.
+    `sample_recorded_video_frames` is stubbed to raise deterministically --
+    this run's own real decode correctness is already covered by
+    `test_recorded_video_source.py`; this test only proves the new,
+    previously-absent structured record fires at the existing `except
+    RecordedVideoDecodeError` boundary, one bounded event per failed run."""
+
+    logged: list[dict] = []
+    monkeypatch.setattr(
+        offline_ingest,
+        "log_error_event",
+        lambda component, event, **fields: logged.append({"component": component, "event": event, **fields}),
+    )
+
+    def _raise(*args: object, **kwargs: object):
+        raise offline_ingest.RecordedVideoDecodeError("unsupported_codec")
+
+    monkeypatch.setattr(offline_ingest, "sample_recorded_video_frames", _raise)
+
+    placeholder = tmp_path / "placeholder.mp4"
+    placeholder.write_bytes(b"not a real video")
+    _seed_media_asset(repository, media_asset_id="media-bad-codec", video_path=placeholder)
+
+    result = await offline_ingest.run_offline_video_ingest(
+        repository, media_asset_id="media-bad-codec",
+    )
+
+    assert result.status == "failed"
+    assert result.error_code == "unsupported_codec"
+
+    decode_events = [entry for entry in logged if entry["event"] == "recorded_media_decode_failed"]
+    assert len(decode_events) == 1
+    assert decode_events[0]["component"] == "offline_ingest"
+    assert decode_events[0]["code"] == "unsupported_codec"
+    assert decode_events[0]["stream_id"] == STREAM_ID
+    assert decode_events[0]["media_asset_id"] == "media-bad-codec"
+    assert "exception" in decode_events[0]
+
+
 @pytest.fixture
 def four_second_clip(tmp_path: Path) -> Path:
     if not _has_real_ffmpeg_suite():

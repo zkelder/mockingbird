@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from mockingbird import __version__ as MOCKINGBIRD_VERSION
-from mockingbird.diagnostics.structured_log import log_event
+from mockingbird.diagnostics.error_taxonomy import resolve_error
+from mockingbird.diagnostics.structured_log import log_error_event, log_event
 
 from collections import Counter
 import csv
@@ -2681,6 +2682,23 @@ def _validate_camera_setup_urls(provider_key: str, config: dict[str, str]) -> No
                 raise ValueError("camera_setup_invalid_node_address") from error
 
 
+def _rtsp_setup_probe_if_applicable(config: dict[str, str]) -> rtsp_bridge.RtspProbeResult | None:
+    """`None` when this config is not a manual-RTSP live setup at all -- a
+    still-image-only `external_url` Source, or a non-RTSP live stream type
+    (`mjpeg`/`hls`/`browser_video`/`unknown`), which the browser fetches
+    directly and the backend never touches (see the `live_stream_url`
+    field's own "Browser-direct stream URL; not fetched by the backend"
+    description). Live Setup Validation v1 ("B1/B7"): only a genuinely
+    RTSP-typed live stream URL gets the bounded live probe; every other
+    `external_url` shape keeps its prior, unchanged validation behavior."""
+
+    live_stream_type = (config.get("live_stream_type") or "").strip().lower()
+    live_stream_url = (config.get("live_stream_url") or "").strip()
+    if live_stream_type != "rtsp" or not live_stream_url:
+        return None
+    return rtsp_bridge.probe_rtsp_stream(live_stream_url)
+
+
 @dataclass(frozen=True)
 class CameraNodePendingSetup:
     """A durable, server-only pending Camera Node pairing/setup draft.
@@ -5165,9 +5183,38 @@ class ProductRepository:
             message = f"Local setup required. {configuration.message}"
             can_continue = True
         elif definition.provider_key == "external_url":
-            status = "configuration_valid"
-            message = "Configuration valid. Use Stream Detail later for any explicit preview."
-            can_continue = True
+            # Live Setup Validation v1 ("B1"): manual RTSP setup must not
+            # claim a source is ready merely because its URL is
+            # syntactically valid -- a genuinely RTSP-typed live stream URL
+            # gets one bounded live probe (connect, negotiate, decode one
+            # real frame) before this can report `configuration_valid`.
+            # `None` for every other `external_url` shape (still-image-only,
+            # or a non-RTSP live type the browser fetches directly) --
+            # unchanged prior behavior for those.
+            rtsp_probe = _rtsp_setup_probe_if_applicable(sanitized)
+            if rtsp_probe is None:
+                status = "configuration_valid"
+                message = "Configuration valid. Use Stream Detail later for any explicit preview."
+                can_continue = True
+            elif rtsp_probe.ready:
+                status = "configuration_valid"
+                message = "Live RTSP stream validated: connected and decoded a real frame."
+                can_continue = True
+            else:
+                # Never the raw ffmpeg/probe `detail` here -- that bounded,
+                # already-credential-redacted diagnostic is advanced-log-
+                # only (B6); the response always carries the taxonomy's own
+                # fixed, safe message text.
+                status = rtsp_probe.code
+                message = resolve_error(rtsp_probe.code).message
+                can_continue = False
+                log_error_event(
+                    "acquisition_provider",
+                    "rtsp_setup_probe_failed",
+                    code=rtsp_probe.code,
+                    detail=rtsp_probe.detail,
+                    elapsed_seconds=round(rtsp_probe.elapsed_seconds, 3),
+                )
         elif definition.provider_key == "camera_node":
             status = "configuration_valid"
             message = "Paired Camera Node configuration is valid. Snapshot preview and monitoring remain explicit."
@@ -7691,6 +7738,8 @@ class ProductRepository:
         session: Session,
         stream_id: str,
         now: datetime,
+        *,
+        resolved_health_state: str = "healthy",
     ) -> None:
         prefix = f"monitoring:{stream_id}:"
         for incident in session.scalars(
@@ -7699,6 +7748,30 @@ class ProductRepository:
                 CameraHealthIncidentModel.resolved_at.is_(None),
             )
         ).all():
+            # Pre-Freeze Operability Gap Closure v1 ("A4 Camera Node
+            # incident resolution"): the prior milestone logged an incident
+            # *opening* (`health_incident_opened`, `_sync_camera_health_
+            # incident` below) but never its resolution -- disclosed as a
+            # known gap in docs/observability-error-taxonomy-contract.md
+            # ("Not yet covered"). One bounded record per incident actually
+            # transitioning to resolved -- never a routine per-poll
+            # "healthy" line: this method only ever runs from `_sync_
+            # camera_health_incident`'s two call sites, once the incident-
+            # worthy condition has already stopped holding, and each
+            # incident's `resolved_at` is set unconditionally right below,
+            # so a later poll finds no open incident left to resolve again.
+            log_event(
+                "camera_node",
+                "health_incident_resolved",
+                stream_id=stream_id,
+                incident_id=incident.id,
+                category=incident.category,
+                reason_code=incident.reason_code,
+                resolved_health_state=resolved_health_state,
+                duration_seconds=max(
+                    0, int((_as_utc(now) - _as_utc(incident.started_at)).total_seconds())
+                ),
+            )
             incident.resolved_at = now
             incident.updated_at = now
         for alert in session.scalars(
@@ -7737,7 +7810,16 @@ class ProductRepository:
             or policy is None
             or policy.mode != StreamMonitoringMode.armed.value
         ):
-            self._resolve_camera_health_state(session, stream_id, now)
+            self._resolve_camera_health_state(
+                session,
+                stream_id,
+                now,
+                resolved_health_state=(
+                    "monitoring_disarmed"
+                    if policy is not None and policy.mode != StreamMonitoringMode.armed.value
+                    else "monitoring_unavailable"
+                ),
+            )
             return
         try:
             playback = self.get_stream_playback_status(stream_id)
@@ -7757,7 +7839,9 @@ class ProductRepository:
             now=now,
         )
         if condition is None:
-            self._resolve_camera_health_state(session, stream_id, now)
+            self._resolve_camera_health_state(
+                session, stream_id, now, resolved_health_state=health.state.value,
+            )
             return
         category, severity, reason_code, fingerprint, title, message = condition
         prefix = f"monitoring:{stream_id}:"

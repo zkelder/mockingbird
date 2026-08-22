@@ -80,6 +80,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from mockingbird.diagnostics.structured_log import log_error_event
 from mockingbird.observation.candidate_visit_authority import (
     ObservationAuthorityMode,
     resolve_ambiguous_boundary_arbitration,
@@ -393,6 +394,26 @@ async def run_offline_video_ingest(
         )
     except RecordedVideoDecodeError as error:
         code = _sanitized(error)
+        # Pre-Freeze Operability Gap Closure v1 ("A2 frame-decode failures
+        # -- recorded/offline media"): disclosed as absent in
+        # docs/observability-error-taxonomy-contract.md. One bounded record
+        # per failed run -- `run_offline_video_ingest` decodes a whole
+        # recording in one bounded `sample_recorded_video_frames` call (see
+        # its own module docstring), never a per-frame retry loop, so this
+        # can fire at most once per analysis attempt; no suppression
+        # mechanism is needed here. Reuses the existing, already-registered
+        # `OFFLINE_INGEST` taxonomy codes (`media_file_invalid`/
+        # `unsupported_codec`/`decode_failed`/`ffmpeg_unavailable`) rather
+        # than inventing new ones.
+        log_error_event(
+            "offline_ingest",
+            "recorded_media_decode_failed",
+            code=code,
+            exception=error,
+            stream_id=stream_id,
+            media_asset_id=media_asset_id,
+            run_id=run.id,
+        )
         repository.complete_recorded_media_analysis_run(
             run.id, status="failed", frames_considered=0, frames_analyzed=0, events_created=0,
             visits_created=0, error_code=code, error_message=_decode_error_message(code),

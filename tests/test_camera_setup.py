@@ -344,6 +344,7 @@ async def test_camera_setup_api_validation_is_secret_safe_and_side_effect_free(
 @pytest.mark.anyio
 async def test_camera_setup_rtsps_gets_the_specific_honest_refusal_not_a_generic_invalid_url(
     client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """First-Hour Onboarding + Whole-Product Observability Closure v1
     ("A3/A6 honest RTSPS refusal"): before this fix, an rtsps:// URL at
@@ -388,6 +389,16 @@ async def test_camera_setup_rtsps_gets_the_specific_honest_refusal_not_a_generic
 
     # An ordinary rtsp:// URL (never rtsps://) must never trigger the RTSPS
     # refusal -- this fix is scheme-specific, not a broader RTSP change.
+    # Live Setup Validation v1: a plain rtsp:// URL now also gets a bounded
+    # live probe (see rtsp_bridge.probe_rtsp_stream) -- irrelevant to what
+    # *this* test proves, so it is stubbed out to a deterministic success
+    # rather than actually reaching for "camera.local" over the network.
+    from mockingbird.playback.rtsp_bridge import RtspProbeResult
+
+    monkeypatch.setattr(
+        "mockingbird.repository.product_repository.rtsp_bridge.probe_rtsp_stream",
+        lambda url, **kwargs: RtspProbeResult(True, "ready", None, 0.01),
+    )
     plain_rtsp = await client.post(
         "/api/camera-setup/validate",
         json={
@@ -397,3 +408,235 @@ async def test_camera_setup_rtsps_gets_the_specific_honest_refusal_not_a_generic
     )
     assert plain_rtsp.status_code == 200
     assert "RTSPS" not in plain_rtsp.text
+
+
+# ---------------------------------------------------------------------------
+# Live Setup Validation v1 (Pre-Freeze Operability Gap Closure v1, Part B):
+# manual RTSP setup must not claim a source is ready merely because its URL
+# is syntactically valid. `rtsp_bridge.probe_rtsp_stream` itself is unit-
+# tested directly in tests/test_rtsp_probe.py (including a real local
+# ffmpeg decode and the bounded-timeout/process-cleanup contract); these
+# tests prove the *wiring* through the real Camera Setup validation path.
+# ---------------------------------------------------------------------------
+
+_RTSP_CONFIG = {
+    "url": "https://camera.local/still.jpg",
+    "live_stream_url": "rtsp://camera.local:554/stream",
+    "live_stream_type": "rtsp",
+}
+
+
+def _stub_probe(monkeypatch: pytest.MonkeyPatch, result) -> None:
+    from mockingbird.playback.rtsp_bridge import RtspProbeResult
+
+    if not isinstance(result, RtspProbeResult):
+        ready, code = result
+        result = RtspProbeResult(ready, code, None, 0.01)
+    monkeypatch.setattr(
+        "mockingbird.repository.product_repository.rtsp_bridge.probe_rtsp_stream",
+        lambda url, **kwargs: result,
+    )
+
+
+@pytest.mark.anyio
+async def test_rtsp_setup_validation_requires_more_than_url_syntax(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B1: a syntactically valid rtsp:// URL alone must not be enough --
+    the exact same request must succeed or fail purely on the bounded live
+    probe's own outcome."""
+
+    _stub_probe(monkeypatch, (False, "camera_setup_rtsp_unreachable"))
+    unreachable = await client.post(
+        "/api/camera-setup/validate", json={"provider_key": "external_url", "config": _RTSP_CONFIG},
+    )
+    assert unreachable.status_code == 200
+    body = unreachable.json()
+    assert body["can_continue"] is False
+    assert body["status"] == "camera_setup_rtsp_unreachable"
+    assert body["message"]
+
+    _stub_probe(monkeypatch, (True, "ready"))
+    ready = await client.post(
+        "/api/camera-setup/validate", json={"provider_key": "external_url", "config": _RTSP_CONFIG},
+    )
+    assert ready.status_code == 200
+    ready_body = ready.json()
+    assert ready_body["can_continue"] is True
+    assert ready_body["status"] == "configuration_valid"
+    assert "decoded a real frame" in ready_body["message"]
+
+
+@pytest.mark.anyio
+async def test_rtsp_setup_validation_reports_bounded_distinguishable_errors(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B4: every probe outcome the taxonomy defines round-trips into a
+    normal (never 500), actionable response -- no HTTP-level crash, no
+    generic catch-all message hiding what actually failed."""
+
+    codes = (
+        "camera_setup_rtsp_unreachable",
+        "camera_setup_rtsp_authentication_failed",
+        "camera_setup_rtsp_negotiation_failed",
+        "camera_setup_rtsp_unsupported_codec",
+        "camera_setup_rtsp_decode_failed",
+        "camera_setup_rtsp_validation_timed_out",
+        "camera_setup_rtsp_ffmpeg_unavailable",
+    )
+    seen_messages = set()
+    for code in codes:
+        _stub_probe(monkeypatch, (False, code))
+        response = await client.post(
+            "/api/camera-setup/validate", json={"provider_key": "external_url", "config": _RTSP_CONFIG},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["can_continue"] is False
+        assert body["status"] == code
+        assert body["message"]
+        seen_messages.add(body["message"])
+    # Each code gets its own distinct, specific text -- not one generic
+    # catch-all string reused for every failure.
+    assert len(seen_messages) == len(codes)
+
+
+@pytest.mark.anyio
+async def test_rtsp_setup_validation_can_be_corrected_and_retried_without_recreating_source(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B7: a failed validation must preserve the entered configuration
+    sufficiently to correct and retry -- no Source/Stream exists to delete
+    at any point in this sequence (`validate_camera_setup` never persists
+    anything; only Complete Setup does)."""
+
+    paths = ("/api/sources", "/api/streams")
+    before = {path: (await client.get(path)).json() for path in paths}
+
+    _stub_probe(monkeypatch, (False, "camera_setup_rtsp_unreachable"))
+    first = await client.post(
+        "/api/camera-setup/validate",
+        json={"provider_key": "external_url", "config": {**_RTSP_CONFIG, "live_stream_url": "rtsp://typo.local/stream"}},
+    )
+    assert first.json()["can_continue"] is False
+
+    # Correct the URL and retry -- no delete/recreate step in between.
+    _stub_probe(monkeypatch, (True, "ready"))
+    second = await client.post(
+        "/api/camera-setup/validate", json={"provider_key": "external_url", "config": _RTSP_CONFIG},
+    )
+    assert second.json()["can_continue"] is True
+
+    after = {path: (await client.get(path)).json() for path in paths}
+    assert after == before
+
+
+@pytest.mark.anyio
+async def test_rtsp_setup_validation_covers_onvif_shaped_credentialed_urls(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B9 #10: an ONVIF-discovered stream URI (`embedOnvifCredentials`'
+    exact `rtsp://user:pass@host/...` shape) goes through the identical
+    `provider_key="external_url"`/`live_stream_type="rtsp"` validation path
+    a manually-entered RTSP camera already uses -- and never leaks its
+    embedded credential doing so."""
+
+    _stub_probe(monkeypatch, (True, "ready"))
+    response = await client.post(
+        "/api/camera-setup/validate",
+        json={
+            "provider_key": "external_url",
+            "config": {
+                "url": "https://camera.local/still.jpg",
+                "live_stream_url": "rtsp://onvif-user:UnmistakableOnvifSecret42@camera.local:554/onvif/profile1",
+                "live_stream_type": "rtsp",
+            },
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["can_continue"] is True
+    assert "UnmistakableOnvifSecret42" not in response.text
+
+
+@pytest.mark.anyio
+async def test_rtsp_setup_validation_never_leaks_credentials_in_response_or_logs(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B6 (mandatory): drives the *real* `probe_rtsp_stream` -- real
+    threading/timeout/redaction code, only the ffmpeg subprocess itself is
+    faked -- with a fake ffmpeg stderr that echoes the credentialed URL
+    verbatim (a real, observed ffmpeg behavior for several RTSP I/O error
+    paths). An unmistakable fake password must be absent from the API
+    response *and* from every structured log record this flow produces."""
+
+    class _FakeStream:
+        def __init__(self, chunks: list[bytes]) -> None:
+            self._chunks = list(chunks)
+
+        def read(self, size: int = -1) -> bytes:
+            return self._chunks.pop(0) if self._chunks else b""
+
+    class _FakeProcess:
+        def __init__(self, stderr_text: bytes) -> None:
+            # One junk byte (never a valid JPEG marker) so the probe's own
+            # "did anything respond at all" signal fires immediately rather
+            # than waiting out the real connect-timeout window -- keeps
+            # this test fast while still reaching the real stderr-based
+            # classifier below.
+            self.stdout = _FakeStream([b"x"])
+            self.stderr = _FakeStream([stderr_text])
+            self.returncode: int | None = None
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def terminate(self) -> None:
+            self.returncode = 1
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+        def wait(self, timeout: float | None = None) -> int:
+            return self.returncode or 0
+
+    unmistakable_password = "tR0ub4dor&ExtremelyUnmistakable"
+    fake_stderr = (
+        f"[rtsp @ 0x0] rtsp://setup-user:{unmistakable_password}@camera.local:554/stream: "
+        "Server returned 404 Not Found"
+    ).encode("utf-8")
+
+    monkeypatch.setattr(
+        "mockingbird.repository.product_repository.rtsp_bridge.is_ffmpeg_available",
+        lambda *args, **kwargs: True,
+    )
+    monkeypatch.setattr(
+        "mockingbird.repository.product_repository.rtsp_bridge.start_rtsp_mjpeg_process",
+        lambda url, **kwargs: _FakeProcess(fake_stderr),
+    )
+    logged: list[dict] = []
+    monkeypatch.setattr(
+        "mockingbird.repository.product_repository.log_error_event",
+        lambda component, event, **fields: logged.append({"component": component, "event": event, **fields}),
+    )
+
+    response = await client.post(
+        "/api/camera-setup/validate",
+        json={
+            "provider_key": "external_url",
+            "config": {
+                "url": "https://camera.local/still.jpg",
+                "live_stream_url": f"rtsp://setup-user:{unmistakable_password}@camera.local:554/stream",
+                "live_stream_type": "rtsp",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["can_continue"] is False
+    assert unmistakable_password not in response.text
+    assert unmistakable_password not in body["message"]
+    assert unmistakable_password not in str(body.get("safe_config_preview", {}))
+
+    assert len(logged) == 1
+    assert unmistakable_password not in str(logged[0])

@@ -381,6 +381,100 @@ def test_a_new_health_incident_is_logged_once_not_on_every_routine_refresh(
     assert incident_events[0]["reason_code"] == "authentication_rejected"
 
 
+def test_a_resolved_health_incident_is_logged_once_with_duration(
+    repository: ProductRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pre-Freeze Operability Gap Closure v1 ("A4 Camera Node incident
+    resolution"): the prior milestone logged an incident *opening* but
+    never its resolution -- disclosed as a known gap in
+    docs/observability-error-taxonomy-contract.md. Reuses the exact same
+    failure-then-healthy fixture as test_node_failure_retry_updates_one_
+    incident_and_alert_until_healthy above, which already proves
+    `resolved_at` itself gets set by this same sequence."""
+
+    logged: list[dict] = []
+    monkeypatch.setattr(
+        product_repository_module,
+        "log_event",
+        lambda component, event, **fields: logged.append({"component": component, "event": event, **fields}),
+    )
+
+    candidate = _enable(repository)
+    now = datetime.now(UTC)
+    repository.mark_monitoring_backoff_with_failure_code(
+        candidate,
+        app_instance_id="camera-health-test",
+        failure_count=2,
+        retry_at=now + timedelta(seconds=5),
+        failure_code="authentication_rejected",
+        now=now,
+    )
+    incident_id = _incidents(repository)[0].id
+    assert not [entry for entry in logged if entry["event"] == "health_incident_resolved"]
+
+    repository.mark_monitoring_running(
+        repository.list_enabled_monitoring_candidates(limit=1)[0],
+        app_instance_id="camera-health-test",
+        healthy_at=now + timedelta(seconds=30),
+        now=now + timedelta(seconds=30),
+    )
+
+    resolved_events = [entry for entry in logged if entry["event"] == "health_incident_resolved"]
+    assert len(resolved_events) == 1
+    assert resolved_events[0]["component"] == "camera_node"
+    assert resolved_events[0]["incident_id"] == incident_id
+    assert resolved_events[0]["reason_code"] == "authentication_rejected"
+    assert resolved_events[0]["resolved_health_state"] == "healthy"
+    assert resolved_events[0]["duration_seconds"] == 30
+
+    # Never fires again on a later, routine healthy poll -- one transition,
+    # one record, not "healthy" logged on every poll.
+    repository.mark_monitoring_running(
+        repository.list_enabled_monitoring_candidates(limit=1)[0],
+        app_instance_id="camera-health-test",
+        healthy_at=now + timedelta(seconds=60),
+        now=now + timedelta(seconds=60),
+    )
+    assert len([entry for entry in logged if entry["event"] == "health_incident_resolved"]) == 1
+
+
+def test_disarming_monitoring_resolves_an_open_incident_as_monitoring_disarmed(
+    repository: ProductRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other `_resolve_camera_health_state` call site (policy no longer
+    armed) is a real, distinct resolution transition too -- but it must
+    never claim the camera itself became healthy again."""
+
+    logged: list[dict] = []
+    monkeypatch.setattr(
+        product_repository_module,
+        "log_event",
+        lambda component, event, **fields: logged.append({"component": component, "event": event, **fields}),
+    )
+
+    candidate = _enable(repository)
+    now = datetime.now(UTC)
+    repository.mark_monitoring_backoff_with_failure_code(
+        candidate,
+        app_instance_id="camera-health-test",
+        failure_count=2,
+        retry_at=now + timedelta(seconds=5),
+        failure_code="authentication_rejected",
+        now=now,
+    )
+    assert len(_incidents(repository)) == 1
+
+    assert repository.set_stream_monitoring_enabled(
+        candidate.stream_id,
+        enabled=False,
+        idempotency_key=f"disable-camera-health-{candidate.stream_id}",
+    ) is False
+
+    resolved_events = [entry for entry in logged if entry["event"] == "health_incident_resolved"]
+    assert len(resolved_events) == 1
+    assert resolved_events[0]["resolved_health_state"] == "monitoring_disarmed"
+
+
 def test_camera_node_session_recovery_is_operational_only(
     repository: ProductRepository,
 ) -> None:

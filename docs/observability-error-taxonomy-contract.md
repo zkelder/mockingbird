@@ -149,15 +149,24 @@ see "Not yet covered," below). Each of these four is purely additive -- no
 lifecycle, authority, retry, or health-state-machine behavior changed;
 verified by real, repeated (2-4x) full-file runs of
 `tests/test_engine_runtime.py` showing no change in pass rate before/
-after, plus a clean full Core gate. Not yet covered: host startup/shutdown
-beyond the existing crash-marker mechanism, frame-decode failures,
-camera-health-incident *resolution* transitions (only opening a new
-incident is logged today), coverage-accounting failures (confirmed absent
-of any durable evidence
-today, not just a log line), and evidence-persistence failures beyond the
-existing `CameraHealthIncidentCategory.evidence_persistence_degraded`
-durable fact -- disclosed gaps, not silent ones; see the milestone's final
-report for the complete list. Do not log every frame, image bytes, or a
+after, plus a clean full Core gate.
+
+**Closed by Pre-Freeze Operability Gap Closure v1** (see
+[pre-freeze-operability-gap-closure-v1-contract.md](pre-freeze-operability-gap-closure-v1-contract.md)):
+frame-decode failures (`playback/live_camera_session.py`'s `_reader_loop`
+"process ended" branch; `observation/offline_ingest.py`'s
+`RecordedVideoDecodeError` branch), camera-health-incident *resolution*
+transitions (`_resolve_camera_health_state` now logs `health_incident_
+resolved`, not only `health_incident_opened`), and coverage-accounting
+failures (`engine_runtime.py`'s `_checkpoint_observation_exposure`/
+`_close_observation_exposure` except blocks now log `code=
+"storage_write_failed"` before their existing swallow-and-continue).
+
+Still not covered: host startup/shutdown beyond the existing crash-marker
+mechanism (explicitly optional, not a regression), and evidence-persistence
+failures beyond the existing
+`CameraHealthIncidentCategory.evidence_persistence_degraded` durable fact --
+disclosed gaps, not silent ones. Do not log every frame, image bytes, or a
 high-cardinality model vector -- the same discipline this module's own
 docstring states directly.
 

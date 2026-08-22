@@ -294,3 +294,34 @@ def test_monitor_loop_failure_sets_a_safe_message_not_the_raw_exception_text() -
     assert "very specific internal detail" not in session.last_error
     assert "RuntimeError" not in session.last_error
     assert session.monitor_running is False
+
+
+def test_reader_loop_process_ended_is_logged(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pre-Freeze Operability Gap Closure v1 ("A2 frame-decode failures --
+    RTSP/live playback/acquisition"): disclosed as absent in
+    docs/observability-error-taxonomy-contract.md. The sibling `except
+    Exception` path in `_reader_loop` already logs via `log_error_event`
+    (see the test above's own module); this proves the "process ended on
+    its own" branch -- reached when ffmpeg simply exits with no Python
+    exception at all, before any Stop was requested -- now does too."""
+
+    logged: list[dict] = []
+    monkeypatch.setattr(
+        live_camera_session,
+        "log_error_event",
+        lambda component, event, **fields: logged.append({"component": component, "event": event, **fields}),
+    )
+
+    process = _FakeCameraProcess()
+    process._close(0)  # ffmpeg exits on its own -- no Stop, no exception.
+    session = live_camera_session._LiveCameraSession(config=_config(), process=process, max_runtime_seconds=60)
+
+    session._reader_loop()
+
+    assert session.status == "failed"
+    assert session.stop_reason == "process_ended"
+    process_events = [entry for entry in logged if entry["event"] == "live_stream_process_ended"]
+    assert len(process_events) == 1
+    assert process_events[0]["component"] == "acquisition_provider"
+    assert process_events[0]["code"] == "camera_process_ended"
+    assert process_events[0]["stream_id"] == STREAM_ID

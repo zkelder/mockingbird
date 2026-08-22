@@ -2688,6 +2688,96 @@ def test_healthy_observation_session_records_monitoring_exposure_with_no_legacy_
     assert repository.list_enabled_monitoring_candidates(limit=10) == []
 
 
+def test_coverage_checkpoint_failure_is_logged_without_corrupting_exposure_history(
+    repository: ProductRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pre-Freeze Operability Gap Closure v1 ("A3 coverage-accounting
+    failures"): disclosed as absent-of-any-durable-evidence in
+    docs/observability-error-taxonomy-contract.md. `_checkpoint_observation_
+    exposure`'s own except block already swallowed this failure
+    unconditionally before this change ("exposure accounting must never be
+    able to break live analysis") -- this proves the new structured record
+    fires, *and* that no partial/fabricated `MonitoringExposureInterval`
+    row is ever left behind: every checkpoint attempt in this run fails, so
+    the honest outcome is zero rows, never a corrupt one."""
+
+    logged: list[dict] = []
+    monkeypatch.setattr(
+        engine_runtime,
+        "log_error_event",
+        lambda component, event, **fields: logged.append({"component": component, "event": event, **fields}),
+    )
+
+    def _raise(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("simulated coverage-accounting write failure")
+
+    monkeypatch.setattr(repository, "record_observation_exposure_frame", _raise)
+
+    transport = _RenewingTransport([4, 4], generation="generation-a")
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: transport,
+        clock=_FakeClock(NOW),
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    # The session still runs to its own normal completion -- a coverage-
+    # accounting bug must never itself break live analysis.
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "stopped", timeout=10.0)
+
+    checkpoint_events = [entry for entry in logged if entry["event"] == "coverage_checkpoint_failed"]
+    assert len(checkpoint_events) >= 1
+    assert checkpoint_events[0]["component"] == "observation_engine"
+    assert checkpoint_events[0]["code"] == "storage_write_failed"
+    assert checkpoint_events[0]["stream_id"] == STREAM_ID
+    assert "exception" in checkpoint_events[0]
+
+    # No corruption: every write attempt failed, so no interval was ever
+    # created -- never a partial/fabricated row standing in for real
+    # coverage evidence.
+    assert _intervals(repository, STREAM_ID) == []
+
+
+def test_close_exposure_failure_is_logged_and_swallowed(
+    repository: ProductRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sibling of the checkpoint-failure test above for the session-stop
+    path (`_close_observation_exposure`'s own except block): additive
+    only -- Stop must still complete cleanly even when the durable close
+    write itself fails."""
+
+    logged: list[dict] = []
+    monkeypatch.setattr(
+        engine_runtime,
+        "log_error_event",
+        lambda component, event, **fields: logged.append({"component": component, "event": event, **fields}),
+    )
+
+    def _raise(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("simulated coverage-accounting close failure")
+
+    monkeypatch.setattr(repository, "close_observation_exposure", _raise)
+
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: _SlowIndefiniteTransport(),
+        clock=_FakeClock(NOW),
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "observing", timeout=10.0)
+
+    status = manager.stop(STREAM_ID)
+    assert status is not None
+    assert status.state == "stopped"
+
+    close_events = [entry for entry in logged if entry["event"] == "coverage_exposure_close_failed"]
+    assert len(close_events) == 1
+    assert close_events[0]["component"] == "observation_engine"
+    assert close_events[0]["code"] == "storage_write_failed"
+    assert close_events[0]["stream_id"] == STREAM_ID
+
+
 def test_user_stop_closes_monitoring_exposure_interval_as_session_stopped(
     repository: ProductRepository,
 ) -> None:

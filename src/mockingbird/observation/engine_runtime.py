@@ -1382,7 +1382,28 @@ class _EngineSession:
                 node_boot_id=node_boot_id,
                 node_service_version=node_service_version,
             )
-        except Exception:  # pragma: no cover - defensive: must never break analysis
+        except Exception as error:  # pragma: no cover - defensive: must never break analysis
+            # Pre-Freeze Operability Gap Closure v1 ("A3 coverage-accounting
+            # failures"): disclosed as absent-of-any-durable-evidence in
+            # docs/observability-error-taxonomy-contract.md. Purely
+            # additive -- this except block already swallowed the failure
+            # unconditionally before this change (see the docstring above:
+            # "exposure accounting must never be able to break live
+            # analysis"); this only adds a structured record of it. The
+            # write itself stays exactly as safe as before: `record_
+            # observation_exposure_frame`'s own `session.begin()` rolls
+            # back on any exception, so a failed checkpoint attempt can
+            # never leave a partial/corrupt `MonitoringExposureInterval`
+            # row -- this log call observes that outcome, it never
+            # participates in producing it.
+            log_error_event(
+                "observation_engine",
+                "coverage_checkpoint_failed",
+                code="storage_write_failed",
+                exception=error,
+                stream_id=self.stream_id,
+                runtime_generation_id=self._runtime_generation_id,
+            )
             return
         if outcome is not None and outcome.boot_transition_detected:
             with self._state_lock:
@@ -1413,8 +1434,21 @@ class _EngineSession:
                 now=self._clock(),
                 last_healthy_at=self._last_healthy_frame_at,
             )
-        except Exception:  # pragma: no cover - defensive: cleanup must never raise
-            pass
+        except Exception as error:  # pragma: no cover - defensive: cleanup must never raise
+            # Pre-Freeze Operability Gap Closure v1 ("A3 coverage-accounting
+            # failures"): see the identical reasoning in `_record_
+            # observation_exposure_frame`'s own except block just above --
+            # purely additive, the swallow-and-continue behavior is
+            # unchanged, `close_observation_exposure`'s own transaction
+            # still rolls back cleanly on any exception.
+            log_error_event(
+                "observation_engine",
+                "coverage_exposure_close_failed",
+                code="storage_write_failed",
+                exception=error,
+                stream_id=self.stream_id,
+                close_reason=close_reason,
+            )
 
     def _schedule_automatic_identification(self, visit_id: str) -> None:
         """Best-effort hand-off to the bounded, single-worker automatic

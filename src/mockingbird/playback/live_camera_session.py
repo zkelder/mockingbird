@@ -2171,13 +2171,33 @@ class _LiveCameraSession:
             with self._lock:
                 self.status = "failed"
                 self.stop_reason = "process_ended"
+                safe_failure_code = getattr(self.process, "safe_failure_code", None)
                 if self.last_error is None:
-                    safe_failure_code = getattr(self.process, "safe_failure_code", None)
                     self.last_error = (
                         safe_failure_code
                         if safe_failure_code in CAMERA_NODE_RUNTIME_FAILURE_CODES
                         else "Camera process ended before the session was stopped."
                     )
+                # Pre-Freeze Operability Gap Closure v1 ("A2 frame-decode
+                # failures -- RTSP/live playback/acquisition"): disclosed as
+                # absent in docs/observability-error-taxonomy-contract.md.
+                # `_reader_loop` is the `target=` of a background thread
+                # this session starts exactly once (see `start()`) -- this
+                # branch runs at most once per session attempt, never a
+                # per-frame storm, so no suppression mechanism is needed
+                # here (mirrors the sibling `except Exception` branch's own
+                # existing `log_error_event` call just below).
+                log_error_event(
+                    "acquisition_provider",
+                    "live_stream_process_ended",
+                    code=(
+                        safe_failure_code
+                        if safe_failure_code in CAMERA_NODE_RUNTIME_FAILURE_CODES
+                        else "camera_process_ended"
+                    ),
+                    stream_id=self.stream_id,
+                    source_id=self.source_id,
+                )
                 self._record_diagnostic_event_locked(
                     "camera_failed",
                     status=self.status,

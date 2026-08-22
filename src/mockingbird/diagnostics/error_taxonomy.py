@@ -289,6 +289,68 @@ for _code, _message, _user_action in (
         ),
     )
 
+# -- ACQUISITION_PROVIDER: Pre-Freeze Operability Gap Closure v1 ("Live RTSP
+#    Setup Validation" -- see rtsp_bridge.probe_rtsp_stream). Manual RTSP
+#    setup must not claim a source is ready merely because its URL is
+#    syntactically valid; these are the bounded, distinguishable outcomes a
+#    real live probe can honestly report. New codes -- no prior structured
+#    text existed for any of these (setup validation previously never
+#    attempted a live connection at all). --
+for _code, _message, _user_action, _retryable in (
+    (
+        "camera_setup_rtsp_unreachable",
+        "Could not reach this camera's RTSP stream. Check the URL, network, and that the camera is powered on.",
+        "Check the camera's network address and that it is powered on, then try again.",
+        True,
+    ),
+    (
+        "camera_setup_rtsp_authentication_failed",
+        "The camera rejected this stream's username/password.",
+        "Check the RTSP URL's username and password.",
+        False,
+    ),
+    (
+        "camera_setup_rtsp_negotiation_failed",
+        "MockingBird connected but this camera did not negotiate a usable RTSP stream at this URL.",
+        "Check the RTSP path in the URL against the camera's own documentation.",
+        True,
+    ),
+    (
+        "camera_setup_rtsp_unsupported_codec",
+        "This stream's video codec is not supported for analysis.",
+        "Set the camera's stream to a widely-supported codec (e.g. H.264) and try again.",
+        False,
+    ),
+    (
+        "camera_setup_rtsp_decode_failed",
+        "MockingBird connected but could not decode a usable video frame from this stream.",
+        "Check the camera's stream settings and try again.",
+        True,
+    ),
+    (
+        "camera_setup_rtsp_validation_timed_out",
+        "Validating this RTSP stream took too long and was stopped.",
+        "Check the camera's network connection and try again.",
+        True,
+    ),
+    (
+        "camera_setup_rtsp_ffmpeg_unavailable",
+        "Video decoding is unavailable on this installation.",
+        "Reinstalling MockingBird usually fixes this.",
+        False,
+    ),
+):
+    _register(
+        _code,
+        ErrorTaxonomyEntry(
+            component=ErrorComponent.ACQUISITION_PROVIDER,
+            message=_message,
+            recoverability=ErrorRecoverability.DEGRADED,
+            retryable=_retryable,
+            user_action=_user_action,
+        ),
+    )
+
 # -- OBSERVATION_ENGINE: reuses observation.engine_runtime._engine_failure_message's
 #    two named categories --
 _register(
