@@ -372,6 +372,62 @@ def test_missing_model_bundle_and_unsupported_gpu_are_distinct_categories(
     assert missing_model_status.engine_message != bad_gpu_status.engine_message
 
 
+def test_model_load_failure_is_logged_alongside_the_existing_status_fields(
+    repository: ProductRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """First-Hour Onboarding + Whole-Product Observability Closure v1 ("B4
+    structured logging" -- model invocation failure): additive only -- the
+    basic message/advanced-dict behavior test_missing_model_bundle_and_
+    unsupported_gpu_are_distinct_categories above already covers is
+    unchanged; this proves the new log line fires alongside it."""
+
+    logged: list[dict] = []
+    monkeypatch.setattr(
+        engine_runtime,
+        "log_error_event",
+        lambda component, event, **fields: logged.append({"component": component, "event": event, **fields}),
+    )
+
+    def _missing_model(path: Path):
+        raise ValueError("invalid_model_bundle_path")
+
+    manager = _manager(repository, provider_loader=_missing_model)
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state != "starting")
+
+    assert len(logged) == 1
+    assert logged[0]["component"] == "model_runtime"
+    assert logged[0]["event"] == "observation_engine_load_failed"
+    assert logged[0]["code"] == "invalid_model_bundle_path"
+    assert logged[0]["stream_id"] == STREAM_ID
+    assert logged[0]["category"] == "missing_model_or_runtime"
+
+
+def test_session_start_and_stop_are_each_logged_once(
+    repository: ProductRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """First-Hour Onboarding + Whole-Product Observability Closure v1 ("B4
+    structured logging" -- Observation Engine session start/stop)."""
+
+    logged: list[dict] = []
+    monkeypatch.setattr(
+        engine_runtime,
+        "log_event",
+        lambda component, event, **fields: logged.append({"component": component, "event": event, **fields}),
+    )
+
+    manager = _manager(repository, provider_loader=lambda path: _fixture_provider())
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state != "starting")
+    manager.stop(STREAM_ID)
+
+    session_events = [entry for entry in logged if entry["component"] == "observation_engine"]
+    assert session_events == [
+        {"component": "observation_engine", "event": "session_start", "stream_id": STREAM_ID},
+        {"component": "observation_engine", "event": "session_stop", "stream_id": STREAM_ID},
+    ]
+
+
 def test_pairing_incomplete_still_reports_camera_as_the_problem(repository: ProductRepository) -> None:
     """The other side of the same fix: when pairing itself is genuinely
     incomplete, the headline message must be the specific camera reason,
@@ -2198,6 +2254,40 @@ def test_bounded_transport_error_recovers_without_stopping_or_duplicating_the_vi
     assert final.advanced.get("analysis_stream_reconnect_recoveries") == 1
     assert transport.calls == 4  # 2 failed + 1 successful (4 frames) + 1 terminal fallback
     assert repository.get_observation_authority_state(stream_id=STREAM_ID).mode == "shadow"
+
+
+def test_reconnect_recovery_is_logged_alongside_the_existing_counter(
+    repository: ProductRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """First-Hour Onboarding + Whole-Product Observability Closure v1 ("B4
+    structured logging" -- reconnect attempts): additive only -- the
+    in-memory `analysis_stream_reconnect_recoveries` counter the test above
+    already covers is unchanged; this proves the new log line fires
+    alongside it, reusing that same real two-failure-then-recover
+    transport fixture."""
+
+    logged: list[dict] = []
+    monkeypatch.setattr(
+        engine_runtime,
+        "log_event",
+        lambda component, event, **fields: logged.append({"component": component, "event": event, **fields}),
+    )
+
+    transport = _RenewingTransport(["raise", "raise", 4], generation="generation-a")
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: transport,
+        analysis_stream_retry_policy=_fast_retry_policy(),
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "stopped", timeout=10.0)
+
+    reconnect_events = [entry for entry in logged if entry["event"] == "reconnect_recovered"]
+    assert len(reconnect_events) == 1
+    assert reconnect_events[0]["component"] == "camera_node"
+    assert reconnect_events[0]["stream_id"] == STREAM_ID
+    assert reconnect_events[0]["consecutive_failures_before_recovery"] == 2
 
 
 def test_empty_batch_interruption_recovers_without_stopping_observation(

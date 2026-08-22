@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from mockingbird import __version__ as MOCKINGBIRD_VERSION
+from mockingbird.diagnostics.structured_log import log_event
 
 from collections import Counter
 import csv
@@ -7788,6 +7789,21 @@ class ProductRepository:
             .order_by(CameraHealthIncidentModel.updated_at.desc())
         )
         if incident is None:
+            # First-Hour Onboarding + Whole-Product Observability Closure v1
+            # ("B4 structured logging" -- Camera Node health transitions):
+            # additive only -- fires once per genuinely new health-incident
+            # condition (never on an existing incident's own routine
+            # occurrence_count/severity refresh below), the same "condition
+            # actually changed" boundary this method's own dedup/fingerprint
+            # logic above already establishes.
+            log_event(
+                "camera_node",
+                "health_incident_opened",
+                stream_id=stream_id,
+                category=category.value,
+                severity=severity.value,
+                reason_code=reason_code,
+            )
             incident = CameraHealthIncidentModel(
                 id=uuid.uuid4().hex,
                 stream_id=stream_id,

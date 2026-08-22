@@ -132,9 +132,32 @@ Wired into a representative, high-value subset of previously-unlogged
 operational events as of this milestone: a shared `SQLAlchemyError`
 handler (every database write/read failure that reaches the API boundary
 uncaught -- previously zero such handling existed anywhere in the 32k-line
-repository module), and the two confirmed raw-exception-leak fixes in
+repository module); the two confirmed raw-exception-leak fixes in
 `monitoring/source_monitor.py`/`playback/live_camera_session.py` (see
-"User-safe actions," below). Do not log every frame, image bytes, or a
+"User-safe actions," below); and, in
+`observation/engine_runtime.py`, Observation Engine session start/stop
+(`ObservationEngineSessionManager.start`/`.stop`), model-load failure (the
+same classification `_engine_failure_message` already computes for the
+basic-tier status message), and analysis-stream reconnect recovery (the
+same event the existing in-memory `analysis_stream_reconnect_recoveries`
+counter already tracks); and, in
+`repository/product_repository.py`'s `_sync_camera_health_incident`, a new
+Camera Node health incident being opened (fires once per genuinely new
+condition -- not on that same method's own routine occurrence_count/
+severity refresh of an already-open incident, and not yet on resolution;
+see "Not yet covered," below). Each of these four is purely additive -- no
+lifecycle, authority, retry, or health-state-machine behavior changed;
+verified by real, repeated (2-4x) full-file runs of
+`tests/test_engine_runtime.py` showing no change in pass rate before/
+after, plus a clean full Core gate. Not yet covered: host startup/shutdown
+beyond the existing crash-marker mechanism, frame-decode failures,
+camera-health-incident *resolution* transitions (only opening a new
+incident is logged today), coverage-accounting failures (confirmed absent
+of any durable evidence
+today, not just a log line), and evidence-persistence failures beyond the
+existing `CameraHealthIncidentCategory.evidence_persistence_degraded`
+durable fact -- disclosed gaps, not silent ones; see the milestone's final
+report for the complete list. Do not log every frame, image bytes, or a
 high-cardinality model vector -- the same discipline this module's own
 docstring states directly.
 
@@ -159,9 +182,16 @@ available to an advanced/support surface" principle.
   middleware, shared `SQLAlchemyError` handler)
 - `src/mockingbird/monitoring/source_monitor.py`,
   `src/mockingbird/playback/live_camera_session.py` (the two leak fixes)
+- `src/mockingbird/observation/engine_runtime.py` (three additive log call
+  sites -- see above; no detector/tracker/authority/retry logic touched)
+- `src/mockingbird/repository/product_repository.py` (one additive log
+  call site in `_sync_camera_health_incident`; no health-state-machine
+  logic touched)
 - `tests/test_request_correlation_and_error_handling.py`,
   `tests/test_source_monitor_error_handling.py`,
-  `tests/test_live_camera_session.py` (new tests)
+  `tests/test_live_camera_session.py`,
+  `tests/test_engine_runtime.py`,
+  `tests/test_camera_health.py` (new tests)
 - this document
 
 ## Non-goals

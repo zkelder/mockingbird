@@ -12,6 +12,7 @@ from mockingbird.api import main as api_main
 from mockingbird.api.schemas import CameraHealthState
 from mockingbird.api.main import _evidence_persistence_failed, app, configure_repository
 from mockingbird.monitoring.durable_supervisor import DurableMonitoringCandidate
+from mockingbird.repository import product_repository as product_repository_module
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.storage.database import CURRENT_DATABASE_SCHEMA_VERSION, initialize_database
 from mockingbird.storage.models import (
@@ -328,6 +329,56 @@ def test_node_failure_retry_updates_one_incident_and_alert_until_healthy(
     )
     assert _incidents(repository)[0].resolved_at is not None
     assert _monitoring_alerts(repository)[0].resolved_at is not None
+
+
+def test_a_new_health_incident_is_logged_once_not_on_every_routine_refresh(
+    repository: ProductRepository, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """First-Hour Onboarding + Whole-Product Observability Closure v1 ("B4
+    structured logging" -- Camera Node health transitions): fires exactly
+    once for the genuinely new incident condition below, not again for the
+    routine occurrence_count/severity refresh a second backoff of the
+    *same* condition performs (mirrors test_node_failure_retry_updates_
+    one_incident_and_alert_until_healthy's own "one incident, updated
+    twice" fixture)."""
+
+    logged: list[dict] = []
+    monkeypatch.setattr(
+        product_repository_module,
+        "log_event",
+        lambda component, event, **fields: logged.append({"component": component, "event": event, **fields}),
+    )
+
+    candidate = _enable(repository)
+    now = datetime.now(UTC)
+    repository.mark_monitoring_backoff_with_failure_code(
+        candidate,
+        app_instance_id="camera-health-test",
+        failure_count=2,
+        retry_at=now + timedelta(seconds=5),
+        failure_code="authentication_rejected",
+        now=now,
+    )
+    retry_candidate = repository.list_enabled_monitoring_candidates(limit=1)[0]
+    repository.mark_monitoring_starting(
+        retry_candidate,
+        app_instance_id="camera-health-test",
+        now=now + timedelta(seconds=5),
+    )
+    retry_candidate = repository.list_enabled_monitoring_candidates(limit=1)[0]
+    repository.mark_monitoring_backoff_with_failure_code(
+        retry_candidate,
+        app_instance_id="camera-health-test",
+        failure_count=3,
+        retry_at=now + timedelta(seconds=35),
+        failure_code="authentication_rejected",
+        now=now + timedelta(seconds=6),
+    )
+
+    incident_events = [entry for entry in logged if entry["event"] == "health_incident_opened"]
+    assert len(incident_events) == 1
+    assert incident_events[0]["component"] == "camera_node"
+    assert incident_events[0]["reason_code"] == "authentication_rejected"
 
 
 def test_camera_node_session_recovery_is_operational_only(

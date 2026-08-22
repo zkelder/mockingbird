@@ -88,6 +88,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Callable, Protocol
 
+from mockingbird.diagnostics.structured_log import log_error_event, log_event
 from mockingbird.monitoring.exposure_history import exposure_close_reason_for_transition
 from mockingbird.observation.acceptance_recorder import (
     AcceptanceRecorderConfig,
@@ -836,6 +837,20 @@ class _EngineSession:
             provider, detector = self._provider_loader(self._provider_config_path)
         except (ValueError, OSError, RuntimeError) as error:
             basic_message, category = _engine_failure_message(error)
+            # First-Hour Onboarding + Whole-Product Observability Closure v1
+            # ("B4 structured logging" -- model invocation failure): the
+            # basic user-facing message/advanced dict above already existed
+            # and are unchanged; this only adds the missing log line so a
+            # support bundle's log tail shows the same fact without needing
+            # a live status poll at the exact right moment.
+            log_error_event(
+                "model_runtime",
+                "observation_engine_load_failed",
+                code=_sanitized(error),
+                exception=error,
+                stream_id=self.stream_id,
+                category=category,
+            )
             with self._state_lock:
                 self._state = "error"
                 self._engine_available = False
@@ -1058,6 +1073,17 @@ class _EngineSession:
                         # instant real frames arrive again -- "state returns
                         # to observing, freshness resumes, no stale terminal
                         # stopped_reason remains."
+                        # First-Hour Onboarding + Whole-Product Observability
+                        # Closure v1 ("B4 structured logging" -- reconnect
+                        # attempts): additive log line only, same recovery
+                        # event the in-memory advanced counter above already
+                        # tracked for a live status poll.
+                        log_event(
+                            "camera_node",
+                            "reconnect_recovered",
+                            stream_id=self.stream_id,
+                            consecutive_failures_before_recovery=consecutive_transport_failures,
+                        )
                         with self._state_lock:
                             self._camera_connected = True
                             self._camera_message = "Connected to the Camera Node."
@@ -1801,6 +1827,14 @@ class ObservationEngineSessionManager:
             )
             self._sessions[stream_id] = session
             session.start()
+            # First-Hour Onboarding + Whole-Product Observability Closure v1
+            # ("B4 structured logging" -- Observation Engine session start/
+            # stop): additive only -- no lifecycle/authority behavior
+            # changed. A stopped-and-restarted session still has no durable,
+            # session-spanning identity of its own (see "Where the chain
+            # still breaks" in docs/observability-error-taxonomy-contract.md);
+            # stream_id is the correlation key available today.
+            log_event("observation_engine", "session_start", stream_id=stream_id)
             return session.snapshot()
 
     def stop(self, stream_id: str) -> ObservationEngineSessionStatus | None:
@@ -1809,6 +1843,7 @@ class ObservationEngineSessionManager:
         if session is None:
             return None
         session.stop()
+        log_event("observation_engine", "session_stop", stream_id=stream_id)
         return session.snapshot()
 
     def status(self, stream_id: str) -> ObservationEngineSessionStatus | None:
