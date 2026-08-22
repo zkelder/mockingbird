@@ -1156,6 +1156,39 @@ class DatasetExportModel(Base):
     selected_visit_ids_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class ResearchCollectionModel(Base):
+    """A named, bounded research/dataset collection (Research/Conservation/
+    Export Interoperability v1, schema 42; see docs/research-conservation-
+    export-contract.md "Collection/contributor model"). Mirrors
+    `DatasetExportModel`'s own bounded `selected_visit_ids_json` shape --
+    membership is an explicit, capped list a user assembles, never an
+    implicit "everything reviewed" set and never a second parallel truth
+    store: every included id is still resolved through the ordinary Visit/
+    ReviewLabel truth boundary at export time, not cached here.
+
+    `curator_identity` mirrors `ReviewLabelModel.reviewer_identity`'s own
+    established free-text "who/what" convention (there is no user/account
+    system in this product -- see review_provenance.py): who assembled this
+    collection, never a taxonomic reviewer and never review authority (see
+    "Contributor authority" in the governing milestone brief).
+    `eligibility_policy_version` is recorded at creation time so a later
+    export of this same collection can disclose whether the eligibility
+    policy has since changed (see "Research replication / dataset identity"
+    in the governing brief).
+    """
+
+    __tablename__ = "research_collections"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    curator_identity: Mapped[str | None] = mapped_column(String, nullable=True)
+    visit_ids_json: Mapped[str] = mapped_column(Text, nullable=False)
+    eligibility_policy_version: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class ActivityLibrarySavedViewModel(Base):
     """Local organizational metadata; it never duplicates Visit evidence or truth."""
 

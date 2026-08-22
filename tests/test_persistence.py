@@ -567,6 +567,44 @@ def test_schema_40_upgrades_to_current_with_recorded_media_analysis_runs(
         migrated.close()
 
 
+def test_schema_41_upgrades_to_current_with_research_collections(
+    tmp_path: Path,
+) -> None:
+    """Research / Conservation / Export Interoperability v1: a real database
+    at the previously-current schema (v41) upgrades cleanly through the new
+    additive `research_collections` table without disturbing existing data,
+    mirroring `test_schema_40_upgrades_to_current_with_recorded_media_
+    analysis_runs`'s own upgrade-in-place proof."""
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = repository_for(db_path)
+    existing_source_count = len(repository.list_sources())
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql("DROP TABLE research_collections")
+        connection.exec_driver_sql("UPDATE mockingbird_schema SET version = 41 WHERE singleton_id = 1")
+    engine.dispose()
+
+    migrated = repository_for(db_path)
+    try:
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+        assert len(migrated.list_sources()) == existing_source_count
+
+        with migrated.engine.connect() as connection:
+            columns = {
+                row[1]
+                for row in connection.exec_driver_sql("PRAGMA table_info(research_collections)").fetchall()
+            }
+            assert {
+                "id", "name", "description", "curator_identity",
+                "visit_ids_json", "eligibility_policy_version", "created_at", "updated_at",
+            } <= columns
+    finally:
+        migrated.close()
+
+
 def test_database_needing_unknown_migration_is_rejected(tmp_path: Path) -> None:
     db_path = tmp_path / "mockingbird.sqlite3"
     repository = repository_for(db_path)

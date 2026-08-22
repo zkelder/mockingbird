@@ -42,7 +42,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 41
+CURRENT_DATABASE_SCHEMA_VERSION = 42
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -1059,6 +1059,23 @@ def _migrate_to_recorded_media_analysis_runs(connection: Connection) -> None:
     Base.metadata.tables["recorded_media_analysis_runs"].create(bind=connection, checkfirst=True)
 
 
+def _migrate_to_research_collections(connection: Connection) -> None:
+    """Add the empty, bounded `research_collections` table (Research/
+    Conservation/Export Interoperability v1, see docs/research-conservation-
+    export-contract.md "Collection/contributor model" and
+    `mockingbird.storage.models.ResearchCollectionModel`). Mirrors
+    `_migrate_to_recorded_media_analysis_runs`'s own "additive table, no
+    seeded row" pattern exactly: an installation upgrading from schema 41
+    has never created a research collection, so it correctly starts with
+    none at all."""
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Research collections migration requires local SQLite storage."
+        )
+    Base.metadata.tables["research_collections"].create(bind=connection, checkfirst=True)
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -1100,6 +1117,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     39: _migrate_to_camera_onvif_profiles,
     40: _migrate_to_media_asset_duration,
     41: _migrate_to_recorded_media_analysis_runs,
+    42: _migrate_to_research_collections,
 }
 
 
