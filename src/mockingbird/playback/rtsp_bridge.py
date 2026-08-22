@@ -34,6 +34,52 @@ def validate_rtsp_url(url: str) -> bool:
     return parts.scheme.lower() in {"rtsp", "rtsps"} and bool(parts.netloc)
 
 
+def is_rtsps_url(url: str) -> bool:
+    """Whether `url` uses the `rtsps://` (RTSP-over-TLS) scheme specifically,
+    as opposed to plain `rtsp://`. See `RTSPS_TRANSPORT_SUPPORTED`'s
+    docstring for why this distinction matters."""
+
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return False
+    return parts.scheme.lower() == "rtsps"
+
+
+# v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.6 RTSPS"): this
+# bridge's ffmpeg invocation (`build_rtsp_mjpeg_command`, `-rtsp_transport
+# tcp`) never constructs a TLS-secured lower transport for the RTSP
+# control/data connection. Empirically verified against this deployment's
+# ffmpeg build (6.1.1, configured `--enable-gnutls`): opening an
+# `rtsps://` URL -- with or without an explicit `-rtsp_transport` flag --
+# still starts a *plain* `tcp://` connection, identical to `rtsp://`;
+# ffmpeg's RTSP demuxer does not upgrade transport based on URL scheme in
+# this configuration. MockingBird must never accept an `rtsps://` URL and
+# silently serve it over plaintext -- that would tell a user their camera
+# connection is secure when it is not (the "do not silently downgrade
+# rtsps:// to rtsp://" requirement). `False` is therefore a durable,
+# evidence-based product fact about this codebase's current transport
+# wiring, not a live runtime probe -- there is no safe way to probe
+# genuine TLS support without a real TLS-terminating RTSP server to test
+# against, and probing a user's actual camera at status-read time would
+# violate this contract's own side-effect-free status guarantee (see
+# docs/source-connection-provider-contract.md). Revisit only alongside a
+# deliberate, reviewed change to how this bridge invokes ffmpeg (an
+# explicit TLS lower-transport, or a dependency change), never by flipping
+# this constant alone without new evidence.
+RTSPS_TRANSPORT_SUPPORTED = False
+
+
+class RtspsUnsupportedError(ValueError):
+    """Raised when a caller asks this bridge to actually open an
+    `rtsps://` URL while `RTSPS_TRANSPORT_SUPPORTED` is `False`. Product-
+    level callers should check `is_rtsps_url`/`RTSPS_TRANSPORT_SUPPORTED`
+    themselves first (see `_external_url_stream_playback_status`'s RTSP
+    branch) to report an honest, actionable capability state instead of
+    relying on this exception -- it exists as a defense-in-depth guard at
+    the point ffmpeg would actually be invoked, not as the primary UX."""
+
+
 def build_rtsp_mjpeg_command(
     url: str,
     *,
@@ -43,6 +89,8 @@ def build_rtsp_mjpeg_command(
 ) -> list[str]:
     if not validate_rtsp_url(url):
         raise ValueError("invalid_rtsp_url")
+    if is_rtsps_url(url) and not RTSPS_TRANSPORT_SUPPORTED:
+        raise RtspsUnsupportedError("rtsps_unsupported")
     return [
         ffmpeg_binary,
         "-hide_banner",

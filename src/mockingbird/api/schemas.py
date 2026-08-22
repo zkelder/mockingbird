@@ -560,6 +560,79 @@ class SourceProviderConfigurationUpdate(BaseModel):
     config: dict[str, str | None] = Field(default_factory=dict)
 
 
+class OnvifDiscoverProfilesRequest(BaseModel):
+    """v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.4 ONVIF").
+    Stateless -- no Source needs to exist yet; this is the "Add camera ->
+    Discover with ONVIF" step. `onvif_password` never appears in any
+    response (see `OnvifDiscoveredProfile`'s docstring)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    onvif_host: str = Field(min_length=1, max_length=255)
+    onvif_port: int = Field(default=80, ge=1, le=65535)
+    onvif_username: str = Field(default="", max_length=255)
+    onvif_password: str = Field(default="", max_length=255)
+
+
+class OnvifDiscoveredProfile(BaseModel):
+    """One media profile plus its camera-provided stream URI -- always the
+    bare URI with no credentials embedded (see docs/source-provider-
+    configuration-contract.md "Secret/Redaction policy": a transient
+    discovery response is held to the identical never-echo-a-secret
+    discipline as a saved-config read). `advertised_width`/`advertised_
+    height` are this camera's own unverified claim, never presented as
+    observed/verified resolution."""
+
+    profile_token: str
+    profile_name: str | None = None
+    advertised_width: int | None = None
+    advertised_height: int | None = None
+    encoding: str | None = None
+    stream_uri: str
+
+
+class OnvifDiscoverProfilesResponse(BaseModel):
+    status: Literal[
+        "available", "unreachable", "authentication_rejected", "no_profiles", "error"
+    ]
+    message: str
+    device_manufacturer: str | None = None
+    device_model: str | None = None
+    device_firmware_version: str | None = None
+    profiles: list[OnvifDiscoveredProfile] = Field(default_factory=list)
+
+
+class OnvifRecordProfileRequest(BaseModel):
+    """v0.1 Acquisition/Ingest Interoperability Closure v1: persists which
+    ONVIF device/profile an already-configured `external_url`+rtsp Source
+    was set up through. `live_stream_url` is the credential-embedded RTSP
+    URI the caller already built client-side (from `OnvifDiscoverProfiles
+    Response.profiles[].stream_uri` plus the password it still holds --
+    see docs/onvif-provider-boundary-design.md) -- this request never
+    carries a raw password field of its own."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    onvif_host: str = Field(min_length=1, max_length=255)
+    onvif_port: int = Field(default=80, ge=1, le=65535)
+    onvif_username: str = Field(default="", max_length=255)
+    profile_token: str = Field(min_length=1)
+    profile_name: str | None = None
+    device_manufacturer: str | None = None
+    device_model: str | None = None
+    device_firmware_version: str | None = None
+    advertised_width: int | None = None
+    advertised_height: int | None = None
+    live_stream_url: str = Field(min_length=1)
+
+
+class OnvifRecordProfileResponse(BaseModel):
+    source_id: str
+    status: Literal["saved", "invalid_stream_url"]
+    message: str
+    provider_configuration: SourceProviderConfiguration | None = None
+
+
 class CameraConfigurationSecretAction(str, Enum):
     keep = "keep"
     replace = "replace"
@@ -1107,6 +1180,13 @@ class StreamPlaybackStatus(BaseModel):
     windows_ffmpeg_binary_display: str | None = None
     camera_settings: dict[str, str] = Field(default_factory=dict)
     bridged_mjpeg_url: str | None = None
+    # v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.16
+    # Capability reporting"): purely informational provenance -- never
+    # authoritative over `status`/`live_stream_type`/anything above. A
+    # Source configured manually (the ordinary case) simply has
+    # `onvif_connected=False`.
+    onvif_connected: bool = False
+    onvif_device_summary: str | None = None
 
 
 class StreamPlaybackStatusResponse(StreamPlaybackStatus):
@@ -2189,6 +2269,13 @@ class MediaAsset(BaseModel):
     content_sha256: str | None = None
     derivation_source: str | None = None
     previous_effective_crop_media_asset_id: str | None = None
+    # v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.8 Offline
+    # recorded video"): the source clip's own known duration -- honest
+    # acquisition-effort provenance, never wired into monitoring coverage/
+    # maturity (see "II.10 Offline vs monitoring coverage"). `None` for
+    # every image and for any video whose duration ffprobe could not
+    # determine.
+    duration_seconds: float | None = Field(default=None, ge=0)
 
 
 class VisitEvidenceFrame(BaseModel):

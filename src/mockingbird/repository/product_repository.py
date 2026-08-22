@@ -330,6 +330,8 @@ from mockingbird.api.schemas import (
     MotionEvidencePromoteResponse,
     MotionEvidenceResponse,
     MotionEvidenceStatus,
+    OnvifRecordProfileRequest,
+    OnvifRecordProfileResponse,
     PixelBoundingBox,
     PlaceActivityReportRequest,
     PlaceActivityReportResponse,
@@ -564,6 +566,7 @@ from mockingbird.monitoring.exposure_history import (
     exposure_close_reason_for_transition,
 )
 from mockingbird.source_providers import folder_import_preview
+from mockingbird.source_providers import media_provenance
 from mockingbird.source_providers.webhook_validation import classify_webhook_payload
 from mockingbird.storage.database import (
     DEFAULT_DB_URL,
@@ -583,6 +586,7 @@ from mockingbird.storage.models import (
     CameraConfigurationRevisionModel,
     CameraHealthIncidentModel,
     CameraNodePendingSetupModel,
+    CameraOnvifProfileModel,
     CameraSourceModel,
     DEFAULT_STREAM_MONITORING_INTERVAL_SECONDS,
     DEFAULT_STREAM_MONITORING_MINIMUM_DETECTIONS,
@@ -982,6 +986,16 @@ SUPPORTED_MEDIA_EXTENSIONS = {
     ".webp": ("image/webp", "image"),
     ".mp4": ("video/mp4", "video"),
     ".mov": ("video/quicktime", "video"),
+    # v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.9
+    # Camera-trap / media ingest"): common trail-camera video formats --
+    # must stay in exact sync with `mockingbird.source_providers.media_
+    # provenance.VIDEO_EXTENSIONS`, the folder-import preview/candidate
+    # set this dict's keys are looked up against; a mismatch there would
+    # let a candidate through preview that this creation-time lookup
+    # cannot resolve.
+    ".avi": ("video/x-msvideo", "video"),
+    ".mkv": ("video/x-matroska", "video"),
+    ".m4v": ("video/x-m4v", "video"),
 }
 
 CLASSIFIER_MANIFEST_COPY_IMAGE_EXTENSIONS = {
@@ -1130,6 +1144,52 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
                 secret=False,
                 description="Optional local setup context.",
                 placeholder="Still-image endpoint for the feeder view",
+            ),
+        ],
+    ),
+    SourceProviderDefinition(
+        provider_key="onvif",
+        display_name="ONVIF network camera",
+        description=(
+            "Discover an ONVIF-capable network camera, authenticate, and select a media "
+            "profile; MockingBird then plays it through the same RTSP bridge as a "
+            "manually-entered RTSP camera."
+        ),
+        status=SourceProviderDefinitionStatus.available_contract_only,
+        supports_live_playback=True,
+        supports_zone_editing=True,
+        fields=[
+            SourceProviderField(
+                key="onvif_host",
+                label="Camera host",
+                required=True,
+                secret=False,
+                description="LAN IP address or .local hostname of the ONVIF device.",
+                placeholder="192.168.1.50",
+            ),
+            SourceProviderField(
+                key="onvif_port",
+                label="ONVIF port",
+                required=False,
+                secret=False,
+                description="Usually 80; some cameras use 8000 or a vendor-specific port.",
+                placeholder="80",
+            ),
+            SourceProviderField(
+                key="onvif_username",
+                label="Username",
+                required=False,
+                secret=False,
+                description="Camera account used for ONVIF authentication.",
+                placeholder="admin",
+            ),
+            SourceProviderField(
+                key="onvif_password",
+                label="Password",
+                required=False,
+                secret=True,
+                description="Stored locally and shown only as configured or not configured.",
+                placeholder="Not stored raw",
             ),
         ],
     ),
@@ -4685,6 +4745,13 @@ class ProductRepository:
                 "local_usb",
                 "manual_media",
                 "camera_node",
+                # v0.1 Acquisition/Ingest Interoperability Closure v1
+                # ("II.18 Onboarding"): selectable so the wizard's ONVIF
+                # discovery sub-flow is reachable; the wizard itself always
+                # completes setup with provider_key="external_url" (see
+                # `record_onvif_profile`'s docstring for why) -- "onvif" is
+                # never actually sent to validate/complete.
+                "onvif",
             }
             options.append(
                 CameraSetupOption(
@@ -4964,6 +5031,122 @@ class ProductRepository:
                 session.flush()
                 stream_ids = self._stream_ids_for_source(session, source_id)
                 return _source_provider_configuration_from_model(source, model, stream_ids)
+
+    def record_onvif_profile(
+        self,
+        source_id: str,
+        payload: OnvifRecordProfileRequest,
+    ) -> OnvifRecordProfileResponse | None:
+        """v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.4
+        ONVIF"): persist which ONVIF device/media profile an
+        `external_url`+rtsp Source was configured through.
+
+        Converges early, per the provider architecture invariant: this
+        never creates a second live-playback/monitoring pipeline. It
+        reuses `update_source_provider_configuration` verbatim to persist
+        the exact same `provider_key="external_url"`/`live_stream_type=
+        "rtsp"` shape a manually-entered RTSP camera already uses -- from
+        that point on, this Source is completely indistinguishable from
+        one at the Doctor/Observation-Engine/capability-reporting level;
+        only the additional `camera_onvif_profiles` row (bounded, informational-
+        only provenance) remembers it was reached through ONVIF. Returns
+        `None` only when `source_id` does not exist (mirrors every other
+        `get_*`-by-id method's convention); an invalid `live_stream_url`
+        is reported as `status="invalid_stream_url"` instead of raising,
+        since that is a normal, expected outcome of a caller round-
+        tripping a value it does not independently validate.
+        """
+
+        if not rtsp_bridge.validate_rtsp_url(payload.live_stream_url):
+            return OnvifRecordProfileResponse(
+                source_id=source_id,
+                status="invalid_stream_url",
+                message="The resolved stream URI is not a valid rtsp:// or rtsps:// URL.",
+            )
+
+        display_name = " ".join(
+            part for part in (payload.device_manufacturer, payload.device_model) if part
+        ).strip() or None
+
+        # `url` (the still-image Snapshot URL field) is deliberately left
+        # unset here: it is an HTTP(S) still-image endpoint, a different
+        # concept from the RTSP stream URI this ONVIF profile resolved --
+        # ONVIF's own snapshot capability (GetSnapshotUri) is not wired up
+        # by this milestone, so reusing the RTSP URL there would be both
+        # semantically wrong and unusable (an rtsp:// URL fetched as an
+        # HTTP still image). Leaving it unconfigured is a completely
+        # normal, already-handled state (see `fetch_external_url_preview`'s
+        # own "not_configured" branch) -- exactly what a manually-entered
+        # RTSP-only camera looks like today.
+        configuration = self.update_source_provider_configuration(
+            source_id,
+            SourceProviderConfigurationUpdate(
+                provider_key="external_url",
+                config={
+                    "live_stream_url": payload.live_stream_url,
+                    "live_stream_type": "rtsp",
+                    **({"display_name": display_name} if display_name else {}),
+                },
+            ),
+        )
+        if configuration is None:
+            return None
+
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                # v0.1 Acquisition/Ingest Interoperability Closure v1
+                # ("II.19 Diagnostics"): `mockingbird.diagnostics.doctor`'s
+                # ffmpeg-dependency check reads `CameraSourceModel.kind`
+                # directly (the same coarse signal `complete_camera_setup`
+                # already sets to `"rtsp"` for a *new* external_url+rtsp
+                # Source) -- kept in sync here too so re-discovering ONVIF
+                # on an *existing* Source that started out as some other
+                # kind still gets an honest "ffmpeg likely needed" WARN if
+                # ffmpeg is ever missing, rather than silently understating
+                # a now-real dependency.
+                source = session.get(CameraSourceModel, source_id)
+                if source is not None and source.kind != SourceKind.rtsp.value:
+                    source.kind = SourceKind.rtsp.value
+
+                existing = session.get(CameraOnvifProfileModel, source_id)
+                if existing is None:
+                    session.add(
+                        CameraOnvifProfileModel(
+                            source_id=source_id,
+                            onvif_host=payload.onvif_host,
+                            onvif_port=payload.onvif_port,
+                            onvif_username=payload.onvif_username or None,
+                            onvif_credential=None,
+                            profile_token=payload.profile_token,
+                            profile_name=payload.profile_name,
+                            device_manufacturer=payload.device_manufacturer,
+                            device_model=payload.device_model,
+                            device_firmware_version=payload.device_firmware_version,
+                            advertised_width=payload.advertised_width,
+                            advertised_height=payload.advertised_height,
+                            resolved_at=now,
+                        )
+                    )
+                else:
+                    existing.onvif_host = payload.onvif_host
+                    existing.onvif_port = payload.onvif_port
+                    existing.onvif_username = payload.onvif_username or None
+                    existing.profile_token = payload.profile_token
+                    existing.profile_name = payload.profile_name
+                    existing.device_manufacturer = payload.device_manufacturer
+                    existing.device_model = payload.device_model
+                    existing.device_firmware_version = payload.device_firmware_version
+                    existing.advertised_width = payload.advertised_width
+                    existing.advertised_height = payload.advertised_height
+                    existing.resolved_at = now
+
+        return OnvifRecordProfileResponse(
+            source_id=source_id,
+            status="saved",
+            message="Camera connected through ONVIF and configured for RTSP playback.",
+            provider_configuration=configuration,
+        )
 
     def get_camera_configuration_edit(
         self,
@@ -5970,14 +6153,31 @@ class ProductRepository:
                     stream_id=stream_model.id,
                 )
 
+                # v0.1 Acquisition/Ingest Interoperability Closure v1
+                # ("II.11 Imported timestamps"): the same Place-local zone
+                # every other local-time computation in this codebase
+                # already resolves (see place_activity_report.py) -- an
+                # honest, disclosed *assumption* for a naive EXIF timestamp
+                # with no timezone of its own, never a silent UTC guess.
+                # See `media_provenance.extract_image_captured_at`'s
+                # docstring.
+                import_local_timezone = resolve_host_local_timezone(imported_at)
+
                 for candidate in preview.candidates:
                     content_type, media_type = SUPPORTED_MEDIA_EXTENSIONS[candidate.extension]
+                    # v0.1 Acquisition/Ingest Interoperability Closure v1
+                    # ("II.12 Duplicate protection"): computed from the
+                    # original source file, before any copy, so a known
+                    # duplicate never pays the cost of being copied into
+                    # local media storage first.
+                    content_sha256 = media_provenance.compute_content_sha256(candidate.source_path)
                     if self._folder_import_duplicate_exists(
                         session,
                         source_id=source_id,
                         relative_source_path=candidate.relative_path,
                         size_bytes=candidate.size_bytes,
                         modified_at=candidate.modified_at,
+                        content_sha256=content_sha256,
                     ):
                         skipped.append(
                             SourceFolderImportSkipped(
@@ -6010,6 +6210,28 @@ class ProductRepository:
                         )
                         continue
 
+                    # v0.1 Acquisition/Ingest Interoperability Closure v1
+                    # ("II.9 Camera-trap / media ingest", "II.11 Imported
+                    # timestamps"): honest, bounded provenance extraction
+                    # -- never decodes/loads full frame content, never
+                    # raises (see media_provenance's own docstrings), and
+                    # never invented when unavailable.
+                    asset_captured_at: datetime | None = None
+                    asset_width: int | None = None
+                    asset_height: int | None = None
+                    asset_duration_seconds: float | None = None
+                    if candidate.planned_media_kind == "image":
+                        image_capture = media_provenance.extract_image_captured_at(
+                            local_path, local_timezone=import_local_timezone
+                        )
+                        asset_captured_at = image_capture.captured_at
+                    else:
+                        video_probe = media_provenance.probe_video_metadata(local_path)
+                        if video_probe is not None:
+                            asset_duration_seconds = video_probe.duration_seconds
+                            asset_width = video_probe.width
+                            asset_height = video_probe.height
+
                     asset_model = MediaAssetModel(
                         id=media_id,
                         source_id=source_id,
@@ -6021,6 +6243,11 @@ class ProductRepository:
                         original_filename=candidate.file_name,
                         file_size_bytes=copied_size,
                         created_at=imported_at,
+                        captured_at=asset_captured_at,
+                        content_sha256=content_sha256,
+                        image_width=asset_width,
+                        image_height=asset_height,
+                        duration_seconds=asset_duration_seconds,
                         notes=_folder_import_media_notes(
                             source_id=source_id,
                             stream_id=stream_model.id,
@@ -8718,9 +8945,17 @@ class ProductRepository:
                 )
             if configured_provider_key == "external_url":
                 config = json.loads(model.config_json) if model is not None else {}
+                # v0.1 Acquisition/Ingest Interoperability Closure v1
+                # ("II.16 Capability reporting"): purely informational --
+                # never authoritative over the config/playback facts
+                # above. A Source configured manually (no ONVIF row) is
+                # unaffected; `onvif_profile=None` renders identically to
+                # today.
+                onvif_profile = session.get(CameraOnvifProfileModel, source.id)
                 return _external_url_stream_playback_status(
                     stream=stream,
                     config=config,
+                    onvif_profile=onvif_profile,
                 )
 
             if source.kind == SourceKind.demo.value:
@@ -24779,7 +25014,29 @@ class ProductRepository:
         relative_source_path: str,
         size_bytes: int | None,
         modified_at: datetime | None,
+        content_sha256: str | None = None,
     ) -> bool:
+        # v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.12
+        # Duplicate protection"): a real content-hash match (the same
+        # bytes, imported under a different relative path/name -- a moved
+        # or renamed file, or a second copy of the same clip in a
+        # different folder) is checked first and independently of the
+        # existing path/size/mtime signal below; `content_sha256` reuses
+        # the same `MediaAssetModel` column Localization Attribution v1
+        # already added for a different purpose, populated for every
+        # folder-imported asset since this milestone (see the creation
+        # loop) but never for one imported before it -- an older asset
+        # with `content_sha256 IS NULL` never matches here, an honest
+        # "cannot content-check that one," not a false negative treated as
+        # a false positive.
+        if content_sha256 and session.scalar(
+            select(MediaAssetModel.id).where(
+                MediaAssetModel.source_id == source_id,
+                MediaAssetModel.content_sha256 == content_sha256,
+            )
+        ):
+            return True
+
         size_value = "" if size_bytes is None else str(size_bytes)
         modified_value = "" if modified_at is None else modified_at.isoformat()
         assets = session.scalars(
@@ -28089,6 +28346,8 @@ def _external_url_supports_browser_live_playback(config: dict[str, str]) -> bool
     live_url = (config.get("live_stream_url") or "").strip()
     live_type = _normalize_live_stream_type(config.get("live_stream_type"), live_url)
     if live_type == "rtsp":
+        if rtsp_bridge.is_rtsps_url(live_url) and not rtsp_bridge.RTSPS_TRANSPORT_SUPPORTED:
+            return False
         return rtsp_bridge.validate_rtsp_url(live_url) and rtsp_bridge.is_ffmpeg_available()
     return bool(live_url and live_type in BROWSER_LIVE_STREAM_TYPES)
 
@@ -28342,6 +28601,32 @@ def _external_url_stream_playback_status(
     *,
     stream: StreamModel,
     config: dict[str, str],
+    onvif_profile: CameraOnvifProfileModel | None = None,
+) -> StreamPlaybackStatus:
+    """Thin ONVIF-provenance wrapper around `_external_url_playback_status_
+    core` (see "II.16 Capability reporting"): every actual playback-
+    readiness decision still comes from `config` alone, exactly as before
+    this milestone -- `onvif_profile` only annotates the result with where
+    the configuration came from, never changes it."""
+
+    status = _external_url_playback_status_core(stream=stream, config=config)
+    if onvif_profile is None:
+        return status
+    device_summary = (
+        " ".join(
+            part
+            for part in (onvif_profile.device_manufacturer, onvif_profile.device_model)
+            if part
+        ).strip()
+        or None
+    )
+    return status.model_copy(update={"onvif_connected": True, "onvif_device_summary": device_summary})
+
+
+def _external_url_playback_status_core(
+    *,
+    stream: StreamModel,
+    config: dict[str, str],
 ) -> StreamPlaybackStatus:
     live_url = (config.get("live_stream_url") or "").strip()
     live_type = _normalize_live_stream_type(config.get("live_stream_type"), live_url)
@@ -28386,6 +28671,38 @@ def _external_url_stream_playback_status(
                 rtsp_bridge_required=True,
                 rtsp_bridge_available=False,
                 rtsp_bridge_status="unsupported_url",
+            )
+        # v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.6
+        # RTSPS"): checked before the ffmpeg-availability branch below so
+        # an rtsps:// URL never silently reports live_ready over what is
+        # actually a plaintext connection -- see
+        # `rtsp_bridge.RTSPS_TRANSPORT_SUPPORTED`'s docstring for the
+        # evidence behind this being a genuine, current transport-stack
+        # limitation rather than a guess.
+        if rtsp_bridge.is_rtsps_url(live_url) and not rtsp_bridge.RTSPS_TRANSPORT_SUPPORTED:
+            return StreamPlaybackStatus(
+                stream_id=stream.id,
+                source_id=stream.source_id,
+                status=StreamPlaybackStatusValue.unsupported_rtsp_bridge_required,
+                playback_kind=StreamPlaybackKind.rtsp,
+                display_title=stream.name,
+                message=(
+                    "RTSPS (secure RTSP) is not currently supported. MockingBird cannot "
+                    "verify a TLS-secured connection to this camera."
+                ),
+                setup_hint=(
+                    "Use rtsp:// on a trusted local network instead. MockingBird will "
+                    "never silently fall back to an unencrypted connection for an "
+                    "rtsps:// URL you configured."
+                ),
+                supports_zone_editing=True,
+                supports_live_playback=False,
+                adapter_key="external_url",
+                live_stream_type=live_type,
+                live_stream_url_display=live_url_display,
+                rtsp_bridge_required=True,
+                rtsp_bridge_available=False,
+                rtsp_bridge_status="rtsps_unsupported",
             )
         if rtsp_bridge.is_ffmpeg_available():
             bridge_url = f"/api/streams/{stream.id}/live/rtsp-mjpeg"
@@ -28846,6 +29163,24 @@ def _sanitize_source_provider_config(
         ):
             sanitized[key] = existing_config[key]
             continue
+        # v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.7
+        # Credential handling"): the read-side companion to this guard --
+        # `_source_provider_configuration_from_config` -- now redacts
+        # embedded URL credentials on *every* non-secret field, not only
+        # `live_stream_url` (see that function's own comment for why). A
+        # caller that round-trips one of those now-redacted preview
+        # strings back unedited must not silently overwrite the real
+        # stored credentialed URL with the redacted placeholder -- keep
+        # the existing value instead, mirroring the "configured" sentinel
+        # guard immediately above.
+        if (
+            not field.secret
+            and "***:***@" in normalized
+            and existing_config.get(key)
+            and _redact_url_credentials(existing_config[key]) == normalized
+        ):
+            sanitized[key] = existing_config[key]
+            continue
         if definition.provider_key == "camera_node" and key in {
             "node_base_address",
             "node_credential",
@@ -28904,10 +29239,22 @@ def _source_provider_configuration_from_config(
         value = (config.get(field.key) or "").strip()
         if value:
             configured_fields.append(field.key)
-            if definition.provider_key == "external_url" and field.key == "live_stream_url":
-                safe_config_preview[field.key] = _redact_url_credentials(value)
-            else:
-                safe_config_preview[field.key] = "configured" if field.secret else value
+            # v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.7
+            # Credential handling"): a real gap this milestone's ONVIF work
+            # concretely exercised and found -- redaction was hardcoded to
+            # exactly one field key (`external_url`'s `live_stream_url`),
+            # so any *other* non-secret URL-shaped field carrying embedded
+            # `user:pass@host` credentials (a snapshot `url`, or a future
+            # provider's own URL field) round-tripped them in plaintext
+            # through `safe_config_preview`. `_redact_url_credentials` is a
+            # safe no-op for a value that is not itself a URL with
+            # embedded userinfo (see its own docstring), so applying it to
+            # every non-secret field -- not one hardcoded field key on one
+            # hardcoded provider -- closes this generally rather than
+            # patching the one field this milestone happened to find.
+            safe_config_preview[field.key] = (
+                "configured" if field.secret else _redact_url_credentials(value)
+            )
         else:
             safe_config_preview[field.key] = "not_configured"
             if field.required:
@@ -30066,6 +30413,7 @@ def _media_asset_from_model(asset: MediaAssetModel) -> MediaAsset:
         previous_effective_crop_media_asset_id=(
             asset.previous_effective_crop_media_asset_id
         ),
+        duration_seconds=asset.duration_seconds,
     )
 
 

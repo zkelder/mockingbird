@@ -673,6 +673,16 @@ class MediaAssetModel(Base):
     # product-doctrine.md). Diagnostic lineage only; nothing reads this
     # column as species/animal-presence truth.
     geometry_attribution_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.8 Offline
+    # recorded video"): the source clip's own known duration, honest
+    # acquisition-effort provenance for a recorded-video/camera-trap-video
+    # import -- never wired into `MonitoringExposureIntervalModel` or
+    # Today's coverage/maturity math (see "II.10 Offline vs monitoring
+    # coverage"): importing a clip must never imply continuous monitoring.
+    # `None` for every image and for any video imported before this column
+    # existed or whose duration ffprobe could not determine -- an honest
+    # "not known," never a fabricated zero.
+    duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class StorageRetentionSettingsModel(Base):
@@ -1220,3 +1230,46 @@ class CameraNodePendingSetupModel(Base):
     monitoring_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CameraOnvifProfileModel(Base):
+    """v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.4 ONVIF",
+    "II.20 provenance bridge"): the bounded, per-Source record of which
+    ONVIF device/media profile a `provider_key="external_url"` RTSP Source
+    was actually configured through, kept only so the product can honestly
+    say "connected via ONVIF" and let a user re-discover/re-select a
+    profile later -- never itself the source of playback truth (the
+    `SourceProviderConfigurationModel` row's own `live_stream_url`/
+    `live_stream_type="rtsp"` is, exactly like a manually-entered RTSP
+    camera; see mockingbird.source_providers.onvif_client's module
+    docstring). One row per Source: a Source not configured through ONVIF
+    simply has none.
+
+    `onvif_credential` is kept exactly the way every other completed
+    Source credential already is (plain local SQLite -- this product's
+    existing trust boundary; see `CameraNodePendingSetupModel`'s identical
+    precedent) -- never returned by any API response and never logged.
+    `device_manufacturer`/`device_model`/`device_firmware_version` and
+    `advertised_width`/`advertised_height` are the camera's own
+    self-reported, unverified identity/capability claims (ONVIF
+    GetDeviceInformation/GetProfiles) -- informational display only, never
+    presented as verified/observed facts (see "II.15 Source-resolution
+    evidence": only what the RTSP bridge actually receives is
+    authoritative resolution).
+    """
+
+    __tablename__ = "camera_onvif_profiles"
+
+    source_id: Mapped[str] = mapped_column(ForeignKey("camera_sources.id"), primary_key=True)
+    onvif_host: Mapped[str] = mapped_column(String, nullable=False)
+    onvif_port: Mapped[int] = mapped_column(Integer, nullable=False)
+    onvif_username: Mapped[str | None] = mapped_column(String, nullable=True)
+    onvif_credential: Mapped[str | None] = mapped_column(String, nullable=True)
+    profile_token: Mapped[str] = mapped_column(String, nullable=False)
+    profile_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    device_manufacturer: Mapped[str | None] = mapped_column(String, nullable=True)
+    device_model: Mapped[str | None] = mapped_column(String, nullable=True)
+    device_firmware_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    advertised_width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    advertised_height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    resolved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

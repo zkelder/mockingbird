@@ -6,6 +6,8 @@ import type {
   CameraNodeAdvertisedCamera,
   CameraNodePendingSetupDraftUpdate,
   CameraNodePendingSetupResponse,
+  OnvifDiscoverProfilesResponse,
+  OnvifDiscoveredProfile,
   Point,
   ZoneActivitySensitivity,
   ZoneType,
@@ -38,6 +40,11 @@ const NODE_DRAFT_SAVE_TIMEOUT_MS = 6_000;
 const NODE_FORGET_TIMEOUT_MS = 10_000;
 const VALIDATE_TIMEOUT_MS = 10_000;
 const COMPLETE_TIMEOUT_MS = 12_000;
+// ONVIF discovery is up to four sequential real network round trips
+// (capabilities -> device info -> profiles -> stream URI per profile),
+// bounded but longer than a single request -- see onvif_client.py's own
+// module docstring.
+const ONVIF_DISCOVER_TIMEOUT_MS = 20_000;
 
 interface CameraSetupDraftState {
   providerKey?: string;
@@ -69,6 +76,29 @@ function errorMessage(caught: unknown, fallback: string): string {
 
 function firstAvailableCamera(cameras: CameraNodeAdvertisedCamera[]): CameraNodeAdvertisedCamera | undefined {
   return cameras.find((camera) => camera.status === "available" && camera.snapshot_supported);
+}
+
+// v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.4 ONVIF"):
+// mirrors mockingbird.source_providers.onvif_client.embed_credentials_in_
+// uri exactly -- the ONVIF discovery response never carries credentials
+// (see docs/source-provider-configuration-contract.md "Secret/Redaction
+// policy"); this browser-side embedding is what turns the bare, camera-
+// provided stream URI into one the existing RTSP bridge can authenticate
+// with, using the same username/password the user already typed into
+// this form, never sent anywhere new.
+function embedOnvifCredentials(uri: string, username: string, password: string): string {
+  if (!username && !password) return uri;
+  const match = uri.match(/^([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)(.*)$/);
+  if (!match) return uri;
+  const [, schemeAndSlashes, rest] = match;
+  if (rest.includes("@")) return uri;
+  const userinfo = `${encodeURIComponent(username)}:${encodeURIComponent(password)}@`;
+  return `${schemeAndSlashes}${userinfo}${rest}`;
+}
+
+function onvifDeviceSummary(discovery: OnvifDiscoverProfilesResponse | null): string {
+  if (!discovery) return "";
+  return [discovery.device_manufacturer, discovery.device_model].filter(Boolean).join(" ");
 }
 
 export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: CameraSetupPageProps) {
@@ -106,6 +136,16 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
   const [isForgettingNode, setIsForgettingNode] = useState(false);
   const [draftSaveStatus, setDraftSaveStatus] = useState<"idle" | "saving" | "failed">("idle");
 
+  // v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.4 ONVIF"):
+  // transient discovery state only -- once a profile is chosen, the
+  // credential-embedded stream URI lands in the same `config` state every
+  // other provider already uses (`live_stream_url`/`live_stream_type`),
+  // so this Source completes setup as an ordinary provider_key=
+  // "external_url" RTSP camera; see `effectiveProviderKey` below.
+  const [onvifDiscovery, setOnvifDiscovery] = useState<OnvifDiscoverProfilesResponse | null>(null);
+  const [onvifSelectedProfileToken, setOnvifSelectedProfileToken] = useState("");
+  const [isDiscoveringOnvif, setIsDiscoveringOnvif] = useState(false);
+
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isValidating, setIsValidating] = useState(false);
@@ -116,6 +156,15 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
     () => options.find((option) => option.provider_key === providerKey) ?? null,
     [options, providerKey],
   );
+
+  // v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.4 ONVIF"):
+  // the dropdown/UI-facing choice stays "onvif" throughout this page, but
+  // every actual validate/complete call submits "external_url" once a
+  // profile is selected -- the backend's own provider-definition allow-
+  // list never accepts "onvif" itself (see record_onvif_profile's own
+  // docstring: an ONVIF-configured Source is, from that point on,
+  // completely indistinguishable from a manually-entered RTSP camera).
+  const effectiveProviderKey = selected?.provider_key === "onvif" ? "external_url" : selected?.provider_key;
 
   function loadCameraSetupOptions() {
     setIsLoading(true);
@@ -248,14 +297,14 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
   }
 
   async function validateSetup() {
-    if (!selected) return;
+    if (!selected || !effectiveProviderKey) return;
     setIsValidating(true);
     setError(null);
     try {
       setValidation(
         await withTimeout(
           apiClient.validateCameraSetup({
-            provider_key: selected.provider_key,
+            provider_key: effectiveProviderKey,
             config,
             node_pairing_token: selected.provider_key === "camera_node" ? nodeSetup?.pairing_token : undefined,
           }),
@@ -372,8 +421,44 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
     }
   }
 
+  async function discoverOnvif() {
+    setIsDiscoveringOnvif(true);
+    setError(null);
+    setOnvifDiscovery(null);
+    setOnvifSelectedProfileToken("");
+    try {
+      const result = await withTimeout(
+        apiClient.discoverOnvifProfiles({
+          onvif_host: config.onvif_host ?? "",
+          onvif_port: config.onvif_port ? Number(config.onvif_port) : undefined,
+          onvif_username: config.onvif_username ?? "",
+          onvif_password: config.onvif_password ?? "",
+        }),
+        ONVIF_DISCOVER_TIMEOUT_MS,
+        "Discovering this camera",
+      );
+      setOnvifDiscovery(result);
+    } catch (caught) {
+      setError(errorMessage(caught, "This camera could not be discovered through ONVIF."));
+    } finally {
+      setIsDiscoveringOnvif(false);
+    }
+  }
+
+  function selectOnvifProfile(profile: OnvifDiscoveredProfile) {
+    setOnvifSelectedProfileToken(profile.profile_token);
+    const embedded = embedOnvifCredentials(
+      profile.stream_uri,
+      config.onvif_username ?? "",
+      config.onvif_password ?? "",
+    );
+    setConfig((current) => ({ ...current, live_stream_url: embedded, live_stream_type: "rtsp" }));
+    setValidation(null);
+    applyCameraNameDefault(onvifDeviceSummary(onvifDiscovery) || undefined);
+  }
+
   async function complete() {
-    if (!selected || !validation?.can_continue) return;
+    if (!selected || !effectiveProviderKey || !validation?.can_continue) return;
     setIsCompleting(true);
     setError(null);
     try {
@@ -381,7 +466,7 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
         apiClient.completeCameraSetup({
           camera_name: cameraName,
           stream_name: streamName || `${cameraName} view`,
-          provider_key: selected.provider_key,
+          provider_key: effectiveProviderKey,
           config,
           node_pairing_token: selected.provider_key === "camera_node" ? nodeSetup?.pairing_token : undefined,
           zones: [{
@@ -436,11 +521,14 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
         blockers.push("Choose a camera the Node can see.");
       }
     }
+    if (selected.provider_key === "onvif" && !config.live_stream_url) {
+      blockers.push("Discover this camera and choose a video profile.");
+    }
     if (!cameraName.trim()) blockers.push("Enter a camera name.");
     if (!zoneName.trim()) blockers.push("Name the area to watch.");
     if (!validation?.can_continue) blockers.push("Check the camera first.");
     return blockers;
-  }, [selected, nodeSetup, selectedNodeCameraId, cameraName, zoneName, validation]);
+  }, [selected, nodeSetup, selectedNodeCameraId, cameraName, zoneName, validation, config.live_stream_url]);
 
   if (isLoading) return <div className="panel">Loading camera setup…</div>;
   if (!options.length && error) {
@@ -464,7 +552,7 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
       </section>
       <section className="panel page-stack">
         <h2>1. Add your camera</h2>
-        <label>Camera type<select value={providerKey} onChange={(event) => { setProviderKey(event.target.value); setConfig({}); setValidation(null); setSelectedNodeCameraId(""); if (nodePreviewUrl) URL.revokeObjectURL(nodePreviewUrl); setNodePreviewUrl(null); }}>
+        <label>Camera type<select value={providerKey} onChange={(event) => { setProviderKey(event.target.value); setConfig({}); setValidation(null); setSelectedNodeCameraId(""); setOnvifDiscovery(null); setOnvifSelectedProfileToken(""); if (nodePreviewUrl) URL.revokeObjectURL(nodePreviewUrl); setNodePreviewUrl(null); }}>
           {options.map((option) => <option key={option.provider_key} disabled={option.availability !== "available_now"} value={option.provider_key}>{option.display_name}{option.availability === "available_now" ? "" : " — unavailable"}</option>)}
         </select></label>
         {selected ? <><p className="meta-text">{selected.message}</p>
@@ -500,6 +588,27 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
               <label>One-time pairing code<input autoComplete="one-time-code" onChange={(event) => setPairingCode(event.target.value)} type="password" value={pairingCode} /></label>
               <button className="secondary-action" disabled={!nodeAddress || !pairingCode || isPairingNode} onClick={() => void pairNode()} type="button">{isPairingNode ? "Pairing…" : nodeSetup?.status === "needs_renewal" ? "Renew pairing" : "Pair Camera Node"}</button>
             </>}
+          </div> : selected.provider_key === "onvif" ? <div className="notice-panel">
+            <strong>ONVIF network camera</strong>
+            <span className="meta-text">Enter this camera's local address and account, then discover its available video profiles. MockingBird never scans your network for it.</span>
+            {selected.fields.map((field) => <label key={field.key}>{field.label}
+              <input onChange={(event) => { setConfig((current) => ({ ...current, [field.key]: event.target.value })); setOnvifDiscovery(null); setOnvifSelectedProfileToken(""); }} placeholder={field.secret ? "Leave blank to keep masked" : field.placeholder ?? ""} type={field.secret ? "password" : "text"} value={config[field.key] ?? ""} />
+            </label>)}
+            <button className="secondary-action" disabled={!config.onvif_host?.trim() || isDiscoveringOnvif} onClick={() => void discoverOnvif()} type="button">{isDiscoveringOnvif ? "Discovering…" : "Discover this camera"}</button>
+            {onvifDiscovery ? (
+              onvifDiscovery.status === "available" && onvifDiscovery.profiles.length > 0 ? (
+                <>
+                  <span className="meta-text">{onvifDeviceSummary(onvifDiscovery) || "Camera found"} — {onvifDiscovery.profiles.length} video profile{onvifDiscovery.profiles.length === 1 ? "" : "s"}</span>
+                  <label>Video profile<select onChange={(event) => { const chosen = onvifDiscovery.profiles.find((profile) => profile.profile_token === event.target.value); if (chosen) selectOnvifProfile(chosen); }} value={onvifSelectedProfileToken}>
+                    <option value="">Choose a profile</option>
+                    {onvifDiscovery.profiles.map((profile) => <option key={profile.profile_token} value={profile.profile_token}>{profile.profile_name ?? profile.profile_token}{profile.advertised_width && profile.advertised_height ? ` — ${profile.advertised_width}×${profile.advertised_height}` : ""}</option>)}
+                  </select></label>
+                  {config.live_stream_url ? <span className="meta-text">Profile selected. This camera will play through MockingBird's RTSP bridge, the same as a manually-entered RTSP camera.</span> : null}
+                </>
+              ) : (
+                <div className="error-panel">{onvifDiscovery.message}</div>
+              )
+            ) : null}
           </div> : selected.fields.map((field) => <label key={field.key}>{field.label}
             <input onChange={(event) => setConfig((current) => ({ ...current, [field.key]: event.target.value }))} placeholder={field.secret ? "Leave blank to keep masked" : field.placeholder ?? ""} type={field.secret ? "password" : "text"} value={config[field.key] ?? ""} />
           </label>)}</> : null}

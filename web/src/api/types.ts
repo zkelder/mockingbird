@@ -458,6 +458,33 @@ export interface CameraSetupOptionsResponse {
   message: string;
 }
 
+// v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.4 ONVIF").
+// Stateless discovery -- no Source needs to exist yet.
+export interface OnvifDiscoverProfilesRequest {
+  onvif_host: string;
+  onvif_port?: number;
+  onvif_username?: string;
+  onvif_password?: string;
+}
+
+export interface OnvifDiscoveredProfile {
+  profile_token: string;
+  profile_name?: string | null;
+  advertised_width?: number | null;
+  advertised_height?: number | null;
+  encoding?: string | null;
+  stream_uri: string;
+}
+
+export interface OnvifDiscoverProfilesResponse {
+  status: "available" | "unreachable" | "authentication_rejected" | "no_profiles" | "error";
+  message: string;
+  device_manufacturer?: string | null;
+  device_model?: string | null;
+  device_firmware_version?: string | null;
+  profiles: OnvifDiscoveredProfile[];
+}
+
 export interface CameraSetupValidationRequest {
   provider_key: string;
   config: Record<string, string | null>;

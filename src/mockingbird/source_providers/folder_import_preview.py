@@ -6,7 +6,20 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+from mockingbird.source_providers.media_provenance import VIDEO_EXTENSIONS, media_kind_for_extension
+
+_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+# v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.9 Camera-trap /
+# media ingest"): video files are now recognized candidates -- imported as
+# ordinary MediaAssets with honest video provenance (duration/resolution/
+# codec; see mockingbird.source_providers.media_provenance), never
+# automatically decoded into per-frame Visits/Evidence (see "II.8 Offline
+# recorded video" -- that remains explicitly deferred; a bounded,
+# architecture-compatible extension, not a new detection pipeline).
+# Deliberately *not* added to `DEFAULT_ALLOWED_EXTENSIONS`: an existing
+# folder-import caller that never explicitly asks for video extensions
+# keeps its exact current, image-only behavior.
+SUPPORTED_EXTENSIONS = _IMAGE_EXTENSIONS | VIDEO_EXTENSIONS
 DEFAULT_ALLOWED_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp"]
 DEFAULT_MAX_FILES = 500
 MAX_MAX_FILES = 2_000
@@ -280,7 +293,7 @@ def _candidate_for_path(
             path,
             root,
             "unsupported_extension",
-            "Only JPEG, PNG, and WebP image extensions are supported for preview.",
+            "Only JPEG/PNG/WebP images and MP4/MOV/AVI/MKV/M4V videos are supported for preview.",
         )
     if extension not in normalized_allowed:
         return None, _skipped(
@@ -304,7 +317,7 @@ def _candidate_for_path(
         extension=extension,
         size_bytes=size_bytes,
         modified_at=modified_at,
-        planned_media_kind="image",
+        planned_media_kind=media_kind_for_extension(extension),
         source_path=path,
         warnings=[] if size_bytes is not None else ["File size could not be read."],
     ), None

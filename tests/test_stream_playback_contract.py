@@ -3512,6 +3512,68 @@ async def test_external_url_rtsp_live_stream_rejects_invalid_rtsp_url(
     assert playback["bridged_mjpeg_url"] is None
 
 
+async def test_external_url_rtsps_live_stream_never_reports_live_ready(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.6 RTSPS"):
+    # even with ffmpeg genuinely available, an rtsps:// URL must never
+    # report live_ready -- this codebase's ffmpeg invocation provides no
+    # real TLS transport for it (see rtsp_bridge.RTSPS_TRANSPORT_SUPPORTED).
+    monkeypatch.setattr(
+        "mockingbird.repository.product_repository.rtsp_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+    await configure_external_url_live_stream(
+        client,
+        live_stream_url="rtsps://viewer:secret@camera.local/live",
+        live_stream_type="rtsp",
+    )
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/playback")
+
+    assert response.status_code == 200
+    playback = response.json()
+    assert playback["status"] == "unsupported_rtsp_bridge_required"
+    assert playback["supports_live_playback"] is False
+    assert playback["rtsp_bridge_required"] is True
+    assert playback["rtsp_bridge_available"] is False
+    assert playback["rtsp_bridge_status"] == "rtsps_unsupported"
+    assert playback["bridged_mjpeg_url"] is None
+    assert "secret" not in playback["message"]
+    assert "secret" not in playback["setup_hint"]
+    assert "secret" not in (playback["live_stream_url_display"] or "")
+
+
+async def test_rtsp_bridge_endpoint_rejects_rtsps_stream_never_starts_ffmpeg(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "mockingbird.api.main.rtsp_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+
+    def fail_if_started(url: str):  # noqa: ANN202
+        raise AssertionError("An rtsps:// stream must never actually start ffmpeg")
+
+    monkeypatch.setattr(
+        "mockingbird.api.main.rtsp_bridge.start_rtsp_mjpeg_process",
+        fail_if_started,
+    )
+    await configure_external_url_live_stream(
+        client,
+        live_stream_url="rtsps://camera.local/live",
+        live_stream_type="rtsp",
+    )
+
+    response = await client.get(f"/api/streams/{STREAM_ID}/live/rtsp-mjpeg")
+
+    assert response.status_code == 400
+    assert "not currently supported" in response.json()["detail"]
+    assert "unencrypted" in response.json()["detail"]
+
+
 async def test_rtsp_bridge_endpoint_rejects_non_rtsp_stream(
     client: httpx.AsyncClient,
 ) -> None:
@@ -3647,6 +3709,26 @@ def test_rtsp_bridge_command_and_redaction_do_not_drop_credentials() -> None:
     assert rtsp_bridge.validate_rtsp_url(url) is True
     assert rtsp_bridge.validate_rtsp_url("rtsps://camera.local/live") is True
     assert rtsp_bridge.validate_rtsp_url("http://camera.local/live") is False
+
+
+def test_rtsp_bridge_scheme_check_distinguishes_rtsps_from_rtsp() -> None:
+    assert rtsp_bridge.is_rtsps_url("rtsps://camera.local/live") is True
+    assert rtsp_bridge.is_rtsps_url("rtsp://camera.local/live") is False
+    assert rtsp_bridge.is_rtsps_url("http://camera.local/live") is False
+    assert rtsp_bridge.is_rtsps_url("not a url") is False
+
+
+def test_rtsp_bridge_command_refuses_rtsps_url_never_silently_downgrades() -> None:
+    # v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.6 RTSPS"):
+    # this ffmpeg build does not provide a genuine TLS-secured transport
+    # for rtsps:// (see RTSPS_TRANSPORT_SUPPORTED's docstring) -- proves
+    # the command builder refuses outright rather than building a plain
+    # -rtsp_transport tcp command for a URL the user believes is secure.
+    assert rtsp_bridge.RTSPS_TRANSPORT_SUPPORTED is False
+    with pytest.raises(rtsp_bridge.RtspsUnsupportedError):
+        rtsp_bridge.build_rtsp_mjpeg_command("rtsps://viewer:secret@camera.local/live")
+    # A plain rtsp:// URL is unaffected.
+    assert rtsp_bridge.build_rtsp_mjpeg_command("rtsp://camera.local/live")[:2] == ["ffmpeg", "-hide_banner"]
 
 
 def test_rtsp_bridge_multipart_generator_stops_process() -> None:
@@ -8252,3 +8334,259 @@ async def test_disabled_zone_does_not_qualify_live_activity(
     assert result["uses_auto_regions"] is False
     assert "Monitoring disabled for Zone: Feeder." in result["warnings"]
     assert result["creates_truth"] is False
+
+
+# ---------------------------------------------------------------------------
+# v0.1 Acquisition/Ingest Interoperability Closure v1 -- ONVIF ("II.4")
+# ---------------------------------------------------------------------------
+# These tests never make a real network call: `onvif_client.
+# UrlLibOnvifRequester.post_soap` is monkeypatched to a fake transport that
+# maps request bodies to canned SOAP response bytes, the same house
+# convention `mockingbird.source_providers.onvif_client`'s own pure/
+# injected-transport tests already use (see tests/test_onvif_client.py).
+
+from mockingbird.source_providers import onvif_client  # noqa: E402
+
+_ONVIF_CAPABILITIES_XML = b"""<?xml version="1.0"?>
+<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"
+    xmlns:tds="http://www.onvif.org/ver10/device/wsdl">
+  <soap:Body><tds:GetCapabilitiesResponse><tds:Capabilities>
+    <tds:Device><tds:XAddr>http://192.168.50.10/onvif/device_service</tds:XAddr></tds:Device>
+    <tds:Media><tds:XAddr>http://192.168.50.10/onvif/media_service</tds:XAddr></tds:Media>
+  </tds:Capabilities></tds:GetCapabilitiesResponse></soap:Body>
+</soap:Envelope>"""
+
+_ONVIF_DEVICE_INFO_XML = b"""<?xml version="1.0"?>
+<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"
+    xmlns:tds="http://www.onvif.org/ver10/device/wsdl">
+  <soap:Body><tds:GetDeviceInformationResponse>
+    <tds:Manufacturer>Acme</tds:Manufacturer>
+    <tds:Model>CamPro 4K</tds:Model>
+    <tds:FirmwareVersion>1.0</tds:FirmwareVersion>
+    <tds:SerialNumber>SN-1</tds:SerialNumber>
+  </tds:GetDeviceInformationResponse></soap:Body>
+</soap:Envelope>"""
+
+_ONVIF_PROFILES_XML = b"""<?xml version="1.0"?>
+<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"
+    xmlns:trt="http://www.onvif.org/ver10/media/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema">
+  <soap:Body><trt:GetProfilesResponse>
+    <trt:Profiles token="main"><tt:Name>Main</tt:Name>
+      <tt:VideoEncoderConfiguration><tt:Encoding>H264</tt:Encoding>
+        <tt:Resolution><tt:Width>1920</tt:Width><tt:Height>1080</tt:Height></tt:Resolution>
+      </tt:VideoEncoderConfiguration>
+    </trt:Profiles>
+  </trt:GetProfilesResponse></soap:Body>
+</soap:Envelope>"""
+
+_ONVIF_STREAM_URI_XML = b"""<?xml version="1.0"?>
+<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"
+    xmlns:trt="http://www.onvif.org/ver10/media/wsdl" xmlns:tt="http://www.onvif.org/ver10/schema">
+  <soap:Body><trt:GetStreamUriResponse>
+    <trt:MediaUri><tt:Uri>rtsp://192.168.50.10:554/onvif1</tt:Uri></trt:MediaUri>
+  </trt:GetStreamUriResponse></soap:Body>
+</soap:Envelope>"""
+
+_ONVIF_AUTH_FAULT_XML = b"""<?xml version="1.0"?>
+<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope">
+  <soap:Body><soap:Fault>
+    <soap:Code><soap:Value>soap:Sender</soap:Value></soap:Code>
+    <soap:Reason><soap:Text xml:lang="en">Sender not Authorized</soap:Text></soap:Reason>
+  </soap:Fault></soap:Body>
+</soap:Envelope>"""
+
+
+def _patch_onvif_golden_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_post_soap(self, *, url: str, body: bytes) -> bytes:  # noqa: ANN001
+        if b"GetCapabilities" in body:
+            return _ONVIF_CAPABILITIES_XML
+        if b"GetDeviceInformation" in body:
+            return _ONVIF_DEVICE_INFO_XML
+        if b"GetProfiles" in body:
+            return _ONVIF_PROFILES_XML
+        if b"GetStreamUri" in body:
+            return _ONVIF_STREAM_URI_XML
+        raise AssertionError(f"unexpected ONVIF SOAP body for {url}")
+
+    monkeypatch.setattr(onvif_client.UrlLibOnvifRequester, "post_soap", fake_post_soap)
+
+
+async def test_onvif_discover_profiles_returns_device_and_profiles_never_touching_the_database(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_onvif_golden_path(monkeypatch)
+    before = await product_counts(client)
+
+    response = await client.post(
+        "/api/onvif/discover-profiles",
+        json={
+            "onvif_host": "192.168.50.10",
+            "onvif_port": 80,
+            "onvif_username": "admin",
+            "onvif_password": "hunter2",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "available"
+    assert body["device_manufacturer"] == "Acme"
+    assert body["device_model"] == "CamPro 4K"
+    [profile] = body["profiles"]
+    assert profile["profile_token"] == "main"
+    assert profile["advertised_width"] == 1920
+    assert profile["stream_uri"] == "rtsp://192.168.50.10:554/onvif1"
+    # The bare, camera-provided URI carries no credentials of its own.
+    assert "hunter2" not in profile["stream_uri"]
+    # Genuinely side-effect-free: no product record of any kind.
+    assert "hunter2" not in response.text
+    assert await product_counts(client) == before
+
+
+async def test_onvif_discover_profiles_reports_authentication_rejected_honestly(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_post_soap(self, *, url: str, body: bytes) -> bytes:  # noqa: ANN001
+        return _ONVIF_AUTH_FAULT_XML
+
+    monkeypatch.setattr(onvif_client.UrlLibOnvifRequester, "post_soap", fake_post_soap)
+
+    response = await client.post(
+        "/api/onvif/discover-profiles",
+        json={"onvif_host": "192.168.50.10", "onvif_username": "admin", "onvif_password": "wrong"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "authentication_rejected"
+    assert "wrong" not in response.text
+    assert body["profiles"] == []
+
+
+async def test_onvif_discover_profiles_refuses_a_public_host(client: httpx.AsyncClient) -> None:
+    response = await client.post(
+        "/api/onvif/discover-profiles",
+        json={"onvif_host": "8.8.8.8", "onvif_username": "admin", "onvif_password": "pw"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "unreachable"
+
+
+async def test_onvif_record_profile_converges_into_ordinary_rtsp_playback(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "mockingbird.repository.product_repository.rtsp_bridge.is_ffmpeg_available",
+        lambda: True,
+    )
+
+    response = await client.post(
+        f"/api/sources/{SOURCE_ID}/onvif/record-profile",
+        json={
+            "onvif_host": "192.168.50.10",
+            "onvif_port": 80,
+            "onvif_username": "admin",
+            "profile_token": "main",
+            "profile_name": "Main",
+            "device_manufacturer": "Acme",
+            "device_model": "CamPro 4K",
+            "advertised_width": 1920,
+            "advertised_height": 1080,
+            "live_stream_url": "rtsp://admin:hunter2@192.168.50.10:554/onvif1",
+        },
+    )
+    assert response.status_code == 200
+    saved = response.json()
+    assert saved["status"] == "saved"
+    # The credential the frontend embedded client-side is never echoed
+    # back in this route's own response either.
+    assert "hunter2" not in response.text
+
+    playback = await client.get(f"/api/streams/{STREAM_ID}/playback")
+    assert playback.status_code == 200
+    playback_body = playback.json()
+    assert playback_body["playback_kind"] == "rtsp"
+    assert playback_body["status"] == "live_ready"
+    assert playback_body["onvif_connected"] is True
+    assert playback_body["onvif_device_summary"] == "Acme CamPro 4K"
+    assert "hunter2" not in playback.text
+
+
+async def test_onvif_record_profile_rejects_a_non_rtsp_stream_url(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.post(
+        f"/api/sources/{SOURCE_ID}/onvif/record-profile",
+        json={
+            "onvif_host": "192.168.50.10",
+            "profile_token": "main",
+            "live_stream_url": "http://192.168.50.10/not-rtsp",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "invalid_stream_url"
+
+    playback = await client.get(f"/api/streams/{STREAM_ID}/playback")
+    # Never partially applied -- the Source's playback configuration is
+    # unaffected by a rejected record-profile call.
+    assert playback.json()["onvif_connected"] is False
+
+
+async def test_onvif_record_profile_404s_for_an_unknown_source(client: httpx.AsyncClient) -> None:
+    response = await client.post(
+        "/api/sources/source-does-not-exist/onvif/record-profile",
+        json={
+            "onvif_host": "192.168.50.10",
+            "profile_token": "main",
+            "live_stream_url": "rtsp://192.168.50.10:554/onvif1",
+        },
+    )
+    assert response.status_code == 404
+
+
+async def test_onvif_record_profile_corrects_source_kind_for_honest_ffmpeg_dependency_detection(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    # v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.19
+    # Diagnostics"): Doctor's ffmpeg-dependency check reads CameraSourceModel
+    # .kind directly; the demo-seeded source starts as kind="demo", not
+    # "rtsp" -- record_onvif_profile must correct it so Doctor never
+    # silently understates a now-real ffmpeg dependency.
+    with isolated_repository.session_factory() as session:
+        before_kind = session.get(CameraSourceModel, SOURCE_ID).kind
+    assert before_kind == "demo"
+
+    response = await client.post(
+        f"/api/sources/{SOURCE_ID}/onvif/record-profile",
+        json={
+            "onvif_host": "192.168.50.10",
+            "profile_token": "main",
+            "live_stream_url": "rtsp://192.168.50.10:554/onvif1",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "saved"
+
+    with isolated_repository.session_factory() as session:
+        after_kind = session.get(CameraSourceModel, SOURCE_ID).kind
+    assert after_kind == "rtsp"
+
+
+async def test_onvif_provider_definition_is_registered_with_correct_secrecy(
+    client: httpx.AsyncClient,
+) -> None:
+    response = await client.get("/api/source-provider-definitions")
+    assert response.status_code == 200
+    definitions = {item["provider_key"]: item for item in response.json()}
+    assert "onvif" in definitions
+    onvif_definition = definitions["onvif"]
+    assert onvif_definition["supports_live_playback"] is True
+    fields_by_key = {field["key"]: field for field in onvif_definition["fields"]}
+    assert fields_by_key["onvif_password"]["secret"] is True
+    assert fields_by_key["onvif_host"]["secret"] is False
+    assert fields_by_key["onvif_host"]["required"] is True

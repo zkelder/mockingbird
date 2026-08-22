@@ -1,5 +1,30 @@
 # Next Provider Boundary Decision
 
+## 2026-08-22 status update
+
+This document's own "Explicit Non-Goals" (below) -- no RTSP implementation,
+no video decode, no live playback for the candidates it evaluated -- are
+now superseded for RTSP, ONVIF, and offline/camera-trap video specifically;
+treat this document as the historical record of that evaluation, not the
+current state. See:
+
+- [docs/onvif-provider-boundary-design.md](onvif-provider-boundary-design.md)
+  for what actually shipped (v0.1 Acquisition/Ingest Interoperability
+  Closure v1) -- a real, working RTSP-to-browser bridge already existed by
+  the time this update was written (Phases 19-22, reached through
+  `external_url` + `live_stream_type="rtsp"`, not a dedicated `rtsp`
+  provider path); ONVIF was newly built as a discovery/configuration
+  assistant on top of that same bridge, never a second live-playback
+  pipeline; offline/camera-trap ingest gained EXIF/content-hash/video-
+  duration provenance through the existing `folder_import_future` path.
+- The RTSP candidate section below undersells what shipped in one respect
+  worth flagging explicitly: "Good later, but not first" turned out to
+  already be partially true when this document was revisited -- RTSP
+  browser playback existed; what this 2026-08-22 milestone actually added
+  was ONVIF discovery, RTSPS honesty (see the new design doc's "RTSPS"
+  section for why it is explicitly *not* supported, not silently faked),
+  and the offline-ingest provenance work above.
+
 ## Purpose
 
 MockingBird now has two explicit provider paths:

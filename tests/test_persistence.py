@@ -482,6 +482,51 @@ def test_newer_database_version_is_rejected_without_modification(
     assert recorded_version == newer_version
 
 
+def test_schema_38_upgrades_to_current_with_onvif_profiles_and_media_duration(
+    tmp_path: Path,
+) -> None:
+    """v0.1 Acquisition/Ingest Interoperability Closure v1: a real database
+    at the previously-current schema (v38) upgrades cleanly through the
+    two new additive migrations -- the empty `camera_onvif_profiles` table
+    (see `mockingbird.storage.models.CameraOnvifProfileModel`) and
+    `media_assets.duration_seconds` -- without disturbing existing data,
+    exactly mirroring `test_schema_two_migrates_motion_evidence_to_
+    optional_zone_without_data_loss`'s upgrade-in-place proof for an
+    earlier migration.
+    """
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = repository_for(db_path)
+    existing_source_count = len(repository.list_sources())
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql("DROP TABLE camera_onvif_profiles")
+        connection.exec_driver_sql("ALTER TABLE media_assets DROP COLUMN duration_seconds")
+        connection.exec_driver_sql("UPDATE mockingbird_schema SET version = 38 WHERE singleton_id = 1")
+    engine.dispose()
+
+    migrated = repository_for(db_path)
+    try:
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+        # Existing product data survived the upgrade untouched.
+        assert len(migrated.list_sources()) == existing_source_count
+
+        with migrated.engine.connect() as connection:
+            columns = {
+                row[1]
+                for row in connection.exec_driver_sql("PRAGMA table_info(camera_onvif_profiles)").fetchall()
+            }
+            assert {"source_id", "onvif_host", "profile_token", "resolved_at"} <= columns
+            media_columns = {
+                row[1] for row in connection.exec_driver_sql("PRAGMA table_info(media_assets)").fetchall()
+            }
+            assert "duration_seconds" in media_columns
+    finally:
+        migrated.close()
+
+
 def test_database_needing_unknown_migration_is_rejected(tmp_path: Path) -> None:
     db_path = tmp_path / "mockingbird.sqlite3"
     repository = repository_for(db_path)

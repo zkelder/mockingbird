@@ -172,15 +172,48 @@ async def test_configured_folder_preview_reports_candidates_and_skips(
     assert str(folder) not in str(preview)
 
     skipped_reasons = {item["relative_path"]: item["reason"] for item in preview["skipped"]}
-    assert skipped_reasons["clip.mp4"] == "unsupported_extension"
-    assert skipped_reasons["movie.mov"] == "unsupported_extension"
-    assert skipped_reasons["camera.avi"] == "unsupported_extension"
+    # v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.9"): video
+    # extensions are now recognized/supported by the system in general
+    # (see test_video_extensions_are_recognized_candidates_when_explicitly_
+    # allowed below) -- this request's own explicit `allowed_extensions`
+    # just does not enable them, the more precise "not allowed for this
+    # request" reason, distinct from "the system has no support at all."
+    assert skipped_reasons["clip.mp4"] == "extension_not_allowed"
+    assert skipped_reasons["movie.mov"] == "extension_not_allowed"
+    assert skipped_reasons["camera.avi"] == "extension_not_allowed"
     assert skipped_reasons["image.heic"] == "unsupported_extension"
     assert skipped_reasons["raw.cr2"] == "unsupported_extension"
     assert skipped_reasons["data.zip"] == "unsupported_extension"
     assert skipped_reasons["noext"] == "unsupported_extension"
     assert skipped_reasons["nested"] == "directory_skipped"
     assert await product_counts(client) == before
+
+
+async def test_video_extensions_are_recognized_candidates_when_explicitly_allowed(
+    client: httpx.AsyncClient,
+    tmp_path: Path,
+) -> None:
+    # v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.9 Camera-
+    # trap / media ingest"): video files enter the same folder-import
+    # preview contract as images -- opt-in only (existing callers that
+    # never ask for video extensions keep their current image-only
+    # behavior; see the default-`allowed_extensions` scenario above).
+    folder = tmp_path / "trailcam"
+    touch(folder / "bird.jpg")
+    touch(folder / "clip.mp4")
+    touch(folder / "movie.mov")
+    await configure_folder_source(client, folder, allowed_extensions="jpg,mp4,mov")
+
+    response = await client.post(f"/api/sources/{SOURCE_ID}/folder-import/preview", json={})
+
+    assert response.status_code == 200
+    preview = response.json()
+    assert preview["allowed_extensions"] == [".jpg", ".mp4", ".mov"]
+    candidates_by_path = {c["relative_path"]: c for c in preview["candidates"]}
+    assert candidates_by_path["bird.jpg"]["planned_media_kind"] == "image"
+    assert candidates_by_path["clip.mp4"]["planned_media_kind"] == "video"
+    assert candidates_by_path["movie.mov"]["planned_media_kind"] == "video"
+    assert preview["skipped"] == []
 
 
 async def test_recursive_preview_scans_to_max_depth_and_skips_deeper_dirs(

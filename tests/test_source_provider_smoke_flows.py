@@ -538,8 +538,11 @@ async def test_folder_import_provider_smoke_flow_preserves_truth_boundaries(
     assert preview["creates_visits"] is False
     assert preview["creates_truth"] is False
     assert {candidate["relative_path"] for candidate in preview["candidates"]} == set(source_files)
+    # v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.9"): video
+    # is now a recognized extension in general, just not enabled by this
+    # request's own explicit allowed_extensions=["jpg", "png"].
     assert {item["relative_path"]: item["reason"] for item in preview["skipped"]} == {
-        "clip.mp4": "unsupported_extension"
+        "clip.mp4": "extension_not_allowed"
     }
     assert str(folder) not in str(preview)
     assert await product_counts(client) == before

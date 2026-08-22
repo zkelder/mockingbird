@@ -247,6 +247,11 @@ from mockingbird.api.schemas import (
     ObservationProviderHealthResponse,
     ObservationSessionCounts,
     ObservationSessionStatusResponse,
+    OnvifDiscoverProfilesRequest,
+    OnvifDiscoverProfilesResponse,
+    OnvifDiscoveredProfile,
+    OnvifRecordProfileRequest,
+    OnvifRecordProfileResponse,
     PlaceActivityReportRequest,
     PlaceActivityReportResponse,
     SourceFolderImportPreviewRequest,
@@ -442,6 +447,7 @@ from mockingbird.sampler.saved_media_frames import (
     load_saved_image_frame_plane,
 )
 from mockingbird.source_providers import external_url_preview
+from mockingbird.source_providers import onvif_client
 from mockingbird.source_providers.camera_node import (
     CAMERA_NODE_RUNTIME_FAILURE_CODES,
     CameraNodeCaptureProfile as NodeCaptureProfile,
@@ -3926,6 +3932,20 @@ def _validate_live_camera_session_config(
             raise HTTPException(
                 status_code=400,
                 detail="RTSP bridge requires an rtsp:// or rtsps:// stream URL.",
+            )
+        # v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.6
+        # RTSPS"): the same honest refusal `_external_url_stream_playback_
+        # status` already reports at status-read time, enforced again here
+        # so a backend live session can never actually start a plaintext
+        # ffmpeg connection for an rtsps:// URL -- see `rtsp_bridge.
+        # RTSPS_TRANSPORT_SUPPORTED`'s docstring.
+        if rtsp_bridge.is_rtsps_url(configuration.live_stream_url) and not rtsp_bridge.RTSPS_TRANSPORT_SUPPORTED:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "RTSPS (secure RTSP) is not currently supported. MockingBird will not "
+                    "silently fall back to an unencrypted connection for this stream URL."
+                ),
             )
         if not rtsp_bridge.is_ffmpeg_available():
             raise HTTPException(
@@ -9491,6 +9511,120 @@ async def save_external_url_preview(
         creates_truth=False,
         warnings=[*warnings, *result.warnings],
     )
+
+
+# v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.17 Error
+# taxonomy"): maps onvif_client's safe, fixed-vocabulary OnvifClientError
+# codes onto this route's own small response-status enum plus an
+# actionable, never-credential-bearing message. Never a generic "camera
+# broken" for every failure -- see the milestone brief.
+_ONVIF_DISCOVERY_ERROR_MESSAGES: dict[str, tuple[str, str]] = {
+    "onvif_host_invalid": (
+        "unreachable",
+        "This host is not a private/local-network address MockingBird can reach.",
+    ),
+    "onvif_unreachable": (
+        "unreachable",
+        "Could not connect to this camera. Check the host and port.",
+    ),
+    "onvif_timeout": ("unreachable", "The camera did not respond in time."),
+    "onvif_authentication_rejected": (
+        "authentication_rejected",
+        "The camera rejected this username/password.",
+    ),
+    "onvif_capabilities_unavailable": (
+        "authentication_rejected",
+        "The camera rejected this username/password.",
+    ),
+    "onvif_device_information_unavailable": (
+        "error",
+        "The camera responded, but device information was unavailable.",
+    ),
+    "onvif_no_media_service": (
+        "error",
+        "This camera does not advertise an ONVIF media service.",
+    ),
+    "onvif_no_profiles": ("no_profiles", "This camera has no media profiles to choose from."),
+    "onvif_stream_uri_unavailable": (
+        "error",
+        "The camera did not return a usable stream URI.",
+    ),
+    "onvif_response_invalid": ("error", "The camera returned an unexpected response."),
+}
+
+
+@app.post(
+    "/api/onvif/discover-profiles",
+    response_model=OnvifDiscoverProfilesResponse,
+)
+async def discover_onvif_profiles(
+    payload: OnvifDiscoverProfilesRequest,
+) -> OnvifDiscoverProfilesResponse:
+    """Stateless and side-effect-free (see docs/source-connection-
+    provider-contract.md): connects live to the given host/credentials and
+    returns device identity plus every media profile with its bare,
+    credential-free stream URI. No Source needs to exist yet -- this is
+    the "Add camera -> Discover with ONVIF" step; nothing here is
+    persisted (see `record_onvif_profile` below for the write)."""
+
+    client = onvif_client.OnvifClient(
+        host=payload.onvif_host,
+        port=payload.onvif_port,
+        username=payload.onvif_username,
+        password=payload.onvif_password,
+    )
+    try:
+        # ONVIF discovery is up to four sequential blocking HTTP round
+        # trips (capabilities -> device info -> profiles -> stream URI per
+        # profile), bounded but longer than the single fetch `external_
+        # url_preview.fetch_external_url_preview` makes synchronously
+        # elsewhere in this file -- offloaded so it cannot stall the event
+        # loop for other concurrent requests, matching this file's own
+        # existing `asyncio.to_thread` precedent for a longer blocking call.
+        result = await asyncio.to_thread(client.discover)
+    except onvif_client.OnvifClientError as error:
+        status_value, message = _ONVIF_DISCOVERY_ERROR_MESSAGES.get(
+            str(error), ("error", "Could not reach this camera through ONVIF.")
+        )
+        return OnvifDiscoverProfilesResponse(status=status_value, message=message)
+
+    return OnvifDiscoverProfilesResponse(
+        status="available",
+        message=f"Found {len(result.device_profiles)} media profile(s).",
+        device_manufacturer=result.device_information.manufacturer,
+        device_model=result.device_information.model,
+        device_firmware_version=result.device_information.firmware_version,
+        profiles=[
+            OnvifDiscoveredProfile(
+                profile_token=device_profile.profile.token,
+                profile_name=device_profile.profile.name,
+                advertised_width=device_profile.profile.advertised_width,
+                advertised_height=device_profile.profile.advertised_height,
+                encoding=device_profile.profile.encoding,
+                stream_uri=device_profile.stream_uri,
+            )
+            for device_profile in result.device_profiles
+        ],
+    )
+
+
+@app.post(
+    "/api/sources/{source_id}/onvif/record-profile",
+    response_model=OnvifRecordProfileResponse,
+)
+async def record_onvif_profile(
+    source_id: str,
+    payload: OnvifRecordProfileRequest,
+) -> OnvifRecordProfileResponse:
+    """Write: persists which ONVIF device/profile this Source was
+    configured through, converging into the same `external_url`+rtsp
+    provider configuration a manually-entered RTSP camera already uses --
+    see `ProductRepository.record_onvif_profile`'s own docstring."""
+
+    result = get_repository().record_onvif_profile(source_id, payload)
+    if result is None:
+        raise _not_found("Source", source_id)
+    return result
 
 
 async def _monitor_capture_snapshot(

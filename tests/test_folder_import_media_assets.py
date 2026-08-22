@@ -187,7 +187,10 @@ async def test_folder_import_creates_media_assets_only(
     imported_paths = {item["relative_source_path"] for item in result["imported"]}
     assert imported_paths == set(source_files)
     skipped = {item["relative_path"]: item["reason"] for item in result["skipped"]}
-    assert skipped["clip.mp4"] == "unsupported_extension"
+    # v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.9"): video
+    # is now a recognized extension in general, just not enabled by this
+    # request's own explicit `allowed_extensions=jpg,jpeg,png,webp`.
+    assert skipped["clip.mp4"] == "extension_not_allowed"
     assert skipped["nested"] == "directory_skipped"
 
     media = await media_by_id(client)

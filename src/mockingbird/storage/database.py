@@ -42,7 +42,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 38
+CURRENT_DATABASE_SCHEMA_VERSION = 40
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -992,6 +992,56 @@ def _migrate_to_camera_node_replacement_provenance(connection: Connection) -> No
             connection.exec_driver_sql(f"ALTER TABLE camera_sources ADD COLUMN {name} {sql_type}")
 
 
+def _migrate_to_camera_onvif_profiles(connection: Connection) -> None:
+    """Add the empty, bounded, per-Source ONVIF device/media-profile
+    provenance table (v0.1 Acquisition/Ingest Interoperability Closure v1,
+    "II.4 ONVIF"; see `mockingbird.storage.models.CameraOnvifProfileModel`
+    and mockingbird.source_providers.onvif_client's module docstring).
+
+    No row is seeded here: the table starts genuinely empty for every
+    installation, including one upgrading from a real Source that already
+    happens to be an RTSP camera some ONVIF-capable device also serves --
+    this migration never infers or backfills ONVIF provenance for an
+    existing Source; only an explicit, future ONVIF setup/re-discovery
+    action ever writes a row here. Mirrors `_migrate_to_scene_confusor_
+    regions`'s identical "additive table, no seeded row" pattern.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "ONVIF profile-provenance migration requires local SQLite storage."
+        )
+    Base.metadata.tables["camera_onvif_profiles"].create(bind=connection, checkfirst=True)
+
+
+def _migrate_to_media_asset_duration(connection: Connection) -> None:
+    """Add the nullable `duration_seconds` column to `media_assets` (v0.1
+    Acquisition/Ingest Interoperability Closure v1, "II.8 Offline recorded
+    video" / "II.20 provenance bridge"): the one small, honest metadata
+    field recorded video/camera-trap clip ingest needs so a bounded,
+    known-duration acquisition effort can be represented as MediaAsset
+    provenance without ever being wired into `MonitoringExposureInterval
+    Model`/Today's coverage math (see "II.10 Offline vs monitoring
+    coverage" -- importing a clip must never imply continuous monitoring).
+
+    Nullable, no default: every row that already exists at migration time
+    (every image, and every video imported before this migration existed)
+    correctly reads back `duration_seconds=None` -- an honest "not known,"
+    never a fabricated zero -- mirroring `_migrate_to_observation_
+    confidence_evidence`'s identical nullable-no-backfill discipline.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "MediaAsset duration migration requires local SQLite storage."
+        )
+    if not inspect(connection).has_table("media_assets"):
+        return
+    columns = {column["name"] for column in inspect(connection).get_columns("media_assets")}
+    if "duration_seconds" not in columns:
+        connection.exec_driver_sql("ALTER TABLE media_assets ADD COLUMN duration_seconds FLOAT")
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -1030,6 +1080,8 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     36: _migrate_to_concurrent_sibling_lineage,
     37: _migrate_to_camera_node_boot_identity,
     38: _migrate_to_camera_node_replacement_provenance,
+    39: _migrate_to_camera_onvif_profiles,
+    40: _migrate_to_media_asset_duration,
 }
 
 

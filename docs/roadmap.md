@@ -2809,6 +2809,29 @@ question.
 - The optional MockingBird Camera Node is a paired local-LAN snapshot adapter
   beneath the same Source/Stream/Zone/monitoring/review loop. It remains
   no-cloud, no-discovery, and no-truth.
+- **2026-08-22 (v0.1 Acquisition/Ingest Interoperability Closure v1):**
+  closed the practical hardware-agnostic acquisition set the "Hardware- and
+  provider-agnostic" settled direction (above) implies, without becoming a
+  second product pipeline -- see
+  [onvif-provider-boundary-design.md](onvif-provider-boundary-design.md).
+  ONVIF network-camera discovery/authentication/profile-selection is new
+  (built from nothing; converges into the pre-existing RTSP browser bridge
+  from Phases 19-22, never a second live-playback path). RTSPS is
+  explicitly, honestly refused rather than faked -- this deployment's
+  ffmpeg silently downgrades an `rtsps://` URL to a plaintext `tcp://`
+  connection, empirically verified, not assumed. A real, generic
+  credential-redaction gap (hardcoded to one field/provider) was found and
+  fixed. Offline/camera-trap folder import gained EXIF capture-timestamp,
+  content-hash duplicate detection, and video (duration/resolution/codec)
+  provenance -- deliberately never wired into monitoring coverage/maturity
+  math, and deliberately stopping short of automatic per-frame multi-
+  subject Visit creation from a recorded clip (an architectural change to
+  the Observation Engine, out of this milestone's bounded scope). Schema
+  38->40 (two additive migrations, both upgrade-path-tested). ~90 new
+  backend tests plus a focused frontend e2e spec; the full Core gate
+  (3798 tests) passed alongside one confirmed pre-existing, unrelated
+  failure (a real-date-boundary sensitivity in an existing dashboard test
+  helper, reproduced identically on the unmodified prior commit).
 
 See [roadmap-history.md](roadmap-history.md) for the concise phase record.
 

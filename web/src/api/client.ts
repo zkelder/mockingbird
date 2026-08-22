@@ -83,6 +83,8 @@ import type {
   LocalBackupRestoreResponse,
   LocalBackupVerificationResponse,
   LocalDataStatus,
+  OnvifDiscoverProfilesRequest,
+  OnvifDiscoverProfilesResponse,
   PlaceActivityReportRequest,
   PlaceActivityReportResponse,
   ProductHealthStatus,
@@ -435,6 +437,13 @@ export const apiClient = {
     }),
   completeCameraSetup: (payload: CameraSetupCompleteRequest) =>
     request<CameraSetupCompletionResponse>("/api/camera-setup/complete", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  // v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.4 ONVIF"):
+  // stateless -- no source_id, nothing persisted.
+  discoverOnvifProfiles: (payload: OnvifDiscoverProfilesRequest) =>
+    request<OnvifDiscoverProfilesResponse>("/api/onvif/discover-profiles", {
       method: "POST",
       body: JSON.stringify(payload),
     }),
