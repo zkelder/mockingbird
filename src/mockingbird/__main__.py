@@ -63,5 +63,14 @@ if __name__ == "__main__":
     elif len(sys.argv) > 1 and sys.argv[1] == "analyze-recorded-media":
         from mockingbird.observation.offline_ingest_cli import run as analyze_recorded_media_run
         raise SystemExit(analyze_recorded_media_run(sys.argv[2:]))
+    elif len(sys.argv) > 1 and sys.argv[1] == "export-research":
+        from mockingbird.research.research_cli import run_export_research
+        raise SystemExit(run_export_research(sys.argv[2:]))
+    elif len(sys.argv) > 1 and sys.argv[1] == "export-camtrap-dp":
+        from mockingbird.research.research_cli import run_export_camtrap_dp
+        raise SystemExit(run_export_camtrap_dp(sys.argv[2:]))
+    elif len(sys.argv) > 1 and sys.argv[1] == "conservation-report":
+        from mockingbird.research.research_cli import run_conservation_report
+        raise SystemExit(run_conservation_report(sys.argv[2:]))
     else:
         main()

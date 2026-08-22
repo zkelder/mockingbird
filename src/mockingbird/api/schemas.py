@@ -4394,6 +4394,307 @@ class AnalyticsSummary(BaseModel):
     zone_activity_counts: dict[str, int]
 
 
+class ResearchClassification(str, Enum):
+    """Mirrors `mockingbird.research.eligibility.ResearchRecordClassification`
+    exactly -- see docs/research-conservation-export-contract.md "Research-
+    safe eligibility"."""
+
+    confirmed_taxon = "confirmed_taxon"
+    confirmed_unidentified_wildlife = "confirmed_unidentified_wildlife"
+    non_wildlife = "non_wildlife"
+    provisional_suggestion = "provisional_suggestion"
+    unresolved = "unresolved"
+    rejected = "rejected"
+    superseded = "superseded"
+
+
+class ResearchEligibility(BaseModel):
+    classification: ResearchClassification
+    eligible: bool
+    eligible_as_named_taxon: bool
+    eligible_as_unidentified_wildlife: bool
+    required_reasons: list[str] = Field(default_factory=list)
+    recommended_reasons: list[str] = Field(default_factory=list)
+
+
+class ResearchEvidence(BaseModel):
+    # Never a local filesystem path -- mirrors VisitEvidenceFrame's own rule.
+    media_id: str
+    evidence_role: str
+    captured_at: datetime | None = None
+    width: int | None = None
+    height: int | None = None
+    content_type: str
+    resolution_provenance: str | None = None
+    is_crop: bool
+    content_sha256: str | None = None
+
+
+class ResearchObservationRecord(BaseModel):
+    """One provider-neutral research-safe exported Observation (see
+    "Provenance contract" in the governing milestone brief). A Camera Node,
+    generic RTSP, ONVIF, or offline/recorded-media Visit all produce this
+    identical shape -- only `acquisition_type`/`acquisition_provider` vary."""
+
+    observation_id: str
+    event_id: str
+    source_id: str
+    source_name: str
+    stream_id: str
+    stream_name: str
+
+    acquisition_type: Literal["continuous_live", "recorded_video", "still_image", "unknown"]
+    acquisition_provider: str | None = None
+    is_offline_acquisition: bool
+
+    captured_at: datetime
+    captured_at_end: datetime | None = None
+    capture_timestamp_confidence: Literal["recorded", "unknown"]
+
+    review_status: ReviewStatus
+    reviewed_at: datetime | None = None
+    reviewed_by: str | None = None
+
+    classification: ResearchClassification
+    taxon_label: str | None = None
+    taxon_display_name: str | None = None
+    taxon_scientific_name: str | None = None
+    taxon_category: LabelCategory | None = None
+    is_species: bool | None = None
+
+    zone_id: str | None = None
+    zone_name: str | None = None
+    zone_type: ZoneType | None = None
+
+    resolution_provenance: str | None = None
+    evidence: list[ResearchEvidence] = Field(default_factory=list)
+
+    eligibility: ResearchEligibility
+
+    suggested_taxon_label: str | None = None
+    suggested_taxon_display_name: str | None = None
+    suggested_taxon_scientific_name: str | None = None
+    suggested_by: str | None = None
+    suggested_confidence: float | None = None
+
+
+class ResearchExportFilters(BaseModel):
+    """Bounded export filters (see "Export filters" in the governing
+    milestone brief) -- deliberately not a general query language."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    start_at: datetime | None = None
+    end_at: datetime | None = None
+    stream_ids: list[str] | None = Field(default=None, max_length=50)
+    source_ids: list[str] | None = Field(default=None, max_length=50)
+    taxon_labels: list[str] | None = Field(default=None, max_length=100)
+    acquisition_scope: Literal["live", "offline", "both"] = "both"
+    collection_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "ResearchExportFilters":
+        if self.start_at is not None and self.end_at is not None and self.end_at <= self.start_at:
+            raise ValueError("end_at must be after start_at")
+        return self
+
+
+class ResearchExportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    filters: ResearchExportFilters = Field(default_factory=ResearchExportFilters)
+    include_media: bool = False
+    dry_run: bool = False
+    output_name: str | None = None
+
+    @field_validator("output_name")
+    @classmethod
+    def validate_output_name(cls, value: str | None) -> str | None:
+        return _validate_export_output_name(value)
+
+
+class ResearchExportManifest(BaseModel):
+    """Reproducibility metadata every research export carries (see
+    "Versioning / reproducibility" in the governing milestone brief)."""
+
+    schema_version: str
+    export_id: str
+    generated_at: datetime
+    application_version: str | None = None
+    eligibility_policy_version: str
+    filters: ResearchExportFilters
+    source_ids: list[str] = Field(default_factory=list)
+    observation_count: int = Field(ge=0)
+    media_count: int = Field(ge=0)
+    excluded_count: int = Field(ge=0)
+    excluded_reasons: dict[str, int] = Field(default_factory=dict)
+    content_fingerprint: str
+
+
+class ResearchExportResponse(BaseModel):
+    export_id: str
+    output_directory: str | None = None
+    files: list[ClassifierManifestExportFile] = Field(default_factory=list)
+    observation_count: int = Field(ge=0)
+    media_count: int = Field(ge=0)
+    excluded_count: int = Field(ge=0)
+    excluded_reasons: dict[str, int] = Field(default_factory=dict)
+    manifest: ResearchExportManifest
+    dry_run: bool
+
+
+class CamtrapDpExportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    filters: ResearchExportFilters = Field(default_factory=ResearchExportFilters)
+    include_media: bool = False
+    site_name: str | None = Field(default=None, max_length=200)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    include_machine_classifications: bool = True
+    dry_run: bool = False
+    output_name: str | None = None
+
+    @field_validator("output_name")
+    @classmethod
+    def validate_output_name(cls, value: str | None) -> str | None:
+        return _validate_export_output_name(value)
+
+
+class CamtrapDpValidation(BaseModel):
+    valid: bool
+    errors: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class CamtrapDpExportResponse(BaseModel):
+    export_id: str
+    output_directory: str | None = None
+    files: list[ClassifierManifestExportFile] = Field(default_factory=list)
+    profile_version: str
+    deployment_count: int = Field(ge=0)
+    media_count: int = Field(ge=0)
+    observation_count: int = Field(ge=0)
+    validation: CamtrapDpValidation
+    dry_run: bool
+
+
+class ConservationSpeciesEntry(BaseModel):
+    label: str
+    display_name: str
+    scientific_name: str | None = None
+    is_species: bool
+    confirmed_visit_count: int = Field(ge=0)
+    occurrence_day_count: int = Field(ge=0)
+    first_confirmed_at: datetime
+    last_confirmed_at: datetime
+    occurrence_note: str | None = None
+
+
+class ConservationReportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    start_at: datetime
+    end_at: datetime
+    stream_ids: list[str] | None = Field(default=None, max_length=50)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "ConservationReportRequest":
+        if self.end_at <= self.start_at:
+            raise ValueError("end_at must be after start_at")
+        return self
+
+
+class ConservationReportResponse(BaseModel):
+    """Bounded conservation/natural-history report (see "Conservation
+    Reporting v1" in the governing milestone brief). Never claims
+    abundance, population size, occupancy, a biodiversity index, ecological
+    significance, or a decline/increase trend -- no such field exists here."""
+
+    period_start_at: datetime
+    period_end_at: datetime
+    generated_at: datetime
+    maturity: Literal["no_data", "sparse", "usable"]
+
+    live_monitoring_monitored_seconds: float | None = None
+    live_monitoring_usable_day_count: int | None = None
+
+    offline_recorded_video_count: int = Field(ge=0)
+    offline_recorded_video_analyzed_seconds: float = Field(ge=0)
+    offline_recorded_video_unknown_duration_count: int = Field(ge=0)
+    offline_still_image_count: int = Field(ge=0)
+
+    confirmed_species: list[ConservationSpeciesEntry] = Field(default_factory=list)
+    confirmed_unidentified_wildlife_visit_count: int = Field(ge=0)
+    reviewed_wildlife_visit_count: int = Field(ge=0)
+    provisional_wildlife_visit_count: int = Field(ge=0)
+    unresolved_visit_count: int = Field(ge=0)
+    total_visit_count: int = Field(ge=0)
+
+    first_activity_at: datetime | None = None
+    last_activity_at: datetime | None = None
+
+    confirmed_wildlife_visits_with_evidence_count: int = Field(ge=0)
+
+
+class ResearchCollectionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=1000)
+    curator_identity: str | None = Field(default=None, max_length=200)
+    visit_ids: list[str] = Field(min_length=1, max_length=500)
+
+    @field_validator("visit_ids")
+    @classmethod
+    def validate_visit_ids(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip() for value in values]
+        if not all(normalized) or len(set(normalized)) != len(normalized):
+            raise ValueError("visit_ids must be unique non-empty Visit IDs")
+        return normalized
+
+
+class ResearchCollection(BaseModel):
+    id: str
+    name: str
+    description: str | None = None
+    curator_identity: str | None = None
+    visit_ids: list[str]
+    eligibility_policy_version: str
+    created_at: datetime
+    updated_at: datetime
+    eligible_observation_count: int = Field(ge=0)
+    excluded_count: int = Field(ge=0)
+
+
+class ResearchCollectionSummary(BaseModel):
+    id: str
+    name: str
+    curator_identity: str | None = None
+    visit_count: int = Field(ge=0)
+    created_at: datetime
+
+
+def _validate_export_output_name(value: str | None) -> str | None:
+    if value is None:
+        return None
+    name = value.strip()
+    safe_chars = set(
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+    )
+    if (
+        not name
+        or len(name) > 80
+        or name in {".", ".."}
+        or not name[0].isalnum()
+        or any(char not in safe_chars for char in name)
+    ):
+        raise ValueError(
+            "output_name must be a safe filename using letters, numbers, '.', '_', or '-'"
+        )
+    return name
+
+
 class WildlifeInsightsRangePreset(str, Enum):
     today = "today"
     last_7_days = "last_7_days"

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from mockingbird import __version__ as MOCKINGBIRD_VERSION
+
 from collections import Counter
 import csv
 import dataclasses
@@ -65,6 +67,40 @@ from mockingbird.analytics.zone_insights import (
     merge_intervals,
     median_duration_seconds,
     quality_status,
+)
+from mockingbird.research.acquisition_effort import (
+    RecordedVideoAcquisitionFact,
+    StillImageAcquisitionFact,
+    compute_offline_acquisition_effort,
+)
+from mockingbird.research.camtrap_dp import (
+    CamtrapDpMappingOptions,
+    build_camtrap_dp_package,
+    datapackage_descriptor as camtrap_dp_datapackage_descriptor,
+    deployment_to_row as camtrap_deployment_to_row,
+    media_to_row as camtrap_media_to_row,
+    observation_to_row as camtrap_observation_to_row,
+    validate_camtrap_dp_package,
+    DEPLOYMENT_CSV_FIELDNAMES as CAMTRAP_DEPLOYMENT_CSV_FIELDNAMES,
+    MEDIA_CSV_FIELDNAMES as CAMTRAP_MEDIA_CSV_FIELDNAMES,
+    OBSERVATION_CSV_FIELDNAMES as CAMTRAP_OBSERVATION_CSV_FIELDNAMES,
+)
+from mockingbird.research.conservation_report import ConservationReport, compute_conservation_report
+from mockingbird.research.eligibility import (
+    RESEARCH_ELIGIBILITY_POLICY_VERSION,
+    evaluate_research_export_eligibility,
+)
+from mockingbird.research.research_export import (
+    OBSERVATION_CSV_FIELDNAMES as RESEARCH_OBSERVATION_CSV_FIELDNAMES,
+    RESEARCH_EXPORT_SCHEMA_VERSION,
+    ResearchEvidenceRecord,
+    ResearchObservation,
+    media_records_for_observations,
+    observation_to_csv_row as research_observation_to_csv_row,
+    observation_to_json as research_observation_to_json,
+    observations_content_fingerprint,
+    sorted_observations,
+    source_records_for_observations,
 )
 
 from mockingbird.api import demo_data
@@ -186,6 +222,19 @@ from mockingbird.motion.high_resolution_evidence import (
 )
 from mockingbird.motion.effective_primary import EvidenceCandidate, select_effective_primary
 from mockingbird.api.schemas import (
+    CamtrapDpExportRequest,
+    CamtrapDpExportResponse,
+    CamtrapDpValidation,
+    ConservationReportRequest,
+    ConservationReportResponse,
+    ConservationSpeciesEntry,
+    ResearchCollection,
+    ResearchCollectionCreate,
+    ResearchCollectionSummary,
+    ResearchExportFilters,
+    ResearchExportManifest,
+    ResearchExportRequest,
+    ResearchExportResponse,
     AdapterEvaluationItem,
     AdapterEvaluationOutcome,
     AdapterEvaluationSummary,
@@ -602,6 +651,7 @@ from mockingbird.storage.models import (
     MediaAssetModel,
     MonitoringExposureIntervalModel,
     ProductAlertModel,
+    ResearchCollectionModel,
     ReviewIdentificationAssistantRunModel,
     ReviewLabelModel,
     StreamModel,
@@ -1008,6 +1058,57 @@ CLASSIFIER_MANIFEST_COPY_IMAGE_EXTENSIONS = {
 }
 
 DEFAULT_CLASSIFIER_MANIFEST_EXPORT_ROOT = Path("data/classifier_manifest_exports")
+
+# Research / Conservation / Export Interoperability v1 (see docs/research-
+# conservation-export-contract.md). Mirrors DEFAULT_CLASSIFIER_MANIFEST_
+# EXPORT_ROOT's own "one ignored data/<feature>_exports root, one export-id
+# subdirectory per export" convention.
+DEFAULT_RESEARCH_EXPORT_ROOT = Path("data/research_exports")
+
+# `ObservationCandidateVisitModel.provider_key` -> the honest, disclosed
+# `ResearchObservation.acquisition_type` it implies (see "Provider-neutral"
+# in the governing brief). Any provider key *not* listed here -- every real
+# live provider (`frame-driven-onnx-cuda`, a Camera Node's own live key,
+# etc.) -- is continuous/live; see `_research_acquisition_type_for_provider_
+# key`. A Visit with *no* `ObservationCandidateVisitModel` row at all (the
+# legacy motion-evidence-promotion path, predating Observation Engine v2
+# candidate authority, or a folder-imported still image promoted directly)
+# honestly reports "unknown" -- there is no reliable machine-readable
+# acquisition-type signal for that path today; see "Known limitations" in
+# docs/research-conservation-export-contract.md.
+RESEARCH_OFFLINE_PROVIDER_KEYS: dict[str, str] = {
+    "recorded-media-offline-ingest-v1": "recorded_video",
+}
+
+
+def _research_acquisition_type_for_provider_key(provider_key: str | None) -> str:
+    if provider_key is None:
+        return "unknown"
+    return RESEARCH_OFFLINE_PROVIDER_KEYS.get(provider_key, "continuous_live")
+
+
+RESEARCH_EXPORT_CONTENT_TYPES: dict[str, str] = {
+    "observations.csv": "text/csv",
+    "observations.jsonl": "application/x-ndjson",
+    "media.csv": "text/csv",
+    "sources.csv": "text/csv",
+    "effort.csv": "text/csv",
+    "manifest.json": "application/json",
+}
+
+CAMTRAP_DP_EXPORT_CONTENT_TYPES: dict[str, str] = {
+    "deployments.csv": "text/csv",
+    "media.csv": "text/csv",
+    "observations.csv": "text/csv",
+    "datapackage.json": "application/json",
+}
+
+RESEARCH_MEDIA_CSV_FIELDNAMES: tuple[str, ...] = (
+    "media_id", "observation_id", "evidence_role", "is_crop",
+    "captured_at", "width", "height", "content_type", "resolution_provenance", "content_sha256",
+)
+RESEARCH_SOURCES_CSV_FIELDNAMES: tuple[str, ...] = ("source_id", "source_name", "stream_id", "stream_name")
+RESEARCH_EFFORT_CSV_FIELDNAMES: tuple[str, ...] = ("kind", "monitored_seconds", "usable_day_count", "count")
 
 CLASSIFIER_MANIFEST_EXPORT_CONTENT_TYPES = {
     "manifest.jsonl": "application/x-ndjson",
@@ -2750,12 +2851,14 @@ class ProductRepository:
         engine: Engine | None = None,
         media_root: str | Path | None = None,
         classifier_manifest_export_root: str | Path | None = None,
+        research_export_root: str | Path | None = None,
     ) -> None:
         self.db_url = resolve_database_url(db_url)
         self.media_root = resolve_media_root(media_root)
         self.classifier_manifest_export_root = Path(
             classifier_manifest_export_root or DEFAULT_CLASSIFIER_MANIFEST_EXPORT_ROOT
         )
+        self.research_export_root = Path(research_export_root or DEFAULT_RESEARCH_EXPORT_ROOT)
         self.engine = engine or create_database_engine(self.db_url)
         self.schema_status = initialize_database(self.engine)
         self.session_factory = create_session_factory(self.engine)
@@ -25149,6 +25252,838 @@ class ProductRepository:
         if dataset_export is None or manifest is None:
             return None
         return DatasetExportDetail(export=dataset_export, manifest=manifest)
+
+    # -------------------------------------------------------------------
+    # Research / Conservation / Export Interoperability v1 (see docs/
+    # research-conservation-export-contract.md). Read-only except for the
+    # explicit, bounded collection-management writes and the export file
+    # writers below; none of this ever creates or mutates Visit/Event/
+    # ReviewLabel/SpeciesSuggestion truth. Reuses the same canonical
+    # resolvers (`_stream_visit_summary_from_models`, `_visit_is_dataset_
+    # ready`, `_taxonomy_label_model_for_input`, `_place_activity_coverage_
+    # summary`) every other reporting surface already relies on -- this
+    # section never re-derives truth or coverage independently.
+    # -------------------------------------------------------------------
+
+    def _research_observation_for_visit(
+        self,
+        session: Session,
+        visit: VisitModel,
+        event: EventModel,
+        *,
+        taxonomy_index: dict[str, TaxonomyLabelModel] | None = None,
+    ) -> ResearchObservation:
+        """Build one provider-neutral `ResearchObservation` from a Visit,
+        including its full `ResearchExportEligibility` verdict. Always
+        returns a record -- even an ineligible one -- so a caller can report
+        *why* a record was excluded (see "Research-safe eligibility" in the
+        governing milestone brief); callers that only want trusted rows
+        filter on `.eligibility.eligible` themselves."""
+
+        summary = self._stream_visit_summary_from_models(session, visit, event, taxonomy_index=taxonomy_index)
+        stream_model = session.get(StreamModel, event.stream_id)
+        source_model = (
+            session.get(CameraSourceModel, stream_model.source_id) if stream_model is not None else None
+        )
+
+        reviewed_taxonomy = (
+            self._taxonomy_label_model_for_input(session, summary.reviewed_label, taxonomy_index=taxonomy_index)
+            if summary.reviewed_label
+            else None
+        )
+        # Reuses the exact same defense-in-depth "authoritative, current,
+        # not superseded" re-check `_visit_is_dataset_ready` already
+        # established for reviewed-only Dataset Export, rather than a second
+        # independent truth check -- see docs/review-decision-provenance-
+        # contract.md.
+        is_dataset_ready = self._visit_is_dataset_ready(session, _visit_from_model(visit))
+        effective_label = self._current_effective_review_label_model_for_visit(session, visit.id)
+
+        primary_evidence_asset = (
+            session.get(MediaAssetModel, summary.primary_evidence.media_asset_id)
+            if summary.primary_evidence is not None
+            else None
+        )
+        # `MediaAssetModel.captured_at` (not `VisitEvidenceFrame.captured_at`,
+        # which always carries a fallback value) is `None` precisely when the
+        # underlying frame's real capture time was unknown -- see "Frame-time
+        # semantics" in docs/offline-recorded-media-observation-contract.md.
+        capture_timestamp_known = (
+            primary_evidence_asset is not None and primary_evidence_asset.captured_at is not None
+        )
+
+        candidate_ledger = session.scalars(
+            select(ObservationCandidateVisitModel).where(ObservationCandidateVisitModel.visit_id == visit.id)
+        ).first()
+        provider_key = candidate_ledger.provider_key if candidate_ledger is not None else None
+        acquisition_type = _research_acquisition_type_for_provider_key(provider_key)
+        is_offline = acquisition_type in ("recorded_video", "still_image")
+
+        suggestion = session.scalars(
+            select(SpeciesSuggestionModel)
+            .where(SpeciesSuggestionModel.visit_id == visit.id)
+            .order_by(
+                SpeciesSuggestionModel.created_at.desc(),
+                SpeciesSuggestionModel.rank,
+                SpeciesSuggestionModel.id.desc(),
+            )
+        ).first()
+        suggested_taxonomy = (
+            self._taxonomy_label_model_for_input(session, suggestion.suggested_label, taxonomy_index=taxonomy_index)
+            if suggestion is not None
+            else None
+        )
+
+        evidence_frames = self._visit_evidence_frames_from_visit(session, visit, event)
+        evidence_records: list[ResearchEvidenceRecord] = []
+        for frame in evidence_frames:
+            asset = session.get(MediaAssetModel, frame.media_asset_id)
+            evidence_records.append(
+                ResearchEvidenceRecord(
+                    media_id=frame.media_asset_id,
+                    evidence_role=frame.evidence_role,
+                    captured_at=frame.captured_at,
+                    width=frame.width,
+                    height=frame.height,
+                    content_type=frame.content_type,
+                    resolution_provenance=frame.resolution_provenance,
+                    is_crop=frame.normalized_crop_box is not None,
+                    content_sha256=asset.content_sha256 if asset is not None else None,
+                )
+            )
+
+        # Defense-in-depth, not the primary enforcement (see docs/privacy-
+        # ignore-zone-contract.md): a Visit triggered *directly* inside a
+        # Privacy/Ignore Zone is already refused at candidate-creation time
+        # (`blocked_privacy_zone`), so this branch exists for the one real
+        # remaining case -- a Zone later *reclassified* to privacy/ignore
+        # after a Visit already existed under it. Respect that current
+        # intent at export time even though the Visit's own creation
+        # predates it; this never redacts pixels, only withholds export.
+        is_privacy_restricted = summary.zone_type in (ZoneType.privacy, ZoneType.ignore)
+
+        eligibility = evaluate_research_export_eligibility(
+            review_status=summary.review_status.value,
+            is_authoritative_review=is_dataset_ready,
+            is_structurally_superseded=visit.is_superseded,
+            taxon_category=reviewed_taxonomy.category if reviewed_taxonomy is not None else None,
+            has_scientific_name=bool(reviewed_taxonomy.scientific_name) if reviewed_taxonomy is not None else False,
+            has_suggestion=summary.has_suggestion,
+            capture_timestamp_known=capture_timestamp_known,
+            has_evidence_media=summary.evidence_frame_count > 0,
+            resolution_provenance_known=(
+                summary.primary_evidence is not None and summary.primary_evidence.resolution_provenance is not None
+            ),
+            is_privacy_restricted=is_privacy_restricted,
+        )
+
+        return ResearchObservation(
+            observation_id=visit.id,
+            event_id=event.id,
+            source_id=source_model.id if source_model is not None else event.stream_id,
+            source_name=source_model.name if source_model is not None else "",
+            stream_id=event.stream_id,
+            stream_name=stream_model.name if stream_model is not None else "",
+            acquisition_type=acquisition_type,
+            acquisition_provider=provider_key,
+            is_offline_acquisition=is_offline,
+            captured_at=summary.activity_started_at,
+            captured_at_end=summary.activity_ended_at,
+            capture_timestamp_confidence="recorded" if capture_timestamp_known else "unknown",
+            review_status=summary.review_status.value,
+            reviewed_at=_as_utc(effective_label.created_at) if effective_label is not None else None,
+            reviewed_by=effective_label.reviewer_identity if effective_label is not None else None,
+            classification=eligibility.classification,
+            taxon_label=reviewed_taxonomy.label if reviewed_taxonomy is not None else None,
+            taxon_display_name=reviewed_taxonomy.display_name if reviewed_taxonomy is not None else None,
+            taxon_scientific_name=reviewed_taxonomy.scientific_name if reviewed_taxonomy is not None else None,
+            taxon_category=reviewed_taxonomy.category if reviewed_taxonomy is not None else None,
+            is_species=reviewed_taxonomy.is_species if reviewed_taxonomy is not None else None,
+            zone_id=summary.zone_id,
+            zone_name=summary.zone_name,
+            zone_type=summary.zone_type.value if summary.zone_type is not None else None,
+            resolution_provenance=(
+                summary.primary_evidence.resolution_provenance if summary.primary_evidence is not None else None
+            ),
+            evidence=tuple(evidence_records),
+            eligibility=eligibility,
+            suggested_taxon_label=(
+                suggested_taxonomy.label if suggested_taxonomy is not None
+                else (suggestion.suggested_label if suggestion is not None else None)
+            ),
+            suggested_taxon_display_name=suggested_taxonomy.display_name if suggested_taxonomy is not None else None,
+            suggested_taxon_scientific_name=(
+                suggested_taxonomy.scientific_name if suggested_taxonomy is not None
+                else (suggestion.suggested_scientific_name if suggestion is not None else None)
+            ),
+            suggested_by=suggestion.adapter_name if suggestion is not None else None,
+            suggested_confidence=suggestion.confidence if suggestion is not None else None,
+            suggested_at=_as_utc(suggestion.created_at) if suggestion is not None else None,
+        )
+
+    def _research_scope_stream_ids(
+        self, session: Session, filters: ResearchExportFilters,
+    ) -> list[str] | None:
+        """`None` means "every configured Stream" -- an explicit, distinct
+        state from an empty list (which would mean "no Stream at all")."""
+
+        if filters.stream_ids is not None:
+            return list(filters.stream_ids)
+        if filters.source_ids is not None:
+            return list(
+                session.scalars(
+                    select(StreamModel.id).where(StreamModel.source_id.in_(filters.source_ids))
+                ).all()
+            )
+        return None
+
+    def _research_collection_visit_ids(self, session: Session, collection_id: str) -> list[str]:
+        collection = session.get(ResearchCollectionModel, collection_id)
+        if collection is None:
+            raise ValueError("missing_research_collection")
+        return list(json.loads(collection.visit_ids_json))
+
+    def _research_observations_for_scope(
+        self,
+        session: Session,
+        *,
+        filters: ResearchExportFilters,
+        taxonomy_index: dict[str, TaxonomyLabelModel] | None = None,
+    ) -> list[ResearchObservation]:
+        """Every Visit in scope, each resolved to a `ResearchObservation`
+        (including ineligible ones -- see `_research_observation_for_visit`).
+        Never filters on eligibility itself; callers decide what to do with
+        an ineligible record (exclude it from a trusted table, or count it
+        toward a skip-reasons summary)."""
+
+        stream_ids = self._research_scope_stream_ids(session, filters)
+        query = (
+            select(VisitModel, EventModel)
+            .join(EventModel, VisitModel.event_id == EventModel.id)
+            .where(VisitModel.is_superseded.is_(False))
+        )
+        if stream_ids is not None:
+            query = query.where(EventModel.stream_id.in_(stream_ids))
+        start_at = _as_utc(filters.start_at) if filters.start_at is not None else None
+        end_at = _as_utc(filters.end_at) if filters.end_at is not None else None
+        if start_at is not None:
+            query = query.where(EventModel.started_at >= start_at)
+        if end_at is not None:
+            query = query.where(EventModel.started_at < end_at)
+        if filters.collection_id is not None:
+            collection_visit_ids = self._research_collection_visit_ids(session, filters.collection_id)
+            query = query.where(VisitModel.id.in_(collection_visit_ids))
+
+        rows = session.execute(
+            query.order_by(EventModel.started_at, EventModel.id, VisitModel.id)
+        ).all()
+
+        observations = [
+            self._research_observation_for_visit(session, visit, event, taxonomy_index=taxonomy_index)
+            for visit, event in rows
+        ]
+
+        if filters.taxon_labels is not None:
+            allowed = set(filters.taxon_labels)
+            observations = [obs for obs in observations if obs.taxon_label in allowed]
+        if filters.acquisition_scope != "both":
+            want_offline = filters.acquisition_scope == "offline"
+            observations = [obs for obs in observations if obs.is_offline_acquisition == want_offline]
+
+        return observations
+
+    def _offline_acquisition_effort_for_scope(
+        self,
+        session: Session,
+        *,
+        stream_ids: list[str] | None,
+        start_at: datetime | None,
+        end_at: datetime | None,
+    ) -> OfflineAcquisitionEffort:
+        """Live monitoring effort and offline acquisition effort are always
+        computed from two independent sources (see "Effort accounting" in
+        the governing milestone brief): this method never touches
+        `MonitoringExposureIntervalModel`."""
+
+        video_query = select(RecordedMediaAnalysisRunModel).where(
+            RecordedMediaAnalysisRunModel.status == "completed"
+        )
+        if stream_ids is not None:
+            video_query = video_query.where(RecordedMediaAnalysisRunModel.stream_id.in_(stream_ids))
+        if start_at is not None:
+            video_query = video_query.where(RecordedMediaAnalysisRunModel.completed_at >= start_at)
+        if end_at is not None:
+            video_query = video_query.where(RecordedMediaAnalysisRunModel.completed_at < end_at)
+        runs = session.scalars(video_query.order_by(RecordedMediaAnalysisRunModel.completed_at.asc())).all()
+
+        # Keep only the latest completed run per distinct MediaAsset -- never
+        # double-count a reprocessing attempt (see `RecordedVideoAcquisition
+        # Fact`'s own dedup contract in mockingbird.research.acquisition_
+        # effort).
+        latest_by_asset: dict[str, RecordedMediaAnalysisRunModel] = {}
+        for run in runs:
+            latest_by_asset[run.media_asset_id] = run
+
+        video_facts = [
+            RecordedVideoAcquisitionFact(
+                media_asset_id=run.media_asset_id,
+                stream_id=run.stream_id,
+                source_duration_seconds=run.source_duration_seconds,
+                frames_analyzed=run.frames_analyzed,
+                completed_at=_as_utc(run.completed_at or run.created_at),
+            )
+            for run in latest_by_asset.values()
+        ]
+
+        image_query = select(MediaAssetModel).where(MediaAssetModel.media_type == "image")
+        if stream_ids is not None:
+            image_query = image_query.where(MediaAssetModel.stream_id.in_(stream_ids))
+        if start_at is not None:
+            image_query = image_query.where(MediaAssetModel.created_at >= start_at)
+        if end_at is not None:
+            image_query = image_query.where(MediaAssetModel.created_at < end_at)
+        # A still image counts toward offline acquisition effort only when it
+        # is itself the folder-imported source file (identified the same way
+        # `_folder_import_duplicate_exists` already does) -- never a
+        # machine-created candidate evidence crop, which would double-count
+        # against the very Visit the effort figure is meant to contextualize.
+        still_facts = [
+            StillImageAcquisitionFact(
+                media_asset_id=asset.id,
+                stream_id=asset.stream_id,
+                captured_at=_as_utc(asset.captured_at) if asset.captured_at is not None else None,
+            )
+            for asset in session.scalars(image_query).all()
+            if _folder_import_note_fields(asset.notes).get("provider_key") == "folder_import_future"
+        ]
+
+        return compute_offline_acquisition_effort(recorded_videos=video_facts, still_images=still_facts)
+
+    def _research_export_id(self, output_name: str | None, *, prefix: str = "research-export") -> str:
+        base_name = output_name or prefix
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+        return f"{base_name}-{timestamp}-{uuid.uuid4().hex[:8]}"
+
+    def _research_export_output_dir(self, export_root: Path, directory_name: str) -> Path:
+        output_dir = (export_root / directory_name).resolve(strict=False)
+        if not output_dir.is_relative_to(export_root):
+            raise ValueError("research export path must stay under the export root")
+        return output_dir
+
+    def _write_csv(self, path: Path, fieldnames: list[str], rows: list[dict[str, Any]]) -> None:
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({name: row.get(name) for name in fieldnames})
+
+    def research_export_eligibility_preview(
+        self, filters: ResearchExportFilters,
+    ) -> tuple[list[ResearchObservation], "Counter[str]"]:
+        """Side-effect-free: every observation in scope plus a required-
+        reason skip breakdown for the ineligible ones -- the bounded
+        eligibility/check step "Research-safe external sharing" in the
+        governing milestone brief calls for, reusable by both the API and
+        the export writers below so they never compute this twice."""
+
+        with self.session_factory() as session:
+            taxonomy_index = self._taxonomy_label_index(session)
+            observations = self._research_observations_for_scope(
+                session, filters=filters, taxonomy_index=taxonomy_index
+            )
+        excluded_reasons: Counter[str] = Counter()
+        for observation in observations:
+            if not observation.eligibility.eligible:
+                for reason in observation.eligibility.required_reasons:
+                    excluded_reasons[reason] += 1
+        return observations, excluded_reasons
+
+    def export_research_dataset(self, payload: ResearchExportRequest) -> ResearchExportResponse:
+        """Generic research-safe CSV/JSON export (see "Generic research
+        export" in the governing milestone brief). Always trusted-only by
+        construction: a provisional/unresolved/rejected/superseded record
+        never reaches `observations.csv`/`.jsonl` -- only its exclusion
+        reason is counted, in `manifest.excluded_reasons`."""
+
+        observations, excluded_reasons = self.research_export_eligibility_preview(payload.filters)
+        eligible = sorted_observations([obs for obs in observations if obs.eligibility.eligible])
+
+        export_id = self._research_export_id(payload.output_name)
+        generated_at = datetime.now(UTC)
+        media_ids = {item.media_id for obs in eligible for item in obs.evidence}
+
+        manifest = ResearchExportManifest(
+            schema_version=RESEARCH_EXPORT_SCHEMA_VERSION,
+            export_id=export_id,
+            generated_at=generated_at,
+            application_version=MOCKINGBIRD_VERSION,
+            eligibility_policy_version=RESEARCH_ELIGIBILITY_POLICY_VERSION,
+            filters=payload.filters,
+            source_ids=sorted({obs.source_id for obs in eligible}),
+            observation_count=len(eligible),
+            media_count=len(media_ids),
+            excluded_count=len(observations) - len(eligible),
+            excluded_reasons=dict(sorted(excluded_reasons.items())),
+            content_fingerprint=observations_content_fingerprint(eligible),
+        )
+        file_names = ["observations.csv", "observations.jsonl", "media.csv", "sources.csv", "effort.csv", "manifest.json"]
+
+        if payload.dry_run:
+            return ResearchExportResponse(
+                export_id=export_id,
+                output_directory=None,
+                files=[
+                    ClassifierManifestExportFile(
+                        name=name, relative_path=name,
+                        content_type=RESEARCH_EXPORT_CONTENT_TYPES[name], size_bytes=None,
+                    )
+                    for name in file_names
+                ],
+                observation_count=manifest.observation_count,
+                media_count=manifest.media_count,
+                excluded_count=manifest.excluded_count,
+                excluded_reasons=manifest.excluded_reasons,
+                manifest=manifest,
+                dry_run=True,
+            )
+
+        with self.session_factory() as session:
+            stream_ids = self._research_scope_stream_ids(session, payload.filters)
+            start_at = _as_utc(payload.filters.start_at) if payload.filters.start_at is not None else None
+            end_at = _as_utc(payload.filters.end_at) if payload.filters.end_at is not None else None
+            coverage, _ = self._place_activity_coverage_summary(
+                session,
+                stream_ids=stream_ids if stream_ids is not None else list(session.scalars(select(StreamModel.id)).all()),
+                period_start_at=start_at or datetime(1970, 1, 1, tzinfo=UTC),
+                period_end_at=end_at or generated_at,
+            )
+            offline_effort = self._offline_acquisition_effort_for_scope(
+                session, stream_ids=stream_ids, start_at=start_at, end_at=end_at,
+            )
+
+        export_root = self.research_export_root.resolve(strict=False)
+        export_root.mkdir(parents=True, exist_ok=True)
+        output_dir = self._research_export_output_dir(export_root, export_id)
+        temporary_dir = self._research_export_output_dir(export_root, f".{export_id}.tmp")
+        if output_dir.exists() or temporary_dir.exists():
+            raise ValueError("research export directory already exists")
+
+        temporary_dir.mkdir()
+        try:
+            self._write_csv(
+                temporary_dir / "observations.csv",
+                list(RESEARCH_OBSERVATION_CSV_FIELDNAMES),
+                [research_observation_to_csv_row(obs) for obs in eligible],
+            )
+            self._write_jsonl(
+                temporary_dir / "observations.jsonl",
+                [research_observation_to_json(obs) for obs in eligible],
+            )
+            self._write_csv(
+                temporary_dir / "media.csv",
+                list(RESEARCH_MEDIA_CSV_FIELDNAMES),
+                media_records_for_observations(eligible),
+            )
+            self._write_csv(
+                temporary_dir / "sources.csv",
+                list(RESEARCH_SOURCES_CSV_FIELDNAMES),
+                source_records_for_observations(eligible),
+            )
+            self._write_csv(
+                temporary_dir / "effort.csv",
+                list(RESEARCH_EFFORT_CSV_FIELDNAMES),
+                self._research_effort_rows(coverage=coverage, offline=offline_effort),
+            )
+            self._write_json(temporary_dir / "manifest.json", manifest.model_dump(mode="json"))
+            temporary_dir.rename(output_dir)
+        except Exception:
+            shutil.rmtree(temporary_dir, ignore_errors=True)
+            raise
+
+        return ResearchExportResponse(
+            export_id=export_id,
+            output_directory=str(output_dir),
+            files=[
+                ClassifierManifestExportFile(
+                    name=name, relative_path=name,
+                    content_type=RESEARCH_EXPORT_CONTENT_TYPES[name],
+                    size_bytes=(output_dir / name).stat().st_size,
+                )
+                for name in file_names
+            ],
+            observation_count=manifest.observation_count,
+            media_count=manifest.media_count,
+            excluded_count=manifest.excluded_count,
+            excluded_reasons=manifest.excluded_reasons,
+            manifest=manifest,
+            dry_run=False,
+        )
+
+    def _research_effort_rows(
+        self, *, coverage: CoverageSummary, offline: OfflineAcquisitionEffort,
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "kind": "live_monitoring", "monitored_seconds": coverage.monitored_seconds,
+                "usable_day_count": None, "count": None,
+            },
+            {
+                "kind": "offline_recorded_video", "monitored_seconds": offline.recorded_video_analyzed_seconds,
+                "usable_day_count": None, "count": offline.recorded_video_count,
+            },
+            {
+                "kind": "offline_still_image", "monitored_seconds": None,
+                "usable_day_count": None, "count": offline.still_image_count,
+            },
+        ]
+
+    def export_camtrap_dp_package(self, payload: CamtrapDpExportRequest) -> CamtrapDpExportResponse:
+        """Camtrap DP interoperability export (target spec v1.0.2 -- see
+        docs/research-conservation-export-contract.md "Camtrap DP
+        mapping")."""
+
+        with self.session_factory() as session:
+            taxonomy_index = self._taxonomy_label_index(session)
+            observations = self._research_observations_for_scope(
+                session, filters=payload.filters, taxonomy_index=taxonomy_index
+            )
+
+        options = CamtrapDpMappingOptions(
+            site_name=payload.site_name,
+            latitude=payload.latitude,
+            longitude=payload.longitude,
+            include_machine_classifications=payload.include_machine_classifications,
+        )
+        package = build_camtrap_dp_package(observations, options=options)
+        validation_result = validate_camtrap_dp_package(package)
+        validation = CamtrapDpValidation(
+            valid=validation_result.valid,
+            errors=list(validation_result.errors),
+            warnings=list(validation_result.warnings),
+        )
+
+        export_id = self._research_export_id(payload.output_name, prefix="camtrap-dp")
+        file_names = ["deployments.csv", "media.csv", "observations.csv", "datapackage.json"]
+
+        if payload.dry_run:
+            return CamtrapDpExportResponse(
+                export_id=export_id,
+                output_directory=None,
+                files=[
+                    ClassifierManifestExportFile(
+                        name=name, relative_path=name,
+                        content_type=CAMTRAP_DP_EXPORT_CONTENT_TYPES[name], size_bytes=None,
+                    )
+                    for name in file_names
+                ],
+                profile_version=package.profile_version,
+                deployment_count=len(package.deployments),
+                media_count=len(package.media),
+                observation_count=len(package.observations),
+                validation=validation,
+                dry_run=True,
+            )
+
+        export_root = self.research_export_root.resolve(strict=False)
+        export_root.mkdir(parents=True, exist_ok=True)
+        output_dir = self._research_export_output_dir(export_root, export_id)
+        temporary_dir = self._research_export_output_dir(export_root, f".{export_id}.tmp")
+        if output_dir.exists() or temporary_dir.exists():
+            raise ValueError("camtrap dp export directory already exists")
+
+        temporary_dir.mkdir()
+        try:
+            self._write_csv(
+                temporary_dir / "deployments.csv",
+                list(CAMTRAP_DEPLOYMENT_CSV_FIELDNAMES),
+                [camtrap_deployment_to_row(deployment) for deployment in package.deployments],
+            )
+            self._write_csv(
+                temporary_dir / "media.csv",
+                list(CAMTRAP_MEDIA_CSV_FIELDNAMES),
+                [camtrap_media_to_row(media) for media in package.media],
+            )
+            self._write_csv(
+                temporary_dir / "observations.csv",
+                list(CAMTRAP_OBSERVATION_CSV_FIELDNAMES),
+                [camtrap_observation_to_row(observation) for observation in package.observations],
+            )
+            self._write_json(
+                temporary_dir / "datapackage.json",
+                camtrap_dp_datapackage_descriptor(
+                    package, generated_at=datetime.now(UTC), software_version=MOCKINGBIRD_VERSION,
+                ),
+            )
+            temporary_dir.rename(output_dir)
+        except Exception:
+            shutil.rmtree(temporary_dir, ignore_errors=True)
+            raise
+
+        return CamtrapDpExportResponse(
+            export_id=export_id,
+            output_directory=str(output_dir),
+            files=[
+                ClassifierManifestExportFile(
+                    name=name, relative_path=name,
+                    content_type=CAMTRAP_DP_EXPORT_CONTENT_TYPES[name],
+                    size_bytes=(output_dir / name).stat().st_size,
+                )
+                for name in file_names
+            ],
+            profile_version=package.profile_version,
+            deployment_count=len(package.deployments),
+            media_count=len(package.media),
+            observation_count=len(package.observations),
+            validation=validation,
+            dry_run=False,
+        )
+
+    def conservation_report(self, payload: ConservationReportRequest) -> ConservationReportResponse:
+        """Read-only Conservation Reporting v1 entry point (see
+        "Conservation Reporting v1" in the governing milestone brief).
+        Never creates or mutates ReviewLabel/SpeciesSuggestion/Visit/Event
+        state -- reuses the exact same canonical per-Visit resolver
+        (`_stream_visit_summary_from_models`) `place_activity_report`/
+        `zone_insights` already rely on, and the same coverage primitives
+        (`_place_activity_coverage_summary`,
+        `_monitoring_exposure_intervals_and_history`) for live monitoring
+        effort. This is an independent, additional caller of those shared
+        resolvers, not a second truth/coverage computation."""
+
+        period_start_at = _as_utc(payload.start_at)
+        period_end_at = _as_utc(payload.end_at)
+        generated_at = datetime.now(UTC)
+        local_timezone = resolve_host_local_timezone(generated_at)
+
+        with self.session_factory() as session:
+            stream_ids = (
+                list(payload.stream_ids)
+                if payload.stream_ids is not None
+                else list(
+                    session.scalars(
+                        select(StreamModel.id)
+                        .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+                        .where(CameraSourceModel.status != SourceStatus.archived.value)
+                    ).all()
+                )
+            )
+            taxonomy_index = self._taxonomy_label_index(session)
+
+            def resolve_taxon(label: str | None) -> TaxonFact | None:
+                if not label:
+                    return None
+                taxonomy = taxonomy_index.get(_taxonomy_key(label))
+                return taxon_fact_from_taxonomy_label(_taxonomy_label_from_model(taxonomy)) if taxonomy else None
+
+            visit_facts: list[VisitFact] = []
+            confirmed_wildlife_with_evidence = 0
+            if stream_ids:
+                rows = session.execute(
+                    select(VisitModel, EventModel)
+                    .join(EventModel, VisitModel.event_id == EventModel.id)
+                    .where(
+                        VisitModel.is_superseded.is_(False),
+                        EventModel.stream_id.in_(stream_ids),
+                        EventModel.started_at >= period_start_at,
+                        EventModel.started_at < period_end_at,
+                    )
+                    .order_by(EventModel.started_at, EventModel.id, VisitModel.id)
+                ).all()
+                for visit, event in rows:
+                    summary = self._stream_visit_summary_from_models(
+                        session, visit, event, taxonomy_index=taxonomy_index
+                    )
+                    confirmed_taxon = resolve_taxon(summary.reviewed_label)
+                    visit_facts.append(
+                        visit_fact_from_stream_visit_summary(
+                            summary,
+                            confirmed_taxon=confirmed_taxon,
+                            provisional_taxon=resolve_taxon(summary.suggested_label),
+                        )
+                    )
+                    if (
+                        summary.review_status == ReviewStatus.reviewed
+                        and confirmed_taxon is not None
+                        and is_wildlife_category(confirmed_taxon.category)
+                        and summary.evidence_frame_count > 0
+                    ):
+                        confirmed_wildlife_with_evidence += 1
+
+            coverage, _streams_without_history = self._place_activity_coverage_summary(
+                session, stream_ids=stream_ids, period_start_at=period_start_at, period_end_at=period_end_at,
+            )
+            monitored_intervals, history_available_from, _ = self._monitoring_exposure_intervals_and_history(
+                session, stream_ids=stream_ids, period_start_at=period_start_at, period_end_at=period_end_at,
+            )
+            usable_day_count: int | None = None
+            if history_available_from is not None:
+                daily_seconds = bucket_intervals_by_local_day(
+                    monitored_intervals,
+                    window_start_at=period_start_at,
+                    window_end_at=period_end_at,
+                    local_timezone=local_timezone,
+                )
+                usable_day_count = len(usable_dates_from_daily_monitored_seconds(daily_seconds))
+
+            offline_effort = self._offline_acquisition_effort_for_scope(
+                session, stream_ids=stream_ids, start_at=period_start_at, end_at=period_end_at,
+            )
+            scientific_names_by_label = {
+                model.label: model.scientific_name for model in taxonomy_index.values()
+            }
+
+        report = compute_place_activity_report(
+            visit_facts, period_start_at=period_start_at, period_end_at=period_end_at,
+            local_timezone=local_timezone, coverage=coverage, generated_at=generated_at,
+        )
+        conservation = compute_conservation_report(
+            report,
+            visits=visit_facts,
+            scientific_names_by_label=scientific_names_by_label,
+            offline_acquisition=offline_effort,
+            live_monitoring_usable_day_count=usable_day_count,
+            confirmed_wildlife_visits_with_evidence_count=confirmed_wildlife_with_evidence,
+            local_timezone=local_timezone,
+            generated_at=generated_at,
+        )
+
+        return ConservationReportResponse(
+            period_start_at=conservation.period_start_at,
+            period_end_at=conservation.period_end_at,
+            generated_at=conservation.generated_at,
+            maturity=conservation.maturity,
+            live_monitoring_monitored_seconds=conservation.live_monitoring_monitored_seconds,
+            live_monitoring_usable_day_count=conservation.live_monitoring_usable_day_count,
+            offline_recorded_video_count=conservation.offline_acquisition.recorded_video_count,
+            offline_recorded_video_analyzed_seconds=conservation.offline_acquisition.recorded_video_analyzed_seconds,
+            offline_recorded_video_unknown_duration_count=(
+                conservation.offline_acquisition.recorded_video_unknown_duration_count
+            ),
+            offline_still_image_count=conservation.offline_acquisition.still_image_count,
+            confirmed_species=[
+                ConservationSpeciesEntry(
+                    label=record.label,
+                    display_name=record.display_name,
+                    scientific_name=record.scientific_name,
+                    is_species=record.is_species,
+                    confirmed_visit_count=record.confirmed_visit_count,
+                    occurrence_day_count=record.occurrence_day_count,
+                    first_confirmed_at=record.first_confirmed_at,
+                    last_confirmed_at=record.last_confirmed_at,
+                    occurrence_note=record.occurrence_note,
+                )
+                for record in conservation.confirmed_species
+            ],
+            confirmed_unidentified_wildlife_visit_count=conservation.confirmed_unidentified_wildlife_visit_count,
+            reviewed_wildlife_visit_count=conservation.reviewed_wildlife_visit_count,
+            provisional_wildlife_visit_count=conservation.provisional_wildlife_visit_count,
+            unresolved_visit_count=conservation.unresolved_visit_count,
+            total_visit_count=conservation.total_visit_count,
+            first_activity_at=conservation.first_activity_at,
+            last_activity_at=conservation.last_activity_at,
+            confirmed_wildlife_visits_with_evidence_count=conservation.confirmed_wildlife_visits_with_evidence_count,
+        )
+
+    def create_research_collection(self, payload: ResearchCollectionCreate) -> ResearchCollection:
+        """Explicit, bounded named research collection (see "Bounded
+        research collaboration / contributor network" in the governing
+        milestone brief). Membership is a capped, explicit id list -- never
+        an implicit "everything reviewed" set -- and every included id is
+        still resolved through the ordinary Visit/ReviewLabel truth boundary
+        at read/export time, never cached as a second truth store here."""
+
+        with self.session_factory() as session:
+            with session.begin():
+                collection_id = self._next_id(session, ResearchCollectionModel, "research-collection")
+                now = datetime.now(UTC)
+                model = ResearchCollectionModel(
+                    id=collection_id,
+                    name=payload.name,
+                    description=payload.description,
+                    curator_identity=_clean_optional_text(payload.curator_identity),
+                    visit_ids_json=json.dumps(list(payload.visit_ids)),
+                    eligibility_policy_version=RESEARCH_ELIGIBILITY_POLICY_VERSION,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(model)
+                session.flush()
+                taxonomy_index = self._taxonomy_label_index(session)
+                eligible_count, excluded_count = self._research_collection_counts(
+                    session, payload.visit_ids, taxonomy_index
+                )
+                return self._research_collection_response(model, eligible_count, excluded_count)
+
+    def get_research_collection(self, collection_id: str) -> ResearchCollection | None:
+        with self.session_factory() as session:
+            model = session.get(ResearchCollectionModel, collection_id)
+            if model is None:
+                return None
+            taxonomy_index = self._taxonomy_label_index(session)
+            eligible_count, excluded_count = self._research_collection_counts(
+                session, json.loads(model.visit_ids_json), taxonomy_index,
+            )
+            return self._research_collection_response(model, eligible_count, excluded_count)
+
+    def list_research_collections(self) -> list[ResearchCollectionSummary]:
+        with self.session_factory() as session:
+            models = session.scalars(
+                select(ResearchCollectionModel).order_by(ResearchCollectionModel.created_at.desc())
+            ).all()
+            return [
+                ResearchCollectionSummary(
+                    id=model.id,
+                    name=model.name,
+                    curator_identity=model.curator_identity,
+                    visit_count=len(json.loads(model.visit_ids_json)),
+                    created_at=_as_utc(model.created_at),
+                )
+                for model in models
+            ]
+
+    def _research_collection_counts(
+        self,
+        session: Session,
+        visit_ids: list[str],
+        taxonomy_index: dict[str, TaxonomyLabelModel],
+    ) -> tuple[int, int]:
+        """Contributing a record to a collection never grants taxonomic
+        authority (see "Contributor authority" in the governing milestone
+        brief): membership is resolved through the ordinary eligibility
+        boundary every time, never cached as its own truth."""
+
+        eligible = 0
+        excluded = 0
+        for visit_id in visit_ids:
+            visit_model = session.get(VisitModel, visit_id)
+            event_model = session.get(EventModel, visit_model.event_id) if visit_model is not None else None
+            if visit_model is None or event_model is None:
+                excluded += 1
+                continue
+            observation = self._research_observation_for_visit(
+                session, visit_model, event_model, taxonomy_index=taxonomy_index
+            )
+            if observation.eligibility.eligible:
+                eligible += 1
+            else:
+                excluded += 1
+        return eligible, excluded
+
+    def _research_collection_response(
+        self, model: ResearchCollectionModel, eligible_count: int, excluded_count: int,
+    ) -> ResearchCollection:
+        return ResearchCollection(
+            id=model.id,
+            name=model.name,
+            description=model.description,
+            curator_identity=model.curator_identity,
+            visit_ids=json.loads(model.visit_ids_json),
+            eligibility_policy_version=model.eligibility_policy_version,
+            created_at=_as_utc(model.created_at),
+            updated_at=_as_utc(model.updated_at),
+            eligible_observation_count=eligible_count,
+            excluded_count=excluded_count,
+        )
 
     def _resolve_import_stream(
         self,

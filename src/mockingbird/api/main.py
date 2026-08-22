@@ -27,6 +27,15 @@ from starlette.responses import FileResponse, Response, StreamingResponse
 
 from mockingbird import __version__ as APP_VERSION
 from mockingbird.api.schemas import (
+    CamtrapDpExportRequest,
+    CamtrapDpExportResponse,
+    ConservationReportRequest,
+    ConservationReportResponse,
+    ResearchCollection,
+    ResearchCollectionCreate,
+    ResearchCollectionSummary,
+    ResearchExportRequest,
+    ResearchExportResponse,
     AnalyticsSummary,
     AlertCategory,
     ActivityLibraryExportSelectionRequest,
@@ -13743,6 +13752,74 @@ async def create_classifier_training_manifest_export(
         return get_repository().create_classifier_manifest_export(payload)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+# -------------------------------------------------------------------------
+# Research / Conservation / Export Interoperability v1 (see docs/research-
+# conservation-export-contract.md). Read-only except for the two file-
+# writing export actions and the explicit, bounded collection-management
+# writes -- none of this ever creates or mutates Visit/Event/ReviewLabel/
+# SpeciesSuggestion truth.
+# -------------------------------------------------------------------------
+
+
+@app.post("/api/research/export", response_model=ResearchExportResponse, status_code=201)
+async def create_research_export(payload: ResearchExportRequest) -> ResearchExportResponse:
+    """Generic research-safe CSV/JSON/manifest export -- always trusted-only
+    by construction (see "Research truth invariant" in docs/research-
+    conservation-export-contract.md)."""
+
+    try:
+        return get_repository().export_research_dataset(payload)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.post("/api/research/export-camtrap-dp", response_model=CamtrapDpExportResponse, status_code=201)
+async def create_camtrap_dp_export(payload: CamtrapDpExportRequest) -> CamtrapDpExportResponse:
+    """Camtrap DP interoperability export (target spec v1.0.2)."""
+
+    try:
+        return get_repository().export_camtrap_dp_package(payload)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.post("/api/research/conservation-report", response_model=ConservationReportResponse)
+async def get_conservation_report(payload: ConservationReportRequest) -> ConservationReportResponse:
+    """Bounded conservation/natural-history report -- read-only, never a
+    population/abundance/occupancy claim (see "Conservation Reporting v1" in
+    docs/research-conservation-export-contract.md)."""
+
+    try:
+        return get_repository().conservation_report(payload)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.post("/api/research/collections", response_model=ResearchCollection, status_code=201)
+async def create_research_collection(payload: ResearchCollectionCreate) -> ResearchCollection:
+    """Explicit, bounded named research collection -- contributing a record
+    never grants review/taxonomic authority (see "Contributor authority" in
+    docs/research-conservation-export-contract.md)."""
+
+    try:
+        return get_repository().create_research_collection(payload)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.get("/api/research/collections", response_model=list[ResearchCollectionSummary])
+async def list_research_collections() -> list[ResearchCollectionSummary]:
+    return get_repository().list_research_collections()
+
+
+@app.get("/api/research/collections/{collection_id}", response_model=ResearchCollection)
+async def get_research_collection(collection_id: str) -> ResearchCollection:
+    collection = get_repository().get_research_collection(collection_id)
+    if collection is None:
+        raise _not_found("Research collection", collection_id)
+    return collection
 
 
 @app.get("/api/analytics/summary", response_model=AnalyticsSummary)
