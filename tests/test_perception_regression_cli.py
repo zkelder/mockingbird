@@ -191,6 +191,43 @@ def test_list_fixtures_prints_every_declared_fixture(tmp_path: Path, capsys: pyt
     assert out.index("a_fixture") < out.index("z_fixture")  # sorted
 
 
+def test_module_invocation_matches_documented_usage(tmp_path: Path) -> None:
+    """docs/perception-replay-regression-harness-contract.md's own "Commands"
+    section documents `python -m mockingbird.observation.perception_regression_cli
+    run ...` as the way to invoke this harness (a top-level `python -m
+    mockingbird` subcommand was explicitly deferred as a separate, later
+    decision -- not this). Without an `if __name__ == "__main__":` guard,
+    that exact invocation silently imports the module and exits 0 without
+    ever calling `main()` -- a real gap `cli.run([...])`-style in-process
+    tests can never catch, because they never exercise `__main__` at all.
+    This proves the documented command line genuinely runs end to end as a
+    real subprocess, not merely as an in-process function call."""
+
+    import subprocess
+    import sys
+
+    registry_path = tmp_path / "fixtures.json"
+    registry_path.write_text(
+        json.dumps({
+            "version": 1,
+            "fixtures": [{
+                "fixture_id": "only_fixture", "description": "d", "source_kind": "benchmark_manifest",
+                "frames_path": "/does/not/matter", "manifest_path": "/does/not/matter",
+                "provider_key": "frame-driven-onnx-cuda", "provider_config_path": None,
+                "stream_id": "replay:only", "base_observed_at": None,
+            }],
+        }),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [sys.executable, "-m", "mockingbird.observation.perception_regression_cli",
+         "list-fixtures", "--registry", str(registry_path)],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert "only_fixture" in result.stdout
+
+
 def test_compare_writes_a_deterministic_diff(tmp_path: Path) -> None:
     frames_dir, manifest_path = _write_frames_and_manifest(tmp_path, count=4)
     baseline_out = tmp_path / "baseline"

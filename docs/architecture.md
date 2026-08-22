@@ -486,6 +486,24 @@ slices remain incomplete, exact live analysis-frame retention is still
 missing, and versioned deployment, monitoring, and rollback/retirement policy
 remain open; see [roadmap.md](roadmap.md) Phase 2.
 
+Detection & Species Model Benchmark / Promotion v1
+([report](detection-species-model-benchmark-promotion-v1-report.md),
+2026-08-22 -- the deliberately-last pre-v0.1 capability milestone) extended
+this lifecycle to a materially larger MDv1000-redwood detector candidate
+(mixed evidence -- better precision/false-positive burden, recall collapses
+to 0.071 against MDv5's 0.357; no threshold dominates) and, for the first
+time, ran the same shadow/comparison discipline on the species side: current
+BioCLIP-2 vs. a real (previously only documented) SpeciesNet evaluation and
+a real BioCLIP 2.5 (ViT-H/14) candidate. BioCLIP-2 was retained; BioCLIP 2.5
+produced a real, materially better result on the historical "RBW-bias"
+full-frame difficult-case cohort but was not promoted because its own
+full-frame-tier calibration is measurably unresolved (true- and
+false-positive scores are not separable at any observed threshold) -- an
+open lead for a future calibration-focused milestone, not a rejection.
+Versioned deployment, monitoring, and rollback/retirement policy remain
+open for both detector and species candidates, unchanged by this milestone
+since no promotion occurred to exercise them.
+
 Reviewed truth may become valuable training data, but a reviewed
 Visit/Observation does not automatically enter a training dataset.
 [custom-bird-classifier-dataset-plan.md](custom-bird-classifier-dataset-plan.md)

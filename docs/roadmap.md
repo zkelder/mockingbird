@@ -926,6 +926,37 @@ looks indistinguishable from a detection miss. See Gate A and Gate B in
   test/validation counts. Decision: **A -- boot identity and autonomous
   service recovery implemented**.
 
+**2026-08-22 update:** Detection & Species Model Benchmark / Promotion v1
+([report](detection-species-model-benchmark-promotion-v1-report.md)) --
+the deliberately-last pre-v0.1 capability milestone -- benchmarked the
+production detector and species incumbents against seven real detector
+candidates (spruce and a newly-tested, materially larger redwood MDv1000
+variant, MDV6-C/E, generic RF-DETR Small, and both wildlife-domain-tuned
+RF-DETR Stage-1/2 attempts) and three real species candidates (SpeciesNet,
+now real-evaluated for the first time since its 2026-07-16 saved-media gate
+failure and re-confirmed not selected; a materially newer/larger BioCLIP 2.5
+ViT-H/14 release). No detector challenger dominates MDv5 at any threshold;
+redwood is the strongest new result (better precision/false-positive burden,
+but recall collapses to 0.071 against MDv5's 0.357). SpeciesNet's real open
+taxonomy never out-performed BioCLIP-2 on any real scored case. BioCLIP 2.5
+produced a genuinely strong real result (correctly names House Finch on 3 of
+4 real full-frame photos that motivated the original "RBW-bias"
+nuthatch-difficulty cohort, where the incumbent could only abstain) but its
+own full-frame-tier calibration is measurably worse than the incumbent's
+(true- and false-positive scores are not separable), so it is not promoted
+this milestone -- recorded as the concrete lead for the already-planned,
+non-blocking "Species Classification Re-evaluation / Promotion v2" below.
+Multi-frame species consensus was re-checked against fresh real data (a
+materially richer, more current real database than the prior "0/98"
+finding) and remains correctly unpromoted: 0 Visits have ever had two or
+more legitimate native candidates, confirmed as a real single-frame
+architectural cap (Same-Frame Species Evidence v1's own explicit design),
+not a data-volume problem. A real, previously-undiscovered defect was found
+and fixed: the Perception Replay Regression Harness's own documented CLI
+invocation silently did nothing (missing `__main__` guard). Decision:
+**D -- incumbents retained after benchmark; v0.1 feature freeze now active**
+(see "v0.1 feature freeze," below).
+
 ## v0.1 scope freeze
 
 Public v0.1 means, approximately: install MockingBird → connect a supported
@@ -985,6 +1016,48 @@ This is intentionally the last general, open-ended roadmap/doctrine audit
 before v0.1. Future audits should be gate-specific ("what prevents Gate X
 from passing," not "what else could we improve") unless new empirical field
 evidence invalidates something above.
+
+## v0.1 feature freeze
+
+**Active as of 2026-08-22**, declared by Detection & Species Model
+Benchmark / Promotion v1 (see "Current status," above, and
+[its report](detection-species-model-benchmark-promotion-v1-report.md)) --
+the deliberately-last pre-v0.1 milestone permitted to add capability. No
+release-blocking perception-quality defect was found: the production MDv5
+detector and BioCLIP-2 species configuration both remain the strongest
+governed choice against every real challenger tested.
+
+Feature freeze is a *capability* freeze, distinct from the "v0.1 scope
+freeze" above (which governs what counts as an in-scope *requirement*, not
+when new capability work stops) and distinct from "Gate A/E field
+acceptance being formally closed" (representative field acceptance --
+accepted minimum Visit recall, false-Visit rate, fragmentation rate, evidence
+survival, latency, coverage -- remains open work; see Gate A, below). From
+this point forward, only the following are permitted before v0.1, unless a
+release-blocking acceptance failure explicitly reopens capability scope:
+
+- defect fixes
+- reliability
+- performance
+- UX/accessibility polish
+- packaging
+- security
+- documentation
+- compatibility
+- storage/recovery
+- field acceptance
+- clean-install/upgrade
+- release presentation
+
+Two items remain deliberately preserved as real, intentional post-v0.1/pre-v1
+capability work, not silently dropped: acoustic/BirdNET multimodal
+observation, and LTE/intermittent-WAN remote field capability (see
+"Post-v0.1 lanes," below). A bounded BioCLIP 2.5 calibration study (see
+"Detection & Species Model Benchmark / Promotion v1" above) is recorded as
+the concrete next candidate for the already-non-blocking "Species
+Classification Re-evaluation / Promotion v2" item under Gate B, should a
+future session choose to pursue it -- not started by this freeze
+declaration itself.
 
 ## v0.1 release gates
 
@@ -1413,6 +1486,22 @@ whether one model materially wins overall, or a repeatable domain split
 justifies the added complexity, before building either. Once a v0.1
 selection is accepted, it is settled direction (see "Scope-reopening rule,"
 above) absent materially new evidence.
+
+**2026-08-22 partial closure:** Detection & Species Model Benchmark /
+Promotion v1 ([report](detection-species-model-benchmark-promotion-v1-report.md))
+ran the first real slice of this bounded milestone against governed real
+evidence (current BioCLIP-2 vs. real SpeciesNet vs. real BioCLIP 2.5
+ViT-H/14) rather than waiting further, since v0.1 feature freeze made this
+the last opportunity. Result: BioCLIP-2 retained; SpeciesNet real-evaluated
+and re-confirmed not selected (0 real cases where it out-performed the
+incumbent); BioCLIP 2.5 produced a real, materially better top-1 result on
+the exact difficult sibling-taxa cohort this section names, but its own
+full-frame calibration is measurably unresolved (true/false-positive scores
+are not separable) and was not promoted. Still open, genuinely deferred
+(not v0.1-blocking, per this section's own framing): the broader
+domain-stratified sweep above (night/IR, motion blur, geography,
+non-bird-wildlife breadth) and a proper BioCLIP 2.5 calibration study before
+any real promotion decision.
 
 #### Resolution-aware species inference (preserved, partially tested doctrine)
 
@@ -2588,8 +2677,7 @@ architecture.md instead of ad hoc benchmarks; build representative
 difficult-case slices as a standing structure (common/uncommon/unknown
 species, partial/occluded animals, multiple animals, small/distant subjects,
 feeder obstruction, motion blur, poor lighting/dawn/dusk, non-birds, empty
-backgrounds); implement abstention, which does not exist anywhere in the
-pipeline today; add classifier-side calibration; wiring Detection Quality
+backgrounds); wiring Detection Quality
 Accounting into a *live* session (rather than only an offline pass over
 already-recorded facts) is now partially done for admission outcomes via
 Rejected / Suppressed Detection Attribution v1's counterfactual ledger
@@ -2598,14 +2686,31 @@ collect a larger, more representative (not
 session-concentrated) reviewed cohort before any confidence-aware admission
 policy could satisfy detection-quality-accounting-contract.md's "Production
 authority gate"; extend the v1 promotion-state rule into versioned
-deployment, monitoring, and rollback/retirement policy; and collect the
-representative (30-100 example) species-level correction truth needed to
-actually validate BioCLIP -- never completed under the earlier "visual
-species identification" priority -- before deciding production selection or
-its abstention/calibration policy.
+deployment, monitoring, and rollback/retirement policy.
+
+Abstention and classifier-side calibration -- called out above as missing
+-- were added by Identification Eligibility + Abstention v1 (2026-08-21) and
+independently reconfirmed still holding, fresh, by Detection & Species Model
+Benchmark / Promotion v1 (2026-08-22,
+[report](detection-species-model-benchmark-promotion-v1-report.md)), which
+also completed the representative species-level correction-truth benchmark
+this section previously named as still missing: real production BioCLIP-2
+was benchmarked against real SpeciesNet and real BioCLIP 2.5 (ViT-H/14)
+candidates on governed real evidence (the archived "RBW-bias"
+nuthatch-difficulty cohort, Visits 139/140, and a real production House
+Finch positive control). Decision **D -- incumbents retained**; see the
+report for the full candidate table, the one real, currently-unresolved
+BioCLIP 2.5 calibration gap that blocks its promotion, and why multi-frame
+species consensus remains correctly unpromoted even against fresher real
+data. This closes Phase 2's detector/species benchmark-and-promotion
+question for v0.1; see "v0.1 feature freeze," above.
 
 Exit condition: we can explain quantitatively where the vision pipeline is
-good, where it fails, and whether a candidate actually improves the product.
+good, where it fails, and whether a candidate actually improves the
+product -- **met for v0.1** by the two Detection/Species Model Benchmark /
+Promotion milestones above. Extending the ad hoc benchmarks into
+architecture.md's full 14-stage accounting as a standing structure remains
+open, non-blocking future work.
 
 ### Phase 3 -- Observation & Today in Your Yard Product Loop
 

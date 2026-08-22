@@ -21,6 +21,21 @@ they are not the motion trigger and Zones are not required crop boundaries.
 
 ## Current Visual Species Identification Milestone
 
+**Historical record, superseded as "current":** this section and "Species
+Suggestion Candidates" below describe the *evaluation-in-progress* stage of
+the visual species work (through the 2026-07-16 saved-media gate). BioCLIP 2
+was subsequently selected and is the real, deployed production species
+adapter (Phase 26A/26B; see "Supported local BioCLIP 2 artifact," below, for
+its current pinned configuration, and
+[roadmap.md](roadmap.md)'s "SpeciesNet / BioCLIP history" and Gate B for the
+accurate current-state account). SpeciesNet was subsequently real-evaluated
+a second time (not merely re-cited) and a materially newer BioCLIP-family
+release (BioCLIP 2.5) was benchmarked for the first time by Detection &
+Species Model Benchmark / Promotion v1
+([report](detection-species-model-benchmark-promotion-v1-report.md),
+2026-08-22); neither changed the production selection. Preserved below
+unedited as the accurate record of how that selection was originally made.
+
 The first detector spike is complete: the optional local MegaDetector path can
 produce animal/person/vehicle `DetectionProposal` evidence from saved best
 frames. It does not identify species. The current product priority is therefore

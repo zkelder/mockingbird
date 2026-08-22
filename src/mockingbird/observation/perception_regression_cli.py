@@ -316,3 +316,14 @@ def run(argv: list[str] | None = None) -> int:
 
 def main() -> None:
     raise SystemExit(run())
+
+
+if __name__ == "__main__":
+    # Without this guard, `python -m mockingbird.observation.perception_regression_cli
+    # run ...` -- the exact invocation docs/perception-replay-regression-harness-
+    # contract.md's own "Commands" section documents as the way to invoke this
+    # harness (a top-level `python -m mockingbird` subcommand was explicitly and
+    # deliberately deferred, not this) -- silently imports the module and exits 0
+    # without ever calling `main()`. Found while wiring the Detection & Species
+    # Model Benchmark / Promotion v1 milestone's own detector replay pass.
+    main()
