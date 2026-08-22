@@ -72,15 +72,29 @@ reboot, see the more technical
 it as a supervised background service instead of starting it by hand each
 time.
 
+**A network camera** -- MockingBird can discover many ONVIF-compatible
+cameras on your network and configure them automatically (host, port, and
+username/password only); if yours isn't discoverable, enter its RTSP
+address directly instead. A `rtsps://` (secure RTSP) address is honestly
+refused with an explanation rather than silently treated as insecure
+`rtsp://` -- MockingBird does not support verifying that kind of encrypted
+connection yet.
+
 **A camera already connected to this computer** (USB, or your computer's
 built-in camera): choose that option and MockingBird checks it directly.
 
 **A camera or device with its own still-image web address**: enter that
 address and MockingBird tests it before saving.
 
-After choosing a camera, drag on the preview to mark the area that matters
-(where birds actually land, for example) -- this helps MockingBird focus on
-what you care about.
+**Recorded wildlife video or images you already have** -- no live camera
+needed. Choose this option to create a place to import video/image files
+into, then use **Import Media** (always in the main menu, not hidden away)
+to add the files themselves and analyze them the same way a live camera's
+activity is analyzed.
+
+After choosing a live camera, drag on the preview to mark the area that
+matters (where birds actually land, for example) -- this helps MockingBird
+focus on what you care about.
 
 ## Start observing
 
@@ -115,6 +129,22 @@ cameras needing attention, how many cameras are currently observing, and
 your most recent backup. An "Advanced diagnostics" section (closed by
 default) has more technical detail if you ever need to describe a problem
 precisely.
+
+## Deeper diagnostics
+
+If something needs more than the Dashboard's own status area to describe,
+two additional tools exist alongside MockingBird -- normally only needed
+for a support conversation, not everyday use:
+
+- **MockingBird Doctor** (`python -m mockingbird doctor` from a terminal in
+  MockingBird's folder) runs one bounded check of your database, storage,
+  paired Camera Node, and detector/species-identification setup, and prints
+  a plain-language summary of anything that needs attention.
+- **A support bundle** (`python -m mockingbird support-bundle`) writes one
+  small file safe to share for support -- it never includes camera
+  passwords, pairing secrets, or media, only Doctor's own check results, a
+  recent (automatically redacted) slice of MockingBird's log, and version
+  facts.
 
 ## Backup and restore
 
@@ -158,7 +188,9 @@ local data with the backup's.
   that the folder MockingBird uses is not read-only, then reopen MockingBird.
 - **Logs**: MockingBird keeps its own log file inside its data folder (shown
   in Advanced diagnostics on the status area) if you ever need to share
-  details for troubleshooting.
+  details for troubleshooting -- or use **a support bundle** (see "Deeper
+  diagnostics," above) for one small file with the relevant pieces already
+  gathered and redacted.
 
 ## Other supported hosts
 

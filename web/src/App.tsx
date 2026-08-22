@@ -89,6 +89,7 @@ const initialData: AppData = {
 const productNavItems: Array<{ page: Page; label: string }> = [
   { page: "dashboard", label: "Dashboard" },
   { page: "streams", label: "Cameras" },
+  { page: "import", label: "Import Media" },
   { page: "review", label: "Review" },
   { page: "bird-log", label: "Bird Log" },
   { page: "activity-library", label: "Activity" },
@@ -107,10 +108,19 @@ const productNavItems: Array<{ page: Page; label: string }> = [
 // renders once topTaxa is non-empty) -- a nontechnical user had no way to
 // browse their Wildlife Journal without first discovering and enabling
 // "Developer Mode." Promoted to the persistent primary nav above instead.
+//
+// Import Media (the "recorded wildlife media" acquisition family this
+// milestone's A3 explicitly names as an accepted v0.1 acquisition choice)
+// moved out of advancedNavItems for the identical reason, found by this
+// milestone's own first-hour investigation: `manual_media` is a normal,
+// undisguised Add Camera choice in CameraSetupPage's dropdown (in fact the
+// current default selection), but its own completion step -- actually
+// importing files into the Source/Stream it creates -- lived only on this
+// Developer-Mode-gated page. A user who picked the default acquisition
+// choice during setup had no discoverable way to finish it.
 const advancedNavItems: Array<{ page: Page; label: string }> = [
   { page: "yard-map", label: "Yard & Camera Map" },
   { page: "exports", label: "Exports / Data" },
-  { page: "import", label: "Import Media" },
   { page: "folder-import", label: "Folder Import" },
   { page: "saved-media-retention", label: "Saved Media Retention" },
   { page: "motion-evidence", label: "Advanced Evidence" },

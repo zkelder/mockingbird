@@ -172,8 +172,19 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
     void withTimeout(apiClient.getCameraSetupOptions(), OPTIONS_LOAD_TIMEOUT_MS, "Loading camera types")
       .then((response) => {
         setOptions(response.options);
+        // First-Hour Onboarding + Whole-Product Observability Closure v1
+        // ("A4 golden path priority"): a genuinely first-time user (no
+        // current selection yet) previously defaulted to whichever
+        // provider happened to sort first in the backend's own definition
+        // order -- "Manual media," not the documented reference/golden
+        // path. Native Camera Node is preferred explicitly here when it is
+        // actually selectable; every other available provider still falls
+        // back to the prior "first available" behavior unchanged.
+        const goldenPath = response.options.find(
+          (option) => option.provider_key === "camera_node" && option.availability === "available_now",
+        );
         const first = response.options.find((option) => option.availability === "available_now");
-        setProviderKey((current) => current || first?.provider_key || "");
+        setProviderKey((current) => current || goldenPath?.provider_key || first?.provider_key || "");
       })
       .catch((caught) => setError(errorMessage(caught, "Camera setup options are unavailable.")))
       .finally(() => setIsLoading(false));

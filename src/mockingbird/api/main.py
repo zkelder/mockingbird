@@ -3958,7 +3958,12 @@ def _live_camera_session_message(
     if snapshot.status == "failed":
         return snapshot.last_error or "Camera session failed."
     if snapshot.status == "paused":
-        return "Live view is paused while Observation Engine is watching this camera."
+        # First-Hour Onboarding + Whole-Product Observability Closure v1:
+        # "Observation Engine" is infrastructure vocabulary that must not
+        # reach a basic-tier, always-shown message -- see "Observation
+        # Control" in docs/glossary.md ("never exposes ... runtime-provider
+        # vocabulary in its basic state").
+        return "Live view is paused while wildlife observation is active on this camera."
     return "Camera session is stopped."
 
 
@@ -11525,7 +11530,7 @@ async def open_stream_live_preview(
                 status=LivePreviewLeaseStatus.unavailable,
                 max_active_previews=preview_manager.max_previews_per_owner,
                 effective_limit=decision.effective_limit,
-                message="Live preview is paused while Observation Engine is watching this camera.",
+                message="Live preview is paused while wildlife observation is active on this camera.",
             )
 
     return LivePreviewLeaseResponse(

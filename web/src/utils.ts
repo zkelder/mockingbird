@@ -1,4 +1,38 @@
-import type { PlaceActivityReportTaxonChangeStatus } from "./api/types";
+import type { CameraHealthState, PlaceActivityReportTaxonChangeStatus } from "./api/types";
+
+/**
+ * First-Hour Onboarding + Whole-Product Observability Closure v1 ("B7
+ * health model"): the single canonical presentation for `CameraHealthState`,
+ * shared by every surface that renders it (Dashboard, Yard & Camera Map,
+ * and any future one) so the same backend state can never show a different
+ * label/tone on two different pages again -- a real, confirmed divergence
+ * this milestone's own investigation found (Dashboard distinguished
+ * `camera_unavailable`/`no_recent_frame`/`evidence_storage_degraded`/
+ * `setup_incomplete` into four distinct labels; Yard Map collapsed all four
+ * to the identical "Unavailable"). Standardizes on the more differentiated
+ * set -- a specific reason is more actionable than a generic one (see "Do
+ * not collapse every failure into 'Camera unavailable'" in the governing
+ * milestone brief) -- rather than the reverse.
+ */
+export function cameraHealthLabel(state: CameraHealthState): string {
+  return {
+    healthy: "Healthy",
+    starting: "Starting",
+    waiting_for_capacity: "Waiting for capacity",
+    camera_unavailable: "Camera unavailable",
+    no_recent_frame: "No recent frame",
+    evidence_storage_degraded: "Evidence storage degraded",
+    recovering: "Recovering",
+    stopped: "Monitoring stopped",
+    setup_incomplete: "Setup incomplete",
+  }[state];
+}
+
+export function cameraHealthTone(state: CameraHealthState): "good" | "review" | "quiet" {
+  if (state === "healthy") return "good";
+  if (state === "stopped" || state === "starting") return "quiet";
+  return "review";
+}
 
 export function formatLabel(value: string): string {
   return value

@@ -66,6 +66,15 @@ python -m mockingbird doctor --json
 See [docs/mockingbird-doctor-operational-health-contract.md](docs/mockingbird-doctor-operational-health-contract.md)
 for the full check list, severity semantics, exit codes, and JSON shape.
 
+Write a small, bounded, privacy-safe diagnostic bundle to share for support
+(Doctor's own report, structural-only Source facts, a redacted recent log
+tail, version facts -- never credentials, pairing secrets, or media):
+
+```sh
+python -m mockingbird support-bundle
+python -m mockingbird support-bundle --output path/to/bundle.zip
+```
+
 For frontend-only iteration, run the API and Vite dev server separately
 (see README.md's "Developer split mode").
 

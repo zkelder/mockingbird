@@ -4271,7 +4271,7 @@ async def test_current_frame_endpoint_returns_409_while_paused_for_observation(
     # The same honest, ownership-aware message the product UI now surfaces
     # directly (Stream Detail's live-view panel), not a generic failure.
     assert paused_status["message"] == (
-        "Live view is paused while Observation Engine is watching this camera."
+        "Live view is paused while wildlife observation is active on this camera."
     )
 
     response = await client.get(f"/api/streams/{STREAM_ID}/live-session/current-frame")

@@ -605,6 +605,80 @@ def test_schema_41_upgrades_to_current_with_research_collections(
         migrated.close()
 
 
+def test_a_mid_chain_migration_failure_rolls_back_every_step_not_only_its_own(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """First-Hour Onboarding + Whole-Product Observability Closure v1 ("C4
+    migration hardening"): every existing migration test above proves a
+    *successful* upgrade; none proves what happens when a migration
+    function itself raises partway through a multi-step chain. The whole
+    `while` loop in `_validate_or_migrate_schema_version` runs inside one
+    `engine.begin()` transaction (see storage/database.py) -- this proves
+    that guarantee for real: rewinds a real database two versions back
+    (v40), injects a synthetic failure into the *second* of the two
+    migrations that would run (v41->v42), and confirms not only that the
+    recorded version never advances, but that the *first* migration's own
+    already-successful table creation (v40->v41) is rolled back too -- a
+    partial upgrade must never be left half-applied."""
+
+    from mockingbird.storage import database as database_module
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = repository_for(db_path)
+    existing_source_count = len(repository.list_sources())
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql("DROP TABLE research_collections")
+        connection.exec_driver_sql("DROP TABLE recorded_media_analysis_runs")
+        connection.exec_driver_sql("UPDATE mockingbird_schema SET version = 40 WHERE singleton_id = 1")
+    engine.dispose()
+
+    def _broken_research_collections_migration(connection) -> None:
+        raise RuntimeError("synthetic mid-chain migration failure")
+
+    monkeypatch.setitem(
+        database_module._SCHEMA_MIGRATIONS, 42, _broken_research_collections_migration
+    )
+
+    with pytest.raises(RuntimeError, match="synthetic mid-chain migration failure"):
+        repository_for(db_path)
+
+    # Re-read raw, bypassing the ORM/repository layer entirely -- the same
+    # discipline `_read_recorded_schema_version` itself uses -- so this
+    # assertion cannot be fooled by any in-process caching.
+    verify_engine = create_database_engine(f"sqlite:///{db_path}")
+    with verify_engine.connect() as connection:
+        recorded_version = connection.exec_driver_sql(
+            "SELECT version FROM mockingbird_schema WHERE singleton_id = 1"
+        ).scalar_one()
+        table_names = {
+            row[0]
+            for row in connection.exec_driver_sql(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+    verify_engine.dispose()
+
+    assert recorded_version == 40  # never advanced to 41, even though that migration itself succeeded
+    assert "recorded_media_analysis_runs" not in table_names  # v40->v41's own successful work, rolled back too
+    assert "research_collections" not in table_names  # the migration that actually raised
+
+    # The database is still genuinely usable afterward -- a failed upgrade
+    # attempt must not corrupt or strand it. Undo the monkeypatch's
+    # not-yet-restored failure by opening fresh (monkeypatch already
+    # restores the real migration function at teardown, but this repeats
+    # the same explicit-teardown pattern the rest of this file uses).
+    monkeypatch.undo()
+    recovered = repository_for(db_path)
+    try:
+        assert recovered.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+        assert len(recovered.list_sources()) == existing_source_count
+    finally:
+        recovered.close()
+
+
 def test_database_needing_unknown_migration_is_rejected(tmp_path: Path) -> None:
     db_path = tmp_path / "mockingbird.sqlite3"
     repository = repository_for(db_path)

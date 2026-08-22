@@ -16,7 +16,7 @@ import type {
 import { EmptyState } from "../components/EmptyState";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { formatDateTime } from "../utils";
+import { cameraHealthLabel, cameraHealthTone, formatDateTime } from "../utils";
 
 interface YardMapPageProps {
   onOpenStream: (streamId: string) => void;
@@ -46,25 +46,13 @@ function zoneTone(zone: YardMapZoneItem): "good" | "review" | "quiet" {
   return "good";
 }
 
-function cameraHealthLabel(stream: YardMapStreamItem): string {
-  return {
-    healthy: "Healthy",
-    recovering: "Recovering",
-    camera_unavailable: "Unavailable",
-    no_recent_frame: "Unavailable",
-    evidence_storage_degraded: "Unavailable",
-    waiting_for_capacity: "Waiting",
-    stopped: "Stopped",
-    starting: "Starting",
-    setup_incomplete: "Unavailable",
-  }[stream.activity.camera_health_state];
-}
-
-function cameraHealthTone(stream: YardMapStreamItem): "good" | "review" | "quiet" {
-  if (stream.activity.camera_health_state === "healthy") return "good";
-  if (["stopped", "starting"].includes(stream.activity.camera_health_state)) return "quiet";
-  return "review";
-}
+// cameraHealthLabel/cameraHealthTone now live in ../utils (First-Hour
+// Onboarding + Whole-Product Observability Closure v1, "B7 health model")
+// -- see that module for why this page's own previously-independent,
+// coarser label set (which collapsed camera_unavailable/no_recent_frame/
+// evidence_storage_degraded/setup_incomplete to the identical
+// "Unavailable") was replaced with the shared, more differentiated one
+// Dashboard already used, rather than the reverse.
 
 function normalizedPoint(event: ReactPointerEvent<HTMLElement>): YardMapAreaPoint {
   const bounds = event.currentTarget.getBoundingClientRect();
@@ -505,7 +493,7 @@ export function YardMapPage({
                   onPointerDown={(event) => event.stopPropagation()}
                   type="button"
                 >
-                  {cameraHealthLabel(stream)}
+                  {cameraHealthLabel(stream.activity.camera_health_state)}
                 </button>
                 {showRecentActivity && stream.activity.latest_preview_url ? (
                   <img
@@ -573,7 +561,10 @@ export function YardMapPage({
               <div className="yard-map-list-item" key={stream.id}>
                 <strong>{stream.name}</strong>
                 <span>{stream.source_name}</span>
-                <StatusPill label={cameraHealthLabel(stream)} tone={cameraHealthTone(stream)} />
+                <StatusPill
+                  label={cameraHealthLabel(stream.activity.camera_health_state)}
+                  tone={cameraHealthTone(stream.activity.camera_health_state)}
+                />
                 <span className="meta-text">{stream.activity.monitoring_desired_state} / {stream.activity.monitoring_actual_state}</span>
                 {stream.activity.open_activity_session ? <StatusPill label="Open activity" tone="review" /> : null}
                 {editing && !stream.placement ? <button className="secondary-action" onClick={() => void placeStream(stream)} type="button">Place on map</button> : null}

@@ -1419,7 +1419,7 @@ export function StreamDetailPage({
     // camera the user simply never started -- say so instead of implying
     // they need to press Start themselves.
     if (liveSession?.status === "paused") {
-      return "Live view is paused while Observation Engine is watching this camera.";
+      return "Live view is paused while wildlife observation is active on this camera.";
     }
     return `Start camera session before ${action}.`;
   }
@@ -2292,7 +2292,7 @@ export function StreamDetailPage({
         : (liveMotionResult?.activity_session_id ?? liveSession?.current_activity_session_id)
           ? "Best frame selected for this visit session."
           : liveSessionPausedForObservation
-            ? "Best frame is unavailable while Observation Engine is watching this camera."
+            ? "Best frame is unavailable while wildlife observation is active on this camera."
             : "Best frame is unavailable.";
   const liveBestFrameUrl = liveBestMediaAssetId
     ? apiClient.mediaFileUrl(liveBestMediaAssetId)
@@ -2827,7 +2827,7 @@ export function StreamDetailPage({
               <div className="stream-live-inline-status">
                 <strong>
                   {liveSession?.message ??
-                    "Live view is paused while Observation Engine is watching this camera."}
+                    "Live view is paused while wildlife observation is active on this camera."}
                 </strong>
               </div>
             ) : liveStatusNotice ? (
@@ -3411,7 +3411,7 @@ export function StreamDetailPage({
                   <strong>Live preview paused</strong>
                   <span>
                     {liveSession?.message ??
-                      "Live view is paused while Observation Engine is watching this camera."}
+                      "Live view is paused while wildlife observation is active on this camera."}
                   </span>
                 </div>
               ) : cameraNodePlayback ? (

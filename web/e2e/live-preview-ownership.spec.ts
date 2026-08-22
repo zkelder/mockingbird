@@ -149,7 +149,7 @@ test("an already-open live view survives Observation Engine taking camera owners
             ? {
                 status: "paused",
                 frame_count: 5,
-                message: "Live view is paused while Observation Engine is watching this camera.",
+                message: "Live view is paused while wildlife observation is active on this camera.",
               }
             : {},
         ),
@@ -216,7 +216,7 @@ test("an already-open live view survives Observation Engine taking camera owners
   // Appears twice by design: once in the media placeholder that replaced
   // `CurrentFrameView`, once in the primary-status inline notice.
   await expect(
-    page.getByText("Live view is paused while Observation Engine is watching this camera."),
+    page.getByText("Live view is paused while wildlife observation is active on this camera."),
   ).toHaveCount(2);
 
   const cameraStatus = page.locator('[aria-label="Camera and monitor status"]');

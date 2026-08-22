@@ -10,6 +10,21 @@ import { expect, test } from "@playwright/test";
 // even offer an option the backend would reject, and unchanged for a
 // provider that legitimately uses legacy durable monitoring.
 
+test("camera setup defaults the Camera type dropdown to MockingBird Camera Node, the golden path", async ({
+  page,
+}) => {
+  // First-Hour Onboarding + Whole-Product Observability Closure v1 ("A4
+  // golden path priority"): before this fix, a genuinely first-time user
+  // (no prior selection) landed on "Manual media" by default -- an
+  // incidental consequence of provider definition order on the backend,
+  // not the documented reference/golden path. See "Native Camera Node
+  // remains the reference/golden path" in product-doctrine.md.
+  await page.goto("/cameras/setup");
+  await expect(page.getByRole("heading", { name: "Add Camera" })).toBeVisible();
+
+  await expect(page.getByLabel("Camera type")).toHaveValue("camera_node");
+});
+
 test("camera setup hides the legacy Start watching checkbox for a Camera Node camera", async ({
   page,
 }) => {

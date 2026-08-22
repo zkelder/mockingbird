@@ -14,7 +14,7 @@ import { LiveCameraOverview } from "../components/LiveCameraOverview";
 import { ProductHealthPanel } from "../components/ProductHealthPanel";
 import { StatusPill } from "../components/StatusPill";
 import { TodayReportPanel } from "../components/TodayReportPanel";
-import { effectiveSpeciesText, formatDateTime, formatLabel } from "../utils";
+import { cameraHealthLabel, cameraHealthTone, effectiveSpeciesText, formatDateTime, formatLabel } from "../utils";
 
 interface ReviewQueueFocus {
   source: "live-motion";
@@ -51,25 +51,10 @@ function todayLocalRange(): { start_at: string; end_at: string } {
   return { start_at: start.toISOString(), end_at: end.toISOString() };
 }
 
-function cameraHealthLabel(state: CameraHealthSummary["state"]): string {
-  return {
-    healthy: "Healthy",
-    starting: "Starting",
-    waiting_for_capacity: "Waiting for capacity",
-    camera_unavailable: "Camera unavailable",
-    no_recent_frame: "No recent frame",
-    evidence_storage_degraded: "Evidence storage degraded",
-    recovering: "Recovering",
-    stopped: "Monitoring stopped",
-    setup_incomplete: "Setup incomplete",
-  }[state];
-}
-
-function cameraHealthTone(state: CameraHealthSummary["state"]): "good" | "review" | "quiet" {
-  if (state === "healthy") return "good";
-  if (state === "stopped" || state === "starting") return "quiet";
-  return "review";
-}
+// cameraHealthLabel/cameraHealthTone now live in ../utils (First-Hour
+// Onboarding + Whole-Product Observability Closure v1, "B7 health model")
+// -- shared with Yard & Camera Map so the same CameraHealthState can never
+// show a different label/tone on two different pages again.
 
 function outcomeLabel(visit: DashboardVisitSummary): string {
   if (visit.review_outcome === "needs_review") {

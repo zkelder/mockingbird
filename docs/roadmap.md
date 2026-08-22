@@ -1731,17 +1731,25 @@ live); the MockingBird host's own install/upgrade/recovery experience
 native Windows hardware acceptance, automatic upgrade, and guided recovery
 still open.
 
-**MockingBird Doctor / self-check, named and still open.** No consolidated
-health/self-check capability exists today; product/camera health is spread
-across several narrower surfaces (Dashboard summary, Observation panel,
-Camera Health). A single self-check covering database integrity,
-migration/schema state, media-root reachability, filesystem permissions,
-disk space, Python/native dependency presence, model-file presence, GPU
-availability when configured, paired Camera Node reachability, provider
-configuration validity, clock sanity, backup state, and version/
-compatibility would give support and self-diagnosis one place to look
-instead of several -- not yet scoped or built; a future bounded milestone,
-not a v0.1 blocker by itself unless field evidence shows otherwise.
+**MockingBird Doctor / self-check.** **Current disposition (superseding
+this entry's original "not yet scoped or built" framing, stale as of
+First-Hour Onboarding + Whole-Product Observability Closure v1):**
+`python -m mockingbird doctor` (`diagnostics/doctor.py`) is a real,
+consolidated, read-only self-check -- see
+[mockingbird-doctor-operational-health-contract.md](mockingbird-doctor-operational-health-contract.md)
+for its full PASS/WARN/FAIL/SKIPPED contract. It covers database
+connectivity/integrity, migration/schema state, storage (media root plus,
+as of this milestone, export output roots independently), backup state,
+Camera Node structural/boot-identity facts, ffmpeg/detector-model/GPU
+availability, clock readability, and (added this milestone) recent
+offline-ingest and research/export failure patterns. It deliberately does
+not, and per its own documented design invariant should not, add a live
+network probe of a paired Camera Node or an ONVIF/RTSP connectivity check
+-- both would require touching `secret=True`-flagged provider
+configuration Doctor's own read-only, no-`ProductRepository`-construction
+design never touches; see that contract doc's "Known v1 scope limits."
+Not yet done: an API/UI surface (CLI-only today) and Python/native
+dependency presence beyond the checks above.
 Transactional configuration (`preview -> validate -> apply -> verify ->
 recover/rollback`) is already the shape of Guided Camera Editing's redacted
 impact-preview/bounded-save flow (see "Source adapters" in
@@ -1936,10 +1944,24 @@ advanced-provenance surfaces named above.
 diagnostic export -- health-check output, redacted logs, schema/version
 facts, no raw media or credentials by default) and correlation/causal
 tracing across a single request or session (so one Visit's full path from
-capture through admission can be followed in logs) are both named, open
-capabilities -- neither exists today. Avoid high-cardinality or raw-image
-telemetry in either, per the existing structured-diagnostics doctrine
-above.
+capture through admission can be followed in logs) were both named, open
+capabilities. Avoid high-cardinality or raw-image telemetry in either, per
+the existing structured-diagnostics doctrine above. **Current disposition
+(First-Hour Onboarding + Whole-Product Observability Closure v1):** a
+first bounded version of both now exists. `python -m mockingbird
+support-bundle` (`diagnostics/support_bundle.py`) writes a bounded `.zip`
+(Doctor's own report, structural-only Source facts, a redacted recent log
+tail, version facts) -- CLI-only for now, no API/UI surface yet, and Source
+entries carry only id/name/kind/status, never provider configuration (a
+disclosed v1 scope limit; see that module's own docstring for why). A
+request-scoped `request_id` (generated or caller-supplied, echoed as an
+`X-Request-Id` response header) now exists at the API boundary and flows
+into structured log lines and the new shared `error_taxonomy` module's
+`StructuredError.correlation`; `stream_id`/`source_id`/`event_id`/
+`visit_id` remain the de facto per-domain correlation keys they already
+were, added to a log line only where a handler already has them. Full
+causal tracing of one Visit's complete capture-through-admission path
+across every log line remains open.
 
 #### Camera Node field-recovery ladder (extends "Fault injection," above)
 

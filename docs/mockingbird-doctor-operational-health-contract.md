@@ -124,6 +124,22 @@ the first time this particular surface needed one of its own.
 | Species identification | `species_identification` | BioCLIP runtime status via the existing `get_bioclip_status` | No |
 | GPU / CUDA | `gpu_cuda` | `CUDAExecutionProvider` availability via `OnnxCudaObservationProvider.unconfigured().probe()`, capability-aware | No |
 | Clock | `clock` | Local clock readability; host timezone resolution (`resolve_host_local_timezone`, which never raises) | No |
+| Offline ingest | `offline_ingest` | Bare read of the most recent `RecordedMediaAnalysisRunModel` rows (bounded sample); WARNs on a recent-failure pattern, informational if none run yet or the database predates schema 41 | No |
+| Research / export | `research_export` | Bare read of the most recent `DatasetExportModel` rows (bounded sample); same WARN/informational shape as Offline ingest | No |
+
+**Added by First-Hour Onboarding + Whole-Product Observability Closure
+v1:** the two checks above, plus the Storage check now additionally probes
+`research_exports`/`classifier_manifest_exports` output roots
+independently (previously only the database directory was probed, falling
+back to media_root -- an export root on a genuinely different volume was
+an undetected blind spot). Both new checks reuse this module's existing
+`(gather, interpret)` pattern and bounded-sample convention
+(`_RECENT_RUN_SAMPLE_SIZE`) rather than a new mechanism, and both fail
+open to `PASS`/informational (never blocking, and never a raw exception)
+when the underlying table predates the database's current migration state
+-- a real installation mid-upgrade must never see a scary unexpected
+failure from a table that simply does not exist yet at its recorded
+schema version.
 
 Only Database and Storage can ever report a `blocking` failure. Every
 other capability is optional/degradable by product doctrine -- an install
@@ -347,9 +363,15 @@ was modified -- every reuse point above is an **import**, never an edit.
   system -- Doctor is one bounded CLI command plus a stable, machine-readable
   report shape.
 - A general observability/metrics/tracing rewrite -- the roadmap's own
-  "Support bundle and tracing" (Gate E) names correlation/causal tracing
-  and a privacy-safe support-bundle export as separate, still-open future
-  capabilities this milestone does not attempt.
+  "Support bundle and tracing" (Gate E) named correlation/causal tracing
+  and a privacy-safe support-bundle export as separate future capabilities
+  this milestone did not attempt. **Current disposition (First-Hour
+  Onboarding + Whole-Product Observability Closure v1):** a first bounded
+  support bundle now exists (`diagnostics/support_bundle.py`, `python -m
+  mockingbird support-bundle`) as a *separate* module that reuses this
+  Doctor report wholesale for its health section -- Doctor itself gained
+  no new responsibility or non-read-only behavior to make that possible.
+  Full causal tracing of one Visit's complete path remains open.
 - Network time synchronization infrastructure -- the Clock check validates
   that the local clock and host timezone are *readable*, never that they
   are *correct* against an external time source.

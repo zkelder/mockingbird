@@ -1417,6 +1417,86 @@ def _read_recorded_schema_version(engine: Engine) -> int | None:
     return int(row.version)
 
 
+def _run_schema_migration_loop(connection: Connection, version: int) -> int:
+    while version < CURRENT_DATABASE_SCHEMA_VERSION:
+        target_version = version + 1
+        migration = _SCHEMA_MIGRATIONS.get(target_version)
+        if migration is None:
+            raise DatabaseSchemaCompatibilityError(
+                "This MockingBird database needs an explicit migration before it "
+                "can be opened safely."
+            )
+        migration(connection)
+        connection.execute(
+            _SCHEMA_VERSION_TABLE.update()
+            .where(_SCHEMA_VERSION_TABLE.c.singleton_id == 1)
+            .values(version=target_version, updated_at=datetime.now(UTC))
+        )
+        version = target_version
+    return version
+
+
+def _run_migrations_with_transactional_ddl(engine: Engine, version: int) -> int:
+    """Run the schema-migration loop against a dedicated, short-lived
+    engine with genuine transactional DDL -- never the shared, long-lived
+    `engine` the rest of the application (and every concurrent request-
+    handling connection, for the entire remaining process lifetime)
+    continues to use afterward.
+
+    First-Hour Onboarding + Whole-Product Observability Closure v1 ("C4
+    migration hardening"): a real, confirmed gap found by this milestone's
+    own new mid-chain-migration-failure test -- pysqlite's default DBAPI
+    behavior implicitly commits before a DDL statement (CREATE TABLE/ALTER
+    TABLE), regardless of an enclosing SQLAlchemy `engine.begin()` block.
+    Before this fix, a migration function that successfully ran a
+    `CREATE TABLE` and then a *later* migration in the same upgrade chain
+    raised left that new, half-migrated table permanently in place even
+    though the schema-version row correctly rolled back to the pre-upgrade
+    version -- a partially-applied upgrade silently disguised as a cleanly
+    -rejected one. The fix is SQLAlchemy's own documented pysqlite
+    "Serializable isolation / Savepoints / Transactional DDL" recipe
+    (disable pysqlite's own implicit transaction handling entirely via
+    `isolation_level = None`, and issue every `BEGIN` explicitly instead,
+    which pysqlite *does* honor for DDL) -- but a first attempt applying it
+    to `create_database_engine` itself (the shared engine/connection-pool
+    factory the rest of the app also uses) measurably changed SQLite
+    locking/timing behavior for ordinary concurrent request handling,
+    found via this milestone's own repeated real-test comparison: a
+    consistent, reproducible failure-rate increase (0/4 at baseline vs.
+    2/3 with the shared-engine version) in an unrelated multi-stream
+    concurrent-authority test. Scoping the fix to a dedicated engine used
+    only for this one, synchronous, once-per-startup call -- before the
+    shared engine's own connection pool is used for anything else, so a
+    second temporary connection to the same SQLite file adds no real
+    contention -- keeps the correctness fix without that side effect.
+    """
+
+    ephemeral_test_database = _is_ephemeral_pytest_sqlite_database(str(engine.url))
+    migration_engine = create_engine(engine.url, connect_args={"check_same_thread": False})
+
+    @event.listens_for(migration_engine, "connect")
+    def _configure_for_transactional_ddl(dbapi_connection, _connection_record) -> None:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA busy_timeout=5000")
+            if ephemeral_test_database:
+                cursor.execute("PRAGMA synchronous=OFF")
+        finally:
+            cursor.close()
+        dbapi_connection.isolation_level = None
+
+    @event.listens_for(migration_engine, "begin")
+    def _emit_explicit_begin(connection: Connection) -> None:
+        connection.exec_driver_sql("BEGIN")
+
+    try:
+        with migration_engine.begin() as connection:
+            version = _run_schema_migration_loop(connection, version)
+    finally:
+        migration_engine.dispose()
+    return version
+
+
 def _validate_or_migrate_schema_version(engine: Engine, recorded_version: int) -> int:
     if recorded_version > CURRENT_DATABASE_SCHEMA_VERSION:
         raise DatabaseSchemaCompatibilityError(
@@ -1426,22 +1506,17 @@ def _validate_or_migrate_schema_version(engine: Engine, recorded_version: int) -
 
     version = recorded_version
     if version < CURRENT_DATABASE_SCHEMA_VERSION:
-        with engine.begin() as connection:
-            while version < CURRENT_DATABASE_SCHEMA_VERSION:
-                target_version = version + 1
-                migration = _SCHEMA_MIGRATIONS.get(target_version)
-                if migration is None:
-                    raise DatabaseSchemaCompatibilityError(
-                        "This MockingBird database needs an explicit migration before it "
-                        "can be opened safely."
-                    )
-                migration(connection)
-                connection.execute(
-                    _SCHEMA_VERSION_TABLE.update()
-                    .where(_SCHEMA_VERSION_TABLE.c.singleton_id == 1)
-                    .values(version=target_version, updated_at=datetime.now(UTC))
-                )
-                version = target_version
+        if engine.dialect.name == "sqlite":
+            version = _run_migrations_with_transactional_ddl(engine, version)
+        else:
+            # Structurally unreachable in practice -- every migration
+            # function itself immediately raises DatabaseSchemaCompatibilityError
+            # for a non-SQLite dialect (see e.g. _migrate_to_zone_optional_
+            # motion_evidence) -- kept only so a hypothetical future non-
+            # SQLite engine still fails the same way it always has, rather
+            # than through this SQLite-specific transactional-DDL path.
+            with engine.begin() as connection:
+                version = _run_schema_migration_loop(connection, version)
     return version
 
 

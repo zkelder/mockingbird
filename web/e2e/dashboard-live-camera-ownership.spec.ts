@@ -157,7 +157,7 @@ test("Dashboard's Live Camera Overview survives Observation Engine taking camera
             ? {
                 status: "paused",
                 frame_count: 5,
-                message: "Live view is paused while Observation Engine is watching this camera.",
+                message: "Live view is paused while wildlife observation is active on this camera.",
               }
             : sessionState === "failed"
               ? {
@@ -220,7 +220,7 @@ test("Dashboard's Live Camera Overview survives Observation Engine taking camera
   await expect(tile.getByText("Current camera frame unavailable")).toHaveCount(0);
   await expect(tile.getByText("Live preview paused")).toBeVisible();
   await expect(
-    tile.getByText("Live view is paused while Observation Engine is watching this camera."),
+    tile.getByText("Live view is paused while wildlife observation is active on this camera."),
   ).toBeVisible();
   await expect(tile.getByText(/^Actual:/)).toContainText("Observing");
 

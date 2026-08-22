@@ -1238,6 +1238,29 @@ test("Bird Log is reachable from the persistent nav without enabling Developer M
   await expect(page.getByRole("heading", { name: "Wildlife Journal" })).toBeVisible();
 });
 
+test("Import Media is reachable from the persistent nav without enabling Developer Mode", async ({
+  page,
+}) => {
+  // First-Hour Onboarding + Whole-Product Observability Closure v1 ("A3/A4
+  // acquisition discoverability"): the identical class of defect the Bird
+  // Log test above regression-guards, found by this milestone's own first-
+  // hour investigation -- `manual_media` ("recorded wildlife media") is a
+  // normal, undisguised Add Camera choice (in fact the current default
+  // selection in CameraSetupPage's dropdown), but its own completion step,
+  // actually importing files, lived only on this Developer-Mode-gated page.
+  await completeSetup(page);
+  await mockPlaceActivityReport(page, {});
+
+  await page.goto("/");
+  await expect(page.getByText("Developer tools")).toHaveCount(0);
+
+  const importNavItem = page.getByRole("button", { name: "Import Media", exact: true });
+  await expect(importNavItem).toBeVisible();
+  await importNavItem.click();
+  await expect(page).toHaveURL(/\/import$/);
+  await expect(page.getByRole("heading", { name: "Import Media" })).toBeVisible();
+});
+
 
 // Gate C -- Representative Species Evidence v1 (see docs/representative-
 // species-evidence-contract.md). `TodayReportPanel` never selects an image
