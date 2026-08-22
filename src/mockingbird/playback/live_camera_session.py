@@ -13,6 +13,7 @@ from collections import deque
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from mockingbird.diagnostics.structured_log import log_error_event
 from mockingbird.playback import (
     camera_node_bridge,
     live_frame_cache,
@@ -2099,8 +2100,22 @@ class _LiveCameraSession:
         except (
             Exception
         ) as error:  # pragma: no cover - defensive around monitor callbacks.
+            # First-Hour Onboarding + Whole-Product Observability Closure v1
+            # ("B8 user-safe actions"): `last_error` is a basic-tier, always
+            # -shown field (see StreamsPage.tsx's "Last error:" text) -- a
+            # raw `str(error)` must never be the primary user-facing string
+            # here. The real detail still reaches the bounded structured
+            # log via `log_error_event`, never silently discarded.
+            log_error_event(
+                "acquisition_provider",
+                "monitor_evaluation_failed",
+                code="monitor_evaluation_failed",
+                exception=error,
+                stream_id=self.stream_id,
+                source_id=self.source_id,
+            )
             with self._lock:
-                self.last_error = str(error)
+                self.last_error = "Camera monitoring stopped unexpectedly. Check this camera's health details."
                 self.monitor_running = False
                 self._record_diagnostic_event_locked(
                     "monitor_stopped",
@@ -2170,10 +2185,23 @@ class _LiveCameraSession:
                 )
         except Exception as error:  # pragma: no cover - defensive around OS process IO.
             _stop_process(self.process)
+            # See the identical fix/reasoning above (`_monitor_loop`): a raw
+            # `str(error)` must never reach this basic-tier, always-shown
+            # field. Matches the curated-string convention this same method
+            # already uses a few lines above (`safe_failure_code`/
+            # "Camera process ended before the session was stopped.").
+            log_error_event(
+                "acquisition_provider",
+                "camera_process_io_failed",
+                code="camera_process_io_failed",
+                exception=error,
+                stream_id=self.stream_id,
+                source_id=self.source_id,
+            )
             with self._lock:
                 self.status = "failed"
                 self.stop_reason = "process_error"
-                self.last_error = str(error)
+                self.last_error = "The camera process ended unexpectedly. Check this camera's health details."
                 self._record_diagnostic_event_locked(
                     "camera_failed",
                     status=self.status,

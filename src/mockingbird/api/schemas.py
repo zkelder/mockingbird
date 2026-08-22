@@ -5817,9 +5817,28 @@ class ProductHealthStatus(BaseModel):
     Reuses `storage_summary`, the Dashboard's existing camera-attention list,
     and the existing backup library rather than recomputing any of them; see
     docs/local-product-packaging-design.md. Advanced-only facts
-    (`database_schema_version`, `log_path`) stay out of the basic fields the
-    same way the Observation panel keeps runtime vocabulary out of its basic
-    state.
+    (`database_schema_version`, `log_path`, and the version fields below)
+    stay out of the basic fields the same way the Observation panel keeps
+    runtime vocabulary out of its basic state.
+
+    First-Hour Onboarding + Whole-Product Observability Closure v1 ("C5
+    version reporting"): `camera_node_service_version`/
+    `research_export_schema_version`/`camtrap_dp_profile_version` close a
+    real gap this milestone's compatibility inventory found -- a support
+    conversation previously had no single API response that could answer
+    "which Camera Node software version, and which export policy version,
+    is this installation actually running." `camera_node_service_version`
+    reflects the most-recently-seen paired Camera Node's own reported
+    version (`CameraSourceModel.camera_node_service_version`, already
+    durable -- see Doctor's identical Camera Node check); `None` when no
+    Camera Node has ever reported one. The export policy versions are
+    fixed, already-accepted constants (`research.research_export.
+    RESEARCH_EXPORT_SCHEMA_VERSION`/`research.camtrap_dp.
+    CAMTRAP_DP_PROFILE_VERSION`), always present. Deliberately excluded:
+    a live Camera Node *API* version re-check, which would require a fresh
+    network probe of the Node's `secret=True`-flagged address from this
+    read-only status aggregate -- see the milestone report's "known
+    limitations."
     """
 
     app_version: str
@@ -5834,6 +5853,9 @@ class ProductHealthStatus(BaseModel):
     previous_shutdown_clean: bool | None = None
     database_schema_version: int = Field(ge=1)
     log_path: str | None = None
+    camera_node_service_version: str | None = None
+    research_export_schema_version: str
+    camtrap_dp_profile_version: str
     generated_at: datetime
 
 

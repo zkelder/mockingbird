@@ -537,6 +537,23 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
+# First-Hour Onboarding + Whole-Product Observability Closure v1 ("B5 log
+# retention"): the Node deliberately logs to journald, not a custom file/
+# rotation subsystem (see "Logs" in docs/camera-node-installer-design.md) --
+# journald's own size-based retention (`SystemMaxUse=`/`RuntimeMaxUse=` in
+# journald.conf) already bounds total disk use machine-wide by OS default;
+# this installer does not additionally edit that machine-wide file (a
+# broader blast radius than one service warrants). What journald's own
+# defaults do *not* bound is the *rate* one unit can log at -- a crash loop
+# emitting a burst of failure messages every restart could otherwise spam
+# the journal indefinitely (see `StartLimitIntervalSec=300`/
+# `StartLimitBurst=5` above, which stops the *restarts*, not the logging).
+# These two values match systemd's own built-in per-unit default explicitly
+# -- not a new behavior, but a disclosed, defensible, always-on policy
+# instead of an implicit one an operator would otherwise need to know to
+# look up.
+LogRateLimitIntervalSec=30
+LogRateLimitBurst=1000
 
 [Install]
 WantedBy=multi-user.target

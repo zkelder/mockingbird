@@ -339,3 +339,61 @@ async def test_camera_setup_api_validation_is_secret_safe_and_side_effect_free(
     assert "unsupported settings" in rejected.text
     after = {path: (await client.get(path)).json() for path in paths}
     assert after == before
+
+
+@pytest.mark.anyio
+async def test_camera_setup_rtsps_gets_the_specific_honest_refusal_not_a_generic_invalid_url(
+    client: httpx.AsyncClient,
+) -> None:
+    """First-Hour Onboarding + Whole-Product Observability Closure v1
+    ("A3/A6 honest RTSPS refusal"): before this fix, an rtsps:// URL at
+    setup time was rejected with the same generic "Enter a valid URL"
+    message as a typo -- never disclosing that RTSPS specifically isn't
+    supported, even though the product already writes that exact honest
+    explanation elsewhere (playback status, session start). Still refused
+    either way -- this only fixes *why* the refusal says what it says."""
+
+    response = await client.post(
+        "/api/camera-setup/validate",
+        json={
+            "provider_key": "external_url",
+            "config": {"live_stream_url": "rtsps://camera.local:322/stream"},
+        },
+    )
+    assert response.status_code == 400
+    assert "RTSPS" in response.text
+    assert "not currently supported" in response.text
+    assert "Enter a valid URL for the selected provider." not in response.text
+
+    completion = await client.post(
+        "/api/camera-setup/complete",
+        json={
+            "provider_key": "external_url",
+            "config": {"live_stream_url": "rtsps://camera.local:322/stream"},
+            "camera_name": "Backyard camera",
+            "stream_name": "Backyard view",
+            "zones": [
+                {
+                    "name": "Feeder",
+                    "zone_type": "feeder",
+                    "polygon": [{"x": 0.1, "y": 0.1}, {"x": 0.9, "y": 0.1}, {"x": 0.5, "y": 0.9}],
+                }
+            ],
+            "enable_monitoring": False,
+            "idempotency_key": "rtsps-refusal-test-key",
+        },
+    )
+    assert completion.status_code == 400
+    assert "RTSPS" in completion.text
+
+    # An ordinary rtsp:// URL (never rtsps://) must never trigger the RTSPS
+    # refusal -- this fix is scheme-specific, not a broader RTSP change.
+    plain_rtsp = await client.post(
+        "/api/camera-setup/validate",
+        json={
+            "provider_key": "external_url",
+            "config": {"live_stream_url": "rtsp://camera.local:554/stream", "live_stream_type": "rtsp"},
+        },
+    )
+    assert plain_rtsp.status_code == 200
+    assert "RTSPS" not in plain_rtsp.text

@@ -239,6 +239,19 @@ def test_rendered_unit_enables_the_service_watchdog(tmp_path) -> None:
     assert "StartLimitIntervalSec=300" in unit
 
 
+def test_rendered_unit_declares_an_explicit_bounded_log_rate_policy(tmp_path) -> None:
+    """First-Hour Onboarding + Whole-Product Observability Closure v1 ("B5
+    log retention"): journald's own size-based retention already bounds
+    total disk use by OS default (the Node deliberately has no custom log
+    file -- see "Logs" in docs/camera-node-installer-design.md); this unit
+    now makes the per-unit *rate* bound explicit and disclosed rather than
+    an unstated reliance on systemd's own implicit default."""
+
+    unit = render_systemd_unit(InstallPaths(prefix=tmp_path))
+    assert "LogRateLimitIntervalSec=30" in unit
+    assert "LogRateLimitBurst=1000" in unit
+
+
 # --- Hardware watchdog (OS-hang recovery; optional, capability-gated) -------
 
 

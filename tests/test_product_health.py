@@ -275,3 +275,57 @@ def test_product_health_never_includes_credential_shaped_values(
 
     for forbidden in ("credential", "bearer", "password", "api_key", "secret"):
         assert forbidden not in response_text
+
+
+def test_product_health_reports_export_policy_versions_and_camera_node_service_version(
+    isolated_repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """First-Hour Onboarding + Whole-Product Observability Closure v1
+    ("C5 version reporting"): a support conversation needs one API
+    response that answers "which export policy version, and which paired
+    Camera Node software version, is this installation actually running,"
+    reusing the already-accepted constants/durable column rather than a
+    second implementation."""
+
+    monkeypatch.setattr(
+        isolated_repository,
+        "dashboard_summary",
+        lambda *_args, **_kwargs: _fake_dashboard_summary(camera_states=[], configured=0, monitored=0),
+    )
+    monkeypatch.setattr(isolated_repository, "most_recent_camera_node_service_version", lambda: "1.4.0")
+
+    body = _get("/api/product/health").json()
+
+    assert body["research_export_schema_version"] == "research-export-v1"
+    assert body["camtrap_dp_profile_version"] == "1.0.2"
+    assert body["camera_node_service_version"] == "1.4.0"
+
+
+def test_most_recent_camera_node_service_version_is_none_when_never_reported(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    try:
+        assert repository.most_recent_camera_node_service_version() is None
+    finally:
+        repository.close()
+
+
+def test_most_recent_camera_node_service_version_reads_a_real_paired_camera_node(tmp_path: Path) -> None:
+    from mockingbird.storage.models import CameraSourceModel
+
+    repository = _repository(tmp_path)
+    try:
+        with repository.session_factory() as session, session.begin():
+            session.add(
+                CameraSourceModel(
+                    id="source-real-camera-node",
+                    name="Real Camera Node",
+                    kind="integration",
+                    status="connected",
+                    description="Real paired Camera Node fixture.",
+                    camera_node_service_version="1.4.0",
+                )
+            )
+        assert repository.most_recent_camera_node_service_version() == "1.4.0"
+    finally:
+        repository.close()

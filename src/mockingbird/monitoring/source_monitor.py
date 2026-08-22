@@ -9,6 +9,21 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 from uuid import uuid4
 
+from mockingbird.diagnostics.structured_log import log_error_event
+
+# First-Hour Onboarding + Whole-Product Observability Closure v1 ("B8 user-
+# safe actions"): confirmed, live, traced defect this milestone's own
+# observability inventory found -- a raw `str(error)` used to reach
+# `StreamsPage.tsx`'s "Last error: {monitorStatus.last_error}" verbatim, no
+# truncation or curation. `last_error` is a *basic-tier, always-shown*
+# field, so it must stay plain-language and safe by construction; the real
+# exception detail still goes to the bounded structured log (and, from
+# there, a future support bundle) via `log_error_event` below -- never
+# discarded, just no longer the primary user-facing string.
+_MONITOR_LOOP_FAILURE_MESSAGE = (
+    "Monitoring stopped unexpectedly. Check this camera's health details, or see MockingBird Doctor."
+)
+
 MonitorStatus = Literal[
     "stopped",
     "starting",
@@ -254,7 +269,14 @@ class SourceMonitorManager:
         except asyncio.CancelledError:
             raise
         except Exception as error:  # pragma: no cover - defensive loop boundary
-            record.state.last_error = str(error) or "Monitor failed."
+            log_error_event(
+                "acquisition_provider",
+                "monitor_loop_failed",
+                code="monitor_loop_failed",
+                exception=error,
+                source_id=record.state.source_id,
+            )
+            record.state.last_error = _MONITOR_LOOP_FAILURE_MESSAGE
             self._finish(record.state, status="error", reason="error")
 
     async def _run_tick(self, record: _MonitorRecord) -> None:

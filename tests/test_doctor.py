@@ -374,6 +374,130 @@ def test_interpret_storage_healthy() -> None:
     assert result.recoverability is None
 
 
+def test_interpret_storage_export_root_not_yet_created_is_not_a_problem() -> None:
+    """An export root is lazily created on first real export -- like
+    media_root, "does not exist yet" on a fresh install is normal, not a
+    defect."""
+
+    result = doctor._interpret_storage(
+        {
+            "media_root_exists": True,
+            "is_writable": True,
+            "is_low_space": False,
+            "export_roots": {"research_exports": {"exists": False}},
+        },
+        database_exists=True,
+    )
+    assert result.status == DoctorStatus.PASS
+
+
+def test_interpret_storage_export_root_low_space_on_a_different_device_warns() -> None:
+    result = doctor._interpret_storage(
+        {
+            "media_root_exists": True,
+            "is_writable": True,
+            "is_low_space": False,
+            "export_roots": {
+                "research_exports": {
+                    "exists": True,
+                    "is_writable": True,
+                    "is_low_space": True,
+                    "same_device_as_database": False,
+                }
+            },
+        },
+        database_exists=True,
+    )
+    assert result.status == DoctorStatus.WARN
+    assert result.recoverability == DoctorRecoverability.DEGRADED
+    assert "research_exports" in result.summary
+
+
+def test_interpret_storage_export_root_problem_on_the_same_device_does_not_double_report() -> None:
+    """The primary Storage probe already covers this physical disk -- an
+    export root sharing it must not create a second, redundant WARN for
+    the identical underlying problem."""
+
+    result = doctor._interpret_storage(
+        {
+            "media_root_exists": True,
+            "is_writable": True,
+            "is_low_space": False,
+            "export_roots": {
+                "research_exports": {
+                    "exists": True,
+                    "is_writable": False,
+                    "is_low_space": False,
+                    "same_device_as_database": True,
+                }
+            },
+        },
+        database_exists=True,
+    )
+    assert result.status == DoctorStatus.PASS
+
+
+# --------------------------------------------------------------------------
+# Offline ingest
+# --------------------------------------------------------------------------
+
+
+def test_interpret_offline_ingest_schema_not_migrated_yet_is_informational() -> None:
+    result = doctor._interpret_offline_ingest({"sampled_count": 0, "failed_count": 0, "table_available": False})
+    assert result.status == DoctorStatus.PASS
+    assert result.recoverability == DoctorRecoverability.INFORMATIONAL
+
+
+def test_interpret_offline_ingest_no_runs_yet_is_informational() -> None:
+    result = doctor._interpret_offline_ingest({"sampled_count": 0, "failed_count": 0, "table_available": True})
+    assert result.status == DoctorStatus.PASS
+    assert result.recoverability == DoctorRecoverability.INFORMATIONAL
+
+
+def test_interpret_offline_ingest_recent_failure_warns() -> None:
+    result = doctor._interpret_offline_ingest(
+        {"sampled_count": 5, "failed_count": 2, "most_recent_error_code": "unsupported_codec", "table_available": True}
+    )
+    assert result.status == DoctorStatus.WARN
+    assert result.recoverability == DoctorRecoverability.DEGRADED
+    assert result.recoverability != DoctorRecoverability.BLOCKING
+    assert result.diagnostic_context["most_recent_error_code"] == "unsupported_codec"
+
+
+def test_interpret_offline_ingest_all_recent_runs_succeeded_is_pass() -> None:
+    result = doctor._interpret_offline_ingest({"sampled_count": 3, "failed_count": 0, "table_available": True})
+    assert result.status == DoctorStatus.PASS
+    assert result.recoverability is None
+
+
+# --------------------------------------------------------------------------
+# Research / export
+# --------------------------------------------------------------------------
+
+
+def test_interpret_research_export_schema_not_migrated_yet_is_informational() -> None:
+    result = doctor._interpret_research_export({"sampled_count": 0, "failed_count": 0, "table_available": False})
+    assert result.status == DoctorStatus.PASS
+    assert result.recoverability == DoctorRecoverability.INFORMATIONAL
+
+
+def test_interpret_research_export_no_exports_yet_is_informational() -> None:
+    result = doctor._interpret_research_export({"sampled_count": 0, "failed_count": 0, "table_available": True})
+    assert result.status == DoctorStatus.PASS
+    assert result.recoverability == DoctorRecoverability.INFORMATIONAL
+
+
+def test_interpret_research_export_recent_failure_warns_but_never_blocks() -> None:
+    result = doctor._interpret_research_export({"sampled_count": 4, "failed_count": 1, "table_available": True})
+    assert result.status == DoctorStatus.WARN
+    assert result.recoverability == DoctorRecoverability.DEGRADED
+
+
+def test_interpret_research_export_all_recent_succeeded_is_pass() -> None:
+    result = doctor._interpret_research_export({"sampled_count": 2, "failed_count": 0, "table_available": True})
+    assert result.status == DoctorStatus.PASS
+
+
 # --------------------------------------------------------------------------
 # Backup
 # --------------------------------------------------------------------------

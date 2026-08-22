@@ -353,8 +353,18 @@ def _camera_items(value: object) -> list[CameraNodeCamera]:
         if not isinstance(item, dict):
             raise CameraNodeClientError("node_response_invalid")
         camera_id, display_name, status = item.get("camera_id"), item.get("display_name"), item.get("status")
-        if not all(isinstance(candidate, str) and candidate for candidate in (camera_id, display_name, status)) or len(camera_id) > 120 or len(display_name) > 120 or status not in {"available", "setup_required", "unavailable"}:
+        if not all(isinstance(candidate, str) and candidate for candidate in (camera_id, display_name, status)) or len(camera_id) > 120 or len(display_name) > 120:
             raise CameraNodeClientError("node_response_invalid")
+        # First-Hour Onboarding + Whole-Product Observability Closure v1
+        # ("C3 additive compatibility"): a genuinely new status value from a
+        # newer Node used to hard-crash the whole camera list. `status` is
+        # purely presentational -- unlike `capture_class` below, nothing
+        # downstream branches on it to make a real capture decision -- so an
+        # unrecognized value soft-falls to the existing, already-handled
+        # `unavailable` state (the conservative "can't confirm this camera
+        # is usable" reading) rather than refusing the entire response.
+        if status not in {"available", "setup_required", "unavailable"}:
+            status = "unavailable"
         hint, provider_type = item.get("setup_hint"), item.get("provider_type")
         readiness = item.get("capture_readiness", "not_initialized")
         cameras.append(
@@ -405,9 +415,17 @@ def _capture_profile_status(value: object) -> list[CameraNodeCaptureProfileStatu
             or len(profile_id) > 120
             or "/" in profile_id
             or not isinstance(state, str)
-            or state not in allowed_states
         ):
             raise CameraNodeClientError("node_response_invalid")
+        # C3 additive compatibility (see `_camera_items`): this is bounded,
+        # sanitized diagnostic-only text ("Read the fixed, sanitized
+        # warm-proof vocabulary without raw diagnostics" -- see this
+        # function's own docstring), never a value anything branches real
+        # capture behavior on. An unrecognized state from a newer Node
+        # soft-falls to "untested" (an honest "not evaluated yet" reading)
+        # instead of discarding the whole profile-status list.
+        if state not in allowed_states:
+            state = "untested"
         statuses.append(CameraNodeCaptureProfileStatus(profile_id, state))
     if len({status.profile_id for status in statuses}) != len(statuses):
         raise CameraNodeClientError("node_response_invalid")
@@ -447,6 +465,17 @@ def _capture_profiles(value: object) -> list[CameraNodeCaptureProfile]:
             or not 1 <= height <= 12_000
             or not isinstance(max_expected_bytes, int)
             or not 32_768 <= max_expected_bytes <= MAX_NODE_CAPTURE_BYTES
+            # `capture_class` deliberately stays a hard requirement, unlike
+            # `status`/`state`/`orientation` elsewhere in this module (C3
+            # additive compatibility): downstream capture-decision code
+            # branches on its exact literal value to choose real capture
+            # behavior (warm vs. reconfiguration), which this milestone did
+            # not trace end-to-end -- an unrecognized value here honestly
+            # refuses the response rather than silently guessing a
+            # capture-behavior fallback that could be wrong in a way a
+            # simple presentational default cannot be. See the First-Hour
+            # Onboarding + Whole-Product Observability Closure v1 report's
+            # "known limitations" for why this one field was left as-is.
             or capture_class not in {
                 "warm",
                 "reconfiguration",
@@ -454,9 +483,15 @@ def _capture_profiles(value: object) -> list[CameraNodeCaptureProfile]:
                 "reconfiguration_required",
             }
             or (geometry_group is not None and (not isinstance(geometry_group, str) or len(geometry_group) > 120))
-            or orientation not in {"normal", "rotate_90", "rotate_180", "rotate_270"}
         ):
             raise CameraNodeClientError("node_response_invalid")
+        # C3 additive compatibility (see `_camera_items`): orientation is
+        # already defaulted to "normal" when the *key itself* is absent
+        # (the `.get("orientation", "normal")` above); an unrecognized-but-
+        # present value now gets the identical, already-used fallback
+        # instead of discarding the whole profile.
+        if orientation not in {"normal", "rotate_90", "rotate_180", "rotate_270"}:
+            orientation = "normal"
         profiles.append(
             CameraNodeCaptureProfile(
                 profile_id=profile_id,

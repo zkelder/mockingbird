@@ -23,9 +23,20 @@ import cv2
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.responses import FileResponse, Response, StreamingResponse
+from sqlalchemy.exc import SQLAlchemyError
+from starlette.requests import Request
+from starlette.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 from mockingbird import __version__ as APP_VERSION
+from mockingbird.diagnostics.error_taxonomy import (
+    ErrorComponent,
+    ErrorCorrelation,
+    bounded_exception_detail,
+    build_structured_error,
+)
+from mockingbird.diagnostics.structured_log import log_error_event
+from mockingbird.research.camtrap_dp import CAMTRAP_DP_PROFILE_VERSION
+from mockingbird.research.research_export import RESEARCH_EXPORT_SCHEMA_VERSION
 from mockingbird.api.schemas import (
     CamtrapDpExportRequest,
     CamtrapDpExportResponse,
@@ -566,6 +577,77 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# A request's own correlation id, bounded to a plain hex token so it is
+# always safe to echo back and to fold into a log line/structured-error
+# `diagnostic` payload with no further sanitization. A caller (support
+# tooling, a future advanced-diagnostics UI) may supply its own
+# `X-Request-Id` to correlate a request against a call it already logged
+# on its own side; otherwise one is generated here. See "Correlation IDs"
+# in the governing milestone brief -- this is deliberately the one
+# universal identifier every request gets; stream_id/source_id/event_id/
+# visit_id/observation_session_id stay route-specific, added only where a
+# handler already has them, never forced onto every log line.
+_REQUEST_ID_HEADER = "X-Request-Id"
+_MAX_CLIENT_REQUEST_ID_LENGTH = 128
+
+
+def _resolve_request_id(request: Request) -> str:
+    supplied = request.headers.get(_REQUEST_ID_HEADER)
+    if supplied and 0 < len(supplied) <= _MAX_CLIENT_REQUEST_ID_LENGTH and supplied.isascii() and supplied.isprintable():
+        return supplied
+    return uuid.uuid4().hex
+
+
+@app.middleware("http")
+async def _request_correlation_and_version_headers(request: Request, call_next):  # noqa: ANN001, ANN201 - Starlette's own untyped middleware signature
+    request_id = _resolve_request_id(request)
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers[_REQUEST_ID_HEADER] = request_id
+    # Cheap, request-scoped, and independent of the FastAPI app's own
+    # static `version="0.1.0"` (see the FastAPI(...) constructor above,
+    # which only feeds OpenAPI docs metadata and is never response-visible
+    # otherwise) -- a client can now tell which MockingBird build actually
+    # answered without a second round trip to /api/product/instance.
+    response.headers["X-MockingBird-Api-Version"] = APP_VERSION
+    return response
+
+
+@app.exception_handler(SQLAlchemyError)
+async def _handle_database_error(request: Request, error: SQLAlchemyError) -> JSONResponse:
+    """One shared, structured response for any database write/read failure
+    that reaches the API boundary uncaught.
+
+    Confirmed by this milestone's own observability inventory: no route
+    handler in this module catches `SQLAlchemyError`/`IntegrityError`/
+    `OperationalError` today (32k+ lines of repository code, effectively
+    zero such handling) -- an ordinary write failure previously propagated
+    as FastAPI's generic unhandled-exception 500 with no stable code, no
+    structured log record, and no user-safe message. This handler is
+    additive: it changes nothing about *when* a write fails, only what the
+    caller and the log see when one does. Never includes the raw SQL
+    statement or parameters in the response body -- only in the bounded,
+    advanced-only `diagnostic` field, truncated by `bounded_exception_detail`
+    exactly like Doctor's own equivalent.
+    """
+
+    request_id = getattr(request.state, "request_id", None)
+    log_error_event(
+        "database",
+        "write_or_read_failed",
+        code="storage_write_failed",
+        exception=error,
+        request_id=request_id,
+        path=request.url.path,
+    )
+    structured = build_structured_error(
+        "storage_write_failed",
+        default_component=ErrorComponent.DATABASE,
+        correlation=ErrorCorrelation(request_id=request_id),
+        diagnostic={"exception": bounded_exception_detail(error)},
+    )
+    return JSONResponse(status_code=500, content={"detail": structured.message, "error": structured.model_dump(mode="json")})
 
 
 def _patch_testclient_for_pytest() -> None:
@@ -9154,6 +9236,10 @@ async def validate_camera_setup(
             "camera_setup_provider_unsupported": "Choose a supported camera provider.",
             "camera_setup_unsupported_fields": "This provider configuration included unsupported settings.",
             "camera_setup_invalid_url": "Enter a valid URL for the selected provider.",
+            "camera_setup_rtsps_unsupported": (
+                "RTSPS (secure RTSP) is not currently supported. MockingBird cannot verify a "
+                "TLS-secured connection to this camera. Use rtsp:// on a trusted local network instead."
+            ),
             "camera_setup_invalid_node_address": "Enter a valid local LAN Camera Node address.",
             "camera_node_pairing_required": "Pair a Camera Node and select one advertised camera before validation.",
             "camera_node_pairing_expired": "Camera Node pairing expired. Pair the Node again before continuing.",
@@ -9184,6 +9270,10 @@ async def complete_camera_setup(
             "camera_setup_provider_unsupported": "Choose a supported camera provider.",
             "camera_setup_unsupported_fields": "This provider configuration included unsupported settings.",
             "camera_setup_invalid_url": "Enter a valid URL for the selected provider.",
+            "camera_setup_rtsps_unsupported": (
+                "RTSPS (secure RTSP) is not currently supported. MockingBird cannot verify a "
+                "TLS-secured connection to this camera. Use rtsp:// on a trusted local network instead."
+            ),
             "camera_setup_invalid_node_address": "Enter a valid local LAN Camera Node address.",
             "camera_node_pairing_required": "Pair a Camera Node and select one advertised camera before completing setup.",
             "camera_node_pairing_expired": "Camera Node pairing expired. Pair the Node again before continuing.",
@@ -10456,6 +10546,9 @@ async def get_product_health() -> ProductHealthStatus:
         previous_shutdown_clean=previous_shutdown_was_clean(),
         database_schema_version=repository.schema_status.version,
         log_path=str(current_log_path()) if current_log_path() else None,
+        camera_node_service_version=repository.most_recent_camera_node_service_version(),
+        research_export_schema_version=RESEARCH_EXPORT_SCHEMA_VERSION,
+        camtrap_dp_profile_version=CAMTRAP_DP_PROFILE_VERSION,
         generated_at=datetime.now(UTC),
     )
 

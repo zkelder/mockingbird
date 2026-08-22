@@ -271,3 +271,26 @@ def test_repeated_pause_resume_cycles_remain_stable(fake_processes) -> None:
     assert len(fake_processes) == 4  # 1 initial start + 3 resumes
     assert manager.status(STREAM_ID).status in {"starting", "running"}
     assert manager.status(STREAM_ID).last_error is None
+
+
+# --- last_error stays user-safe on an unexpected monitor failure ---------
+# (First-Hour Onboarding + Whole-Product Observability Closure v1, "B8 user-
+# safe actions": a confirmed, live, traced defect -- a raw `str(error)` used
+# to reach StreamsPage.tsx's "Last error:" text verbatim, no curation.)
+
+
+def test_monitor_loop_failure_sets_a_safe_message_not_the_raw_exception_text() -> None:
+    process = _FakeCameraProcess()
+    session = live_camera_session._LiveCameraSession(config=_config(), process=process, max_runtime_seconds=60)
+
+    def _raising_evaluate() -> dict:
+        raise RuntimeError("a very specific internal detail that must never reach the user")
+
+    session._monitor_loop(_raising_evaluate, interval_seconds=0.0)
+
+    assert session.last_error == (
+        "Camera monitoring stopped unexpectedly. Check this camera's health details."
+    )
+    assert "very specific internal detail" not in session.last_error
+    assert "RuntimeError" not in session.last_error
+    assert session.monitor_running is False

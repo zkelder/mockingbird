@@ -76,6 +76,7 @@ from mockingbird.storage.database import (
 )
 from mockingbird.storage.models import (
     CameraSourceModel,
+    DatasetExportModel,
     MonitoringExposureIntervalModel,
     StreamModel,
     StreamRuntimeCheckpointModel,
@@ -134,6 +135,14 @@ _CAMERA_NODE_INSTABILITY_WINDOW_SECONDS = 900.0
 # time to notice and review Zones after a routine hardware swap without
 # requiring a dedicated acknowledge action for this milestone's bounded scope.
 _CAMERA_NODE_REPLACEMENT_REVIEW_WINDOW_SECONDS = 7 * 24 * 60 * 60.0
+# First-Hour Onboarding + Whole-Product Observability Closure v1: a small,
+# bounded recency window for the two checks below, matching this module's
+# existing "recent, not all-time" bias (see the Camera Node boot-transition
+# window above) -- a failure from months ago should not permanently degrade
+# Doctor with no way to clear it, and scanning an unbounded row count on
+# every Doctor run would violate "avoid expensive inference merely for
+# diagnosis" (see docs/mockingbird-doctor-operational-health-contract.md).
+_RECENT_RUN_SAMPLE_SIZE = 20
 
 
 class DoctorStatus(str, Enum):
@@ -189,6 +198,8 @@ class DoctorCheckCode(str, Enum):
     SPECIES_IDENTIFICATION = "species_identification"
     GPU_CUDA = "gpu_cuda"
     CLOCK = "clock"
+    OFFLINE_INGEST = "offline_ingest"
+    RESEARCH_EXPORT = "research_export"
 
 
 class DoctorCheckResult(BaseModel):
@@ -235,6 +246,18 @@ class DoctorEnvironment(BaseModel):
     db_url: str
     media_root: Path
     backup_root: Path
+    # First-Hour Onboarding + Whole-Product Observability Closure v1: the
+    # two export output roots were previously never probed by Storage at
+    # all (only the database directory, falling back to media_root -- see
+    # `_gather_storage`), a real blind spot for an install with exports on
+    # a different volume. No dedicated env var exists for either (confirmed
+    # by this milestone's own compatibility inventory), so both are
+    # anchored to `runtime_home` exactly like `media_root`/`backup_root`
+    # above, matching `product_repository.py`'s own
+    # `DEFAULT_RESEARCH_EXPORT_ROOT`/`DEFAULT_CLASSIFIER_MANIFEST_EXPORT_ROOT`
+    # relative-path convention.
+    research_export_root: Path
+    classifier_manifest_export_root: Path
 
 
 def resolve_doctor_environment(*, runtime_home: Path | None = None) -> DoctorEnvironment:
@@ -251,7 +274,16 @@ def resolve_doctor_environment(*, runtime_home: Path | None = None) -> DoctorEnv
     db_url = os.getenv(DB_URL_ENV_VAR) or f"sqlite:///{home / 'data' / 'mockingbird.sqlite3'}"
     media_root = Path(os.getenv(MEDIA_ROOT_ENV_VAR) or str(home / "data" / "media" / "imports"))
     backup_root = Path(os.getenv(BACKUP_ROOT_ENV_VAR) or str(home / "data" / "backups"))
-    return DoctorEnvironment(runtime_home=home, db_url=db_url, media_root=media_root, backup_root=backup_root)
+    research_export_root = home / "data" / "research_exports"
+    classifier_manifest_export_root = home / "data" / "classifier_manifest_exports"
+    return DoctorEnvironment(
+        runtime_home=home,
+        db_url=db_url,
+        media_root=media_root,
+        backup_root=backup_root,
+        research_export_root=research_export_root,
+        classifier_manifest_export_root=classifier_manifest_export_root,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -560,10 +592,57 @@ def _interpret_database_schema(gathered: dict[str, Any]) -> DoctorCheckResult:
 # --------------------------------------------------------------------------
 
 
-def _gather_storage(*, media_root: Path, database_directory: Path) -> dict[str, Any]:
+def _gather_export_root_status(
+    export_roots: dict[str, Path], *, primary_device_id: int | None
+) -> dict[str, dict[str, Any]]:
+    """Probe each export output root independently, but only when it
+    already exists -- like `media_root`, these are lazily created on first
+    real export, so "does not exist yet" is a normal, non-alarming state
+    for a fresh install, not a defect (see the module docstring's "never
+    mutate" invariant: this must not create the folder merely by checking
+    it). `primary_device_id` (the database directory's `st_dev`, when
+    resolvable) lets the caller avoid a second, redundant low-space WARN
+    for a root that turns out to share the exact same physical volume the
+    primary Storage probe already reported on.
+    """
+
+    results: dict[str, dict[str, Any]] = {}
+    for label, root in export_roots.items():
+        if not root.is_dir():
+            results[label] = {"exists": False}
+            continue
+        disk_status = probe_local_storage_disk(root)
+        same_device = None
+        if primary_device_id is not None:
+            try:
+                same_device = root.stat().st_dev == primary_device_id
+            except OSError:  # pragma: no cover - defensive, matches probe's own tolerance
+                same_device = None
+        results[label] = {
+            "exists": True,
+            "is_writable": disk_status.is_writable,
+            "is_low_space": disk_status.is_low_space,
+            "free_bytes": disk_status.free_bytes,
+            "same_device_as_database": same_device,
+        }
+    return results
+
+
+def _gather_storage(
+    *,
+    media_root: Path,
+    database_directory: Path,
+    export_roots: dict[str, Path] | None = None,
+) -> dict[str, Any]:
     media_root_exists = media_root.is_dir()
     probe_directory = database_directory if database_directory.is_dir() else media_root
     disk_status = probe_local_storage_disk(probe_directory) if probe_directory.is_dir() else None
+    primary_device_id: int | None = None
+    if probe_directory.is_dir():
+        try:
+            primary_device_id = probe_directory.stat().st_dev
+        except OSError:  # pragma: no cover - defensive, matches probe's own tolerance
+            primary_device_id = None
     return {
         "media_root_exists": media_root_exists,
         "media_root": str(media_root),
@@ -572,6 +651,7 @@ def _gather_storage(*, media_root: Path, database_directory: Path) -> dict[str, 
         "is_writable": disk_status.is_writable if disk_status else False,
         "is_low_space": disk_status.is_low_space if disk_status else False,
         "probed_directory": str(probe_directory),
+        "export_roots": _gather_export_root_status(export_roots or {}, primary_device_id=primary_device_id),
     }
 
 
@@ -627,6 +707,34 @@ def _interpret_storage(gathered: dict[str, Any], *, database_exists: bool) -> Do
             summary=f"Free disk space is low ({free_gb:.1f} GB free).",
             recoverability=DoctorRecoverability.DEGRADED,
             user_action="Free up disk space, or move MockingBird's data folder to a drive with more room.",
+            diagnostic_context=context,
+        )
+    # First-Hour Onboarding + Whole-Product Observability Closure v1: an
+    # export output root is never itself blocking (exports are an optional
+    # capability, not the core "observe wildlife" loop), but a genuinely
+    # separate, low-space/unwritable export volume was previously an
+    # undetected blind spot -- see `_gather_export_root_status`. Only
+    # surfaced when the root actually exists and is a genuinely different
+    # device than the one just confirmed healthy above, so this can never
+    # double-report the same physical disk as two separate problems.
+    export_roots = gathered.get("export_roots") or {}
+    problem_roots = [
+        label
+        for label, status in export_roots.items()
+        if status.get("exists")
+        and status.get("same_device_as_database") is False
+        and (not status.get("is_writable") or status.get("is_low_space"))
+    ]
+    context["export_roots"] = export_roots
+    if problem_roots:
+        return DoctorCheckResult(
+            code=DoctorCheckCode.STORAGE,
+            component="Storage",
+            status=DoctorStatus.WARN,
+            summary=f"Export storage needs attention: {', '.join(problem_roots)}.",
+            detail="An export output folder is low on space or not writable. Exports can fail until this is resolved.",
+            recoverability=DoctorRecoverability.DEGRADED,
+            user_action="Free up space on the export folder's drive, or check its permissions.",
             diagnostic_context=context,
         )
     return DoctorCheckResult(
@@ -1237,6 +1345,160 @@ def _interpret_clock(gathered: dict[str, Any]) -> DoctorCheckResult:
 
 
 # --------------------------------------------------------------------------
+# Offline ingest
+# --------------------------------------------------------------------------
+
+
+def _gather_offline_ingest(engine: Engine) -> dict[str, Any]:
+    # `RecordedMediaAnalysisRunModel` lives in `repository.product_repository`
+    # (not `storage.models`) -- a lazy, function-local import so Doctor's
+    # module-level import cost does not grow for every other check merely
+    # because this one exists; importing the module does not construct
+    # `ProductRepository` (see the module docstring's design invariant),
+    # so this stays a bare, read-only query exactly like every other check.
+    from sqlalchemy.exc import OperationalError
+
+    from mockingbird.repository.product_repository import RecordedMediaAnalysisRunModel
+
+    try:
+        with engine.connect() as connection:
+            rows = connection.execute(
+                select(RecordedMediaAnalysisRunModel.status, RecordedMediaAnalysisRunModel.error_code)
+                .order_by(RecordedMediaAnalysisRunModel.created_at.desc())
+                .limit(_RECENT_RUN_SAMPLE_SIZE)
+            ).all()
+    except OperationalError:
+        # A database whose recorded schema is older than this table's own
+        # migration (schema 41) has no such table yet -- an honest "not
+        # migrated to that point" fact, not an unexpected Doctor failure;
+        # the Database Schema check above already reports the version gap
+        # itself. Never surfaced as a raw exception here.
+        return {"sampled_count": 0, "failed_count": 0, "table_available": False}
+    statuses = [row[0] for row in rows]
+    return {
+        "sampled_count": len(statuses),
+        "failed_count": sum(1 for status in statuses if status == "failed"),
+        "most_recent_error_code": next((row[1] for row in rows if row[0] == "failed"), None),
+        "table_available": True,
+    }
+
+
+def _interpret_offline_ingest(gathered: dict[str, Any]) -> DoctorCheckResult:
+    sampled_count = gathered.get("sampled_count", 0)
+    context = {"sampled_run_count": sampled_count, "failed_count": gathered.get("failed_count", 0)}
+    if gathered.get("table_available") is False:
+        return DoctorCheckResult(
+            code=DoctorCheckCode.OFFLINE_INGEST,
+            component="Offline ingest",
+            status=DoctorStatus.PASS,
+            summary="Recorded-media analysis history isn't available yet.",
+            detail="This database has not been migrated to the schema version that added it. See the Database Schema check.",
+            recoverability=DoctorRecoverability.INFORMATIONAL,
+            diagnostic_context=context,
+        )
+    if sampled_count == 0:
+        return DoctorCheckResult(
+            code=DoctorCheckCode.OFFLINE_INGEST,
+            component="Offline ingest",
+            status=DoctorStatus.PASS,
+            summary="No recorded-media analysis has been run yet.",
+            detail="This is expected until a recorded video is analyzed from Import Media.",
+            recoverability=DoctorRecoverability.INFORMATIONAL,
+            diagnostic_context=context,
+        )
+    failed_count = gathered.get("failed_count", 0)
+    if failed_count > 0:
+        context["most_recent_error_code"] = gathered.get("most_recent_error_code")
+        return DoctorCheckResult(
+            code=DoctorCheckCode.OFFLINE_INGEST,
+            component="Offline ingest",
+            status=DoctorStatus.WARN,
+            summary=f"{failed_count} of the last {sampled_count} recorded-media analysis run(s) failed.",
+            detail="Live camera observation is unaffected; this only concerns imported recorded video.",
+            recoverability=DoctorRecoverability.DEGRADED,
+            user_action="Open the affected recording's analysis result for the specific reason, or try analyzing it again.",
+            diagnostic_context=context,
+        )
+    return DoctorCheckResult(
+        code=DoctorCheckCode.OFFLINE_INGEST,
+        component="Offline ingest",
+        status=DoctorStatus.PASS,
+        summary=f"The last {sampled_count} recorded-media analysis run(s) completed without error.",
+        diagnostic_context=context,
+    )
+
+
+# --------------------------------------------------------------------------
+# Research / export
+# --------------------------------------------------------------------------
+
+
+def _gather_research_export(engine: Engine) -> dict[str, Any]:
+    from sqlalchemy.exc import OperationalError
+
+    try:
+        with engine.connect() as connection:
+            rows = connection.execute(
+                select(DatasetExportModel.status)
+                .order_by(DatasetExportModel.created_at.desc())
+                .limit(_RECENT_RUN_SAMPLE_SIZE)
+            ).all()
+    except OperationalError:
+        # See `_gather_offline_ingest`'s identical guard: an honest "not
+        # migrated that far yet" fact, never a raw exception here.
+        return {"sampled_count": 0, "failed_count": 0, "table_available": False}
+    statuses = [row[0] for row in rows]
+    return {
+        "sampled_count": len(statuses),
+        "failed_count": sum(1 for status in statuses if status == "failed"),
+        "table_available": True,
+    }
+
+
+def _interpret_research_export(gathered: dict[str, Any]) -> DoctorCheckResult:
+    sampled_count = gathered.get("sampled_count", 0)
+    context = {"sampled_export_count": sampled_count, "failed_count": gathered.get("failed_count", 0)}
+    if gathered.get("table_available") is False:
+        return DoctorCheckResult(
+            code=DoctorCheckCode.RESEARCH_EXPORT,
+            component="Research / export",
+            status=DoctorStatus.PASS,
+            summary="Export history isn't available yet.",
+            detail="This database has not been migrated to a schema version that supports it.",
+            recoverability=DoctorRecoverability.INFORMATIONAL,
+            diagnostic_context=context,
+        )
+    if sampled_count == 0:
+        return DoctorCheckResult(
+            code=DoctorCheckCode.RESEARCH_EXPORT,
+            component="Research / export",
+            status=DoctorStatus.PASS,
+            summary="No dataset export has been run yet.",
+            recoverability=DoctorRecoverability.INFORMATIONAL,
+            diagnostic_context=context,
+        )
+    failed_count = gathered.get("failed_count", 0)
+    if failed_count > 0:
+        return DoctorCheckResult(
+            code=DoctorCheckCode.RESEARCH_EXPORT,
+            component="Research / export",
+            status=DoctorStatus.WARN,
+            summary=f"{failed_count} of the last {sampled_count} export(s) failed.",
+            detail="Reviewed history and Bird Log are unaffected; this only concerns dataset export runs.",
+            recoverability=DoctorRecoverability.DEGRADED,
+            user_action="Check available storage on the export folder's drive, then try the export again.",
+            diagnostic_context=context,
+        )
+    return DoctorCheckResult(
+        code=DoctorCheckCode.RESEARCH_EXPORT,
+        component="Research / export",
+        status=DoctorStatus.PASS,
+        summary=f"The last {sampled_count} export(s) completed without error.",
+        diagnostic_context=context,
+    )
+
+
+# --------------------------------------------------------------------------
 # Orchestrator
 # --------------------------------------------------------------------------
 
@@ -1338,6 +1600,10 @@ def run_doctor(
             gather=lambda: _gather_storage(
                 media_root=environment.media_root,
                 database_directory=sqlite_database_path(environment.db_url).parent,
+                export_roots={
+                    "research_exports": environment.research_export_root,
+                    "classifier_manifest_exports": environment.classifier_manifest_export_root,
+                },
             ),
             interpret=lambda gathered: _interpret_storage(gathered, database_exists=database_exists),
             timeout_seconds=timeout_seconds,
@@ -1431,6 +1697,45 @@ def run_doctor(
             timeout_seconds=timeout_seconds,
         )
     )
+
+    if engine is not None:
+        checks.append(
+            _execute_check(
+                code=DoctorCheckCode.OFFLINE_INGEST,
+                component="Offline ingest",
+                gather=lambda: _gather_offline_ingest(engine),
+                interpret=_interpret_offline_ingest,
+                timeout_seconds=timeout_seconds,
+            )
+        )
+        checks.append(
+            _execute_check(
+                code=DoctorCheckCode.RESEARCH_EXPORT,
+                component="Research / export",
+                gather=lambda: _gather_research_export(engine),
+                interpret=_interpret_research_export,
+                timeout_seconds=timeout_seconds,
+            )
+        )
+    else:
+        checks.append(
+            _execute_check(
+                code=DoctorCheckCode.OFFLINE_INGEST,
+                component="Offline ingest",
+                gather=None,
+                interpret=_interpret_offline_ingest,
+                skip_reason="Skipped because the database is unavailable.",
+            )
+        )
+        checks.append(
+            _execute_check(
+                code=DoctorCheckCode.RESEARCH_EXPORT,
+                component="Research / export",
+                gather=None,
+                interpret=_interpret_research_export,
+                skip_reason="Skipped because the database is unavailable.",
+            )
+        )
 
     if engine is not None:
         try:

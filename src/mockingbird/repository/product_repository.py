@@ -2655,6 +2655,18 @@ def _validate_camera_setup_urls(provider_key: str, config: dict[str, str]) -> No
         value = (config.get(key) or "").strip()
         if not value:
             continue
+        # First-Hour Onboarding + Whole-Product Observability Closure v1
+        # ("A3/A6 honest RTSPS refusal"): checked *before* the generic
+        # scheme allowlist below so an rtsps:// URL at setup time gets the
+        # same specific, honest explanation `_external_url_stream_playback_
+        # status`/session-start already give post-setup (see
+        # `rtsp_bridge.RTSPS_TRANSPORT_SUPPORTED`'s docstring), instead of
+        # the generic "invalid URL" the plain scheme-allowlist check below
+        # would otherwise produce for it -- confirmed as a real, distinct
+        # gap by this milestone's own first-hour investigation: the setup
+        # path previously never disclosed *why* the URL was rejected.
+        if key == "live_stream_url" and rtsp_bridge.is_rtsps_url(value) and not rtsp_bridge.RTSPS_TRANSPORT_SUPPORTED:
+            raise ValueError("camera_setup_rtsps_unsupported")
         parsed = urlsplit(value)
         allowed_schemes = {"http", "https", "rtsp"} if key == "live_stream_url" else {"http", "https"}
         if parsed.scheme.lower() not in allowed_schemes or not parsed.hostname:
@@ -12592,6 +12604,29 @@ class ProductRepository:
                 session.flush()
                 self._sync_storage_alert(session, now)
                 return self._storage_retention_settings_response(model), False
+
+    def most_recent_camera_node_service_version(self) -> str | None:
+        """The most-recently-observed paired Camera Node's own reported
+        software version, for `/api/product/health`'s advanced-only version
+        reporting (First-Hour Onboarding + Whole-Product Observability
+        Closure v1, "C5"). A bare, read-only, side-effect-free read of the
+        same durable `CameraSourceModel.camera_node_service_version`
+        column Doctor's own Camera Node check already reads (Boot Identity
+        + Autonomous Recovery v1) -- never a second implementation, and
+        never a live network call to the Node. `None` when no Camera Node
+        has ever reported a version (never configured, or configured but
+        never yet successfully connected)."""
+
+        with self.session_factory() as session:
+            rows = session.scalars(
+                select(CameraSourceModel)
+                .where(
+                    CameraSourceModel.kind == SourceKind.integration.value,
+                    CameraSourceModel.camera_node_service_version.is_not(None),
+                )
+                .order_by(CameraSourceModel.camera_node_last_seen_at.desc().nulls_last())
+            ).all()
+        return rows[0].camera_node_service_version if rows else None
 
     def storage_summary(self) -> StorageSummary:
         """Summarize managed media with no path disclosure and no filesystem mutation."""
