@@ -33,7 +33,9 @@ export function MediaAssetPreview({
     height: number;
   } | null>(null);
   const fileUrl = apiClient.mediaFileUrl(asset.id);
-  const canPreview = !previewFailed && (asset.media_type === "image" || asset.media_type === "video");
+  const canPreview =
+    !previewFailed &&
+    (asset.media_type === "image" || asset.media_type === "video" || asset.media_type === "audio");
   const imageStageStyle: CSSProperties | undefined = imageDimensions
     ? {
         aspectRatio: `${imageDimensions.width} / ${imageDimensions.height}`,
@@ -74,6 +76,18 @@ export function MediaAssetPreview({
             preload="metadata"
             src={fileUrl}
           />
+        ) : canPreview && asset.media_type === "audio" ? (
+          // Acoustic / BirdNET Observation Foundation v1: audio evidence is
+          // heard, not seen -- this is real evidence content (never a
+          // fabricated waveform/thumbnail standing in for it), just a
+          // different modality of the same "open/play the evidence" action
+          // an image or video preview already offers.
+          <div className="media-preview-audio-stage">
+            <span className="media-preview-audio-icon" aria-hidden="true">
+              🔊
+            </span>
+            <audio controls onError={() => setPreviewFailed(true)} preload="metadata" src={fileUrl} />
+          </div>
         ) : (
           <div className="media-preview-fallback">
             <strong>{asset.original_filename}</strong>
@@ -81,7 +95,7 @@ export function MediaAssetPreview({
             <span>{asset.local_path}</span>
           </div>
         )}
-        {canPreview && asset.media_type === "video" ? surfaceOverlay : null}
+        {canPreview && (asset.media_type === "video" || asset.media_type === "audio") ? surfaceOverlay : null}
       </div>
       <div className="media-preview-meta">
         <strong>{asset.original_filename}</strong>

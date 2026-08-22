@@ -286,6 +286,17 @@ database/media replacement.
 
 ## Audio-aware boundary
 
+**Status: implemented.** Acoustic / BirdNET Observation Foundation v1 (see
+[acoustic-birdnet-observation-foundation-v1-contract.md](acoustic-birdnet-observation-foundation-v1-contract.md))
+built the audio capture/analysis/review path this section designed --
+`microphone`/`audio_capture` and BirdNET-backed `audio_suggestion`
+components under the existing Stream/Source context, exactly as named
+below, with every constraint in this section honored (separate consent,
+no inheritance from video `armed`, no reuse of video Zone polygons for
+audio privacy, suggestion-only BirdNET output). Preserved below unedited
+as the original design record this milestone implemented against; it does
+not itself describe current behavior.
+
 Audio is planned, but this phase does not capture, store, analyze, or model it.
 The lifecycle should be extensible through independently owned components such
 as `video_capture`, `motion_monitor`, future `audio_capture`, and future

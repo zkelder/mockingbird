@@ -163,6 +163,11 @@ import type {
   ReviewQueueItem,
   ReviewQueueSpeciesSuggestionBatchPrepareRequest,
   ReviewQueueSpeciesSuggestionBatchPrepareResponse,
+  AcousticAnalysisRun,
+  AudioCaptureStatusResponse,
+  BirdNetStatusResponse,
+  RecordedAudioAnalysisRequest,
+  RecordedAudioAnalysisResponse,
   RecordedMediaAnalysisRequest,
   RecordedMediaAnalysisResponse,
   RecordedMediaAnalysisRun,
@@ -912,6 +917,35 @@ export const apiClient = {
   getRecordedMediaAnalysisRuns: (mediaId: string) =>
     request<RecordedMediaAnalysisRun[]>(
       `/api/media/${encodeURIComponent(mediaId)}/analysis-runs`,
+    ),
+  // Acoustic / BirdNET Observation Foundation v1: mirrors the recorded-
+  // video analysis client methods immediately above.
+  analyzeRecordedAudio: (mediaId: string, payload: RecordedAudioAnalysisRequest = {}) =>
+    request<RecordedAudioAnalysisResponse>(
+      `/api/media/${encodeURIComponent(mediaId)}/analyze-audio`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    ),
+  getAcousticAnalysisRuns: (mediaId: string) =>
+    request<AcousticAnalysisRun[]>(
+      `/api/media/${encodeURIComponent(mediaId)}/audio-analysis-runs`,
+    ),
+  getBirdNetStatus: () => request<BirdNetStatusResponse>("/api/birdnet/status"),
+  startMicrophoneCapture: (streamId: string) =>
+    request<AudioCaptureStatusResponse>(
+      `/api/streams/${encodeURIComponent(streamId)}/audio-capture/start`,
+      { method: "POST" },
+    ),
+  stopMicrophoneCapture: (streamId: string) =>
+    request<AudioCaptureStatusResponse>(
+      `/api/streams/${encodeURIComponent(streamId)}/audio-capture/stop`,
+      { method: "POST" },
+    ),
+  getMicrophoneCaptureStatus: (streamId: string) =>
+    request<AudioCaptureStatusResponse>(
+      `/api/streams/${encodeURIComponent(streamId)}/audio-capture/status`,
     ),
   dryRunFolderImportEvidence: (payload: FolderImportEvidenceBatchDryRunRequest) =>
     request<FolderImportEvidenceBatchDryRunResponse>("/api/folder-import/evidence/dry-run", {

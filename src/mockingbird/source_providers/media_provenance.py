@@ -268,6 +268,80 @@ def _safe_int(value: object) -> int | None:
         return None
 
 
+@dataclass(frozen=True)
+class AudioProbeResult:
+    """ffprobe-derived provenance for one audio file -- Acoustic / BirdNET
+    Observation Foundation v1. Mirrors `VideoProbeResult` exactly (same
+    honesty discipline: `None` for anything ffprobe did not report, never a
+    fabricated fallback); never wired into `MonitoringExposureIntervalModel`
+    /coverage math for the same reason a video probe is not."""
+
+    duration_seconds: float | None
+    sample_rate_hz: int | None
+    channel_count: int | None
+    codec_name: str | None
+    captured_at: datetime | None = None
+
+
+def probe_audio_metadata(
+    path: Path,
+    *,
+    ffprobe_binary: str = "ffprobe",
+    timeout_seconds: float = _FFPROBE_TIMEOUT_SECONDS,
+) -> AudioProbeResult | None:
+    """Bounded, read-only `ffprobe` metadata probe for an audio file --
+    same subprocess/timeout/output-cap discipline as `probe_video_metadata`,
+    reused rather than duplicated. Returns `None` (never raises) when
+    ffprobe is unavailable, the file is not audio ffprobe can parse, or the
+    process times out."""
+
+    if not is_ffprobe_available(ffprobe_binary):
+        return None
+    try:
+        completed = subprocess.run(  # noqa: S603 -- fixed argv, no shell, local file path only
+            [
+                ffprobe_binary,
+                "-v",
+                "quiet",
+                "-print_format",
+                "json",
+                "-show_format",
+                "-show_streams",
+                str(path),
+            ],
+            capture_output=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0 or not completed.stdout:
+        return None
+
+    try:
+        payload = json.loads(completed.stdout[:_MAX_FFPROBE_OUTPUT_BYTES])
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+
+    format_payload = payload.get("format") or {}
+    duration_seconds = _safe_float(format_payload.get("duration"))
+    audio_stream = next(
+        (
+            stream
+            for stream in payload.get("streams") or []
+            if stream.get("codec_type") == "audio"
+        ),
+        None,
+    )
+    return AudioProbeResult(
+        duration_seconds=duration_seconds,
+        sample_rate_hz=_safe_int(audio_stream.get("sample_rate")) if audio_stream else None,
+        channel_count=_safe_int(audio_stream.get("channels")) if audio_stream else None,
+        codec_name=(audio_stream.get("codec_name") if audio_stream else None),
+        captured_at=_parse_video_creation_time((format_payload.get("tags") or {}).get("creation_time")),
+    )
+
+
 def compute_content_sha256(path: Path, *, chunk_size: int = _HASH_CHUNK_BYTES) -> str | None:
     """Stream-hash one local file -- bounded memory regardless of file
     size (see "II.25 Performance"). Returns `None` (never raises) only
@@ -284,17 +358,28 @@ def compute_content_sha256(path: Path, *, chunk_size: int = _HASH_CHUNK_BYTES) -
     return digest.hexdigest()
 
 
-MediaKind = Literal["image", "video"]
+MediaKind = Literal["image", "video", "audio"]
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".m4v"}
+# Acoustic / BirdNET Observation Foundation v1: must stay in exact sync with
+# `mockingbird.repository.product_repository.SUPPORTED_MEDIA_EXTENSIONS`'s
+# audio entries, the same discipline `VIDEO_EXTENSIONS` above already notes.
+AUDIO_EXTENSIONS = {".wav", ".mp3"}
 
 
 def media_kind_for_extension(extension: str) -> MediaKind:
-    return "video" if extension.lower() in VIDEO_EXTENSIONS else "image"
+    lowered = extension.lower()
+    if lowered in VIDEO_EXTENSIONS:
+        return "video"
+    if lowered in AUDIO_EXTENSIONS:
+        return "audio"
+    return "image"
 
 
 __all__ = [
+    "AUDIO_EXTENSIONS",
     "VIDEO_EXTENSIONS",
+    "AudioProbeResult",
     "ImageCaptureMetadata",
     "MediaKind",
     "VideoProbeResult",
@@ -302,5 +387,6 @@ __all__ = [
     "extract_image_captured_at",
     "is_ffprobe_available",
     "media_kind_for_extension",
+    "probe_audio_metadata",
     "probe_video_metadata",
 ]

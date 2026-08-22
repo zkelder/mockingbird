@@ -605,6 +605,58 @@ def test_schema_41_upgrades_to_current_with_research_collections(
         migrated.close()
 
 
+def test_schema_42_upgrades_to_current_with_acoustic_observation_foundation(
+    tmp_path: Path,
+) -> None:
+    """Acoustic / BirdNET Observation Foundation v1: a real database at the
+    previously-current schema (v42) upgrades cleanly through the new
+    additive `acoustic_analysis_runs` table and the new `media_assets`/
+    `species_suggestions` columns without disturbing existing data,
+    mirroring `test_schema_41_upgrades_to_current_with_research_
+    collections`'s own upgrade-in-place proof."""
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = repository_for(db_path)
+    existing_source_count = len(repository.list_sources())
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql("DROP TABLE acoustic_analysis_runs")
+        connection.exec_driver_sql("UPDATE mockingbird_schema SET version = 42 WHERE singleton_id = 1")
+    engine.dispose()
+
+    migrated = repository_for(db_path)
+    try:
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+        assert len(migrated.list_sources()) == existing_source_count
+
+        with migrated.engine.connect() as connection:
+            acoustic_run_columns = {
+                row[1]
+                for row in connection.exec_driver_sql("PRAGMA table_info(acoustic_analysis_runs)").fetchall()
+            }
+            assert {
+                "id", "media_asset_id", "stream_id", "pipeline_version", "status", "min_confidence",
+                "source_duration_seconds", "windows_analyzed", "detections_above_threshold",
+                "species_suggestions_created", "events_created", "visits_created",
+                "error_code", "error_message", "started_at", "completed_at", "created_at",
+            } <= acoustic_run_columns
+
+            media_asset_columns = {
+                row[1] for row in connection.exec_driver_sql("PRAGMA table_info(media_assets)").fetchall()
+            }
+            assert {"audio_sample_rate_hz", "audio_channel_count"} <= media_asset_columns
+
+            species_suggestion_columns = {
+                row[1]
+                for row in connection.exec_driver_sql("PRAGMA table_info(species_suggestions)").fetchall()
+            }
+            assert {"window_start_ms", "window_end_ms", "model_provenance_json"} <= species_suggestion_columns
+    finally:
+        migrated.close()
+
+
 def test_a_mid_chain_migration_failure_rolls_back_every_step_not_only_its_own(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -6,7 +6,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from mockingbird.source_providers.media_provenance import VIDEO_EXTENSIONS, media_kind_for_extension
+from mockingbird.source_providers.media_provenance import (
+    AUDIO_EXTENSIONS,
+    VIDEO_EXTENSIONS,
+    media_kind_for_extension,
+)
 
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 # v0.1 Acquisition/Ingest Interoperability Closure v1 ("II.9 Camera-trap /
@@ -18,8 +22,12 @@ _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 # architecture-compatible extension, not a new detection pipeline).
 # Deliberately *not* added to `DEFAULT_ALLOWED_EXTENSIONS`: an existing
 # folder-import caller that never explicitly asks for video extensions
-# keeps its exact current, image-only behavior.
-SUPPORTED_EXTENSIONS = _IMAGE_EXTENSIONS | VIDEO_EXTENSIONS
+# keeps its exact current, image-only behavior. Acoustic / BirdNET
+# Observation Foundation v1 extends the identical, already-established
+# opt-in-only pattern to recorded audio -- a folder-import caller must
+# explicitly request `.wav`/`.mp3` the same way it must explicitly request
+# video today.
+SUPPORTED_EXTENSIONS = _IMAGE_EXTENSIONS | VIDEO_EXTENSIONS | AUDIO_EXTENSIONS
 DEFAULT_ALLOWED_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp"]
 DEFAULT_MAX_FILES = 500
 MAX_MAX_FILES = 2_000

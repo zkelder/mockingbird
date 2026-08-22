@@ -2526,20 +2526,24 @@ provisioning, updates, remote/fleet services, support, warranty,
 replacement, installation. No artificial lock-in; MockingBird does not
 become a commodity trail-camera hardware company.
 
-**Audio.** Remains on the roadmap, not implemented. The canonical
-design/consent boundary already exists and is more detailed than a one-line
-mention:
+**Audio.** Acoustic / BirdNET Observation Foundation v1 (see
+[acoustic-birdnet-observation-foundation-v1-contract.md](acoustic-birdnet-observation-foundation-v1-contract.md))
+implemented the independent acoustic observation path the design/consent
+boundary in
 [durable-camera-monitor-lifecycle-design.md](durable-camera-monitor-lifecycle-design.md)
-"Audio-aware boundary" -- separate consent from video, cannot inherit
-video's `armed` state, video privacy polygons are insufficient for audio,
-off-by-default retention, BirdNET-family output would be suggestion-only
-(never reviewed truth), video arming never enables audio capture. Future
-direction otherwise: optional local microphones/audio providers, capability
-reporting, retention, source-evidence provenance, audio model lifecycle,
-ranked species/taxon evidence, eventual visual/audio/context fusion, safe
-failure, human review authority throughout. Audio feeds Evidence →
-Interpretation → Review Decision → Observation; it never creates a second
-truth system. Nothing in current repository evidence moves audio into v0.1.
+"Audio-aware boundary" called for: a `microphone` Source provider and
+audio-aware recorded-clip import; separate, explicit capture consent that
+cannot inherit video's `armed` state (Zones/video privacy polygons do not
+apply to audio, so this milestone did not reuse them); local BirdNET-class
+inference (`birdnetlib` + bundled `BirdNET-Analyzer GLOBAL_6K_V2.4`,
+CPU-only) producing suggestion-only `SpeciesSuggestion` evidence, never
+reviewed truth by itself; the existing, completely unmodified `ReviewLabel`
+correction path as the sole truth boundary; and Today/Bird Log/history
+surfacing with no backend changes required. Audio feeds Evidence →
+Interpretation → Review Decision → Observation, exactly as this entry
+originally specified; no second truth system was created. Visual/audio/
+context fusion (associating an acoustic and a visual detection of the same
+encounter) remains explicitly future work, not attempted here.
 
 **Ecological export & sharing interoperability.** Research / Conservation /
 Export Interoperability v1 (2026-08-22, see "Completed foundations" below

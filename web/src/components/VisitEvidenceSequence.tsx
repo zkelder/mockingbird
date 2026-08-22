@@ -145,17 +145,27 @@ export function VisitEvidenceSequence({
     previewSrc: previewUrl(selectedFrame),
     subjectBox: selectedFrame.normalized_track_box,
   });
+  // Acoustic / BirdNET Observation Foundation v1: audio evidence has no
+  // pixels to zoom/pan -- render a plain player instead of the image
+  // zoom viewport for this frame. Real evidence content either way, never
+  // a fabricated waveform/thumbnail standing in for the image case.
+  const isAudioFrame = selectedFrame.content_type.startsWith("audio/");
   return (
     <div className="review-evidence-sequence">
       <div className="review-evidence-sequence-image">
-        {isPreviewUnavailable ? (
+        {isAudioFrame ? (
+          <div className="media-preview-audio-stage">
+            <span className="media-preview-audio-icon" aria-hidden="true">🔊</span>
+            <audio controls preload="metadata" src={previewUrl(selectedFrame)} />
+          </div>
+        ) : isPreviewUnavailable ? (
           <span className="review-evidence-preview-unavailable">Saved preview is unavailable.</span>
         ) : (
           <EvidenceZoomViewport zoom={zoom} />
         )}
         {selectedFrame.is_primary ? surfaceOverlay : null}
       </div>
-      {isPreviewUnavailable ? null : <EvidenceZoomControls zoom={zoom} />}
+      {isAudioFrame || isPreviewUnavailable ? null : <EvidenceZoomControls zoom={zoom} />}
       {recommendedIndex >= 0 && recommendedIndex !== persistedPrimaryIndex ? (
         <div className="review-evidence-recommendation">
           <EvidenceBadge label="Recommended view" tone="evidence" />

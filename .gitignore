@@ -42,6 +42,16 @@ exports/
 *.log
 logs/
 
+# Acoustic / BirdNET Observation Foundation v1: real local audio test
+# fixtures (a real, third-party-licensed field recording plus generated
+# synthetic clips) -- mirrors the existing "model/media artifacts stay
+# local, never committed" convention above, not source. See
+# tests/fixtures/acoustic/PROVENANCE.md for exactly what belongs here and
+# its licensing; `tests/test_acoustic_ingest_real_model.py` skips (never
+# fails) when this directory is absent.
+tests/fixtures/acoustic/*.wav
+tests/fixtures/acoustic/*.mp3
+
 # Local dev-checkout runtime markers (mockingbird/runtime_state.py). A
 # development checkout with no MOCKINGBIRD_HOME set resolves its runtime home
 # to the repository root itself (runtime.py:resolve_runtime_home), so a real

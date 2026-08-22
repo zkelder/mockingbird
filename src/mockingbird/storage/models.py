@@ -683,6 +683,14 @@ class MediaAssetModel(Base):
     # existed or whose duration ffprobe could not determine -- an honest
     # "not known," never a fabricated zero.
     duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Acoustic / BirdNET Observation Foundation v1 (schema 43, see docs/
+    # acoustic-birdnet-observation-foundation-v1-contract.md): sample-rate/
+    # channel metadata for an audio `media_type` asset. `None` for every
+    # image/video row and for any audio asset whose source metadata could
+    # not be determined -- an honest "not known," never a fabricated value,
+    # mirroring `duration_seconds`'s identical discipline immediately above.
+    audio_sample_rate_hz: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    audio_channel_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class StorageRetentionSettingsModel(Base):

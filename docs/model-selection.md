@@ -245,6 +245,25 @@ binds the labels, cache, model configuration, weights, prompt recipe, OpenCLIP
 version, and PyTorch version. The evaluation-only `pybioclip` tooling used to
 prepare the current cache is not a production runtime dependency.
 
+### BirdNET (acoustic species identification)
+
+Acoustic / BirdNET Observation Foundation v1 (see
+[acoustic-birdnet-observation-foundation-v1-contract.md](acoustic-birdnet-observation-foundation-v1-contract.md))
+is the actual, evidence-backed implementation phase this doc's own rule
+above anticipated ("No ... BirdNET runtime ... should be added by
+selection docs alone") -- not this document adding a dependency by itself.
+Selected: `birdnetlib` (Apache-2.0) running the bundled BirdNET-Analyzer
+`GLOBAL_6K_V2.4` TFLite model (Cornell K. Lisa Yang Center for
+Conservation Bioacoustics, CC BY-NC-SA 4.0 -- NonCommercial, disclosed
+explicitly in the contract doc), on a lightweight `ai-edge-litert` TFLite
+backend (not full TensorFlow -- `tflite-runtime` is unavailable on PyPI for
+this project's supported Python versions, confirmed directly). CPU-only,
+mirroring the BioCLIP CPU-only precedent below. A new `classifier-birdnet`
+optional extra (`pyproject.toml`), never required for core startup, model
+weights never committed to git. Real positive/negative verification against
+a real, licensed field recording and synthetic noise is recorded in the
+contract doc.
+
 Serious future detector runtime candidates:
 
 - ONNX Runtime for local model execution, only after a compatible local MegaDetector artifact and output mapping are available

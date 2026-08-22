@@ -71,6 +71,7 @@ from mockingbird.analytics.zone_insights import (
     quality_status,
 )
 from mockingbird.research.acquisition_effort import (
+    RecordedAudioAcquisitionFact,
     RecordedVideoAcquisitionFact,
     StillImageAcquisitionFact,
     compute_offline_acquisition_effort,
@@ -465,6 +466,7 @@ from mockingbird.api.schemas import (
     ReviewStatus,
     RecordedMediaAnalysisRequest,
     RecordedMediaAnalysisResponse,
+    AcousticAnalysisRun,
     RecordedMediaAnalysisRun,
     SetupState,
     SetupStateUpdate,
@@ -692,6 +694,16 @@ SUPPORTED_MEDIA_CONTENT_TYPES = {
     "image/webp": "image",
     "video/mp4": "video",
     "video/quicktime": "video",
+    # Acoustic / BirdNET Observation Foundation v1: recorded-audio import,
+    # mirroring the video precedent exactly -- a supported content type
+    # here is a supported `import_source_folder_media_assets`/manual-upload
+    # candidate, nothing more. Canonical stored/analyzed form is always
+    # 48kHz mono PCM16 WAV (`audio_capture.decode_audio_to_canonical_wav`);
+    # other supported formats are transcoded on ingest via ffmpeg, the same
+    # tool this product already depends on for video decode.
+    "audio/wav": "audio",
+    "audio/x-wav": "audio",
+    "audio/mpeg": "audio",
 }
 
 # Live evidence is a short review aid, never a video archive. Keep a read-side
@@ -1051,6 +1063,12 @@ SUPPORTED_MEDIA_EXTENSIONS = {
     ".avi": ("video/x-msvideo", "video"),
     ".mkv": ("video/x-matroska", "video"),
     ".m4v": ("video/x-m4v", "video"),
+    # Acoustic / BirdNET Observation Foundation v1: must stay in exact sync
+    # with `mockingbird.observation.audio_capture.AUDIO_EXTENSIONS`, the
+    # folder-import preview/candidate set this dict's keys are looked up
+    # against -- same discipline the video extensions above already note.
+    ".wav": ("audio/wav", "audio"),
+    ".mp3": ("audio/mpeg", "audio"),
 }
 
 CLASSIFIER_MANIFEST_COPY_IMAGE_EXTENSIONS = {
@@ -1765,6 +1783,55 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
             ),
         ],
     ),
+    # Acoustic / BirdNET Observation Foundation v1: a local microphone
+    # capture path, deliberately separate from every video provider above.
+    # `supports_live_playback=False`/`supports_zone_editing=False`: this is
+    # not a video Stream and Zones (geometric regions on a frame) do not
+    # apply to audio -- see "Audio-aware boundary" in docs/durable-camera-
+    # monitor-lifecycle-design.md ("video privacy/ignore polygons are not
+    # sufficient audio privacy controls"). `capture_consent` is the
+    # explicit, separate consent flag that same design requires ("audio
+    # requires separate, explicit consent and cannot inherit video
+    # `armed`") -- read directly from this provider's own config by the
+    # audio-capture start route, never inferred from a Stream's video
+    # monitoring policy.
+    SourceProviderDefinition(
+        provider_key="microphone",
+        display_name="Local microphone",
+        description=(
+            "A local audio-input device this installation may explicitly capture "
+            "bounded acoustic clips from. Device selection and capture start/stop "
+            "always remain a separate, explicit action from video monitoring."
+        ),
+        status=SourceProviderDefinitionStatus.available_contract_only,
+        supports_live_playback=False,
+        supports_zone_editing=False,
+        fields=[
+            SourceProviderField(
+                key="device",
+                label="Microphone device",
+                required=True,
+                secret=False,
+                description=(
+                    "An explicit local device identifier (a PulseAudio/ALSA source "
+                    "name on Linux, or a DirectShow device name on Windows)."
+                ),
+                placeholder="default",
+            ),
+            SourceProviderField(
+                key="capture_consent",
+                label="Allow audio capture",
+                required=False,
+                secret=False,
+                description=(
+                    "Must be explicitly set to \"true\" before this installation will "
+                    "ever start a microphone capture session for this Source -- never "
+                    "inherited from video monitoring being armed."
+                ),
+                placeholder="false",
+            ),
+        ],
+    ),
 )
 
 @dataclass
@@ -2043,6 +2110,19 @@ class SpeciesSuggestionModel(Base):
     status: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Acoustic / BirdNET Observation Foundation v1 (schema 43): the temporal
+    # analog of `evidence_region_json` -- which bounded window of the
+    # source audio clip this suggestion came from. `None` for every
+    # image-backed suggestion (unchanged) and for any pre-schema-43 row.
+    window_start_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    window_end_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # One serialized, adapter-neutral provenance object -- model name/
+    # version/license, runtime identity, resolved config (confidence floor,
+    # location filter), and the source evidence's own content hash. Any
+    # adapter may populate this (not audio-specific by construction); every
+    # pre-schema-43 row and every suggestion whose adapter does not supply
+    # one reads back `None`, never a fabricated value.
+    model_provenance_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class SourceProviderConfigurationModel(Base):
@@ -2302,6 +2382,93 @@ class RecordedMediaAnalysisRunModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class AcousticAnalysisRunModel(Base):
+    """Bounded progress/diagnostics and idempotency record for one BirdNET
+    analysis attempt over one audio `MediaAsset` (schema 43, Acoustic /
+    BirdNET Observation Foundation v1). See docs/acoustic-birdnet-
+    observation-foundation-v1-contract.md.
+
+    Mirrors `RecordedMediaAnalysisRunModel` deliberately: same "operational
+    history, never evidence" framing (this table never itself creates or
+    gates a Visit/Event/SpeciesSuggestion -- `acoustic_ingest.py`'s own
+    bounded admission path does that; this table only records *that* one
+    bounded analysis attempt happened, its outcome, and enough bounded
+    counts to answer "queued / processing / completed / failed" honestly).
+
+    A completed run with `detections_above_threshold=0` is not a failure --
+    it is the honest "BirdNET ran and found nothing" outcome the milestone
+    doctrine requires be representable (abstention/no-detection are
+    legitimate outcomes, never silently dropped or conflated with an error).
+
+    `(media_asset_id, pipeline_version)` is the same idempotency key
+    `RecordedMediaAnalysisRunModel` uses, for the same reason: a prior
+    `completed` row for the exact same pair means "already analyzed under
+    this model/config," never silently duplicated; explicit re-analysis
+    under a materially different BirdNET model/config supplies a different
+    `pipeline_version` string instead.
+    """
+
+    __tablename__ = "acoustic_analysis_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued', 'processing', 'completed', 'failed')",
+            name="ck_acoustic_analysis_run_status",
+        ),
+        Index(
+            "ix_acoustic_analysis_runs_asset_pipeline",
+            "media_asset_id",
+            "pipeline_version",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    media_asset_id: Mapped[str] = mapped_column(ForeignKey("media_assets.id"), nullable=False)
+    stream_id: Mapped[str] = mapped_column(ForeignKey("streams.id"), nullable=False)
+    # A stable identity for "which BirdNET model/runtime/config produced
+    # this run" -- never a raw model file path. See `pipeline_version` on
+    # `RecordedMediaAnalysisRunModel` for the identical discipline.
+    pipeline_version: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    min_confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    source_duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    windows_analyzed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    detections_above_threshold: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    species_suggestions_created: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    events_created: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    visits_created: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # A small, fixed-vocabulary code -- `None` for a `queued`/`processing`/
+    # `completed` row. Never a raw filesystem path or subprocess stderr.
+    error_code: Mapped[str | None] = mapped_column(String, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+def _acoustic_analysis_run_from_model(row: AcousticAnalysisRunModel) -> AcousticAnalysisRun:
+    """Pure projection: durable row -> the read-only API/CLI shape."""
+
+    return AcousticAnalysisRun(
+        id=row.id,
+        media_asset_id=row.media_asset_id,
+        stream_id=row.stream_id,
+        pipeline_version=row.pipeline_version,
+        status=row.status,
+        min_confidence=row.min_confidence,
+        source_duration_seconds=row.source_duration_seconds,
+        windows_analyzed=row.windows_analyzed,
+        detections_above_threshold=row.detections_above_threshold,
+        species_suggestions_created=row.species_suggestions_created,
+        events_created=row.events_created,
+        visits_created=row.visits_created,
+        error_code=row.error_code,
+        error_message=row.error_message,
+        started_at=row.started_at,
+        completed_at=row.completed_at,
+        created_at=row.created_at,
+    )
+
+
 def _recorded_media_analysis_run_from_model(row: RecordedMediaAnalysisRunModel) -> RecordedMediaAnalysisRun:
     """Pure projection: durable row -> the read-only API/CLI shape."""
 
@@ -2497,6 +2664,34 @@ class CreateCandidateVisitRequest:
     observed_at: datetime
     evidence_items: tuple[CandidateEvidenceItem, ...] = ()
     limits: AuthorityLimits | None = None
+
+
+@dataclass(frozen=True)
+class AcousticDetectionFacts:
+    """One BirdNET-positive analysis window -- the minimal facts needed to
+    create an acoustic candidate Visit (Acoustic / BirdNET Observation
+    Foundation v1). Deliberately provider-neutral by type (not a
+    `birdnet_adapter` dataclass), mirroring
+    `CandidateVisitProposalFacts`'s identical role for the visual path:
+    the repository layer never imports adapter-specific types."""
+
+    common_name: str
+    scientific_name: str | None
+    confidence: float
+    window_start_ms: int
+    window_end_ms: int
+
+
+@dataclass(frozen=True)
+class AcousticCandidateVisitOutcome:
+    """Always returned, never raised, for an ordinary idempotent-repeat
+    outcome -- mirrors `CandidateVisitCreationOutcome`'s identical
+    contract. `outcome` is `"created"` or `"idempotent_repeat"`."""
+
+    outcome: str
+    visit_id: str | None
+    event_id: str | None
+    species_suggestion_id: str | None
 
 
 @dataclass(frozen=True)
@@ -3846,6 +4041,292 @@ class ProductRepository:
                 .limit(50)
             ).all()
             return [_recorded_media_analysis_run_from_model(row) for row in rows]
+
+    # -------------------------------------------------------------------
+    # Acoustic / BirdNET Observation Foundation v1 (see docs/acoustic-
+    # birdnet-observation-foundation-v1-contract.md): bounded progress/
+    # diagnostics/idempotency bookkeeping for one BirdNET analysis attempt,
+    # mirroring the offline-video block immediately above -- plus the one
+    # genuinely new persistence primitive this milestone adds,
+    # `create_acoustic_candidate_visit`. `mockingbird.observation.
+    # acoustic_ingest` is the orchestrator that calls these.
+    # -------------------------------------------------------------------
+
+    def find_acoustic_analysis_run(
+        self, *, media_asset_id: str, pipeline_version: str,
+    ) -> AcousticAnalysisRun | None:
+        """Side-effect-free: the most recent analysis attempt for this
+        exact `(media_asset_id, pipeline_version)` pair, if any -- mirrors
+        `find_recorded_media_analysis_run`'s identical idempotency-check
+        role."""
+
+        with self.session_factory() as session:
+            row = session.scalars(
+                select(AcousticAnalysisRunModel)
+                .where(
+                    AcousticAnalysisRunModel.media_asset_id == media_asset_id,
+                    AcousticAnalysisRunModel.pipeline_version == pipeline_version,
+                )
+                .order_by(AcousticAnalysisRunModel.created_at.desc())
+                .limit(1)
+            ).first()
+            return _acoustic_analysis_run_from_model(row) if row is not None else None
+
+    def create_acoustic_analysis_run(
+        self,
+        *,
+        media_asset_id: str,
+        stream_id: str,
+        pipeline_version: str,
+        min_confidence: float,
+        now: datetime,
+    ) -> AcousticAnalysisRun:
+        """Insert one new `processing` run row. Mirrors
+        `create_recorded_media_analysis_run`'s identical bounded,
+        single-process-adequate concurrency guard."""
+
+        with self.session_factory() as session:
+            with session.begin():
+                in_progress = session.scalars(
+                    select(AcousticAnalysisRunModel)
+                    .where(
+                        AcousticAnalysisRunModel.media_asset_id == media_asset_id,
+                        AcousticAnalysisRunModel.pipeline_version == pipeline_version,
+                        AcousticAnalysisRunModel.status.in_(("queued", "processing")),
+                    )
+                    .limit(1)
+                ).first()
+                if in_progress is not None:
+                    raise ValueError("analysis_already_in_progress")
+                run_id = self._next_id(session, AcousticAnalysisRunModel, "acoustic-analysis-run")
+                model = AcousticAnalysisRunModel(
+                    id=run_id, media_asset_id=media_asset_id, stream_id=stream_id,
+                    pipeline_version=pipeline_version, status="processing",
+                    min_confidence=min_confidence, windows_analyzed=0,
+                    detections_above_threshold=0, species_suggestions_created=0,
+                    events_created=0, visits_created=0, started_at=now, completed_at=None,
+                    created_at=now,
+                )
+                session.add(model)
+                session.flush()
+                return _acoustic_analysis_run_from_model(model)
+
+    def complete_acoustic_analysis_run(
+        self,
+        run_id: str,
+        *,
+        status: str,
+        windows_analyzed: int,
+        detections_above_threshold: int,
+        species_suggestions_created: int,
+        events_created: int,
+        visits_created: int,
+        now: datetime,
+        error_code: str | None = None,
+        error_message: str | None = None,
+        source_duration_seconds: float | None = None,
+    ) -> None:
+        """Move one run to its terminal state. Mirrors
+        `complete_recorded_media_analysis_run`'s identical never-raises-
+        for-a-missing-row discipline."""
+
+        if status not in ("completed", "failed"):
+            raise ValueError("invalid_analysis_run_status")
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(AcousticAnalysisRunModel, run_id)
+                if model is None:
+                    return
+                model.status = status
+                model.windows_analyzed = windows_analyzed
+                model.detections_above_threshold = detections_above_threshold
+                model.species_suggestions_created = species_suggestions_created
+                model.events_created = events_created
+                model.visits_created = visits_created
+                model.error_code = error_code
+                model.error_message = error_message
+                if source_duration_seconds is not None:
+                    model.source_duration_seconds = source_duration_seconds
+                model.completed_at = now
+
+    def get_acoustic_analysis_run(self, run_id: str) -> AcousticAnalysisRun | None:
+        """Side-effect-free read for the progress/diagnostics status route."""
+
+        with self.session_factory() as session:
+            model = session.get(AcousticAnalysisRunModel, run_id)
+            return _acoustic_analysis_run_from_model(model) if model is not None else None
+
+    def list_acoustic_analysis_runs_for_media_asset(
+        self, media_asset_id: str,
+    ) -> list[AcousticAnalysisRun]:
+        """Side-effect-free: every analysis attempt ever recorded for this
+        MediaAsset, most recent first."""
+
+        with self.session_factory() as session:
+            rows = session.scalars(
+                select(AcousticAnalysisRunModel)
+                .where(AcousticAnalysisRunModel.media_asset_id == media_asset_id)
+                .order_by(AcousticAnalysisRunModel.created_at.desc())
+                .limit(50)
+            ).all()
+            return [_acoustic_analysis_run_from_model(row) for row in rows]
+
+    def create_acoustic_candidate_visit(
+        self,
+        *,
+        stream_id: str,
+        media_asset_id: str,
+        detection: AcousticDetectionFacts,
+        model_provenance: dict[str, Any],
+        observed_at: datetime,
+        adapter_id: str,
+        adapter_name: str,
+    ) -> AcousticCandidateVisitOutcome:
+        """Create one bounded, needs-review acoustic candidate Visit from
+        one BirdNET-positive analysis window -- the audio-native sibling of
+        `create_candidate_visit_from_proposal`, deliberately NOT a call
+        into that method (see "Architecture decision" in docs/acoustic-
+        birdnet-observation-foundation-v1-contract.md): audio has no
+        spatial detection, so it cannot honestly satisfy `evaluate_
+        evidence_admission`'s hard geometry requirement
+        (`reject_subject_geometry_invalid`) or `evaluate_scene_confusor_
+        suspicion`'s hard `candidate_box` parameter without fabricating a
+        box that was never observed -- exactly the "without pretending
+        there was visual evidence" trap this milestone's own architecture
+        question warns against. Every geometry-shaped field on the
+        resulting `MediaAsset`/`Visit` (`normalized_track_box_json`,
+        `geometry_attribution_json`, `zone_id`) stays genuinely `None`,
+        never fabricated.
+
+        Reuses everything that *does* generalize cleanly: `EventModel`/
+        `VisitModel`/`VisitEvidenceLinkModel` schema (unmodified),
+        `create_species_suggestion`'s taxonomy-neutral field set, and --
+        critically -- the completely unmodified `ReviewLabel`/
+        `review_provenance` correction path downstream (this method never
+        touches `review_status` beyond the ordinary `needs_review` a new
+        Visit always starts at).
+
+        Idempotent by `(media_asset_id, window_start_ms, window_end_ms,
+        adapter_id)`: a prior `SpeciesSuggestion` already carrying that
+        exact tuple means this exact window was already turned into a
+        candidate (e.g. a caller re-running analysis under an unchanged
+        pipeline) -- returns `"idempotent_repeat"` rather than creating a
+        duplicate Visit, mirroring the visual path's own content-addressed
+        `proposal_id` idempotency discipline, adapted to audio's own
+        natural identity (there is no track/geometry to hash instead).
+        """
+
+        with self.session_factory() as session:
+            with session.begin():
+                stream_model = session.get(StreamModel, stream_id)
+                if stream_model is None:
+                    raise ValueError("missing_stream")
+                media_asset_model = session.get(MediaAssetModel, media_asset_id)
+                if media_asset_model is None:
+                    raise ValueError("missing_media_asset")
+
+                existing = session.scalars(
+                    select(SpeciesSuggestionModel)
+                    .where(
+                        SpeciesSuggestionModel.media_asset_id == media_asset_id,
+                        SpeciesSuggestionModel.window_start_ms == detection.window_start_ms,
+                        SpeciesSuggestionModel.window_end_ms == detection.window_end_ms,
+                        SpeciesSuggestionModel.adapter_id == adapter_id,
+                    )
+                    .limit(1)
+                ).first()
+                if existing is not None:
+                    return AcousticCandidateVisitOutcome(
+                        outcome="idempotent_repeat",
+                        visit_id=existing.visit_id,
+                        event_id=existing.event_id,
+                        species_suggestion_id=existing.id,
+                    )
+
+                taxonomy_match = self._taxonomy_label_model_for_input(
+                    session, detection.common_name,
+                )
+                species_guess = (
+                    taxonomy_match.label if taxonomy_match is not None else detection.common_name
+                )
+
+                event_id = self._next_id(session, EventModel, "event-acoustic-candidate")
+                session.add(
+                    EventModel(
+                        id=event_id,
+                        stream_id=stream_model.id,
+                        title=f"Machine-heard {detection.common_name} activity (needs review)",
+                        event_type="acoustic_observation_candidate",
+                        started_at=observed_at,
+                        ended_at=observed_at,
+                        primary_zone_id=None,
+                        review_status=ReviewStatus.needs_review.value,
+                    )
+                )
+                visit_id = self._next_id(session, VisitModel, "visit-acoustic-candidate")
+                visit_model = VisitModel(
+                    id=visit_id,
+                    event_id=event_id,
+                    subject_label="bird",
+                    species_guess=species_guess,
+                    confidence=detection.confidence,
+                    reviewed_label=None,
+                    review_status=ReviewStatus.needs_review.value,
+                    representative_media_path=media_asset_model.local_path,
+                    zone_id=None,
+                )
+                session.add(visit_model)
+                session.flush()
+
+                session.add(
+                    VisitEvidenceLinkModel(
+                        id=f"visit-evidence-{uuid.uuid4().hex}",
+                        visit_id=visit_id,
+                        media_asset_id=media_asset_id,
+                        captured_at=observed_at,
+                        frame_sequence=None,
+                        sort_order=0,
+                        is_primary=True,
+                        evidence_role="identification",
+                        created_at=observed_at,
+                    )
+                )
+
+                suggestion_id = self._next_id(session, SpeciesSuggestionModel, "species-suggestion")
+                session.add(
+                    SpeciesSuggestionModel(
+                        id=suggestion_id,
+                        source_id=stream_model.source_id,
+                        stream_id=stream_id,
+                        event_id=event_id,
+                        visit_id=visit_id,
+                        media_asset_id=media_asset_id,
+                        motion_evidence_id=None,
+                        adapter_id=adapter_id,
+                        adapter_name=adapter_name,
+                        suggested_label=species_guess,
+                        suggested_common_name=detection.common_name,
+                        suggested_scientific_name=detection.scientific_name,
+                        confidence=detection.confidence,
+                        rank=1,
+                        alternatives_json="[]",
+                        evidence_region_json=None,
+                        status=SpeciesSuggestionStatus.pending.value,
+                        created_at=observed_at,
+                        notes=None,
+                        window_start_ms=detection.window_start_ms,
+                        window_end_ms=detection.window_end_ms,
+                        model_provenance_json=json.dumps(model_provenance, sort_keys=True),
+                    )
+                )
+                session.flush()
+                self._sync_review_alert(session, visit_model, observed_at)
+                return AcousticCandidateVisitOutcome(
+                    outcome="created",
+                    visit_id=visit_id,
+                    event_id=event_id,
+                    species_suggestion_id=suggestion_id,
+                )
 
     # -------------------------------------------------------------------
     # Scene confusor suspicion (see docs/scene-confusor-suspicion-
@@ -6599,11 +7080,23 @@ class ProductRepository:
                     asset_width: int | None = None
                     asset_height: int | None = None
                     asset_duration_seconds: float | None = None
+                    asset_sample_rate_hz: int | None = None
+                    asset_channel_count: int | None = None
                     if candidate.planned_media_kind == "image":
                         image_capture = media_provenance.extract_image_captured_at(
                             local_path, local_timezone=import_local_timezone
                         )
                         asset_captured_at = image_capture.captured_at
+                    elif candidate.planned_media_kind == "audio":
+                        # Acoustic / BirdNET Observation Foundation v1: same
+                        # honest-provenance discipline as the video branch
+                        # below, mirrored for audio's own probe result.
+                        audio_probe = media_provenance.probe_audio_metadata(local_path)
+                        if audio_probe is not None:
+                            asset_duration_seconds = audio_probe.duration_seconds
+                            asset_sample_rate_hz = audio_probe.sample_rate_hz
+                            asset_channel_count = audio_probe.channel_count
+                            asset_captured_at = audio_probe.captured_at
                     else:
                         video_probe = media_provenance.probe_video_metadata(local_path)
                         if video_probe is not None:
@@ -6633,6 +7126,8 @@ class ProductRepository:
                         image_width=asset_width,
                         image_height=asset_height,
                         duration_seconds=asset_duration_seconds,
+                        audio_sample_rate_hz=asset_sample_rate_hz,
+                        audio_channel_count=asset_channel_count,
                         notes=_folder_import_media_notes(
                             source_id=source_id,
                             stream_id=stream_model.id,
@@ -17974,6 +18469,13 @@ class ProductRepository:
             status=SpeciesSuggestionStatus.pending.value,
             created_at=datetime.now(UTC),
             notes=_clean_optional_text(payload.notes),
+            window_start_ms=payload.window_start_ms,
+            window_end_ms=payload.window_end_ms,
+            model_provenance_json=(
+                json.dumps(payload.model_provenance, sort_keys=True)
+                if payload.model_provenance is not None
+                else None
+            ),
         )
         session.add(suggestion_model)
         session.flush()
@@ -25692,7 +26194,39 @@ class ProductRepository:
             if _folder_import_note_fields(asset.notes).get("provider_key") == "folder_import_future"
         ]
 
-        return compute_offline_acquisition_effort(recorded_videos=video_facts, still_images=still_facts)
+        # Acoustic / BirdNET Observation Foundation v1: the audio analog of
+        # the recorded-video query above -- same "latest completed run per
+        # distinct MediaAsset, never double-count a reprocessing attempt"
+        # dedup discipline.
+        audio_query = select(AcousticAnalysisRunModel).where(
+            AcousticAnalysisRunModel.status == "completed"
+        )
+        if stream_ids is not None:
+            audio_query = audio_query.where(AcousticAnalysisRunModel.stream_id.in_(stream_ids))
+        if start_at is not None:
+            audio_query = audio_query.where(AcousticAnalysisRunModel.completed_at >= start_at)
+        if end_at is not None:
+            audio_query = audio_query.where(AcousticAnalysisRunModel.completed_at < end_at)
+        audio_runs = session.scalars(
+            audio_query.order_by(AcousticAnalysisRunModel.completed_at.asc())
+        ).all()
+        latest_audio_by_asset: dict[str, AcousticAnalysisRunModel] = {}
+        for run in audio_runs:
+            latest_audio_by_asset[run.media_asset_id] = run
+        audio_facts = [
+            RecordedAudioAcquisitionFact(
+                media_asset_id=run.media_asset_id,
+                stream_id=run.stream_id,
+                source_duration_seconds=run.source_duration_seconds,
+                windows_analyzed=run.windows_analyzed,
+                completed_at=_as_utc(run.completed_at or run.created_at),
+            )
+            for run in latest_audio_by_asset.values()
+        ]
+
+        return compute_offline_acquisition_effort(
+            recorded_videos=video_facts, still_images=still_facts, recorded_audio=audio_facts,
+        )
 
     def _research_export_id(self, output_name: str | None, *, prefix: str = "research-export") -> str:
         base_name = output_name or prefix
@@ -25869,6 +26403,10 @@ class ProductRepository:
             {
                 "kind": "offline_still_image", "monitored_seconds": None,
                 "usable_day_count": None, "count": offline.still_image_count,
+            },
+            {
+                "kind": "offline_recorded_audio", "monitored_seconds": offline.recorded_audio_analyzed_seconds,
+                "usable_day_count": None, "count": offline.recorded_audio_count,
             },
         ]
 
@@ -26095,6 +26633,13 @@ class ProductRepository:
                 conservation.offline_acquisition.recorded_video_unknown_duration_count
             ),
             offline_still_image_count=conservation.offline_acquisition.still_image_count,
+            offline_recorded_audio_count=conservation.offline_acquisition.recorded_audio_count,
+            offline_recorded_audio_analyzed_seconds=(
+                conservation.offline_acquisition.recorded_audio_analyzed_seconds
+            ),
+            offline_recorded_audio_unknown_duration_count=(
+                conservation.offline_acquisition.recorded_audio_unknown_duration_count
+            ),
             confirmed_species=[
                 ConservationSpeciesEntry(
                     label=record.label,
@@ -31706,6 +32251,8 @@ def _media_asset_from_model(asset: MediaAssetModel) -> MediaAsset:
             asset.previous_effective_crop_media_asset_id
         ),
         duration_seconds=asset.duration_seconds,
+        audio_sample_rate_hz=asset.audio_sample_rate_hz,
+        audio_channel_count=asset.audio_channel_count,
     )
 
 
@@ -33309,6 +33856,13 @@ def _species_suggestion_from_model(
         status=SpeciesSuggestionStatus(suggestion.status),
         created_at=_as_utc(suggestion.created_at),
         notes=suggestion.notes,
+        window_start_ms=suggestion.window_start_ms,
+        window_end_ms=suggestion.window_end_ms,
+        model_provenance=(
+            dict(json.loads(suggestion.model_provenance_json))
+            if suggestion.model_provenance_json
+            else None
+        ),
     )
 
 

@@ -13,6 +13,7 @@ import type {
   FolderImportCreatedMediaAsset,
   FolderImportRequest,
   FolderImportResponse,
+  RecordedAudioAnalysisResponse,
   RecordedMediaAnalysisResponse,
   DemoDetectionRunCreate,
   DemoDetectionRunResult,
@@ -1792,6 +1793,17 @@ export function StreamsPage({
     Record<string, string>
   >({});
   const [recordedMediaAnalysisLoadingId, setRecordedMediaAnalysisLoadingId] = useState<
+    string | null
+  >(null);
+  // Acoustic / BirdNET Observation Foundation v1: mirrors the recorded-
+  // video analysis state immediately above.
+  const [recordedAudioAnalysisResults, setRecordedAudioAnalysisResults] = useState<
+    Record<string, RecordedAudioAnalysisResponse>
+  >({});
+  const [recordedAudioAnalysisErrors, setRecordedAudioAnalysisErrors] = useState<
+    Record<string, string>
+  >({});
+  const [recordedAudioAnalysisLoadingId, setRecordedAudioAnalysisLoadingId] = useState<
     string | null
   >(null);
   const [folderRecursive, setFolderRecursive] = useState(false);
@@ -3930,6 +3942,35 @@ export function StreamsPage({
     }
   }
 
+  // Acoustic / BirdNET Observation Foundation v1: mirrors
+  // `handleAnalyzeRecordedMedia` exactly, for a recorded-audio MediaAsset.
+  async function handleAnalyzeRecordedAudio(item: FolderImportCreatedMediaAsset) {
+    setRecordedAudioAnalysisLoadingId(item.media_asset_id);
+    setRecordedAudioAnalysisErrors((current) => {
+      const next = { ...current };
+      delete next[item.media_asset_id];
+      return next;
+    });
+    try {
+      const result = await apiClient.analyzeRecordedAudio(item.media_asset_id);
+      setRecordedAudioAnalysisResults((current) => ({
+        ...current,
+        [item.media_asset_id]: result,
+      }));
+      if (result.visits_created > 0) {
+        await refreshLifecycleAndStorage();
+      }
+    } catch (caught) {
+      setRecordedAudioAnalysisErrors((current) => ({
+        ...current,
+        [item.media_asset_id]:
+          caught instanceof Error ? caught.message : "Could not analyze this recorded audio.",
+      }));
+    } finally {
+      setRecordedAudioAnalysisLoadingId(null);
+    }
+  }
+
   const selectedProviderLabel =
     selectedSetupReview?.provider_display_name ??
     selectedProviderDefinition?.display_name ??
@@ -5778,6 +5819,65 @@ export function StreamsPage({
                                       <span>
                                         {
                                           recordedMediaAnalysisResults[item.media_asset_id]
+                                            .error_message
+                                        }
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                                {/* Acoustic / BirdNET Observation Foundation v1: mirrors the
+                                    recorded-video "Analyze imported media" action above. */}
+                                {item.content_type?.startsWith("audio/") ? (
+                                  <div className="folder-evidence-action">
+                                    <button
+                                      className="secondary-action"
+                                      disabled={
+                                        recordedAudioAnalysisLoadingId === item.media_asset_id
+                                      }
+                                      onClick={() => void handleAnalyzeRecordedAudio(item)}
+                                      type="button"
+                                    >
+                                      {recordedAudioAnalysisLoadingId === item.media_asset_id
+                                        ? "Analyzing recorded audio..."
+                                        : "Analyze imported audio"}
+                                    </button>
+                                    <span className="meta-text">
+                                      Runs this recorded audio through BirdNET. Creates ordinary
+                                      needs-review candidate Visits from any bird detected, never
+                                      reviewed truth.
+                                    </span>
+                                  </div>
+                                ) : null}
+                                {recordedAudioAnalysisErrors[item.media_asset_id] ? (
+                                  <div className="zone-error">
+                                    {recordedAudioAnalysisErrors[item.media_asset_id]}
+                                  </div>
+                                ) : null}
+                                {recordedAudioAnalysisResults[item.media_asset_id] ? (
+                                  <div className="folder-evidence-result">
+                                    <strong>
+                                      Analysis: {recordedAudioAnalysisResults[item.media_asset_id].status}
+                                    </strong>
+                                    <span>
+                                      {recordedAudioAnalysisResults[item.media_asset_id]
+                                        .visits_created}{" "}
+                                      Visit
+                                      {recordedAudioAnalysisResults[item.media_asset_id]
+                                        .visits_created === 1
+                                        ? ""
+                                        : "s"}{" "}
+                                      created from{" "}
+                                      {
+                                        recordedAudioAnalysisResults[item.media_asset_id]
+                                          .windows_analyzed
+                                      }{" "}
+                                      analyzed windows. Open Review Queue to review, correct, or
+                                      confirm.
+                                    </span>
+                                    {recordedAudioAnalysisResults[item.media_asset_id].error_message ? (
+                                      <span>
+                                        {
+                                          recordedAudioAnalysisResults[item.media_asset_id]
                                             .error_message
                                         }
                                       </span>

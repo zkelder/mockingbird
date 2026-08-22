@@ -52,6 +52,36 @@ from typing import Any, Literal
 
 from mockingbird.research.research_export import ResearchObservation, sorted_observations
 
+#: Bounded `fileMediatype` -> manifest-relative filename extension map --
+#: covers every content type this product's own evidence import already
+#: supports (`mockingbird.repository.product_repository.
+#: SUPPORTED_MEDIA_CONTENT_TYPES`), kept deliberately local/decoupled from
+#: that module rather than importing it (this `research/` package does not
+#: depend on the repository layer). Acoustic / BirdNET Observation
+#: Foundation v1: an image-only assumption here (a hardcoded `.jpg`
+#: extension for every evidence item, regardless of its real content type)
+#: predates audio evidence and already silently mislabeled recorded-video
+#: evidence too -- fixed here rather than narrowly to "just audio". Falls
+#: back to `.jpg` only for a genuinely unrecognized/missing content type,
+#: preserving this module's exact prior behavior for that one edge case.
+_MEDIA_FILE_EXTENSIONS: dict[str, str] = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "video/mp4": ".mp4",
+    "video/quicktime": ".mov",
+    "video/x-msvideo": ".avi",
+    "video/x-matroska": ".mkv",
+    "video/x-m4v": ".m4v",
+    "audio/wav": ".wav",
+    "audio/x-wav": ".wav",
+    "audio/mpeg": ".mp3",
+}
+
+
+def _media_file_extension(content_type: str | None) -> str:
+    return _MEDIA_FILE_EXTENSIONS.get(content_type or "", ".jpg")
+
 CAMTRAP_DP_PROFILE_VERSION = "1.0.2"
 
 ObservationType = Literal["animal", "human", "vehicle", "blank", "unknown", "unclassified"]
@@ -190,7 +220,7 @@ def build_camtrap_dp_package(
                     # brief). The actual export writer decides whether this
                     # relative path corresponds to a real copied file
                     # (media inclusion requested) or is metadata-only.
-                    file_path=f"media/{item.media_id}.jpg",
+                    file_path=f"media/{item.media_id}{_media_file_extension(item.content_type)}",
                     file_public=False,
                     file_mediatype=item.content_type or "image/jpeg",
                     capture_method="activityDetection",

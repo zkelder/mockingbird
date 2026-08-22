@@ -2276,6 +2276,11 @@ class MediaAsset(BaseModel):
     # every image and for any video whose duration ffprobe could not
     # determine.
     duration_seconds: float | None = Field(default=None, ge=0)
+    # Acoustic / BirdNET Observation Foundation v1: the audio analog of
+    # `image_width`/`image_height`. `None` for every image/video and for
+    # any audio asset whose source metadata could not be determined.
+    audio_sample_rate_hz: int | None = Field(default=None, ge=1)
+    audio_channel_count: int | None = Field(default=None, ge=1)
 
 
 class VisitEvidenceFrame(BaseModel):
@@ -3584,6 +3589,16 @@ class SpeciesSuggestionCreateRequest(BaseModel):
     alternatives: list[dict[str, Any]] = Field(default_factory=list)
     evidence_region: dict[str, Any] | None = None
     notes: str | None = None
+    # Acoustic / BirdNET Observation Foundation v1: the temporal analog of
+    # `evidence_region` -- which bounded window of the source audio clip
+    # this suggestion came from. `None` for an image-backed suggestion
+    # (unchanged); any adapter may populate `model_provenance` (not
+    # audio-specific by construction) -- an adapter-neutral provenance
+    # object (model name/version/license, runtime identity, resolved
+    # config, source evidence content hash).
+    window_start_ms: int | None = Field(default=None, ge=0)
+    window_end_ms: int | None = Field(default=None, ge=0)
+    model_provenance: dict[str, Any] | None = None
 
     @field_validator("adapter_id", "adapter_name", "suggested_label")
     @classmethod
@@ -3610,6 +3625,26 @@ class SpeciesSuggestionCreateRequest(BaseModel):
         if value is not None:
             _ensure_json_compatible(value, "evidence_region")
         return value
+
+    @field_validator("model_provenance")
+    @classmethod
+    def model_provenance_must_be_json_compatible(
+        cls,
+        value: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if value is not None:
+            _ensure_json_compatible(value, "model_provenance")
+        return value
+
+    @model_validator(mode="after")
+    def window_end_not_before_start(self) -> "SpeciesSuggestionCreateRequest":
+        if (
+            self.window_start_ms is not None
+            and self.window_end_ms is not None
+            and self.window_end_ms < self.window_start_ms
+        ):
+            raise ValueError("window_end_ms must not be before window_start_ms")
+        return self
 
 
 class MockSpeciesSuggestionRequest(BaseModel):
@@ -3655,6 +3690,9 @@ class SpeciesSuggestionResponse(BaseModel):
     status: SpeciesSuggestionStatus
     created_at: datetime
     notes: str | None
+    window_start_ms: int | None = None
+    window_end_ms: int | None = None
+    model_provenance: dict[str, Any] | None = None
 
 
 class SpeciesSuggestionListResponse(BaseModel):
@@ -4623,6 +4661,11 @@ class ConservationReportResponse(BaseModel):
     offline_recorded_video_analyzed_seconds: float = Field(ge=0)
     offline_recorded_video_unknown_duration_count: int = Field(ge=0)
     offline_still_image_count: int = Field(ge=0)
+    # Acoustic / BirdNET Observation Foundation v1: the audio analog of the
+    # recorded-video fields above.
+    offline_recorded_audio_count: int = Field(default=0, ge=0)
+    offline_recorded_audio_analyzed_seconds: float = Field(default=0.0, ge=0)
+    offline_recorded_audio_unknown_duration_count: int = Field(default=0, ge=0)
 
     confirmed_species: list[ConservationSpeciesEntry] = Field(default_factory=list)
     confirmed_unidentified_wildlife_visit_count: int = Field(ge=0)
@@ -6311,6 +6354,98 @@ class RecordedMediaAnalysisResponse(BaseModel):
     # needs-review candidate Events/Visits exactly like a live Camera Node
     # session, but it never creates reviewed truth -- only the existing,
     # unmodified correction path can.
+    creates_events: bool = True
+    creates_visits: bool = True
+    creates_truth: bool = False
+
+
+class AcousticAnalysisRun(BaseModel):
+    """One BirdNET analysis attempt over one audio `MediaAsset` --
+    operational history and bounded progress/diagnostics, never evidence or
+    truth by itself (Acoustic / BirdNET Observation Foundation v1, see
+    docs/acoustic-birdnet-observation-foundation-v1-contract.md). Mirrors
+    `RecordedMediaAnalysisRun` exactly."""
+
+    id: str
+    media_asset_id: str
+    stream_id: str
+    pipeline_version: str
+    status: str
+    min_confidence: float = Field(ge=0, le=1)
+    source_duration_seconds: float | None = None
+    windows_analyzed: int = Field(default=0, ge=0)
+    detections_above_threshold: int = Field(default=0, ge=0)
+    species_suggestions_created: int = Field(default=0, ge=0)
+    events_created: int = Field(default=0, ge=0)
+    visits_created: int = Field(default=0, ge=0)
+    error_code: str | None = None
+    error_message: str | None = None
+    started_at: datetime
+    completed_at: datetime | None = None
+    created_at: datetime
+
+
+class AudioCaptureStatusResponse(BaseModel):
+    """Read-only local-microphone capture status for one Stream -- current-
+    process state only (see "Restart-safety" in `mockingbird.observation.
+    audio_capture`'s module docstring), never proof of anything beyond
+    this running process."""
+
+    stream_id: str
+    is_running: bool
+    consent_granted: bool
+    device: str | None = None
+
+
+class BirdNetStatusResponse(BaseModel):
+    """Explicit local readiness for the optional BirdNET acoustic adapter --
+    mirrors the existing `GET .../bioclip-status`-style contract. Read-only;
+    never loads the model or runs inference."""
+
+    status: str  # "available" | "unavailable"
+    runtime_available: bool
+    detail: str
+
+
+class RecordedAudioAnalysisRequest(BaseModel):
+    # Every field is optional: omitted, this route uses this pipeline's own
+    # documented defaults (see docs/acoustic-birdnet-observation-
+    # foundation-v1-contract.md "Configuration").
+    min_confidence: float | None = Field(default=None, ge=0, le=1)
+    pipeline_version: str | None = None
+    force_reprocess: bool = False
+    # Optional BirdNET species-range filter override for this one request
+    # only -- never persisted, mirroring `CamtrapDpExportRequest.latitude`/
+    # `.longitude`'s identical "no persisted per-Source coordinate model,
+    # explicit per-call override only" precedent (see "Privacy" in docs/
+    # research-conservation-export-contract.md). Omitted, BirdNET evaluates
+    # its full global species list with no location narrowing.
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+
+
+class RecordedAudioAnalysisResponse(BaseModel):
+    run_id: str
+    status: str
+    media_asset_id: str
+    stream_id: str
+    pipeline_version: str
+    min_confidence: float = Field(ge=0, le=1)
+    windows_analyzed: int = Field(default=0, ge=0)
+    detections_above_threshold: int = Field(default=0, ge=0)
+    species_suggestions_created: int = Field(default=0, ge=0)
+    events_created: int = Field(default=0, ge=0)
+    visits_created: int = Field(default=0, ge=0)
+    visit_ids: list[str] = Field(default_factory=list)
+    event_ids: list[str] = Field(default_factory=list)
+    source_duration_seconds: float | None = None
+    capture_time_known: bool = False
+    error_code: str | None = None
+    error_message: str | None = None
+    # This route's own fixed category disclosure, mirroring
+    # `RecordedMediaAnalysisResponse`'s identical convention: it can create
+    # ordinary, needs-review candidate Events/Visits, but it never creates
+    # reviewed truth -- only the existing, unmodified correction path can.
     creates_events: bool = True
     creates_visits: bool = True
     creates_truth: bool = False

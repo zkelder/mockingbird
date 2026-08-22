@@ -194,6 +194,15 @@ function JournalThumbnail({
   if (!evidence || failed) {
     return <div className="journal-thumbnail-fallback">No saved thumbnail</div>;
   }
+  // Acoustic / BirdNET Observation Foundation v1: an honest "heard, not
+  // seen" state, never the same copy a genuinely missing image uses.
+  if (evidence.content_type.startsWith("audio/")) {
+    return (
+      <div className="journal-thumbnail-fallback journal-thumbnail-audio" aria-label={`${label}, heard ${formatDateTime(observedAt)}`}>
+        🔊 Heard
+      </div>
+    );
+  }
   return (
     <img
       alt={thumbnailAlt(label, observedAt)}

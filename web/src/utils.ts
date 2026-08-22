@@ -89,6 +89,19 @@ export function effectiveSpeciesText(visit: {
   return null;
 }
 
+/**
+ * The unconfirmed-activity fallback copy for one Visit summary, used only
+ * when `effectiveSpeciesText` returns null (no reviewed label, no
+ * suggestion). Acoustic / BirdNET Observation Foundation v1: honest about
+ * whether the underlying evidence was heard or seen -- "Animal detected"
+ * (implying a visual sighting) would be misleading for an audio-only Visit.
+ */
+export function unconfirmedActivityText(evidenceContentType?: string | null): string {
+  return evidenceContentType?.startsWith("audio/")
+    ? "Bird heard — species not confirmed"
+    : "Animal detected — species not confirmed";
+}
+
 export function formatDateTime(value: string): string {
   return new Intl.DateTimeFormat(undefined, {
     month: "short",

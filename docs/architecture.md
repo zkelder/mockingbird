@@ -520,8 +520,12 @@ plan (see [roadmap.md](roadmap.md) Phase 8).
 
 Implemented product paths include demo/manual media, explicit external still
 images, explicit folder/trail-cam import, metadata-only webhook evidence,
-browser-playable streams, RTSP, Linux local USB, Windows DirectShow, and the
-paired local-LAN Camera Node snapshot adapter.
+browser-playable streams, RTSP, Linux local USB, Windows DirectShow, the
+paired local-LAN Camera Node snapshot adapter, and (Acoustic / BirdNET
+Observation Foundation v1) a local `microphone` audio-capture provider plus
+audio-aware recorded-clip import through the existing generic file-import
+path -- see
+[acoustic-birdnet-observation-foundation-v1-contract.md](acoustic-birdnet-observation-foundation-v1-contract.md).
 
 Adapters sit below provider configuration, Source connection status, and Stream
 playback status. They normalize into Source/Stream/MediaAsset/MotionEvidence or
@@ -649,9 +653,13 @@ a prior app process ends.
 Backup, restore, migration, emergency stop, Source archive, Stop camera, and
 shutdown override active runtime. Stop camera also disables durable intent so
 it cannot immediately restart. Status reads remain side-effect free. External
-snapshot polling and general provider workers remain separate. Future audio
-requires its own consent, privacy, retention, dependency, and evidence design;
-video arming never enables a microphone.
+snapshot polling and general provider workers remain separate. Video arming
+never enables a microphone: Acoustic / BirdNET Observation Foundation v1 (see
+[acoustic-birdnet-observation-foundation-v1-contract.md](acoustic-birdnet-observation-foundation-v1-contract.md))
+gives audio its own explicit consent, provider (`microphone`), and analysis
+action, entirely separate from video's `armed`/monitoring-policy state, per
+the "Audio-aware boundary" design in
+[durable-camera-monitor-lifecycle-design.md](durable-camera-monitor-lifecycle-design.md).
 
 ## Worker boundary
 

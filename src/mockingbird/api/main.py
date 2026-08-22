@@ -251,6 +251,11 @@ from mockingbird.api.schemas import (
     CameraSetupOptionsResponse,
     CameraSetupValidationRequest,
     CameraSetupValidationResponse,
+    AcousticAnalysisRun,
+    AudioCaptureStatusResponse,
+    BirdNetStatusResponse,
+    RecordedAudioAnalysisRequest,
+    RecordedAudioAnalysisResponse,
     RecordedMediaAnalysisRequest,
     RecordedMediaAnalysisResponse,
     RecordedMediaAnalysisRun,
@@ -432,6 +437,9 @@ from mockingbird.observation.acceptance_recorder import (
 )
 from mockingbird.observation.counterfactual_lineage import classify_rejection_attribution
 from mockingbird.observation.offline_ingest import OfflineIngestError, run_offline_video_ingest
+from mockingbird.observation.acoustic_ingest import AcousticIngestError, run_acoustic_analysis
+from mockingbird.observation import audio_capture
+from mockingbird.species.birdnet_adapter import get_birdnet_status
 from mockingbird.observation.engine_runtime import (
     ObservationEngineSessionManager,
     ObservationEngineSessionStatus,
@@ -545,6 +553,8 @@ async def _app_lifespan(_app: FastAPI):
             _live_preview_lease_manager.shutdown()
         if _live_camera_session_manager is not None:
             _live_camera_session_manager.stop_all(reason="api_shutdown")
+        if _microphone_session_manager is not None:
+            _microphone_session_manager.stop_all()
         if detector_drained:
             _live_object_detector_manager = None
         if _automatic_review_identification_assist is not None:
@@ -736,6 +746,7 @@ _patch_testclient_for_pytest()
 _repository: ProductRepository | None = None
 _source_monitor_manager: SnapshotObservationProvider | None = None
 _live_camera_session_manager: live_camera_session.LiveCameraSessionManager | None = None
+_microphone_session_manager: audio_capture.MicrophoneSessionManager | None = None
 _observation_engine_session_manager: ObservationEngineSessionManager | None = None
 _live_preview_lease_manager: live_preview_leases.LivePreviewLeaseManager | None = None
 _durable_monitoring_supervisor: DurableMonitoringSupervisor | None = None
@@ -1525,6 +1536,13 @@ def get_live_camera_session_manager() -> live_camera_session.LiveCameraSessionMa
     return _live_camera_session_manager
 
 
+def get_microphone_session_manager() -> audio_capture.MicrophoneSessionManager:
+    global _microphone_session_manager
+    if _microphone_session_manager is None:
+        _microphone_session_manager = audio_capture.MicrophoneSessionManager()
+    return _microphone_session_manager
+
+
 def get_observation_engine_session_manager() -> ObservationEngineSessionManager:
     """The app-owned Observation Engine lifecycle (Product requirement 1).
 
@@ -1777,6 +1795,26 @@ def _offline_ingest_error(error: ValueError, media_id: str) -> HTTPException:
             detail="This recorded video is already being analyzed. Try again once it finishes.",
         )
     return HTTPException(status_code=400, detail="This recorded video could not be analyzed.")
+
+
+def _acoustic_ingest_error(error: ValueError, media_id: str) -> HTTPException:
+    reason = str(error)
+    if reason == "media_asset_not_found":
+        return _not_found("MediaAsset", media_id)
+    if reason == "media_asset_not_audio":
+        return HTTPException(status_code=400, detail="This MediaAsset is not a recorded audio clip.")
+    if reason == "missing_stream":
+        return HTTPException(status_code=404, detail="This MediaAsset's Stream was not found.")
+    if reason == "analysis_already_in_progress":
+        return HTTPException(
+            status_code=409,
+            detail="This recorded audio is already being analyzed. Try again once it finishes.",
+        )
+    if reason == "invalid_min_confidence":
+        return HTTPException(status_code=400, detail="The requested confidence threshold is invalid.")
+    if reason == "invalid_coordinate":
+        return HTTPException(status_code=400, detail="The requested location filter is invalid.")
+    return HTTPException(status_code=400, detail="This recorded audio could not be analyzed.")
 
 
 def _folder_import_error(error: ValueError) -> HTTPException:
@@ -13376,6 +13414,179 @@ async def list_recorded_media_analysis_runs(media_id: str) -> list[RecordedMedia
     if get_repository().get_media_asset(media_id) is None:
         raise _not_found("MediaAsset", media_id)
     return get_repository().list_recorded_media_analysis_runs_for_media_asset(media_id)
+
+
+@app.post(
+    "/api/media/{media_id}/analyze-audio",
+    response_model=RecordedAudioAnalysisResponse,
+    status_code=201,
+)
+async def analyze_recorded_audio(
+    media_id: str,
+    response: Response,
+    payload: RecordedAudioAnalysisRequest | None = None,
+) -> RecordedAudioAnalysisResponse:
+    """Acoustic / BirdNET Observation Foundation v1: run BirdNET-class
+    analysis over one already-imported recorded-audio MediaAsset, producing
+    candidate Events/Visits/Evidence/SpeciesSuggestions a reviewer can see
+    exactly like a live Camera Node session's. Never imports media itself
+    -- `media_id` must already exist. Bounded and synchronous, mirroring
+    `analyze_recorded_media`'s identical v0.1 shape (see "API / CLI / UI
+    surface" in docs/acoustic-birdnet-observation-foundation-v1-contract.md)."""
+
+    request = payload or RecordedAudioAnalysisRequest()
+    kwargs: dict[str, object] = {"force_reprocess": request.force_reprocess}
+    if request.min_confidence is not None:
+        kwargs["min_confidence"] = request.min_confidence
+    if request.pipeline_version is not None:
+        kwargs["pipeline_version"] = request.pipeline_version
+    if request.latitude is not None:
+        kwargs["latitude"] = request.latitude
+    if request.longitude is not None:
+        kwargs["longitude"] = request.longitude
+    try:
+        result = run_acoustic_analysis(get_repository(), media_asset_id=media_id, **kwargs)
+    except AcousticIngestError as error:
+        raise _acoustic_ingest_error(error, media_id) from error
+    if result.status != "completed":
+        response.status_code = 200
+    return RecordedAudioAnalysisResponse(
+        run_id=result.run_id,
+        status=result.status,
+        media_asset_id=result.media_asset_id,
+        stream_id=result.stream_id,
+        pipeline_version=result.pipeline_version,
+        min_confidence=result.min_confidence,
+        windows_analyzed=result.windows_analyzed,
+        detections_above_threshold=result.detections_above_threshold,
+        species_suggestions_created=result.species_suggestions_created,
+        events_created=result.events_created,
+        visits_created=result.visits_created,
+        visit_ids=list(result.visit_ids),
+        event_ids=list(result.event_ids),
+        source_duration_seconds=result.source_duration_seconds,
+        capture_time_known=result.capture_time_known,
+        error_code=result.error_code,
+        error_message=result.error_message,
+    )
+
+
+@app.get(
+    "/api/media/{media_id}/audio-analysis-runs",
+    response_model=list[AcousticAnalysisRun],
+)
+async def list_acoustic_analysis_runs(media_id: str) -> list[AcousticAnalysisRun]:
+    """Side-effect-free: every BirdNET analysis attempt ever recorded for
+    this MediaAsset, most recent first."""
+
+    if get_repository().get_media_asset(media_id) is None:
+        raise _not_found("MediaAsset", media_id)
+    return get_repository().list_acoustic_analysis_runs_for_media_asset(media_id)
+
+
+def _microphone_config_for_stream(stream_id: str) -> tuple[str | None, bool]:
+    """`(device, consent_granted)` for one Stream's Source, read from the
+    existing, generic `SourceProviderConfiguration` -- never a new,
+    audio-specific persistence path. `consent_granted` is `True` only for
+    the literal string `"true"`, matching this codebase's existing
+    string-config convention for other boolean-shaped provider fields
+    (e.g. `accept_media_urls` on the `webhook_future` provider)."""
+
+    stream = get_repository().get_stream(stream_id)
+    if stream is None:
+        return None, False
+    configuration = get_repository().get_source_provider_configuration(stream.source_id)
+    if configuration is None or configuration.provider_key != "microphone":
+        return None, False
+    # `safe_config_preview` fills an unset *required* field with the
+    # literal sentinel `"not_configured"` (`_sanitize_source_provider_
+    # config`'s established convention, reused verbatim rather than
+    # reinvented -- see `_webhook_config_value`'s identical check) --
+    # never `None`/empty for a required field, so this must be checked
+    # explicitly rather than relying on falsiness.
+    preview = configuration.safe_config_preview
+    device = preview.get("device")
+    if device is None or device == "not_configured":
+        device = None
+    return device, preview.get("capture_consent") == "true"
+
+
+@app.post(
+    "/api/streams/{stream_id}/audio-capture/start",
+    response_model=AudioCaptureStatusResponse,
+)
+async def start_microphone_capture(stream_id: str) -> AudioCaptureStatusResponse:
+    """Acoustic / BirdNET Observation Foundation v1: start a bounded,
+    rolling local-microphone capture session for this Stream's configured
+    `microphone` Source provider. Refuses (403) unless `capture_consent`
+    has been explicitly set to `"true"` on that Source's own provider
+    configuration -- this can never be inherited from video monitoring
+    being armed (see "Audio-aware boundary" in docs/durable-camera-
+    monitor-lifecycle-design.md)."""
+
+    if get_repository().get_stream(stream_id) is None:
+        raise _not_found("Stream", stream_id)
+    device, consent_granted = _microphone_config_for_stream(stream_id)
+    if not consent_granted:
+        raise HTTPException(
+            status_code=403,
+            detail="Microphone capture requires explicit consent on this Source's provider configuration.",
+        )
+    if not device:
+        raise HTTPException(status_code=400, detail="This Source has no configured microphone device.")
+    try:
+        get_microphone_session_manager().start(
+            stream_id, device=device,
+            output_directory=get_repository().media_root / "audio_capture" / stream_id,
+        )
+    except audio_capture.AudioDecodeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    return AudioCaptureStatusResponse(
+        stream_id=stream_id, is_running=get_microphone_session_manager().is_running(stream_id),
+        consent_granted=consent_granted, device=device,
+    )
+
+
+@app.post(
+    "/api/streams/{stream_id}/audio-capture/stop",
+    response_model=AudioCaptureStatusResponse,
+)
+async def stop_microphone_capture(stream_id: str) -> AudioCaptureStatusResponse:
+    if get_repository().get_stream(stream_id) is None:
+        raise _not_found("Stream", stream_id)
+    get_microphone_session_manager().stop(stream_id)
+    device, consent_granted = _microphone_config_for_stream(stream_id)
+    return AudioCaptureStatusResponse(
+        stream_id=stream_id, is_running=False, consent_granted=consent_granted, device=device,
+    )
+
+
+@app.get(
+    "/api/streams/{stream_id}/audio-capture/status",
+    response_model=AudioCaptureStatusResponse,
+)
+async def get_microphone_capture_status(stream_id: str) -> AudioCaptureStatusResponse:
+    """Side-effect-free."""
+
+    if get_repository().get_stream(stream_id) is None:
+        raise _not_found("Stream", stream_id)
+    device, consent_granted = _microphone_config_for_stream(stream_id)
+    return AudioCaptureStatusResponse(
+        stream_id=stream_id, is_running=get_microphone_session_manager().is_running(stream_id),
+        consent_granted=consent_granted, device=device,
+    )
+
+
+@app.get("/api/birdnet/status", response_model=BirdNetStatusResponse)
+async def birdnet_status() -> BirdNetStatusResponse:
+    """Side-effect-free: whether the optional BirdNET acoustic adapter is
+    installed and ready. Never loads the model or runs inference -- mirrors
+    the existing BioCLIP status route's identical contract."""
+
+    status = get_birdnet_status()
+    return BirdNetStatusResponse(
+        status=status.status, runtime_available=status.runtime_available, detail=status.detail,
+    )
 
 
 @app.get("/api/media/{media_id}/file")

@@ -42,7 +42,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 42
+CURRENT_DATABASE_SCHEMA_VERSION = 43
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -1076,6 +1076,62 @@ def _migrate_to_research_collections(connection: Connection) -> None:
     Base.metadata.tables["research_collections"].create(bind=connection, checkfirst=True)
 
 
+def _migrate_to_acoustic_observation_foundation(connection: Connection) -> None:
+    """Acoustic / BirdNET Observation Foundation v1 (see docs/acoustic-
+    birdnet-observation-foundation-v1-contract.md): three small, additive
+    changes in one migration, deliberately not three separate schema bumps
+    -- they all land together in the same milestone and none is useful
+    without the others.
+
+    - `media_assets` gains nullable `audio_sample_rate_hz`/
+      `audio_channel_count` (the audio analog of `image_width`/
+      `image_height`), mirroring `_migrate_to_media_asset_duration`'s exact
+      "nullable, no default, no backfill" discipline.
+    - `species_suggestions` gains nullable `window_start_ms`/`window_end_ms`
+      (the temporal analog of `evidence_region_json`) and
+      `model_provenance_json` (adapter-neutral model/runtime provenance).
+    - The new, empty `acoustic_analysis_runs` table, mirroring
+      `_migrate_to_recorded_media_analysis_runs`'s own "additive table, no
+      seeded row" pattern exactly: an installation upgrading from schema 42
+      has never analyzed any audio, so it correctly starts with no run
+      history at all.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Acoustic observation foundation migration requires local SQLite storage."
+        )
+    if inspect(connection).has_table("media_assets"):
+        media_asset_columns = {
+            column["name"] for column in inspect(connection).get_columns("media_assets")
+        }
+        if "audio_sample_rate_hz" not in media_asset_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE media_assets ADD COLUMN audio_sample_rate_hz INTEGER"
+            )
+        if "audio_channel_count" not in media_asset_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE media_assets ADD COLUMN audio_channel_count INTEGER"
+            )
+    if inspect(connection).has_table("species_suggestions"):
+        suggestion_columns = {
+            column["name"] for column in inspect(connection).get_columns("species_suggestions")
+        }
+        if "window_start_ms" not in suggestion_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE species_suggestions ADD COLUMN window_start_ms INTEGER"
+            )
+        if "window_end_ms" not in suggestion_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE species_suggestions ADD COLUMN window_end_ms INTEGER"
+            )
+        if "model_provenance_json" not in suggestion_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE species_suggestions ADD COLUMN model_provenance_json TEXT"
+            )
+    Base.metadata.tables["acoustic_analysis_runs"].create(bind=connection, checkfirst=True)
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -1118,6 +1174,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     40: _migrate_to_media_asset_duration,
     41: _migrate_to_recorded_media_analysis_runs,
     42: _migrate_to_research_collections,
+    43: _migrate_to_acoustic_observation_foundation,
 }
 
 

@@ -14,7 +14,14 @@ import { LiveCameraOverview } from "../components/LiveCameraOverview";
 import { ProductHealthPanel } from "../components/ProductHealthPanel";
 import { StatusPill } from "../components/StatusPill";
 import { TodayReportPanel } from "../components/TodayReportPanel";
-import { cameraHealthLabel, cameraHealthTone, effectiveSpeciesText, formatDateTime, formatLabel } from "../utils";
+import {
+  cameraHealthLabel,
+  cameraHealthTone,
+  effectiveSpeciesText,
+  formatDateTime,
+  formatLabel,
+  unconfirmedActivityText,
+} from "../utils";
 
 interface ReviewQueueFocus {
   source: "live-motion";
@@ -103,6 +110,17 @@ function VisitPreview({ visit }: { visit: DashboardVisitSummary }) {
   const [unavailable, setUnavailable] = useState(false);
   if (!visit.primary_evidence || unavailable) {
     return <div className="dashboard-visit-preview dashboard-preview-unavailable">Preview unavailable</div>;
+  }
+  // Acoustic / BirdNET Observation Foundation v1: audio evidence has no
+  // visual thumbnail to show here -- an honest "heard, not seen" icon,
+  // never a fabricated image standing in for it. Full playback is
+  // available from Visit Detail.
+  if (visit.primary_evidence.content_type.startsWith("audio/")) {
+    return (
+      <div className="dashboard-visit-preview dashboard-preview-audio" aria-label="Heard, no image evidence">
+        🔊
+      </div>
+    );
   }
   return (
     <img
@@ -313,7 +331,10 @@ export function DashboardPage({
                 <article className="dashboard-visit-row" key={visit.id}>
                   <VisitPreview visit={visit} />
                   <div>
-                    <strong>{effectiveSpeciesText(visit) ?? "Animal detected — species not confirmed"}</strong>
+                    <strong>
+                      {effectiveSpeciesText(visit) ??
+                        unconfirmedActivityText(visit.primary_evidence?.content_type)}
+                    </strong>
                     <VisitContext visit={visit} />
                     <span className="meta-text">{formatDateTime(visit.captured_at)}</span>
                   </div>

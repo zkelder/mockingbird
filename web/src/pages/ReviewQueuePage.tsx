@@ -90,7 +90,11 @@ function matchesProductReviewTab(
 
 function productReviewTitle(item: ReviewQueueItem): string {
   if (item.product_category === "animal") {
-    return "Animal detected — species not confirmed";
+    // Acoustic / BirdNET Observation Foundation v1: honest about whether
+    // this candidate's evidence was heard or seen.
+    return item.media_asset?.media_type === "audio"
+      ? "Bird heard — species not confirmed"
+      : "Animal detected — species not confirmed";
   }
   if (item.product_category === "other_activity") {
     return "Other detector-qualified activity";

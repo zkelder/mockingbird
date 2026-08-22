@@ -1396,6 +1396,72 @@ export interface RecordedMediaAnalysisResponse {
   creates_truth: boolean;
 }
 
+// Acoustic / BirdNET Observation Foundation v1: mirrors the recorded-video
+// analysis types above.
+export interface AcousticAnalysisRun {
+  id: string;
+  media_asset_id: string;
+  stream_id: string;
+  pipeline_version: string;
+  status: string;
+  min_confidence: number;
+  source_duration_seconds?: number | null;
+  windows_analyzed: number;
+  detections_above_threshold: number;
+  species_suggestions_created: number;
+  events_created: number;
+  visits_created: number;
+  error_code?: string | null;
+  error_message?: string | null;
+  started_at: string;
+  completed_at?: string | null;
+  created_at: string;
+}
+
+export interface RecordedAudioAnalysisRequest {
+  min_confidence?: number;
+  pipeline_version?: string;
+  force_reprocess?: boolean;
+  latitude?: number;
+  longitude?: number;
+}
+
+export interface RecordedAudioAnalysisResponse {
+  run_id: string;
+  status: string;
+  media_asset_id: string;
+  stream_id: string;
+  pipeline_version: string;
+  min_confidence: number;
+  windows_analyzed: number;
+  detections_above_threshold: number;
+  species_suggestions_created: number;
+  events_created: number;
+  visits_created: number;
+  visit_ids: string[];
+  event_ids: string[];
+  source_duration_seconds?: number | null;
+  capture_time_known: boolean;
+  error_code?: string | null;
+  error_message?: string | null;
+  creates_events: boolean;
+  creates_visits: boolean;
+  creates_truth: boolean;
+}
+
+export interface BirdNetStatusResponse {
+  status: string;
+  runtime_available: boolean;
+  detail: string;
+}
+
+export interface AudioCaptureStatusResponse {
+  stream_id: string;
+  is_running: boolean;
+  consent_granted: boolean;
+  device?: string | null;
+}
+
 export interface SavedMediaRetentionItem {
   media_asset_id: string;
   source_id?: string | null;
@@ -1616,6 +1682,11 @@ export interface MediaAsset {
   content_sha256?: string | null;
   derivation_source?: string | null;
   previous_effective_crop_media_asset_id?: string | null;
+  duration_seconds?: number | null;
+  // Acoustic / BirdNET Observation Foundation v1: the audio analog of
+  // `image_width`/`image_height`. Present only for `media_type === "audio"`.
+  audio_sample_rate_hz?: number | null;
+  audio_channel_count?: number | null;
 }
 
 export interface VisitEvidenceFrame {

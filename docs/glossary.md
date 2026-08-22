@@ -360,6 +360,34 @@ Local classifier evidence that a media item or crop may contain a species or tax
 
 A local optional adapter that creates SpeciesSuggestion evidence from media-backed Event/Visit context without creating labels, exports, or dataset truth.
 
+## BirdNET Suggestion
+
+A `SpeciesSuggestion` (`adapter_id="birdnet"`) produced by local BirdNET-
+class acoustic analysis of a bounded audio clip window. Preserves
+`window_start_ms`/`window_end_ms` (the temporal analog of a visual
+suggestion's `evidence_region`) and full model/runtime provenance
+(`model_provenance`). Suggestion evidence only, exactly like any other
+`SpeciesSuggestion` -- never reviewed truth by itself. See
+[acoustic-birdnet-observation-foundation-v1-contract.md](acoustic-birdnet-observation-foundation-v1-contract.md).
+
+## Microphone Source
+
+A local audio-input `SourceProviderDefinition` (`provider_key=
+"microphone"`) an installation may explicitly capture bounded, rolling
+acoustic clips from. Requires its own explicit `capture_consent`,
+separate from and never inherited from a video Stream's `armed`/
+monitoring-policy state. Has no live video playback and no Zone editing --
+Zones are geometric regions on a video frame and do not apply to audio.
+
+## Acoustic Analysis Run
+
+Bounded operational history (`AcousticAnalysisRunModel`) for one BirdNET
+analysis attempt over one recorded-audio MediaAsset -- mirrors the
+recorded-video analysis-run record's identical "progress/diagnostics/
+idempotency, never evidence, never gates a Visit itself" role. A completed
+run with zero detections above the confidence floor is an honest,
+legitimate outcome, not an error.
+
 ## Apply Suggestion As Correction
 
 A future explicit user action that pre-fills the existing correction flow from a SpeciesSuggestion; truth is created only when the correction is submitted.
