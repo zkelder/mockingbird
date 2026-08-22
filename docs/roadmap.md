@@ -2430,30 +2430,32 @@ failure, human review authority throughout. Audio feeds Evidence →
 Interpretation → Review Decision → Observation; it never creates a second
 truth system. Nothing in current repository evidence moves audio into v0.1.
 
-**Ecological export & sharing interoperability.** A real, working local
-export exists today -- structured metadata/manifest export (JSONL +
-taxonomy + skip-reasons + summary) built only from reviewed `ReviewLabel`
-truth -- but it is reference-only (it points at local media paths; it does
-not yet bundle/copy the actual media bytes). Camtrap DP, GBIF, eBird,
-Wildlife Insights, Darwin Core, and iNaturalist interoperability do not
-exist anywhere in the repository today (confirmed absent, not merely
-undocumented) -- this is genuinely new post-v0.1 direction, not a
-correction. External sharing always consumes data already permitted by the
-existing reviewed-truth contract; do not build a second "human
-verification" mechanism per destination. eBird: eventual assisted/reviewed
-export where the checklist context is eligible under then-current eBird
-rules -- no autonomous reporting of unreviewed machine detections, and
-eBird's data model never becomes MockingBird's internal truth model. Camtrap
-DP: the important standardized interchange target for autonomous
-field/research deployments -- deployment/site, coverage/sampling,
-timestamps, evidence/media, taxonomy, machine provenance, human review, and
-events/observations should all be representable when this is built. GBIF:
-future publication interoperability through Camtrap DP/Darwin Core where
-appropriate. Wildlife Insights: a downstream interoperability target, not
-something MockingBird replaces -- note this name collides with
-MockingBird's own existing internal Wildlife Insights analytics panel
-(`/analytics`); disambiguate explicitly in any future implementation, this
-is not the same thing. Other legitimate destinations (iNaturalist, research
+**Ecological export & sharing interoperability.** Research / Conservation /
+Export Interoperability v1 (2026-08-22, see "Completed foundations" below
+and [research-conservation-export-contract.md](research-conservation-export-contract.md))
+closed the core of this lane: a consolidated research-safe eligibility
+policy, a provider-neutral exported-Observation shape, live-vs-offline
+effort accounting, bounded Conservation Reporting, a generic CSV/JSON/
+manifest export, a Camtrap DP v1.0.2 package (deployments/media/
+observations + bounded structural validator), and a bounded named-collection
++ free-text-contributor model. The classifier training manifest export
+(JSONL + taxonomy + skip-reasons + summary) remains a separate, still
+reference-only lane for training use, not research export. Media-byte
+bundling into a research export bundle remains unimplemented (accepted as a
+request flag, no effect yet -- see "Explicitly deferred" in that contract
+doc). GBIF, eBird, Wildlife Insights (the external destination -- distinct
+from MockingBird's own `/analytics` Wildlife Insights panel), Darwin Core,
+and iNaturalist interoperability still do not exist anywhere in the
+repository (confirmed absent) -- genuinely new post-v0.1 direction for each
+specific destination, not a correction. External sharing always consumes
+data already permitted by the existing reviewed-truth/research-eligibility
+contract; do not build a second "human verification" mechanism per
+destination. eBird: eventual assisted/reviewed export where the checklist
+context is eligible under then-current eBird rules -- no autonomous
+reporting of unreviewed machine detections, and eBird's data model never
+becomes MockingBird's internal truth model. GBIF: future publication
+interoperability through the now-existing Camtrap DP export where
+appropriate. Other legitimate destinations (iNaturalist, other research
 datasets): keep the architecture extensible; verify each destination's
 actual current rules/API when actually built. None of this delays v0.1.
 
@@ -2862,6 +2864,44 @@ question.
   host-timezone-independent midnight-boundary regression added. New
   bounded API route, CLI command, and a Streams-page "Analyze imported
   media" action -- no background job queue, no second review system.
+- **2026-08-22 (Research / Conservation / Export Interoperability v1):**
+  closed the "Scope exclusions" gap the entry immediately above named
+  (Camtrap DP export, research collaboration, conservation reporting) --
+  see [research-conservation-export-contract.md](research-conservation-export-contract.md).
+  One consolidated research-safe eligibility policy
+  (`mockingbird.research.eligibility`) now decides, for every reviewed
+  record, whether it may enter a trusted export and as what (confirmed
+  named taxon / confirmed unidentified wildlife / non-wildlife /
+  provisional / unresolved / rejected / superseded) -- a `SpeciesSuggestion`
+  alone can never become research truth. A provider-neutral exported-
+  Observation shape means a Camera Node, RTSP, ONVIF, or offline/recorded
+  Visit all produce the identical row. Live monitoring effort
+  (`MonitoringExposureIntervalModel`, reused unmodified) and offline/
+  recorded acquisition effort (`RecordedMediaAnalysisRunModel` + imported
+  stills, newly aggregated) stay two distinct, never-summed figures.
+  Conservation Reporting v1 is a thin synthesis layer over the existing
+  `PlaceActivityReport` with one sanctioned coverage-aware phrasing
+  ("confirmed on N of M usable monitored days") and no field capable of
+  expressing abundance/population/occupancy/trend. Camtrap DP export
+  targets spec v1.0.2 (confirmed nothing was previously vendored/
+  referenced in-repo), with a bounded structural validator and an honest,
+  disclosed non-conformance (no coordinates unless explicitly supplied at
+  export time -- MockingBird has no site/coordinate model at all). A
+  bounded `ResearchCollectionModel` (schema 41->42) plus free-text curator
+  attribution, mirroring `ReviewLabelModel.reviewer_identity`'s established
+  convention, closes the "bounded contributor network" requirement without
+  a user/account system. Found and fixed one real, previously-unreachable
+  gap in passing: a Visit's export eligibility now honors a Zone later
+  reclassified to privacy/ignore, which nothing previously re-checked.
+  New API routes, CLI subcommands (`export-research`, `export-camtrap-dp`,
+  `conservation-report`); no UI surface (none existed to extend without
+  building a new one, out of this milestone's scope). Schema 41->42 (one
+  additive migration, upgrade-path-tested). 89 new backend tests, including
+  22 real end-to-end repository-integration tests against a seeded
+  database exercising corrections/supersession, multi-subject Events,
+  live-vs-offline provenance, privacy-zone reclassification, deterministic/
+  reproducible exports, and contributor attribution; the Fast gate (1691
+  tests) passed cleanly before this milestone's commits.
 
 See [roadmap-history.md](roadmap-history.md) for the concise phase record.
 

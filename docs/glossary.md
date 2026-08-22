@@ -399,6 +399,60 @@ A local export of reviewed media, labels, corrections, and metadata.
 
 Local summaries of outdoor activity over time.
 
+## Research Export
+
+A local, provider-neutral export of research-safe reviewed Observations
+(generic CSV/JSON/manifest, or a Camtrap DP package). Consumes reviewed
+truth; never creates it. Only a record whose `ResearchExportEligibility` is
+eligible (`confirmed_taxon` or `confirmed_unidentified_wildlife`) is
+included -- a provisional suggestion, unresolved Visit, rejected record, or
+superseded truth is excluded, never exported as trusted data. See
+[research-conservation-export-contract.md](research-conservation-export-contract.md).
+
+## Research-safe Eligibility
+
+The one policy decision (`mockingbird.research.eligibility.evaluate_
+research_export_eligibility`) answering whether a reviewed record may enter
+a trusted research/conservation export, and as what -- distinguishing
+confirmed named taxon, confirmed unidentified wildlife, non-wildlife,
+provisional suggestion, unresolved, rejected, and superseded, each with
+explicit required (blocking) vs. recommended (disclosed, non-blocking)
+reason codes.
+
+## Acquisition Effort
+
+The offline/recorded-media counterpart to live monitoring coverage
+(`MonitoringExposureIntervalModel`): bounded, honest counts of recorded-
+video analyzed duration and still-image capture opportunities, never
+summed with live coverage and never used to infer deployment uptime from
+gaps between imported files. See "Effort accounting" in
+[research-conservation-export-contract.md](research-conservation-export-contract.md).
+
+## Conservation Report
+
+A bounded, coverage-aware natural-history summary for an explicit period --
+confirmed species with occurrence-day counts, confirmed unidentified
+wildlife, review backlog, and effort denominators. Never claims abundance,
+population size, occupancy, a biodiversity index, or a decline/increase
+trend.
+
+## Camtrap DP Export
+
+A Camtrap DP-interoperable package (target spec v1.0.2) mapped from
+research-eligible Observations: `deployments.csv`, `media.csv`,
+`observations.csv`, `datapackage.json`. Human-reviewed truth and
+machine-classification (`SpeciesSuggestion`) provenance are always
+distinct, never-blended observation rows.
+
+## Research Collection
+
+A named, bounded set of explicit Visit ids assembled for research export
+(`ResearchCollectionModel`), with free-text curator attribution mirroring
+`ReviewLabelModel.reviewer_identity`'s convention. Membership is never
+cached truth -- every read/export re-resolves eligibility through the
+ordinary review boundary. Curating a collection never grants review or
+taxonomic authority.
+
 ## Observation (product object)
 
 The target durable semantic product object from
