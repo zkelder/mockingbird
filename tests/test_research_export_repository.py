@@ -263,6 +263,36 @@ def test_structurally_superseded_visit_is_excluded_from_current_export(repositor
     assert all(obs.observation_id != visit_id for obs in observations)
 
 
+def test_capture_time_reflects_historical_observed_at_never_import_wall_clock(
+    repository: ProductRepository,
+) -> None:
+    # An offline-provider Visit whose real encounter happened years ago
+    # (`observed_at`) must export under that real historical timestamp, not
+    # under whatever wall-clock moment the analysis/export actually ran --
+    # mirroring offline_ingest's own "a historical clip imported today is
+    # never reported as observed today" invariant at this layer's own
+    # `captured_at` field.
+    historical_observed_at = datetime(2020, 3, 14, 9, 30, tzinfo=UTC)
+    # Offline ingest activates authority fresh for its own bounded call at
+    # the moment analysis actually runs (see "Acquisition-session
+    # semantics" in docs/offline-recorded-media-observation-contract.md) --
+    # the activation boundary itself is a real "now," but the candidate's
+    # own `observed_at` still legitimately reflects the video's historical
+    # timeline, exactly like a real offline-ingest run.
+    _activate(repository, now=historical_observed_at)
+    visit_id = _create_visit(
+        repository, proposal_id="visit-episode:historical", provider_key="recorded-media-offline-ingest-v1",
+        observed_at=historical_observed_at, captured_at=historical_observed_at,
+    )
+    _review(repository, visit_id, "northern_cardinal")
+
+    observations, _ = repository.research_export_eligibility_preview(ResearchExportFilters())
+    observation = next(obs for obs in observations if obs.observation_id == visit_id)
+    assert observation.captured_at == historical_observed_at
+    assert observation.captured_at.year == 2020
+    assert observation.captured_at != datetime.now(UTC).replace(microsecond=0)
+
+
 def test_offline_reanalysis_does_not_duplicate_current_reviewed_truth(repository: ProductRepository) -> None:
     # Idempotent repeat: attempting the identical proposal_id twice must
     # never create a second Visit for the same underlying encounter.
