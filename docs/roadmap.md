@@ -1548,6 +1548,38 @@ this is the rest of Place Intelligence -- seasonality, year-over-year,
 cautious anomalies -- which needs more accumulated real history than this
 young a product has yet; see Phase 5, below.
 
+**2026-08-21 update (Gate C -- Meaningful Change Detection / Baseline
+Comparison v1):** a bounded slice of the "cautious anomalies" gap the
+update above named -- see
+[meaningful-change-detection-contract.md](meaningful-change-detection-contract.md).
+A new pure module, `mockingbird.analytics.place_change_summary`, built
+directly on `historical_baseline`'s own `usable_dates`/`taxa`/`window_
+visits`, compares a recent window (the last 7 usable days) against a
+reference window (the preceding 14 usable days) by *presence-day
+recurrence* -- never raw Visit count, so one busy feeder afternoon can
+never look like a persistent increase -- and reports one of
+`insufficient_baseline`/`insufficient_recent_coverage`/`no_supported_
+change`/`higher_recent_presence`/`lower_recent_presence` per taxon, plus a
+single, honest Place-wide `overall` aggregate (never a forced blend of
+conflicting per-species signals). This module's own gate is stricter than
+bare "established" baseline maturity (21 usable days, not 7), asserted
+explicitly. Verified directly against the real local dev database at
+closure: 5 usable days, `insufficient_baseline`/`building baseline` --
+zero strong change claims, the mandatory regression this milestone
+required. Wired additively into `PlaceActivityReportResponse` (Today) and
+`WildlifeJournalLabelSummary`/`WildlifeJournalHistoryResponse` (Bird Log)
+-- zero schema/migration, zero new API routes, zero additional database
+queries for Today (computed from data historical_baseline already fetched).
+27 new pure tests, 15 new repository/API integration tests, and 6 new
+frontend e2e tests all pass, alongside the full pre-existing suite (Core
+gate, 3640 tests) unmodified. Explicitly not attempted: ecological
+population trends, statistical-significance claims, a separate normalized
+Visits-per-monitored-hour metric (considered, deferred), seasonality, and
+year-over-year comparison -- see "Known limitations" in the new contract
+doc. What remains open beyond this: seasonality and year-over-year
+comparison, which still need more accumulated real history than this young
+a product has yet.
+
 **Temporal correctness surfaces this gate must preserve, named explicitly:**
 event time (source capture) vs. ingestion time vs. processing-completion
 time vs. presentation/UI freshness must stay distinguishable, not collapsed

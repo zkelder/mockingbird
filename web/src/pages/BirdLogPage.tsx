@@ -24,7 +24,7 @@ import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { formatDateTime } from "../utils";
+import { changeStatusBadge, formatDateTime } from "../utils";
 
 interface BirdLogPageProps {
   sources: CameraSource[];
@@ -635,6 +635,10 @@ export function BirdLogPage({
                       <h2>{item.display_name}</h2>
                       <span className="meta-text">{item.observation_count} reviewed observation{item.observation_count === 1 ? "" : "s"}</span>
                       {item.is_regular ? <StatusPill label="Regular here" tone="good" /> : null}
+                      {(() => {
+                        const badge = changeStatusBadge(item.change_status);
+                        return badge ? <StatusPill label={badge.label} tone={badge.tone} /> : null;
+                      })()}
                     </div>
                     <Sparkline activity={item.recent_activity} />
                   </div>
@@ -763,6 +767,19 @@ export function BirdLogPage({
                     Confirmed on {activeHistory.distinct_confirmed_usable_days} well-monitored days in this Place's recent history
                   </span>
                   <StatusPill label="Regular here" tone="good" />
+                </div>
+              ) : null}
+              {activeHistory.change_status ? (
+                <div className="section-heading">
+                  <span className="meta-text">
+                    Recent: {activeHistory.change_status.recent_presence_days} of {activeHistory.change_status.recent_usable_day_count} usable monitored days
+                    {" · "}
+                    Reference: {activeHistory.change_status.reference_presence_days} of {activeHistory.change_status.reference_usable_day_count} usable monitored days
+                  </span>
+                  {(() => {
+                    const badge = changeStatusBadge(activeHistory.change_status);
+                    return badge ? <StatusPill label={badge.label} tone={badge.tone} /> : null;
+                  })()}
                 </div>
               ) : null}
               <section className="metric-grid journal-metrics">

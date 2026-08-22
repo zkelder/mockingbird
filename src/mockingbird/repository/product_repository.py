@@ -46,9 +46,11 @@ from mockingbird.analytics.place_activity_report import (
 )
 from mockingbird.analytics.place_activity_report_adapter import (
     place_activity_report_response,
+    taxon_change_status_response,
     taxon_fact_from_taxonomy_label,
     visit_fact_from_stream_visit_summary,
 )
+from mockingbird.analytics.place_change_summary import PlaceChangeSummary, compute_place_change_summary
 from mockingbird.analytics.zone_insights import (
     TimeInterval,
     interval_seconds,
@@ -23296,7 +23298,7 @@ class ProductRepository:
             # is deliberately this report's own period_end_at, not "now" --
             # see `_historical_place_baseline_and_species_statuses`'s
             # docstring for why a past-period report must stay reproducible.
-            historical_baseline, species_historical_statuses = (
+            historical_baseline, species_historical_statuses, change_summary = (
                 self._historical_place_baseline_and_species_statuses(
                     session,
                     stream_ids=stream_ids,
@@ -23350,6 +23352,7 @@ class ProductRepository:
             warnings=warnings,
             historical_baseline=historical_baseline,
             species_historical_statuses=species_historical_statuses,
+            change_summary=change_summary,
         )
 
     def _taxonomy_label_index(self, session: Session) -> dict[str, TaxonomyLabelModel]:
@@ -23612,13 +23615,20 @@ class ProductRepository:
         local_timezone: tzinfo,
         period_start_at: datetime,
         period_end_at: datetime,
-    ) -> tuple[HistoricalPlaceBaseline, dict[str, SpeciesHistoricalStatus]]:
-        """Compute the Place-wide `HistoricalPlaceBaseline` and every
-        all-time-confirmed taxon's `SpeciesHistoricalStatus`, for
-        `ProductRepository.place_activity_report`'s own Today integration
-        (Historical Baseline Maturity + New/Regular Species v1; see
-        docs/historical-baseline-maturity-contract.md). Read-only, like
-        every other method in this file's reporting family.
+    ) -> tuple[HistoricalPlaceBaseline, dict[str, SpeciesHistoricalStatus], PlaceChangeSummary]:
+        """Compute the Place-wide `HistoricalPlaceBaseline`, every
+        all-time-confirmed taxon's `SpeciesHistoricalStatus`, and the Gate C
+        -- Meaningful Change Detection v1 `PlaceChangeSummary` (see
+        docs/meaningful-change-detection-contract.md), for `ProductRepository.
+        place_activity_report`'s own Today integration and (independently
+        anchored) `wildlife_journal_overview`/`wildlife_journal_history`'s
+        Bird Log integration. Read-only, like every other method in this
+        file's reporting family.
+
+        The change summary is computed from the exact same `usable_dates`/
+        `window_visits`/`taxa` this method already fetches for historical
+        baseline -- zero additional queries beyond what this method already
+        issued before Gate C existed.
 
         `window_end_at` anchors the trailing `HISTORICAL_BASELINE_WINDOW_
         DAYS`-day regularity window -- deliberately the caller's own report
@@ -23660,6 +23670,22 @@ class ProductRepository:
             # `mockingbird.wildlife_taxonomy`'s denylist) -- never a second,
             # independently-drifting truth-precedence rule.
             return taxon if is_wildlife_category(taxon.category) else None
+
+        def resolve_any_taxon(label: str) -> TaxonFact | None:
+            # Deliberately broader than resolve_wildlife_taxon above (any
+            # resolvable taxonomy row, any category) so Gate C's own
+            # Place-wide `overall` change aggregate can recognize a
+            # confirmed "unknown_bird"/"unknown_animal" abstention as real
+            # wildlife activity -- see place_change_summary.py's own truth
+            # contract. This never changes `taxa`/`compute_species_
+            # historical_statuses`'s existing output: both already ignore
+            # any classification other than CONFIRMED_WILDLIFE, so a Visit
+            # resolved here to a non-wildlife or "unknown" category is
+            # filtered out downstream exactly as before this milestone.
+            taxonomy = taxonomy_index.get(_taxonomy_key(label))
+            if taxonomy is None:
+                return None
+            return taxon_fact_from_taxonomy_label(_taxonomy_label_from_model(taxonomy))
 
         taxa: dict[str, TaxonFact] = {}
         all_time_first_confirmed_at: dict[str, datetime] = {}
@@ -23715,7 +23741,13 @@ class ProductRepository:
         )
 
         window_visits: list[VisitFact] = []
-        if taxa and stream_ids:
+        # Note: unlike the historical-baseline-only computation this method
+        # originally performed, this query must run whenever Streams exist
+        # even if `taxa` (all-time confirmed *wildlife* taxa) is empty --
+        # Gate C's `overall` aggregate still needs to see a confirmed
+        # "unknown_bird"/"unknown_animal" abstention even when no named
+        # species has ever been confirmed at this Place.
+        if stream_ids:
             window_start_at = window_end_at - timedelta(days=HISTORICAL_BASELINE_WINDOW_DAYS)
             window_rows = session.execute(
                 select(VisitModel.id, VisitModel.reviewed_label, EventModel.started_at)
@@ -23730,7 +23762,7 @@ class ProductRepository:
                 )
             ).all()
             for visit_id, reviewed_label, started_at in window_rows:
-                taxon = resolve_wildlife_taxon(reviewed_label)
+                taxon = resolve_any_taxon(reviewed_label)
                 if taxon is None:
                     continue
                 window_visits.append(
@@ -23755,7 +23787,14 @@ class ProductRepository:
             period_end_at=period_end_at,
             baseline_maturity=baseline.maturity,
         )
-        return baseline, {status.taxon.label: status for status in statuses}
+        change_summary = compute_place_change_summary(
+            window_visits,
+            taxa=taxa,
+            usable_dates=usable_dates,
+            local_timezone=local_timezone,
+            window_end_at=window_end_at,
+        )
+        return baseline, {status.taxon.label: status for status in statuses}, change_summary
 
     def list_likely_species_overview(self, *, limit: int = 20) -> LikelySpeciesOverviewResponse:
         """Bird Log's provisional counterpart to `wildlife_journal_overview`
@@ -23841,6 +23880,30 @@ class ProductRepository:
             )
             baseline_maturity = compute_baseline_maturity(len(usable_dates))
 
+            # Gate C -- Meaningful Change Detection v1 (see docs/meaningful-
+            # change-detection-contract.md) needs the fuller historical-
+            # facts computation (not just `_historical_usable_dates` above)
+            # so each label can also carry a `change_status` -- this
+            # internally recomputes `usable_dates` a second time (still one
+            # bounded interval query, not O(labels)/O(Visits)) plus a
+            # taxonomy index and two further bounded queries; `historical_
+            # baseline`/`_species_historical_statuses` are discarded here --
+            # this surface's own `baseline_maturity`/`is_regular` above are
+            # unchanged and remain the source of truth for this response.
+            taxonomy_index = self._taxonomy_label_index(session)
+            _historical_baseline, _species_historical_statuses, change_summary = (
+                self._historical_place_baseline_and_species_statuses(
+                    session,
+                    stream_ids=stream_ids,
+                    taxonomy_index=taxonomy_index,
+                    window_end_at=window_end_at,
+                    local_timezone=local_timezone,
+                    period_start_at=window_start_at,
+                    period_end_at=window_end_at,
+                )
+            )
+            change_status_by_label = {status.taxon.label: status for status in change_summary.taxa}
+
             records = self._wildlife_journal_confirmed_records(session)
             grouped: dict[str, list[dict[str, Any]]] = {}
             for record in records:
@@ -23896,6 +23959,7 @@ class ProductRepository:
                         representative=self._wildlife_journal_representative(ordered),
                         distinct_confirmed_usable_days=distinct_confirmed_usable_days,
                         is_regular=distinct_confirmed_usable_days >= MIN_DISTINCT_USABLE_DAYS_FOR_REGULAR,
+                        change_status=taxon_change_status_response(change_status_by_label.get(label)),
                     )
                 )
 
@@ -24000,6 +24064,27 @@ class ProductRepository:
             }
             distinct_confirmed_usable_days = len(confirmed_dates_in_window & usable_dates)
             is_regular = distinct_confirmed_usable_days >= MIN_DISTINCT_USABLE_DAYS_FOR_REGULAR
+
+            # Gate C -- Meaningful Change Detection v1 (see docs/meaningful-
+            # change-detection-contract.md) -- see the identical comment in
+            # `wildlife_journal_overview` for why this is a separate,
+            # additive computation rather than a change to the historical-
+            # baseline facts above.
+            taxonomy_index = self._taxonomy_label_index(session)
+            _historical_baseline, _species_historical_statuses, change_summary = (
+                self._historical_place_baseline_and_species_statuses(
+                    session,
+                    stream_ids=stream_ids,
+                    taxonomy_index=taxonomy_index,
+                    window_end_at=history_window_end_at,
+                    local_timezone=local_timezone,
+                    period_start_at=history_window_start_at,
+                    period_end_at=history_window_end_at,
+                )
+            )
+            change_status = next(
+                (status for status in change_summary.taxa if status.taxon.label == canonical_label), None
+            )
             records = [
                 record
                 for record in self._wildlife_journal_confirmed_records(
@@ -24229,6 +24314,7 @@ class ProductRepository:
                 distinct_confirmed_usable_days=distinct_confirmed_usable_days,
                 is_regular=is_regular,
                 baseline_maturity=baseline_maturity,
+                change_status=taxon_change_status_response(change_status),
                 activity_library_drilldown=WildlifeJournalDrilldown(
                     confirmed_label=canonical_label,
                     start_date=start_date,

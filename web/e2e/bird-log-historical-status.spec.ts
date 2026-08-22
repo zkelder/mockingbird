@@ -172,3 +172,102 @@ test("an immature baseline never implies ecological novelty in the history detai
   await expect(page.getByText("New to your reviewed history in this range")).toHaveCount(0);
   await expect(page.getByText("hasn't accumulated enough monitored history", { exact: false })).toBeVisible();
 });
+
+// Gate C -- Meaningful Change Detection / Baseline Comparison v1 (see
+// docs/meaningful-change-detection-contract.md).
+
+test("an overview card with higher recent presence shows the More often recently badge", async ({ page }) => {
+  await completeSetup(page);
+  await mockJournalOverview(page, {
+    labels: [
+      {
+        label: "northern_cardinal",
+        display_name: "Northern Cardinal",
+        observation_count: 11,
+        first_observed_at: new Date(Date.now() - 20 * 24 * 3600 * 1000).toISOString(),
+        latest_observed_at: new Date().toISOString(),
+        stream_count: 1,
+        zone_count: 1,
+        recent_activity: [],
+        representative: null,
+        distinct_confirmed_usable_days: 3,
+        is_regular: true,
+        change_status: {
+          recent_presence_days: 5,
+          recent_usable_day_count: 7,
+          reference_presence_days: 3,
+          reference_usable_day_count: 14,
+          status: "higher_recent_presence",
+        },
+      },
+    ],
+  });
+
+  await page.goto("/bird-log");
+  const card = page.locator(".journal-label-card").filter({ hasText: "Northern Cardinal" });
+  await expect(card.getByText("Regular here")).toBeVisible();
+  await expect(card.getByText("More often recently")).toBeVisible();
+});
+
+test("a card with no supported change shows no change badge at all", async ({ page }) => {
+  await completeSetup(page);
+  await mockJournalOverview(page, {
+    labels: [
+      {
+        label: "northern_cardinal",
+        display_name: "Northern Cardinal",
+        observation_count: 11,
+        first_observed_at: new Date(Date.now() - 20 * 24 * 3600 * 1000).toISOString(),
+        latest_observed_at: new Date().toISOString(),
+        stream_count: 1,
+        zone_count: 1,
+        recent_activity: [],
+        representative: null,
+        distinct_confirmed_usable_days: 3,
+        is_regular: true,
+        change_status: {
+          recent_presence_days: 4,
+          recent_usable_day_count: 7,
+          reference_presence_days: 8,
+          reference_usable_day_count: 14,
+          status: "no_supported_change",
+        },
+      },
+    ],
+  });
+
+  await page.goto("/bird-log");
+  const card = page.locator(".journal-label-card").filter({ hasText: "Northern Cardinal" });
+  await expect(card.getByText("More often recently")).toHaveCount(0);
+  await expect(card.getByText("Fewer recent visits")).toHaveCount(0);
+});
+
+test("a label's history detail shows the recent/reference presence facts and a change badge", async ({ page }) => {
+  await completeSetup(page);
+  await mockJournalOverview(page, {});
+  await mockJournalHistory(page, "northern_cardinal", {
+    change_status: {
+      recent_presence_days: 1,
+      recent_usable_day_count: 7,
+      reference_presence_days: 10,
+      reference_usable_day_count: 14,
+      status: "lower_recent_presence",
+    },
+  });
+
+  await page.goto("/bird-log/northern_cardinal");
+  await expect(page.getByText("Recent: 1 of 7 usable monitored days", { exact: false })).toBeVisible();
+  await expect(page.getByText("Reference: 10 of 14 usable monitored days", { exact: false })).toBeVisible();
+  await expect(page.getByText("Fewer recent visits")).toBeVisible();
+});
+
+test("a label's history detail omits change facts entirely when no change_status is supported", async ({ page }) => {
+  await completeSetup(page);
+  await mockJournalOverview(page, {});
+  await mockJournalHistory(page, "northern_cardinal", { change_status: null });
+
+  await page.goto("/bird-log/northern_cardinal");
+  await expect(page.getByText("Recent:", { exact: false })).toHaveCount(0);
+  await expect(page.getByText("More often recently")).toHaveCount(0);
+  await expect(page.getByText("Fewer recent visits")).toHaveCount(0);
+});

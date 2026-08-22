@@ -3970,6 +3970,25 @@ export interface PlaceActivityReportTaxonHistoricalStatus {
   status: "new" | "first_record" | "regular" | "seen_before";
 }
 
+// Gate C -- Meaningful Change Detection / Baseline Comparison v1 (see
+// docs/meaningful-change-detection-contract.md). Present only under the
+// identical truth-contract condition as `PlaceActivityReportTaxonHistorical
+// Status` above -- never populated from a provisional SpeciesSuggestion
+// alone. `recent_presence_days`/`reference_presence_days` count distinct
+// genuinely-monitored days, never raw Visit count.
+export interface PlaceActivityReportTaxonChangeStatus {
+  recent_presence_days: number;
+  recent_usable_day_count: number;
+  reference_presence_days: number;
+  reference_usable_day_count: number;
+  status:
+    | "insufficient_baseline"
+    | "insufficient_recent_coverage"
+    | "no_supported_change"
+    | "higher_recent_presence"
+    | "lower_recent_presence";
+}
+
 export interface PlaceActivityReportTaxonEntry {
   label: string;
   display_name: string;
@@ -3981,6 +4000,7 @@ export interface PlaceActivityReportTaxonEntry {
   first_activity_at: string;
   last_activity_at: string;
   historical_status?: PlaceActivityReportTaxonHistoricalStatus | null;
+  change_status?: PlaceActivityReportTaxonChangeStatus | null;
 }
 
 // Place-wide historical baseline facts, bounded to a trailing window ending
@@ -3995,6 +4015,36 @@ export interface PlaceActivityReportHistoricalBaseline {
   distinct_taxa_count: number;
   earliest_authoritative_record_at?: string | null;
   latest_authoritative_record_at?: string | null;
+}
+
+// Gate C -- Meaningful Change Detection / Baseline Comparison v1 -- see
+// docs/meaningful-change-detection-contract.md. `is_valid: false` means
+// every `change_status` in this report is forced to `invalid_reason`,
+// never a fabricated comparison from a partial window.
+export interface PlaceActivityReportChangeWindows {
+  policy_version: number;
+  recent_window_start_at?: string | null;
+  recent_window_end_at: string;
+  reference_window_start_at?: string | null;
+  reference_window_end_at?: string | null;
+  is_valid: boolean;
+  invalid_reason?: "insufficient_baseline" | "insufficient_recent_coverage" | null;
+}
+
+// The Place-wide aggregate comparison: any confirmed wildlife activity, not
+// a forced blend of potentially conflicting per-species signals -- see
+// docs/meaningful-change-detection-contract.md.
+export interface PlaceActivityReportOverallChangeStatus {
+  recent_presence_days: number;
+  recent_usable_day_count: number;
+  reference_presence_days: number;
+  reference_usable_day_count: number;
+  status:
+    | "building_baseline"
+    | "insufficient_recent_coverage"
+    | "no_supported_change"
+    | "more_activity_recorded"
+    | "less_activity_recorded";
 }
 
 export interface PlaceActivityReportZoneActivity {
@@ -4061,6 +4111,10 @@ export interface PlaceActivityReportResponse {
   // accumulated history is deep enough to trust a new-vs-regular species
   // claim. See docs/historical-baseline-maturity-contract.md.
   historical_baseline: PlaceActivityReportHistoricalBaseline;
+  // Gate C -- Meaningful Change Detection / Baseline Comparison v1 -- see
+  // docs/meaningful-change-detection-contract.md.
+  change_windows: PlaceActivityReportChangeWindows;
+  overall_change_status: PlaceActivityReportOverallChangeStatus;
   warnings: string[];
 }
 
@@ -4146,6 +4200,9 @@ export interface WildlifeJournalLabelSummary {
   // docs/historical-baseline-maturity-contract.md.
   distinct_confirmed_usable_days: number;
   is_regular: boolean;
+  // Gate C -- Meaningful Change Detection / Baseline Comparison v1 -- see
+  // docs/meaningful-change-detection-contract.md.
+  change_status?: PlaceActivityReportTaxonChangeStatus | null;
 }
 
 export interface WildlifeJournalOverviewResponse {
@@ -4229,6 +4286,9 @@ export interface WildlifeJournalHistoryResponse {
   distinct_confirmed_usable_days: number;
   is_regular: boolean;
   baseline_maturity: "insufficient" | "developing" | "established";
+  // Gate C -- Meaningful Change Detection / Baseline Comparison v1 -- see
+  // docs/meaningful-change-detection-contract.md.
+  change_status?: PlaceActivityReportTaxonChangeStatus | null;
   activity_library_drilldown: WildlifeJournalDrilldown;
   gallery: WildlifeJournalGallery;
 }

@@ -4583,6 +4583,39 @@ class PlaceActivityReportTaxonHistoricalStatus(BaseModel):
     status: Literal["new", "first_record", "regular", "seen_before"]
 
 
+class PlaceActivityReportTaxonChangeStatus(BaseModel):
+    """One taxon's recent-vs-reference presence comparison (Gate C --
+    Meaningful Change Detection / Baseline Comparison v1; see
+    docs/meaningful-change-detection-contract.md). Present only for an
+    authoritatively-confirmed taxon -- never populated from a provisional
+    SpeciesSuggestion alone, matching `historical_status`'s identical truth
+    contract.
+
+    `recent_presence_days`/`reference_presence_days` count distinct
+    genuinely-monitored (usable) days this taxon was confirmed on -- never
+    raw Visit count, so one busy afternoon can never look like several
+    independent days of presence. `recent_usable_day_count`/`reference_
+    usable_day_count` are the fixed window-size targets (`place_change_
+    summary.RECENT_WINDOW_USABLE_DAYS`/`REFERENCE_WINDOW_USABLE_DAYS`) this
+    comparison actually achieved -- always exactly 7/14 whenever `status` is
+    anything other than `insufficient_baseline`/`insufficient_recent_
+    coverage`, repeated here so this entry is self-explanatory without
+    cross-referencing `PlaceActivityReportChangeWindows`.
+    """
+
+    recent_presence_days: int = Field(ge=0)
+    recent_usable_day_count: int = Field(ge=0)
+    reference_presence_days: int = Field(ge=0)
+    reference_usable_day_count: int = Field(ge=0)
+    status: Literal[
+        "insufficient_baseline",
+        "insufficient_recent_coverage",
+        "no_supported_change",
+        "higher_recent_presence",
+        "lower_recent_presence",
+    ]
+
+
 class PlaceActivityReportTaxonEntry(BaseModel):
     """One represented taxon and its Visit-count backing. `confirmed_visit_
     count`/`provisional_visit_count` are always kept separate -- see "Report
@@ -4603,6 +4636,9 @@ class PlaceActivityReportTaxonEntry(BaseModel):
     # ever establishing historical status. See
     # docs/historical-baseline-maturity-contract.md.
     historical_status: PlaceActivityReportTaxonHistoricalStatus | None = None
+    # `None` under the identical condition as `historical_status` above.
+    # See docs/meaningful-change-detection-contract.md.
+    change_status: PlaceActivityReportTaxonChangeStatus | None = None
 
 
 class PlaceActivityReportZoneActivity(BaseModel):
@@ -4672,6 +4708,44 @@ class PlaceActivityReportHistoricalBaseline(BaseModel):
     latest_authoritative_record_at: datetime | None = None
 
 
+class PlaceActivityReportChangeWindows(BaseModel):
+    """The bounded recent/reference comparison windows Gate C -- Meaningful
+    Change Detection / Baseline Comparison v1 used to produce every
+    `change_status` in this report (see
+    docs/meaningful-change-detection-contract.md). `is_valid=False` means no
+    per-taxon or Place-wide change status in this report is anything other
+    than `invalid_reason` -- never a fabricated comparison from a partial
+    window. `*_start_at` fields are `None` only when the corresponding
+    window could not be populated at all."""
+
+    policy_version: int = Field(ge=1)
+    recent_window_start_at: datetime | None = None
+    recent_window_end_at: datetime
+    reference_window_start_at: datetime | None = None
+    reference_window_end_at: datetime | None = None
+    is_valid: bool
+    invalid_reason: Literal["insufficient_baseline", "insufficient_recent_coverage"] | None = None
+
+
+class PlaceActivityReportOverallChangeStatus(BaseModel):
+    """The Place-wide aggregate comparison: any confirmed wildlife activity
+    (named-species and "unknown_bird"/"unknown_animal" abstentions alike),
+    never a forced blend of potentially conflicting per-species signals --
+    see docs/meaningful-change-detection-contract.md."""
+
+    recent_presence_days: int = Field(ge=0)
+    recent_usable_day_count: int = Field(ge=0)
+    reference_presence_days: int = Field(ge=0)
+    reference_usable_day_count: int = Field(ge=0)
+    status: Literal[
+        "building_baseline",
+        "insufficient_recent_coverage",
+        "no_supported_change",
+        "more_activity_recorded",
+        "less_activity_recorded",
+    ]
+
+
 class PlaceActivityReportResponse(BaseModel):
     """One deterministic current-period activity report for a Place (see
     docs/place-activity-report-contract.md). Every count is a Visit count,
@@ -4725,6 +4799,14 @@ class PlaceActivityReportResponse(BaseModel):
     # enough to trust a new-vs-regular species claim"). See
     # docs/historical-baseline-maturity-contract.md.
     historical_baseline: PlaceActivityReportHistoricalBaseline
+    # Gate C -- Meaningful Change Detection / Baseline Comparison v1 (see
+    # docs/meaningful-change-detection-contract.md): the bounded windows
+    # backing every `taxa[].change_status`/`overall_change_status` below,
+    # plus the Place-wide aggregate comparison. Never population/ecological
+    # claims -- only a bounded, coverage-aware comparison of what was
+    # recorded under comparable monitoring.
+    change_windows: PlaceActivityReportChangeWindows
+    overall_change_status: PlaceActivityReportOverallChangeStatus
     warnings: list[str] = Field(default_factory=list, max_length=10)
 
 
@@ -4847,6 +4929,11 @@ class WildlifeJournalLabelSummary(BaseModel):
     # either figure.
     distinct_confirmed_usable_days: int = Field(default=0, ge=0)
     is_regular: bool = False
+    # Gate C -- Meaningful Change Detection / Baseline Comparison v1 -- see
+    # docs/meaningful-change-detection-contract.md. `None` under the
+    # identical truth-contract condition as `historical_status` elsewhere:
+    # never populated from a provisional SpeciesSuggestion alone.
+    change_status: PlaceActivityReportTaxonChangeStatus | None = None
 
 
 class WildlifeJournalOverviewResponse(BaseModel):
@@ -4940,6 +5027,10 @@ class WildlifeJournalHistoryResponse(BaseModel):
     distinct_confirmed_usable_days: int = Field(default=0, ge=0)
     is_regular: bool = False
     baseline_maturity: Literal["insufficient", "developing", "established"] = "insufficient"
+    # Gate C -- Meaningful Change Detection / Baseline Comparison v1 -- see
+    # `WildlifeJournalLabelSummary.change_status` and
+    # docs/meaningful-change-detection-contract.md.
+    change_status: PlaceActivityReportTaxonChangeStatus | None = None
     activity_library_drilldown: WildlifeJournalDrilldown
     gallery: WildlifeJournalGallery
 

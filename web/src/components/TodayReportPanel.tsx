@@ -5,7 +5,7 @@ import type {
 } from "../api/types";
 import { EmptyState } from "./EmptyState";
 import { StatusPill } from "./StatusPill";
-import { formatDateTime } from "../utils";
+import { changeStatusBadge, formatDateTime } from "../utils";
 
 /**
  * Product Experience / UI Cohesion v1 Phase 1 (Gate C: Daily Place Report
@@ -102,6 +102,28 @@ function historicalStatusBadge(
       return { label: "First confirmed record so far", tone: "quiet" };
     case "regular":
       return { label: "Regular here", tone: "good" };
+    default:
+      return null;
+  }
+}
+
+// The single Place-level line Today may show about recent-vs-reference
+// change -- see "Today integration" in docs/meaningful-change-detection-
+// contract.md. `no_supported_change` deliberately renders nothing (the
+// calm, ordinary case -- silence is the message), matching how a plain
+// "seen_before" species row above also renders no badge at all. This next
+// says only what MockingBird recorded under comparable monitoring -- never
+// a population/ecological claim.
+function overallChangeMessage(status: PlaceActivityReportResponse["overall_change_status"]): string | null {
+  switch (status.status) {
+    case "building_baseline":
+      return "MockingBird is still building a baseline for this Place.";
+    case "insufficient_recent_coverage":
+      return "There wasn't enough recent monitoring to compare with history.";
+    case "more_activity_recorded":
+      return "Wildlife activity was recorded on more monitored days recently than in the preceding weeks.";
+    case "less_activity_recorded":
+      return "Wildlife activity was recorded on fewer monitored days recently than in the preceding weeks.";
     default:
       return null;
   }
@@ -228,6 +250,7 @@ export function TodayReportPanel({
   const confirmedSpeciesCount = confirmedTaxa.filter((taxon) => taxon.is_species).length;
   const speciesHeadlineCount = confirmedSpeciesCount > 0 ? confirmedSpeciesCount : confirmedTaxa.length;
   const speciesHeadlineLabel = confirmedSpeciesCount > 0 ? "species" : "kinds of wildlife";
+  const changeMessage = overallChangeMessage(report.overall_change_status);
 
   return (
     <section aria-label="Today's wildlife report" className="panel today-report">
@@ -245,6 +268,7 @@ export function TodayReportPanel({
       {coveragePartial && coverageNote ? (
         <p className="meta-text today-report-coverage-note">{coverageNote}</p>
       ) : null}
+      {changeMessage ? <p className="meta-text today-report-change-note">{changeMessage}</p> : null}
 
       {hasWildlife ? (
         <>
@@ -278,6 +302,7 @@ export function TodayReportPanel({
                   <ol className="today-report-species-list">
                     {topTaxa.map((taxon) => {
                       const historicalBadge = historicalStatusBadge(taxon);
+                      const changeBadge = changeStatusBadge(taxon.change_status);
                       return (
                         <li key={taxon.label}>
                           <div className="today-report-species-name">
@@ -286,6 +311,7 @@ export function TodayReportPanel({
                             {historicalBadge ? (
                               <StatusPill label={historicalBadge.label} tone={historicalBadge.tone} />
                             ) : null}
+                            {changeBadge ? <StatusPill label={changeBadge.label} tone={changeBadge.tone} /> : null}
                           </div>
                           <div className="today-report-species-count">
                             <strong>{plural(taxon.confirmed_visit_count, "visit")}</strong>

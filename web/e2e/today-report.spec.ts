@@ -84,6 +84,28 @@ async function mockPlaceActivityReport(page: Page, overrides: Record<string, unk
       earliest_authoritative_record_at: new Date(now.getTime() - 300 * 24 * 3600 * 1000).toISOString(),
       latest_authoritative_record_at: now.toISOString(),
     },
+    // Gate C -- Meaningful Change Detection / Baseline Comparison v1 (see
+    // docs/meaningful-change-detection-contract.md). Deliberately "valid" +
+    // "no_supported_change" by default -- the calm, invisible-by-default
+    // case (no Place-level note rendered) -- so a scenario that doesn't
+    // care about this feature sees no unexpected text; scenarios that do
+    // override these fields explicitly.
+    change_windows: {
+      policy_version: 1,
+      recent_window_start_at: new Date(now.getTime() - 7 * 24 * 3600 * 1000).toISOString(),
+      recent_window_end_at: now.toISOString(),
+      reference_window_start_at: new Date(now.getTime() - 21 * 24 * 3600 * 1000).toISOString(),
+      reference_window_end_at: new Date(now.getTime() - 7 * 24 * 3600 * 1000).toISOString(),
+      is_valid: true,
+      invalid_reason: null,
+    },
+    overall_change_status: {
+      recent_presence_days: 4,
+      recent_usable_day_count: 7,
+      reference_presence_days: 8,
+      reference_usable_day_count: 14,
+      status: "no_supported_change" as string,
+    },
     warnings: [
       "Visits are activity sessions, not estimates of unique animals. The same animal may create more than one Visit if it leaves and returns.",
     ],
@@ -345,6 +367,131 @@ test("historical status badges read New/First confirmed/Regular honestly, and a 
   await expect(finchRow.getByText("Regular here")).toHaveCount(0);
   await expect(finchRow.getByText("New to your reviewed history")).toHaveCount(0);
   await expect(finchRow.getByText("First confirmed record so far")).toHaveCount(0);
+});
+
+test("change-status badges read More/Fewer honestly, and no_supported_change stays unbadged", async ({ page }) => {
+  // Gate C -- Meaningful Change Detection / Baseline Comparison v1 (see
+  // docs/meaningful-change-detection-contract.md): the backend already
+  // resolved the recent-vs-reference comparison into `taxon.change_status.
+  // status` -- this only proves the frontend renders exactly what it was
+  // given, never re-deriving the comparison itself.
+  await completeSetup(page);
+  const now = new Date().toISOString();
+  const baseTaxon = {
+    category: "bird",
+    is_species: true,
+    confirmed_visit_count: 3,
+    provisional_visit_count: 0,
+    total_visit_count: 3,
+    first_activity_at: now,
+    last_activity_at: now,
+  };
+  await mockPlaceActivityReport(page, {
+    total_visit_count: 3,
+    confirmed_wildlife_visit_count: 3,
+    wildlife_visit_count: 3,
+    distinct_taxa_count: 3,
+    distinct_species_count: 3,
+    last_activity_at: now,
+    first_activity_at: now,
+    taxa: [
+      {
+        ...baseTaxon,
+        label: "northern_cardinal",
+        display_name: "Northern Cardinal",
+        change_status: {
+          recent_presence_days: 5,
+          recent_usable_day_count: 7,
+          reference_presence_days: 3,
+          reference_usable_day_count: 14,
+          status: "higher_recent_presence",
+        },
+      },
+      {
+        ...baseTaxon,
+        label: "house_finch",
+        display_name: "House Finch",
+        change_status: {
+          recent_presence_days: 1,
+          recent_usable_day_count: 7,
+          reference_presence_days: 10,
+          reference_usable_day_count: 14,
+          status: "lower_recent_presence",
+        },
+      },
+      {
+        ...baseTaxon,
+        label: "carolina_wren",
+        display_name: "Carolina Wren",
+        change_status: {
+          recent_presence_days: 4,
+          recent_usable_day_count: 7,
+          reference_presence_days: 8,
+          reference_usable_day_count: 14,
+          status: "no_supported_change",
+        },
+      },
+    ],
+  });
+
+  await page.goto("/");
+  const reportPanel = page.locator("section.today-report");
+  const speciesList = reportPanel.locator(".today-report-species-list li");
+  await expect(speciesList).toHaveCount(3);
+
+  const cardinalRow = speciesList.filter({ hasText: "Northern Cardinal" });
+  await expect(cardinalRow.getByText("More often recently")).toBeVisible();
+
+  const finchRow = speciesList.filter({ hasText: "House Finch" });
+  await expect(finchRow.getByText("Fewer recent visits")).toBeVisible();
+
+  const wrenRow = speciesList.filter({ hasText: "Carolina Wren" });
+  await expect(wrenRow.getByText("More often recently")).toHaveCount(0);
+  await expect(wrenRow.getByText("Fewer recent visits")).toHaveCount(0);
+});
+
+test("the Place-level change message stays calm: shown only when there is something to say", async ({ page }) => {
+  await completeSetup(page);
+
+  await mockPlaceActivityReport(page, {
+    overall_change_status: {
+      recent_presence_days: 0,
+      recent_usable_day_count: 0,
+      reference_presence_days: 0,
+      reference_usable_day_count: 0,
+      status: "building_baseline",
+    },
+  });
+  await page.goto("/");
+  await expect(page.getByText("MockingBird is still building a baseline for this Place.")).toBeVisible();
+
+  await mockPlaceActivityReport(page, {
+    overall_change_status: {
+      recent_presence_days: 2,
+      recent_usable_day_count: 7,
+      reference_presence_days: 12,
+      reference_usable_day_count: 14,
+      status: "less_activity_recorded",
+    },
+  });
+  await page.goto("/");
+  await expect(
+    page.getByText("Wildlife activity was recorded on fewer monitored days recently than in the preceding weeks."),
+  ).toBeVisible();
+
+  // The calm default -- no Place-level line at all, matching how an
+  // ordinary "seen_before" species row also renders no badge.
+  await mockPlaceActivityReport(page, {
+    overall_change_status: {
+      recent_presence_days: 4,
+      recent_usable_day_count: 7,
+      reference_presence_days: 8,
+      reference_usable_day_count: 14,
+      status: "no_supported_change",
+    },
+  });
+  await page.goto("/");
+  await expect(page.locator(".today-report-change-note")).toHaveCount(0);
 });
 
 test("a Stream with older exposure history but zero coverage this period shows Partial, never Fully observed", async ({

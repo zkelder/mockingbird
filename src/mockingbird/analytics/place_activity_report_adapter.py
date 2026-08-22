@@ -36,13 +36,22 @@ from mockingbird.analytics.place_activity_report import (
     VisitResolution,
     ZoneActivityEntry,
 )
+from mockingbird.analytics.place_change_summary import (
+    PlaceChangeSummary,
+    PlaceChangeWindows,
+    PlaceOverallChangeStatus,
+    TaxonChangeStatus,
+)
 from mockingbird.api.schemas import (
     LabelCategory,
+    PlaceActivityReportChangeWindows,
     PlaceActivityReportCoverage,
     PlaceActivityReportCoverageGap,
     PlaceActivityReportHistoricalBaseline,
     PlaceActivityReportHourActivity,
+    PlaceActivityReportOverallChangeStatus,
     PlaceActivityReportResponse,
+    PlaceActivityReportTaxonChangeStatus,
     PlaceActivityReportTaxonEntry,
     PlaceActivityReportTaxonHistoricalStatus,
     PlaceActivityReportZoneActivity,
@@ -119,10 +128,56 @@ def _species_historical_status_response(
     )
 
 
+def taxon_change_status_response(
+    status: TaxonChangeStatus | None,
+) -> PlaceActivityReportTaxonChangeStatus | None:
+    """Public (not module-private) because Bird Log's own repository
+    integration (`ProductRepository.wildlife_journal_overview`/
+    `wildlife_journal_history`) needs this exact same conversion for its own
+    `WildlifeJournalLabelSummary.change_status`/`WildlifeJournalHistory
+    Response.change_status` fields -- see
+    docs/meaningful-change-detection-contract.md."""
+
+    if status is None:
+        return None
+    return PlaceActivityReportTaxonChangeStatus(
+        recent_presence_days=status.recent_presence_days,
+        recent_usable_day_count=status.recent_usable_day_count,
+        reference_presence_days=status.reference_presence_days,
+        reference_usable_day_count=status.reference_usable_day_count,
+        status=status.status,
+    )
+
+
+def _change_windows_response(windows: PlaceChangeWindows) -> PlaceActivityReportChangeWindows:
+    return PlaceActivityReportChangeWindows(
+        policy_version=windows.policy_version,
+        recent_window_start_at=windows.recent_window_start_at,
+        recent_window_end_at=windows.recent_window_end_at,
+        reference_window_start_at=windows.reference_window_start_at,
+        reference_window_end_at=windows.reference_window_end_at,
+        is_valid=windows.is_valid,
+        invalid_reason=windows.invalid_reason,
+    )
+
+
+def _overall_change_status_response(
+    overall: PlaceOverallChangeStatus,
+) -> PlaceActivityReportOverallChangeStatus:
+    return PlaceActivityReportOverallChangeStatus(
+        recent_presence_days=overall.recent_presence_days,
+        recent_usable_day_count=overall.recent_usable_day_count,
+        reference_presence_days=overall.reference_presence_days,
+        reference_usable_day_count=overall.reference_usable_day_count,
+        status=overall.status,
+    )
+
+
 def _taxon_entry_response(
     entry: TaxonReportEntry,
     *,
     historical_status: SpeciesHistoricalStatus | None,
+    change_status: TaxonChangeStatus | None,
 ) -> PlaceActivityReportTaxonEntry:
     return PlaceActivityReportTaxonEntry(
         label=entry.label,
@@ -139,6 +194,7 @@ def _taxon_entry_response(
             if historical_status is not None
             else None
         ),
+        change_status=taxon_change_status_response(change_status),
     )
 
 
@@ -198,6 +254,7 @@ def place_activity_report_response(
     warnings: list[str],
     historical_baseline: HistoricalPlaceBaseline,
     species_historical_statuses: Mapping[str, SpeciesHistoricalStatus],
+    change_summary: PlaceChangeSummary,
 ) -> PlaceActivityReportResponse:
     """Adapt one pure `PlaceActivityReport` into its typed API response.
     Field-for-field only -- see the module docstring. `report.coverage` is
@@ -214,6 +271,12 @@ def place_activity_report_response(
     statuses` is keyed by taxon label; a `report.taxa` entry with no match
     (a purely-provisional taxon, never authoritatively confirmed) correctly
     gets `historical_status=None` -- see `_taxon_entry_response`.
+
+    `change_summary` is required for the identical reason (Gate C --
+    Meaningful Change Detection / Baseline Comparison v1; see
+    docs/meaningful-change-detection-contract.md); `change_summary.taxa` is
+    matched to `report.taxa` by taxon label the same way `species_
+    historical_statuses` already is.
     """
 
     if report.coverage is None:
@@ -221,6 +284,9 @@ def place_activity_report_response(
             "place_activity_report_response requires a coverage summary; "
             "ProductRepository.place_activity_report must always compute one."
         )
+
+    change_status_by_label = {status.taxon.label: status for status in change_summary.taxa}
+    assert change_summary.overall is not None
 
     return PlaceActivityReportResponse(
         period_start_at=report.period_start_at,
@@ -239,7 +305,9 @@ def place_activity_report_response(
         distinct_species_count=report.distinct_species_count,
         taxa=[
             _taxon_entry_response(
-                entry, historical_status=species_historical_statuses.get(entry.label)
+                entry,
+                historical_status=species_historical_statuses.get(entry.label),
+                change_status=change_status_by_label.get(entry.label),
             )
             for entry in report.taxa
         ],
@@ -253,5 +321,7 @@ def place_activity_report_response(
         coverage=_coverage_response(report.coverage),
         maturity=report.maturity,
         historical_baseline=_historical_baseline_response(historical_baseline),
+        change_windows=_change_windows_response(change_summary.windows),
+        overall_change_status=_overall_change_status_response(change_summary.overall),
         warnings=warnings,
     )

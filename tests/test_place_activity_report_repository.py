@@ -742,6 +742,8 @@ def test_api_serialization_contract_exposes_only_documented_fields(
         "coverage",
         "maturity",
         "historical_baseline",
+        "change_windows",
+        "overall_change_status",
         "warnings",
     }
     assert body["total_visit_count"] == 1
@@ -760,6 +762,7 @@ def test_api_serialization_contract_exposes_only_documented_fields(
         "first_activity_at",
         "last_activity_at",
         "historical_status",
+        "change_status",
     }
     assert taxon["label"] == "northern_cardinal"
     assert taxon["category"] == "bird"
@@ -777,6 +780,37 @@ def test_api_serialization_contract_exposes_only_documented_fields(
         "status",
     }
     assert taxon["historical_status"]["status"] == "first_record"
+    # Gate C -- Meaningful Change Detection / Baseline Comparison v1 (see
+    # docs/meaningful-change-detection-contract.md): the identical zero-
+    # accumulated-history fixture that makes historical_status "first_
+    # record" above also makes any change comparison honestly unsupported.
+    assert set(taxon["change_status"].keys()) == {
+        "recent_presence_days",
+        "recent_usable_day_count",
+        "reference_presence_days",
+        "reference_usable_day_count",
+        "status",
+    }
+    assert taxon["change_status"]["status"] == "insufficient_baseline"
+    assert set(body["change_windows"].keys()) == {
+        "policy_version",
+        "recent_window_start_at",
+        "recent_window_end_at",
+        "reference_window_start_at",
+        "reference_window_end_at",
+        "is_valid",
+        "invalid_reason",
+    }
+    assert body["change_windows"]["is_valid"] is False
+    assert body["change_windows"]["invalid_reason"] == "insufficient_baseline"
+    assert set(body["overall_change_status"].keys()) == {
+        "recent_presence_days",
+        "recent_usable_day_count",
+        "reference_presence_days",
+        "reference_usable_day_count",
+        "status",
+    }
+    assert body["overall_change_status"]["status"] == "building_baseline"
     assert len(body["activity_by_hour"]) == 24
     assert set(body["coverage"].keys()) == {
         "period_seconds",

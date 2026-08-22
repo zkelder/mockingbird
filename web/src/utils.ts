@@ -1,8 +1,36 @@
+import type { PlaceActivityReportTaxonChangeStatus } from "./api/types";
+
 export function formatLabel(value: string): string {
   return value
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+/**
+ * Gate C -- Meaningful Change Detection / Baseline Comparison v1 (see
+ * docs/meaningful-change-detection-contract.md). Shared by Today
+ * (`TodayReportPanel`) and Bird Log (`BirdLogPage`) so both surfaces use
+ * identical wording for the same underlying fact. Only the two "there is
+ * something worth saying" statuses render a badge at all --
+ * `insufficient_baseline`/`insufficient_recent_coverage`/`no_supported_
+ * change` (and no change_status at all, e.g. a purely-provisional taxon)
+ * render nothing, keeping an ordinary row calm rather than decorating every
+ * species with a "no change" pill. Deliberately "quiet" tone for both
+ * directions -- more or fewer recent sightings is a recorded fact, never a
+ * value judgment (a squirrel visiting more often is not "good news").
+ */
+export function changeStatusBadge(
+  changeStatus: PlaceActivityReportTaxonChangeStatus | null | undefined,
+): { label: string; tone: "good" | "quiet" } | null {
+  switch (changeStatus?.status) {
+    case "higher_recent_presence":
+      return { label: "More often recently", tone: "quiet" };
+    case "lower_recent_presence":
+      return { label: "Fewer recent visits", tone: "quiet" };
+    default:
+      return null;
+  }
 }
 
 /**
