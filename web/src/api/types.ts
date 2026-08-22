@@ -1347,6 +1347,55 @@ export interface FolderImportEvidenceBatchCreateResponse {
   warnings: string[];
 }
 
+export interface RecordedMediaAnalysisRun {
+  id: string;
+  media_asset_id: string;
+  stream_id: string;
+  pipeline_version: string;
+  status: string;
+  sample_fps: number;
+  source_duration_seconds?: number | null;
+  frames_considered: number;
+  frames_analyzed: number;
+  events_created: number;
+  visits_created: number;
+  error_code?: string | null;
+  error_message?: string | null;
+  started_at: string;
+  completed_at?: string | null;
+  created_at: string;
+}
+
+export interface RecordedMediaAnalysisRequest {
+  sample_fps?: number;
+  max_frames?: number;
+  pipeline_version?: string;
+  force_reprocess?: boolean;
+}
+
+export interface RecordedMediaAnalysisResponse {
+  run_id: string;
+  status: string;
+  media_asset_id: string;
+  stream_id: string;
+  pipeline_version: string;
+  sample_fps: number;
+  frames_considered: number;
+  frames_analyzed: number;
+  events_created: number;
+  visits_created: number;
+  visit_ids: string[];
+  event_ids: string[];
+  source_duration_seconds?: number | null;
+  truncated: boolean;
+  capture_time_known: boolean;
+  error_code?: string | null;
+  error_message?: string | null;
+  creates_events: boolean;
+  creates_visits: boolean;
+  creates_truth: boolean;
+}
+
 export interface SavedMediaRetentionItem {
   media_asset_id: string;
   source_id?: string | null;

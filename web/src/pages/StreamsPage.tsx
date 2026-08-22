@@ -13,6 +13,7 @@ import type {
   FolderImportCreatedMediaAsset,
   FolderImportRequest,
   FolderImportResponse,
+  RecordedMediaAnalysisResponse,
   DemoDetectionRunCreate,
   DemoDetectionRunResult,
   DetectionProposal,
@@ -1784,6 +1785,15 @@ export function StreamsPage({
     Record<string, SavedPreviewMotionEvidenceResponse>
   >({});
   const [folderEvidenceErrors, setFolderEvidenceErrors] = useState<Record<string, string>>({});
+  const [recordedMediaAnalysisResults, setRecordedMediaAnalysisResults] = useState<
+    Record<string, RecordedMediaAnalysisResponse>
+  >({});
+  const [recordedMediaAnalysisErrors, setRecordedMediaAnalysisErrors] = useState<
+    Record<string, string>
+  >({});
+  const [recordedMediaAnalysisLoadingId, setRecordedMediaAnalysisLoadingId] = useState<
+    string | null
+  >(null);
   const [folderRecursive, setFolderRecursive] = useState(false);
   const [folderAllowedExtensions, setFolderAllowedExtensions] = useState("jpg,jpeg,png,webp");
   const [folderMaxFiles, setFolderMaxFiles] = useState("500");
@@ -3888,6 +3898,38 @@ export function StreamsPage({
     }
   }
 
+  // Offline / Recorded Observation Ingest v1: decode one already-imported
+  // recorded-video MediaAsset through the ordinary Observation Engine seam.
+  // Bounded and synchronous -- this call runs the full decode/detect/track/
+  // assemble/admit pass before returning; see docs/offline-recorded-media-
+  // observation-contract.md "API/CLI/UI surface".
+  async function handleAnalyzeRecordedMedia(item: FolderImportCreatedMediaAsset) {
+    setRecordedMediaAnalysisLoadingId(item.media_asset_id);
+    setRecordedMediaAnalysisErrors((current) => {
+      const next = { ...current };
+      delete next[item.media_asset_id];
+      return next;
+    });
+    try {
+      const result = await apiClient.analyzeRecordedMedia(item.media_asset_id);
+      setRecordedMediaAnalysisResults((current) => ({
+        ...current,
+        [item.media_asset_id]: result,
+      }));
+      if (result.visits_created > 0) {
+        await refreshLifecycleAndStorage();
+      }
+    } catch (caught) {
+      setRecordedMediaAnalysisErrors((current) => ({
+        ...current,
+        [item.media_asset_id]:
+          caught instanceof Error ? caught.message : "Could not analyze this recorded video.",
+      }));
+    } finally {
+      setRecordedMediaAnalysisLoadingId(null);
+    }
+  }
+
   const selectedProviderLabel =
     selectedSetupReview?.provider_display_name ??
     selectedProviderDefinition?.display_name ??
@@ -5682,6 +5724,63 @@ export function StreamsPage({
                                           ),
                                         )}
                                       </div>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                                {item.content_type?.startsWith("video/") ? (
+                                  <div className="folder-evidence-action">
+                                    <button
+                                      className="secondary-action"
+                                      disabled={
+                                        recordedMediaAnalysisLoadingId === item.media_asset_id
+                                      }
+                                      onClick={() => void handleAnalyzeRecordedMedia(item)}
+                                      type="button"
+                                    >
+                                      {recordedMediaAnalysisLoadingId === item.media_asset_id
+                                        ? "Analyzing recorded video..."
+                                        : "Analyze imported media"}
+                                    </button>
+                                    <span className="meta-text">
+                                      Runs this recorded video through the same wildlife
+                                      Observation pipeline as a live camera. Creates ordinary
+                                      needs-review candidate Visits, never reviewed truth.
+                                    </span>
+                                  </div>
+                                ) : null}
+                                {recordedMediaAnalysisErrors[item.media_asset_id] ? (
+                                  <div className="zone-error">
+                                    {recordedMediaAnalysisErrors[item.media_asset_id]}
+                                  </div>
+                                ) : null}
+                                {recordedMediaAnalysisResults[item.media_asset_id] ? (
+                                  <div className="folder-evidence-result">
+                                    <strong>
+                                      Analysis: {recordedMediaAnalysisResults[item.media_asset_id].status}
+                                    </strong>
+                                    <span>
+                                      {recordedMediaAnalysisResults[item.media_asset_id]
+                                        .visits_created}{" "}
+                                      Visit
+                                      {recordedMediaAnalysisResults[item.media_asset_id]
+                                        .visits_created === 1
+                                        ? ""
+                                        : "s"}{" "}
+                                      created from{" "}
+                                      {
+                                        recordedMediaAnalysisResults[item.media_asset_id]
+                                          .frames_analyzed
+                                      }{" "}
+                                      analyzed frames. Open Review Queue to review, correct, or
+                                      confirm.
+                                    </span>
+                                    {recordedMediaAnalysisResults[item.media_asset_id].error_message ? (
+                                      <span>
+                                        {
+                                          recordedMediaAnalysisResults[item.media_asset_id]
+                                            .error_message
+                                        }
+                                      </span>
                                     ) : null}
                                   </div>
                                 ) : null}

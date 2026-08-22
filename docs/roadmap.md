@@ -2832,6 +2832,36 @@ question.
   (3798 tests) passed alongside one confirmed pre-existing, unrelated
   failure (a real-date-boundary sensitivity in an existing dashboard test
   helper, reproduced identically on the unmodified prior commit).
+- **2026-08-22 (Offline / Recorded Observation Ingest v1):** closed the
+  "deliberately stopping short" gap the entry immediately above named:
+  recorded video can now flow, automatically, through the same subject-
+  level wildlife Observation pipeline a live Camera Node uses -- see
+  [offline-recorded-media-observation-contract.md](offline-recorded-media-observation-contract.md).
+  The common seam already existed and needed no change:
+  `FrameDrivenObservationProvider.replay_frames` (the same entry point the
+  Perception Replay Regression Harness already drives) now also accepts a
+  new bounded, deterministic ffmpeg-decoded recorded-video frame source,
+  feeding the completely unmodified detector/tracker/assembler/admission
+  stack -- multi-subject correctness, Privacy/Ignore enforcement,
+  source-resolution evidence, and idempotency all came free from reusing
+  that stack unmodified rather than reimplementing any of it. Deliberate,
+  disclosed timestamp-honesty fork from the live path: an offline
+  candidate's `observed_at` derives from the video's own timeline
+  (`capture_start + offset`, or the existing epoch-anchor convention when
+  capture start is unknown) rather than real processing wall-clock, so a
+  historical clip imported today is never reported as observed today.
+  Zero live monitoring-coverage rows are ever created for an offline run
+  (verified directly against `MonitoringExposureIntervalModel`, not
+  merely asserted). Schema 40->41 (one additive migration, upgrade-path-
+  tested). Also root-caused and fixed the one pre-existing Core failure
+  the previous entry's own report flagged
+  (`test_dashboard_summary_uses_reviewed_truth_and_bounded_safe_visits`):
+  a test-fixture bug (persisting an un-normalized local timestamp where
+  every real write path normalizes to UTC), not a `dashboard_summary`
+  defect -- fixed at the actually-buggy layer, with a new deterministic,
+  host-timezone-independent midnight-boundary regression added. New
+  bounded API route, CLI command, and a Streams-page "Analyze imported
+  media" action -- no background job queue, no second review system.
 
 See [roadmap-history.md](roadmap-history.md) for the concise phase record.
 

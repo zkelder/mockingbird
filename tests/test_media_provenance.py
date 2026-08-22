@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -152,6 +152,61 @@ def test_probe_video_metadata_reads_real_duration_and_resolution(tiny_video_clip
     assert result.width == 320
     assert result.height == 240
     assert result.codec_name == "h264"
+    # Offline / Recorded Observation Ingest v1: this fixture never sets
+    # creation_time, so the honest outcome is "not known" -- never a
+    # fabricated fallback to filesystem mtime or the probe's own wall clock.
+    assert result.captured_at is None
+
+
+@pytest.fixture
+def tiny_video_clip_with_creation_time(tmp_path: Path) -> Path:
+    if not _has_real_ffmpeg_suite():
+        pytest.skip("ffmpeg/ffprobe not available in this environment")
+    path = tmp_path / "clip-with-creation-time.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=green:s=320x240:d=1",
+            "-metadata",
+            "creation_time=2024-05-01T14:23:01.000000Z",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            str(path),
+        ],
+        check=True,
+        timeout=30,
+        capture_output=True,
+    )
+    return path
+
+
+def test_probe_video_metadata_reads_real_embedded_creation_time(
+    tiny_video_clip_with_creation_time: Path,
+) -> None:
+    result = media_provenance.probe_video_metadata(tiny_video_clip_with_creation_time)
+    assert result is not None
+    assert result.captured_at == datetime(2024, 5, 1, 14, 23, 1, tzinfo=UTC)
+
+
+def test_probe_video_metadata_ignores_a_naive_creation_time_tag() -> None:
+    # A creation_time with no offset/Z is not the trustworthy aware instant
+    # this field promises -- honestly discarded, never assumed UTC.
+    assert media_provenance._parse_video_creation_time("2024-05-01 14:23:01") is None
+
+
+def test_probe_video_metadata_ignores_a_malformed_creation_time_tag() -> None:
+    assert media_provenance._parse_video_creation_time("not-a-timestamp") is None
+    assert media_provenance._parse_video_creation_time(None) is None
+    assert media_provenance._parse_video_creation_time("") is None
 
 
 def test_probe_video_metadata_returns_none_for_a_missing_file(tmp_path: Path) -> None:

@@ -412,6 +412,9 @@ from mockingbird.api.schemas import (
     ReviewQueueSpeciesSuggestionBatchPrepareResult,
     ReviewQueueSpeciesSuggestionBatchPrepareStatus,
     ReviewStatus,
+    RecordedMediaAnalysisRequest,
+    RecordedMediaAnalysisResponse,
+    RecordedMediaAnalysisRun,
     SetupState,
     SetupStateUpdate,
     SavedMediaBulkMotionEvidenceRequest,
@@ -2135,6 +2138,90 @@ class SceneConfusorRegionModel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class RecordedMediaAnalysisRunModel(Base):
+    """Bounded progress/diagnostics and idempotency record for one offline
+    recorded-video analysis attempt (schema 41, Offline / Recorded
+    Observation Ingest v1). See docs/offline-recorded-media-observation-
+    contract.md "Progress and diagnostics" / "Idempotency".
+
+    This table is operational history, mirroring `MonitoringExposureInterval
+    Model`'s own "operational history, never evidence" framing -- it never
+    itself creates or gates a Visit/Event/MediaAsset (the same, unmodified
+    candidate-Visit admission boundary still decides that); it only records
+    *that* one bounded processing attempt happened, its outcome, and enough
+    bounded counts for `GET .../analysis-runs/{id}` to answer "queued /
+    processing / completed / failed" honestly without per-frame log spam.
+
+    `(media_asset_id, pipeline_version)` is the idempotency key a caller
+    checks before starting real work: a prior `completed` row for the exact
+    same pair means "already processed under this pipeline," never silently
+    duplicated; a caller explicitly requesting re-analysis under a newer
+    detector/tracker/assembler build supplies a different `pipeline_version`
+    string instead, which is a legitimate, distinct row, not a duplicate."""
+
+    __tablename__ = "recorded_media_analysis_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued', 'processing', 'completed', 'failed')",
+            name="ck_recorded_media_analysis_run_status",
+        ),
+        Index(
+            "ix_recorded_media_analysis_runs_asset_pipeline",
+            "media_asset_id",
+            "pipeline_version",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    media_asset_id: Mapped[str] = mapped_column(ForeignKey("media_assets.id"), nullable=False)
+    stream_id: Mapped[str] = mapped_column(ForeignKey("streams.id"), nullable=False)
+    # A stable identity for "which detector/tracker/assembler build produced
+    # this run" -- never a raw model file path. Two rows sharing this value
+    # for the same `media_asset_id` are the same idempotent attempt; a
+    # different value is an explicit, legitimate re-analysis (see "Idempotent
+    # vs. explicit reprocessing" in docs/offline-recorded-media-observation-
+    # contract.md).
+    pipeline_version: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    sample_fps: Mapped[float] = mapped_column(Float, nullable=False)
+    source_duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    frames_considered: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    frames_analyzed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    events_created: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    visits_created: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # A small, fixed-vocabulary code (see "Error taxonomy" in the contract
+    # doc) -- `None` for a `queued`/`processing`/`completed` row. Never a
+    # raw filesystem path or subprocess stderr.
+    error_code: Mapped[str | None] = mapped_column(String, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+def _recorded_media_analysis_run_from_model(row: RecordedMediaAnalysisRunModel) -> RecordedMediaAnalysisRun:
+    """Pure projection: durable row -> the read-only API/CLI shape."""
+
+    return RecordedMediaAnalysisRun(
+        id=row.id,
+        media_asset_id=row.media_asset_id,
+        stream_id=row.stream_id,
+        pipeline_version=row.pipeline_version,
+        status=row.status,
+        sample_fps=row.sample_fps,
+        source_duration_seconds=row.source_duration_seconds,
+        frames_considered=row.frames_considered,
+        frames_analyzed=row.frames_analyzed,
+        events_created=row.events_created,
+        visits_created=row.visits_created,
+        error_code=row.error_code,
+        error_message=row.error_message,
+        started_at=row.started_at,
+        completed_at=row.completed_at,
+        created_at=row.created_at,
+    )
+
+
 def _scene_confusor_snapshot_from_model(row: SceneConfusorRegionModel) -> SceneRegionSnapshot:
     """Pure projection: durable row -> the small snapshot the pure
     `scene_confusor` decision module actually reads. Mirrors every other
@@ -3496,6 +3583,135 @@ class ProductRepository:
             .limit(1)
         ).first()
         return row.event_id if row is not None else None
+
+    # -------------------------------------------------------------------
+    # Offline / Recorded Observation Ingest v1 (see docs/offline-recorded-
+    # media-observation-contract.md): bounded progress/diagnostics and
+    # idempotency bookkeeping for one recorded-video analysis attempt.
+    # `mockingbird.observation.offline_ingest` is the orchestrator that
+    # calls these; the actual Visit/Event/Evidence write still only ever
+    # happens through the completely unmodified `create_candidate_visit_
+    # from_proposal` above.
+    # -------------------------------------------------------------------
+
+    def find_recorded_media_analysis_run(
+        self, *, media_asset_id: str, pipeline_version: str,
+    ) -> RecordedMediaAnalysisRun | None:
+        """Side-effect-free: the most recent analysis attempt for this
+        exact `(media_asset_id, pipeline_version)` pair, if any -- the
+        idempotency check `run_offline_video_ingest` runs before deciding
+        whether to do any real work."""
+
+        with self.session_factory() as session:
+            row = session.scalars(
+                select(RecordedMediaAnalysisRunModel)
+                .where(
+                    RecordedMediaAnalysisRunModel.media_asset_id == media_asset_id,
+                    RecordedMediaAnalysisRunModel.pipeline_version == pipeline_version,
+                )
+                .order_by(RecordedMediaAnalysisRunModel.created_at.desc())
+                .limit(1)
+            ).first()
+            return _recorded_media_analysis_run_from_model(row) if row is not None else None
+
+    def create_recorded_media_analysis_run(
+        self, *, media_asset_id: str, stream_id: str, pipeline_version: str, sample_fps: float, now: datetime,
+    ) -> RecordedMediaAnalysisRun:
+        """Insert one new `processing` run row -- the durable fact that one
+        bounded offline-ingest attempt has begun. Refuses (`ValueError
+        ("analysis_already_in_progress")`) rather than starting a second,
+        concurrent attempt for the exact same `(media_asset_id,
+        pipeline_version)` while an earlier one is still `queued`/
+        `processing` -- a bounded, single-process-adequate guard (not a
+        distributed lock; see "Idempotency and concurrency" in
+        docs/offline-recorded-media-observation-contract.md), checked and
+        inserted inside one transaction to keep the window as small as
+        this storage layer can make it."""
+
+        with self.session_factory() as session:
+            with session.begin():
+                in_progress = session.scalars(
+                    select(RecordedMediaAnalysisRunModel)
+                    .where(
+                        RecordedMediaAnalysisRunModel.media_asset_id == media_asset_id,
+                        RecordedMediaAnalysisRunModel.pipeline_version == pipeline_version,
+                        RecordedMediaAnalysisRunModel.status.in_(("queued", "processing")),
+                    )
+                    .limit(1)
+                ).first()
+                if in_progress is not None:
+                    raise ValueError("analysis_already_in_progress")
+                run_id = self._next_id(session, RecordedMediaAnalysisRunModel, "analysis-run")
+                model = RecordedMediaAnalysisRunModel(
+                    id=run_id, media_asset_id=media_asset_id, stream_id=stream_id,
+                    pipeline_version=pipeline_version, status="processing", sample_fps=sample_fps,
+                    frames_considered=0, frames_analyzed=0, events_created=0, visits_created=0,
+                    started_at=now, completed_at=None, created_at=now,
+                )
+                session.add(model)
+                session.flush()
+                return _recorded_media_analysis_run_from_model(model)
+
+    def complete_recorded_media_analysis_run(
+        self,
+        run_id: str,
+        *,
+        status: str,
+        frames_considered: int,
+        frames_analyzed: int,
+        events_created: int,
+        visits_created: int,
+        now: datetime,
+        error_code: str | None = None,
+        error_message: str | None = None,
+        source_duration_seconds: float | None = None,
+    ) -> None:
+        """Move one run to its terminal state (`completed`/`failed`) with
+        final bounded counts. Never raises for a missing `run_id` -- a
+        caller updating a run it just created should never crash the
+        orchestration if this is somehow called twice; the second call is
+        simply a no-op."""
+
+        if status not in ("completed", "failed"):
+            raise ValueError("invalid_analysis_run_status")
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(RecordedMediaAnalysisRunModel, run_id)
+                if model is None:
+                    return
+                model.status = status
+                model.frames_considered = frames_considered
+                model.frames_analyzed = frames_analyzed
+                model.events_created = events_created
+                model.visits_created = visits_created
+                model.error_code = error_code
+                model.error_message = error_message
+                if source_duration_seconds is not None:
+                    model.source_duration_seconds = source_duration_seconds
+                model.completed_at = now
+
+    def get_recorded_media_analysis_run(self, run_id: str) -> RecordedMediaAnalysisRun | None:
+        """Side-effect-free read for the progress/diagnostics status route."""
+
+        with self.session_factory() as session:
+            model = session.get(RecordedMediaAnalysisRunModel, run_id)
+            return _recorded_media_analysis_run_from_model(model) if model is not None else None
+
+    def list_recorded_media_analysis_runs_for_media_asset(
+        self, media_asset_id: str,
+    ) -> list[RecordedMediaAnalysisRun]:
+        """Side-effect-free: every analysis attempt ever recorded for this
+        MediaAsset, most recent first -- bounded by how many times a real
+        operator would ever explicitly re-analyze one file."""
+
+        with self.session_factory() as session:
+            rows = session.scalars(
+                select(RecordedMediaAnalysisRunModel)
+                .where(RecordedMediaAnalysisRunModel.media_asset_id == media_asset_id)
+                .order_by(RecordedMediaAnalysisRunModel.created_at.desc())
+                .limit(50)
+            ).all()
+            return [_recorded_media_analysis_run_from_model(row) for row in rows]
 
     # -------------------------------------------------------------------
     # Scene confusor suspicion (see docs/scene-confusor-suspicion-
@@ -6231,6 +6447,12 @@ class ProductRepository:
                             asset_duration_seconds = video_probe.duration_seconds
                             asset_width = video_probe.width
                             asset_height = video_probe.height
+                            # Offline / Recorded Observation Ingest v1: an
+                            # embedded container creation_time is a real,
+                            # already-aware capture instant (unlike naive
+                            # EXIF, it needs no assumed local timezone) --
+                            # `None` when absent, never fabricated.
+                            asset_captured_at = video_probe.captured_at
 
                     asset_model = MediaAssetModel(
                         id=media_id,

@@ -1,7 +1,7 @@
 import asyncio
 import base64
 from hashlib import sha1
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 import json
 from pathlib import Path
 import re
@@ -63,6 +63,7 @@ from mockingbird.storage.models import (
     VisitModel,
     ZoneModel,
 )
+from mockingbird.time_utils import normalize_utc
 
 pytestmark = pytest.mark.anyio
 
@@ -401,7 +402,27 @@ async def test_stream_recent_visit_history_is_scoped_bounded_and_safe(
 
 
 def add_dashboard_today_visits(repository: ProductRepository, tmp_path: Path) -> str:
-    """Create local-day truth and evidence cases for the operations Dashboard."""
+    """Create local-day truth and evidence cases for the operations Dashboard.
+
+    Midnight/local-day boundary fix: every timestamp actually *persisted*
+    below is normalized to UTC (`normalize_utc`) before being bound to a
+    `DateTime(timezone=True)` column, exactly mirroring what every real
+    production write path already does (`datetime.now(UTC)` everywhere --
+    see `product_repository.py`'s own writers). SQLite's generic `DateTime
+    (timezone=True)` binding silently discards tzinfo and encodes only the
+    raw wall-clock digits, so a naive-local-vs-UTC mismatch at write time
+    produces a real, wall-clock-time-of-day-dependent bug: this fixture
+    previously bound the *local*-zoned `local_now` object directly, which
+    only coincidentally compared correctly against `dashboard_summary`'s own
+    UTC-normalized day boundary whenever the real local hour happened to be
+    `>=` this host's UTC offset -- and silently failed whenever a test ran
+    between local midnight and local-midnight-plus-UTC-offset (see
+    `test_dashboard_midnight_boundary_uses_local_day_not_utc_digits` for a
+    deterministic, clock-independent regression locking in the actual
+    day-boundary behavior this fixture exercises). `local_now` itself stays
+    a real local-aware instant, unchanged -- it is also returned so the
+    caller can pass it as `dashboard_summary`'s own `now=`, which performs
+    its own correct local-day-to-UTC-range conversion from it."""
 
     local_now = datetime.now().astimezone().replace(microsecond=0)
     records = [
@@ -426,7 +447,7 @@ def add_dashboard_today_visits(repository: ProductRepository, tmp_path: Path) ->
                 )
             )
             for index, (kind, review_status, label, has_media, minutes_ago) in enumerate(records):
-                started_at = local_now - timedelta(minutes=minutes_ago)
+                started_at = normalize_utc(local_now - timedelta(minutes=minutes_ago))
                 visit_id = f"visit-dashboard-{kind}"
                 local_path = tmp_path / f"dashboard-{kind}.jpg"
                 if has_media:
@@ -475,7 +496,7 @@ def add_dashboard_today_visits(repository: ProductRepository, tmp_path: Path) ->
                     stream_id=other_stream_id,
                     title="Other Stream Dashboard review",
                     event_type="dashboard_fixture",
-                    started_at=local_now - timedelta(minutes=10),
+                    started_at=normalize_utc(local_now - timedelta(minutes=10)),
                     ended_at=None,
                     primary_zone_id=None,
                     review_status="needs_review",
@@ -494,6 +515,88 @@ def add_dashboard_today_visits(repository: ProductRepository, tmp_path: Path) ->
                 )
             )
     return local_now.isoformat()
+
+
+async def test_dashboard_midnight_boundary_uses_local_day_not_utc_digits(
+    isolated_repository: ProductRepository,
+) -> None:
+    """Deterministic, host-timezone-independent regression for the real
+    midnight/local-day-boundary defect `add_dashboard_today_visits`'s own
+    `normalize_utc` fix protects against (see that function's docstring
+    for the full mechanism). Uses a fixed, explicit UTC-4 offset --
+    deliberately never the real system timezone or wall clock -- so this
+    test's outcome can never depend on what hour it happens to run, or
+    what timezone the host machine is in: a reviewed Visit whose *local*
+    time is 00:30 (inside the exact `[local midnight, local midnight +
+    |UTC offset|)` window that exposed the original bug on a negative-
+    offset host) must still count as "today" for that same local day."""
+
+    fixed_local_tz = timezone(timedelta(hours=-4))
+    local_now = datetime(2026, 3, 15, 0, 30, 0, tzinfo=fixed_local_tz)
+
+    with isolated_repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                EventModel(
+                    id="event-midnight-boundary",
+                    stream_id=STREAM_ID,
+                    title="Just after local midnight",
+                    event_type="dashboard_fixture",
+                    started_at=normalize_utc(local_now),
+                    ended_at=normalize_utc(local_now + timedelta(seconds=30)),
+                    primary_zone_id=None,
+                    review_status="reviewed",
+                )
+            )
+            session.add(
+                VisitModel(
+                    id="visit-midnight-boundary",
+                    event_id="event-midnight-boundary",
+                    subject_label="unknown_bird",
+                    species_guess=None,
+                    confidence=None,
+                    reviewed_label="american_robin",
+                    review_status="reviewed",
+                    representative_media_path=None,
+                )
+            )
+
+    summary = isolated_repository.dashboard_summary({}, now=local_now)
+    assert "american_robin" in {observation.label for observation in summary.today_observations}
+
+    # The complementary boundary: a Visit from the *previous* local day
+    # (yesterday 23:50) must correctly stay excluded from today, proving
+    # this isn't merely a widened/loosened window.
+    with isolated_repository.session_factory() as session:
+        with session.begin():
+            yesterday_local = local_now - timedelta(minutes=40)
+            session.add(
+                EventModel(
+                    id="event-midnight-boundary-yesterday",
+                    stream_id=STREAM_ID,
+                    title="Previous local day",
+                    event_type="dashboard_fixture",
+                    started_at=normalize_utc(yesterday_local),
+                    ended_at=normalize_utc(yesterday_local + timedelta(seconds=30)),
+                    primary_zone_id=None,
+                    review_status="reviewed",
+                )
+            )
+            session.add(
+                VisitModel(
+                    id="visit-midnight-boundary-yesterday",
+                    event_id="event-midnight-boundary-yesterday",
+                    subject_label="unknown_bird",
+                    species_guess=None,
+                    confidence=None,
+                    reviewed_label="blue_jay",
+                    review_status="reviewed",
+                    representative_media_path=None,
+                )
+            )
+
+    summary_after = isolated_repository.dashboard_summary({}, now=local_now)
+    assert "blue_jay" not in {observation.label for observation in summary_after.today_observations}
 
 
 async def test_dashboard_summary_uses_reviewed_truth_and_bounded_safe_visits(

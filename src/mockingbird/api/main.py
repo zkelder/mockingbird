@@ -231,6 +231,9 @@ from mockingbird.api.schemas import (
     CameraSetupOptionsResponse,
     CameraSetupValidationRequest,
     CameraSetupValidationResponse,
+    RecordedMediaAnalysisRequest,
+    RecordedMediaAnalysisResponse,
+    RecordedMediaAnalysisRun,
     SourceFolderImportRequest,
     SourceFolderImportResponse,
     SourceMonitorStartRequest,
@@ -408,6 +411,7 @@ from mockingbird.observation.acceptance_recorder import (
     acceptance_recorder_config_from_env,
 )
 from mockingbird.observation.counterfactual_lineage import classify_rejection_attribution
+from mockingbird.observation.offline_ingest import OfflineIngestError, run_offline_video_ingest
 from mockingbird.observation.engine_runtime import (
     ObservationEngineSessionManager,
     ObservationEngineSessionStatus,
@@ -1666,6 +1670,22 @@ def _resolve_external_url_save_stream_id(
             detail="Choose a stream before saving this external URL preview.",
         )
     return streams[0].id
+
+
+def _offline_ingest_error(error: ValueError, media_id: str) -> HTTPException:
+    reason = str(error)
+    if reason == "media_asset_not_found":
+        return _not_found("MediaAsset", media_id)
+    if reason == "media_asset_not_video":
+        return HTTPException(status_code=400, detail="This MediaAsset is not a recorded video.")
+    if reason == "missing_stream":
+        return HTTPException(status_code=404, detail="This MediaAsset's Stream was not found.")
+    if reason == "analysis_already_in_progress":
+        return HTTPException(
+            status_code=409,
+            detail="This recorded video is already being analyzed. Try again once it finishes.",
+        )
+    return HTTPException(status_code=400, detail="This recorded video could not be analyzed.")
 
 
 def _folder_import_error(error: ValueError) -> HTTPException:
@@ -13182,6 +13202,73 @@ async def create_motion_evidence_from_saved_media(
         provenance_kind=result.provenance_kind,
         warnings=result.warnings,
     )
+
+
+@app.post(
+    "/api/media/{media_id}/analyze-recorded",
+    response_model=RecordedMediaAnalysisResponse,
+    status_code=201,
+)
+async def analyze_recorded_media(
+    media_id: str,
+    response: Response,
+    payload: RecordedMediaAnalysisRequest | None = None,
+) -> RecordedMediaAnalysisResponse:
+    """Offline / Recorded Observation Ingest v1: decode one already-
+    imported recorded-video MediaAsset and run it through the ordinary
+    Observation Engine seam, producing candidate Events/Visits/Evidence a
+    reviewer can see exactly like a live Camera Node session's. Never
+    scans a folder or imports media itself -- `media_id` must already
+    exist. Bounded and synchronous: this route runs the full decode/
+    detect/track/assemble/admit pass before responding (see "API/CLI/UI
+    surface" in docs/offline-recorded-media-observation-contract.md)."""
+
+    request = payload or RecordedMediaAnalysisRequest()
+    kwargs: dict[str, object] = {"force_reprocess": request.force_reprocess}
+    if request.sample_fps is not None:
+        kwargs["sample_fps"] = request.sample_fps
+    if request.max_frames is not None:
+        kwargs["max_frames"] = request.max_frames
+    if request.pipeline_version is not None:
+        kwargs["pipeline_version"] = request.pipeline_version
+    try:
+        result = await run_offline_video_ingest(get_repository(), media_asset_id=media_id, **kwargs)
+    except OfflineIngestError as error:
+        raise _offline_ingest_error(error, media_id) from error
+    if result.status != "completed":
+        response.status_code = 200
+    return RecordedMediaAnalysisResponse(
+        run_id=result.run_id,
+        status=result.status,
+        media_asset_id=result.media_asset_id,
+        stream_id=result.stream_id,
+        pipeline_version=result.pipeline_version,
+        sample_fps=result.sample_fps,
+        frames_considered=result.frames_considered,
+        frames_analyzed=result.frames_analyzed,
+        events_created=result.events_created,
+        visits_created=result.visits_created,
+        visit_ids=list(result.visit_ids),
+        event_ids=list(result.event_ids),
+        source_duration_seconds=result.source_duration_seconds,
+        truncated=result.truncated,
+        capture_time_known=result.capture_time_known,
+        error_code=result.error_code,
+        error_message=result.error_message,
+    )
+
+
+@app.get(
+    "/api/media/{media_id}/analysis-runs",
+    response_model=list[RecordedMediaAnalysisRun],
+)
+async def list_recorded_media_analysis_runs(media_id: str) -> list[RecordedMediaAnalysisRun]:
+    """Side-effect-free: every offline-ingest attempt ever recorded for
+    this MediaAsset, most recent first."""
+
+    if get_repository().get_media_asset(media_id) is None:
+        raise _not_found("MediaAsset", media_id)
+    return get_repository().list_recorded_media_analysis_runs_for_media_asset(media_id)
 
 
 @app.get("/api/media/{media_id}/file")

@@ -42,7 +42,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 40
+CURRENT_DATABASE_SCHEMA_VERSION = 41
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -1042,6 +1042,23 @@ def _migrate_to_media_asset_duration(connection: Connection) -> None:
         connection.exec_driver_sql("ALTER TABLE media_assets ADD COLUMN duration_seconds FLOAT")
 
 
+def _migrate_to_recorded_media_analysis_runs(connection: Connection) -> None:
+    """Add the empty, bounded `recorded_media_analysis_runs` progress/
+    diagnostics/idempotency table (Offline / Recorded Observation Ingest v1,
+    see docs/offline-recorded-media-observation-contract.md). Mirrors
+    `_migrate_to_scene_confusor_regions`'s own "additive table, no seeded
+    row" pattern exactly: an installation upgrading from schema 40 has never
+    analyzed any recorded video, so it correctly starts with no run history
+    at all, never a fabricated backfill from pre-existing `media_assets`
+    rows."""
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Recorded-media analysis run migration requires local SQLite storage."
+        )
+    Base.metadata.tables["recorded_media_analysis_runs"].create(bind=connection, checkfirst=True)
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -1082,6 +1099,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     38: _migrate_to_camera_node_replacement_provenance,
     39: _migrate_to_camera_onvif_profiles,
     40: _migrate_to_media_asset_duration,
+    41: _migrate_to_recorded_media_analysis_runs,
 }
 
 

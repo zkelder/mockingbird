@@ -60,5 +60,8 @@ if __name__ == "__main__":
     elif len(sys.argv) > 1 and sys.argv[1] == "doctor":
         from mockingbird.diagnostics.doctor_cli import run as doctor_run
         raise SystemExit(doctor_run(sys.argv[2:]))
+    elif len(sys.argv) > 1 and sys.argv[1] == "analyze-recorded-media":
+        from mockingbird.observation.offline_ingest_cli import run as analyze_recorded_media_run
+        raise SystemExit(analyze_recorded_media_run(sys.argv[2:]))
     else:
         main()

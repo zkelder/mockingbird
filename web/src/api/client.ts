@@ -163,6 +163,9 @@ import type {
   ReviewQueueItem,
   ReviewQueueSpeciesSuggestionBatchPrepareRequest,
   ReviewQueueSpeciesSuggestionBatchPrepareResponse,
+  RecordedMediaAnalysisRequest,
+  RecordedMediaAnalysisResponse,
+  RecordedMediaAnalysisRun,
   SavedMediaBulkMotionEvidenceRequest,
   SavedMediaBulkMotionEvidenceResponse,
   SavedMediaCleanupDryRunRequest,
@@ -898,6 +901,18 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  analyzeRecordedMedia: (mediaId: string, payload: RecordedMediaAnalysisRequest = {}) =>
+    request<RecordedMediaAnalysisResponse>(
+      `/api/media/${encodeURIComponent(mediaId)}/analyze-recorded`,
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    ),
+  getRecordedMediaAnalysisRuns: (mediaId: string) =>
+    request<RecordedMediaAnalysisRun[]>(
+      `/api/media/${encodeURIComponent(mediaId)}/analysis-runs`,
+    ),
   dryRunFolderImportEvidence: (payload: FolderImportEvidenceBatchDryRunRequest) =>
     request<FolderImportEvidenceBatchDryRunResponse>("/api/folder-import/evidence/dry-run", {
       method: "POST",

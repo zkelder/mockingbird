@@ -527,6 +527,46 @@ def test_schema_38_upgrades_to_current_with_onvif_profiles_and_media_duration(
         migrated.close()
 
 
+def test_schema_40_upgrades_to_current_with_recorded_media_analysis_runs(
+    tmp_path: Path,
+) -> None:
+    """Offline / Recorded Observation Ingest v1: a real database at the
+    previously-current schema (v40) upgrades cleanly through the new
+    additive `recorded_media_analysis_runs` table without disturbing
+    existing data, mirroring `test_schema_38_upgrades_to_current_with_onvif_
+    profiles_and_media_duration`'s own upgrade-in-place proof."""
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = repository_for(db_path)
+    existing_source_count = len(repository.list_sources())
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql("DROP TABLE recorded_media_analysis_runs")
+        connection.exec_driver_sql("UPDATE mockingbird_schema SET version = 40 WHERE singleton_id = 1")
+    engine.dispose()
+
+    migrated = repository_for(db_path)
+    try:
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+        assert len(migrated.list_sources()) == existing_source_count
+
+        with migrated.engine.connect() as connection:
+            columns = {
+                row[1]
+                for row in connection.exec_driver_sql(
+                    "PRAGMA table_info(recorded_media_analysis_runs)"
+                ).fetchall()
+            }
+            assert {
+                "id", "media_asset_id", "stream_id", "pipeline_version", "status",
+                "sample_fps", "frames_considered", "frames_analyzed", "visits_created",
+            } <= columns
+    finally:
+        migrated.close()
+
+
 def test_database_needing_unknown_migration_is_rejected(tmp_path: Path) -> None:
     db_path = tmp_path / "mockingbird.sqlite3"
     repository = repository_for(db_path)

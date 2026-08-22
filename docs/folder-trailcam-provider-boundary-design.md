@@ -56,6 +56,18 @@ Phase 15A includes Folder / trail-cam import in the MVP readiness overview as
 explicit preview/import -> MediaAsset -> pending evidence -> review/correction
 truth. The overview does not scan folders or create media/evidence.
 
+Offline / Recorded Observation Ingest v1 adds an explicit, separate action
+("Analyze imported media") that decodes an already-imported *video*
+MediaAsset through the ordinary Observation Engine seam -- the same
+detector/tracker/Visit-assembly/admission stack a live Camera Node uses --
+producing ordinary needs-review candidate Events/Visits/Evidence. This is
+additive to, not a replacement for, the MotionEvidence handoff path above
+(which still applies to still images and remains unchanged); a video
+MediaAsset can use either path. See
+[offline-recorded-media-observation-contract.md](offline-recorded-media-observation-contract.md)
+for the full contract -- folder import itself still only ever creates
+MediaAssets, never Events/Visits/evidence/truth by itself.
+
 ## Product Flow
 
 folder/trail-cam Source setup -> explicit folder selection/config metadata ->
@@ -218,18 +230,28 @@ Initial supported media:
 - `image/png`
 - `image/webp`
 
-Defer:
+`video/mp4`, `.mov`, `.avi`, `.mkv`, `.m4v` are supported but opt-in
+(`folder_import_preview.SUPPORTED_EXTENSIONS` includes them;
+`DEFAULT_ALLOWED_EXTENSIONS` does not, so an existing caller that never
+explicitly asks for video extensions keeps its exact original image-only
+behavior) -- see "v0.1 Acquisition/Ingest Interoperability Closure v1" in
+[roadmap.md](roadmap.md). EXIF capture-timestamp and container
+`creation_time` extraction, and content-hash duplicate detection, are
+likewise implemented (`mockingbird.source_providers.media_provenance`).
 
-- videos
+Still deferred:
+
 - RAW formats
 - HEIC
 - ZIP archives
-- metadata extraction/EXIF parsing
 - thumbnails/crops
 
-The first metadata/import pass does not require decoding. Content type is
-inferred conservatively from extension; stronger validation can be a future
-phase.
+The first metadata/import pass does not require decoding beyond the bounded
+EXIF/ffprobe metadata reads above. Content type is inferred conservatively
+from extension; stronger validation can be a future phase. Folder import
+itself still never decodes a video's *frames* -- per-frame decode into the
+Observation Engine is a separate, later, explicit action (see "Offline /
+Recorded Observation Ingest v1" above).
 
 ## Duplicate Handling
 
@@ -398,5 +420,7 @@ initially, and must preserve retention, provenance, and truth boundaries.
 - No Event/Visit creation.
 - No ReviewLabel/truth.
 - No live playback.
-- No video decoding.
+- No video decoding (still true of folder import itself; per-frame video
+  decode is a separate, later, explicit action -- see "Offline / Recorded
+  Observation Ingest v1" above).
 - No model/training work.

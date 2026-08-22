@@ -5931,6 +5931,68 @@ class SourceFolderImportResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class RecordedMediaAnalysisRun(BaseModel):
+    """One offline recorded-video analysis attempt -- operational history
+    and bounded progress/diagnostics, never evidence or truth by itself
+    (Offline / Recorded Observation Ingest v1, see docs/offline-recorded-
+    media-observation-contract.md)."""
+
+    id: str
+    media_asset_id: str
+    stream_id: str
+    pipeline_version: str
+    status: str
+    sample_fps: float
+    source_duration_seconds: float | None = None
+    frames_considered: int = Field(default=0, ge=0)
+    frames_analyzed: int = Field(default=0, ge=0)
+    events_created: int = Field(default=0, ge=0)
+    visits_created: int = Field(default=0, ge=0)
+    error_code: str | None = None
+    error_message: str | None = None
+    started_at: datetime
+    completed_at: datetime | None = None
+    created_at: datetime
+
+
+class RecordedMediaAnalysisRequest(BaseModel):
+    # Every field is optional: omitted, this route uses this pipeline's own
+    # documented defaults (see docs/offline-recorded-media-observation-
+    # contract.md "Frame sampling policy").
+    sample_fps: float | None = Field(default=None, gt=0)
+    max_frames: int | None = Field(default=None, gt=0)
+    pipeline_version: str | None = None
+    force_reprocess: bool = False
+
+
+class RecordedMediaAnalysisResponse(BaseModel):
+    run_id: str
+    status: str
+    media_asset_id: str
+    stream_id: str
+    pipeline_version: str
+    sample_fps: float
+    frames_considered: int = Field(default=0, ge=0)
+    frames_analyzed: int = Field(default=0, ge=0)
+    events_created: int = Field(default=0, ge=0)
+    visits_created: int = Field(default=0, ge=0)
+    visit_ids: list[str] = Field(default_factory=list)
+    event_ids: list[str] = Field(default_factory=list)
+    source_duration_seconds: float | None = None
+    truncated: bool = False
+    capture_time_known: bool = False
+    error_code: str | None = None
+    error_message: str | None = None
+    # This route's own fixed category disclosure (mirrors `SourceFolder
+    # ImportResponse`'s identical convention): it can create ordinary,
+    # needs-review candidate Events/Visits exactly like a live Camera Node
+    # session, but it never creates reviewed truth -- only the existing,
+    # unmodified correction path can.
+    creates_events: bool = True
+    creates_visits: bool = True
+    creates_truth: bool = False
+
+
 class FolderImportCandidate(BaseModel):
     filename: str
     path: str

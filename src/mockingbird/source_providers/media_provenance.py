@@ -141,6 +141,19 @@ class VideoProbeResult:
     width: int | None
     height: int | None
     codec_name: str | None
+    # Offline / Recorded Observation Ingest v1: the container's own
+    # `format.tags.creation_time`, when the encoder wrote one -- unlike
+    # `ImageCaptureMetadata.captured_at`, this is `None` for a video (see
+    # "Frame-time semantics" in
+    # docs/offline-recorded-media-observation-contract.md) whenever no
+    # such tag exists, never a fabricated fallback to filesystem mtime or
+    # import time. Present as a real ISO-8601 UTC instant on every
+    # container format this module has observed emit it (MP4/MOV via
+    # ffmpeg/most phones and trail cameras), so -- unlike the naive EXIF
+    # wall-clock string `extract_image_captured_at` must localize --
+    # `timezone_assumed` does not apply here: this value is already
+    # timezone-aware when present.
+    captured_at: datetime | None = None
 
 
 def is_ffprobe_available(ffprobe_binary: str = "ffprobe") -> bool:
@@ -190,7 +203,8 @@ def probe_video_metadata(
     except (json.JSONDecodeError, UnicodeDecodeError):
         return None
 
-    duration_seconds = _safe_float((payload.get("format") or {}).get("duration"))
+    format_payload = payload.get("format") or {}
+    duration_seconds = _safe_float(format_payload.get("duration"))
     video_stream = next(
         (
             stream
@@ -204,7 +218,36 @@ def probe_video_metadata(
         width=_safe_int(video_stream.get("width")) if video_stream else None,
         height=_safe_int(video_stream.get("height")) if video_stream else None,
         codec_name=(video_stream.get("codec_name") if video_stream else None),
+        captured_at=_parse_video_creation_time((format_payload.get("tags") or {}).get("creation_time")),
     )
+
+
+def _parse_video_creation_time(raw_value: object) -> datetime | None:
+    """Parse ffprobe's `format.tags.creation_time`, when present.
+
+    Observed empirically (see docs/offline-recorded-media-observation-
+    contract.md) as a `Z`-suffixed ISO-8601 UTC instant, e.g.
+    `"2024-05-01T14:23:01.000000Z"`, for ffmpeg-produced containers.
+    Returns `None` -- never raises -- for a missing tag or any value this
+    parser cannot confidently read as a real timestamp; an unfamiliar or
+    malformed tag is honestly "not known," never guessed."""
+
+    if not isinstance(raw_value, str) or not raw_value.strip():
+        return None
+    normalized = raw_value.strip()
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        # A creation_time tag with no offset/Z at all is not the trustworthy
+        # aware instant this field promises -- honestly discarded rather
+        # than silently assumed UTC (mirrors this module's own EXIF
+        # discipline: never assume a timezone this codebase was not told).
+        return None
+    return parsed
 
 
 def _safe_float(value: object) -> float | None:
