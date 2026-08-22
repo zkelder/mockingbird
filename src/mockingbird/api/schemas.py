@@ -4817,6 +4817,106 @@ class PlaceActivityReportOverallChangeStatus(BaseModel):
     ]
 
 
+class PlaceActivityReportDigestSpeciesHighlight(BaseModel):
+    """Gate C -- Calm Daily Digest v1 (see `mockingbird.analytics.daily_
+    digest`): one named, reviewed-truth-backed species highlight. Always
+    reuses the identical `historical_status`/`change_status`/`most_active_
+    zone`/`most_active_hour`/`representative_evidence` facts already present
+    on this taxon's own `PlaceActivityReportTaxonEntry` -- never a second,
+    independently-derived set of facts."""
+
+    label: str
+    display_name: str
+    category: LabelCategory
+    is_species: bool
+    confirmed_visit_count: int = Field(ge=0)
+    provisional_visit_count: int = Field(ge=0)
+    first_activity_at: datetime
+    last_activity_at: datetime
+    reason: Literal[
+        "first_confirmed_record",
+        "meaningful_change",
+        "strong_representative_evidence",
+        "regular_activity",
+        "confirmed_activity",
+    ]
+    historical_note: str | None = None
+    change_note: str | None = None
+    pattern_note: str | None = None
+    # Reused unmodified from `PlaceActivityReportTaxonEntry.representative_
+    # evidence` for this same taxon -- the digest never selects or ranks
+    # evidence itself (Representative Species Evidence v1 remains the only
+    # selector). `None` is a completely normal outcome; the frontend omits
+    # the image rather than treating it as an error.
+    representative_evidence: RepresentativeEvidence | None = None
+
+
+class PlaceActivityReportDigestOtherSpecies(BaseModel):
+    """One additional confirmed species beyond the primary highlight bound
+    -- compact, name-only continuity (see "Also recorded" in the milestone
+    brief)."""
+
+    label: str
+    display_name: str
+    category: LabelCategory
+    is_species: bool
+    confirmed_visit_count: int = Field(ge=0)
+
+
+class PlaceActivityReportDigestOtherActivity(BaseModel):
+    """Wildlife activity that is not (yet) reviewed truth -- always an
+    anonymous count, never a species name. A provisional SpeciesSuggestion
+    alone can never create a digest species."""
+
+    provisional_visit_count: int = Field(ge=0)
+    unresolved_visit_count: int = Field(ge=0)
+
+
+class PlaceActivityReportDigestCoverage(BaseModel):
+    """How much confidence today's digest may claim, and one calm sentence
+    describing it. `state` is purely a function of monitoring coverage plus
+    honest activity counts, never a judgment about whether the amount of
+    wildlife found is normal -- see `mockingbird.analytics.daily_digest.
+    _classify_coverage`."""
+
+    state: Literal[
+        "no_monitoring",
+        "sparse_monitoring",
+        "no_confirmed_activity",
+        "unresolved_activity_only",
+        "confirmed_wildlife",
+    ]
+    maturity: Literal["no_data", "sparse", "usable"]
+    message: str
+
+
+class PlaceActivityReportDigest(BaseModel):
+    """Gate C -- Calm Daily Digest v1: one calm "what happened here today"
+    recap, composed entirely from this same report's own already-resolved
+    facts (see `mockingbird.analytics.daily_digest`). Creates no new
+    observational authority -- every field here is derivable from `taxa`/
+    `coverage`/`maturity`/`overall_change_status` elsewhere on this same
+    response; this is a presentation-ready composition, not a second source
+    of truth. Bounded to `MAX_PRIMARY_HIGHLIGHTS` (5) primary highlights;
+    additional confirmed species appear compactly in `other_species`."""
+
+    coverage: PlaceActivityReportDigestCoverage
+    primary_highlights: list[PlaceActivityReportDigestSpeciesHighlight] = Field(
+        default_factory=list, max_length=5
+    )
+    other_species: list[PlaceActivityReportDigestOtherSpecies] = Field(default_factory=list)
+    other_activity: PlaceActivityReportDigestOtherActivity
+    # The single Place-level baseline/change sentence, when supported --
+    # `None` for the calm "no_supported_change" case (silence is the
+    # message). Identical wording to `overall_change_status`'s existing
+    # Today presentation; this field exists so a caller does not have to
+    # re-derive the same sentence from the enum a second time.
+    place_change_note: str | None = None
+    first_activity_at: datetime | None = None
+    last_activity_at: datetime | None = None
+    confirmed_wildlife_visit_count: int = Field(ge=0)
+
+
 class PlaceActivityReportResponse(BaseModel):
     """One deterministic current-period activity report for a Place (see
     docs/place-activity-report-contract.md). Every count is a Visit count,
@@ -4879,6 +4979,9 @@ class PlaceActivityReportResponse(BaseModel):
     change_windows: PlaceActivityReportChangeWindows
     overall_change_status: PlaceActivityReportOverallChangeStatus
     warnings: list[str] = Field(default_factory=list, max_length=10)
+    # Gate C -- Calm Daily Digest v1: a bounded, ranked, presentation-ready
+    # composition of the facts above -- see `PlaceActivityReportDigest`.
+    digest: PlaceActivityReportDigest
 
 
 class WildlifeJournalOrder(str, Enum):

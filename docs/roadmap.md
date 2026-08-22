@@ -1662,6 +1662,43 @@ performance contract); click-through navigation from Today's compact
 thumbnail (judged not trivial enough to add for this milestone) -- see
 "Known limitations" in the new contract doc.
 
+**2026-08-22 update (Gate C -- Calm Daily Digest v1):** the calm digest
+named in this gate's own charter and in product-doctrine.md's "Calm-
+observatory notifications" (above) -- a bounded, deterministic composition
+of every prior Gate C slice's already-resolved facts into one "what
+happened here today" recap, not a new observational authority. A new pure
+module, `mockingbird.analytics.daily_digest.compute_daily_digest`, ranks
+today's authoritatively-confirmed taxa by a fixed five-tier priority
+(first confirmed record, supported meaningful change, strong proven-
+native-resolution representative evidence, regular activity, then plain
+confirmed activity by Visit count) so a single common high-count species
+can never bury a genuine first record, bounds the result to 5 primary
+highlights (remaining confirmed species still appear compactly, name-
+only), and classifies today's coverage into five honest states so a
+quiet or under-monitored day never reads as "no wildlife visited." A
+provisional SpeciesSuggestion can never create, name, or badge a digest
+species -- see "Calm Daily Digest v1" in
+[place-activity-report-contract.md](place-activity-report-contract.md).
+Wired additively as `PlaceActivityReportResponse.digest` (zero schema/
+migration, zero new queries, zero new API routes). `TodayReportPanel.tsx`
+was refactored, not merely extended: it is now a presentation-only
+consumer of `digest` and no longer ranks taxa, blends confirmed/
+provisional counts, or derives historical/change/pattern wording itself
+-- the "Top visitors" list was replaced in place by the ranked digest
+highlights, removing one of two near-duplicate species lists rather than
+adding a third. The adjacent "Best moments" panel was inspected and
+deliberately left unchanged (genuinely complementary -- the one place
+provisional/unidentified animal activity stays visible with a photo, not
+redundant with named-species highlights). 30 new pure tests, 2 extended
+repository/API integration tests, and 19 frontend e2e tests (18 existing,
+1 new, all passing against a real backend) all pass, alongside the full
+pre-existing suite (Core gate) unmodified. Explicitly not attempted: an
+LLM-authored recap, a persisted/cached digest, unifying the older,
+differently-scoped `_dashboard_today_summary` "New today"/"Recent
+regulars" panels with this digest, weekly/monthly digests, and any push-
+notification delivery mechanism -- see "Explicitly not attempted" in the
+contract doc.
+
 **Temporal correctness surfaces this gate must preserve, named explicitly:**
 event time (source capture) vs. ingestion time vs. processing-completion
 time vs. presentation/UI freshness must stay distinguishable, not collapsed

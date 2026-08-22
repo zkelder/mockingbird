@@ -780,6 +780,7 @@ def test_api_serialization_contract_exposes_only_documented_fields(
         "change_windows",
         "overall_change_status",
         "warnings",
+        "digest",
     }
     assert body["total_visit_count"] == 1
     # A full day of durable exposure on both Streams is well past the
@@ -887,6 +888,60 @@ def test_api_serialization_contract_exposes_only_documented_fields(
         "latest_authoritative_record_at",
     }
     assert body["historical_baseline"]["maturity"] == "insufficient"
+    # Gate C -- Calm Daily Digest v1: composed entirely from the facts
+    # already asserted above -- see docs/place-activity-report-contract.md
+    # and mockingbird.analytics.daily_digest.
+    assert set(body["digest"].keys()) == {
+        "coverage",
+        "primary_highlights",
+        "other_species",
+        "other_activity",
+        "place_change_note",
+        "first_activity_at",
+        "last_activity_at",
+        "confirmed_wildlife_visit_count",
+    }
+    assert body["digest"]["confirmed_wildlife_visit_count"] == 1
+    assert set(body["digest"]["coverage"].keys()) == {"state", "maturity", "message"}
+    assert body["digest"]["coverage"]["state"] == "confirmed_wildlife"
+    assert body["digest"]["coverage"]["maturity"] == "usable"
+    [highlight] = body["digest"]["primary_highlights"]
+    assert set(highlight.keys()) == {
+        "label",
+        "display_name",
+        "category",
+        "is_species",
+        "confirmed_visit_count",
+        "provisional_visit_count",
+        "first_activity_at",
+        "last_activity_at",
+        "reason",
+        "historical_note",
+        "change_note",
+        "pattern_note",
+        "representative_evidence",
+    }
+    assert highlight["label"] == "northern_cardinal"
+    # Insufficient Place-wide baseline (asserted above) -> "first_record"
+    # wording, never "New to your reviewed history" -- see "I.6 Historical
+    # wording" in the milestone brief.
+    assert highlight["reason"] == "first_confirmed_record"
+    assert highlight["historical_note"] == "First confirmed record so far"
+    # No supported change comparison at this fixture's zero accumulated
+    # history (asserted via change_status/change_windows above).
+    assert highlight["change_note"] is None
+    # Below MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN (asserted via
+    # most_active_zone/most_active_hour above) -> no fabricated pattern.
+    assert highlight["pattern_note"] is None
+    assert highlight["representative_evidence"] is None
+    assert body["digest"]["other_species"] == []
+    assert body["digest"]["other_activity"] == {
+        "provisional_visit_count": 0,
+        "unresolved_visit_count": 0,
+    }
+    assert body["digest"]["place_change_note"] == (
+        "MockingBird is still building a baseline for this Place."
+    )
     # No raw internal ORM identifiers (visit_id, event_id, zone/stream
     # ORM ids on the taxon, SQLAlchemy state) ever leak into the response.
     assert "visit_id" not in taxon

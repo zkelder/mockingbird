@@ -588,6 +588,81 @@ rather than a brittle exact count). No caches, materialized views,
 background jobs, or aggregation tables were added -- current evidence does
 not show they are needed yet.
 
+## Calm Daily Digest v1
+
+`mockingbird.analytics.daily_digest.compute_daily_digest` composes one
+calm "what happened here today" recap from this report's own already-
+resolved facts (see product-doctrine.md's "Calm-observatory notifications"
+-- calm daily digests, not per-Visit alerts, are the product center).
+Pure and dependency-free like every module above: no database query, no
+image decode, no model or language-model call, no persisted prose --
+every field is recomputed from `taxa`/`historical_status`/`change_status`/
+`zone_activity`/`hour_activity`/`representative_evidence` on every read.
+Wired additively as `PlaceActivityReportResponse.digest`; zero new
+queries (built in the same per-taxon pass `_taxon_entry_response` already
+runs) and zero schema/migration.
+
+**Truth boundary.** Only a taxon with `confirmed_visit_count > 0` -- the
+identical truth-contract gate `historical_status`/`change_status`/
+`representative_evidence` already enforce -- may become a named
+`digest.primary_highlights`/`digest.other_species` entry. A provisional
+`SpeciesSuggestion` can never create, name, or badge a digest species;
+it and genuinely unresolved wildlife are folded, anonymously, into
+`digest.other_activity`'s two counts.
+
+**Ranking.** A bounded, deterministic five-tier priority -- never model
+confidence, never raw Visit count alone: (1) a first confirmed record
+(`historical_status` "new"/"first_record"); (2) a supported meaningful
+change (`change_status` "higher_recent_presence"/"lower_recent_
+presence"); (3) strong representative evidence (`resolution_provenance ==
+"synchronized"` -- a genuinely proven, separate higher-resolution
+capture, not mere presence); (4) a "regular" species; (5) every other
+confirmed species, by today's confirmed Visit count. Ties within a tier
+break on confirmed Visit count, then display name, then label -- so a
+single common high-Visit-count species can never bury a genuine first
+record. `digest.primary_highlights` is bounded to `MAX_PRIMARY_
+HIGHLIGHTS` (5); every other confirmed species still appears, compactly
+and name-only, in `digest.other_species` -- never hidden entirely.
+
+**Coverage semantics.** `digest.coverage.state` distinguishes five states
+so a quiet or under-monitored day is never misread as "no wildlife
+visited": `no_monitoring`/`sparse_monitoring` (keyed purely on `maturity`,
+never on activity counts -- mirrors `compute_report_maturity`'s own
+discipline), `no_confirmed_activity` (usable coverage, genuinely zero
+wildlife activity of any kind), `unresolved_activity_only` (usable
+coverage, only provisional/unresolved activity), and `confirmed_wildlife`.
+Each carries one calm, observational `message` -- "No reviewed wildlife
+records yet today," never "No wildlife visited."
+
+**Wording reuse.** `historical_note`/`pattern_note` reuse the exact
+strings the pre-existing Today presentation already shipped
+(`historicalStatusBadge`/`speciesPlacePattern` in the former
+`TodayReportPanel.tsx`, now retired in favor of this backend-composed
+text) so the same fact never reads two different ways on the same page.
+`change_note` ("Recorded more often recently"/"Recorded less often
+recently") and `place_change_note` (reusing the pre-existing Place-level
+change sentence verbatim) are this milestone's own composed-prose
+wording for the digest surface specifically.
+
+**Frontend.** `TodayReportPanel.tsx` is now a presentation-only consumer
+of `digest`: it no longer ranks taxa, blends confirmed/provisional
+counts, or derives historical/change/pattern wording itself -- see the
+component's own module docstring. The "Top visitors" list was replaced
+in place (not duplicated) by `digest.primary_highlights`; the existing
+"Best moments" panel (Dashboard-level, any evidence-backed animal Visit,
+not only named/confirmed species) was inspected and left unchanged --
+genuinely complementary rather than redundant, since it is the one place
+provisional/unidentified animal activity remains visible with a photo.
+
+**Explicitly not attempted:** an LLM-authored recap or any generated
+prose; a persisted/cached digest (recomputed every read, like every
+sibling module in this file); unifying the pre-existing, differently-
+scoped `_dashboard_today_summary` "New today"/"Recent regulars" panels
+with this digest (see the identical decision in "Historical Baseline
+Maturity + New/Regular Species v1," above); weekly/monthly digests
+(only "today" is scoped here); and any push notification/delivery
+mechanism (this module only composes what a UI reads, on demand).
+
 ## Remaining limitations
 
 - **DST fallback on a host with no discoverable IANA zone.** On a host

@@ -1,36 +1,39 @@
 import { useEffect, useState } from "react";
 import type {
+  PlaceActivityReportDigestSpeciesHighlight,
   PlaceActivityReportHourActivity,
   PlaceActivityReportResponse,
-  PlaceActivityReportTaxonEntry,
 } from "../api/types";
 import { apiClient } from "../api/client";
 import { EmptyState } from "./EmptyState";
 import { StatusPill } from "./StatusPill";
-import { changeStatusBadge, formatDateTime } from "../utils";
+import { formatDateTime } from "../utils";
 
 /**
  * Product Experience / UI Cohesion v1 Phase 1 (Gate C: Daily Place Report
- * v1 hardened this further): the report-first "Today in Your Yard" summary.
- * Renders only facts already computed by the existing read-only Place
- * Activity Report backend (`POST /api/analytics/place-activity-report`, see
- * docs/place-activity-report-contract.md) -- this component never re-derives
- * truth precedence, wildlife eligibility, or Visit counts itself. Every
- * count here is a Visit count, never a unique-animal count.
+ * v1, then Calm Daily Digest v1, hardened this further): the report-first
+ * "Today in Your Yard" summary. Renders only facts already computed by the
+ * existing read-only Place Activity Report backend (`POST /api/analytics/
+ * place-activity-report`, see docs/place-activity-report-contract.md) --
+ * this component never re-derives truth precedence, wildlife eligibility,
+ * Visit counts, or highlight wording/ranking itself. Every count here is a
+ * Visit count, never a unique-animal count.
  *
- * Confirmed vs. provisional: the backend deliberately keeps `confirmed_
- * visit_count`/`provisional_visit_count` separate on every `taxa` entry
- * precisely so a consumer does not blend them into one number (see "Report
- * truth precedence" in docs/place-activity-report-contract.md). The
- * headline species count, "Top visitors" list, and its ranking below are
- * all confirmed-only for exactly that reason -- a species with only
- * provisional (AI-suggested, never human-reviewed) Visits never appears
- * there by name; it is only ever represented, in aggregate and without a
- * species name attached, by the quiet "N items worth reviewing" footer
- * link. A taxon that *is* confirmed but also has additional provisional
- * sightings shows its confirmed count as the primary figure and the extra
- * provisional ones as a small "+N likely" annotation, never folded into one
- * blended total.
+ * Calm Daily Digest v1 (see `mockingbird.analytics.daily_digest`) is the
+ * single source of the highlighted-species list, its bounded priority
+ * ranking, and every badge/pattern sentence below -- this component is a
+ * presentation layer only; it does not rank, caption, or blend counts
+ * itself. Confirmed vs. provisional: the backend deliberately keeps
+ * `confirmed_visit_count`/`provisional_visit_count` separate on every
+ * highlight precisely so a consumer does not blend them into one number
+ * (see "Report truth precedence" in docs/place-activity-report-contract.md).
+ * A species with only provisional (AI-suggested, never human-reviewed)
+ * Visits never appears by name; it is only ever represented, in aggregate
+ * and without a species name attached, by `digest.other_activity` and the
+ * quiet "N items worth reviewing" footer link. A taxon that *is* confirmed
+ * but also has additional provisional sightings shows its confirmed count
+ * as the primary figure and the extra provisional ones as a small "+N
+ * likely" annotation, never folded into one blended total.
  */
 
 interface TodayReportPanelProps {
@@ -43,8 +46,6 @@ interface TodayReportPanelProps {
   onOpenReview: () => void;
   onOpenBirdLog: () => void;
 }
-
-const TOP_SPECIES_LIMIT = 5;
 
 function plural(count: number, word: string): string {
   return `${count} ${word}${count === 1 ? "" : "s"}`;
@@ -78,112 +79,52 @@ function formatTimeOnly(value: string): string {
   return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(value));
 }
 
-function speciesTimeRange(taxon: PlaceActivityReportTaxonEntry): string {
-  const first = formatTimeOnly(taxon.first_activity_at);
-  if (taxon.first_activity_at === taxon.last_activity_at) {
+function speciesTimeRange(highlight: PlaceActivityReportDigestSpeciesHighlight): string {
+  const first = formatTimeOnly(highlight.first_activity_at);
+  if (highlight.first_activity_at === highlight.last_activity_at) {
     return `Seen ${first}`;
   }
-  return `First ${first} · Last ${formatTimeOnly(taxon.last_activity_at)}`;
+  return `First ${first} · Last ${formatTimeOnly(highlight.last_activity_at)}`;
 }
 
-// Historical Baseline Maturity + New/Regular Species v1 (see
-// docs/historical-baseline-maturity-contract.md): the backend already
-// picked the maturity-appropriate wording (`historical_status.status`
-// itself distinguishes "new" from "first_record" using `historical_
-// baseline.maturity` -- this component never re-derives that judgment). A
-// taxon with no historical_status (purely provisional today, never
-// authoritatively confirmed) or "seen_before" status gets no badge at all
-// -- keep the row calm rather than annotating every species every day.
-function historicalStatusBadge(
-  taxon: PlaceActivityReportTaxonEntry,
-): { label: string; tone: "good" | "quiet" } | null {
-  switch (taxon.historical_status?.status) {
-    case "new":
-      return { label: "New to your reviewed history", tone: "quiet" };
-    case "first_record":
-      return { label: "First confirmed record so far", tone: "quiet" };
-    case "regular":
-      return { label: "Regular here", tone: "good" };
-    default:
-      return null;
-  }
-}
-
-// The single Place-level line Today may show about recent-vs-reference
-// change -- see "Today integration" in docs/meaningful-change-detection-
-// contract.md. `no_supported_change` deliberately renders nothing (the
-// calm, ordinary case -- silence is the message), matching how a plain
-// "seen_before" species row above also renders no badge at all. This next
-// says only what MockingBird recorded under comparable monitoring -- never
-// a population/ecological claim.
-function overallChangeMessage(status: PlaceActivityReportResponse["overall_change_status"]): string | null {
-  switch (status.status) {
-    case "building_baseline":
-      return "MockingBird is still building a baseline for this Place.";
-    case "insufficient_recent_coverage":
-      return "There wasn't enough recent monitoring to compare with history.";
-    case "more_activity_recorded":
-      return "Wildlife activity was recorded on more monitored days recently than in the preceding weeks.";
-    case "less_activity_recorded":
-      return "Wildlife activity was recorded on fewer monitored days recently than in the preceding weeks.";
-    default:
-      return null;
-  }
-}
-
-// Gate C -- Per-Species Zone + Time Pattern Intelligence v1: one concise,
-// observational secondary fact about where/when this taxon is usually
-// recorded, from the same bounded historical window `historical_status`/
-// `change_status` above already use -- never a behavioral or ecological
-// claim ("prefers the feeder," "feeds at 7 AM"), only what MockingBird's
-// own reviewed history shows. `null` below this milestone's minimum-support
-// floor (see "Minimum support" in docs/place-activity-report-contract.md)
-// -- the row simply omits this line rather than manufacturing a pattern
-// from too little evidence. With no Zones configured, `most_active_zone`
-// is always null for every species and this naturally degrades to
-// time-only wording -- no separate "no Zones" handling needed here (see
-// "Critical invariant: Zones are optional").
-function speciesPlacePattern(taxon: PlaceActivityReportTaxonEntry): string | null {
-  const zone = taxon.most_active_zone;
-  const hour = taxon.most_active_hour;
-  if (zone && hour) {
-    return `${zone.display_name} · ${formatHourRange(hour.local_hour)}`;
-  }
-  if (zone) {
-    return `Mostly recorded at ${zone.display_name}`;
-  }
-  if (hour) {
-    return `Most active ${formatHourRange(hour.local_hour)}`;
-  }
-  return null;
+// Calm Daily Digest v1 already resolved every badge/pattern sentence below
+// server-side (`mockingbird.analytics.daily_digest`) -- this component only
+// renders already-composed, already-truth-checked text, exactly the same
+// "backend resolves facts and wording, this component only presents them"
+// boundary the rest of this file follows. `null` is always a calm, valid
+// outcome (the ordinary "seen_before" species, "no_supported_change", or a
+// pattern below the minimum-support floor) -- never an error state.
+function historicalTone(reason: PlaceActivityReportDigestSpeciesHighlight["reason"]): "good" | "quiet" {
+  return reason === "regular_activity" ? "good" : "quiet";
 }
 
 // Gate C -- Representative Species Evidence v1 (see docs/representative-
-// species-evidence-contract.md). Alt text is built from the reviewed taxon
-// name and real capture context this component already has -- never model
-// speculation, and never information a screen-reader user could not get
-// any other way (the species name and visit count are already plain text
-// on this same row).
-function representativeAlt(taxon: PlaceActivityReportTaxonEntry): string {
-  const capturedAt = taxon.representative_evidence?.evidence.captured_at;
+// species-evidence-contract.md). Alt text is built from the reviewed
+// species name and real capture context this component already has --
+// never model speculation, and never information a screen-reader user
+// could not get any other way (the species name and visit count are
+// already plain text on this same row).
+function representativeAlt(highlight: PlaceActivityReportDigestSpeciesHighlight): string {
+  const capturedAt = highlight.representative_evidence?.evidence.captured_at;
   return capturedAt
-    ? `${taxon.display_name}, reviewed observation ${formatDateTime(capturedAt)}`
-    : `${taxon.display_name}, reviewed observation`;
+    ? `${highlight.display_name}, reviewed observation ${formatDateTime(capturedAt)}`
+    : `${highlight.display_name}, reviewed observation`;
 }
 
 // Compact, non-interactive thumbnail for one species row. Deliberately no
 // click-through: Today stays report-first and calm (see "Today UI" in the
 // milestone brief), not a photo grid. Renders nothing at all -- no
-// placeholder box -- when this taxon has no representative evidence; a
-// missing/failed image degrades the same way, never an error state.
-function SpeciesThumbnail({ taxon }: { taxon: PlaceActivityReportTaxonEntry }) {
+// placeholder box -- when this highlight has no representative evidence; a
+// missing/failed image degrades the same way, never an error state (see
+// "I.8 Representative evidence" / "image absent still produces highlight").
+function SpeciesThumbnail({ highlight }: { highlight: PlaceActivityReportDigestSpeciesHighlight }) {
   const [failed, setFailed] = useState(false);
-  const evidence = taxon.representative_evidence?.evidence;
+  const evidence = highlight.representative_evidence?.evidence;
   useEffect(() => setFailed(false), [evidence?.media_asset_id]);
   if (!evidence || failed) return null;
   return (
     <img
-      alt={representativeAlt(taxon)}
+      alt={representativeAlt(highlight)}
       className="today-report-species-thumb"
       loading="lazy"
       onError={() => setFailed(true)}
@@ -204,22 +145,6 @@ function busiestHour(
     }
   }
   return best;
-}
-
-// Reviewed truth first: rank and keep only taxa a human has actually
-// confirmed at least once. A taxon backed solely by an AI suggestion never
-// appears here by name (see the module doc comment above); it is still
-// visible, just not as a named species claim.
-function confirmedTaxaByCount(taxa: PlaceActivityReportTaxonEntry[]): PlaceActivityReportTaxonEntry[] {
-  return taxa
-    .filter((taxon) => taxon.confirmed_visit_count > 0)
-    .slice()
-    .sort((a, b) => {
-      if (b.confirmed_visit_count !== a.confirmed_visit_count) {
-        return b.confirmed_visit_count - a.confirmed_visit_count;
-      }
-      return a.display_name.localeCompare(b.display_name);
-    });
 }
 
 export function TodayReportPanel({
@@ -258,10 +183,13 @@ export function TodayReportPanel({
   // headline numbers and species list narrow to confirmed truth only.
   const hasWildlife = report.wildlife_visit_count > 0;
   const hasConfirmedWildlife = report.confirmed_wildlife_visit_count > 0;
-  const confirmedTaxa = confirmedTaxaByCount(report.taxa);
-  const hasConfirmedTaxa = confirmedTaxa.length > 0;
-  const topTaxa = confirmedTaxa.slice(0, TOP_SPECIES_LIMIT);
-  const extraTaxaCount = confirmedTaxa.length - topTaxa.length;
+  // Calm Daily Digest v1 already ranked, bounded, and worded this list
+  // server-side (see mockingbird.analytics.daily_digest) -- this component
+  // never re-derives ranking or truth precedence, it only presents the
+  // result.
+  const digest = report.digest;
+  const primaryHighlights = digest.primary_highlights;
+  const hasConfirmedTaxa = primaryHighlights.length > 0 || digest.other_species.length > 0;
   const busiest = busiestHour(report.activity_by_hour);
   // Everything that is not yet confirmed truth but is not excluded either --
   // a truthful, backend-derived total, never a re-derivation of per-Visit
@@ -301,19 +229,22 @@ export function TodayReportPanel({
     (coverageRatioLow
       ? `MockingBird was actively monitoring about ${Math.round(coverageRatio! * 100)}% of today so far.`
       : null);
-  // Report maturity (see compute_report_maturity in place_activity_report.py)
-  // -- purely a coverage judgment, never a wildlife-count one. Used only to
-  // decide how confidently a *silence* ("no wildlife yet") can be claimed;
-  // it never gates or discounts an actually-recorded Visit.
-  const coverageInsufficientForConclusions = report.maturity !== "usable";
   // A confirmed Visit whose taxon never resolved to species level (a coarse
   // "Bird"/"Squirrel" group) still counts as wildlife; fall back to the
   // taxon count so the headline never reads "0 species" while confirmed
-  // wildlife plainly appeared today.
-  const confirmedSpeciesCount = confirmedTaxa.filter((taxon) => taxon.is_species).length;
-  const speciesHeadlineCount = confirmedSpeciesCount > 0 ? confirmedSpeciesCount : confirmedTaxa.length;
+  // wildlife plainly appeared today. Spans the full confirmed set (primary
+  // highlights plus the compact "also recorded" continuation), not only
+  // the bounded highlight list.
+  const confirmedTaxaCount = primaryHighlights.length + digest.other_species.length;
+  const confirmedSpeciesCount =
+    primaryHighlights.filter((entry) => entry.is_species).length +
+    digest.other_species.filter((entry) => entry.is_species).length;
+  const speciesHeadlineCount = confirmedSpeciesCount > 0 ? confirmedSpeciesCount : confirmedTaxaCount;
   const speciesHeadlineLabel = confirmedSpeciesCount > 0 ? "species" : "kinds of wildlife";
-  const changeMessage = overallChangeMessage(report.overall_change_status);
+  // Calm Daily Digest v1 already resolved this identical sentence
+  // server-side (see "I.11 Developing installation" -- one calm,
+  // already-accepted baseline sentence, not a second one invented here).
+  const changeMessage = digest.place_change_note;
 
   return (
     <section aria-label="Today's wildlife report" className="panel today-report">
@@ -354,47 +285,47 @@ export function TodayReportPanel({
                 <p className="meta-text">Last visit {formatDateTime(report.last_activity_at)}</p>
               ) : null}
 
-              {topTaxa.length > 0 ? (
+              {primaryHighlights.length > 0 ? (
                 <div className="today-report-species">
                   <div className="section-heading">
-                    <h3>Top visitors</h3>
+                    <h3>Today’s highlights</h3>
                     <button className="text-action" onClick={onOpenBirdLog} type="button">
                       Bird Log
                     </button>
                   </div>
                   <ol className="today-report-species-list">
-                    {topTaxa.map((taxon) => {
-                      const historicalBadge = historicalStatusBadge(taxon);
-                      const changeBadge = changeStatusBadge(taxon.change_status);
-                      const placePattern = speciesPlacePattern(taxon);
-                      return (
-                        <li key={taxon.label}>
-                          <SpeciesThumbnail taxon={taxon} />
-                          <div className="today-report-species-name">
-                            <span>{taxon.display_name}</span>
-                            <span className="today-report-species-meta">{speciesTimeRange(taxon)}</span>
-                            {placePattern ? (
-                              <span className="today-report-species-meta">{placePattern}</span>
-                            ) : null}
-                            {historicalBadge ? (
-                              <StatusPill label={historicalBadge.label} tone={historicalBadge.tone} />
-                            ) : null}
-                            {changeBadge ? <StatusPill label={changeBadge.label} tone={changeBadge.tone} /> : null}
-                          </div>
-                          <div className="today-report-species-count">
-                            <strong>{plural(taxon.confirmed_visit_count, "visit")}</strong>
-                            {taxon.provisional_visit_count > 0 ? (
-                              <span className="today-report-species-likely">
-                                +{taxon.provisional_visit_count} likely
-                              </span>
-                            ) : null}
-                          </div>
-                        </li>
-                      );
-                    })}
+                    {primaryHighlights.map((highlight) => (
+                      <li key={highlight.label}>
+                        <SpeciesThumbnail highlight={highlight} />
+                        <div className="today-report-species-name">
+                          <span>{highlight.display_name}</span>
+                          <span className="today-report-species-meta">{speciesTimeRange(highlight)}</span>
+                          {highlight.pattern_note ? (
+                            <span className="today-report-species-meta">{highlight.pattern_note}</span>
+                          ) : null}
+                          {highlight.historical_note ? (
+                            <StatusPill label={highlight.historical_note} tone={historicalTone(highlight.reason)} />
+                          ) : null}
+                          {highlight.change_note ? (
+                            <StatusPill label={highlight.change_note} tone="quiet" />
+                          ) : null}
+                        </div>
+                        <div className="today-report-species-count">
+                          <strong>{plural(highlight.confirmed_visit_count, "visit")}</strong>
+                          {highlight.provisional_visit_count > 0 ? (
+                            <span className="today-report-species-likely">
+                              +{highlight.provisional_visit_count} likely
+                            </span>
+                          ) : null}
+                        </div>
+                      </li>
+                    ))}
                   </ol>
-                  {extraTaxaCount > 0 ? (
-                    <span className="meta-text">+{extraTaxaCount} more species</span>
+                  {digest.other_species.length > 0 ? (
+                    <p className="meta-text today-report-also-recorded">
+                      Also recorded:{" "}
+                      {digest.other_species.map((entry) => entry.display_name).join(" · ")}
+                    </p>
                   ) : null}
                 </div>
               ) : null}
@@ -435,21 +366,18 @@ export function TodayReportPanel({
           ) : null}
         </>
       ) : monitoredStreamCount > 0 ? (
-        coverageInsufficientForConclusions ? (
-          // Distinct from "no wildlife" below: too little of today has been
-          // monitored yet to honestly say wildlife did or didn't appear.
-          // See "Coverage / effort accounting" -- never imply "no birds
-          // visited" when there simply isn't enough monitoring behind that
-          // claim yet.
-          <EmptyState
-            description="MockingBird hasn’t monitored enough of today yet to summarize it with confidence. Check back once more of the day has been observed."
-            title="Not enough monitoring yet to say"
-          />
+        digest.coverage.state !== "no_confirmed_activity" ? (
+          // sparse_monitoring or no_monitoring (see "I.10 Coverage
+          // semantics"): too little of today has been monitored yet to
+          // honestly say wildlife did or didn't appear -- never "no
+          // wildlife visited" when there simply isn't enough monitoring
+          // behind that claim yet. Wording is Calm Daily Digest v1's own
+          // (mockingbird.analytics.daily_digest), not re-authored here.
+          <EmptyState description={digest.coverage.message} title="Not enough monitoring yet to say" />
         ) : (
-          <EmptyState
-            description="MockingBird is watching this place. Your frequent visitors, busiest times, and most active areas will show up here as activity builds."
-            title="No wildlife visits yet today"
-          />
+          // Genuinely usable coverage, genuinely zero wildlife activity of
+          // any kind -- an honest, calm observation, not a database dump.
+          <EmptyState description={digest.coverage.message} title="No wildlife visits yet today" />
         )
       ) : (
         <EmptyState

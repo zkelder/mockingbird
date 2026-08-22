@@ -22,6 +22,14 @@ from __future__ import annotations
 
 from typing import Mapping
 
+from mockingbird.analytics.daily_digest import (
+    DigestCoverageSummary,
+    DigestOtherActivity,
+    DigestOtherSpecies,
+    DigestSpeciesHighlight,
+    DigestTaxonFact,
+    compute_daily_digest,
+)
 from mockingbird.analytics.historical_baseline import (
     HistoricalPlaceBaseline,
     SpeciesHistoricalStatus,
@@ -50,6 +58,11 @@ from mockingbird.api.schemas import (
     PlaceActivityReportChangeWindows,
     PlaceActivityReportCoverage,
     PlaceActivityReportCoverageGap,
+    PlaceActivityReportDigest,
+    PlaceActivityReportDigestCoverage,
+    PlaceActivityReportDigestOtherActivity,
+    PlaceActivityReportDigestOtherSpecies,
+    PlaceActivityReportDigestSpeciesHighlight,
     PlaceActivityReportHistoricalBaseline,
     PlaceActivityReportHourActivity,
     PlaceActivityReportOverallChangeStatus,
@@ -251,6 +264,110 @@ def _taxon_entry_response(
     )
 
 
+def _digest_taxon_fact(
+    entry: TaxonReportEntry,
+    *,
+    historical_status: SpeciesHistoricalStatus | None,
+    change_status: TaxonChangeStatus | None,
+    place_pattern: TaxonPlacePattern | None,
+    representative_evidence: RepresentativeEvidence | None,
+) -> DigestTaxonFact:
+    """Gate C -- Calm Daily Digest v1: build one `DigestTaxonFact` from the
+    exact same per-taxon facts `_taxon_entry_response` above already
+    assembles into a `PlaceActivityReportTaxonEntry` -- never a second,
+    independently-derived set of facts (see the digest module's own
+    docstring)."""
+
+    return DigestTaxonFact(
+        label=entry.label,
+        display_name=entry.display_name,
+        category=entry.category,
+        is_species=entry.is_species,
+        confirmed_visit_count=entry.confirmed_visit_count,
+        provisional_visit_count=entry.provisional_visit_count,
+        first_activity_at=entry.first_activity_at,
+        last_activity_at=entry.last_activity_at,
+        historical_status=historical_status.status if historical_status is not None else None,
+        change_status=change_status.status if change_status is not None else None,
+        most_active_zone_name=(
+            place_pattern.most_active_zone.zone_name
+            if place_pattern is not None and place_pattern.most_active_zone is not None
+            else None
+        ),
+        most_active_hour=(
+            place_pattern.most_active_hour.local_hour
+            if place_pattern is not None and place_pattern.most_active_hour is not None
+            else None
+        ),
+        has_representative_evidence=representative_evidence is not None,
+        # "Strong" mirrors `representative_evidence.EvidenceCandidateFact.
+        # is_native_resolution`'s own definition exactly (a genuinely
+        # proven, separate higher-resolution capture) -- never inferred
+        # from pixel counts or evidence presence alone.
+        has_strong_representative_evidence=(
+            representative_evidence is not None
+            and representative_evidence.evidence.resolution_provenance == "synchronized"
+        ),
+    )
+
+
+def _digest_highlight_response(
+    highlight: DigestSpeciesHighlight,
+    *,
+    representative_evidence: RepresentativeEvidence | None,
+) -> PlaceActivityReportDigestSpeciesHighlight:
+    return PlaceActivityReportDigestSpeciesHighlight(
+        label=highlight.label,
+        display_name=highlight.display_name,
+        category=LabelCategory(highlight.category),
+        is_species=highlight.is_species,
+        confirmed_visit_count=highlight.confirmed_visit_count,
+        provisional_visit_count=highlight.provisional_visit_count,
+        first_activity_at=highlight.first_activity_at,
+        last_activity_at=highlight.last_activity_at,
+        reason=highlight.reason,
+        historical_note=highlight.historical_note,
+        change_note=highlight.change_note,
+        pattern_note=highlight.pattern_note,
+        # Reused unmodified from the same `representative_evidence` mapping
+        # `_taxon_entry_response` already draws from -- the digest never
+        # selects or ranks evidence itself; see "I.8 Representative
+        # evidence" in the milestone brief.
+        representative_evidence=representative_evidence,
+    )
+
+
+def _digest_other_species_response(
+    entry: DigestOtherSpecies,
+) -> PlaceActivityReportDigestOtherSpecies:
+    return PlaceActivityReportDigestOtherSpecies(
+        label=entry.label,
+        display_name=entry.display_name,
+        category=LabelCategory(entry.category),
+        is_species=entry.is_species,
+        confirmed_visit_count=entry.confirmed_visit_count,
+    )
+
+
+def _digest_coverage_response(
+    coverage: DigestCoverageSummary,
+) -> PlaceActivityReportDigestCoverage:
+    return PlaceActivityReportDigestCoverage(
+        state=coverage.state,
+        maturity=coverage.maturity,
+        message=coverage.message,
+    )
+
+
+def _digest_other_activity_response(
+    other_activity: DigestOtherActivity,
+) -> PlaceActivityReportDigestOtherActivity:
+    return PlaceActivityReportDigestOtherActivity(
+        provisional_visit_count=other_activity.provisional_visit_count,
+        unresolved_visit_count=other_activity.unresolved_visit_count,
+    )
+
+
 def _zone_entry_response(entry: ZoneActivityEntry) -> PlaceActivityReportZoneActivity:
     return PlaceActivityReportZoneActivity(
         zone_id=entry.zone_id,
@@ -358,6 +475,48 @@ def place_activity_report_response(
     change_status_by_label = {status.taxon.label: status for status in change_summary.taxa}
     assert change_summary.overall is not None
 
+    # Gate C -- Calm Daily Digest v1: composed from the exact same per-taxon
+    # facts gathered for `taxa` above, plus this report's own honest
+    # report-level accounting -- never a second query, never a second truth
+    # resolution. See mockingbird.analytics.daily_digest's module docstring.
+    digest = compute_daily_digest(
+        [
+            _digest_taxon_fact(
+                entry,
+                historical_status=species_historical_statuses.get(entry.label),
+                change_status=change_status_by_label.get(entry.label),
+                place_pattern=taxon_place_patterns.get(entry.label),
+                representative_evidence=representative_evidence.get(entry.label),
+            )
+            for entry in report.taxa
+        ],
+        period_start_at=report.period_start_at,
+        period_end_at=report.period_end_at,
+        generated_at=report.generated_at,
+        maturity=report.maturity,
+        confirmed_wildlife_visit_count=report.confirmed_wildlife_visit_count,
+        provisional_wildlife_visit_count=report.provisional_wildlife_visit_count,
+        unresolved_visit_count=report.unresolved_visit_count,
+        first_activity_at=report.first_activity_at,
+        last_activity_at=report.last_activity_at,
+        place_change_status=change_summary.overall.status,
+    )
+    digest_response = PlaceActivityReportDigest(
+        coverage=_digest_coverage_response(digest.coverage),
+        primary_highlights=[
+            _digest_highlight_response(
+                highlight, representative_evidence=representative_evidence.get(highlight.label)
+            )
+            for highlight in digest.primary_highlights
+        ],
+        other_species=[_digest_other_species_response(entry) for entry in digest.other_species],
+        other_activity=_digest_other_activity_response(digest.other_activity),
+        place_change_note=digest.place_change_note,
+        first_activity_at=digest.first_activity_at,
+        last_activity_at=digest.last_activity_at,
+        confirmed_wildlife_visit_count=digest.confirmed_wildlife_visit_count,
+    )
+
     return PlaceActivityReportResponse(
         period_start_at=report.period_start_at,
         period_end_at=report.period_end_at,
@@ -396,4 +555,5 @@ def place_activity_report_response(
         change_windows=_change_windows_response(change_summary.windows),
         overall_change_status=_overall_change_status_response(change_summary.overall),
         warnings=warnings,
+        digest=digest_response,
     )

@@ -4126,6 +4126,77 @@ export interface PlaceActivityReportCoverage {
   gaps_truncated: boolean;
 }
 
+// Gate C -- Calm Daily Digest v1: one named, reviewed-truth-backed species
+// highlight, composed from the exact same historical_status/change_status/
+// most_active_zone/most_active_hour/representative_evidence facts already
+// present on this taxon's own PlaceActivityReportTaxonEntry.
+export interface PlaceActivityReportDigestSpeciesHighlight {
+  label: string;
+  display_name: string;
+  category: LabelCategory;
+  is_species: boolean;
+  confirmed_visit_count: number;
+  provisional_visit_count: number;
+  first_activity_at: string;
+  last_activity_at: string;
+  reason:
+    | "first_confirmed_record"
+    | "meaningful_change"
+    | "strong_representative_evidence"
+    | "regular_activity"
+    | "confirmed_activity";
+  historical_note?: string | null;
+  change_note?: string | null;
+  pattern_note?: string | null;
+  representative_evidence?: RepresentativeEvidence | null;
+}
+
+// One additional confirmed species beyond the primary highlight bound --
+// compact, name-only continuity ("Also recorded: ...").
+export interface PlaceActivityReportDigestOtherSpecies {
+  label: string;
+  display_name: string;
+  category: LabelCategory;
+  is_species: boolean;
+  confirmed_visit_count: number;
+}
+
+// Wildlife activity that is not (yet) reviewed truth -- always an anonymous
+// count, never a species name.
+export interface PlaceActivityReportDigestOtherActivity {
+  provisional_visit_count: number;
+  unresolved_visit_count: number;
+}
+
+// How much confidence today's digest may claim, and one calm sentence
+// describing it -- purely a function of monitoring coverage plus honest
+// activity counts, never a judgment about the amount of wildlife found.
+export interface PlaceActivityReportDigestCoverage {
+  state:
+    | "no_monitoring"
+    | "sparse_monitoring"
+    | "no_confirmed_activity"
+    | "unresolved_activity_only"
+    | "confirmed_wildlife";
+  maturity: "no_data" | "sparse" | "usable";
+  message: string;
+}
+
+// Gate C -- Calm Daily Digest v1: one calm "what happened here today"
+// recap, composed entirely from this same report's own already-resolved
+// facts (see mockingbird.analytics.daily_digest). Creates no new
+// observational authority.
+export interface PlaceActivityReportDigest {
+  coverage: PlaceActivityReportDigestCoverage;
+  primary_highlights: PlaceActivityReportDigestSpeciesHighlight[];
+  other_species: PlaceActivityReportDigestOtherSpecies[];
+  other_activity: PlaceActivityReportDigestOtherActivity;
+  place_change_note?: string | null;
+  first_activity_at?: string | null;
+  last_activity_at?: string | null;
+  confirmed_wildlife_visit_count: number;
+}
+
 export interface PlaceActivityReportResponse {
   period_start_at: string;
   period_end_at: string;
@@ -4168,6 +4239,9 @@ export interface PlaceActivityReportResponse {
   change_windows: PlaceActivityReportChangeWindows;
   overall_change_status: PlaceActivityReportOverallChangeStatus;
   warnings: string[];
+  // Gate C -- Calm Daily Digest v1: a bounded, ranked, presentation-ready
+  // composition of the facts above.
+  digest: PlaceActivityReportDigest;
 }
 
 export type WildlifeJournalOrder =

@@ -33,6 +33,165 @@ async function completeSetup(page: Page) {
   );
 }
 
+// Gate C -- Calm Daily Digest v1 (see mockingbird.analytics.daily_digest).
+// This spec's fixtures predate the digest and only ever hand-authored
+// `taxa[]`/report-level counts; rather than rewrite every scenario below to
+// also hand-author a matching `digest`, this derives one mechanically from
+// exactly those same already-authored fields, mirroring the real backend's
+// ranking/wording closely enough for this file's purposes (a frontend
+// presentation-layer spec, not a re-test of the backend's own ranking --
+// that is already covered by tests/test_daily_digest.py and
+// tests/test_place_activity_report_repository.py). A scenario that cares
+// about digest-specific behavior beyond this mechanical derivation passes
+// an explicit `digest` override instead (see the "Also recorded" test
+// below).
+const HISTORICAL_NOTES: Record<string, string> = {
+  new: "New to your reviewed history",
+  first_record: "First confirmed record so far",
+  regular: "Regular here",
+};
+const CHANGE_NOTES: Record<string, string> = {
+  higher_recent_presence: "Recorded more often recently",
+  lower_recent_presence: "Recorded less often recently",
+};
+const PLACE_CHANGE_NOTES: Record<string, string> = {
+  building_baseline: "MockingBird is still building a baseline for this Place.",
+  insufficient_recent_coverage: "There wasn't enough recent monitoring to compare with history.",
+  more_activity_recorded: "Wildlife activity was recorded on more monitored days recently than in the preceding weeks.",
+  less_activity_recorded: "Wildlife activity was recorded on fewer monitored days recently than in the preceding weeks.",
+};
+const TIER_ORDER = [
+  "first_confirmed_record",
+  "meaningful_change",
+  "strong_representative_evidence",
+  "regular_activity",
+  "confirmed_activity",
+];
+
+function fixtureHourRange(hour: number): string {
+  const fmt = (value: number) => {
+    const period = value < 12 ? "AM" : "PM";
+    const twelve = value % 12 === 0 ? 12 : value % 12;
+    return { label: String(twelve), period };
+  };
+  const start = fmt(hour);
+  const end = fmt((hour + 1) % 24);
+  return start.period === end.period
+    ? `${start.label}–${end.label} ${end.period}`
+    : `${start.label} ${start.period}–${end.label} ${end.period}`;
+}
+
+function fixturePatternNote(
+  zone: { display_name: string } | null | undefined,
+  hour: { local_hour: number } | null | undefined,
+): string | null {
+  if (zone && hour) return `${zone.display_name} · ${fixtureHourRange(hour.local_hour)}`;
+  if (zone) return `Mostly recorded at ${zone.display_name}`;
+  if (hour) return `Most active ${fixtureHourRange(hour.local_hour)}`;
+  return null;
+}
+
+interface FixtureTaxon {
+  label: string;
+  display_name: string;
+  category: string;
+  is_species: boolean;
+  confirmed_visit_count: number;
+  provisional_visit_count: number;
+  first_activity_at: string;
+  last_activity_at: string;
+  historical_status?: { status: string } | null;
+  change_status?: { status: string } | null;
+  most_active_zone?: { display_name: string } | null;
+  most_active_hour?: { local_hour: number } | null;
+  representative_evidence?: unknown;
+}
+
+function fixtureHighlightReason(taxon: FixtureTaxon): string {
+  const historicalStatus = taxon.historical_status?.status;
+  if (historicalStatus === "new" || historicalStatus === "first_record") return "first_confirmed_record";
+  const changeStatus = taxon.change_status?.status;
+  if (changeStatus === "higher_recent_presence" || changeStatus === "lower_recent_presence") {
+    return "meaningful_change";
+  }
+  if (historicalStatus === "regular") return "regular_activity";
+  return "confirmed_activity";
+}
+
+function deriveDigest(body: Record<string, unknown>): Record<string, unknown> {
+  const taxa = ((body.taxa as FixtureTaxon[] | undefined) ?? []).filter((taxon) => taxon.confirmed_visit_count > 0);
+  const ranked = taxa.slice().sort((a, b) => {
+    const tierDelta = TIER_ORDER.indexOf(fixtureHighlightReason(a)) - TIER_ORDER.indexOf(fixtureHighlightReason(b));
+    if (tierDelta !== 0) return tierDelta;
+    if (b.confirmed_visit_count !== a.confirmed_visit_count) return b.confirmed_visit_count - a.confirmed_visit_count;
+    return a.display_name.localeCompare(b.display_name);
+  });
+  const primary = ranked.slice(0, 5);
+  const other = ranked
+    .slice(5)
+    .slice()
+    .sort((a, b) => a.display_name.localeCompare(b.display_name));
+
+  const maturity = (body.maturity as string | undefined) ?? "usable";
+  const confirmedWildlife = (body.confirmed_wildlife_visit_count as number | undefined) ?? 0;
+  const provisionalWildlife = (body.provisional_wildlife_visit_count as number | undefined) ?? 0;
+  const unresolved = (body.unresolved_visit_count as number | undefined) ?? 0;
+
+  let coverage: { state: string; maturity: string; message: string };
+  if (maturity === "no_data") {
+    coverage = { state: "no_monitoring", maturity, message: "MockingBird hasn't started monitoring here yet today." };
+  } else if (maturity === "sparse") {
+    coverage = { state: "sparse_monitoring", maturity, message: "Monitoring coverage is still limited today." };
+  } else if (confirmedWildlife > 0) {
+    coverage = { state: "confirmed_wildlife", maturity, message: "" };
+  } else if (provisionalWildlife + unresolved > 0) {
+    coverage = {
+      state: "unresolved_activity_only",
+      maturity,
+      message: "Wildlife activity was recorded today, but nothing has been reviewed yet.",
+    };
+  } else {
+    coverage = { state: "no_confirmed_activity", maturity, message: "No reviewed wildlife records yet today." };
+  }
+
+  const overallStatus = (body.overall_change_status as { status?: string } | undefined)?.status;
+  const placeChangeNote = overallStatus ? PLACE_CHANGE_NOTES[overallStatus] ?? null : null;
+
+  return {
+    coverage,
+    primary_highlights: primary.map((taxon) => ({
+      label: taxon.label,
+      display_name: taxon.display_name,
+      category: taxon.category,
+      is_species: taxon.is_species,
+      confirmed_visit_count: taxon.confirmed_visit_count,
+      provisional_visit_count: taxon.provisional_visit_count,
+      first_activity_at: taxon.first_activity_at,
+      last_activity_at: taxon.last_activity_at,
+      reason: fixtureHighlightReason(taxon),
+      historical_note: taxon.historical_status ? HISTORICAL_NOTES[taxon.historical_status.status] ?? null : null,
+      change_note: taxon.change_status ? CHANGE_NOTES[taxon.change_status.status] ?? null : null,
+      pattern_note: fixturePatternNote(taxon.most_active_zone, taxon.most_active_hour),
+      representative_evidence: taxon.representative_evidence ?? null,
+    })),
+    other_species: other.map((taxon) => ({
+      label: taxon.label,
+      display_name: taxon.display_name,
+      category: taxon.category,
+      is_species: taxon.is_species,
+      confirmed_visit_count: taxon.confirmed_visit_count,
+    })),
+    other_activity: {
+      provisional_visit_count: provisionalWildlife,
+      unresolved_visit_count: unresolved,
+    },
+    place_change_note: placeChangeNote,
+    first_activity_at: (body.first_activity_at as string | null | undefined) ?? null,
+    last_activity_at: (body.last_activity_at as string | null | undefined) ?? null,
+    confirmed_wildlife_visit_count: confirmedWildlife,
+  };
+}
+
 async function mockPlaceActivityReport(page: Page, overrides: Record<string, unknown>) {
   const now = new Date();
   const base = {
@@ -110,7 +269,10 @@ async function mockPlaceActivityReport(page: Page, overrides: Record<string, unk
       "Visits are activity sessions, not estimates of unique animals. The same animal may create more than one Visit if it leaves and returns.",
     ],
   };
-  const body = { ...base, ...overrides };
+  const body: Record<string, unknown> = { ...base, ...overrides };
+  if (!("digest" in overrides)) {
+    body.digest = deriveDigest(body);
+  }
   await page.route("**/api/analytics/place-activity-report", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) }),
   );
@@ -581,14 +743,14 @@ test("change-status badges read More/Fewer honestly, and no_supported_change sta
   await expect(speciesList).toHaveCount(3);
 
   const cardinalRow = speciesList.filter({ hasText: "Northern Cardinal" });
-  await expect(cardinalRow.getByText("More often recently")).toBeVisible();
+  await expect(cardinalRow.getByText("Recorded more often recently")).toBeVisible();
 
   const finchRow = speciesList.filter({ hasText: "House Finch" });
-  await expect(finchRow.getByText("Fewer recent visits")).toBeVisible();
+  await expect(finchRow.getByText("Recorded less often recently")).toBeVisible();
 
   const wrenRow = speciesList.filter({ hasText: "Carolina Wren" });
-  await expect(wrenRow.getByText("More often recently")).toHaveCount(0);
-  await expect(wrenRow.getByText("Fewer recent visits")).toHaveCount(0);
+  await expect(wrenRow.getByText("Recorded more often recently")).toHaveCount(0);
+  await expect(wrenRow.getByText("Recorded less often recently")).toHaveCount(0);
 });
 
 test("the Place-level change message stays calm: shown only when there is something to say", async ({ page }) => {
@@ -802,6 +964,65 @@ test("a species' provisional Visits never blend into its confirmed count, and a 
   await expect(reportPanel.getByRole("button", { name: "6 items worth reviewing" })).toBeVisible();
 });
 
+test("Calm Daily Digest v1: highlights stay bounded, and additional confirmed species appear compactly below them", async ({
+  page,
+}) => {
+  await completeSetup(page);
+  const seenAt = new Date().toISOString();
+  const names = [
+    "Northern Cardinal",
+    "Carolina Wren",
+    "House Finch",
+    "Blue Jay",
+    "Mourning Dove",
+    "American Robin",
+    "Tufted Titmouse",
+  ];
+  await mockPlaceActivityReport(page, {
+    total_visit_count: 28,
+    confirmed_wildlife_visit_count: 28,
+    wildlife_visit_count: 28,
+    distinct_taxa_count: names.length,
+    distinct_species_count: names.length,
+    first_activity_at: seenAt,
+    last_activity_at: seenAt,
+    taxa: names.map((name, index) => ({
+      label: name.toLowerCase().replace(/ /g, "_"),
+      display_name: name,
+      category: "bird",
+      is_species: true,
+      // Strictly decreasing so ranking (and the primary/other split) is
+      // unambiguous: index 0 is the most-visited, index 6 the least.
+      confirmed_visit_count: names.length - index,
+      provisional_visit_count: 0,
+      total_visit_count: names.length - index,
+      first_activity_at: seenAt,
+      last_activity_at: seenAt,
+    })),
+  });
+
+  await page.goto("/");
+  const reportPanel = page.locator("section.today-report");
+  await expect(reportPanel).toBeVisible();
+
+  // Bounded to 5 primary highlights (see "I.5 Highlight count") -- never an
+  // unbounded card wall, even with 7 confirmed species today.
+  const speciesList = reportPanel.locator(".today-report-species-list li");
+  await expect(speciesList).toHaveCount(5);
+  await expect(speciesList.nth(0)).toContainText("Northern Cardinal");
+  await expect(speciesList.nth(4)).toContainText("Mourning Dove");
+
+  // The remaining confirmed species still appear, compactly, by name only
+  // -- never hidden entirely.
+  const alsoRecorded = reportPanel.locator(".today-report-also-recorded");
+  await expect(alsoRecorded).toBeVisible();
+  await expect(alsoRecorded).toContainText("American Robin");
+  await expect(alsoRecorded).toContainText("Tufted Titmouse");
+  // Alphabetical, not a duplicate of the ranked primary list.
+  await expect(alsoRecorded).toHaveText(/American Robin.*Tufted Titmouse/);
+  await expect(alsoRecorded).not.toContainText("Northern Cardinal");
+});
+
 test("insufficient monitoring today says so honestly, instead of a confident 'no wildlife' claim", async ({
   page,
 }) => {
@@ -874,7 +1095,10 @@ test("a quiet, intentional empty state appears when there is no wildlife activit
   await expect(reportPanel).toBeVisible();
 
   await expect(reportPanel.getByText("No wildlife visits yet today")).toBeVisible();
-  await expect(reportPanel.getByText("MockingBird is watching this place", { exact: false })).toBeVisible();
+  // Calm Daily Digest v1 (see "I.10 Coverage semantics"): an observational
+  // statement about what has been reviewed so far, never a claim that
+  // nothing visited.
+  await expect(reportPanel.getByText("No reviewed wildlife records yet today.")).toBeVisible();
   // Not a blank analytics shell -- the rest of the page still renders.
   await expect(page.getByRole("heading", { name: "Today in Your Yard" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Best moments" })).toBeVisible();
