@@ -1,6 +1,6 @@
 interface StatusPillProps {
   label: string;
-  tone?: "good" | "review" | "quiet";
+  tone?: "good" | "review" | "alert" | "quiet";
 }
 
 export function StatusPill({ label, tone = "quiet" }: StatusPillProps) {

@@ -12861,6 +12861,11 @@ async def get_visit_detail(visit_id: str) -> VisitDetail:
     stream = repository.get_stream(event.stream_id)
     if stream is None:
         raise _not_found("Stream", event.stream_id)
+    # Camera / Source + Multi-Camera Maturity v1, Phase B/G: resolve
+    # `stream.source_id` to its actual display name here, once, rather than
+    # showing the raw id -- see `VisitDetail.source_name`'s own docstring.
+    source = repository.get_source(stream.source_id)
+    source_name = source.name if source is not None else stream.source_id
 
     dataset_ready = repository.visit_is_dataset_ready(visit)
     detection_proposals = repository.detection_proposals_for_visit(visit.id)
@@ -12878,6 +12883,7 @@ async def get_visit_detail(visit_id: str) -> VisitDetail:
         visit=_redact_visit(visit),
         event=event,
         stream=stream,
+        source_name=source_name,
         primary_zone=(
             repository.get_zone(visit.zone_id or event.primary_zone_id)
             if (visit.zone_id or event.primary_zone_id) is not None
@@ -12904,6 +12910,10 @@ async def get_visit_detail(visit_id: str) -> VisitDetail:
         multimodal_associations=[
             association.model_copy(update={"other_visit": _redact_visit(association.other_visit)})
             for association in repository.multimodal_associations_for_visit(visit.id)
+        ],
+        cross_camera_associations=[
+            association.model_copy(update={"other_visit": _redact_visit(association.other_visit)})
+            for association in repository.cross_camera_associations_for_visit(visit.id)
         ],
         eligible_zones=[
             zone

@@ -42,7 +42,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 46
+CURRENT_DATABASE_SCHEMA_VERSION = 47
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -1262,6 +1262,29 @@ def _migrate_to_visit_multimodal_association(connection: Connection) -> None:
     Base.metadata.tables["visit_associations"].create(bind=connection, checkfirst=True)
 
 
+def _migrate_to_cross_camera_visit_association(connection: Connection) -> None:
+    """Camera / Source + Multi-Camera Maturity v1, Phase I: add the empty,
+    additive `cross_camera_visit_associations` table (see
+    docs/camera-source-multi-camera-maturity-v1-contract.md).
+
+    A deliberate sibling table, not an ALTER of `visit_associations`: that
+    table's `acoustic_visit_id` is `NOT NULL` and SQLite has no `ALTER
+    COLUMN` to loosen it, so a same-modality (visual+visual) pair gets its
+    own honestly-named columns instead (see `CrossCameraVisitAssociationModel`'s
+    own docstring). No row is seeded here, mirroring `_migrate_to_visit_
+    multimodal_association`'s own "additive table, no seeded row, no
+    retroactive backfill" precedent exactly -- an upgraded installation's
+    cross-camera association mechanism starts exactly as cold as a
+    brand-new one.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Cross-camera visit association migration requires local SQLite storage."
+        )
+    Base.metadata.tables["cross_camera_visit_associations"].create(bind=connection, checkfirst=True)
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -1308,6 +1331,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     44: _migrate_to_acoustic_runtime_queue,
     45: _migrate_to_acoustic_species_scoped_idempotency,
     46: _migrate_to_visit_multimodal_association,
+    47: _migrate_to_cross_camera_visit_association,
 }
 
 

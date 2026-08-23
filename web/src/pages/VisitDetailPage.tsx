@@ -886,6 +886,55 @@ export function VisitDetailPage({
           })
         : null}
 
+      {/*
+        Camera / Source + Multi-Camera Maturity v1, Phase I: a durable,
+        additive link to a same-encounter (or possibly-same-encounter) Visit
+        on a *different* camera -- empty, and therefore invisible, for the
+        ordinary single-camera case. Mirrors the multimodal panel above
+        exactly (plain wording, navigation/context only, never a shared
+        correction surface) with one addition: which other camera/Area, since
+        that is the one fact that actually matters here (unlike modality,
+        which the acoustic/visual badge above already communicates).
+      */}
+      {detail.cross_camera_associations.length > 0
+        ? detail.cross_camera_associations.map((association) => {
+            const otherVisitLabel = displayTaxonomyLabel(
+              association.other_visit.reviewed_label ??
+                association.other_visit.species_guess ??
+                association.other_visit.subject_label,
+              taxonomyLabels,
+            );
+            return (
+              <div className="notice-panel" key={association.association_id}>
+                <EvidenceBadge label={`Also seen on ${association.other_source_name}`} tone="evidence" />
+                {association.taxon_agreement === "agrees" ? (
+                  <EvidenceBadge label="Evidence agrees" tone="evidence" />
+                ) : association.taxon_agreement === "differs" ? (
+                  <EvidenceBadge label="Evidence differs" tone="review" />
+                ) : null}
+                {association.tier === "possible" ? (
+                  <EvidenceBadge label="Needs review" tone="quiet" />
+                ) : null}
+                <p>
+                  {association.tier === "associated"
+                    ? "Likely the same encounter, also captured on another camera."
+                    : "Possibly related to activity on another camera -- not confirmed as the same encounter."}
+                </p>
+                <div className="detail-actions">
+                  <button
+                    className="secondary-action"
+                    onClick={() => onOpenVisit(association.other_visit.id)}
+                    type="button"
+                  >
+                    {otherVisitLabel} on {association.other_source_name} (
+                    {formatLabel(association.other_visit.review_status)})
+                  </button>
+                </div>
+              </div>
+            );
+          })
+        : null}
+
       {message ? <div className="notice-panel">{message}</div> : null}
 
       {/*
@@ -1047,7 +1096,7 @@ export function VisitDetailPage({
             {visitCorrectionTruthCopy}
           </p>
           <div className="promoted-review-context-grid">
-            <ContextItem label="Source" value={detail.stream.source_id} />
+            <ContextItem label="Source" value={detail.source_name} detail={detail.stream.source_id} />
             <ContextItem label="Event" value={detail.event.title} detail={detail.event.id} />
             <ContextItem label="Stream" value={detail.stream.name} detail={detail.stream.id} />
             <ContextItem

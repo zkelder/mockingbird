@@ -46,7 +46,14 @@ async function forceStreamPlaybackKind(
   page: import("@playwright/test").Page,
   playbackKind: string,
 ) {
-  await page.route("**/api/dashboard/summary", async (route) => {
+  // Pre-existing bug found during Camera / Source + Multi-Camera Maturity
+  // v1 validation: `dashboard_summary` has carried a `?local_date=...` query
+  // parameter since before this milestone, so a glob with no trailing
+  // wildcard never matched the real request -- this route silently never
+  // intercepted, and the mutated `source_kind`/`playback_kind` both tests
+  // below depend on was never applied. `today-report.spec.ts`'s own
+  // identical interception already uses the correct trailing `**`.
+  await page.route("**/api/dashboard/summary**", async (route) => {
     const real = await page.request.get("/api/dashboard/summary");
     const body = await real.json();
     const stream = body.streams.find((item: { stream_id: string }) => item.stream_id === streamId);

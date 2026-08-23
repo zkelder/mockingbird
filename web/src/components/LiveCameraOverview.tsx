@@ -6,7 +6,7 @@ import type {
   LiveCameraSessionStatus,
   StreamRuntimeStatus,
 } from "../api/types";
-import { formatDateTime } from "../utils";
+import { cameraHealthLabel, cameraHealthTone, formatDateTime } from "../utils";
 import { CurrentFrameView } from "./CurrentFrameView";
 import { EmptyState } from "./EmptyState";
 import { StatusPill } from "./StatusPill";
@@ -121,19 +121,13 @@ function monitoringState(
   // whole time Observation is actively, healthily watching this camera.
   if (pausedForObservation) return "Observing";
   const health = stream.camera_health;
-  if (health) {
-    return {
-      healthy: "Healthy",
-      starting: "Starting",
-      waiting_for_capacity: "Waiting for capacity",
-      camera_unavailable: "Camera unavailable",
-      no_recent_frame: "No recent frame",
-      evidence_storage_degraded: "Evidence storage degraded",
-      recovering: "Recovering",
-      stopped: "Monitoring stopped",
-      setup_incomplete: "Setup incomplete",
-    }[health.state];
-  }
+  // Camera / Source + Multi-Camera Maturity v1, Phase F: reuse the one
+  // canonical `cameraHealthLabel` (utils.ts, the "B7 health model" this
+  // milestone's own doctrine names) instead of this file's own separately-
+  // maintained copy of the same mapping -- exactly the divergence risk that
+  // model was built to close, and the reason this file's tone below had
+  // silently drifted out of sync with the shared 4-tone severity fix.
+  if (health) return cameraHealthLabel(health.state);
   if (stream.monitoring_active || runtime?.actual_state === "running") return "Monitoring running";
   if (runtime?.desired_mode === "armed" && runtime.failure_code === "waiting_for_capacity") {
     return "Waiting for monitoring capacity";
@@ -146,11 +140,9 @@ function monitoringTone(
   stream: DashboardStreamSummary,
   runtime?: StreamRuntimeStatus,
   pausedForObservation?: boolean,
-): "good" | "review" | "quiet" {
+): "good" | "review" | "alert" | "quiet" {
   if (pausedForObservation) return "good";
-  if (stream.camera_health?.state === "healthy") return "good";
-  if (stream.camera_health?.state === "stopped" || stream.camera_health?.state === "starting") return "quiet";
-  if (stream.camera_health) return "review";
+  if (stream.camera_health) return cameraHealthTone(stream.camera_health.state);
   if (stream.monitoring_active || runtime?.actual_state === "running") return "good";
   if (runtime?.desired_mode === "armed") return "review";
   return "quiet";
@@ -490,7 +482,10 @@ export function LiveCameraOverview({
               <div className="item-title-row">
                 <div>
                   <h3>{stream.stream_name}</h3>
-                  <span className="meta-text">{stream.source_name}</span>
+                  <span className="meta-text">
+                    {stream.source_name}
+                    {stream.camera_health?.area_name ? ` · ${stream.camera_health.area_name}` : ""}
+                  </span>
                 </div>
                 <StatusPill
                   label={monitoringState(stream, runtime, liveSessionPausedForObservation)}
@@ -550,6 +545,24 @@ export function LiveCameraOverview({
                 {runtime?.exposure_interval_active ? <span>Active exposure: <strong>{exposureDurationLabel(runtime.current_healthy_duration_seconds)}</strong></span> : null}
                 {stream.camera_health?.next_retry_at ? <span>Recovery: <strong>{formatDateTime(stream.camera_health.next_retry_at)}</strong></span> : null}
                 {stream.camera_health?.unread_alert ? <span>Unread camera alert</span> : null}
+                {
+                  // Camera / Source + Multi-Camera Maturity v1, Phase F/K:
+                  // plain wording only -- "kept working while disconnected,
+                  // items waiting to sync" is the target phrasing from the
+                  // milestone brief, never transport/protocol jargon.
+                  stream.camera_health?.connectivity_reason === "host_unreachable" ? (
+                    <span>
+                      The camera kept working while disconnected
+                      {typeof stream.camera_health.backlog_pending_count === "number"
+                        ? ` and has ${stream.camera_health.backlog_pending_count} item(s) waiting to sync`
+                        : ""}
+                      .
+                    </span>
+                  ) : typeof stream.camera_health?.backlog_pending_count === "number" &&
+                    stream.camera_health.backlog_pending_count > 0 ? (
+                    <span>Backlog pending: <strong>{stream.camera_health.backlog_pending_count} item(s) waiting to sync</strong></span>
+                  ) : null
+                }
                 <span>Needs review: <strong>{stream.needs_review_visit_count}</strong></span>
                 <span>Latest Visit: <strong>{stream.latest_visit ? formatDateTime(stream.latest_visit.captured_at) : "None yet"}</strong></span>
                 {stream.setup_incomplete ? <span>Setup incomplete</span> : null}

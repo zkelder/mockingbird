@@ -125,12 +125,14 @@ treat a stale pre-fix `armed` camera_node row as work (it would otherwise
 actually start a real session: `LiveCameraSessionManager` genuinely supports
 `camera_node`, so nothing else would stop it). Disabling stays unguarded and
 always safe/idempotent, including recovery from stale historical state. The
-one still-open surface is `CameraSetupPage.tsx`'s "Start watching" checkbox,
-which the guided setup wizard renders unconditionally for every provider,
-including `camera_node`; the backend now rejects that combination with a
-clear error instead of silently arming it, but the checkbox itself is not
-yet hidden for Camera Node the way `LiveCameraOverview.tsx`'s was -- a small
-follow-up UI fix, not a backend gap.
+`CameraSetupPage.tsx` "Start watching" checkbox this section used to flag as
+a still-open follow-up UI fix (unconditionally rendered for every provider,
+including `camera_node`) was closed by v0.1 Acquisition/Ingest
+Interoperability v1 (2026-08-22): the wizard now conditionally hides the
+checkbox for `camera_node` and shows explanatory text instead, confirmed
+current as of Camera / Source + Multi-Camera Maturity v1's own archaeology
+pass (2026-08-23) -- corrected here since this doc had drifted stale on that
+one point.
 
 Forbidding legacy durable monitoring for Camera Node used to also mean no
 coverage: only that legacy path wrote `MonitoringExposureIntervalModel`, the

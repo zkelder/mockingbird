@@ -411,7 +411,7 @@ export function TodayReportPanel({
           }
           description={
             configuredStreamCount > 0
-              ? "Start observing on your camera to begin building your wildlife report."
+              ? `Start observing on your ${configuredStreamCount > 1 ? "cameras" : "camera"} to begin building your wildlife report.`
               : "Add a camera to start building your wildlife report. Frequent visitors, busiest times, and most active areas will appear here."
           }
           title={configuredStreamCount > 0 ? "Monitoring hasn’t started yet" : "MockingBird is ready to watch this place"}

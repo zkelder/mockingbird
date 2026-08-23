@@ -2038,3 +2038,152 @@ def test_representative_evidence_reuses_the_existing_privacy_boundary_not_a_new_
     [taxon] = report.taxa
     assert taxon.representative_evidence is not None
     assert taxon.representative_evidence.visit_id == "cardinal-in-privacy-zone"
+
+
+# 20. Camera / Source + Multi-Camera Maturity v1, Phase H: a confidently-associated
+# pair (multimodal or cross-camera) must count as one encounter, not two ----------
+
+
+def test_confidently_associated_cross_camera_pair_counts_once_not_twice(
+    repository: ProductRepository,
+) -> None:
+    """The exact Phase H failure mode this milestone's own archaeology
+    found: `place_activity_report` had zero multimodal/cross-camera
+    awareness at all, so a real bird seen by two Sources at once would
+    silently double-count. Two confirmed cardinal Visits, on two different
+    Sources, already linked by a real (directly-inserted, mirroring how
+    `_add_exposure` above stands in for the live monitoring pipeline)
+    `CrossCameraVisitAssociationModel` "associated" row -> exactly one
+    `confirmed_visit_count`, not two."""
+
+    other_source_id, other_stream_id = "source-place-report-camera-c", "stream-place-report-camera-c"
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(CameraSourceModel(
+                id=other_source_id, name="Place report camera C", kind="manual_upload",
+                status="connected", description="Second Source for cross-camera dedup fixture.",
+            ))
+            session.add(StreamModel(
+                id=other_stream_id, source_id=other_source_id, name="Yard stream C",
+                description="Second Source for cross-camera dedup fixture.", is_live=False,
+            ))
+
+    at = PERIOD_START + timedelta(hours=1)
+    _add_visit(repository, visit_id="cardinal-camera-a", at=at, stream_id=STREAM_A, zone_id=ZONE_FEEDER)
+    _confirm(repository, visit_id="cardinal-camera-a", label="northern_cardinal")
+    _add_visit(
+        repository, visit_id="cardinal-camera-c", at=at + timedelta(seconds=3), stream_id=other_stream_id,
+    )
+    _confirm(repository, visit_id="cardinal-camera-c", label="northern_cardinal")
+
+    from mockingbird.repository.product_repository import CrossCameraVisitAssociationModel
+
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(CrossCameraVisitAssociationModel(
+                id="cross-camera-association-fixture-1",
+                primary_visit_id="cardinal-camera-a",
+                secondary_visit_id="cardinal-camera-c",
+                tier="associated",
+                overlap_ms=0,
+                gap_ms=3_000,
+                spatial_signal="matching_area_name",
+                multi_subject=False,
+                engine_version="cross-camera-association-v1",
+                created_at=at,
+                updated_at=at,
+            ))
+
+    report = _report(repository)
+
+    [taxon] = report.taxa
+    assert taxon.label == "northern_cardinal"
+    assert taxon.confirmed_visit_count == 1, (
+        "an associated pair from two Sources is one real encounter and must count once"
+    )
+
+
+def test_unassociated_visits_on_different_cameras_still_each_count(
+    repository: ProductRepository,
+) -> None:
+    """Control for the test above: two genuinely independent Visits (no
+    association row at all) on two different Sources must still both count
+    -- the dedup must not over-apply to ordinary, unrelated activity."""
+
+    other_source_id, other_stream_id = "source-place-report-camera-d", "stream-place-report-camera-d"
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(CameraSourceModel(
+                id=other_source_id, name="Place report camera D", kind="manual_upload",
+                status="connected", description="Second Source, no association, fixture.",
+            ))
+            session.add(StreamModel(
+                id=other_stream_id, source_id=other_source_id, name="Yard stream D",
+                description="Second Source, no association, fixture.", is_live=False,
+            ))
+
+    _add_visit(
+        repository, visit_id="cardinal-camera-a-2", at=PERIOD_START + timedelta(hours=1),
+        stream_id=STREAM_A, zone_id=ZONE_FEEDER,
+    )
+    _confirm(repository, visit_id="cardinal-camera-a-2", label="northern_cardinal")
+    _add_visit(
+        repository, visit_id="cardinal-camera-d", at=PERIOD_START + timedelta(hours=5), stream_id=other_stream_id,
+    )
+    _confirm(repository, visit_id="cardinal-camera-d", label="northern_cardinal")
+
+    report = _report(repository)
+
+    [taxon] = report.taxa
+    assert taxon.confirmed_visit_count == 2
+
+
+# 21. Camera / Source + Multi-Camera Maturity v1, Phase N: optional Source filter ---
+
+
+def test_source_ids_filter_scopes_the_report_without_changing_truth(
+    repository: ProductRepository,
+) -> None:
+    """`source_ids=None` (every existing caller) stays byte-identical to the
+    unfiltered report. A non-empty filter narrows which Sources' activity
+    this one report call includes -- it never touches reviewed truth."""
+
+    other_source_id, other_stream_id = "source-place-report-camera-e", "stream-place-report-camera-e"
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(CameraSourceModel(
+                id=other_source_id, name="Place report camera E", kind="manual_upload",
+                status="connected", description="Source-filter fixture.",
+            ))
+            session.add(StreamModel(
+                id=other_stream_id, source_id=other_source_id, name="Yard stream E",
+                description="Source-filter fixture.", is_live=False,
+            ))
+
+    _add_visit(
+        repository, visit_id="cardinal-source-a", at=PERIOD_START + timedelta(hours=1),
+        stream_id=STREAM_A, zone_id=ZONE_FEEDER,
+    )
+    _confirm(repository, visit_id="cardinal-source-a", label="northern_cardinal")
+    _add_visit(
+        repository, visit_id="finch-source-e", at=PERIOD_START + timedelta(hours=2), stream_id=other_stream_id,
+    )
+    _confirm(repository, visit_id="finch-source-e", label="house_finch")
+
+    unfiltered = _report(repository)
+    assert {taxon.label for taxon in unfiltered.taxa} == {"northern_cardinal", "house_finch"}
+
+    filtered_to_a = repository.place_activity_report(
+        PlaceActivityReportRequest(start_at=PERIOD_START, end_at=PERIOD_END, source_ids=[SOURCE_ID]),
+    )
+    assert {taxon.label for taxon in filtered_to_a.taxa} == {"northern_cardinal"}
+
+    filtered_to_e = repository.place_activity_report(
+        PlaceActivityReportRequest(start_at=PERIOD_START, end_at=PERIOD_END, source_ids=[other_source_id]),
+    )
+    assert {taxon.label for taxon in filtered_to_e.taxa} == {"house_finch"}
+
+    # Reviewed truth itself is untouched by filtering -- the same Visit
+    # still reads back with its confirmed label regardless of report scope.
+    unfiltered_visit = repository.get_visit("cardinal-source-a")
+    assert unfiltered_visit is not None and unfiltered_visit.reviewed_label == "northern_cardinal"

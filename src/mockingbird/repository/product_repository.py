@@ -23,12 +23,12 @@ import shutil
 import struct
 import threading
 import time
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Literal, Sequence
 from urllib.parse import urlsplit, urlunsplit
 import uuid
 
 from sqlalchemy import (
-    CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text,
+    Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text,
 )
 from sqlalchemy import Engine, and_, delete, func, or_, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
@@ -159,12 +159,21 @@ from mockingbird.observation.candidate_visit_authority import (
 from mockingbird.observation.candidate_quality_gate import evaluate_evidence_admission
 from mockingbird.observation.contracts import CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE
 from mockingbird.observation.localization_attribution import geometry_attribution_from_json
+from mockingbird.observation.provider_compatibility import (
+    classify_provider_compatibility,
+    provider_compatibility_label,
+)
 from mockingbird.observation.multimodal_association import (
     ENGINE_VERSION as MULTIMODAL_ASSOCIATION_ENGINE_VERSION,
     POSSIBLE_WINDOW_MS as MULTIMODAL_POSSIBLE_WINDOW_MS,
     AssociationCandidate,
     classify_taxon_agreement,
     evaluate_temporal_association,
+)
+from mockingbird.observation.cross_camera_association import (
+    ENGINE_VERSION as CROSS_CAMERA_ASSOCIATION_ENGINE_VERSION,
+    CrossCameraEventCandidate,
+    evaluate_cross_camera_association,
 )
 from mockingbird.observation.temporal_evidence import event_evidence_interval
 from mockingbird.observation.scene_confusor import (
@@ -568,6 +577,8 @@ from mockingbird.api.schemas import (
     SoundscapeHourlyActivity,
     SoundscapeSpeciesHeardEntry,
     SoundscapeSummaryResponse,
+    VisitCrossCameraAssociation,
+    VisitCrossCameraPartnerSummary,
     VisitMergeCandidate,
     VisitMergeCandidatesResponse,
     VisitMergePreview,
@@ -646,6 +657,7 @@ from mockingbird.monitoring.exposure_history import (
 from mockingbird.source_providers import folder_import_preview
 from mockingbird.source_providers import media_provenance
 from mockingbird.source_providers.webhook_validation import classify_webhook_payload
+from mockingbird.storage.camera_node_transport_ledger import read_camera_node_transport_backlog_summary
 from mockingbird.storage.database import (
     DEFAULT_DB_URL,
     create_database_engine,
@@ -746,6 +758,12 @@ MAX_COLLECTION_LIST_ITEMS = 100
 CAMERA_HEALTH_STARTUP_GRACE = timedelta(minutes=2)
 CAMERA_HEALTH_RECENT_FRAME = DURABLE_EXPOSURE_FRESHNESS_LIMIT
 CAMERA_HEALTH_DEGRADED_FRAME = timedelta(minutes=8)
+# Camera / Source + Multi-Camera Maturity v1, Phase F/K: byte-identical to
+# `diagnostics.doctor.CAMERA_NODE_TRANSPORT_STALE_AFTER_SECONDS`, duplicated
+# (not imported -- see `_camera_node_transport_backlog_facts`'s own
+# docstring for why) so "how stale is too stale to call the Node recently
+# alive" is one judgment call in spirit, even though it lives in two places.
+_CAMERA_NODE_TRANSPORT_STALE_AFTER_SECONDS = 3600.0
 CAMERA_HEALTH_PROLONGED_CAPACITY_WAIT = timedelta(minutes=5)
 CAMERA_HEALTH_CHECKPOINT_INTERVAL = timedelta(seconds=30)
 CAMERA_HEALTH_HISTORY_LIMIT = 20
@@ -1182,6 +1200,8 @@ BASE_MODEL_ADAPTERS: tuple[ModelAdapter, ...] = (
 SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
     SourceProviderDefinition(
         provider_key="demo",
+        compatibility=classify_provider_compatibility("demo"),
+        compatibility_label=provider_compatibility_label(classify_provider_compatibility("demo")),
         display_name="Demo source",
         description="Seeded local demo metadata for stream, zone, and review workflows.",
         status=SourceProviderDefinitionStatus.demo,
@@ -1200,6 +1220,8 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
     ),
     SourceProviderDefinition(
         provider_key="manual_media",
+        compatibility=classify_provider_compatibility("manual_media"),
+        compatibility_label=provider_compatibility_label(classify_provider_compatibility("manual_media")),
         display_name="Manual media",
         description="Metadata for sources that begin from manually supplied local media.",
         status=SourceProviderDefinitionStatus.available_contract_only,
@@ -1218,6 +1240,8 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
     ),
     SourceProviderDefinition(
         provider_key="external_url",
+        compatibility=classify_provider_compatibility("external_url"),
+        compatibility_label=provider_compatibility_label(classify_provider_compatibility("external_url")),
         display_name="External URL / HTTP camera",
         description=(
             "Metadata for explicit still-image preview/status and optional "
@@ -1295,6 +1319,8 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
     ),
     SourceProviderDefinition(
         provider_key="onvif",
+        compatibility=classify_provider_compatibility("onvif"),
+        compatibility_label=provider_compatibility_label(classify_provider_compatibility("onvif")),
         display_name="ONVIF network camera",
         description=(
             "Discover an ONVIF-capable network camera, authenticate, and select a media "
@@ -1341,6 +1367,8 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
     ),
     SourceProviderDefinition(
         provider_key="local_usb",
+        compatibility=classify_provider_compatibility("local_usb"),
+        compatibility_label=provider_compatibility_label(classify_provider_compatibility("local_usb")),
         display_name="Local USB / Windows webcam",
         description=(
             "Metadata for local USB or Windows webcam Live view through optional ffmpeg."
@@ -1481,6 +1509,8 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
     ),
     SourceProviderDefinition(
         provider_key="rtsp_future",
+        compatibility=classify_provider_compatibility("rtsp_future"),
+        compatibility_label=provider_compatibility_label(classify_provider_compatibility("rtsp_future")),
         display_name="RTSP future provider",
         description="Future provider contract for network camera-style streams.",
         status=SourceProviderDefinitionStatus.future_adapter,
@@ -1515,6 +1545,8 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
     ),
     SourceProviderDefinition(
         provider_key="esp32_future",
+        compatibility=classify_provider_compatibility("esp32_future"),
+        compatibility_label=provider_compatibility_label(classify_provider_compatibility("esp32_future")),
         display_name="ESP32 future provider",
         description="Future provider contract for small outdoor camera devices.",
         status=SourceProviderDefinitionStatus.future_adapter,
@@ -1541,6 +1573,8 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
     ),
     SourceProviderDefinition(
         provider_key="browser_camera_future",
+        compatibility=classify_provider_compatibility("browser_camera_future"),
+        compatibility_label=provider_compatibility_label(classify_provider_compatibility("browser_camera_future")),
         display_name="Browser camera future provider",
         description="Future provider contract for a browser-mediated local camera source.",
         status=SourceProviderDefinitionStatus.future_adapter,
@@ -1559,6 +1593,8 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
     ),
     SourceProviderDefinition(
         provider_key="camera_node",
+        compatibility=classify_provider_compatibility("camera_node"),
+        compatibility_label=provider_compatibility_label(classify_provider_compatibility("camera_node")),
         display_name="MockingBird Camera Node",
         description=(
             "Paired local edge camera metadata. Frames stay on the LAN and enter "
@@ -1666,6 +1702,8 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
     ),
     SourceProviderDefinition(
         provider_key="folder_import_future",
+        compatibility=classify_provider_compatibility("folder_import_future"),
+        compatibility_label=provider_compatibility_label(classify_provider_compatibility("folder_import_future")),
         display_name="Folder / trail-cam import",
         description=(
             "Metadata for explicit local folder or trail-cam preview/import; "
@@ -1745,6 +1783,8 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
     ),
     SourceProviderDefinition(
         provider_key="webhook_future",
+        compatibility=classify_provider_compatibility("webhook_future"),
+        compatibility_label=provider_compatibility_label(classify_provider_compatibility("webhook_future")),
         display_name="Generic webhook ingest",
         description=(
             "Metadata for future signed webhook ingest; no endpoint accepts payloads yet."
@@ -1833,6 +1873,8 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
     # monitoring policy.
     SourceProviderDefinition(
         provider_key="microphone",
+        compatibility=classify_provider_compatibility("microphone"),
+        compatibility_label=provider_compatibility_label(classify_provider_compatibility("microphone")),
         display_name="Local microphone",
         description=(
             "A local audio-input device this installation may explicitly capture "
@@ -2243,6 +2285,69 @@ class VisitAssociationModel(Base):
     # mirrors `ObservationCandidateVisitModel.assembler_version`'s own
     # precedent, so a future stricter/looser engine can tell which rule
     # decided a given historical row without guessing.
+    engine_version: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class CrossCameraVisitAssociationModel(Base):
+    """Camera / Source + Multi-Camera Maturity v1, Phase I (schema 47; see
+    "Overlapping-camera policy" in docs/camera-source-multi-camera-
+    maturity-v1-contract.md): a durable, additive link between two visual
+    candidate Visits on *different* Sources that `cross_camera_association.
+    evaluate_cross_camera_association` judged the same wildlife encounter,
+    or plausibly the same encounter.
+
+    A deliberate sibling of `VisitAssociationModel`, not a reuse of its
+    columns: `VisitAssociationModel.acoustic_visit_id` is `NOT NULL` and
+    SQLite cannot cheaply loosen an existing column's nullability (no
+    `ALTER COLUMN`), so a same-modality (visual+visual) pair gets its own
+    additive table with honestly-named columns instead of overloading an
+    acoustic-shaped column with a second visual id. Same discipline as
+    `VisitAssociationModel` throughout: both original Visits/Events always
+    remain independently reviewable, species/taxon agreement is never
+    stored here (recomputed at read time, exactly like the multimodal
+    case), and only positive findings are persisted -- two Events judged
+    clearly independent never get a row at all.
+
+    `primary_visit_id`/`secondary_visit_id` use a canonical order (the
+    lexicographically smaller `Visit.id` first) purely so the same pair is
+    never stored twice under swapped columns -- unlike a visual/acoustic
+    pair, neither side of a cross-camera pair is intrinsically "first."
+    Rows are upserted, not append-only, by the same full-recompute-per-
+    Event-reconciliation pattern `_reconcile_multimodal_association_for_
+    event` already established."""
+
+    __tablename__ = "cross_camera_visit_associations"
+    __table_args__ = (
+        UniqueConstraint("primary_visit_id", "secondary_visit_id", name="uq_cross_camera_association_pair"),
+        Index("ix_cross_camera_associations_primary_visit", "primary_visit_id"),
+        Index("ix_cross_camera_associations_secondary_visit", "secondary_visit_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    primary_visit_id: Mapped[str] = mapped_column(ForeignKey("visits.id"), nullable=False)
+    secondary_visit_id: Mapped[str] = mapped_column(ForeignKey("visits.id"), nullable=False)
+    # "associated" (clear) | "possible" (temporally coincident, not
+    # confidently exclusive) -- see `cross_camera_association.AssociationTier`
+    # (re-exported from `multimodal_association`). No "independent" value,
+    # matching `VisitAssociationModel`'s own convention.
+    tier: Mapped[str] = mapped_column(String, nullable=False)
+    overlap_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    gap_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # "matching_area_name" | "unknown" -- see `cross_camera_association.
+    # SpatialSignal`. Never "differing_area_name" here: that case is dropped
+    # before a row is ever created (see `evaluate_cross_camera_association`'s
+    # own docstring), consistent with "only positive findings are
+    # persisted," above. Persisted (unlike taxon agreement) because,
+    # together with `tier`, it is *why* a pair reached its tier --
+    # diagnostic and review-facing honesty, not a fact that goes stale the
+    # way a re-suggested species label would.
+    spatial_signal: Mapped[str] = mapped_column(String, nullable=False)
+    # Two concurrent subjects on either camera made the pairing inherently
+    # ambiguous (Phase J) -- kept alongside `spatial_signal` for the same
+    # read-time-honesty reason.
+    multi_subject: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     engine_version: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -4130,6 +4235,25 @@ class ProductRepository:
         # method's own docstring for why this is what correctly downgrades
         # a stale "associated" row the moment a second sibling arrives).
         self._reconcile_multimodal_association_for_event(session, event_id=event_id, now=observed_at)
+        # Camera / Source + Multi-Camera Maturity v1, Phase I: the same
+        # sibling-set change may also now temporally (and, conservatively,
+        # spatially) relate to a nearby visual candidate Event on a
+        # *different* Source -- see `_reconcile_cross_camera_association_
+        # for_event`'s own docstring for the same "always a full
+        # recomputation" reasoning as the multimodal call immediately above.
+        # Unlike the multimodal call, this must also cascade to every other
+        # nearby different-source Event's *own* picture (`_nearby_cross_
+        # camera_event_ids`'s own docstring): a brand new Camera C arrival
+        # can turn an already-persisted, confidently "associated" Camera A
+        # <-> Camera B pair genuinely ambiguous, and that correction must
+        # happen now, not only the next time A or B itself changes.
+        this_event_model = session.get(EventModel, event_id)
+        self._reconcile_cross_camera_association_for_event(session, event_id=event_id, now=observed_at)
+        if this_event_model is not None:
+            for neighbor_event_id in self._nearby_cross_camera_event_ids(session, event=this_event_model):
+                self._reconcile_cross_camera_association_for_event(
+                    session, event_id=neighbor_event_id, now=observed_at,
+                )
         return CandidateVisitCreationOutcome(
             "created",
             "candidate_visit_created_shared_event" if shared_event_id is not None else "candidate_visit_created",
@@ -4333,6 +4457,227 @@ class ProductRepository:
                         )
                     )
                     session.flush()
+
+    # -------------------------------------------------------------------
+    # Camera / Source + Multi-Camera Maturity v1, Phase I (see "Overlapping-
+    # camera policy" in docs/camera-source-multi-camera-maturity-v1-
+    # contract.md): the visual+visual sibling of the multimodal engine
+    # immediately above -- same discipline (additive only, conservative,
+    # full-recompute reconciliation), different modality pairing and an
+    # extra spatial-plausibility gate cameras need that a co-located
+    # microphone does not.
+    # -------------------------------------------------------------------
+
+    def _representative_area_name(self, session: Session, stream_id: str) -> str | None:
+        """The one human-authored "Area" fact this milestone's cross-camera
+        spatial-plausibility signal (and the several-camera place-level
+        view, Phase E) can honestly derive from existing data: a Stream's
+        own single active, non-privacy, non-ignore Zone name. A Stream with
+        zero or more than one such Zone has no unambiguous representative
+        Area -- this returns `None` rather than guess which Zone the user
+        means, matching this codebase's general "return None rather than
+        fabricate" convention."""
+
+        zones = session.scalars(
+            select(ZoneModel).where(
+                ZoneModel.stream_id == stream_id,
+                ZoneModel.is_active.is_(True),
+                ZoneModel.zone_type.notin_((ZoneType.privacy.value, ZoneType.ignore.value)),
+            )
+        ).all()
+        if len(zones) != 1:
+            return None
+        name = zones[0].name.strip()
+        return name or None
+
+    def _nearby_cross_camera_event_ids(self, session: Session, *, event: EventModel) -> tuple[str, ...]:
+        """Bounded lookback: which visual Event(s) on a *different* Source
+        fall within the association window of one visual Event's own
+        interval. Unlike the multimodal case (asymmetric by modality: a new
+        visual sibling never needs to re-examine other visual Events, only
+        its own), cross-camera pairing is symmetric -- a brand new Event on
+        Camera C can just as easily change what Camera A's *existing*
+        picture of Camera B should honestly look like (Journey 8's
+        ambiguity: A were uniquely paired with B, then C also arrived in
+        range) as the reverse. Both `_reconcile_cross_camera_association_
+        for_event`'s own candidate query (this Event's picture) and this
+        method (everyone else's picture, cascaded from the call site) share
+        the identical window/filter shape by construction."""
+
+        stream = session.get(StreamModel, event.stream_id)
+        if stream is None:
+            return ()
+        window_start = event.started_at - timedelta(milliseconds=MULTIMODAL_POSSIBLE_WINDOW_MS)
+        window_end = (event.ended_at or event.started_at) + timedelta(milliseconds=MULTIMODAL_POSSIBLE_WINDOW_MS)
+        rows = session.scalars(
+            select(EventModel.id)
+            .join(StreamModel, EventModel.stream_id == StreamModel.id)
+            .where(
+                EventModel.event_type != "acoustic_observation_candidate",
+                EventModel.id != event.id,
+                StreamModel.source_id != stream.source_id,
+                EventModel.started_at <= window_end,
+                func.coalesce(EventModel.ended_at, EventModel.started_at) >= window_start,
+            )
+            .distinct()
+        ).all()
+        return tuple(rows)
+
+    def _reconcile_cross_camera_association_for_event(
+        self, session: Session, *, event_id: str, now: datetime,
+    ) -> None:
+        """Recompute (upsert) every `CrossCameraVisitAssociationModel` row
+        between `event_id`'s *current* full sibling set and every visual
+        Event on a *different* Source in temporal range, from scratch --
+        the same "always a full recomputation" reasoning as `_reconcile_
+        multimodal_association_for_event`, generalized to a candidate side
+        that can itself have multiple concurrent siblings (Phase J).
+
+        Only ever meaningfully called with a visual Event id predating no
+        real content (an acoustic Event, or an Event with no live Visits,
+        is a defensive no-op) -- called from the same call site immediately
+        after the multimodal reconciliation above."""
+
+        event = session.get(EventModel, event_id)
+        if event is None or event.event_type == "acoustic_observation_candidate":
+            return
+        stream = session.get(StreamModel, event.stream_id)
+        if stream is None:
+            return
+        siblings = session.scalars(
+            select(VisitModel).where(
+                VisitModel.event_id == event_id, VisitModel.is_superseded.is_(False),
+            )
+        ).all()
+        if not siblings:
+            return
+        sibling_ids = {sibling.id for sibling in siblings}
+        subject_area_name = self._representative_area_name(session, stream.id)
+        subject_interval = event_evidence_interval(
+            started_at=event.started_at, ended_at=event.ended_at, clock_provenance="visual_event_range",
+        )
+
+        window_start = event.started_at - timedelta(milliseconds=MULTIMODAL_POSSIBLE_WINDOW_MS)
+        window_end = (event.ended_at or event.started_at) + timedelta(milliseconds=MULTIMODAL_POSSIBLE_WINDOW_MS)
+        candidate_rows = session.execute(
+            select(EventModel, StreamModel)
+            .join(StreamModel, EventModel.stream_id == StreamModel.id)
+            .where(
+                EventModel.event_type != "acoustic_observation_candidate",
+                EventModel.id != event_id,
+                StreamModel.source_id != stream.source_id,
+                EventModel.started_at <= window_end,
+                func.coalesce(EventModel.ended_at, EventModel.started_at) >= window_start,
+            )
+        ).all()
+
+        candidate_sibling_visits: dict[str, list[VisitModel]] = {}
+        decision_candidates: list[CrossCameraEventCandidate] = []
+        for candidate_event, candidate_stream in candidate_rows:
+            candidate_visits = session.scalars(
+                select(VisitModel).where(
+                    VisitModel.event_id == candidate_event.id, VisitModel.is_superseded.is_(False),
+                )
+            ).all()
+            if not candidate_visits:
+                continue  # An Event with no live Visits is not a real candidate.
+            candidate_sibling_visits[candidate_event.id] = list(candidate_visits)
+            decision_candidates.append(
+                CrossCameraEventCandidate(
+                    event_id=candidate_event.id,
+                    interval=event_evidence_interval(
+                        started_at=candidate_event.started_at, ended_at=candidate_event.ended_at,
+                        clock_provenance="visual_event_range",
+                    ),
+                    sibling_visit_count=len(candidate_visits),
+                    area_name=self._representative_area_name(session, candidate_stream.id),
+                )
+            )
+
+        decisions = evaluate_cross_camera_association(
+            subject_interval,
+            subject_sibling_count=len(siblings),
+            subject_area_name=subject_area_name,
+            candidates=tuple(decision_candidates),
+        )
+
+        # Existing rows touching any of this Event's own siblings, scoped to
+        # the candidate Visits currently in this reconciliation's own scope
+        # -- mirrors `_reconcile_multimodal_association_for_event`'s own
+        # per-candidate scoping (see that method's docstring for why an
+        # Event whose window narrowed, or a sibling that itself became
+        # superseded, is not separately swept by this pass either).
+        all_candidate_visit_ids = {
+            visit.id for visits in candidate_sibling_visits.values() for visit in visits
+        }
+        relevant_ids = sibling_ids | all_candidate_visit_ids
+        existing_by_pair = (
+            {
+                (row.primary_visit_id, row.secondary_visit_id): row
+                for row in session.scalars(
+                    select(CrossCameraVisitAssociationModel).where(
+                        CrossCameraVisitAssociationModel.primary_visit_id.in_(relevant_ids),
+                        CrossCameraVisitAssociationModel.secondary_visit_id.in_(relevant_ids),
+                    )
+                ).all()
+            }
+            if relevant_ids
+            else {}
+        )
+
+        live_pairs: set[tuple[str, str]] = set()
+        for decision in decisions:
+            for sibling in siblings:
+                for candidate_visit in candidate_sibling_visits[decision.event_id]:
+                    primary_id, secondary_id = sorted((sibling.id, candidate_visit.id))
+                    live_pairs.add((primary_id, secondary_id))
+                    existing_row = existing_by_pair.get((primary_id, secondary_id))
+                    if existing_row is not None:
+                        if (
+                            existing_row.tier != decision.tier
+                            or existing_row.overlap_ms != decision.overlap_ms
+                            or existing_row.gap_ms != decision.gap_ms
+                            or existing_row.spatial_signal != decision.spatial_signal
+                            or existing_row.multi_subject != decision.multi_subject
+                        ):
+                            existing_row.tier = decision.tier
+                            existing_row.overlap_ms = decision.overlap_ms
+                            existing_row.gap_ms = decision.gap_ms
+                            existing_row.spatial_signal = decision.spatial_signal
+                            existing_row.multi_subject = decision.multi_subject
+                            existing_row.engine_version = CROSS_CAMERA_ASSOCIATION_ENGINE_VERSION
+                            existing_row.updated_at = now
+                    else:
+                        session.add(
+                            CrossCameraVisitAssociationModel(
+                                id=self._next_id(
+                                    session, CrossCameraVisitAssociationModel, "cross-camera-association",
+                                ),
+                                primary_visit_id=primary_id,
+                                secondary_visit_id=secondary_id,
+                                tier=decision.tier,
+                                overlap_ms=decision.overlap_ms,
+                                gap_ms=decision.gap_ms,
+                                spatial_signal=decision.spatial_signal,
+                                multi_subject=decision.multi_subject,
+                                engine_version=CROSS_CAMERA_ASSOCIATION_ENGINE_VERSION,
+                                created_at=now,
+                                updated_at=now,
+                            )
+                        )
+                        session.flush()
+
+        # A previously-persisted pair touching one of this Event's own
+        # siblings that this reconciliation did not recompute as live (its
+        # Event fell fully out of range, or now has zero live Visits) is
+        # removed rather than left as a fabricated relationship -- mirrors
+        # the sibling-side cleanup in `_reconcile_multimodal_association_
+        # for_event`. Never touches a row that does not involve one of this
+        # Event's own siblings (a pair from an unrelated reconciliation).
+        for (primary_id, secondary_id), row in existing_by_pair.items():
+            touches_this_event = primary_id in sibling_ids or secondary_id in sibling_ids
+            if touches_this_event and (primary_id, secondary_id) not in live_pairs:
+                session.delete(row)
 
     @staticmethod
     def _effective_taxon_label(visit: VisitModel) -> str | None:
@@ -4587,6 +4932,280 @@ class ProductRepository:
             for observation in observations
             if observation.visit_id not in drop
         ]
+
+    # -------------------------------------------------------------------
+    # Camera / Source + Multi-Camera Maturity v1, Phase I: read-only
+    # resolution of `CrossCameraVisitAssociationModel` rows into presentation
+    # facts -- the visual+visual sibling of the multimodal read helpers
+    # immediately above. Same "recompute agreement fresh, never store it"
+    # and "associated pairs collapse, possible pairs never do" discipline.
+    # -------------------------------------------------------------------
+
+    def _visit_stream_and_source_names(self, session: Session, visit: VisitModel) -> tuple[str, str]:
+        """(stream_name, source_name) for one already-loaded `VisitModel` --
+        the same resolution `DashboardVisitSummary`/`WildlifeJournalObservation`
+        already do per-row, reused here so a cross-camera partner is never
+        named by a raw id (see `VisitDetail.source_name`'s own docstring for
+        why that matters)."""
+
+        event = session.get(EventModel, visit.event_id)
+        stream = session.get(StreamModel, event.stream_id) if event is not None else None
+        source = session.get(CameraSourceModel, stream.source_id) if stream is not None else None
+        return (
+            stream.name if stream is not None else "Unknown stream",
+            source.name if source is not None else "Unknown camera",
+        )
+
+    def cross_camera_associations_for_visit(self, visit_id: str) -> list[VisitCrossCameraAssociation]:
+        """Read-only: every cross-camera association row touching this
+        Visit, from either side, resolved to the full other-camera `Visit`
+        -- mirrors `multimodal_associations_for_visit`'s own shape."""
+
+        with self.session_factory() as session:
+            this_visit_model = session.get(VisitModel, visit_id)
+            if this_visit_model is None:
+                return []
+            rows = session.scalars(
+                select(CrossCameraVisitAssociationModel).where(
+                    or_(
+                        CrossCameraVisitAssociationModel.primary_visit_id == visit_id,
+                        CrossCameraVisitAssociationModel.secondary_visit_id == visit_id,
+                    )
+                )
+            ).all()
+            if not rows:
+                return []
+            this_label = self._effective_taxon_label(this_visit_model)
+            summaries: list[VisitCrossCameraAssociation] = []
+            for row in rows:
+                other_id = row.secondary_visit_id if row.primary_visit_id == visit_id else row.primary_visit_id
+                other_visit_model = session.get(VisitModel, other_id)
+                if other_visit_model is None:
+                    continue
+                other_stream_name, other_source_name = self._visit_stream_and_source_names(
+                    session, other_visit_model,
+                )
+                summaries.append(
+                    VisitCrossCameraAssociation(
+                        association_id=row.id,
+                        other_visit=_visit_from_model(other_visit_model),
+                        other_source_name=other_source_name,
+                        other_stream_name=other_stream_name,
+                        tier=row.tier,
+                        taxon_agreement=classify_taxon_agreement(
+                            this_label, self._effective_taxon_label(other_visit_model),
+                        ),
+                        overlap_ms=row.overlap_ms,
+                        gap_ms=row.gap_ms,
+                        spatial_signal=row.spatial_signal,
+                        multi_subject=row.multi_subject,
+                    )
+                )
+            return summaries
+
+    def _bulk_cross_camera_pair_summaries(
+        self, session: Session, visit_ids: Sequence[str],
+    ) -> dict[str, VisitCrossCameraPartnerSummary]:
+        """One bulk query resolving each of `visit_ids`'s *strongest*
+        cross-camera association (if any) to a compact partner summary --
+        the N-query-free counterpart to `cross_camera_associations_for_
+        visit`, mirroring `_bulk_multimodal_pair_summaries`'s own shape and
+        reason for existing (avoid an N+1 per list row)."""
+
+        ids = set(visit_ids)
+        if not ids:
+            return {}
+        rows = session.scalars(
+            select(CrossCameraVisitAssociationModel).where(
+                or_(
+                    CrossCameraVisitAssociationModel.primary_visit_id.in_(ids),
+                    CrossCameraVisitAssociationModel.secondary_visit_id.in_(ids),
+                )
+            )
+        ).all()
+        if not rows:
+            return {}
+        other_ids = {row.primary_visit_id for row in rows} | {row.secondary_visit_id for row in rows}
+        visit_models = {
+            model.id: model
+            for model in session.scalars(select(VisitModel).where(VisitModel.id.in_(other_ids))).all()
+        }
+        best_row_by_visit_id: dict[str, CrossCameraVisitAssociationModel] = {}
+        for row in rows:
+            for visit_id in (row.primary_visit_id, row.secondary_visit_id):
+                if visit_id not in ids:
+                    continue
+                current = best_row_by_visit_id.get(visit_id)
+                if current is None or (current.tier != "associated" and row.tier == "associated"):
+                    best_row_by_visit_id[visit_id] = row
+
+        summaries: dict[str, VisitCrossCameraPartnerSummary] = {}
+        for visit_id, row in best_row_by_visit_id.items():
+            other_id = row.secondary_visit_id if row.primary_visit_id == visit_id else row.primary_visit_id
+            this_model = visit_models.get(visit_id) or session.get(VisitModel, visit_id)
+            other_model = visit_models.get(other_id)
+            if other_model is None:
+                continue
+            other_stream_name, other_source_name = self._visit_stream_and_source_names(session, other_model)
+            summaries[visit_id] = VisitCrossCameraPartnerSummary(
+                visit_id=other_id,
+                tier=row.tier,
+                taxon_agreement=classify_taxon_agreement(
+                    self._effective_taxon_label(this_model) if this_model else None,
+                    self._effective_taxon_label(other_model),
+                ),
+                other_source_name=other_source_name,
+                other_stream_name=other_stream_name,
+            )
+        return summaries
+
+    def _collapse_associated_cross_camera_pairs(
+        self, session: Session, summaries: Sequence[DashboardVisitSummary],
+    ) -> list[DashboardVisitSummary]:
+        """Presentation-only collapse of a confidently-associated cross-
+        camera pair into one list row -- the visual+visual sibling of
+        `_collapse_associated_multimodal_pairs` (see its docstring for the
+        full contract: never mutates the database, never marks a Visit
+        `is_superseded`, both Visits remain independently reachable).
+
+        Tie-break for which side stays primary differs from the multimodal
+        case (there is no "visual always wins" rule when *both* sides are
+        visual): a row still needing review is always kept visible over an
+        already-resolved partner (Phase I doctrine, same as multimodal);
+        otherwise the row that already has real evidence to show wins;
+        otherwise the lexicographically smaller Visit id, for a fully
+        deterministic result regardless of call order."""
+
+        by_id = {summary.id: summary for summary in summaries}
+        if len(by_id) < 2:
+            return list(summaries)
+        pairs = self._bulk_cross_camera_pair_summaries(session, list(by_id))
+        drop: set[str] = set()
+        updated: dict[str, DashboardVisitSummary] = {}
+        for visit_id, pair in pairs.items():
+            if pair.tier != "associated" or visit_id in drop or pair.visit_id in drop:
+                continue
+            partner_id = pair.visit_id
+            if partner_id not in by_id:
+                continue
+            this_summary = by_id[visit_id]
+            partner_summary = by_id[partner_id]
+            this_needs_review = this_summary.review_status == ReviewStatus.needs_review
+            partner_needs_review = partner_summary.review_status == ReviewStatus.needs_review
+            if this_needs_review != partner_needs_review:
+                primary_id, secondary_id = (
+                    (visit_id, partner_id) if this_needs_review else (partner_id, visit_id)
+                )
+            elif bool(this_summary.primary_evidence) != bool(partner_summary.primary_evidence):
+                primary_id, secondary_id = (
+                    (visit_id, partner_id) if this_summary.primary_evidence else (partner_id, visit_id)
+                )
+            else:
+                primary_id, secondary_id = sorted((visit_id, partner_id))
+            drop.add(secondary_id)
+            primary_summary = by_id[primary_id]
+            secondary_summary = by_id[secondary_id]
+            updated[primary_id] = primary_summary.model_copy(
+                update={
+                    "cross_camera_partner": VisitCrossCameraPartnerSummary(
+                        visit_id=secondary_id,
+                        tier=pair.tier,
+                        taxon_agreement=pair.taxon_agreement,
+                        # Read straight from the dropped row's own already-
+                        # resolved fields -- both `DashboardVisitSummary` and
+                        # `WildlifeJournalObservation` already carry their
+                        # own `source_name`/`stream_name`, so no extra
+                        # lookup (and no direction confusion) is needed.
+                        other_source_name=secondary_summary.source_name,
+                        other_stream_name=secondary_summary.stream_name,
+                    ),
+                }
+            )
+        return [
+            updated.get(summary.id, summary) for summary in summaries if summary.id not in drop
+        ]
+
+    def _collapse_associated_cross_camera_journal_observations(
+        self, session: Session, observations: Sequence[WildlifeJournalObservation],
+    ) -> list[WildlifeJournalObservation]:
+        """`WildlifeJournalObservation` counterpart to `_collapse_associated_
+        cross_camera_pairs` -- Bird Log's gallery is confirmed-only by
+        construction, so (matching the multimodal journal variant's own
+        reasoning) there is no "still needs review" tie-break to make; the
+        row with real evidence wins, else the lexicographically smaller id."""
+
+        by_id = {observation.visit_id: observation for observation in observations}
+        if len(by_id) < 2:
+            return list(observations)
+        pairs = self._bulk_cross_camera_pair_summaries(session, list(by_id))
+        drop: set[str] = set()
+        updated: dict[str, WildlifeJournalObservation] = {}
+        for visit_id, pair in pairs.items():
+            if pair.tier != "associated" or visit_id in drop or pair.visit_id in drop:
+                continue
+            partner_id = pair.visit_id
+            if partner_id not in by_id:
+                continue
+            this_observation = by_id[visit_id]
+            partner_observation = by_id[partner_id]
+            if bool(this_observation.primary_evidence) != bool(partner_observation.primary_evidence):
+                primary_id, secondary_id = (
+                    (visit_id, partner_id) if this_observation.primary_evidence else (partner_id, visit_id)
+                )
+            else:
+                primary_id, secondary_id = sorted((visit_id, partner_id))
+            drop.add(secondary_id)
+            primary_observation = by_id[primary_id]
+            secondary_observation = by_id[secondary_id]
+            updated[primary_id] = primary_observation.model_copy(
+                update={
+                    "cross_camera_partner": VisitCrossCameraPartnerSummary(
+                        visit_id=secondary_id,
+                        tier=pair.tier,
+                        taxon_agreement=pair.taxon_agreement,
+                        other_source_name=secondary_observation.source_name,
+                        other_stream_name=secondary_observation.stream_name,
+                    ),
+                }
+            )
+        return [
+            updated.get(observation.visit_id, observation)
+            for observation in observations
+            if observation.visit_id not in drop
+        ]
+
+    def _associated_visit_ids_to_exclude_from_counting(
+        self, session: Session, visit_ids: Sequence[str],
+    ) -> set[str]:
+        """Camera / Source + Multi-Camera Maturity v1, Phase H: for a
+        *counting* context (Place Activity Report, meaningful-change, or any
+        future aggregate that is not a presentation list) rather than a
+        *display* context, there is nothing to merge/collapse into one
+        row -- only a set of ids to leave out of the count. For every
+        confidently-`"associated"` pair (multimodal or cross-camera) where
+        *both* sides are in `visit_ids`, the lexicographically larger id is
+        excluded; a fully deterministic, symmetric rule (unlike the
+        presentation collapse's needs-review/has-evidence tie-break, which
+        exists only to pick which *row* survives -- counting has no row to
+        preserve, so the simplest correct rule is the right one).
+
+        One real encounter observed by two Sources must count once, not
+        twice, whether the two Visits are visual+acoustic or visual+visual
+        -- see Phase H's own explicit requirement in the milestone brief."""
+
+        ids = set(visit_ids)
+        if len(ids) < 2:
+            return set()
+        exclude: set[str] = set()
+        for pairs in (
+            self._bulk_multimodal_pair_summaries(session, list(ids)),
+            self._bulk_cross_camera_pair_summaries(session, list(ids)),
+        ):
+            for visit_id, pair in pairs.items():
+                if pair.tier != "associated" or pair.visit_id not in ids:
+                    continue
+                exclude.add(max(visit_id, pair.visit_id))
+        return exclude
 
     def soundscape_summary(self, *, start_at: datetime, end_at: datetime) -> SoundscapeSummaryResponse:
         """Multimodal Observation & Soundscape v1, Phase K (see docs/
@@ -7150,6 +7769,8 @@ class ProductRepository:
                         if available_now
                         else "Local setup required before this provider can be configured here."
                     ),
+                    compatibility=definition.compatibility,
+                    compatibility_label=definition.compatibility_label,
                 )
             )
         return CameraSetupOptionsResponse(
@@ -9378,6 +9999,54 @@ class ProductRepository:
             "previous_process_ended": "Monitoring will resume when the local supervisor is ready.",
         }.get(code)
 
+    def _camera_node_transport_backlog_facts(
+        self, session: Session, source: CameraSourceModel | None, *, now: datetime,
+    ) -> tuple[bool, int | None, datetime | None]:
+        """Camera / Source + Multi-Camera Maturity v1, Phase F/K: read the
+        same Remote/Intermittent-WAN Transport backlog facts Doctor's own
+        `_gather_camera_node_transport` already reads (`node_id`/
+        `node_transport_credential` from this Source's provider config,
+        then `read_camera_node_transport_backlog_summary`), reused here for
+        two purposes: (1) whether there is *positive, recent* evidence the
+        Node itself is alive despite an unreachable host<->Node API path
+        (the `bool` return -- only true when transport is configured *and*
+        its last contact is fresher than `_CAMERA_NODE_TRANSPORT_STALE_
+        AFTER_SECONDS`, mirroring Doctor's own staleness threshold exactly,
+        duplicated rather than imported for the same reason `temporal_
+        evidence.EPOCH_ANCHOR` duplicates its own constant -- `diagnostics.
+        doctor` deliberately does not import this module, so this module
+        does not import it back either), and (2) the honest pending-item
+        count/last-sync fact for Phase K's normal-UX surfacing, regardless
+        of whether the Node is currently reachable by pull at all. Returns
+        `(host_recently_alive, pending_count, last_synced_at)`; all `None`/
+        `False` when transport was never configured for this Source."""
+
+        if source is None:
+            return False, None, None
+        model = session.get(SourceProviderConfigurationModel, source.id)
+        if model is None:
+            return False, None, None
+        try:
+            config = json.loads(model.config_json)
+        except (TypeError, ValueError):
+            return False, None, None
+        node_id = config.get("node_id")
+        if not node_id or not config.get("node_transport_credential"):
+            return False, None, None
+        summary = read_camera_node_transport_backlog_summary(node_id)
+        if summary is None:
+            return False, None, None
+        reported_at = summary.get("reported_at")
+        last_synced_at = (
+            datetime.fromtimestamp(reported_at, tz=UTC) if isinstance(reported_at, (int, float)) else None
+        )
+        pending_count = summary.get("pending_count")
+        age_seconds = (
+            (_as_utc(now) - last_synced_at).total_seconds() if last_synced_at is not None else None
+        )
+        host_recently_alive = age_seconds is not None and age_seconds <= _CAMERA_NODE_TRANSPORT_STALE_AFTER_SECONDS
+        return host_recently_alive, pending_count, last_synced_at
+
     def _camera_health_summary_from_models(
         self,
         session: Session,
@@ -9588,6 +10257,22 @@ class ProductRepository:
             and desired_mode == StreamMonitoringMode.armed
             and _as_utc(checkpoint.updated_at) < _as_utc(now) - CAMERA_HEALTH_DEGRADED_FRAME
         )
+        # Camera / Source + Multi-Camera Maturity v1, Phase F/K: always
+        # resolved (cheap no-op unless this Source actually has Remote/
+        # Intermittent-WAN Transport configured) so backlog facts stay
+        # visible in normal UX regardless of current health, but the
+        # connectivity disambiguation itself is only ever asserted for the
+        # one failure class it can genuinely speak to -- an unreachable
+        # host<->Node API path (`failure_code == "node_unavailable"`) with
+        # positive, recent evidence the Node itself is alive. Every other
+        # state (healthy, setup, evidence storage, capacity, or any other
+        # failure code) leaves `connectivity_reason` honestly unset.
+        host_recently_alive, backlog_pending_count, backlog_last_synced_at = (
+            self._camera_node_transport_backlog_facts(session, source, now=now)
+        )
+        connectivity_reason: Literal["host_unreachable"] | None = (
+            "host_unreachable" if failure_code == "node_unavailable" and host_recently_alive else None
+        )
         return CameraHealthSummary(
             stream_id=stream.id,
             stream_name=stream.name,
@@ -9616,6 +10301,10 @@ class ProductRepository:
             failure_reason=self._camera_health_reason(failure_code),
             unread_alert=unread_alert,
             stale=stale,
+            connectivity_reason=connectivity_reason,
+            backlog_pending_count=backlog_pending_count,
+            backlog_last_synced_at=backlog_last_synced_at,
+            area_name=self._representative_area_name(session, stream.id),
         )
 
     @staticmethod
@@ -13889,12 +14578,15 @@ class ProductRepository:
             # associated visual+acoustic pair collapses to one row here so
             # it never reads as two independent encounters -- see
             # `_collapse_associated_multimodal_pairs`'s own docstring.
-            recent_activity = self._collapse_associated_multimodal_pairs(
+            recent_activity = self._collapse_associated_cross_camera_pairs(
                 session,
-                [
-                    self._dashboard_visit_summary_from_models(session, visit, event)
-                    for visit, event in recent_rows
-                ],
+                self._collapse_associated_multimodal_pairs(
+                    session,
+                    [
+                        self._dashboard_visit_summary_from_models(session, visit, event)
+                        for visit, event in recent_rows
+                    ],
+                ),
             )
             # The query is bounded so the landing surface cannot become an event log.
 
@@ -14269,7 +14961,9 @@ class ProductRepository:
         # species cannot crowd out a rarer single encounter.
         best_moments = self._best_moments_diversity_capped(
             sorted(
-                self._collapse_associated_multimodal_pairs(session, qualified),
+                self._collapse_associated_cross_camera_pairs(
+                    session, self._collapse_associated_multimodal_pairs(session, qualified),
+                ),
                 key=lambda item: (
                     item.review_status == ReviewStatus.reviewed and item.primary_evidence is not None,
                     item.evidence_modality == "seen_and_heard",
@@ -26219,13 +26913,22 @@ class ProductRepository:
         timezone_name = local_now.tzname() or "local time"
 
         with self.session_factory() as session:
-            stream_ids = list(
-                session.scalars(
-                    select(StreamModel.id)
-                    .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
-                    .where(CameraSourceModel.status != SourceStatus.archived.value)
-                ).all()
+            stream_id_query = (
+                select(StreamModel.id)
+                .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+                .where(CameraSourceModel.status != SourceStatus.archived.value)
             )
+            if payload.source_ids:
+                # Camera / Source + Multi-Camera Maturity v1, Phase N: an
+                # additive narrowing of the same in-scope Stream set every
+                # downstream computation (coverage, historical baseline,
+                # representative evidence, digest) already uses -- this
+                # never changes reviewed truth, only which of it this one
+                # report call includes.
+                stream_id_query = stream_id_query.where(
+                    CameraSourceModel.id.in_(payload.source_ids)
+                )
+            stream_ids = list(session.scalars(stream_id_query).all())
 
             # Always preloaded now (previously only when stream_ids was
             # non-empty): Historical Baseline Maturity + New/Regular Species
@@ -26303,6 +27006,23 @@ class ProductRepository:
                         and is_wildlife_category(confirmed_taxon.category)
                     ):
                         confirmed_summaries_by_label.setdefault(confirmed_taxon.label, []).append(summary)
+
+                # Camera / Source + Multi-Camera Maturity v1, Phase H: a
+                # confirmed multimodal or cross-camera "associated" pair is
+                # one real encounter observed by two Sources -- excluded here
+                # (not merged/relabeled -- see `_associated_visit_ids_to_
+                # exclude_from_counting`'s own docstring) so every downstream
+                # count (species-day totals, historical baseline, change
+                # windows, digest) counts it once. Representative-evidence
+                # selection just below is deliberately left unfiltered: it
+                # already picks one photo per species regardless of how many
+                # Visits contributed, so it is not itself a double-counting
+                # surface.
+                excluded_visit_ids = self._associated_visit_ids_to_exclude_from_counting(
+                    session, [fact.visit_id for fact in visit_facts],
+                )
+                if excluded_visit_ids:
+                    visit_facts = [fact for fact in visit_facts if fact.visit_id not in excluded_visit_ids]
 
             # Gate C -- Representative Species Evidence v1: the same
             # canonical selector Bird Log uses (`_representative_evidence_
@@ -27369,54 +28089,67 @@ class ProductRepository:
             # straddle a page boundary, in which case only the visible side
             # collapses; this is the same accepted bound every other
             # pagination-vs-presentation tradeoff in this method already has.
+            page_observations = [
+                WildlifeJournalObservation(
+                    visit_id=record["summary"].id,
+                    event_id=record["summary"].event_id,
+                    stream_id=record["summary"].stream_id,
+                    stream_name=record["stream_name"],
+                    source_name=record["source_name"],
+                    zone_id=record["summary"].zone_id,
+                    zone_name=record["summary"].zone_name,
+                    observed_at=record["observed_at"],
+                    activity_started_at=record["summary"].activity_started_at,
+                    activity_ended_at=record["summary"].activity_ended_at,
+                    duration_seconds=record["summary"].duration_seconds,
+                    evidence_frame_count=record["summary"].evidence_frame_count,
+                    reviewed_label=canonical_label,
+                    display_name=record["display_name"],
+                    primary_evidence=record["summary"].primary_evidence,
+                    has_curation_history=record["summary"].id in curation_visit_ids,
+                    has_review_revision=revision_counts[record["summary"].id] > 1,
+                    is_first_on_stream=(
+                        first_on_stream.get(record["summary"].stream_id)
+                        == record["summary"].id
+                    ),
+                    is_first_in_zone=(
+                        record["summary"].zone_id is not None
+                        and first_in_zone.get(record["summary"].zone_id)
+                        == record["summary"].id
+                    ),
+                    is_favorite=bool(
+                        organization_by_visit_id.get(record["summary"].id)
+                        and organization_by_visit_id[record["summary"].id].is_favorite
+                    ),
+                    has_note=bool(
+                        organization_by_visit_id.get(record["summary"].id)
+                        and organization_by_visit_id[record["summary"].id].note
+                        and organization_by_visit_id[record["summary"].id].note.strip()
+                    ),
+                    collection_count=collection_counts.get(record["summary"].id, 0),
+                    tags=tags_by_visit_id.get(record["summary"].id, [])[:MAX_TAGS_PER_VISIT],
+                    evidence_modality=record["summary"].evidence_modality,
+                )
+                for record in page_records
+            ]
+            # Everyday Discovery / Product Experience v2 (Phase B; see docs/
+            # multimodal-list-presentation-contract.md) then Camera / Source
+            # + Multi-Camera Maturity v1, Phase I: collapse this page's
+            # confidently-associated pairs into one row each, exactly as
+            # Today's lists do -- see each collapse method's own docstring. A
+            # pair may occasionally straddle a page boundary, in which case
+            # only the visible side collapses; this is the same accepted
+            # bound every other pagination-vs-presentation tradeoff in this
+            # method already has.
+            page_observations = self._collapse_associated_multimodal_journal_observations(
+                session, page_observations,
+            )
+            page_observations = self._collapse_associated_cross_camera_journal_observations(
+                session, page_observations,
+            )
             gallery = WildlifeJournalGallery(
                 order=payload.gallery_order,
-                observations=self._collapse_associated_multimodal_journal_observations(
-                    session,
-                    [
-                        WildlifeJournalObservation(
-                            visit_id=record["summary"].id,
-                            event_id=record["summary"].event_id,
-                            stream_id=record["summary"].stream_id,
-                            stream_name=record["stream_name"],
-                            source_name=record["source_name"],
-                            zone_id=record["summary"].zone_id,
-                            zone_name=record["summary"].zone_name,
-                            observed_at=record["observed_at"],
-                            activity_started_at=record["summary"].activity_started_at,
-                            activity_ended_at=record["summary"].activity_ended_at,
-                            duration_seconds=record["summary"].duration_seconds,
-                            evidence_frame_count=record["summary"].evidence_frame_count,
-                            reviewed_label=canonical_label,
-                            display_name=record["display_name"],
-                            primary_evidence=record["summary"].primary_evidence,
-                            has_curation_history=record["summary"].id in curation_visit_ids,
-                            has_review_revision=revision_counts[record["summary"].id] > 1,
-                            is_first_on_stream=(
-                                first_on_stream.get(record["summary"].stream_id)
-                                == record["summary"].id
-                            ),
-                            is_first_in_zone=(
-                                record["summary"].zone_id is not None
-                                and first_in_zone.get(record["summary"].zone_id)
-                                == record["summary"].id
-                            ),
-                            is_favorite=bool(
-                                organization_by_visit_id.get(record["summary"].id)
-                                and organization_by_visit_id[record["summary"].id].is_favorite
-                            ),
-                            has_note=bool(
-                                organization_by_visit_id.get(record["summary"].id)
-                                and organization_by_visit_id[record["summary"].id].note
-                                and organization_by_visit_id[record["summary"].id].note.strip()
-                            ),
-                            collection_count=collection_counts.get(record["summary"].id, 0),
-                            tags=tags_by_visit_id.get(record["summary"].id, [])[:MAX_TAGS_PER_VISIT],
-                            evidence_modality=record["summary"].evidence_modality,
-                        )
-                        for record in page_records
-                    ],
-                ),
+                observations=page_observations,
                 has_more=has_more,
                 next_offset=(payload.offset + payload.page_size) if has_more else None,
             )

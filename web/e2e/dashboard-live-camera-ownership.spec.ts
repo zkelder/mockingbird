@@ -120,7 +120,15 @@ test("Dashboard's Live Camera Overview survives Observation Engine taking camera
   // a real Camera Node tile never needs. Every other field (visits,
   // species, storage, headline, other Streams) is the real backend,
   // re-fetched fresh on every poll.
-  await page.route("**/api/dashboard/summary", async (route) => {
+  // Pre-existing bug found during Camera / Source + Multi-Camera Maturity
+  // v1 validation: `dashboard_summary` has carried a `?local_date=...` query
+  // parameter since before this milestone (see `apiClient.getDashboardSummary`),
+  // so a glob with no trailing wildcard never matched the real request at
+  // all -- this route silently never intercepted, and the mutated
+  // `source_kind`/`playback_kind` this test depends on was never applied.
+  // `today-report.spec.ts`'s own identical interception already uses the
+  // correct trailing `**` -- matched here for consistency.
+  await page.route("**/api/dashboard/summary**", async (route) => {
     const real = await page.request.get("/api/dashboard/summary");
     const body = await real.json();
     const stream = body.streams.find((item: { stream_id: string }) => item.stream_id === streamId);

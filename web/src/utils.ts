@@ -33,9 +33,20 @@ export function cameraHealthLabel(state: CameraHealthState): string {
   }[state];
 }
 
-export function cameraHealthTone(state: CameraHealthState): "good" | "review" | "quiet" {
+/**
+ * Camera / Source + Multi-Camera Maturity v1, Phase F: a fourth tone so a
+ * bounded, self-healing `recovering` state no longer renders identically to
+ * `camera_unavailable`/`no_recent_frame` (retries exhausted, genuinely
+ * needs attention) -- a real, confirmed conflation this milestone's own
+ * archaeology found ("recovering/reprovisioning state should not look like
+ * permanent failure"). `waiting_for_capacity`/`evidence_storage_degraded`/
+ * `setup_incomplete` deliberately keep their existing "review" tone --
+ * unrelated to the specific conflation this fixes.
+ */
+export function cameraHealthTone(state: CameraHealthState): "good" | "review" | "alert" | "quiet" {
   if (state === "healthy") return "good";
   if (state === "stopped" || state === "starting") return "quiet";
+  if (state === "camera_unavailable" || state === "no_recent_frame") return "alert";
   return "review";
 }
 

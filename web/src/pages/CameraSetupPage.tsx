@@ -564,7 +564,7 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
       <section className="panel page-stack">
         <h2>1. Add your camera</h2>
         <label>Camera type<select value={providerKey} onChange={(event) => { setProviderKey(event.target.value); setConfig({}); setValidation(null); setSelectedNodeCameraId(""); setOnvifDiscovery(null); setOnvifSelectedProfileToken(""); if (nodePreviewUrl) URL.revokeObjectURL(nodePreviewUrl); setNodePreviewUrl(null); }}>
-          {options.map((option) => <option key={option.provider_key} disabled={option.availability !== "available_now"} value={option.provider_key}>{option.display_name}{option.availability === "available_now" ? "" : " — unavailable"}</option>)}
+          {options.map((option) => <option key={option.provider_key} disabled={option.availability !== "available_now"} value={option.provider_key}>{option.display_name}{option.availability === "available_now" ? ` — ${option.compatibility_label}` : " — unavailable"}</option>)}
         </select></label>
         {selected ? <><p className="meta-text">{selected.message}</p>
           {selected.provider_key === "camera_node" ? <div className="notice-panel">

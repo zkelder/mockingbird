@@ -452,6 +452,24 @@ def test_live_monitoring_armed_starting_reports_starting() -> None:
     assert facts.observing is False
 
 
+def test_live_monitoring_armed_interrupted_reports_starting_not_needs_attention() -> None:
+    """Camera / Source + Multi-Camera Maturity v1, Phase F: a previous app
+    instance ending without a clean stop is a calm, expected recovery-in-
+    progress fact (durable-camera-monitor-lifecycle-design.md) -- it must
+    read the same as the ordinary `stopped`-armed-but-not-yet-reconciled
+    case above, never fall through to the generic needs_attention bucket
+    a genuine failure uses."""
+
+    facts = unified_status.live_monitoring_facts(
+        policy=_policy(StreamMonitoringMode.armed),
+        runtime=_runtime_status(StreamRuntimeState.interrupted),
+        health=_health(CameraHealthState.starting, message="Monitoring is enabled and awaiting local supervision."),
+        playback=_playback(status=StreamPlaybackStatusValue.live_ready),
+    )
+    assert facts.state == "starting"
+    assert facts.observing is False
+
+
 # --- Snapshot monitor lane (external_url still-image polling) ---
 
 

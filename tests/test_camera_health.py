@@ -618,7 +618,7 @@ def test_history_is_bounded_newest_first_and_safe_responses_hide_runtime_details
 
 
 def test_schema_v27_contains_empty_bounded_incident_configuration_and_exposure_storage(repository: ProductRepository) -> None:
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 46
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 47
     tables = set(inspect(repository.engine).get_table_names())
     assert "camera_health_incidents" in tables
     assert "camera_configuration_revisions" in tables
@@ -719,3 +719,154 @@ def test_evidence_storage_health_ignores_unrelated_auto_review_errors() -> None:
     assert not _evidence_persistence_failed(
         "Auto-create requires completed activity in a named reviewable Zone."
     )
+
+
+# Camera / Source + Multi-Camera Maturity v1, Phase F/K: honest WAN-vs-camera
+# disambiguation and normal-UX backlog surfacing, both reusing the existing
+# Remote/Intermittent-WAN Transport backlog fact -------------------------------
+
+
+def test_unreachable_host_with_fresh_transport_backlog_reads_host_unreachable(
+    repository: ProductRepository, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The exact Phase F failure mode this milestone's own archaeology
+    found: `node_unavailable` alone cannot tell "camera hardware failed"
+    from "WAN down, Node alive and backlogging." When there is *positive,
+    recent* Remote Transport evidence the Node is alive, the health summary
+    must say so -- and the same read must surface the honest pending-item
+    count for Phase K's normal UX, never transport/protocol jargon."""
+
+    from mockingbird.storage.camera_node_transport_ledger import TRANSPORT_ROOT_ENV_VAR, TransportLedger
+
+    monkeypatch.setenv(TRANSPORT_ROOT_ENV_VAR, str(tmp_path / "transport"))
+    candidate = _enable(repository)
+    node_id = "node-camera-health-transport-test"
+    with repository.session_factory() as session:
+        with session.begin():
+            # `provider_key="demo"` (not "camera_node") deliberately: the
+            # default seeded Stream's Source is `kind="demo"`, and claiming
+            # a real `camera_node` provider config here (with no actual
+            # pairing/camera-selection fields) would make `readiness_status`
+            # correctly, but unhelpfully for this focused test, read as
+            # `setup_incomplete` -- which overrides `failure_code` before
+            # this test's own `node_unavailable` scenario is ever reached.
+            # `_camera_node_transport_backlog_facts` itself never reads
+            # `provider_key` at all, only `node_id`/`node_transport_
+            # credential` from `config_json`, so this is a safe, narrow
+            # fixture choice, not a workaround for a real bug.
+            session.add(
+                product_repository_module.SourceProviderConfigurationModel(
+                    source_id=repository.get_stream(candidate.stream_id).source_id,
+                    provider_key="demo",
+                    config_json=(
+                        '{"node_id": "' + node_id + '", "node_transport_credential": "configured"}'
+                    ),
+                    updated_at=datetime.now(UTC),
+                )
+            )
+    TransportLedger(tmp_path / "transport").record_backlog_summary(
+        node_id=node_id, summary={"pending_count": 14, "pending_bytes": 4096, "failed_terminal_count": 0},
+    )
+
+    now = datetime.now(UTC)
+    repository.mark_monitoring_backoff_with_failure_code(
+        candidate,
+        app_instance_id="camera-health-transport-test",
+        failure_count=5,
+        retry_at=now + timedelta(seconds=30),
+        failure_code="node_unavailable",
+        now=now,
+    )
+
+    health = repository.get_stream_camera_health(candidate.stream_id)
+
+    assert health is not None
+    assert health.health.connectivity_reason == "host_unreachable"
+    assert health.health.backlog_pending_count == 14
+    assert health.health.backlog_last_synced_at is not None
+
+
+def test_unreachable_host_without_transport_configured_stays_honestly_unset(
+    repository: ProductRepository,
+) -> None:
+    """Control: no Remote Transport configured at all for this Source -> no
+    positive evidence exists, so `connectivity_reason` stays unset rather
+    than guessing either direction. This is the ordinary, unchanged case for
+    every installation that never set up remote transport."""
+
+    candidate = _enable(repository)
+    now = datetime.now(UTC)
+    repository.mark_monitoring_backoff_with_failure_code(
+        candidate,
+        app_instance_id="camera-health-no-transport-test",
+        failure_count=5,
+        retry_at=now + timedelta(seconds=30),
+        failure_code="node_unavailable",
+        now=now,
+    )
+
+    health = repository.get_stream_camera_health(candidate.stream_id)
+
+    assert health is not None
+    assert health.health.connectivity_reason is None
+    assert health.health.backlog_pending_count is None
+    assert health.health.backlog_last_synced_at is None
+
+
+def test_authentication_failure_never_reads_host_unreachable_even_with_fresh_backlog(
+    repository: ProductRepository, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The disambiguation is scoped to the one failure class it can
+    genuinely speak to. A rejected credential is a real, different problem
+    (pair the Node again) -- fresh transport evidence must never relabel it
+    as a connectivity issue."""
+
+    from mockingbird.storage.camera_node_transport_ledger import TRANSPORT_ROOT_ENV_VAR, TransportLedger
+
+    monkeypatch.setenv(TRANSPORT_ROOT_ENV_VAR, str(tmp_path / "transport"))
+    candidate = _enable(repository)
+    node_id = "node-camera-health-auth-test"
+    with repository.session_factory() as session:
+        with session.begin():
+            # `provider_key="demo"` (not "camera_node") deliberately: the
+            # default seeded Stream's Source is `kind="demo"`, and claiming
+            # a real `camera_node` provider config here (with no actual
+            # pairing/camera-selection fields) would make `readiness_status`
+            # correctly, but unhelpfully for this focused test, read as
+            # `setup_incomplete` -- which overrides `failure_code` before
+            # this test's own `node_unavailable` scenario is ever reached.
+            # `_camera_node_transport_backlog_facts` itself never reads
+            # `provider_key` at all, only `node_id`/`node_transport_
+            # credential` from `config_json`, so this is a safe, narrow
+            # fixture choice, not a workaround for a real bug.
+            session.add(
+                product_repository_module.SourceProviderConfigurationModel(
+                    source_id=repository.get_stream(candidate.stream_id).source_id,
+                    provider_key="demo",
+                    config_json=(
+                        '{"node_id": "' + node_id + '", "node_transport_credential": "configured"}'
+                    ),
+                    updated_at=datetime.now(UTC),
+                )
+            )
+    TransportLedger(tmp_path / "transport").record_backlog_summary(
+        node_id=node_id, summary={"pending_count": 3, "pending_bytes": 512, "failed_terminal_count": 0},
+    )
+
+    now = datetime.now(UTC)
+    repository.mark_monitoring_backoff_with_failure_code(
+        candidate,
+        app_instance_id="camera-health-auth-test",
+        failure_count=2,
+        retry_at=now + timedelta(seconds=30),
+        failure_code="authentication_rejected",
+        now=now,
+    )
+
+    health = repository.get_stream_camera_health(candidate.stream_id)
+
+    assert health is not None
+    assert health.health.connectivity_reason is None
+    # The backlog count itself is still honestly surfaced (Phase K) even
+    # though it does not apply to *this* failure's own explanation.
+    assert health.health.backlog_pending_count == 3

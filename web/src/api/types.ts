@@ -302,6 +302,10 @@ export interface SourceProviderField {
   placeholder?: string | null;
 }
 
+// Camera / Source + Multi-Camera Maturity v1, Phase D -- see the backend
+// `provider_compatibility` module's own docstring for what each level means.
+export type ProviderCompatibility = "certified" | "compatible" | "experimental" | "import_only" | "unsupported";
+
 export interface SourceProviderDefinition {
   provider_key: string;
   display_name: string;
@@ -310,6 +314,8 @@ export interface SourceProviderDefinition {
   supports_live_playback: boolean;
   supports_zone_editing: boolean;
   fields: SourceProviderField[];
+  compatibility: ProviderCompatibility;
+  compatibility_label: string;
 }
 
 export interface SourceProviderConfiguration {
@@ -451,6 +457,8 @@ export interface CameraSetupOption {
   supports_live_playback: boolean;
   fields: SourceProviderField[];
   message: string;
+  compatibility: ProviderCompatibility;
+  compatibility_label: string;
 }
 
 export interface CameraSetupOptionsResponse {
@@ -843,6 +851,11 @@ export interface CameraHealthSummary {
   failure_reason?: string | null;
   unread_alert: boolean;
   stale: boolean;
+  // Camera / Source + Multi-Camera Maturity v1, Phase F/K/E.
+  connectivity_reason?: "host_unreachable" | null;
+  backlog_pending_count?: number | null;
+  backlog_last_synced_at?: string | null;
+  area_name?: string | null;
 }
 
 export interface CameraHealthDetailResponse {
@@ -1791,6 +1804,14 @@ export interface VisitMultimodalPartnerSummary {
   taxon_agreement: "agrees" | "differs" | "not_comparable";
 }
 
+export interface VisitCrossCameraPartnerSummary {
+  visit_id: string;
+  tier: "associated" | "possible";
+  taxon_agreement: "agrees" | "differs" | "not_comparable";
+  other_source_name: string;
+  other_stream_name: string;
+}
+
 export interface StreamVisitSummary {
   id: string;
   event_id: string;
@@ -1811,6 +1832,7 @@ export interface StreamVisitSummary {
   primary_evidence?: VisitEvidenceFrame | null;
   evidence_modality: ListEvidenceModality;
   multimodal_partner?: VisitMultimodalPartnerSummary | null;
+  cross_camera_partner?: VisitCrossCameraPartnerSummary | null;
 }
 
 export interface DashboardVisitSummary extends StreamVisitSummary {
@@ -3640,6 +3662,24 @@ export interface VisitMultimodalAssociation {
   gap_ms: number;
 }
 
+// Camera / Source + Multi-Camera Maturity v1, Phase I: a durable link
+// between this Visit and a same-encounter (or possibly-same-encounter)
+// Visit on a *different* camera. Mirrors VisitMultimodalAssociation's shape.
+export type CrossCameraSpatialSignal = "matching_area_name" | "unknown";
+
+export interface VisitCrossCameraAssociation {
+  association_id: string;
+  other_visit: Visit;
+  other_source_name: string;
+  other_stream_name: string;
+  tier: MultimodalTier;
+  taxon_agreement: TaxonAgreement;
+  overlap_ms: number;
+  gap_ms: number;
+  spatial_signal: CrossCameraSpatialSignal;
+  multi_subject: boolean;
+}
+
 // Multimodal Observation & Soundscape v1, Phase K -- the bounded acoustic-
 // history foundation for an explicit period (see docs/multimodal-
 // observation-soundscape-v1-contract.md). Mirrors PlaceActivityReportRequest.
@@ -3674,6 +3714,10 @@ export interface VisitDetail {
   visit: Visit;
   event: Event;
   stream: Stream;
+  // Camera / Source + Multi-Camera Maturity v1, Phase B/G: `stream.
+  // source_id`'s resolved display name -- the one place Visit Detail can
+  // show "Source" without a raw id.
+  source_name: string;
   primary_zone?: Zone | null;
   detections: Detection[];
   motion_evidence?: MotionEvidence | null;
@@ -3696,6 +3740,11 @@ export interface VisitDetail {
   // Visit has to an opposite-modality Visit -- empty for the common single-
   // modality case.
   multimodal_associations: VisitMultimodalAssociation[];
+  // Camera / Source + Multi-Camera Maturity v1, Phase I: every durable
+  // association this Visit has to a same-encounter (or possibly-same-
+  // encounter) Visit on a *different* camera -- empty for the common
+  // single-camera case.
+  cross_camera_associations: VisitCrossCameraAssociation[];
   eligible_zones: Zone[];
   review_state_token: string;
   dataset_ready: boolean;
@@ -4620,6 +4669,7 @@ export interface WildlifeJournalObservation {
   // docs/multimodal-list-presentation-contract.md.
   evidence_modality: ListEvidenceModality;
   multimodal_partner?: VisitMultimodalPartnerSummary | null;
+  cross_camera_partner?: VisitCrossCameraPartnerSummary | null;
 }
 
 export interface WildlifeJournalGallery {

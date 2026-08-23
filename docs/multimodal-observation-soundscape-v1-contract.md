@@ -204,22 +204,18 @@ per-Visit association view at the Visit Detail level (Phase I, above),
 reachable by opening either Visit of an associated pair from Today or Bird
 Log exactly as today.
 
-**Not implemented in this pass, and disclosed rather than silently
-dropped:** true list-level deduplication -- "one encounter should not
-appear twice" inside `ProductRepository.dashboard_summary`'s own
-`best_moments`/`new_today` construction or the wildlife-journal listing
-queries. Both are large, deeply-threaded, heavily-tested methods; a rushed
-edit inside them to suppress one side of an associated pair carried real
-regression risk to a core, high-traffic surface that this milestone's own
-governing doctrine (honest, conservative change over clever-but-risky
-fusion) argues against attempting without a dedicated, carefully-scoped
-pass. The backend fact this future pass would need
-(`multimodal_association` tier, already computed per-Visit) already
-exists -- see `ProductRepository._strongest_multimodal_tier` -- so the
-remaining work is presentation-layer list construction only, not new
-association logic. Explicitly named in "Known bounded gaps," below, per the
-brief's own instruction to keep Phase J's scope bounded and let later
-Everyday Discovery/mobile work decide richer presentation.
+**Update (Everyday Discovery / Product Experience v2, 2026-08-23):** the
+list-level deduplication this section originally disclosed as not-yet-
+implemented was completed by that later milestone, using exactly the
+presentation-layer approach this section predicted -- `_collapse_associated_
+multimodal_pairs`/`_collapse_associated_multimodal_journal_observations`
+now collapse a confidently-`"associated"` pair into one row inside
+`dashboard_summary`'s `recent_activity`/`best_moments` and the wildlife-
+journal gallery, reusing the already-computed `multimodal_association` tier
+fact this section named -- no new association logic, matching the bounded
+scope this contract called for. Left in place as historical record of the
+original, deliberate deferral rather than deleted, per this doc's own
+convention elsewhere of recording what a milestone chose not to do and why.
 
 ## Soundscape foundation (Phase K)
 

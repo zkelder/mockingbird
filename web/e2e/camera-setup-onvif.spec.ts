@@ -53,7 +53,10 @@ test("ONVIF network camera is selectable and offers discovery before the generic
   await expect(page.getByRole("heading", { name: "Add Camera" })).toBeVisible();
 
   const cameraType = page.getByLabel("Camera type");
-  await expect(cameraType.locator('option[value="onvif"]')).toHaveText("ONVIF network camera");
+  // Camera / Source + Multi-Camera Maturity v1, Phase D: available options
+  // now carry their truthful compatibility label ("ONVIF network camera —
+  // Compatible") -- see provider_compatibility.py's own docstring for why.
+  await expect(cameraType.locator('option[value="onvif"]')).toHaveText("ONVIF network camera — Compatible");
   await cameraType.selectOption("onvif");
 
   await expect(page.locator("strong", { hasText: "ONVIF network camera" })).toBeVisible();

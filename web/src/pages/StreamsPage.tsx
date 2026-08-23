@@ -5942,8 +5942,18 @@ export function StreamsPage({
                   onChange={(event) => handleProviderChange(event.target.value)}
                 >
                   {providerDefinitions.map((definition) => (
-                    <option key={definition.provider_key} value={definition.provider_key}>
-                      {definition.display_name}
+                    // Camera / Source + Multi-Camera Maturity v1, Phase D:
+                    // a genuinely-unbuilt provider (compatibility ===
+                    // "unsupported") is disabled here, exactly like the Add
+                    // Camera wizard's own provider list already does --
+                    // this dropdown previously offered every provider,
+                    // including true stubs, with no such gating at all.
+                    <option
+                      disabled={definition.compatibility === "unsupported"}
+                      key={definition.provider_key}
+                      value={definition.provider_key}
+                    >
+                      {definition.display_name} — {definition.compatibility_label}
                     </option>
                   ))}
                 </select>

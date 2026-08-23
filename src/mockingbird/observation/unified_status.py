@@ -296,6 +296,13 @@ _LIVE_MONITORING_STATE_MAP: dict[str, str] = {
     # Armed but the supervisor has not reconciled it yet -- a transitional
     # fact, not a problem to alarm the user about.
     StreamRuntimeState.stopped.value: "starting",
+    # Camera / Source + Multi-Camera Maturity v1, Phase F: a previous app
+    # instance ended without a clean stop (durable-camera-monitor-lifecycle-
+    # design.md's own deliberately calm recovery-in-progress state) --
+    # missing here fell through to the generic "needs_attention" bucket,
+    # making an ordinary restart-recovery read identically to a genuine
+    # failure. Same transitional treatment as `stopped`, above.
+    StreamRuntimeState.interrupted.value: "starting",
 }
 
 

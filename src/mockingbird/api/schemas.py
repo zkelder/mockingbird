@@ -541,6 +541,13 @@ class SourceProviderDefinition(BaseModel):
     supports_live_playback: bool
     supports_zone_editing: bool
     fields: list[SourceProviderField] = Field(default_factory=list)
+    # Camera / Source + Multi-Camera Maturity v1, Phase D: the one bounded,
+    # truthful classification -- see `mockingbird.observation.provider_
+    # compatibility`'s own module docstring for why this exists alongside
+    # `status` above (which answers a narrower, different question and
+    # currently lumps a fully-built import path in with genuine vaporware).
+    compatibility: Literal["certified", "compatible", "experimental", "import_only", "unsupported"]
+    compatibility_label: str
 
 
 class SourceProviderConfiguration(BaseModel):
@@ -1089,6 +1096,25 @@ class CameraHealthSummary(BaseModel):
     failure_reason: str | None = None
     unread_alert: bool = False
     stale: bool = False
+    # Camera / Source + Multi-Camera Maturity v1, Phase F/K: honest,
+    # existing-diagnostics-only disambiguation. Both fields stay `None`/
+    # unset by default -- the ordinary case, unchanged. `connectivity_reason
+    # == "host_unreachable"` is set only when there is *positive* evidence
+    # the paired Camera Node itself is alive (a fresh Remote/Intermittent-
+    # WAN Transport contact) despite the ordinary host<->Node API path
+    # currently failing -- never a guess, and never claimed the other
+    # direction ("camera_hardware") merely by absence of that evidence,
+    # since a failed pull path alone cannot actually prove the camera itself
+    # is at fault. See `ProductRepository._camera_node_transport_backlog_
+    # facts`.
+    connectivity_reason: Literal["host_unreachable"] | None = None
+    backlog_pending_count: int | None = Field(default=None, ge=0)
+    backlog_last_synced_at: datetime | None = None
+    # Camera / Source + Multi-Camera Maturity v1, Phase B/E: this Stream's
+    # one unambiguous representative "Area" (see `ProductRepository.
+    # _representative_area_name`) -- `None` when zero or more than one
+    # active, non-privacy Zone exists, never a guess.
+    area_name: str | None = None
 
 
 class CameraHealthDetailResponse(BaseModel):
@@ -1994,6 +2020,10 @@ class CameraSetupOption(BaseModel):
     supports_live_playback: bool
     fields: list[SourceProviderField] = Field(default_factory=list)
     message: str
+    # Camera / Source + Multi-Camera Maturity v1, Phase D -- see
+    # `SourceProviderDefinition.compatibility`'s own docstring.
+    compatibility: Literal["certified", "compatible", "experimental", "import_only", "unsupported"]
+    compatibility_label: str
 
 
 class CameraSetupOptionsResponse(BaseModel):
@@ -2540,6 +2570,27 @@ class VisitMultimodalPartnerSummary(BaseModel):
     taxon_agreement: Literal["agrees", "differs", "not_comparable"]
 
 
+class VisitCrossCameraPartnerSummary(BaseModel):
+    """Camera / Source + Multi-Camera Maturity v1, Phase I: the compact,
+    list-row-safe counterpart to `VisitCrossCameraAssociation` -- mirrors
+    `VisitMultimodalPartnerSummary`'s own shape exactly, plus the one fact
+    that actually matters for a cross-camera (not cross-modality) pair: which
+    *other* camera/Area this row's evidence was also captured on. Present on
+    a `StreamVisitSummary`/`WildlifeJournalObservation` only when a
+    confidently-`"associated"` pair was collapsed into this one row for
+    presentation -- a `"possible"` association always stays two separate,
+    uncollapsed rows, exactly like the multimodal case. Independent of
+    `evidence_modality`/`multimodal_partner`: a row can have either, both, or
+    neither -- they answer different questions (what modality; which other
+    camera)."""
+
+    visit_id: str
+    tier: Literal["associated", "possible"]
+    taxon_agreement: Literal["agrees", "differs", "not_comparable"]
+    other_source_name: str
+    other_stream_name: str
+
+
 class StreamVisitSummary(BaseModel):
     # Compact, Stream-scoped history. Full evidence is loaded only on inspection.
     id: str
@@ -2571,6 +2622,11 @@ class StreamVisitSummary(BaseModel):
     # "acoustic" and a `None` `multimodal_partner`.
     evidence_modality: Literal["visual", "acoustic", "seen_and_heard"] = "visual"
     multimodal_partner: VisitMultimodalPartnerSummary | None = None
+    # Camera / Source + Multi-Camera Maturity v1, Phase I/H: set only when a
+    # confidently-associated same-encounter Visit from a *different* camera
+    # was collapsed into this row -- see `VisitCrossCameraPartnerSummary`'s
+    # own docstring. Independent of `multimodal_partner` above.
+    cross_camera_partner: VisitCrossCameraPartnerSummary | None = None
 
 
 class ActivityLibraryReviewFilter(str, Enum):
@@ -5038,6 +5094,15 @@ class PlaceActivityReportRequest(BaseModel):
 
     start_at: datetime
     end_at: datetime
+    # Camera / Source + Multi-Camera Maturity v1, Phase N: optional,
+    # additive Source filter. `None` (the default, and every existing
+    # caller) means the unfiltered whole-Place report, byte-identical to
+    # before this field existed. A non-empty list scopes every count/
+    # baseline/coverage fact in the report to only those Sources' Streams --
+    # it never changes reviewed truth itself, only which of it this one
+    # report call includes (see "source_ids filtering never changes truth"
+    # in docs/camera-source-multi-camera-maturity-v1-contract.md).
+    source_ids: list[str] | None = Field(default=None, min_length=1, max_length=50)
 
     @model_validator(mode="after")
     def validate_range(self) -> "PlaceActivityReportRequest":
@@ -5710,6 +5775,7 @@ class WildlifeJournalObservation(BaseModel):
     # partner` -- see that field's docstring.
     evidence_modality: Literal["visual", "acoustic", "seen_and_heard"] = "visual"
     multimodal_partner: VisitMultimodalPartnerSummary | None = None
+    cross_camera_partner: VisitCrossCameraPartnerSummary | None = None
 
 
 class WildlifeJournalGallery(BaseModel):
@@ -6675,10 +6741,42 @@ class VisitMultimodalAssociation(BaseModel):
     gap_ms: int
 
 
+class VisitCrossCameraAssociation(BaseModel):
+    """Camera / Source + Multi-Camera Maturity v1, Phase I: one durable
+    `CrossCameraVisitAssociationModel` row touching this Visit, resolved to
+    the full same-encounter (or possibly-same-encounter) Visit it points at
+    on a *different* camera -- mirrors `VisitMultimodalAssociation`'s own
+    "return the real nested Visit, not a summary" shape.
+
+    `taxon_agreement` is recomputed fresh at read time, never stored,
+    exactly like the multimodal case. `spatial_signal`/`multi_subject` are
+    disclosed, not hidden, so a reviewer can see *why* a pair reached its
+    tier (e.g. "possible" because two subjects were on camera at once, not
+    because the system merely guessed)."""
+
+    association_id: str
+    other_visit: Visit
+    other_source_name: str
+    other_stream_name: str
+    tier: Literal["associated", "possible"]
+    taxon_agreement: Literal["agrees", "differs", "not_comparable"]
+    overlap_ms: int
+    gap_ms: int
+    spatial_signal: Literal["matching_area_name", "unknown"]
+    multi_subject: bool
+
+
 class VisitDetail(BaseModel):
     visit: Visit
     event: Event
     stream: Stream
+    # Camera / Source + Multi-Camera Maturity v1, Phase B/G: `stream.
+    # source_id` alone is an opaque id -- this is the one place `VisitDetail`
+    # resolves it to the Source's actual display name, so evidence/Visit
+    # detail (the most-visited attribution surface) never has to show a raw
+    # UUID as "Source." Mirrors `DashboardVisitSummary.source_name`'s own
+    # existing precedent, applied to the one surface that was missing it.
+    source_name: str
     primary_zone: Zone | None = None
     detections: list[Detection]
     motion_evidence: MotionEvidenceResponse | None = None
@@ -6716,6 +6814,11 @@ class VisitDetail(BaseModel):
     # this Visit's own evidence or review state; each associated Visit
     # remains independently reviewable.
     multimodal_associations: list[VisitMultimodalAssociation] = Field(default_factory=list)
+    # Camera / Source + Multi-Camera Maturity v1, Phase I: every durable
+    # association this Visit has to a same-encounter (or possibly-same-
+    # encounter) Visit on a *different* camera -- empty for the common
+    # single-camera case. Independent of `multimodal_associations` above.
+    cross_camera_associations: list[VisitCrossCameraAssociation] = Field(default_factory=list)
     eligible_zones: list[Zone] = Field(default_factory=list)
     review_state_token: str
     dataset_ready: bool

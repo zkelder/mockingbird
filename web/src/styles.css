@@ -2702,6 +2702,17 @@ a.secondary-action {
   color: #7b4a12;
 }
 
+/* Camera / Source + Multi-Camera Maturity v1, Phase F: a fourth, distinct
+   severity for "retries exhausted, genuinely needs attention" -- separate
+   from `.status-review`'s calmer "recovering/in progress" amber, so the two
+   no longer render as the identical pill (see cameraHealthTone in utils.ts).
+   Still a muted, calm tone, not an alarm color -- MockingBird does not
+   inherit motion-alert-culture red. */
+.status-alert {
+  background: #f6d3c8;
+  color: #8a3220;
+}
+
 .status-quiet {
   background: #e8ece6;
   color: #536258;

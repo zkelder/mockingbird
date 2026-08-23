@@ -29,7 +29,10 @@ def _build_fixture_database(db_path: Path, media_root: Path) -> None:
     try:
         with repository.session_factory() as session:
             with session.begin():
-                session.add(CameraSourceModel(id="source-1", name="x", kind="camera_node", status="active", description="x"))
+                # "integration"/"connected" match what a real Camera Node
+                # Source's `kind`/`status` actually store, not the raw
+                # "camera_node" provider_key / "active".
+                session.add(CameraSourceModel(id="source-1", name="x", kind="integration", status="connected", description="x"))
                 session.add(StreamModel(id="stream-1", source_id="source-1", name="x", description="x", is_live=True))
                 session.add(EventModel(
                     id="event-1", stream_id="stream-1", title="x", event_type="motion_evidence",

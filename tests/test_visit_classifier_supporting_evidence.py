@@ -60,8 +60,17 @@ def repository(tmp_path: Path) -> ProductRepository:
     with repo.session_factory() as session:
         with session.begin():
             session.add(CameraSourceModel(
-                id=SOURCE_ID, name="Classifier Evidence Test Source", kind="camera_node",
-                status="active", description="Isolated fixture source.",
+                # "integration" (not the raw "camera_node" provider_key) and
+                # "connected" (not "active") are what a real Camera Node
+                # Source's `kind`/`status` actually store -- see
+                # `_camera_setup_source_kind`/`SourceKind`/`SourceStatus`.
+                # `ProductRepository.get_source` (exercised via Visit Detail's
+                # `source_name` resolution, Camera / Source + Multi-Camera
+                # Maturity v1) parses both strictly, so a fixture using the
+                # provider key directly would fail there even though nothing
+                # in this file exercised that path before.
+                id=SOURCE_ID, name="Classifier Evidence Test Source", kind="integration",
+                status="connected", description="Isolated fixture source.",
             ))
             session.add(StreamModel(
                 id=STREAM_ID, source_id=SOURCE_ID, name="Classifier Evidence Test Stream",

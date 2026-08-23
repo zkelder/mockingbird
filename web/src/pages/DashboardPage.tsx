@@ -496,6 +496,15 @@ export function DashboardPage({
                     {camera.next_retry_at ? ` · Next retry ${formatDateTime(camera.next_retry_at)}` : ""}
                   </span>
                   <span className="meta-text">{camera.failure_reason ?? camera.message}</span>
+                  {camera.connectivity_reason === "host_unreachable" ? (
+                    <span className="meta-text">
+                      The camera kept working while disconnected
+                      {typeof camera.backlog_pending_count === "number"
+                        ? ` and has ${camera.backlog_pending_count} item(s) waiting to sync`
+                        : ""}
+                      .
+                    </span>
+                  ) : null}
                 </div>
                 <div className="detail-actions">
                   <button className="secondary-action" onClick={() => onOpenStream(camera.stream_id)} type="button">Open Stream</button>

@@ -59,8 +59,12 @@ def repository(tmp_path: Path) -> ProductRepository:
     with repo.session_factory() as session:
         with session.begin():
             session.add(CameraSourceModel(
-                id=SOURCE_ID, name="Native Resolution Test Source", kind="camera_node",
-                status="active", description="Isolated fixture source; no Privacy/Ignore Zone attached.",
+                # "integration"/"connected" (not the raw "camera_node"
+                # provider_key / "active") match what a real Camera Node
+                # Source's `kind`/`status` actually store -- see
+                # `_camera_setup_source_kind`/`SourceKind`/`SourceStatus`.
+                id=SOURCE_ID, name="Native Resolution Test Source", kind="integration",
+                status="connected", description="Isolated fixture source; no Privacy/Ignore Zone attached.",
             ))
             session.add(StreamModel(
                 id=STREAM_ID, source_id=SOURCE_ID, name="Native Resolution Test Stream",

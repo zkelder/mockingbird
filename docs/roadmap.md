@@ -2811,10 +2811,19 @@ cloud optional.
 
 ### Phase 7 -- Multi-Camera / Richer Wildlife
 
-Not started, and explicitly gated behind stable single-camera Observation
-semantics (Phases 1-3). Covers multiple cameras, camera-aware observations,
-defensible duplicate handling, broader wildlife, behavioral proposals, and
-richer habitat/Zone understanding.
+Explicitly gated behind stable single-camera Observation semantics
+(Phases 1-3); this framework note is preserved as historical record and the
+phase remains not formally started. Camera / Source + Multi-Camera
+Maturity v1 (2026-08-23) deliberately pulled forward one bounded slice
+ahead of that gate -- Camera/Source/Area vocabulary, provider compatibility
+classification, health-state coherence, source attribution, and (the most
+significant single piece) a real, conservative overlapping-camera
+duplicate-encounter policy (`cross_camera_visit_associations`, schema 47;
+see
+[camera-source-multi-camera-maturity-v1-contract.md](camera-source-multi-camera-maturity-v1-contract.md)) --
+without redesigning the data model, building the full multi-property remote
+product, or starting mobile/PWA. Broader wildlife, behavioral proposals,
+and richer habitat/Zone understanding remain fully unstarted.
 
 ### Phase 8 -- Learning / Contributor Ecosystem
 
