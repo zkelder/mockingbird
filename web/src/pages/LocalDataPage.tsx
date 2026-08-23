@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiClient } from "../api/client";
+import { apiClient, ApiError } from "../api/client";
 import type {
   LocalBackupSummary,
   LocalDataStatus,
@@ -7,12 +7,13 @@ import type {
   StorageCleanupPreviewResponse,
   StorageRetentionSettings,
   StorageSummary,
+  StructuredError,
 } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { formatBytes } from "../utils";
+import { formatBytes, formatLabel } from "../utils";
 
 interface LocalDataPageProps {
   onOpenDashboard: () => void;
@@ -60,6 +61,11 @@ export function LocalDataPage({
   const [confirmingRestoreId, setConfirmingRestoreId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Structured error surfacing (P0): populated only when a caught ApiError
+  // carries one (today, only a database-write failure does) -- see
+  // `applyError`. Reset alongside `error` everywhere so a later, unrelated
+  // failure can never show a stale "Advanced details" block.
+  const [errorDetail, setErrorDetail] = useState<StructuredError | undefined>(undefined);
   const [storageSummary, setStorageSummary] = useState<StorageSummary | null>(null);
   const [storageSettings, setStorageSettings] = useState<StorageRetentionSettings | null>(null);
   const [cleanupHistory, setCleanupHistory] = useState<StorageCleanupHistoryItem[]>([]);
@@ -69,12 +75,23 @@ export function LocalDataPage({
   const [isConfirmingCleanup, setIsConfirmingCleanup] = useState(false);
   const [confirmingPurgeId, setConfirmingPurgeId] = useState<string | null>(null);
 
+  // Populates both `error` (always) and `errorDetail` (only when the
+  // caught failure is an ApiError carrying a well-shaped structuredError --
+  // today, only a database-write failure does). Used by every backup/
+  // storage-retention operation below, whose failures are the ones this
+  // milestone's structured-error taxonomy actually touched.
+  function applyError(caught: unknown, fallback: string): void {
+    setError(caught instanceof Error ? caught.message : fallback);
+    setErrorDetail(caught instanceof ApiError ? caught.structuredError : undefined);
+  }
+
   async function loadStatus(options: { showLoading?: boolean } = {}) {
     const showLoading = options.showLoading ?? true;
     if (showLoading) {
       setIsLoading(true);
     }
     setError(null);
+    setErrorDetail(undefined);
     try {
       setStatus(await apiClient.getLocalDataStatus());
     } catch (caught) {
@@ -91,12 +108,13 @@ export function LocalDataPage({
     if (showLoading) {
       setIsLoadingBackups(true);
     }
+    setErrorDetail(undefined);
     try {
       const library = await apiClient.getLocalBackups();
       setBackups(library.backups);
       setUnreadableBackupCount(library.unreadable_backup_count);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load local backups.");
+      applyError(caught, "Could not load local backups.");
     } finally {
       if (showLoading) {
         setIsLoadingBackups(false);
@@ -109,6 +127,7 @@ export function LocalDataPage({
     if (showLoading) {
       setIsLoadingStorage(true);
     }
+    setErrorDetail(undefined);
     try {
       const [summary, settings, history] = await Promise.all([
         apiClient.getStorageRetentionSummary(),
@@ -119,7 +138,7 @@ export function LocalDataPage({
       setStorageSettings(settings);
       setCleanupHistory(history.items);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not load storage retention status.");
+      applyError(caught, "Could not load storage retention status.");
     } finally {
       if (showLoading) {
         setIsLoadingStorage(false);
@@ -145,13 +164,14 @@ export function LocalDataPage({
   async function createBackup() {
     setBackupOperation("create");
     setError(null);
+    setErrorDetail(undefined);
     setMessage(null);
     try {
       const result = await apiClient.createLocalBackup();
       upsertBackup(result.backup);
       setMessage(result.message);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not create a local backup.");
+      applyError(caught, "Could not create a local backup.");
     } finally {
       setBackupOperation(null);
     }
@@ -160,13 +180,14 @@ export function LocalDataPage({
   async function importBackup(file: File) {
     setBackupOperation("import");
     setError(null);
+    setErrorDetail(undefined);
     setMessage(null);
     try {
       const result = await apiClient.importLocalBackup(file);
       upsertBackup(result.backup);
       setMessage(result.message);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not import that backup.");
+      applyError(caught, "Could not import that backup.");
     } finally {
       setBackupOperation(null);
     }
@@ -175,13 +196,14 @@ export function LocalDataPage({
   async function verifyBackup(backupId: string) {
     setBackupOperation(`verify:${backupId}`);
     setError(null);
+    setErrorDetail(undefined);
     setMessage(null);
     try {
       const result = await apiClient.verifyLocalBackup(backupId);
       upsertBackup(result.backup);
       setMessage(result.message);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not verify that backup.");
+      applyError(caught, "Could not verify that backup.");
     } finally {
       setBackupOperation(null);
     }
@@ -196,6 +218,7 @@ export function LocalDataPage({
 
     setBackupOperation(`restore:${backupId}`);
     setError(null);
+    setErrorDetail(undefined);
     setMessage(null);
     try {
       const result = await apiClient.restoreLocalBackup(backupId);
@@ -205,7 +228,7 @@ export function LocalDataPage({
       setConfirmingRestoreId(null);
       setMessage(result.message);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not restore that backup.");
+      applyError(caught, "Could not restore that backup.");
     } finally {
       setBackupOperation(null);
     }
@@ -217,6 +240,7 @@ export function LocalDataPage({
     }
     setStorageOperation("settings");
     setError(null);
+    setErrorDetail(undefined);
     setMessage(null);
     try {
       const { persisted, recommended_defaults, updated_at, last_automatic_run_at, last_automatic_result, message: _message, policy_revision: _revision, ...payload } = storageSettings;
@@ -227,7 +251,7 @@ export function LocalDataPage({
       setStorageSettings(updated);
       setMessage(updated.message);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not update storage retention settings.");
+      applyError(caught, "Could not update storage retention settings.");
     } finally {
       setStorageOperation(null);
     }
@@ -236,6 +260,7 @@ export function LocalDataPage({
   async function previewStorageCleanup() {
     setStorageOperation("preview");
     setError(null);
+    setErrorDetail(undefined);
     setMessage(null);
     setIsConfirmingCleanup(false);
     try {
@@ -243,7 +268,7 @@ export function LocalDataPage({
       setCleanupPreview(preview);
       setMessage(preview.message);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not preview cleanup.");
+      applyError(caught, "Could not preview cleanup.");
     } finally {
       setStorageOperation(null);
     }
@@ -259,6 +284,7 @@ export function LocalDataPage({
     }
     setStorageOperation("cleanup");
     setError(null);
+    setErrorDetail(undefined);
     setMessage(null);
     try {
       const result = await apiClient.executeStorageRetentionCleanup({
@@ -271,7 +297,7 @@ export function LocalDataPage({
       setIsConfirmingCleanup(false);
       await loadStorage({ showLoading: false });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not move eligible media to recovery.");
+      applyError(caught, "Could not move eligible media to recovery.");
     } finally {
       setStorageOperation(null);
     }
@@ -280,6 +306,7 @@ export function LocalDataPage({
   async function restoreStorageCleanup(batchId: string) {
     setStorageOperation(`restore:${batchId}`);
     setError(null);
+    setErrorDetail(undefined);
     setMessage(null);
     try {
       const result = await apiClient.restoreStorageRetentionCleanup(
@@ -289,7 +316,7 @@ export function LocalDataPage({
       setMessage(result.message);
       await loadStorage({ showLoading: false });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not restore the recovery batch.");
+      applyError(caught, "Could not restore the recovery batch.");
     } finally {
       setStorageOperation(null);
     }
@@ -303,6 +330,7 @@ export function LocalDataPage({
     }
     setStorageOperation(`purge:${batchId}`);
     setError(null);
+    setErrorDetail(undefined);
     setMessage(null);
     try {
       const result = await apiClient.purgeStorageRetentionCleanup(
@@ -313,7 +341,7 @@ export function LocalDataPage({
       setMessage(result.message);
       await loadStorage({ showLoading: false });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Could not permanently delete that recovery batch.");
+      applyError(caught, "Could not permanently delete that recovery batch.");
     } finally {
       setStorageOperation(null);
     }
@@ -328,6 +356,7 @@ export function LocalDataPage({
 
     setIsResetting(true);
     setError(null);
+    setErrorDetail(undefined);
     setMessage(null);
     try {
       setStatus(await apiClient.resetDemoData());
@@ -360,7 +389,28 @@ export function LocalDataPage({
       />
 
       {message ? <div className="notice-panel">{message}</div> : null}
-      {error ? <div className="error-panel">{error}</div> : null}
+      {error ? (
+        <div className="error-panel">
+          {error}
+          {errorDetail ? (
+            <details className="review-diagnostic-details">
+              <summary>Advanced details</summary>
+              <div className="review-diagnostic-grid">
+                <span>Code: {errorDetail.code}</span>
+                <span>Recoverability: {formatLabel(errorDetail.recoverability)}</span>
+                {errorDetail.diagnostic ? (
+                  <span>
+                    Diagnostic:{" "}
+                    {Object.entries(errorDetail.diagnostic)
+                      .map(([key, value]) => `${key}: ${String(value)}`)
+                      .join(", ")}
+                  </span>
+                ) : null}
+              </div>
+            </details>
+          ) : null}
+        </div>
+      ) : null}
 
       {isLoading ? <div className="panel">Loading local data status...</div> : null}
 
@@ -599,6 +649,20 @@ export function LocalDataPage({
                       onChange={(event) => setStorageSettings({ ...storageSettings, orphaned_media_age_days: Number(event.target.value) })}
                       value={storageSettings.orphaned_media_age_days}
                     >
+                      <option value={7}>7 days</option>
+                      <option value={30}>30 days</option>
+                      <option value={90}>90 days</option>
+                      <option value={180}>180 days</option>
+                    </select>
+                  </label>
+                  <label className="data-row">
+                    <span>Rejected analysis media age</span>
+                    <select
+                      disabled={storageOperation !== null}
+                      onChange={(event) => setStorageSettings({ ...storageSettings, rejected_analysis_media_age_days: event.target.value === "none" ? null : Number(event.target.value) })}
+                      value={storageSettings.rejected_analysis_media_age_days ?? "none"}
+                    >
+                      <option value="none">Keep forever (default)</option>
                       <option value={7}>7 days</option>
                       <option value={30}>30 days</option>
                       <option value={90}>90 days</option>

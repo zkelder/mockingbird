@@ -835,6 +835,108 @@ def test_schema_45_upgrades_to_current_with_visit_multimodal_association(
         migrated.close()
 
 
+def test_schema_47_upgrades_to_current_with_camera_node_transport_ingestion(
+    tmp_path: Path,
+) -> None:
+    """Appliance / Storage / Privacy / Recovery v1, Phase E: a real database
+    at the previously-current schema (v47) upgrades cleanly through the new
+    additive `camera_node_transport_ingestions` table -- mirroring
+    `test_schema_45_upgrades_to_current_with_visit_multimodal_association`'s
+    own "additive table, no seeded row" proof pattern applied to this
+    milestone's table."""
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = repository_for(db_path)
+    existing_source_count = len(repository.list_sources())
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql("DROP TABLE camera_node_transport_ingestions")
+        connection.exec_driver_sql("UPDATE mockingbird_schema SET version = 47 WHERE singleton_id = 1")
+    engine.dispose()
+
+    migrated = repository_for(db_path)
+    try:
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+        assert len(migrated.list_sources()) == existing_source_count
+
+        with migrated.engine.connect() as connection:
+            columns = {
+                row[1]
+                for row in connection.exec_driver_sql(
+                    "PRAGMA table_info(camera_node_transport_ingestions)"
+                ).fetchall()
+            }
+            assert {
+                "id", "node_id", "item_id", "source_id", "content_sha256", "content_length",
+                "status", "media_asset_id", "error_reason", "attempt_count", "blob_deleted_at",
+                "created_at", "updated_at",
+            } <= columns
+            count = connection.exec_driver_sql(
+                "SELECT COUNT(*) FROM camera_node_transport_ingestions"
+            ).scalar()
+            assert count == 0
+    finally:
+        migrated.close()
+
+
+def test_schema_48_upgrades_to_current_with_rejected_analysis_media_retention(
+    tmp_path: Path,
+) -> None:
+    """Appliance / Storage / Privacy / Recovery v1, Phase D: a real database
+    at the previously-current schema (v48) upgrades cleanly through the new
+    nullable `rejected_analysis_media_age_days` column on the existing
+    `storage_retention_settings` table -- same add-column shape as
+    `_migrate_to_media_asset_duration`, proven the same way
+    `test_schema_37_adds_camera_node_boot_identity_columns_without_data_loss`
+    proves its own add-column migration: rebuild the pre-migration table
+    shape, roll the recorded version back, then reopen and confirm the new
+    column exists and every pre-existing row survived untouched."""
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = repository_for(db_path)
+    existing_source_count = len(repository.list_sources())
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "ALTER TABLE storage_retention_settings RENAME TO storage_retention_settings_v48"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE storage_retention_settings AS SELECT "
+            "singleton_id, automatic_cleanup_enabled, cleanup_frequency, "
+            "retain_unresolved_visit_evidence, retain_reviewed_bird_wildlife_evidence, "
+            "reviewed_non_bird_age_days, superseded_evidence_age_days, orphaned_media_age_days, "
+            "maximum_managed_media_bytes, policy_revision, updated_at, last_automatic_run_at, "
+            "last_automatic_result, last_settings_idempotency_key "
+            "FROM storage_retention_settings_v48"
+        )
+        connection.exec_driver_sql("DROP TABLE storage_retention_settings_v48")
+        connection.exec_driver_sql("UPDATE mockingbird_schema SET version = 48 WHERE singleton_id = 1")
+    engine.dispose()
+
+    migrated = repository_for(db_path)
+    try:
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+        assert len(migrated.list_sources()) == existing_source_count
+
+        with migrated.engine.connect() as connection:
+            columns = {
+                row[1]
+                for row in connection.exec_driver_sql(
+                    "PRAGMA table_info(storage_retention_settings)"
+                ).fetchall()
+            }
+            assert "rejected_analysis_media_age_days" in columns
+
+        settings = migrated.storage_retention_settings()
+        assert settings.rejected_analysis_media_age_days is None  # honest "not configured," never fabricated
+    finally:
+        migrated.close()
+
+
 def test_a_mid_chain_migration_failure_rolls_back_every_step_not_only_its_own(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

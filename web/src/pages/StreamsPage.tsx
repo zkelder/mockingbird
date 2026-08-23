@@ -5961,6 +5961,10 @@ export function StreamsPage({
               {selectedProviderDefinition ? (
                 <>
                   <p className="meta-text">{selectedProviderDefinition.description}</p>
+                  <div className="source-connection-meta">
+                    <span>Live preview: {selectedProviderDefinition.supports_live_playback ? "Available" : "Not available"}</span>
+                    <span>Zone editing: {selectedProviderDefinition.supports_zone_editing ? "Available" : "Unavailable"}</span>
+                  </div>
                   <div className="provider-field-grid">
                     {primaryProviderFields.map(renderProviderField)}
                   </div>

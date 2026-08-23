@@ -104,6 +104,32 @@ so a future redaction feature would be a bounded, additive change if the
 product ever decides to build it -- but that is a future decision, not this
 one.
 
+## Diagnostic metadata exposure (disclosed, Appliance / Storage / Privacy / Recovery v1)
+
+The counterfactual/rejected-evidence ledger (`GET /api/streams/{stream_id}
+/observation/counterfactual`, see
+[rejected-detection-attribution-contract.md](rejected-detection-attribution-contract.md))
+never stores or exposes pixels, thumbnails, or file paths -- but it *does*
+durably record real bounding-box geometry, timing, and confidence for every
+detection outcome, including one rejected specifically as
+`blocked_privacy_zone`. A caller with access to this diagnostic endpoint can
+therefore learn that activity occurred inside a specific Privacy or Ignore
+Zone, approximately where and when, purely from geometry retained because
+the detection was rejected there.
+
+This is not wildlife evidence -- no Visit, Event, Observation, review-queue
+item, or export row is ever created from a privacy-zone rejection -- and
+reaching it requires deliberately querying a diagnostic API, not ordinary
+product use. But a user who drew a Privacy or Ignore Zone specifically so
+that area's activity leaves *no trace at all* would reasonably want this
+disclosed, and no prior document addressed it. Recorded here rather than
+changed: narrowing what the counterfactual ledger retains would weaken a
+separate, already-accepted diagnostic capability, and this exposure's own
+severity is bounded (geometry/metadata only, diagnostic-access only) -- a
+future pass could scope the ledger to omit `blocked_privacy_zone`/
+`blocked_ignore_zone` outcomes specifically if this is ever judged to need
+tightening further.
+
 ## Regression coverage
 
 `tests/test_candidate_visit_repository.py::test_evidence_from_a_non_privacy_zone_is_not_redacted_for_a_coexisting_privacy_zone`

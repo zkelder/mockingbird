@@ -567,6 +567,9 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
           {options.map((option) => <option key={option.provider_key} disabled={option.availability !== "available_now"} value={option.provider_key}>{option.display_name}{option.availability === "available_now" ? ` — ${option.compatibility_label}` : " — unavailable"}</option>)}
         </select></label>
         {selected ? <><p className="meta-text">{selected.message}</p>
+          <div className="source-connection-meta">
+            <span>{selected.supports_live_playback ? "Live preview available" : "No live preview"}</span>
+          </div>
           {selected.provider_key === "camera_node" ? <div className="notice-panel">
             <strong>MockingBird Camera Node</strong>
             {isCheckingNodeResume ? (

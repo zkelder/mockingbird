@@ -113,12 +113,13 @@ the first time this particular surface needed one of its own.
 
 | Component | Code | What it checks | Can it be `blocking`? |
 | --- | --- | --- | --- |
-| Application | `application` | Running app version/build identity; whether the previous run shut down cleanly | No |
-| Database | `database_connectivity` | The database opens and passes `PRAGMA quick_check` | **Yes** |
+| Application | `application` | Running app version/build identity; whether the previous run shut down cleanly; (Appliance / Storage / Privacy / Recovery v1) fixed compatibility constants -- `backup_format_version`/`camera_node_api_version`/`transport_protocol_version` -- in `diagnostic_context`, never a live re-check | No |
+| Database | `database_connectivity` | The database opens and passes `PRAGMA quick_check`; (Appliance / Storage / Privacy / Recovery v1) also runs `PRAGMA foreign_key_check` on the same open connection and `WARN`s (never blocking -- the database is otherwise usable) if it finds a dangling reference, a real class of issue found via this milestone's own real-database acceptance testing | **Yes** |
 | Database | `database_schema` | Recorded schema version vs. `CURRENT_DATABASE_SCHEMA_VERSION`; `SKIPPED` if connectivity failed | **Yes** |
-| Storage | `storage` | Media root exists, is writable (`probe_local_storage_disk`'s bounded write-then-delete probe), and has enough free space (reuses the existing `LOW_DISK_FREE_BYTES_THRESHOLD`/`LOW_DISK_FREE_RATIO_THRESHOLD` -- the same 1 GB / 5% policy `/api/product/health` already uses) | **Yes** |
-| Backup | `backup` | Whether a backup exists and how old the most recent one is (via the real `LocalBackupManager.list_backups()`, never a second implementation) | No |
+| Storage | `storage` | Media root exists, is writable (`probe_local_storage_disk`'s bounded write-then-delete probe), and has enough free space (reuses the existing `LOW_DISK_FREE_BYTES_THRESHOLD`/`LOW_DISK_FREE_RATIO_THRESHOLD` -- the same 1 GB / 5% policy `/api/product/health` already uses); (Appliance / Storage / Privacy / Recovery v1) distinguishes a `critical` tier (below 200 MB / 1%) with a distinct, more urgent message, and a calm informational `getting_low` tier (below 5 GB / 15%) below the existing threshold | **Yes** |
+| Backup | `backup` | Whether a backup exists and how old the most recent one is (via the real `LocalBackupManager.list_backups()`, never a second implementation); (Appliance / Storage / Privacy / Recovery v1) also distinguishes "every backup is unreadable" from "none created yet" (previously indistinguishable), and reports a distinct, more urgent signal if a previous restore was interrupted mid-swap (`LocalBackupManager.detect_interrupted_restore()`, a plain file read) | No |
 | Camera Node | `camera_node` | Configured Source/Stream counts, currently-monitored count (`MonitoringExposureIntervalModel`'s open-interval signal, which -- unlike the legacy `armed`-policy check -- is accurate for a paired Camera Node Stream too), legacy runtime checkpoints in `blocked`/`interrupted` state, staleness of the durable `camera_node_last_seen_at` fact when no session is currently open (Boot Identity + Autonomous Recovery v1 -- closes the gap disclosed below the open-interval check alone could not), and bounded recent-boot-transition evidence (`camera_node_recent_boot_transitions_json`, capped at 5 entries) for restart/boot-loop instability suspicion | No |
+| Camera Node transport | `camera_node_transport` | Per-Source self-reported WAN-transport backlog/staleness; (Appliance / Storage / Privacy / Recovery v1) also a host-side, source-agnostic scan of unconsumed completed transport items across every Node (count/bytes/oldest-age, `WARN`s only once something has sat over an hour, since consumption is normally synchronous) | No |
 | FFmpeg | `ffmpeg` | `ffmpeg` binary availability, capability-gated: only escalates to `WARN` when a configured Source kind (`rtsp`/`local_camera`) plausibly needs it | No |
 | Detector model | `detector_model` | Observation Engine provider-config + model-bundle presence and integrity (`FrameDrivenProviderConfiguration.load` + `OnnxModelBundle.load`), capability-aware on whether a Camera Node Stream is configured | No |
 | Species identification | `species_identification` | BioCLIP runtime status via the existing `get_bioclip_status` | No |
@@ -126,20 +127,29 @@ the first time this particular surface needed one of its own.
 | Clock | `clock` | Local clock readability; host timezone resolution (`resolve_host_local_timezone`, which never raises) | No |
 | Offline ingest | `offline_ingest` | Bare read of the most recent `RecordedMediaAnalysisRunModel` rows (bounded sample); WARNs on a recent-failure pattern, informational if none run yet or the database predates schema 41 | No |
 | Research / export | `research_export` | Bare read of the most recent `DatasetExportModel` rows (bounded sample); same WARN/informational shape as Offline ingest | No |
+| Acoustic runtime | `acoustic_runtime` | Bare read of the most recent acoustic-analysis run statuses plus queue depth/oldest-queued age; same WARN/informational shape as Offline ingest (added by Acoustic Runtime & Quality v1; recorded here for table completeness) | No |
+| Media integrity | `media_integrity` | (Appliance / Storage / Privacy / Recovery v1) Bounded, cheap, stat-only sample of the most recently created `MediaAssetModel` rows -- flags a missing or size-mismatched file. Never decodes/opens content; never a claim about whether a file actually decodes correctly | No |
 
 **Added by First-Hour Onboarding + Whole-Product Observability Closure
-v1:** the two checks above, plus the Storage check now additionally probes
-`research_exports`/`classifier_manifest_exports` output roots
-independently (previously only the database directory was probed, falling
-back to media_root -- an export root on a genuinely different volume was
-an undetected blind spot). Both new checks reuse this module's existing
-`(gather, interpret)` pattern and bounded-sample convention
-(`_RECENT_RUN_SAMPLE_SIZE`) rather than a new mechanism, and both fail
-open to `PASS`/informational (never blocking, and never a raw exception)
-when the underlying table predates the database's current migration state
--- a real installation mid-upgrade must never see a scary unexpected
-failure from a table that simply does not exist yet at its recorded
-schema version.
+v1:** Offline ingest and Research/export, plus the Storage check now
+additionally probes `research_exports`/`classifier_manifest_exports`
+output roots independently (previously only the database directory was
+probed, falling back to media_root -- an export root on a genuinely
+different volume was an undetected blind spot). Both new checks reuse this
+module's existing `(gather, interpret)` pattern and bounded-sample
+convention (`_RECENT_RUN_SAMPLE_SIZE`) rather than a new mechanism, and
+both fail open to `PASS`/informational (never blocking, and never a raw
+exception) when the underlying table predates the database's current
+migration state -- a real installation mid-upgrade must never see a scary
+unexpected failure from a table that simply does not exist yet at its
+recorded schema version.
+
+**Added by Appliance / Storage / Privacy / Recovery v1:** the Camera Node
+transport host-side backlog scan, the Media integrity check, and the
+enhancements to Database/Storage/Backup/Application noted inline above --
+see
+[appliance-storage-privacy-recovery-v1-contract.md](appliance-storage-privacy-recovery-v1-contract.md)
+for the full account of why each exists.
 
 Only Database and Storage can ever report a `blocking` failure. Every
 other capability is optional/degradable by product doctrine -- an install

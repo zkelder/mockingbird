@@ -14,7 +14,7 @@ from mockingbird.api.schemas import (
     StorageRetentionSettingsUpdate,
 )
 from mockingbird.observation.contracts import CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE
-from mockingbird.repository.product_repository import ProductRepository
+from mockingbird.repository.product_repository import MotionEvidenceModel, ProductRepository
 from mockingbird.storage.backup import LocalBackupManager
 from mockingbird.storage.models import (
     EventModel,
@@ -434,6 +434,94 @@ def test_unresolved_secondary_evidence_is_always_protected(
     assert preview.eligible_media_count == 0
     assert any(item.category == "unresolved_visit_evidence" for item in preview.protected_counts)
     assert secondary_path.exists()
+
+
+def _add_rejected_analysis_media(
+    repository: ProductRepository, *, media_id: str, age_days: int
+) -> Path:
+    """A MediaAsset referenced only by a rejected/suppressed detection
+    record (never a Visit) -- the `linked_evidence_or_analysis` category.
+    Appliance / Storage / Privacy / Recovery v1, Phase B/D: previously
+    untested entirely (this category had no lever and was invisible in
+    `StorageSummary`)."""
+
+    path = _add_media(repository, media_id=media_id, age_days=age_days)
+    now = datetime.now(UTC)
+    with repository.session_factory() as session:
+        with session.begin():
+            asset = session.get(MediaAssetModel, media_id)
+            assert asset is not None
+            session.add(
+                MotionEvidenceModel(
+                    id=f"{media_id}-evidence",
+                    source_id=asset.source_id,
+                    stream_id=asset.stream_id,
+                    zone_id=None,
+                    start_frame_index=None,
+                    end_frame_index=None,
+                    best_frame_index=None,
+                    start_time=None,
+                    end_time=None,
+                    best_frame_time=None,
+                    peak_changed_ratio=0.1,
+                    triggered_frame_count=1,
+                    scoring_config_json="{}",
+                    snapshot_media_asset_id=media_id,
+                    status="rejected",
+                    promoted_event_id=None,
+                    promoted_visit_id=None,
+                    created_at=now,
+                    notes=None,
+                )
+            )
+    return path
+
+
+def test_linked_evidence_or_analysis_is_visible_in_storage_summary(
+    repository: ProductRepository,
+) -> None:
+    _add_rejected_analysis_media(repository, media_id="retention-rejected-analysis", age_days=365)
+
+    summary = repository.storage_summary()
+
+    assert summary.linked_evidence_or_analysis_count == 1
+    assert summary.linked_evidence_or_analysis_bytes > 0
+
+
+def test_linked_evidence_or_analysis_is_protected_forever_by_default(
+    repository: ProductRepository,
+) -> None:
+    """The default (`rejected_analysis_media_age_days=None`) must preserve
+    every existing installation's exact behavior: protected forever, no
+    matter how old."""
+
+    path = _add_rejected_analysis_media(repository, media_id="retention-rejected-default", age_days=3650)
+
+    preview = repository.preview_storage_cleanup()
+
+    assert preview.eligible_media_count == 0
+    assert any(item.category == "linked_evidence_or_analysis" for item in preview.protected_counts)
+    assert path.exists()
+
+
+def test_linked_evidence_or_analysis_becomes_eligible_only_after_explicit_opt_in(
+    repository: ProductRepository,
+) -> None:
+    young_path = _add_rejected_analysis_media(repository, media_id="retention-rejected-young", age_days=5)
+    old_path = _add_rejected_analysis_media(repository, media_id="retention-rejected-old", age_days=100)
+    repository.update_storage_retention_settings(
+        _settings_payload("retention-rejected-opt-in", rejected_analysis_media_age_days=30)
+    )
+
+    preview = repository.preview_storage_cleanup()
+
+    assert preview.eligible_media_count == 1
+    category = next(item for item in preview.categories if item.category == "rejected_analysis_media")
+    assert category.media_count == 1
+    # The young one must still show up as protected, not silently dropped.
+    assert any(item.category == "linked_evidence_or_analysis" for item in preview.protected_counts)
+    assert young_path.exists()
+    assert old_path.exists()  # preview only -- nothing deleted yet
 
 
 def test_reviewed_wildlife_secondary_evidence_follows_explicit_policy_without_changing_truth(

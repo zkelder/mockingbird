@@ -295,6 +295,50 @@ class TransportLedger:
             content_length=meta.get("content_length", 0),
         )
 
+    def list_node_ids(self) -> list[str]:
+        """Every node_id directory that currently exists under the transport
+        root -- a home installation has a handful of Camera Nodes at most,
+        so a plain directory listing is cheap and needs no index."""
+
+        if not self._root.is_dir():
+            return []
+        return sorted(entry.name for entry in self._root.iterdir() if entry.is_dir())
+
+    def list_completed_item_ids(self, node_id: str) -> list[str]:
+        """Every item_id with a durably completed blob for this node,
+        newest declaration last is not guaranteed -- callers that need
+        ordering should sort by the metadata's own `completed_at`."""
+
+        completed_dir = self._completed_dir(node_id)
+        if not completed_dir.is_dir():
+            return []
+        return sorted(path.stem for path in completed_dir.glob("*.bin"))
+
+    def completed_item_metadata(self, node_id: str, item_id: str) -> dict[str, Any] | None:
+        return _read_json(self._completed_meta_path(node_id, item_id))
+
+    def completed_blob_path(self, node_id: str, item_id: str) -> Path | None:
+        """The durable completed blob's real path, for a consumer to copy
+        from -- `None` if this item isn't (or is no longer) completed. Never
+        used to *write*; `complete()` is the only writer of this path."""
+
+        path = self._completed_blob_path(node_id, item_id)
+        return path if path.is_file() else None
+
+    def delete_completed_item(self, node_id: str, item_id: str) -> None:
+        """Remove a completed item's blob and metadata from the ledger.
+
+        Only ever call this *after* the caller has durably recorded that the
+        item was consumed (see `CameraNodeTransportIngestionModel`) -- this
+        method has no opinion on whether that happened, by design: the
+        ledger's own job is durable delivery, not retention policy. Safe to
+        call more than once (idempotent no-op if already gone), so a
+        consumer that crashes between recording success and calling this can
+        simply call it again on the next sweep."""
+
+        self._completed_blob_path(node_id, item_id).unlink(missing_ok=True)
+        self._completed_meta_path(node_id, item_id).unlink(missing_ok=True)
+
     def record_backlog_summary(self, *, node_id: str, summary: dict[str, Any]) -> None:
         """The Node's own self-reported backlog rides along on every
         declare call -- see the design doc's "Diagnostics": the host never

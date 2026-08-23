@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiClient } from "../api/client";
 import type {
+  CameraSource,
   PlaceActivityReportCoverageGap,
   PlaceActivityReportHourActivity,
   PlaceActivityReportOverallChangeStatus,
@@ -33,6 +34,7 @@ import { changeStatusBadge, formatDateTime, historicalStatusBadge } from "../uti
  */
 
 interface PlaceActivityReportPageProps {
+  sources: CameraSource[];
   onOpenVisit: (visitId: string) => void;
   /** With no `label`, opens Bird Log's overview; with one, deep-links
    * straight to that species' own Bird Log history (mirrors the identical
@@ -429,19 +431,32 @@ function TaxonCard({
   );
 }
 
-export function PlaceActivityReportPage({ onOpenVisit, onOpenBirdLog }: PlaceActivityReportPageProps) {
+export function PlaceActivityReportPage({ sources, onOpenVisit, onOpenBirdLog }: PlaceActivityReportPageProps) {
   const [preset, setPreset] = useState<PlaceReportPreset>("last_30_days");
   const [customStartDate, setCustomStartDate] = useState(localDateInputValue(localMidnight(new Date(), -29)));
   const [customEndDate, setCustomEndDate] = useState(localDateInputValue());
   const [appliedCustomRange, setAppliedCustomRange] = useState<PlaceActivityReportRequest | null>(null);
+  // Camera / Source + Multi-Camera Maturity v1, Phase N: an empty selection
+  // means the unfiltered whole-Place report -- mirrors the backend's own
+  // "omitted/empty means every Source" contract for `source_ids`.
+  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
   const [report, setReport] = useState<PlaceActivityReportResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  function toggleSourceId(sourceId: string) {
+    setSelectedSourceIds((current) =>
+      current.includes(sourceId)
+        ? current.filter((selected) => selected !== sourceId)
+        : [...current, sourceId],
+    );
+  }
+
   const range = useMemo<PlaceActivityReportRequest | null>(() => {
-    if (preset === "custom") return appliedCustomRange;
-    return presetRange(preset, new Date());
-  }, [preset, appliedCustomRange]);
+    const period = preset === "custom" ? appliedCustomRange : presetRange(preset, new Date());
+    if (!period) return null;
+    return selectedSourceIds.length > 0 ? { ...period, source_ids: selectedSourceIds } : period;
+  }, [preset, appliedCustomRange, selectedSourceIds]);
 
   useEffect(() => {
     if (!range) return;
@@ -533,6 +548,37 @@ export function PlaceActivityReportPage({ onOpenVisit, onOpenBirdLog }: PlaceAct
           </span>
         ) : null}
       </section>
+
+      {/* A separate panel, not nested inside .journal-filter-panel above --
+          that section's own `input`/`select` styling (sized/bordered for
+          its text-style period controls) would otherwise visually distort
+          these ordinary checkboxes (`.checkbox-row`'s own reset loses that
+          specific cascade). Still directly beneath the period picker, so it
+          reads as the same "choose what this report covers" filter area. */}
+      {sources.length > 0 ? (
+        <section className="panel place-report-source-filter" aria-label="Filter by camera">
+          <fieldset>
+            <legend>Cameras / Sources</legend>
+            <div className="retention-checkbox-grid">
+              {sources.map((source) => (
+                <label className="checkbox-row" key={source.id}>
+                  <input
+                    checked={selectedSourceIds.includes(source.id)}
+                    onChange={() => toggleSourceId(source.id)}
+                    type="checkbox"
+                  />
+                  {source.name}
+                </label>
+              ))}
+            </div>
+            <span className="meta-text">
+              {selectedSourceIds.length === 0
+                ? "No cameras selected -- every camera is included."
+                : `Limited to ${selectedSourceIds.length} of ${sources.length} camera${sources.length === 1 ? "" : "s"}.`}
+            </span>
+          </fieldset>
+        </section>
+      ) : null}
 
       {error ? (
         report ? (

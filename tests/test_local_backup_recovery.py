@@ -355,7 +355,13 @@ def test_backup_api_create_list_verify_download_and_import(
     list_response = client.get("/api/settings/backups")
     assert list_response.status_code == 200
     assert list_response.json()["backups"][0]["id"] == backup_id
-    assert list_response.json()["backups"][0]["verification_status"] == "not_checked"
+    # Appliance / Storage / Privacy / Recovery v1: `create_backup` already
+    # ran a real, full verification internally -- `list_backups` now
+    # honestly reflects that (via the durable marker `verify_archive`
+    # writes) instead of always claiming "not_checked" regardless of
+    # history. See test_list_backups_reports_not_checked_for_a_backup_that_
+    # was_never_verified for the genuinely-unverified case.
+    assert list_response.json()["backups"][0]["verification_status"] == "verified"
 
     verify_response = client.post(f"/api/settings/backups/{backup_id}/verify")
     assert verify_response.status_code == 200
@@ -374,6 +380,167 @@ def test_backup_api_create_list_verify_download_and_import(
     )
     assert import_response.status_code == 201
     assert import_response.json()["backup"]["id"] == backup_id
+
+
+def test_list_backups_reports_not_checked_for_a_backup_that_was_never_verified(
+    tmp_path: Path,
+) -> None:
+    """The honest counterpart to the fix above: a `.mbbackup` file placed
+    directly into the backup directory (never through `create_backup`/
+    `import_backup`/`verify_backup`) has no verified marker at all, so
+    `list_backups` correctly still reports `not_checked` for it -- the fix
+    is that "verified" now means something real, not that everything
+    reports "verified" unconditionally."""
+
+    repository = _repository(tmp_path)
+    repository.media_root.mkdir(parents=True)
+    manager = _manager(repository, tmp_path)
+    verification = manager.create_backup()
+    manager._verified_marker_path(verification.backup.id).unlink()  # simulate a marker that never existed
+
+    library = manager.list_backups()
+
+    assert library.backups[0].id == verification.backup.id
+    assert library.backups[0].verification_status == "not_checked"
+    repository.close()
+
+
+def test_cleanup_orphaned_temporary_artifacts_removes_only_old_temp_files(
+    tmp_path: Path,
+) -> None:
+    """Simulates the one thing this cleanup exists for: a hard process kill
+    mid-backup leaves a `.creating-*`/`.snapshot-*` file behind forever.
+    Age-gated so a genuinely in-progress operation is never touched, and a
+    real, correctly-named backup is never mistaken for an orphan."""
+
+    repository = _repository(tmp_path)
+    repository.media_root.mkdir(parents=True)
+    manager = _manager(repository, tmp_path)
+    real_backup = manager.create_backup()
+
+    old_orphan = manager.backup_root / ".creating-deadbeefdeadbeefdeadbeefdeadbeef.mbbackup"
+    old_orphan.write_bytes(b"incomplete")
+    old_snapshot = manager.backup_root / ".snapshot-deadbeefdeadbeefdeadbeefdeadbeef.sqlite3"
+    old_snapshot.write_bytes(b"incomplete")
+    recent_orphan = manager.backup_root / ".import-cafefeedcafefeedcafefeedcafefeed.mbbackup"
+    recent_orphan.write_bytes(b"still-in-progress")
+    import os as _os
+
+    old_timestamp = datetime.now(UTC).timestamp() - 7200
+    _os.utime(old_orphan, (old_timestamp, old_timestamp))
+    _os.utime(old_snapshot, (old_timestamp, old_timestamp))
+    # recent_orphan keeps its just-created (fresh) mtime.
+
+    removed = manager.cleanup_orphaned_temporary_artifacts(min_age_seconds=3600)
+
+    assert removed == 2
+    assert not old_orphan.exists()
+    assert not old_snapshot.exists()
+    assert recent_orphan.exists()  # too young to touch -- could be a real in-progress operation
+    assert real_backup.backup.archive_path.exists()  # never mistaken for an orphan
+    repository.close()
+
+
+def test_detect_interrupted_restore_is_none_on_a_normal_installation(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    manager = _manager(repository, tmp_path)
+    assert manager.detect_interrupted_restore() is None
+    repository.close()
+
+
+def test_replace_live_files_clears_the_sentinel_after_recovering_from_a_hard_kill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hard process kill mid-swap is simulated by making the *forward*
+    `os.replace` call that promotes the staged database fail, while
+    everything else (including `RestoreFileTransaction.rollback()`'s own
+    `os.replace` calls) proceeds normally -- the common, recoverable case.
+    Proves the sentinel `replace_live_files` writes before its first mutation
+    is cleared once rollback genuinely restores the pre-restore state."""
+
+    from mockingbird.storage import backup as backup_module
+
+    repository = _repository(tmp_path)
+    repository.media_root.mkdir(parents=True)
+    (repository.media_root / "visit.jpg").write_bytes(b"backup version")
+    manager = _manager(repository, tmp_path)
+    verification = manager.create_backup()
+    (repository.media_root / "visit.jpg").write_bytes(b"current version")
+    repository.close()
+
+    real_replace = backup_module.os.replace
+    database_path = manager.database_path
+    promote_attempts = {"count": 0}
+
+    def selective_replace(src, dst):
+        # Fires exactly on "promote staged database to the live path" --
+        # the first time `dst` is the live database path -- but lets
+        # `RestoreFileTransaction.rollback()`'s own later attempt to
+        # restore the *original* database back to that same live path
+        # succeed normally (the recoverable case this test proves).
+        if Path(dst) == database_path:
+            promote_attempts["count"] += 1
+            if promote_attempts["count"] == 1:
+                raise OSError("simulated hard kill mid-restore")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(backup_module.os, "replace", selective_replace)
+
+    with pytest.raises(backup_module.LocalBackupRestoreError):
+        manager.replace_live_files(manager.verify_backup(verification.backup.id))
+
+    monkeypatch.undo()  # detect_interrupted_restore/re-reading media below must use the real os.replace
+    assert manager.detect_interrupted_restore() is None  # rollback succeeded -- no longer "in progress"
+    assert (repository.media_root / "visit.jpg").read_bytes() == b"current version"
+
+
+def test_replace_live_files_keeps_the_sentinel_when_rollback_itself_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The genuinely unrecoverable case: the forward swap fails *and* the
+    resulting rollback attempt also fails. The sentinel must survive so a
+    later Doctor run / product startup can surface it -- silently
+    continuing as if nothing happened would be the unsafe outcome here."""
+
+    from mockingbird.storage import backup as backup_module
+
+    repository = _repository(tmp_path)
+    repository.media_root.mkdir(parents=True)
+    (repository.media_root / "visit.jpg").write_bytes(b"backup version")
+    manager = _manager(repository, tmp_path)
+    verification = manager.create_backup()
+    repository.close()
+
+    real_replace = backup_module.os.replace
+    database_path = manager.database_path
+
+    def always_fail_promote(src, dst):
+        # Fails *every* attempt to write to the live database path --
+        # both the forward promote and rollback's own later attempt to
+        # restore the original database -- the unrecoverable case.
+        if Path(dst) == database_path:
+            raise OSError("simulated unrecoverable hard kill")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(backup_module.os, "replace", always_fail_promote)
+
+    with pytest.raises(backup_module.LocalBackupRestoreError, match="restore_and_rollback_failed"):
+        manager.replace_live_files(manager.verify_backup(verification.backup.id))
+
+    monkeypatch.undo()
+    interrupted = manager.detect_interrupted_restore()
+    assert interrupted is not None
+    assert interrupted["backup_id"] == verification.backup.id
+
+    # Doctor must surface this plainly, not fold it into ordinary staleness.
+    from mockingbird.diagnostics import doctor
+
+    gathered = doctor._gather_backup(
+        db_url=repository.db_url, media_root=repository.media_root, backup_root=manager.backup_root
+    )
+    result = doctor._interpret_backup(gathered, now=datetime.now(UTC))
+    assert result.status == doctor.DoctorStatus.WARN
+    assert "did not finish" in result.summary
 
 
 def test_backup_api_restore_requires_confirmation(

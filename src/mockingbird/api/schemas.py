@@ -742,6 +742,15 @@ class CameraNodeIdentityReplacementImpact(BaseModel):
     new_node_id: str
     zones_review_recommended: bool
     message: str
+    # Appliance / Storage / Privacy / Recovery v1, Phase I: the previous
+    # physical node's own last-self-reported remote-transport backlog count,
+    # when Remote/Intermittent-WAN Transport was configured for it -- `None`
+    # when transport was never configured or has never reported (nothing to
+    # disclose). Not re-derived after replacement: the old node's credential
+    # becomes unusable the moment this replacement is applied, so any items
+    # still sitting in *its own* local spool at that moment cannot be
+    # delivered afterward. See `message` for the plain-language warning.
+    pending_transport_backlog_count: int | None = None
 
 
 class CameraConfigurationImpactPreview(BaseModel):
@@ -5949,6 +5958,12 @@ class StorageRetentionSettings(BaseModel):
     reviewed_non_bird_age_days: int = Field(default=180, ge=30, le=3650)
     superseded_evidence_age_days: int = Field(default=90, ge=14, le=3650)
     orphaned_media_age_days: int = Field(default=30, ge=7, le=3650)
+    # Appliance / Storage / Privacy / Recovery v1, Phase D: opt-in age
+    # threshold for `linked_evidence_or_analysis` media (a file referenced
+    # only by a rejected/suppressed detection/analysis record, never by a
+    # Visit) -- `None` (the default) keeps this category protected forever,
+    # matching every installation's behavior before this field existed.
+    rejected_analysis_media_age_days: int | None = Field(default=None, ge=7, le=3650)
     maximum_managed_media_bytes: int | None = Field(default=None, ge=1_048_576)
     policy_revision: int = Field(ge=1)
     persisted: bool
@@ -5969,6 +5984,7 @@ class StorageRetentionSettingsUpdate(BaseModel):
     reviewed_non_bird_age_days: int = Field(ge=30, le=3650)
     superseded_evidence_age_days: int = Field(ge=14, le=3650)
     orphaned_media_age_days: int = Field(ge=7, le=3650)
+    rejected_analysis_media_age_days: int | None = Field(default=None, ge=7, le=3650)
     maximum_managed_media_bytes: int | None = Field(default=None, ge=1_048_576)
     idempotency_key: str = Field(min_length=8, max_length=120)
 
@@ -5988,6 +6004,14 @@ class StorageSummary(BaseModel):
     unresolved_visit_evidence_count: int = Field(ge=0)
     reviewed_bird_wildlife_evidence_count: int = Field(ge=0)
     reviewed_non_bird_blank_ambiguous_evidence_count: int = Field(ge=0)
+    # Appliance / Storage / Privacy / Recovery v1, Phase B/D: media
+    # referenced only by a rejected/suppressed detection/analysis record
+    # (never a Visit) -- previously invisible in this summary entirely,
+    # even though it is retained forever by default. See
+    # `StorageRetentionSettings.rejected_analysis_media_age_days` for the
+    # one opt-in lever that can ever make this category cleanup-eligible.
+    linked_evidence_or_analysis_count: int = Field(default=0, ge=0)
+    linked_evidence_or_analysis_bytes: int = Field(default=0, ge=0)
     # Host-disk facts, distinct from the managed-media accounting above: a
     # normal user's "is my storage okay" question is about the real volume
     # MockingBird's data directory lives on, not a configured retention
@@ -5995,6 +6019,12 @@ class StorageSummary(BaseModel):
     disk_total_bytes: int = Field(ge=0)
     disk_free_bytes: int = Field(ge=0)
     is_writable: bool
+    # Appliance / Storage / Privacy / Recovery v1, Phase C: a graduated
+    # healthy/getting_low/action_recommended/critical read of the same disk
+    # facts above -- see `storage.database.LocalStorageDiskStatus.storage_
+    # health_tier`. `storage_warning`/`is_writable` are unchanged; this is
+    # additive, not a replacement.
+    storage_health_tier: str = "healthy"
     storage_warning: str | None = None
     message: str
 
@@ -6079,6 +6109,11 @@ class ProductHealthStatus(BaseModel):
     message: str
     storage_writable: bool
     storage_low_space: bool
+    # Appliance / Storage / Privacy / Recovery v1, Phase C/L: graduated
+    # reading of the same disk facts `storage_low_space` already
+    # summarizes as a single boolean -- see `StorageSummary.storage_health_
+    # tier`. `storage_low_space` keeps its exact existing meaning/trigger.
+    storage_health_tier: str = "healthy"
     storage_warning: str | None = None
     cameras: ProductHealthCameraSummary
     observation: ProductHealthObservationSummary
@@ -6089,6 +6124,18 @@ class ProductHealthStatus(BaseModel):
     camera_node_service_version: str | None = None
     research_export_schema_version: str
     camtrap_dp_profile_version: str
+    # Appliance / Storage / Privacy / Recovery v1, Phase N: each of these
+    # is a fixed, always-present constant (never a live network probe --
+    # see docs/appliance-storage-privacy-recovery-v1-contract.md,
+    # "Compatibility boundaries") that was previously enforced in code but
+    # surfaced on no diagnostic/status endpoint at all -- a recovery/support
+    # conversation had no way to see a mismatch without attempting the
+    # actual operation and hitting its error. `camera_node_api_version`/
+    # `transport_protocol_version` are this host's own supported wire
+    # versions, not a live re-check of what a specific paired Node speaks.
+    backup_format_version: int
+    camera_node_api_version: str
+    transport_protocol_version: str
     generated_at: datetime
 
 

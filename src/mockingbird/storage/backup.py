@@ -11,7 +11,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import shutil
 import sqlite3
-from typing import BinaryIO, Iterable
+from typing import Any, BinaryIO, Iterable
 import uuid
 import zipfile
 
@@ -29,6 +29,46 @@ MANIFEST_MEMBER = "manifest.json"
 DATABASE_MEMBER = "database.sqlite3"
 MAX_MANIFEST_BYTES = 1_048_576
 COPY_CHUNK_BYTES = 1024 * 1024
+
+# Appliance / Storage / Privacy / Recovery v1: every temporary-name prefix
+# this file writes under before an atomic `os.replace`/cleanup finishes the
+# real operation (`create_backup`, `import_backup`, `verify_archive`,
+# `create_restore_plan`). Their own `finally` blocks remove them on any
+# raised exception, but a hard process kill (power loss, OOM kill, SIGKILL)
+# skips `finally` entirely, leaving an orphan behind. Two distinct problems
+# this one list closes: (1) the two `{BACKUP_EXTENSION}`-suffixed patterns
+# would otherwise be picked up by `list_backups`'s own glob (`Path.glob`,
+# unlike the top-level `glob.glob()` function, does not exclude dotfiles),
+# fail to parse, and count as "unreadable" forever with no way to tell a
+# temporary orphan apart from a genuinely corrupted backup; (2) all five
+# patterns are real, if usually small, disk space that nothing ever
+# reclaimed before `cleanup_orphaned_temporary_artifacts`. See
+# docs/appliance-storage-privacy-recovery-v1-contract.md, "Backup
+# diagnosability."
+# Appliance / Storage / Privacy / Recovery v1, Phase G/O: written by
+# `replace_live_files` before its first `os.replace` and removed after its
+# last one succeeds (or after a raised exception's own rollback completes) --
+# see `LocalBackupManager.detect_interrupted_restore`'s docstring for why
+# this exists: a raised Python exception mid-swap is already well-handled
+# by `RestoreFileTransaction.rollback()`, but a hard process kill (not an
+# exception) between two of the swap's several `os.replace` calls skips
+# that rollback entirely, and nothing before this sentinel could ever tell
+# a live installation apart from one left mid-restore.
+RESTORE_SENTINEL_FILENAME = ".mockingbird-restore-in-progress.json"
+
+_TEMPORARY_ARTIFACT_GLOBS = (
+    f".creating-*{BACKUP_EXTENSION}",
+    f".import-*{BACKUP_EXTENSION}",
+    ".snapshot-*.sqlite3",
+    ".verify-*.sqlite3",
+    ".restore-plan-*.sqlite3",
+)
+# Generous on purpose: even a very large real backup/import completes in
+# well under a minute on ordinary hardware (see this file's own `create_
+# backup`/`import_backup`), so anything still present after this long was
+# never going to finish -- an orphan, not a slow-but-live operation this
+# cleanup could race.
+DEFAULT_ORPHANED_ARTIFACT_MIN_AGE_SECONDS = 3600.0
 
 _BACKUP_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -439,6 +479,26 @@ def _parse_created_at(value: object) -> datetime:
     return parsed.astimezone(UTC)
 
 
+def _is_temporary_backup_artifact_name(name: str) -> bool:
+    return any(Path(name).match(pattern) for pattern in _TEMPORARY_ARTIFACT_GLOBS)
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """`O_CREAT`/temp-file + `fsync` + `os.replace` -- this codebase's own
+    established atomic-write idiom (see `camera_node_transport_ledger.
+    _atomic_write_json`'s identical shape), duplicated rather than shared
+    across modules per this codebase's existing convention for small,
+    self-contained primitives."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    with open(temporary, "w", encoding="utf-8") as handle:
+        handle.write(text)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+
+
 def _hash_stream(source: BinaryIO, destination: BinaryIO | None = None) -> tuple[int, str]:
     digest = hashlib.sha256()
     size = 0
@@ -555,6 +615,49 @@ class LocalBackupManager:
         if not path.is_file() or path.is_symlink():
             raise LocalBackupNotFoundError("backup_not_found")
         return path
+
+    def _verified_marker_path(self, backup_id: str) -> Path:
+        return self.backup_root / f"{backup_id}.verified.json"
+
+    def _write_verified_marker(self, backup_id: str, *, verified_at: datetime) -> None:
+        """Record that `backup_id` passed full hash/schema verification at
+        `verified_at` -- written once at the end of `create_backup`/
+        `import_backup`/`verify_backup`, each of which has *just* run the
+        real, heavier `verify_archive` (temp-database extraction, full
+        media hash re-check). `list_backups` reads this back cheaply (one
+        small file, no re-hashing) instead of hardcoding "not checked" for
+        a backup that was, in fact, checked -- see docs/appliance-storage-
+        privacy-recovery-v1-contract.md, "Backup diagnosability."
+
+        Deliberately scoped: this records "verification passed as of this
+        timestamp," not a live, continuously-enforced tamper-detection
+        guarantee -- if the archive's bytes changed after this was written
+        (a manual edit outside MockingBird, filesystem corruption), the
+        marker does not know that; a user who suspects that can always run
+        the real "Verify" action again, which rewrites this file fresh.
+        Best-effort: a write failure here must never fail the backup/verify
+        operation that produced this fact in the first place."""
+
+        try:
+            _atomic_write_text(
+                self._verified_marker_path(backup_id),
+                json.dumps({"verified_at": verified_at.isoformat()}),
+            )
+        except OSError:
+            pass
+
+    def _read_verified_at(self, backup_id: str) -> datetime | None:
+        # A tolerant, direct parse of this module's own marker format (not
+        # `_parse_created_at`, which is deliberately strict for untrusted
+        # manifest input and raises `LocalBackupValidationError` --
+        # inappropriate here, where a malformed/missing marker should just
+        # mean "not known to be verified," never a hard failure).
+        try:
+            raw = json.loads(self._verified_marker_path(backup_id).read_text(encoding="utf-8"))
+            parsed = datetime.fromisoformat(raw["verified_at"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
     def _discover_media_files(self) -> list[tuple[Path, str]]:
         if not self.media_root.exists():
@@ -842,7 +945,18 @@ class LocalBackupManager:
                 if size != int(entry["size_bytes"]) or digest != entry["sha256"]:
                     raise LocalBackupValidationError("backup_media_hash_mismatch")
 
-            return BackupVerificationData(backup=summary, checked_at=datetime.now(UTC))
+            checked_at = datetime.now(UTC)
+            # Appliance / Storage / Privacy / Recovery v1: this is the one
+            # place every caller (create/import/explicit-verify/download)
+            # funnels through after a real, full hash/schema verification
+            # just passed -- regardless of which physical path/filename
+            # `archive_path` was (a still-temporary `.creating-*`/`.import-*`
+            # file during creation, or an already-final `<id>.mbbackup`),
+            # `summary.id` is resolved from the manifest itself, so the
+            # marker always lands under the backup's real, final identity.
+            # See `_write_verified_marker`'s own docstring for scope.
+            self._write_verified_marker(summary.id, verified_at=checked_at)
+            return BackupVerificationData(backup=summary, checked_at=checked_at)
         except LocalBackupValidationError:
             raise
         except (OSError, RuntimeError, zipfile.BadZipFile) as error:
@@ -858,16 +972,34 @@ class LocalBackupManager:
         backups: list[BackupSummaryData] = []
         unreadable_count = 0
         for path in self.backup_root.glob(f"*{BACKUP_EXTENSION}"):
+            if _is_temporary_backup_artifact_name(path.name):
+                # A known in-progress-or-orphaned temporary name, never a
+                # real backup -- excluded from both lists rather than
+                # counted as "unreadable" (which would otherwise read as a
+                # corrupted backup forever; see `cleanup_orphaned_temporary_
+                # artifacts`, which is what actually reclaims these).
+                continue
             if not path.is_file() or path.is_symlink():
                 unreadable_count += 1
                 continue
             archive: zipfile.ZipFile | None = None
             try:
                 manifest, archive = self._read_manifest(path)
+                # Appliance / Storage / Privacy / Recovery v1: a cheap,
+                # no-re-hashing read of whether this backup has *ever*
+                # passed a real verification (`_write_verified_marker`,
+                # written by `verify_archive`) -- "not_checked" now means
+                # what it says, rather than being hardcoded regardless of
+                # this backup's real history. Still never re-hashes on
+                # every list call, matching Doctor's own disclosed "prefer
+                # the cheap check" precedent.
+                verification_status = (
+                    "verified" if self._read_verified_at(path.stem) is not None else "not_checked"
+                )
                 summary, _database, _media = self._parse_manifest(
                     manifest,
                     path,
-                    verification_status="not_checked",
+                    verification_status=verification_status,
                 )
                 if path.stem != summary.id:
                     raise LocalBackupValidationError("backup_filename_identity_mismatch")
@@ -879,6 +1011,38 @@ class LocalBackupManager:
                     archive.close()
         backups.sort(key=lambda item: item.created_at, reverse=True)
         return BackupLibraryData(backups=backups, unreadable_backup_count=unreadable_count)
+
+    def cleanup_orphaned_temporary_artifacts(
+        self, *, min_age_seconds: float = DEFAULT_ORPHANED_ARTIFACT_MIN_AGE_SECONDS
+    ) -> int:
+        """Remove `.creating-*`/`.import-*`/`.snapshot-*` files left behind
+        by a hard process kill mid-backup/import -- see this file's own
+        `_TEMPORARY_ARTIFACT_GLOBS` docstring for why these can exist at
+        all. Age-gated so this can never race a genuinely in-progress
+        `create_backup`/`import_backup` call on another thread: only a file
+        older than `min_age_seconds` (default one hour, far longer than any
+        real operation takes) is ever removed. Safe to call repeatedly and
+        safe to call when nothing needs cleaning -- returns the count
+        actually removed. Never touches a real, correctly-named backup
+        (`_is_temporary_backup_artifact_name` only ever matches the
+        temporary prefixes above)."""
+
+        if not self.backup_root.is_dir():
+            return 0
+        now = datetime.now(UTC).timestamp()
+        removed = 0
+        for pattern in _TEMPORARY_ARTIFACT_GLOBS:
+            for path in self.backup_root.glob(pattern):
+                try:
+                    if path.is_symlink() or not path.is_file():
+                        continue
+                    if (now - path.stat().st_mtime) < min_age_seconds:
+                        continue
+                    path.unlink(missing_ok=True)
+                    removed += 1
+                except OSError:
+                    continue
+        return removed
 
     def verify_backup(self, backup_id: str) -> BackupVerificationData:
         verification = self.verify_archive(self._archive_path(backup_id))
@@ -1274,6 +1438,22 @@ class LocalBackupManager:
             if archive is not None:
                 archive.close()
 
+    def _restore_sentinel_path(self) -> Path:
+        return self.database_path.parent / RESTORE_SENTINEL_FILENAME
+
+    def detect_interrupted_restore(self) -> dict[str, Any] | None:
+        """Read-only, side-effect-free: is there a restore sentinel left
+        behind by a hard process kill mid-`replace_live_files`? Safe to call
+        from Doctor (no repository, no mutation) or from product startup.
+        Returns the sentinel's own recorded facts (`backup_id`, `started_at`,
+        rollback paths) or `None` when no restore is (or was left) in
+        progress -- the overwhelmingly common case."""
+
+        try:
+            return json.loads(self._restore_sentinel_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+
     def replace_live_files(
         self,
         verification: BackupVerificationData,
@@ -1328,6 +1508,24 @@ class LocalBackupManager:
             had_media=self.media_root.exists(),
         )
 
+        sentinel_path = self._restore_sentinel_path()
+        # Written *before* the first live-file mutation below, so a hard
+        # kill at any point in this sequence -- not only a raised Python
+        # exception, which `transaction.rollback()` already handles --
+        # leaves durable evidence of exactly what was interrupted. See
+        # `detect_interrupted_restore`.
+        _atomic_write_text(
+            sentinel_path,
+            json.dumps(
+                {
+                    "token": token,
+                    "backup_id": verification.backup.id,
+                    "started_at": datetime.now(UTC).isoformat(),
+                    "rollback_database": str(rollback_database),
+                    "rollback_media": str(rollback_media),
+                }
+            ),
+        )
         try:
             if transaction.had_database:
                 os.replace(self.database_path, rollback_database)
@@ -1340,12 +1538,19 @@ class LocalBackupManager:
                 os.replace(self.media_root, rollback_media)
             os.replace(staged_database, self.database_path)
             os.replace(staged_media, self.media_root)
+            sentinel_path.unlink(missing_ok=True)
             return transaction
         except Exception as error:
             try:
                 transaction.rollback()
             except Exception as rollback_error:
+                # A genuinely unrecoverable state -- the sentinel is
+                # deliberately *kept* here (not cleared) so Doctor/startup
+                # can surface it rather than silently continue as if
+                # nothing happened; the rollback paths it recorded are
+                # exactly what a support conversation would need.
                 raise LocalBackupRestoreError("restore_and_rollback_failed") from rollback_error
+            sentinel_path.unlink(missing_ok=True)  # rollback succeeded -- back to the pre-restore state
             if isinstance(error, LocalBackupError):
                 raise
             raise LocalBackupRestoreError("restore_file_replacement_failed") from error

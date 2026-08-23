@@ -25,6 +25,8 @@ from typing import Any, Callable
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from mockingbird.diagnostics.structured_log import log_error_event
+
 from mockingbird.storage.camera_node_transport_ledger import (
     TransportLedger,
     TransportLedgerError,
@@ -108,12 +110,27 @@ def build_camera_node_transport_router(
     *,
     resolve_transport_source: Callable[[str], tuple[str, str] | None],
     transport_root: Path | None = None,
+    on_item_completed: Callable[[str, str], None] | None = None,
 ) -> APIRouter:
     """Factory, not a module-level router: takes `resolve_transport_source`
     (normally `ProductRepository.resolve_camera_node_transport_source`) as
     a plain callable so this module never imports `mockingbird.api.main`
     (which imports *this* module) -- avoids a circular import while keeping
-    this router fully unit-testable with a fake resolver."""
+    this router fully unit-testable with a fake resolver.
+
+    `on_item_completed` (Appliance / Storage / Privacy / Recovery v1,
+    Phase E), normally `ProductRepository.consume_camera_node_transport_item`,
+    is called with `(node_id, item_id)` immediately after a `complete`
+    call durably completes an item -- the one hook point where this
+    otherwise Evidence/Observation-agnostic transport surface hands a
+    completed item off to the product's real ingest path. Any exception it
+    raises is caught and logged here, never surfaced to the Node: the item
+    is already durably "completed," and the Node deletes its own spooled
+    copy the instant it sees a 200 response, so a consumption failure must
+    be recovered by the host's own later sweep, never by asking the Node to
+    resend bytes it no longer has. `None` (the default) leaves this router
+    exactly as receive-only as before this milestone -- used by tests that
+    only exercise the declare/chunk/complete protocol itself."""
 
     ledger = TransportLedger(resolve_transport_root(transport_root))
     router = APIRouter(prefix="/api/camera-nodes/transport", tags=["camera-node-transport"])
@@ -191,6 +208,28 @@ def build_camera_node_transport_router(
             ledger.complete(node_id=source.node_id, item_id=item_id)
         except TransportLedgerError as error:
             raise _http_error(error) from None
+        # Appliance / Storage / Privacy / Recovery v1, Phase E: the item is
+        # already durably "completed" on the ledger at this point -- the
+        # Node is about to delete its own spooled copy the moment it sees
+        # this 200 response (see `mockingbird_node.transport_worker`), so
+        # consumption from here on is the host's own responsibility and
+        # must never make the Node think delivery failed. Best-effort and
+        # bounded: a consumption failure here is recovered by the next
+        # startup sweep (`ProductRepository.consume_pending_camera_node_
+        # transport_backlog`), never by asking the Node to resend bytes it
+        # no longer has.
+        if on_item_completed is not None:
+            try:
+                on_item_completed(source.node_id, item_id)
+            except Exception as error:  # noqa: BLE001 - never fail the Node's ack on this
+                log_error_event(
+                    "camera_node_transport",
+                    "item_consumption_failed",
+                    code="camera_node_transport_consume_failed",
+                    exception=error,
+                    node_id=source.node_id,
+                    item_id=item_id,
+                )
         return TransportCompleteResponse(status="completed")
 
     @router.get("/items/{item_id}", response_model=TransportItemStatusResponse)

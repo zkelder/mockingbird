@@ -28,7 +28,10 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 from mockingbird import __version__ as APP_VERSION
-from mockingbird.api.camera_node_transport import build_camera_node_transport_router
+from mockingbird.api.camera_node_transport import (
+    TRANSPORT_PROTOCOL_VERSION,
+    build_camera_node_transport_router,
+)
 from mockingbird.diagnostics.error_taxonomy import (
     ErrorComponent,
     ErrorCorrelation,
@@ -487,6 +490,7 @@ from mockingbird.source_providers import external_url_preview
 from mockingbird.source_providers import onvif_client
 from mockingbird.source_providers.camera_node import (
     CAMERA_NODE_RUNTIME_FAILURE_CODES,
+    NODE_API_VERSION,
     CameraNodeCaptureProfile as NodeCaptureProfile,
     CameraNodeClient,
     CameraNodeClientError,
@@ -496,6 +500,7 @@ from mockingbird.species.automatic_identification import (
     AutomaticReviewIdentificationAssist,
 )
 from mockingbird.storage.backup import (
+    BACKUP_FORMAT_VERSION,
     BackupSummaryData,
     BackupVerificationData,
     RestorePlanData,
@@ -540,6 +545,39 @@ async def _app_lifespan(_app: FastAPI):
     # place restart recovery (Phase C) actually happens for any acoustic
     # work a previous process left mid-flight.
     get_acoustic_runtime_service().start()
+    # Appliance / Storage / Privacy / Recovery v1, Phase E: a bounded,
+    # best-effort sweep of any Camera Node transport item that completed
+    # but was never consumed (a crash between `POST .../complete` and its
+    # synchronous consumption call, the only way this can happen -- see
+    # camera_node_transport.py's `complete_item`). Never blocks startup: a
+    # fresh/never-used transport root costs one empty directory listing, and
+    # any unexpected failure here must not prevent the product from opening.
+    try:
+        repository.consume_pending_camera_node_transport_backlog()
+    except Exception as error:  # noqa: BLE001 - never block startup on this
+        log_error_event(
+            "camera_node_transport",
+            "startup_consumption_sweep_failed",
+            code="camera_node_transport_startup_sweep_failed",
+            exception=error,
+        )
+    # Appliance / Storage / Privacy / Recovery v1, Phase F: reclaim any
+    # `.creating-*`/`.import-*`/`.snapshot-*`/`.verify-*`/`.restore-plan-*`
+    # temporary artifact a hard process kill left behind last time (see
+    # `LocalBackupManager.cleanup_orphaned_temporary_artifacts`'s own
+    # docstring) -- age-gated, so this can never touch a genuinely
+    # in-progress operation even if one happened to be running when this
+    # process itself started (it cannot be, since nothing else has run yet,
+    # but the age gate is what makes this safe to call from anywhere).
+    try:
+        _local_backup_manager(repository).cleanup_orphaned_temporary_artifacts()
+    except Exception as error:  # noqa: BLE001 - never block startup on this
+        log_error_event(
+            "local_backup",
+            "startup_orphaned_artifact_cleanup_failed",
+            code="local_backup_startup_cleanup_failed",
+            exception=error,
+        )
     try:
         yield
     finally:
@@ -613,7 +651,14 @@ app.include_router(
     build_camera_node_transport_router(
         resolve_transport_source=lambda credential: get_repository().resolve_camera_node_transport_source(
             credential
-        )
+        ),
+        # Appliance / Storage / Privacy / Recovery v1, Phase E: consume a
+        # completed transport item into a MediaAsset the moment the Node's
+        # own delivery is acknowledged -- see camera_node_transport.py's
+        # `complete_item` for why this must never fail the Node's ack.
+        on_item_completed=lambda node_id, item_id: get_repository().consume_camera_node_transport_item(
+            node_id=node_id, item_id=item_id
+        ),
     )
 )
 
@@ -1520,9 +1565,17 @@ def _local_backup_http_error(error: LocalBackupError) -> HTTPException:
             detail="Backup is unavailable for the configured local storage layout.",
         )
     if isinstance(error, LocalBackupValidationError):
+        # Appliance / Storage / Privacy / Recovery v1: `code` is one of
+        # ~37 distinct, already-specific reasons `backup.py` raises
+        # (`backup_format_incompatible`, `backup_database_hash_mismatch`,
+        # `restore_staged_media_missing`, ...) -- previously discarded in
+        # favor of one generic sentence, making the failure undiagnosable
+        # from the API response alone. Keeping it in parentheses preserves
+        # the calm primary sentence while still surfacing the real reason
+        # for a user or support conversation to act on.
         return HTTPException(
             status_code=400,
-            detail="Backup verification failed. No product data was changed.",
+            detail=f"Backup verification failed ({code}). No product data was changed.",
         )
     if isinstance(error, LocalBackupConflictError):
         if code == "backup_storage_layout_mismatch":
@@ -1537,10 +1590,10 @@ def _local_backup_http_error(error: LocalBackupError) -> HTTPException:
     if isinstance(error, LocalBackupRestoreError):
         return HTTPException(
             status_code=500,
-            detail="Restore could not finish safely. MockingBird attempted to preserve the previous local data.",
+            detail=f"Restore could not finish safely ({code}). MockingBird attempted to preserve the previous local data.",
         )
     return HTTPException(
-        status_code=500, detail="The local backup operation could not be completed."
+        status_code=500, detail=f"The local backup operation could not be completed ({code})."
     )
 
 
@@ -10684,6 +10737,7 @@ async def get_product_health() -> ProductHealthStatus:
         message=message,
         storage_writable=storage.is_writable,
         storage_low_space=storage_low_space,
+        storage_health_tier=storage.storage_health_tier,
         storage_warning=storage.storage_warning,
         cameras=ProductHealthCameraSummary(needs_attention_count=needs_attention_count),
         observation=ProductHealthObservationSummary(
@@ -10706,6 +10760,9 @@ async def get_product_health() -> ProductHealthStatus:
         camera_node_service_version=repository.most_recent_camera_node_service_version(),
         research_export_schema_version=RESEARCH_EXPORT_SCHEMA_VERSION,
         camtrap_dp_profile_version=CAMTRAP_DP_PROFILE_VERSION,
+        backup_format_version=BACKUP_FORMAT_VERSION,
+        camera_node_api_version=NODE_API_VERSION,
+        transport_protocol_version=TRANSPORT_PROTOCOL_VERSION,
         generated_at=datetime.now(UTC),
     )
 

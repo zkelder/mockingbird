@@ -735,6 +735,18 @@ class StorageRetentionSettingsModel(Base):
     last_settings_idempotency_key: Mapped[str | None] = mapped_column(
         String, nullable=True
     )
+    # Appliance / Storage / Privacy / Recovery v1, Phase D (schema 49): the
+    # one new, opt-in retention lever for the `linked_evidence_or_analysis`
+    # category (a MediaAsset referenced only by a rejected/suppressed
+    # detection/analysis record, never by a Visit) -- previously protected
+    # forever with no lever at all. `None` (every existing installation,
+    # and the default for a new one) preserves that exact protected-forever
+    # behavior; a user must explicitly opt in to an age threshold before any
+    # of this category ever becomes cleanup-eligible. See
+    # `ProductRepository._storage_retention_evaluation`.
+    rejected_analysis_media_age_days: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
+    )
 
 
 class StorageCleanupBatchModel(Base):

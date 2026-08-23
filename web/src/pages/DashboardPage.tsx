@@ -539,7 +539,7 @@ export function DashboardPage({
           instead of leading the page, matching the milestone's priority
           order (product-doctrine.md: this is a nature observatory, not an
           operations dashboard). */}
-      <ProductHealthPanel />
+      <ProductHealthPanel storageSummary={storageSummary} />
 
       <section className="panel dashboard-recent-activity">
         <div className="section-heading">

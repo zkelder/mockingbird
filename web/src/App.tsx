@@ -399,7 +399,11 @@ export default function App() {
       return;
     }
     if (action.action_type === "open_storage_retention") {
-      setPage("saved-media-retention");
+      // Saved Media Retention is superseded by Local Data's own Storage &
+      // Retention section (see that page's on-page copy) -- no anchor-
+      // scroll convention exists in this codebase, so this opens Local
+      // Data as a whole rather than inventing one for this alone.
+      setPage("settings");
       return;
     }
     if (action.action_type === "open_wildlife_journal") {
@@ -808,6 +812,7 @@ export default function App() {
     if (page === "place-activity-report") {
       return (
         <PlaceActivityReportPage
+          sources={data.sources}
           onOpenBirdLog={openBirdLogLabel}
           onOpenVisit={openVisit}
         />

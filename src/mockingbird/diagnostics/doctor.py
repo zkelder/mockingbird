@@ -47,6 +47,7 @@ from typing import Any, TypeVar
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import SQLAlchemyError
 
 from mockingbird import __version__ as APP_VERSION
 from mockingbird import runtime_state
@@ -63,7 +64,7 @@ from mockingbird.species.bioclip_runtime import (
     resolve_bioclip_labels_path,
     resolve_bioclip_model_dir,
 )
-from mockingbird.storage.backup import BACKUP_ROOT_ENV_VAR, LocalBackupManager
+from mockingbird.storage.backup import BACKUP_FORMAT_VERSION, BACKUP_ROOT_ENV_VAR, LocalBackupManager
 from mockingbird.storage.database import (
     CURRENT_DATABASE_SCHEMA_VERSION,
     DB_URL_ENV_VAR,
@@ -77,11 +78,13 @@ from mockingbird.storage.database import (
 )
 from mockingbird.storage.camera_node_transport_ledger import (
     TRANSPORT_ROOT_ENV_VAR,
+    TransportLedger,
     read_camera_node_transport_backlog_summary,
 )
 from mockingbird.storage.models import (
     CameraSourceModel,
     DatasetExportModel,
+    MediaAssetModel,
     MonitoringExposureIntervalModel,
     StreamModel,
     StreamRuntimeCheckpointModel,
@@ -215,6 +218,7 @@ class DoctorCheckCode(str, Enum):
     OFFLINE_INGEST = "offline_ingest"
     RESEARCH_EXPORT = "research_export"
     ACOUSTIC_RUNTIME = "acoustic_runtime"
+    MEDIA_INTEGRITY = "media_integrity"
 
 
 class DoctorCheckResult(BaseModel):
@@ -485,6 +489,22 @@ def _peek_previous_shutdown_state(runtime_home: Path) -> bool | None:
     return None
 
 
+# Appliance / Storage / Privacy / Recovery v1, Phase N: duplicated, not
+# imported, exactly like this codebase's existing precedent for these same
+# two values (`NODE_API_VERSION` already exists independently in both
+# `source_providers.camera_node` and `mockingbird_node.app`;
+# `TRANSPORT_PROTOCOL_VERSION` already exists independently in both
+# `mockingbird_node.transport_client` and `api.camera_node_transport`) --
+# `diagnostics.doctor` deliberately imports nothing from `api/` today (see
+# this module's own design-invariant docstring), so a third duplicate here
+# extends an already-accepted pattern rather than introducing a new
+# api->diagnostics dependency for two short version strings. `BACKUP_
+# FORMAT_VERSION` is imported directly instead: `storage.backup` is not
+# `api/`, and this module already imports `LocalBackupManager` from it.
+_DOCTOR_NODE_API_VERSION = "v1"
+_DOCTOR_TRANSPORT_PROTOCOL_VERSION = "transport/v1"
+
+
 def _gather_application(runtime_home: Path) -> dict[str, Any]:
     git_commit, build_id = runtime_state.resolve_build_identity()
     shutdown_clean = _peek_previous_shutdown_state(runtime_home)
@@ -492,7 +512,15 @@ def _gather_application(runtime_home: Path) -> dict[str, Any]:
 
 
 def _interpret_application(gathered: dict[str, Any]) -> DoctorCheckResult:
-    context = {"git_commit": gathered.get("git_commit"), "build_id": gathered.get("build_id")}
+    context = {
+        "git_commit": gathered.get("git_commit"),
+        "build_id": gathered.get("build_id"),
+        # Fixed constants, never a live re-check -- see "Compatibility
+        # boundaries" in docs/appliance-storage-privacy-recovery-v1-contract.md.
+        "backup_format_version": BACKUP_FORMAT_VERSION,
+        "camera_node_api_version": _DOCTOR_NODE_API_VERSION,
+        "transport_protocol_version": _DOCTOR_TRANSPORT_PROTOCOL_VERSION,
+    }
     if gathered.get("shutdown_clean") is False:
         return DoctorCheckResult(
             code=DoctorCheckCode.APPLICATION,
@@ -531,7 +559,33 @@ def _gather_database_connectivity(db_url: str) -> dict[str, Any]:
         return {"database_exists": False}
     engine = create_database_engine(db_url)
     integrity_check = _sqlite_integrity_check(engine)
-    return {"database_exists": True, "engine": engine, "integrity_check": integrity_check}
+    # Appliance / Storage / Privacy / Recovery v1, Phase O: a real,
+    # reproduced `PRAGMA foreign_key_check` failure on this project's own
+    # development database (a Stream-scoped settings row surviving a demo-
+    # data reset that deleted its owning Stream -- fixed at the source in
+    # `ProductRepository._delete_sample_graph`) blocked a real backup-
+    # restore-with-rebind acceptance run. Distinct from, and never
+    # escalated to, `integrity_check` above: a dangling foreign key on a
+    # lazily-created settings row is not page-level corruption and must
+    # never make an otherwise-healthy database read as BLOCKING, nor make
+    # backup verification (which reuses `_sqlite_integrity_check` too, via
+    # `_validate_database_file`) reject an otherwise-fine backup over it --
+    # this is purely an additional, non-blocking Doctor signal so the
+    # underlying data issue is at least visible before it surfaces as a
+    # confusing restore failure.
+    fk_violations: list[tuple[str, ...]] = []
+    try:
+        with engine.connect() as connection:
+            fk_violations = [tuple(str(value) for value in row) for row in connection.execute(text("PRAGMA foreign_key_check")).fetchall()]
+    except SQLAlchemyError:
+        fk_violations = []
+    return {
+        "database_exists": True,
+        "engine": engine,
+        "integrity_check": integrity_check,
+        "foreign_key_violation_count": len(fk_violations),
+        "foreign_key_violation_tables": sorted({row[0] for row in fk_violations})[:10],
+    }
 
 
 def _interpret_database_connectivity(gathered: dict[str, Any], *, database_path: Path) -> DoctorCheckResult:
@@ -556,6 +610,22 @@ def _interpret_database_connectivity(gathered: dict[str, Any], *, database_path:
             detail=f"SQLite integrity check reported: {integrity_check}",
             recoverability=DoctorRecoverability.BLOCKING,
             user_action="Restore from a recent backup (Local Data page), or contact support with this report.",
+            diagnostic_context=context,
+        )
+    violation_count = gathered.get("foreign_key_violation_count", 0)
+    if violation_count:
+        context["foreign_key_violation_count"] = violation_count
+        context["foreign_key_violation_tables"] = gathered.get("foreign_key_violation_tables", [])
+        return DoctorCheckResult(
+            code=DoctorCheckCode.DATABASE_CONNECTIVITY,
+            component="Database",
+            status=DoctorStatus.WARN,
+            summary="The database is usable, but a background reference check found a stale internal link.",
+            detail=(
+                "This does not affect reviewed history or evidence; it can happen after removing sample "
+                "walkthrough data. It may cause an advanced cross-install restore to be refused."
+            ),
+            recoverability=DoctorRecoverability.DEGRADED,
             diagnostic_context=context,
         )
     return DoctorCheckResult(
@@ -673,6 +743,10 @@ def _gather_storage(
         "free_bytes": disk_status.free_bytes if disk_status else 0,
         "is_writable": disk_status.is_writable if disk_status else False,
         "is_low_space": disk_status.is_low_space if disk_status else False,
+        # Appliance / Storage / Privacy / Recovery v1, Phase C: the graduated
+        # tier behind the `is_low_space` boolean above -- see
+        # `storage.database.LocalStorageDiskStatus.storage_health_tier`.
+        "storage_health_tier": disk_status.storage_health_tier if disk_status else "healthy",
         "probed_directory": str(probe_directory),
         "export_roots": _gather_export_root_status(export_roots or {}, primary_device_id=primary_device_id),
     }
@@ -721,6 +795,20 @@ def _interpret_storage(gathered: dict[str, Any], *, database_exists: bool) -> Do
             user_action="Check folder permissions for the configured MockingBird data folder.",
             diagnostic_context=context,
         )
+    storage_health_tier = gathered.get("storage_health_tier", "healthy")
+    context["storage_health_tier"] = storage_health_tier
+    if storage_health_tier == "critical":
+        free_gb = gathered.get("free_bytes", 0) / 1_000_000_000
+        return DoctorCheckResult(
+            code=DoctorCheckCode.STORAGE,
+            component="Storage",
+            status=DoctorStatus.WARN,
+            summary=f"Free disk space is critically low ({free_gb:.1f} GB free). New evidence may soon fail to save.",
+            detail="Authoritative reviewed history and the database are not at risk from this alone, but new captures/backups may start failing.",
+            recoverability=DoctorRecoverability.DEGRADED,
+            user_action="Free up disk space now, or move MockingBird's data folder to a drive with more room.",
+            diagnostic_context=context,
+        )
     if gathered.get("is_low_space"):
         free_gb = gathered.get("free_bytes", 0) / 1_000_000_000
         return DoctorCheckResult(
@@ -730,6 +818,16 @@ def _interpret_storage(gathered: dict[str, Any], *, database_exists: bool) -> Do
             summary=f"Free disk space is low ({free_gb:.1f} GB free).",
             recoverability=DoctorRecoverability.DEGRADED,
             user_action="Free up disk space, or move MockingBird's data folder to a drive with more room.",
+            diagnostic_context=context,
+        )
+    if storage_health_tier == "getting_low":
+        free_gb = gathered.get("free_bytes", 0) / 1_000_000_000
+        return DoctorCheckResult(
+            code=DoctorCheckCode.STORAGE,
+            component="Storage",
+            status=DoctorStatus.PASS,
+            summary=f"Free disk space is getting low ({free_gb:.1f} GB free).",
+            recoverability=DoctorRecoverability.INFORMATIONAL,
             diagnostic_context=context,
         )
     # First-Hour Onboarding + Whole-Product Observability Closure v1: an
@@ -782,6 +880,10 @@ def _gather_backup(*, db_url: str, media_root: Path, backup_root: Path) -> dict[
         "backup_count": len(library.backups),
         "unreadable_backup_count": library.unreadable_backup_count,
         "most_recent_created_at": most_recent.created_at.isoformat() if most_recent else None,
+        # Appliance / Storage / Privacy / Recovery v1, Phase G/O: a plain
+        # file read, no mutation -- see `LocalBackupManager.detect_
+        # interrupted_restore`'s own docstring.
+        "interrupted_restore": manager.detect_interrupted_restore(),
     }
 
 
@@ -791,7 +893,50 @@ def _interpret_backup(gathered: dict[str, Any], *, now: datetime) -> DoctorCheck
         "unreadable_backup_count": gathered.get("unreadable_backup_count", 0),
         "most_recent_backup_at": gathered.get("most_recent_created_at"),
     }
+    interrupted_restore = gathered.get("interrupted_restore")
+    if interrupted_restore:
+        # Appliance / Storage / Privacy / Recovery v1, Phase G/O: a
+        # distinct, more urgent signal than ordinary backup staleness -- a
+        # previous restore was interrupted by a hard process kill partway
+        # through replacing live files (see `LocalBackupManager.replace_
+        # live_files`'s sentinel). The recorded rollback paths are still on
+        # disk, so nothing is silently lost, but the install must not be
+        # treated as an ordinary healthy one until a human looks at this.
+        return DoctorCheckResult(
+            code=DoctorCheckCode.BACKUP,
+            component="Backup",
+            status=DoctorStatus.WARN,
+            summary="A previous restore did not finish.",
+            detail=(
+                "MockingBird was stopped while replacing local data during a restore. "
+                "The data now in place may be incomplete. Nothing was deleted -- the "
+                "files from just before the restore are still on disk."
+            ),
+            recoverability=DoctorRecoverability.DEGRADED,
+            user_action="Restore again from a known-good backup, or contact support with this diagnostic detail.",
+            diagnostic_context={**context, "interrupted_restore": interrupted_restore},
+        )
+    unreadable_count = gathered.get("unreadable_backup_count", 0)
     if not gathered.get("backup_count"):
+        if unreadable_count:
+            # Appliance / Storage / Privacy / Recovery v1: every backup on
+            # record is unreadable -- a real, degraded failure, not the calm
+            # "nothing created yet" case this check previously could not
+            # tell apart from it (see docs/appliance-storage-privacy-
+            # recovery-v1-contract.md, "Backup diagnosability").
+            return DoctorCheckResult(
+                code=DoctorCheckCode.BACKUP,
+                component="Backup",
+                status=DoctorStatus.WARN,
+                summary=f"{unreadable_count} backup file(s) exist but none can be read.",
+                detail=(
+                    "Every backup on record failed verification (an incompatible or "
+                    "corrupted archive). None of them can currently be used to restore."
+                ),
+                recoverability=DoctorRecoverability.DEGRADED,
+                user_action="Create a fresh backup from the Local Data page.",
+                diagnostic_context=context,
+            )
         return DoctorCheckResult(
             code=DoctorCheckCode.BACKUP,
             component="Backup",
@@ -812,6 +957,22 @@ def _interpret_backup(gathered: dict[str, Any], *, now: datetime) -> DoctorCheck
             summary=f"The most recent backup is {age_days:.0f} days old.",
             recoverability=DoctorRecoverability.DEGRADED,
             user_action="Create a fresh backup from the Local Data page.",
+            diagnostic_context=context,
+        )
+    if unreadable_count:
+        # A mix of good and unreadable backups: restore is still possible,
+        # but the unreadable ones are worth the user's attention -- surfaced
+        # here rather than silently folded into a plain PASS.
+        return DoctorCheckResult(
+            code=DoctorCheckCode.BACKUP,
+            component="Backup",
+            status=DoctorStatus.WARN,
+            summary=(
+                f"{gathered['backup_count']} backup(s) found (most recent {age_days:.0f} day(s) old); "
+                f"{unreadable_count} other backup file(s) cannot be read."
+            ),
+            recoverability=DoctorRecoverability.DEGRADED,
+            user_action="Review backups on the Local Data page; unreadable files can be safely removed.",
             diagnostic_context=context,
         )
     return DoctorCheckResult(
@@ -1154,6 +1315,57 @@ def _interpret_camera_node(gathered: dict[str, Any], *, now: datetime) -> Doctor
 # because it has not phoned home in the last few minutes.
 CAMERA_NODE_TRANSPORT_STALE_AFTER_SECONDS = 3600.0
 
+# Appliance / Storage / Privacy / Recovery v1, Phase E: a completed transport
+# item is normally consumed into a MediaAsset synchronously, within the same
+# request that acknowledged it (see `api.camera_node_transport`'s
+# `on_item_completed` hook) -- so anything still sitting in a node's
+# `completed/` directory this long suggests the consumption sweep itself is
+# stuck, not merely "hasn't happened yet." Deliberately the same threshold
+# as `CAMERA_NODE_TRANSPORT_STALE_AFTER_SECONDS`, not a second invented
+# number, for a consistent "an hour of silence is worth a look" doctrine.
+CAMERA_NODE_TRANSPORT_UNCONSUMED_WARN_AFTER_SECONDS = 3600.0
+
+# Bounded, not a hard architectural limit: a home installation has a
+# handful of Camera Nodes and consumption normally drains within one
+# request, so a plain filesystem scan across every node's `completed/`
+# directory never needs to look past a small number of files. Caps cost if
+# something is ever genuinely stuck, rather than letting Doctor's own
+# bounded-timeout budget (`_run_bounded`) be the only backstop.
+_MAX_TRANSPORT_UNCONSUMED_ITEMS_SCANNED = 500
+
+
+def _scan_camera_node_transport_unconsumed_backlog(transport_root: Path) -> dict[str, Any]:
+    """Plain filesystem read, no repository/database involved (mirrors
+    `read_camera_node_transport_backlog_summary`'s own "free function, no
+    repository" pattern) -- how much completed transport evidence is
+    currently sitting unconsumed on the host, across every Camera Node,
+    regardless of which Source it will eventually attribute to. A properly
+    consumed item's blob is deleted (see `ProductRepository.consume_camera_
+    node_transport_item`), so anything this finds is, by construction,
+    either mid-flight (about to be consumed) or genuinely stuck."""
+
+    ledger = TransportLedger(transport_root)
+    count = 0
+    total_bytes = 0
+    oldest_completed_at: float | None = None
+    for node_id in ledger.list_node_ids():
+        for item_id in ledger.list_completed_item_ids(node_id):
+            if count >= _MAX_TRANSPORT_UNCONSUMED_ITEMS_SCANNED:
+                break
+            count += 1
+            meta = ledger.completed_item_metadata(node_id, item_id) or {}
+            total_bytes += int(meta.get("content_length") or 0)
+            completed_at = meta.get("completed_at")
+            if isinstance(completed_at, (int, float)) and (
+                oldest_completed_at is None or completed_at < oldest_completed_at
+            ):
+                oldest_completed_at = completed_at
+    return {
+        "unconsumed_count": count,
+        "unconsumed_bytes": total_bytes,
+        "oldest_unconsumed_completed_at": oldest_completed_at,
+    }
+
 
 def _gather_camera_node_transport(engine: Engine, *, transport_root: Path) -> dict[str, Any]:
     # Raw SQL, not `select(SourceProviderConfigurationModel...)`: that ORM
@@ -1194,13 +1406,35 @@ def _gather_camera_node_transport(engine: Engine, *, transport_root: Path) -> di
                 "backlog_summary": summary,
             }
         )
-    return {"sources": sources}
+    # Host-side, source-agnostic: how much completed transport evidence is
+    # sitting unconsumed right now, regardless of whether it will eventually
+    # attribute to a currently-configured Source (an unattributed item, for
+    # example after a Camera Node replacement gone wrong, would otherwise
+    # never appear in the per-Source list above at all).
+    unconsumed_backlog = _scan_camera_node_transport_unconsumed_backlog(transport_root)
+    return {"sources": sources, **unconsumed_backlog}
 
 
 def _interpret_camera_node_transport(gathered: dict[str, Any], *, now: datetime) -> DoctorCheckResult:
     sources = gathered.get("sources", [])
     transport_sources = [item for item in sources if item.get("transport_configured")]
     if not transport_sources:
+        unconsumed_count = gathered.get("unconsumed_count", 0)
+        if unconsumed_count:
+            # Real, if narrow, edge case: completed transport evidence with
+            # no currently-configured Source claiming it (for example after
+            # an interrupted Camera Node replacement) -- never silently
+            # invisible just because no Source is "transport_configured"
+            # right now.
+            return DoctorCheckResult(
+                code=DoctorCheckCode.CAMERA_NODE_TRANSPORT,
+                component="Camera Node transport",
+                status=DoctorStatus.WARN,
+                summary=f"{unconsumed_count} completed transport item(s) are not attributed to any configured Source.",
+                detail="These will keep being retried automatically if a matching Source is configured again.",
+                recoverability=DoctorRecoverability.DEGRADED,
+                diagnostic_context={"unconsumed_count": unconsumed_count, "unconsumed_bytes": gathered.get("unconsumed_bytes", 0)},
+            )
         return DoctorCheckResult(
             code=DoctorCheckCode.CAMERA_NODE_TRANSPORT,
             component="Camera Node transport",
@@ -1244,6 +1478,26 @@ def _interpret_camera_node_transport(gathered: dict[str, Any], *, now: datetime)
             else:
                 summaries.append(f"{item['name']}: backlog clear")
         context["sources"].append(entry)
+
+    # Appliance / Storage / Privacy / Recovery v1, Phase E: a completed
+    # transport item is normally consumed synchronously; anything still
+    # sitting unconsumed past the stale-contact threshold suggests the
+    # consumption sweep itself is stuck, not merely "hasn't run yet."
+    unconsumed_count = gathered.get("unconsumed_count", 0)
+    oldest_unconsumed_completed_at = gathered.get("oldest_unconsumed_completed_at")
+    unconsumed_age_seconds = (
+        now.timestamp() - oldest_unconsumed_completed_at
+        if isinstance(oldest_unconsumed_completed_at, (int, float))
+        else None
+    )
+    context["unconsumed_count"] = unconsumed_count
+    context["unconsumed_bytes"] = gathered.get("unconsumed_bytes", 0)
+    if unconsumed_count and (
+        unconsumed_age_seconds is None or unconsumed_age_seconds > CAMERA_NODE_TRANSPORT_UNCONSUMED_WARN_AFTER_SECONDS
+    ):
+        worst_status = DoctorStatus.WARN
+        summaries.append(f"{unconsumed_count} completed item(s) have not been consumed into evidence yet")
+
     return DoctorCheckResult(
         code=DoctorCheckCode.CAMERA_NODE_TRANSPORT,
         component="Camera Node transport",
@@ -1801,6 +2055,87 @@ def _interpret_research_export(gathered: dict[str, Any]) -> DoctorCheckResult:
 
 
 # --------------------------------------------------------------------------
+# Media integrity
+# --------------------------------------------------------------------------
+
+# Bounded, cheap, stat-only -- never decodes/opens a media file's actual
+# content (that would be real per-file I/O cost multiplied across a
+# potentially large library, the opposite of Doctor's "single-digit
+# milliseconds on a healthy install" budget). This can only ever find a
+# *structural* problem (file missing, truncated, or zero bytes) -- never a
+# claim about whether the image/video/audio decodes correctly. See
+# docs/appliance-storage-privacy-recovery-v1-contract.md, "Doctor: media
+# integrity."
+_MEDIA_INTEGRITY_SAMPLE_SIZE = 25
+
+
+def _gather_media_integrity(engine: Engine) -> dict[str, Any]:
+    with engine.connect() as connection:
+        rows = connection.execute(
+            select(MediaAssetModel.local_path, MediaAssetModel.file_size_bytes)
+            .order_by(MediaAssetModel.created_at.desc())
+            .limit(_MEDIA_INTEGRITY_SAMPLE_SIZE)
+        ).all()
+    missing_count = 0
+    size_mismatch_count = 0
+    for local_path, expected_size in rows:
+        try:
+            actual_size = Path(local_path).stat().st_size
+        except OSError:
+            missing_count += 1
+            continue
+        if actual_size == 0 or (expected_size and actual_size != expected_size):
+            size_mismatch_count += 1
+    return {
+        "sampled_count": len(rows),
+        "missing_count": missing_count,
+        "size_mismatch_count": size_mismatch_count,
+    }
+
+
+def _interpret_media_integrity(gathered: dict[str, Any]) -> DoctorCheckResult:
+    sampled_count = gathered.get("sampled_count", 0)
+    missing_count = gathered.get("missing_count", 0)
+    size_mismatch_count = gathered.get("size_mismatch_count", 0)
+    context = {
+        "sampled_count": sampled_count,
+        "missing_count": missing_count,
+        "size_mismatch_count": size_mismatch_count,
+    }
+    if sampled_count == 0:
+        return DoctorCheckResult(
+            code=DoctorCheckCode.MEDIA_INTEGRITY,
+            component="Media integrity",
+            status=DoctorStatus.PASS,
+            summary="No retained media to check yet.",
+            recoverability=DoctorRecoverability.INFORMATIONAL,
+            diagnostic_context=context,
+        )
+    problem_count = missing_count + size_mismatch_count
+    if problem_count:
+        return DoctorCheckResult(
+            code=DoctorCheckCode.MEDIA_INTEGRITY,
+            component="Media integrity",
+            status=DoctorStatus.WARN,
+            summary=f"{problem_count} of the last {sampled_count} retained media file(s) look incomplete or missing.",
+            detail=(
+                "This is a lightweight sample of the most recently created media, not a "
+                "full library scan. Reviewed history and evidence relationships are unaffected."
+            ),
+            recoverability=DoctorRecoverability.DEGRADED,
+            user_action="Restore from a recent backup if this evidence matters.",
+            diagnostic_context=context,
+        )
+    return DoctorCheckResult(
+        code=DoctorCheckCode.MEDIA_INTEGRITY,
+        component="Media integrity",
+        status=DoctorStatus.PASS,
+        summary=f"The last {sampled_count} retained media file(s) checked out (present, correctly sized).",
+        diagnostic_context=context,
+    )
+
+
+# --------------------------------------------------------------------------
 # Orchestrator
 # --------------------------------------------------------------------------
 
@@ -2049,6 +2384,15 @@ def run_doctor(
                 timeout_seconds=timeout_seconds,
             )
         )
+        checks.append(
+            _execute_check(
+                code=DoctorCheckCode.MEDIA_INTEGRITY,
+                component="Media integrity",
+                gather=lambda: _gather_media_integrity(engine),
+                interpret=_interpret_media_integrity,
+                timeout_seconds=timeout_seconds,
+            )
+        )
     else:
         checks.append(
             _execute_check(
@@ -2074,6 +2418,15 @@ def run_doctor(
                 component="Acoustic runtime",
                 gather=None,
                 interpret=_interpret_acoustic_runtime,
+                skip_reason="Skipped because the database is unavailable.",
+            )
+        )
+        checks.append(
+            _execute_check(
+                code=DoctorCheckCode.MEDIA_INTEGRITY,
+                component="Media integrity",
+                gather=None,
+                interpret=_interpret_media_integrity,
                 skip_reason="Skipped because the database is unavailable.",
             )
         )

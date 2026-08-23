@@ -210,6 +210,7 @@ import type {
   StreamPlaybackStatus,
   StreamRuntimeStatus,
   StreamVisitSummary,
+  StructuredError,
   TaxonomyLabel,
   Visit,
   VisitDetail,
@@ -254,10 +255,38 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    // Appliance / Storage / Privacy / Recovery v1: populated only when the
+    // response body carried a well-shaped `error` (see `parseStructuredError`)
+    // -- today that means a database-write failure. `undefined` for every
+    // other error, exactly like before this field existed; every existing
+    // call site that only reads `.message` keeps working unchanged.
+    readonly structuredError?: StructuredError,
   ) {
     super(message);
     this.name = "ApiError";
   }
+}
+
+// Defensive: a malformed or absent `error` field must never throw here --
+// it just means `ApiError.structuredError` stays undefined and callers fall
+// back to the plain `detail` message, exactly like today.
+function parseStructuredError(value: unknown): StructuredError | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const candidate = value as Record<string, unknown>;
+  if (
+    typeof candidate.code !== "string" ||
+    typeof candidate.component !== "string" ||
+    typeof candidate.message !== "string" ||
+    typeof candidate.recoverability !== "string" ||
+    typeof candidate.retryable !== "boolean" ||
+    typeof candidate.correlation !== "object" ||
+    candidate.correlation === null
+  ) {
+    return undefined;
+  }
+  return candidate as unknown as StructuredError;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -274,13 +303,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     let detail = response.statusText;
+    let structuredError: StructuredError | undefined;
     try {
-      const body = (await response.json()) as { detail?: string };
+      const body = (await response.json()) as { detail?: string; error?: unknown };
       detail = body.detail ?? detail;
+      structuredError = parseStructuredError(body.error);
     } catch {
       detail = response.statusText;
     }
-    throw new ApiError(detail, response.status);
+    throw new ApiError(detail, response.status, structuredError);
   }
 
   if (response.status === 204) {

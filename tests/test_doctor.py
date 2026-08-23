@@ -304,6 +304,60 @@ def test_interpret_database_connectivity_healthy() -> None:
     assert result.recoverability is None
 
 
+def test_interpret_database_connectivity_foreign_key_violation_warns_but_never_blocks() -> None:
+    """Appliance / Storage / Privacy / Recovery v1, Phase O: a dangling
+    foreign key (found for real on this project's own dev database, see
+    ProductRepository._delete_sample_graph's fix) is a real, actionable
+    signal but must never read as BLOCKING -- the database itself is fine."""
+
+    result = doctor._interpret_database_connectivity(
+        {
+            "database_exists": True, "integrity_check": "ok",
+            "foreign_key_violation_count": 1, "foreign_key_violation_tables": ["observation_authority_settings"],
+        },
+        database_path=Path("/x/db.sqlite3"),
+    )
+    assert result.status == DoctorStatus.WARN
+    assert result.recoverability == DoctorRecoverability.DEGRADED
+    assert result.recoverability != DoctorRecoverability.BLOCKING
+    assert result.diagnostic_context["foreign_key_violation_tables"] == ["observation_authority_settings"]
+
+
+def test_gather_database_connectivity_detects_a_real_dangling_foreign_key(tmp_path: Path) -> None:
+    """Real, not hand-built: constructs an actual orphaned `observation_
+    authority_settings` row (the exact real shape this milestone found and
+    fixed) against a genuine, current-schema database and proves the gather
+    step's own `PRAGMA foreign_key_check` catches it."""
+
+    from sqlalchemy import text
+
+    from mockingbird.repository.product_repository import ProductRepository
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
+    with repository.session_factory() as session:
+        with session.begin():
+            session.execute(text("PRAGMA foreign_keys=OFF"))
+            session.execute(
+                text(
+                    "INSERT INTO observation_authority_settings "
+                    "(stream_id, mode, max_candidates_per_session, max_candidates_per_hour, "
+                    "max_evidence_items_per_candidate, max_evidence_bytes_per_candidate, "
+                    "proposals_observed_count, candidates_attempted_count, candidates_created_count, "
+                    "idempotent_repeat_count, suppressed_count, failure_count, updated_at) "
+                    "VALUES ('stream-does-not-exist', 'shadow', 50, 20, 4, 8000000, 0, 0, 0, 0, 0, 0, '2026-01-01 00:00:00')"
+                )
+            )
+    repository.close()
+
+    gathered = doctor._gather_database_connectivity(f"sqlite:///{db_path}")
+    try:
+        assert gathered["foreign_key_violation_count"] == 1
+        assert gathered["foreign_key_violation_tables"] == ["observation_authority_settings"]
+    finally:
+        gathered["engine"].dispose()
+
+
 def test_interpret_database_schema_missing_version_is_blocking() -> None:
     result = doctor._interpret_database_schema({"version": None})
     assert result.status == DoctorStatus.FAIL
@@ -372,6 +426,40 @@ def test_interpret_storage_healthy() -> None:
     )
     assert result.status == DoctorStatus.PASS
     assert result.recoverability is None
+
+
+def test_interpret_storage_critical_tier_warns_distinctly_from_plain_low_space() -> None:
+    """Appliance / Storage / Privacy / Recovery v1, Phase C: `critical` is
+    still WARN/degraded, never BLOCKING (the install can still write) --
+    but the message is distinct and more urgent than plain "low"."""
+
+    result = doctor._interpret_storage(
+        {
+            "media_root_exists": True, "is_writable": True, "is_low_space": True,
+            "storage_health_tier": "critical", "free_bytes": 100_000_000,
+        },
+        database_exists=True,
+    )
+    assert result.status == DoctorStatus.WARN
+    assert result.recoverability == DoctorRecoverability.DEGRADED
+    assert result.recoverability != DoctorRecoverability.BLOCKING
+    assert "critically low" in result.summary
+
+
+def test_interpret_storage_getting_low_tier_is_informational_not_a_warning() -> None:
+    """An early, calm heads-up -- not yet the same severity as
+    `action_recommended`/`is_low_space`."""
+
+    result = doctor._interpret_storage(
+        {
+            "media_root_exists": True, "is_writable": True, "is_low_space": False,
+            "storage_health_tier": "getting_low", "free_bytes": 8_000_000_000,
+        },
+        database_exists=True,
+    )
+    assert result.status == DoctorStatus.PASS
+    assert result.recoverability == DoctorRecoverability.INFORMATIONAL
+    assert "getting low" in result.summary
 
 
 def test_interpret_storage_export_root_not_yet_created_is_not_a_problem() -> None:
@@ -471,6 +559,94 @@ def test_interpret_offline_ingest_all_recent_runs_succeeded_is_pass() -> None:
 
 
 # --------------------------------------------------------------------------
+# Media integrity (Appliance / Storage / Privacy / Recovery v1)
+# --------------------------------------------------------------------------
+
+
+def test_interpret_media_integrity_no_media_yet_is_informational() -> None:
+    result = doctor._interpret_media_integrity({"sampled_count": 0, "missing_count": 0, "size_mismatch_count": 0})
+    assert result.status == DoctorStatus.PASS
+    assert result.recoverability == DoctorRecoverability.INFORMATIONAL
+
+
+def test_interpret_media_integrity_all_present_is_pass() -> None:
+    result = doctor._interpret_media_integrity({"sampled_count": 10, "missing_count": 0, "size_mismatch_count": 0})
+    assert result.status == DoctorStatus.PASS
+    assert result.recoverability is None
+
+
+def test_interpret_media_integrity_missing_files_warn_but_never_block() -> None:
+    result = doctor._interpret_media_integrity({"sampled_count": 10, "missing_count": 2, "size_mismatch_count": 0})
+    assert result.status == DoctorStatus.WARN
+    assert result.recoverability == DoctorRecoverability.DEGRADED
+    assert result.recoverability != DoctorRecoverability.BLOCKING
+    assert "2 of the last 10" in result.summary
+
+
+def test_interpret_media_integrity_size_mismatch_also_warns() -> None:
+    result = doctor._interpret_media_integrity({"sampled_count": 4, "missing_count": 0, "size_mismatch_count": 1})
+    assert result.status == DoctorStatus.WARN
+
+
+def test_gather_media_integrity_detects_missing_and_truncated_files(tmp_path) -> None:
+    from sqlalchemy import create_engine
+
+    from mockingbird.repository.product_repository import ProductRepository
+
+    media_root = tmp_path / "media"
+    media_root.mkdir()
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=media_root)
+    try:
+        good_path = media_root / "good.jpg"
+        good_path.write_bytes(b"x" * 20)
+        truncated_path = media_root / "truncated.jpg"
+        truncated_path.write_bytes(b"x" * 5)  # will disagree with file_size_bytes below
+        from datetime import UTC as _UTC
+        from datetime import datetime as _datetime
+
+        from mockingbird.storage.models import MediaAssetModel
+
+        with repository.session_factory() as session:
+            with session.begin():
+                session.add(
+                    MediaAssetModel(
+                        id="media-asset-good", source_id=None, stream_id="stream-does-not-need-to-exist-for-this-check",
+                        filename="good.jpg", content_type="image/jpeg", media_type="image",
+                        local_path=str(good_path), original_filename="good.jpg", file_size_bytes=20,
+                        created_at=_datetime.now(_UTC),
+                    )
+                )
+                session.add(
+                    MediaAssetModel(
+                        id="media-asset-truncated", source_id=None, stream_id="stream-does-not-need-to-exist-for-this-check",
+                        filename="truncated.jpg", content_type="image/jpeg", media_type="image",
+                        local_path=str(truncated_path), original_filename="truncated.jpg", file_size_bytes=20,
+                        created_at=_datetime.now(_UTC),
+                    )
+                )
+                session.add(
+                    MediaAssetModel(
+                        id="media-asset-missing", source_id=None, stream_id="stream-does-not-need-to-exist-for-this-check",
+                        filename="missing.jpg", content_type="image/jpeg", media_type="image",
+                        local_path=str(media_root / "missing.jpg"), original_filename="missing.jpg", file_size_bytes=20,
+                        created_at=_datetime.now(_UTC),
+                    )
+                )
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            gathered = doctor._gather_media_integrity(engine)
+        finally:
+            engine.dispose()
+    finally:
+        repository.close()
+
+    assert gathered["sampled_count"] == 3
+    assert gathered["missing_count"] == 1
+    assert gathered["size_mismatch_count"] == 1
+
+
+# --------------------------------------------------------------------------
 # Acoustic runtime (Acoustic Runtime & Quality v1)
 # --------------------------------------------------------------------------
 
@@ -565,6 +741,23 @@ def test_interpret_research_export_all_recent_succeeded_is_pass() -> None:
 
 
 # --------------------------------------------------------------------------
+# Application (compatibility constants, Appliance / Storage / Privacy /
+# Recovery v1, Phase N)
+# --------------------------------------------------------------------------
+
+
+def test_interpret_application_surfaces_compatibility_constants() -> None:
+    """Fixed constants, not live re-checks -- see docs/appliance-storage-
+    privacy-recovery-v1-contract.md, "Compatibility boundaries"."""
+
+    result = doctor._interpret_application({"git_commit": None, "build_id": None, "shutdown_clean": True})
+
+    assert result.diagnostic_context["backup_format_version"] == 1
+    assert result.diagnostic_context["camera_node_api_version"] == "v1"
+    assert result.diagnostic_context["transport_protocol_version"] == "transport/v1"
+
+
+# --------------------------------------------------------------------------
 # Backup
 # --------------------------------------------------------------------------
 
@@ -593,6 +786,31 @@ def test_interpret_backup_recent_is_pass() -> None:
     )
     assert result.status == DoctorStatus.PASS
     assert result.recoverability is None
+
+
+def test_interpret_backup_every_backup_unreadable_is_degraded_not_informational() -> None:
+    """Appliance / Storage / Privacy / Recovery v1: previously
+    indistinguishable from "no backups yet" -- see
+    docs/appliance-storage-privacy-recovery-v1-contract.md."""
+
+    result = doctor._interpret_backup(
+        {"backup_count": 0, "unreadable_backup_count": 2}, now=datetime.now(UTC)
+    )
+    assert result.status == DoctorStatus.WARN
+    assert result.recoverability == DoctorRecoverability.DEGRADED
+    assert "2 backup file(s)" in result.summary
+
+
+def test_interpret_backup_mix_of_good_and_unreadable_warns_but_not_blocking() -> None:
+    now = datetime.now(UTC)
+    recent = now - timedelta(days=1)
+    result = doctor._interpret_backup(
+        {"backup_count": 2, "unreadable_backup_count": 1, "most_recent_created_at": recent.isoformat()},
+        now=now,
+    )
+    assert result.status == DoctorStatus.WARN
+    assert result.recoverability == DoctorRecoverability.DEGRADED
+    assert "1 other backup file(s)" in result.summary
 
 
 # --------------------------------------------------------------------------

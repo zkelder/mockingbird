@@ -24,14 +24,20 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
-def _app(tmp_path, *, sources=None):
+def _app(tmp_path, *, sources=None, on_item_completed=None):
     sources = sources or {"good-credential": ("source-1", "node-1")}
 
     def resolve(credential: str):
         return sources.get(credential)
 
     app = FastAPI()
-    app.include_router(build_camera_node_transport_router(resolve_transport_source=resolve, transport_root=tmp_path / "transport"))
+    app.include_router(
+        build_camera_node_transport_router(
+            resolve_transport_source=resolve,
+            transport_root=tmp_path / "transport",
+            on_item_completed=on_item_completed,
+        )
+    )
     return app
 
 
@@ -152,6 +158,62 @@ async def test_unknown_item_status_is_404(tmp_path) -> None:
         response = await client.get("/api/camera-nodes/transport/items/never-declared", headers=headers)
     assert response.status_code == 404
     assert response.json()["detail"]["error_code"] == "transport_item_unknown"
+
+
+@pytest.mark.anyio
+async def test_complete_invokes_on_item_completed_with_node_id_and_item_id(tmp_path) -> None:
+    """Appliance / Storage / Privacy / Recovery v1, Phase E: the one hook
+    point this router hands a completed item off to the product's real
+    ingest path through."""
+
+    calls: list[tuple[str, str]] = []
+    headers = {"Authorization": "Bearer good-credential"}
+    payload_bytes = b"abcd"
+    app = _app(tmp_path, on_item_completed=lambda node_id, item_id: calls.append((node_id, item_id)))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        await client.post(
+            "/api/camera-nodes/transport/items",
+            json=_declare_payload(content_length=4, content_sha256=hashlib.sha256(payload_bytes).hexdigest(), chunk_size=1024),
+            headers=headers,
+        )
+        await client.post(
+            "/api/camera-nodes/transport/items/item-1/chunks/0",
+            content=payload_bytes,
+            headers={**headers, "X-MockingBird-Chunk-Sha256": hashlib.sha256(payload_bytes).hexdigest()},
+        )
+        response = await client.post("/api/camera-nodes/transport/items/item-1/complete", headers=headers)
+
+    assert response.status_code == 200
+    assert calls == [("node-1", "item-1")]
+
+
+@pytest.mark.anyio
+async def test_complete_swallows_an_on_item_completed_failure_and_still_acks(tmp_path) -> None:
+    """The Node already deletes its own spooled copy the instant it sees a
+    200 here -- a consumption failure must never turn into a failed ack,
+    since the Node has nothing left to resend after this point."""
+
+    def _boom(node_id: str, item_id: str) -> None:
+        raise RuntimeError("simulated consumption failure")
+
+    headers = {"Authorization": "Bearer good-credential"}
+    payload_bytes = b"abcd"
+    app = _app(tmp_path, on_item_completed=_boom)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        await client.post(
+            "/api/camera-nodes/transport/items",
+            json=_declare_payload(content_length=4, content_sha256=hashlib.sha256(payload_bytes).hexdigest(), chunk_size=1024),
+            headers=headers,
+        )
+        await client.post(
+            "/api/camera-nodes/transport/items/item-1/chunks/0",
+            content=payload_bytes,
+            headers={**headers, "X-MockingBird-Chunk-Sha256": hashlib.sha256(payload_bytes).hexdigest()},
+        )
+        response = await client.post("/api/camera-nodes/transport/items/item-1/complete", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "completed"}
 
 
 @pytest.mark.anyio

@@ -42,7 +42,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 47
+CURRENT_DATABASE_SCHEMA_VERSION = 49
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -1285,6 +1285,60 @@ def _migrate_to_cross_camera_visit_association(connection: Connection) -> None:
     Base.metadata.tables["cross_camera_visit_associations"].create(bind=connection, checkfirst=True)
 
 
+def _migrate_to_camera_node_transport_ingestion(connection: Connection) -> None:
+    """Appliance / Storage / Privacy / Recovery v1, Phase E: add the empty,
+    additive `camera_node_transport_ingestions` table (see
+    docs/appliance-storage-privacy-recovery-v1-contract.md). Closes the
+    standing gap where a completed Camera Node WAN-transport item had a
+    durable filesystem home
+    (`mockingbird.storage.camera_node_transport_ledger.TransportLedger`)
+    but no durable, idempotent record of whether it had been consumed into
+    a MediaAsset -- see `CameraNodeTransportIngestionModel`'s own docstring
+    and `ProductRepository.consume_camera_node_transport_item`.
+
+    No backfill, no seeded row -- mirrors every other additive-table
+    migration in this file. An upgraded installation's existing
+    completed-but-unconsumed transport items (if any) are picked up by the
+    very next consumption sweep, exactly like a brand-new installation
+    would be; nothing about the transport ledger's own filesystem layout
+    changes.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Camera Node transport ingestion migration requires local SQLite storage."
+        )
+    Base.metadata.tables["camera_node_transport_ingestions"].create(bind=connection, checkfirst=True)
+
+
+def _migrate_to_rejected_analysis_media_retention(connection: Connection) -> None:
+    """Appliance / Storage / Privacy / Recovery v1, Phase D: add the
+    nullable `rejected_analysis_media_age_days` column to
+    `storage_retention_settings` -- the one new, opt-in retention lever for
+    the `linked_evidence_or_analysis` category (see `StorageRetentionSettingsModel`'s
+    own docstring). `None` for every existing row (and the default for a
+    freshly-created one), preserving today's exact protected-forever
+    behavior for this category on every installation until a user
+    explicitly opts in -- an honest "not configured," never a fabricated
+    threshold, mirroring `_migrate_to_media_asset_duration`'s identical
+    nullable-no-backfill discipline.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Rejected-analysis-media retention migration requires local SQLite storage."
+        )
+    if not inspect(connection).has_table("storage_retention_settings"):
+        return
+    columns = {
+        column["name"] for column in inspect(connection).get_columns("storage_retention_settings")
+    }
+    if "rejected_analysis_media_age_days" not in columns:
+        connection.exec_driver_sql(
+            "ALTER TABLE storage_retention_settings ADD COLUMN rejected_analysis_media_age_days INTEGER"
+        )
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -1332,6 +1386,8 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     45: _migrate_to_acoustic_species_scoped_idempotency,
     46: _migrate_to_visit_multimodal_association,
     47: _migrate_to_cross_camera_visit_association,
+    48: _migrate_to_camera_node_transport_ingestion,
+    49: _migrate_to_rejected_analysis_media_retention,
 }
 
 
@@ -1481,8 +1537,23 @@ def _ensure_sqlite_parent(db_url: str) -> None:
 # media-relative signal already exists on `StorageSummary.storage_warning`;
 # this is the separate, more basic "is the disk itself okay" fact a normal
 # local application answers regardless of retention configuration.
+#
+# Appliance / Storage / Privacy / Recovery v1, Phase C: a graduated
+# healthy/getting_low/action_recommended/critical ladder, not a single
+# binary threshold -- `LOW_DISK_FREE_BYTES_THRESHOLD`/`LOW_DISK_FREE_RATIO_
+# THRESHOLD` are unchanged and remain exactly the "action_recommended"
+# boundary (so `is_low_space`, already read by Doctor and `/api/product/
+# health`, keeps its existing meaning and trigger point for every current
+# caller). `GETTING_LOW_*` is a new, earlier warning; `CRITICAL_*` is a new,
+# more severe tier for "ingestion genuinely at risk." Like `BACKUP_STALE_
+# AFTER_DAYS`, these are this milestone's own disclosed judgment call --
+# no pre-existing canonical policy existed for either new tier.
+GETTING_LOW_DISK_FREE_BYTES_THRESHOLD = 5_000_000_000
+GETTING_LOW_DISK_FREE_RATIO_THRESHOLD = 0.15
 LOW_DISK_FREE_BYTES_THRESHOLD = 1_000_000_000
 LOW_DISK_FREE_RATIO_THRESHOLD = 0.05
+CRITICAL_DISK_FREE_BYTES_THRESHOLD = 200_000_000
+CRITICAL_DISK_FREE_RATIO_THRESHOLD = 0.01
 
 
 @dataclass(frozen=True)
@@ -1492,13 +1563,42 @@ class LocalStorageDiskStatus:
     is_writable: bool
 
     @property
-    def is_low_space(self) -> bool:
+    def storage_health_tier(self) -> str:
+        """One of `healthy`/`getting_low`/`action_recommended`/`critical` --
+        see the module-level threshold comment above for the defensible,
+        disclosed boundaries. `total_bytes <= 0` (disk usage could not be
+        read at all) reads as `healthy` rather than fabricating alarm from
+        a fact this probe does not actually have -- the separate
+        `is_writable` flag already carries the "something is genuinely
+        wrong" signal for that case."""
+
         if self.total_bytes <= 0:
-            return False
-        return (
+            return "healthy"
+        free_ratio = self.free_bytes / self.total_bytes
+        if (
+            self.free_bytes < CRITICAL_DISK_FREE_BYTES_THRESHOLD
+            or free_ratio < CRITICAL_DISK_FREE_RATIO_THRESHOLD
+        ):
+            return "critical"
+        if (
             self.free_bytes < LOW_DISK_FREE_BYTES_THRESHOLD
-            or (self.free_bytes / self.total_bytes) < LOW_DISK_FREE_RATIO_THRESHOLD
-        )
+            or free_ratio < LOW_DISK_FREE_RATIO_THRESHOLD
+        ):
+            return "action_recommended"
+        if (
+            self.free_bytes < GETTING_LOW_DISK_FREE_BYTES_THRESHOLD
+            or free_ratio < GETTING_LOW_DISK_FREE_RATIO_THRESHOLD
+        ):
+            return "getting_low"
+        return "healthy"
+
+    @property
+    def is_low_space(self) -> bool:
+        # Unchanged trigger point (existing callers, e.g. Doctor and
+        # `/api/product/health`'s `storage_low_space`, keep today's exact
+        # behavior) -- now expressed in terms of the tier above rather than
+        # a second, independently-maintained copy of the same comparison.
+        return self.storage_health_tier in {"action_recommended", "critical"}
 
 
 def probe_local_storage_disk(directory: Path) -> LocalStorageDiskStatus:

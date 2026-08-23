@@ -9530,3 +9530,16 @@ a.secondary-action {
   display: flex;
   justify-content: flex-start;
 }
+
+/* Camera / Source + Multi-Camera Maturity v1, Phase N: the Source-filter
+   checkbox group. Reuses .retention-checkbox-grid/.checkbox-row (Saved
+   Media Retention's own risk-level filter) for the checkboxes themselves;
+   this only mirrors that page's identical .retention-dry-run-form
+   fieldset/legend border reset for its own container, since a bare
+   <fieldset>/<legend> otherwise keeps the browser's default inset chrome. */
+.place-report-source-filter fieldset,
+.place-report-source-filter legend {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}

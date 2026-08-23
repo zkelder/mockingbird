@@ -657,7 +657,11 @@ from mockingbird.monitoring.exposure_history import (
 from mockingbird.source_providers import folder_import_preview
 from mockingbird.source_providers import media_provenance
 from mockingbird.source_providers.webhook_validation import classify_webhook_payload
-from mockingbird.storage.camera_node_transport_ledger import read_camera_node_transport_backlog_summary
+from mockingbird.storage.camera_node_transport_ledger import (
+    TransportLedger,
+    read_camera_node_transport_backlog_summary,
+    resolve_transport_root,
+)
 from mockingbird.storage.database import (
     DEFAULT_DB_URL,
     create_database_engine,
@@ -794,6 +798,13 @@ STORAGE_CLEANUP_RECOVERY_WINDOW = timedelta(days=14)
 DEFAULT_STORAGE_REVIEWED_NON_BIRD_AGE_DAYS = 180
 DEFAULT_STORAGE_SUPERSEDED_AGE_DAYS = 90
 DEFAULT_STORAGE_ORPHANED_AGE_DAYS = 30
+# Appliance / Storage / Privacy / Recovery v1, Phase B: bounds how stale
+# `storage_summary()`'s cache can be between explicit invalidations (see
+# `ProductRepository.__init__`). Short enough that a user actively watching
+# the Dashboard after a cleanup/backup action sees it refresh within the
+# same minute; long enough that rapid page navigation/reloads do not each
+# pay this method's real per-`MediaAsset` query cost.
+STORAGE_SUMMARY_CACHE_TTL_SECONDS = 30.0
 MAX_ALERT_PAGE_SIZE = 50
 MAX_RECENT_ALERTS = 12
 # Dataset QA's own summary counts (issue_count, high_count, ...) are always
@@ -2353,6 +2364,60 @@ class CrossCameraVisitAssociationModel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class CameraNodeTransportIngestionModel(Base):
+    """Appliance / Storage / Privacy / Recovery v1, Phase E (schema 48; see
+    docs/appliance-storage-privacy-recovery-v1-contract.md "Remote-transport
+    host-file lifecycle"): the durable, idempotent record that one completed
+    Camera Node WAN-transport item (see
+    `mockingbird.storage.camera_node_transport_ledger.TransportLedger`) has
+    been consumed into a `MediaAssetModel`.
+
+    This closes a standing gap: before this table existed, a transport item
+    reaching `complete()` had a durable filesystem home
+    (`<transport_root>/<node_id>/completed/<item_id>.bin`) but nothing
+    durable recorded whether it had ever been turned into product evidence.
+    Since the Camera Node deletes its own spooled copy immediately on ack
+    (`mockingbird_node.transport_worker`), that completed blob is the *only*
+    surviving copy -- a consumer that could crash between "MediaAsset
+    created" and "blob deleted" needed its own idempotency record, not a
+    second, parallel Observation/Evidence authority path.
+
+    Keyed `(node_id, item_id)` -- the same idempotency pair the transport
+    protocol itself already uses. `media_asset_id` is set only on a
+    successful ingest; `blob_deleted_at` is set only after the transport
+    ledger's own completed blob has actually been removed, so a process
+    killed between the two commits safely resumes by only finishing the
+    delete, never re-ingesting the same bytes as a second MediaAsset. A
+    `status="failed"` row with `error_reason="unattributed_source"` (no
+    configured Source currently claims this `node_id`, even accounting for
+    a recent Camera Node replacement) is deliberately retried on every
+    sweep rather than ever silently dropped -- see
+    `ProductRepository.consume_camera_node_transport_item`.
+    """
+
+    __tablename__ = "camera_node_transport_ingestions"
+    __table_args__ = (
+        UniqueConstraint("node_id", "item_id", name="uq_camera_node_transport_ingestion_item"),
+        Index("ix_camera_node_transport_ingestions_status", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    node_id: Mapped[str] = mapped_column(String, nullable=False)
+    item_id: Mapped[str] = mapped_column(String, nullable=False)
+    source_id: Mapped[str | None] = mapped_column(ForeignKey("camera_sources.id"), nullable=True)
+    content_sha256: Mapped[str] = mapped_column(String, nullable=False)
+    content_length: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # "pending" (attempt in progress) | "ingested" (a MediaAsset now exists,
+    # see `media_asset_id`) | "failed" (see class docstring).
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    media_asset_id: Mapped[str | None] = mapped_column(ForeignKey("media_assets.id"), nullable=True)
+    error_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    blob_deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class SourceProviderConfigurationModel(Base):
     __tablename__ = "source_provider_configurations"
 
@@ -3467,6 +3532,21 @@ class ProductRepository:
         # local-first, single-application-runtime product boundary), not
         # cross-process database-level locking.
         self._observation_authority_lock = threading.Lock()
+        # Appliance / Storage / Privacy / Recovery v1, Phase B: `storage_
+        # summary()` is a full-`MediaAssetModel`-table scan with several
+        # queries per row -- exactly the "expensive scan on every page
+        # load" this milestone wants avoided, since `/api/product/health`
+        # calls it on every Dashboard mount. A short, bounded TTL (not a
+        # full SQL-aggregate rewrite of well-tested classification logic)
+        # plus explicit invalidation at the points that already exist for
+        # this purpose (`_sync_storage_alert`, already called after every
+        # cleanup/restore/purge/settings-update) keeps routine page loads
+        # cheap while bounding staleness to a value never used for any
+        # eligibility/cleanup decision (`_storage_retention_evaluation`
+        # always recomputes fresh, uncached, right before a destructive
+        # action). See `storage_summary`'s own docstring.
+        self._storage_summary_cache: tuple[float, StorageSummary] | None = None
+        self._storage_summary_cache_lock = threading.Lock()
         self.seed_if_empty()
 
     def close(self) -> None:
@@ -3766,6 +3846,33 @@ class ProductRepository:
             session.execute(
                 delete(StreamMonitoringPolicyModel).where(
                     StreamMonitoringPolicyModel.stream_id.in_(graph["streams"])
+                )
+            )
+            # Appliance / Storage / Privacy / Recovery v1, Phase O (bounded
+            # update-readiness review): three more tables key directly on
+            # `stream_id` as their own primary key (`ForeignKey("streams.id"),
+            # primary_key=True`) and are lazily created on first use, never
+            # pre-seeded -- confirmed missing here by a real, reproduced
+            # `PRAGMA foreign_key_check` failure on this project's own real
+            # development database (`observation_authority_settings`
+            # referencing a `stream_id` this method had already deleted
+            # without also deleting this row), which in turn blocked a real
+            # backup-restore-with-rebind acceptance run. Fixed for all three
+            # analogous tables, not only the one that happened to have
+            # already manifested an orphan row on this specific database.
+            session.execute(
+                delete(ObservationAuthoritySettingsModel).where(
+                    ObservationAuthoritySettingsModel.stream_id.in_(graph["streams"])
+                )
+            )
+            session.execute(
+                delete(StreamSpeciesCandidatePackSelectionModel).where(
+                    StreamSpeciesCandidatePackSelectionModel.stream_id.in_(graph["streams"])
+                )
+            )
+            session.execute(
+                delete(YardMapStreamPlacementModel).where(
+                    YardMapStreamPlacementModel.stream_id.in_(graph["streams"])
                 )
             )
         delete_ids(StreamModel, graph["streams"])
@@ -8081,10 +8188,305 @@ class ProductRepository:
                     config = json.loads(config_json)
                 except (TypeError, ValueError):
                     continue
+                # Defense in depth (Appliance / Storage / Privacy / Recovery
+                # v1, Phase I): `revoke_camera_node_pairing` already pops
+                # this credential outright, so this check is a second,
+                # independent guard against ever re-trusting a revoked
+                # Node's transport credential -- never trust `credential`
+                # presence alone.
+                if config.get("node_pairing_state") == "revoked":
+                    continue
                 stored = config.get("node_transport_credential")
                 if isinstance(stored, str) and stored and hmac.compare_digest(stored, credential):
                     return source_id, str(config.get("node_id") or "")
         return None
+
+    def resolve_camera_node_source_id_for_node(self, node_id: str) -> str | None:
+        """Map a transport item's `node_id` back to the Source that
+        currently owns it -- a bounded scan, mirroring `resolve_camera_
+        node_transport_source`'s own convention, but keyed on `node_id`
+        (available from a transport-ledger directory name alone) rather
+        than a live presented credential, since a startup consumption
+        sweep has no request/credential to work from.
+
+        Checks the *current* `node_id` first, then falls back to `camera_
+        node_prior_node_id` (Camera Node Reprovision / Replacement Recovery
+        v1) -- a real, disclosed case: a completed-but-unconsumed transport
+        item can outlive a hardware replacement, and its evidence still
+        belongs to the same logical Source/Stream/history the replacement
+        deliberately preserved. Only the single most recent prior identity
+        is checked, matching that column's own bounded "most recent
+        transition only" scope -- a backlog surviving *two* replacements
+        without ever being consumed in between is out of bounded scope."""
+
+        if not node_id:
+            return None
+        with self.session_factory() as session:
+            rows = session.execute(
+                select(
+                    CameraSourceModel.id,
+                    CameraSourceModel.camera_node_prior_node_id,
+                    SourceProviderConfigurationModel.config_json,
+                ).join(
+                    SourceProviderConfigurationModel,
+                    SourceProviderConfigurationModel.source_id == CameraSourceModel.id,
+                ).where(SourceProviderConfigurationModel.provider_key == "camera_node")
+            ).all()
+            for source_id, prior_node_id, config_json in rows:
+                try:
+                    config = json.loads(config_json)
+                except (TypeError, ValueError):
+                    config = {}
+                if config.get("node_id") == node_id or prior_node_id == node_id:
+                    return source_id
+        return None
+
+    def consume_camera_node_transport_item(
+        self,
+        *,
+        node_id: str,
+        item_id: str,
+        transport_root: Path | str | None = None,
+    ) -> str:
+        """Idempotently turn one completed Camera Node WAN-transport item
+        into a MediaAsset via the same hash/dedup/provenance contract
+        Source Folder Import already established, then clean up its
+        transport-ledger blob -- see docs/appliance-storage-privacy-
+        recovery-v1-contract.md, Phase E, and `CameraNodeTransportIngestionModel`'s
+        own docstring for the crash-recovery reasoning this method
+        implements.
+
+        Two-phase by design: phase 1 commits durable DB state (the
+        MediaAsset and the ingestion row) without ever touching the
+        transport ledger's filesystem; phase 2 deletes the ledger's
+        completed blob only *after* that commit is durable, and records
+        `blob_deleted_at` in its own small transaction. A process killed
+        between the two phases leaves a row with `status="ingested"` and
+        `blob_deleted_at IS NULL` -- the next call for the same
+        `(node_id, item_id)` sees that state and only finishes the delete,
+        never re-ingesting. This ordering is exactly why cleanup can never
+        delete unconsumed data: the blob is only ever removed after the
+        product has durably recorded what it means.
+
+        Returns "ingested" (a MediaAsset now exists, or already did),
+        "unattributed" (no configured Source claims this `node_id` even
+        accounting for a recent replacement -- retried on every sweep,
+        never dropped), or "pending_retry" (a transient failure; the blob
+        is deliberately left in place). Never raises for an ordinary
+        content/attribution/IO failure -- only a genuine, unexpected
+        database error propagates, exactly like every other repository
+        method in this class."""
+
+        ledger = TransportLedger(resolve_transport_root(transport_root))
+        now = datetime.now(UTC)
+        final_status: str | None = None
+
+        with self.session_factory() as session:
+            with session.begin():
+                row = session.scalar(
+                    select(CameraNodeTransportIngestionModel).where(
+                        CameraNodeTransportIngestionModel.node_id == node_id,
+                        CameraNodeTransportIngestionModel.item_id == item_id,
+                    )
+                )
+                if row is not None and row.status == "ingested":
+                    final_status = "ingested"
+                else:
+                    meta = ledger.completed_item_metadata(node_id, item_id)
+                    if meta is None:
+                        # Not (or no longer) completed -- either it was
+                        # never finished, or a concurrent call already fully
+                        # cleaned it up between our two reads. Only
+                        # reachable via a benign race; never an error.
+                        return "ingested" if row is not None and row.status == "ingested" else "pending_retry"
+
+                    content_sha256 = str(meta.get("content_sha256") or "")
+                    content_length = int(meta.get("content_length") or 0)
+                    if row is None:
+                        row = CameraNodeTransportIngestionModel(
+                            id=self._next_id(session, CameraNodeTransportIngestionModel, "transport-ingest"),
+                            node_id=node_id,
+                            item_id=item_id,
+                            content_sha256=content_sha256,
+                            content_length=content_length,
+                            status="pending",
+                            attempt_count=0,
+                            created_at=now,
+                            updated_at=now,
+                        )
+                        session.add(row)
+                    row.attempt_count += 1
+                    row.updated_at = now
+
+                    source_id = self.resolve_camera_node_source_id_for_node(node_id)
+                    if source_id is None:
+                        row.status = "failed"
+                        row.error_reason = "unattributed_source"
+                        final_status = "unattributed"
+                    else:
+                        row.source_id = source_id
+                        final_status = self._ingest_camera_node_transport_item(
+                            session,
+                            row=row,
+                            ledger=ledger,
+                            node_id=node_id,
+                            item_id=item_id,
+                            source_id=source_id,
+                            meta=meta,
+                            now=now,
+                        )
+
+        if final_status == "ingested":
+            with self.session_factory() as session:
+                with session.begin():
+                    row = session.scalar(
+                        select(CameraNodeTransportIngestionModel).where(
+                            CameraNodeTransportIngestionModel.node_id == node_id,
+                            CameraNodeTransportIngestionModel.item_id == item_id,
+                        )
+                    )
+                    if row is not None and row.blob_deleted_at is None:
+                        ledger.delete_completed_item(node_id, item_id)
+                        row.blob_deleted_at = now
+                        row.updated_at = now
+            self.invalidate_storage_summary_cache()
+            return "ingested"
+        return final_status or "pending_retry"
+
+    def _ingest_camera_node_transport_item(
+        self,
+        session: Session,
+        *,
+        row: "CameraNodeTransportIngestionModel",
+        ledger: TransportLedger,
+        node_id: str,
+        item_id: str,
+        source_id: str,
+        meta: dict[str, Any],
+        now: datetime,
+    ) -> str:
+        """Phase-1 body of `consume_camera_node_transport_item`: everything
+        that can be decided and committed from durable state alone, with no
+        filesystem write except copying the source blob into managed media
+        storage (mirrors every other ingest path's own copy-before-commit
+        risk profile -- see `_copy_media_file`'s other call sites). Never
+        deletes the transport ledger's blob; that only ever happens in the
+        caller's phase 2, after this has committed."""
+
+        content_sha256 = row.content_sha256
+        try:
+            stream_model, _warning = self._resolve_source_import_stream(
+                session, source_id=source_id, stream_id=None
+            )
+        except ValueError as error:
+            row.status = "failed"
+            row.error_reason = str(error)
+            return "pending_retry"
+
+        item_metadata = meta.get("metadata")
+        if not isinstance(item_metadata, dict):
+            item_metadata = {}
+        wire_media_type = str(meta.get("media_type") or "")
+        kind_and_extension = _CAMERA_NODE_TRANSPORT_MEDIA_TYPES.get(wire_media_type)
+        if kind_and_extension is None:
+            row.status = "failed"
+            row.error_reason = "unsupported_media_type"
+            return "pending_retry"
+        media_kind, extension = kind_and_extension
+
+        # Content-hash dedup first (mirrors `_folder_import_duplicate_
+        # exists`'s own content-hash branch): a retried sweep, or the same
+        # bytes already imported through a different path, must never
+        # create a second MediaAsset.
+        duplicate_id = (
+            session.scalar(
+                select(MediaAssetModel.id).where(
+                    MediaAssetModel.source_id == source_id,
+                    MediaAssetModel.content_sha256 == content_sha256,
+                )
+            )
+            if content_sha256
+            else None
+        )
+        if duplicate_id is not None:
+            row.media_asset_id = duplicate_id
+            row.status = "ingested"
+            row.error_reason = None
+            return "ingested"
+
+        blob_path = ledger.completed_blob_path(node_id, item_id)
+        if blob_path is None:
+            row.status = "failed"
+            row.error_reason = "blob_missing"
+            return "pending_retry"
+
+        media_id = self._next_id(session, MediaAssetModel, "media-asset")
+        destination_name = f"{media_id}-camera-node-transport-{_safe_filename(item_id)}{extension}"
+        try:
+            filename, local_path = self._copy_media_file(destination_name, blob_path)
+            copied_size = local_path.stat().st_size
+        except OSError as error:
+            row.status = "failed"
+            row.error_reason = f"copy_error_{error.__class__.__name__}"
+            return "pending_retry"
+
+        captured_at = _parse_camera_node_transport_captured_at(item_metadata.get("captured_at"))
+        asset_model = MediaAssetModel(
+            id=media_id,
+            source_id=source_id,
+            stream_id=stream_model.id,
+            filename=filename,
+            content_type=wire_media_type,
+            media_type=media_kind,
+            local_path=str(local_path),
+            original_filename=filename,
+            file_size_bytes=copied_size,
+            created_at=now,
+            captured_at=captured_at,
+            content_sha256=content_sha256 or None,
+            image_width=item_metadata.get("width") if media_kind == "image" else None,
+            image_height=item_metadata.get("height") if media_kind == "image" else None,
+            notes=_camera_node_transport_media_notes(
+                node_id=node_id, item_id=item_id, item_metadata=item_metadata
+            ),
+        )
+        session.add(asset_model)
+        row.media_asset_id = media_id
+        row.status = "ingested"
+        row.error_reason = None
+        return "ingested"
+
+    def consume_pending_camera_node_transport_backlog(
+        self,
+        *,
+        transport_root: Path | str | None = None,
+        limit: int = 200,
+    ) -> dict[str, int]:
+        """Sweep every Camera Node's completed transport items through
+        `consume_camera_node_transport_item`, bounded to `limit` items per
+        call. A healthy, continuously-running installation never relies on
+        this at all -- consumption normally happens synchronously right
+        after `POST .../complete` -- this exists to recover anything a
+        crash left between an item's completion and its consumption. Once
+        an item is fully consumed (its blob deleted), it no longer appears
+        in `list_completed_item_ids` at all, so a repeated sweep over an
+        already-healthy backlog is cheap: a bounded set of directory
+        listings, nothing more. Called once at application startup; see
+        `docs/appliance-storage-privacy-recovery-v1-contract.md`, Phase E."""
+
+        ledger = TransportLedger(resolve_transport_root(transport_root))
+        counts: dict[str, int] = {}
+        checked = 0
+        for node_id in ledger.list_node_ids():
+            for item_id in ledger.list_completed_item_ids(node_id):
+                if checked >= limit:
+                    return counts
+                checked += 1
+                status = self.consume_camera_node_transport_item(
+                    node_id=node_id, item_id=item_id, transport_root=transport_root
+                )
+                counts[status] = counts.get(status, 0) + 1
+        return counts
 
     def record_onvif_profile(
         self,
@@ -8375,23 +8777,47 @@ class ProductRepository:
                 existing_config=config,
                 proposed_config=proposed_config,
             )
-            node_identity_replacement = (
-                CameraNodeIdentityReplacementImpact(
-                    previous_node_id=config.get("node_id", ""),
+            node_identity_replacement = None
+            if replacement_detected:
+                # Appliance / Storage / Privacy / Recovery v1, Phase I:
+                # honestly disclose the *previous* physical node's own
+                # last-known remote-transport backlog before an operator
+                # confirms replacement -- once confirmed, that node's
+                # credential stops being accepted (see
+                # `resolve_camera_node_transport_source`) and anything still
+                # sitting in its own local spool becomes permanently
+                # undeliverable. Reuses the same fact Doctor's own transport
+                # check already reads; never a new drain/network call.
+                previous_node_id = config.get("node_id", "")
+                backlog_summary = (
+                    read_camera_node_transport_backlog_summary(previous_node_id)
+                    if previous_node_id
+                    else None
+                )
+                pending_backlog_count = (
+                    backlog_summary.get("pending_count") if backlog_summary else None
+                )
+                message = (
+                    "This confirms a Camera Node hardware replacement, not a credential "
+                    "repair. This camera's Place, Stream, Zones, monitoring history, and "
+                    "reviewed truth stay attached and unchanged. The previous Node's "
+                    "pairing will no longer be trusted. MockingBird cannot verify whether "
+                    "the replacement camera's framing/field of view matches the original "
+                    "-- review Zones after saving."
+                )
+                if pending_backlog_count:
+                    message += (
+                        f" The previous Node last reported {pending_backlog_count} item(s) "
+                        "still waiting to be delivered -- these will not be deliverable once "
+                        "you confirm this replacement."
+                    )
+                node_identity_replacement = CameraNodeIdentityReplacementImpact(
+                    previous_node_id=previous_node_id,
                     new_node_id=proposed_config.get("node_id", ""),
                     zones_review_recommended=True,
-                    message=(
-                        "This confirms a Camera Node hardware replacement, not a credential "
-                        "repair. This camera's Place, Stream, Zones, monitoring history, and "
-                        "reviewed truth stay attached and unchanged. The previous Node's "
-                        "pairing will no longer be trusted. MockingBird cannot verify whether "
-                        "the replacement camera's framing/field of view matches the original "
-                        "-- review Zones after saving."
-                    ),
+                    message=message,
+                    pending_transport_backlog_count=pending_backlog_count,
                 )
-                if replacement_detected
-                else None
-            )
 
         runtime = self.get_stream_runtime_status(stream_id)
         health = self.get_stream_camera_health(stream_id)
@@ -8780,6 +9206,16 @@ class ProductRepository:
                 if not (config.get("node_credential") or "").strip():
                     return False
                 config.pop("node_credential", None)
+                # Appliance / Storage / Privacy / Recovery v1, Phase I: pop
+                # the transport credential too -- revoking pairing must
+                # revoke *every* credential this Node could still present,
+                # not just the one the ordinary health/pairing path checks.
+                # Before this fix, `resolve_camera_node_transport_source`
+                # would keep accepting a revoked Node's transport calls
+                # indefinitely (it matches on the stored credential value
+                # alone, never `node_pairing_state`) -- see that method's
+                # own docstring and the defense-in-depth check added there.
+                config.pop("node_transport_credential", None)
                 config["node_pairing_state"] = "revoked"
                 model.config_json = json.dumps(config, sort_keys=True)
                 model.updated_at = now
@@ -15558,6 +15994,11 @@ class ProductRepository:
         self._sync_camera_health_incident(session, stream_id, now)
 
     def _sync_storage_alert(self, session: Session, now: datetime) -> None:
+        # Already the established "storage state meaningfully changed" hook
+        # (called after every cleanup/restore/purge/settings-update) --
+        # reused to invalidate the cache above rather than inventing a
+        # second call site for the same fact.
+        self.invalidate_storage_summary_cache()
         settings = session.get(StorageRetentionSettingsModel, 1)
         target = settings.maximum_managed_media_bytes if settings is not None else None
         key = "storage:managed_target"
@@ -15614,6 +16055,7 @@ class ProductRepository:
                         reviewed_non_bird_age_days=payload.reviewed_non_bird_age_days,
                         superseded_evidence_age_days=payload.superseded_evidence_age_days,
                         orphaned_media_age_days=payload.orphaned_media_age_days,
+                        rejected_analysis_media_age_days=payload.rejected_analysis_media_age_days,
                         maximum_managed_media_bytes=payload.maximum_managed_media_bytes,
                         policy_revision=1,
                         updated_at=now,
@@ -15632,6 +16074,7 @@ class ProductRepository:
                     model.reviewed_non_bird_age_days = payload.reviewed_non_bird_age_days
                     model.superseded_evidence_age_days = payload.superseded_evidence_age_days
                     model.orphaned_media_age_days = payload.orphaned_media_age_days
+                    model.rejected_analysis_media_age_days = payload.rejected_analysis_media_age_days
                     model.maximum_managed_media_bytes = payload.maximum_managed_media_bytes
                     model.policy_revision += 1
                     model.updated_at = now
@@ -15664,8 +16107,36 @@ class ProductRepository:
         return rows[0].camera_node_service_version if rows else None
 
     def storage_summary(self) -> StorageSummary:
-        """Summarize managed media with no path disclosure and no filesystem mutation."""
+        """Summarize managed media with no path disclosure and no filesystem mutation.
 
+        Cached for `STORAGE_SUMMARY_CACHE_TTL_SECONDS` (Appliance / Storage /
+        Privacy / Recovery v1, Phase B) -- see `__init__`'s own comment for
+        why a bounded TTL, not a SQL-aggregate rewrite, was chosen, and
+        `invalidate_storage_summary_cache` for where staleness is actively
+        closed rather than merely time-boxed. A cache miss/expiry recomputes
+        exactly the same value this always computed; nothing about the
+        classification logic below changed."""
+
+        with self._storage_summary_cache_lock:
+            cached = self._storage_summary_cache
+            if cached is not None and (time.monotonic() - cached[0]) < STORAGE_SUMMARY_CACHE_TTL_SECONDS:
+                return cached[1]
+        summary = self._compute_storage_summary()
+        with self._storage_summary_cache_lock:
+            self._storage_summary_cache = (time.monotonic(), summary)
+        return summary
+
+    def invalidate_storage_summary_cache(self) -> None:
+        """Force the next `storage_summary()` call to recompute rather than
+        wait out the TTL -- called from the points that already exist to
+        mark storage state as meaningfully changed (`_sync_storage_alert`)
+        plus the Camera Node transport consumer, so a newly-ingested item
+        is reflected promptly rather than after a full TTL window."""
+
+        with self._storage_summary_cache_lock:
+            self._storage_summary_cache = None
+
+    def _compute_storage_summary(self) -> StorageSummary:
         with self.session_factory() as session:
             settings = session.get(StorageRetentionSettingsModel, 1)
             assets = session.scalars(
@@ -15678,6 +16149,7 @@ class ProductRepository:
             active_count = superseded_count = orphaned_count = 0
             active_bytes = superseded_bytes = orphaned_bytes = 0
             unresolved_count = reviewed_wildlife_count = reviewed_other_count = 0
+            linked_evidence_or_analysis_count = linked_evidence_or_analysis_bytes = 0
             for asset in assets:
                 path, relative_path, size, safe_reason = self._storage_managed_media_path(asset)
                 if path is None or relative_path is None or size is None:
@@ -15703,6 +16175,14 @@ class ProductRepository:
                 elif not links and not self._storage_has_non_visit_reference(session, asset.id):
                     orphaned_count += 1
                     orphaned_bytes += size
+                elif not links:
+                    # Appliance / Storage / Privacy / Recovery v1, Phase B:
+                    # the `linked_evidence_or_analysis` category -- a file
+                    # referenced only by a rejected/suppressed detection/
+                    # analysis record, never by a Visit. Previously never
+                    # counted anywhere in this summary at all.
+                    linked_evidence_or_analysis_count += 1
+                    linked_evidence_or_analysis_bytes += size
                 if any(visit.review_status == ReviewStatus.needs_review.value for visit in active_visits):
                     unresolved_count += 1
                 if any(
@@ -15736,8 +16216,15 @@ class ProductRepository:
             )
             if warning is None and not disk_status.is_writable:
                 warning = "MockingBird's local storage location is not writable."
-            elif warning is None and disk_status.is_low_space:
+            elif warning is None and disk_status.storage_health_tier == "critical":
+                # Appliance / Storage / Privacy / Recovery v1, Phase C: a
+                # distinct, more urgent message than plain "running low" --
+                # ingestion (new evidence, backups) is genuinely at risk.
+                warning = "Local storage space is critically low. New evidence may soon fail to save."
+            elif warning is None and disk_status.storage_health_tier == "action_recommended":
                 warning = "Local storage space is running low."
+            elif warning is None and disk_status.storage_health_tier == "getting_low":
+                warning = "Local storage space is getting low."
             return StorageSummary(
                 total_managed_media_bytes=total_bytes,
                 total_managed_media_count=sum(1 for asset in assets if self._storage_managed_media_path(asset)[0] is not None),
@@ -15753,9 +16240,12 @@ class ProductRepository:
                 unresolved_visit_evidence_count=unresolved_count,
                 reviewed_bird_wildlife_evidence_count=reviewed_wildlife_count,
                 reviewed_non_bird_blank_ambiguous_evidence_count=reviewed_other_count,
+                linked_evidence_or_analysis_count=linked_evidence_or_analysis_count,
+                linked_evidence_or_analysis_bytes=linked_evidence_or_analysis_bytes,
                 disk_total_bytes=disk_status.total_bytes,
                 disk_free_bytes=disk_status.free_bytes,
                 is_writable=disk_status.is_writable,
+                storage_health_tier=disk_status.storage_health_tier,
                 storage_warning=warning,
                 message="Managed media is summarized locally. Protected evidence is counted but never treated as cleanup permission.",
             )
@@ -16276,6 +16766,7 @@ class ProductRepository:
             and model.reviewed_non_bird_age_days == DEFAULT_STORAGE_REVIEWED_NON_BIRD_AGE_DAYS
             and model.superseded_evidence_age_days == DEFAULT_STORAGE_SUPERSEDED_AGE_DAYS
             and model.orphaned_media_age_days == DEFAULT_STORAGE_ORPHANED_AGE_DAYS
+            and model.rejected_analysis_media_age_days is None
             and model.maximum_managed_media_bytes is None
         )
         return StorageRetentionSettings(
@@ -16288,6 +16779,7 @@ class ProductRepository:
             reviewed_non_bird_age_days=model.reviewed_non_bird_age_days,
             superseded_evidence_age_days=model.superseded_evidence_age_days,
             orphaned_media_age_days=model.orphaned_media_age_days,
+            rejected_analysis_media_age_days=model.rejected_analysis_media_age_days,
             maximum_managed_media_bytes=model.maximum_managed_media_bytes,
             policy_revision=model.policy_revision,
             persisted=True,
@@ -16505,6 +16997,27 @@ class ProductRepository:
                     protected_bytes["orphaned_media_too_recent"] += size
                 continue
             if non_visit_reference:
+                # Appliance / Storage / Privacy / Recovery v1, Phase D: the
+                # one opt-in lever for this category (default `None` ->
+                # exactly today's protected-forever behavior, unchanged for
+                # every installation that never configures it explicitly).
+                if (
+                    settings.rejected_analysis_media_age_days is not None
+                    and age_days >= settings.rejected_analysis_media_age_days
+                ):
+                    candidates.append(
+                        _StorageRetentionCandidate(
+                            asset_id=asset.id,
+                            category="rejected_analysis_media",
+                            local_path=path,
+                            relative_path=relative,
+                            file_size_bytes=size,
+                            created_at=_as_utc(asset.created_at),
+                            affected_visit_ids=(),
+                            evidence_links=(),
+                        )
+                    )
+                    continue
                 protected_counts["linked_evidence_or_analysis"] += 1
                 protected_bytes["linked_evidence_or_analysis"] += size
                 continue
@@ -36765,6 +37278,63 @@ def _external_url_preview_note_fields(notes: str | None) -> dict[str, str]:
         if key:
             fields[key] = value.strip()
     return fields
+
+
+# Appliance / Storage / Privacy / Recovery v1, Phase E: the wire-protocol
+# `media_type` a Camera Node transport item declares (a MIME content-type,
+# confusingly named to match `TransportDeclareRequest.media_type` -- see
+# `mockingbird_node.app.queue_evidence`) mapped to the MediaAssetModel kind
+# and file extension a consumer should give it. Deliberately closed/
+# explicit, not a MIME-prefix guess: an unrecognized value fails the item
+# into `status="failed"` (retried, never dropped) rather than ever being
+# promoted as a kind MockingBird cannot actually interpret. Only
+# "image/jpeg" is real today (the only kind `queue_evidence` ever produces);
+# the others are named ahead of an audio/video transport producer that does
+# not exist yet, so the consumer does not need re-plumbing the day one does.
+_CAMERA_NODE_TRANSPORT_MEDIA_TYPES: dict[str, tuple[str, str]] = {
+    "image/jpeg": ("image", ".jpg"),
+    "image/png": ("image", ".png"),
+    "audio/wav": ("audio", ".wav"),
+    "audio/x-wav": ("audio", ".wav"),
+}
+
+
+def _parse_camera_node_transport_captured_at(value: Any) -> datetime | None:
+    """Tolerant parse of a transport item's Node-stamped `captured_at`
+    (a real ISO 8601 wall-clock timestamp -- see `queue_evidence` -- never
+    an EXIF-style naive value needing a guessed local timezone, unlike
+    `media_provenance.extract_image_captured_at`). `None` for anything
+    absent or malformed -- an honest "not known," never fabricated,
+    matching every other provenance field's discipline in this module."""
+
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return normalize_utc(parsed)
+
+
+def _camera_node_transport_media_notes(
+    *, node_id: str, item_id: str, item_metadata: dict[str, Any]
+) -> str:
+    lines = [
+        "Delivered via Camera Node remote/intermittent-WAN transport as MediaAsset only.",
+        "Creates no MotionEvidence, Events, Visits, ReviewLabels, or truth.",
+        f"node_id={node_id}",
+        f"item_id={item_id}",
+    ]
+    reason = item_metadata.get("reason")
+    if isinstance(reason, str) and reason:
+        lines.append(f"capture_reason={reason}")
+    profile_id = item_metadata.get("profile_id")
+    if isinstance(profile_id, str) and profile_id:
+        lines.append(f"capture_profile_id={profile_id}")
+    camera_id = item_metadata.get("camera_id")
+    if isinstance(camera_id, str) and camera_id:
+        lines.append(f"node_camera_id={camera_id}")
+    return "\n".join(lines)
 
 
 def _folder_import_media_notes(

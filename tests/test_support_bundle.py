@@ -59,6 +59,32 @@ def test_bundle_manifest_carries_stable_version_facts(tmp_path: Path) -> None:
     assert manifest["app_version"]
 
 
+def test_bundle_includes_local_database_path_by_default(tmp_path: Path) -> None:
+    runtime_home = _initialized_runtime_home(tmp_path)
+    output_path = tmp_path / "bundle.zip"
+    write_support_bundle(output_path, runtime_home=runtime_home)
+
+    manifest = read_bundle_member_json(output_path, "manifest.json")
+    assert manifest["local_paths_included"] is True
+    assert manifest["database_path"] is not None
+    assert str(runtime_home) in manifest["database_path"]
+
+
+def test_bundle_redacts_the_database_path_when_opted_out(tmp_path: Path) -> None:
+    """Appliance / Storage / Privacy / Recovery v1, Phase J: the honest,
+    bounded fix -- see `write_support_bundle`'s own docstring for what this
+    option does and does not cover (it does not scrub the embedded Doctor
+    report, disclosed rather than pretended)."""
+
+    runtime_home = _initialized_runtime_home(tmp_path)
+    output_path = tmp_path / "bundle.zip"
+    write_support_bundle(output_path, runtime_home=runtime_home, include_local_paths=False)
+
+    manifest = read_bundle_member_json(output_path, "manifest.json")
+    assert manifest["local_paths_included"] is False
+    assert manifest["database_path"] is None
+
+
 def test_bundle_sources_are_structural_only_never_provider_configuration(tmp_path: Path) -> None:
     """See the module's "Known v1 scope limits": Source entries carry only
     id/name/kind/status -- never a URL, address, or credential field."""
@@ -186,3 +212,23 @@ def test_support_bundle_cli_writes_a_real_bundle_and_prints_its_path(
     captured = capsys.readouterr()
     assert str(output_path) in captured.out
     assert "safe to share" in captured.out
+    assert "local folder paths" in captured.out  # honest disclosure, not silent about paths
+
+
+def test_support_bundle_cli_no_local_paths_flag_redacts_and_says_so(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from mockingbird.diagnostics import support_bundle_cli
+
+    _initialized_runtime_home(tmp_path)
+    monkeypatch.setenv("MOCKINGBIRD_HOME", str(tmp_path))
+    output_path = tmp_path / "cli-bundle-redacted.zip"
+
+    exit_code = support_bundle_cli.run(["--output", str(output_path), "--no-local-paths"])
+
+    assert exit_code == 0
+    manifest = read_bundle_member_json(output_path, "manifest.json")
+    assert manifest["local_paths_included"] is False
+    assert manifest["database_path"] is None
+    captured = capsys.readouterr()
+    assert "local folder paths" not in captured.out

@@ -184,11 +184,13 @@ def test_product_health_reflects_backup_status(
 
     after = _get("/api/product/health").json()
     assert after["backup"]["has_backup"] is True
-    # `list_backups` deliberately reports "not_checked" for a plain listing
-    # (re-verifying every archive's checksums on every list would be
-    # expensive); explicit verification is its own existing action. This
-    # widget must reflect that honestly rather than claim "verified".
-    assert after["backup"]["last_backup_verified"] is False
+    # Appliance / Storage / Privacy / Recovery v1: `create_backup` already
+    # ran a real, full verification internally and durably recorded that
+    # fact (see `LocalBackupManager._write_verified_marker`) -- `list_
+    # backups` now reads that back honestly instead of always claiming
+    # "not_checked" regardless of whether this backup was ever verified.
+    # This still costs no re-hashing on every list call.
+    assert after["backup"]["last_backup_verified"] is True
     assert after["backup"]["last_backup_at"] is not None
     assert after["backup"]["suggest_first_backup"] is False
 
@@ -300,6 +302,12 @@ def test_product_health_reports_export_policy_versions_and_camera_node_service_v
     assert body["research_export_schema_version"] == "research-export-v1"
     assert body["camtrap_dp_profile_version"] == "1.0.2"
     assert body["camera_node_service_version"] == "1.4.0"
+    # Appliance / Storage / Privacy / Recovery v1, Phase N: fixed
+    # compatibility constants, not live re-checks -- see
+    # docs/appliance-storage-privacy-recovery-v1-contract.md.
+    assert body["backup_format_version"] == 1
+    assert body["camera_node_api_version"] == "v1"
+    assert body["transport_protocol_version"] == "transport/v1"
 
 
 def test_most_recent_camera_node_service_version_is_none_when_never_reported(tmp_path: Path) -> None:

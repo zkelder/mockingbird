@@ -25,7 +25,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
             "Write a small, bounded, privacy-safe diagnostic bundle (health check, "
             "structural Source facts, redacted recent logs, version/schema facts) "
             "to share in a support conversation. Never includes camera passwords, "
-            "pairing secrets, auth tokens, or media."
+            "pairing secrets, auth tokens, or media. Includes local folder paths "
+            "(which can embed your OS username) unless --no-local-paths is given."
         ),
     )
     parser.add_argument(
@@ -40,6 +41,14 @@ def build_argument_parser() -> argparse.ArgumentParser:
         default=DEFAULT_LOG_TAIL_LINES,
         help=f"Maximum recent log lines to include (default: {DEFAULT_LOG_TAIL_LINES}).",
     )
+    parser.add_argument(
+        "--no-local-paths",
+        action="store_true",
+        help=(
+            "Redact the database folder path from the bundle's manifest. Some paths "
+            "may still appear inside the detailed diagnostic report section."
+        ),
+    )
     return parser
 
 
@@ -48,10 +57,16 @@ def run(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     output_path = args.output or default_output_path()
     try:
-        written_path = write_support_bundle(output_path, log_tail_lines=args.log_lines)
+        written_path = write_support_bundle(
+            output_path,
+            log_tail_lines=args.log_lines,
+            include_local_paths=not args.no_local_paths,
+        )
     except OSError as error:
         print(f"Could not write the support bundle: {error}")
         return 1
     print(f"Support bundle written to {written_path}")
     print("This file is safe to share for support -- it never includes passwords, tokens, or media.")
+    if not args.no_local_paths:
+        print("It does include local folder paths (which can show your OS username) -- use --no-local-paths to redact those.")
     return 0

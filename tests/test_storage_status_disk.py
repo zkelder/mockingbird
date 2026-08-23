@@ -58,6 +58,41 @@ def test_is_low_space_threshold(total_bytes: int, free_bytes: int, expected_low_
     assert status.is_low_space is expected_low_space
 
 
+@pytest.mark.parametrize(
+    ("total_bytes", "free_bytes", "expected_tier"),
+    [
+        # A 100 GB disk: the 5%/15%/1% ratio floors (5/15/1 GB) each exceed
+        # their absolute-byte counterparts (1 GB/5 GB/200 MB), so ratio
+        # comparisons are what actually decide the tier here.
+        (100_000_000_000, 20_000_000_000, "healthy"),  # 20% free, above every floor
+        (100_000_000_000, 8_000_000_000, "getting_low"),  # 8% free: below 15%, above 5%
+        (100_000_000_000, 3_000_000_000, "action_recommended"),  # 3% free: below 5%, above 1%
+        (100_000_000_000, 500_000_000, "critical"),  # 0.5% free: below the 1% ratio floor
+        # A 1 TB disk: ratio floors (10/50/150 GB) are now far larger than
+        # the absolute-byte floors, so a small absolute free amount reads
+        # as critical purely via ratio even though it is well above 200 MB.
+        (1_000_000_000_000, 5_000_000_000, "critical"),  # 5 GB free is > 200MB, but only 0.5% of 1 TB
+        # A 10 GB disk: 1% of it (100 MB) is *below* the 200 MB absolute
+        # floor, so the absolute floor is what decides here instead: 150 MB
+        # free is 1.5% (above the 1% ratio floor) but still under 200 MB.
+        (10_000_000_000, 150_000_000, "critical"),
+        (0, 0, "healthy"),  # unknown total (probe failed): never fabricates alarm from zero/zero
+    ],
+)
+def test_storage_health_tier_ladder(total_bytes: int, free_bytes: int, expected_tier: str) -> None:
+    """Appliance / Storage / Privacy / Recovery v1, Phase C: the graduated
+    healthy/getting_low/action_recommended/critical ladder -- `is_low_space`
+    above stays exactly the `action_recommended`-or-worse boundary it
+    always was; this proves the two new tiers around it."""
+
+    status = LocalStorageDiskStatus(total_bytes=total_bytes, free_bytes=free_bytes, is_writable=True)
+
+    assert status.storage_health_tier == expected_tier
+    # Backward-compatible: `is_low_space` still means exactly
+    # action_recommended-or-worse, never affected by the new tiers.
+    assert status.is_low_space == (expected_tier in {"action_recommended", "critical"})
+
+
 def test_storage_summary_surfaces_disk_fields_and_low_space_warning(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

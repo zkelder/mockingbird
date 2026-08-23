@@ -31,6 +31,24 @@ docstring for the full reasoning):
   limit (see "Known v1 scope limits" below), not a silent omission.
 - **Log tail is redacted defensively**, not merely assumed safe: any
   line containing a credential-shaped substring is never included verbatim.
+
+Appliance / Storage / Privacy / Recovery v1, Phase J: local absolute
+filesystem paths (the database path directly in `manifest.json`, and
+`media_root`/`probed_directory`/model-bundle paths embedded inside the
+reused `doctor_report.json`) ARE included by default -- this bundle never
+contained raw media or credentials, but it was previously silent about
+paths specifically, even though a folder path can embed the OS username.
+`include_local_paths=False` (default `True`, matching every existing
+caller's behavior unchanged) redacts this module's own `database_path`
+field in `manifest.json`. It does **not** attempt to scrub every path that
+could appear inside the reused `doctor_report.json`'s per-check
+`diagnostic_context` (Storage/Detector-model paths, for example) -- doing
+that safely would mean a second, parallel, necessarily-incomplete
+path-detection pass over Doctor's own structured facts, which this module's
+own design invariant above already rules out ("never a second, parallel
+health computation"). Disclosed here honestly rather than promising a
+guarantee this module cannot keep -- see "Known v1 scope limits" in
+docs/appliance-storage-privacy-recovery-v1-contract.md.
 """
 
 from __future__ import annotations
@@ -91,7 +109,12 @@ class SupportBundleManifest(BaseModel):
     app_version: str
     research_export_schema_version: str
     camtrap_dp_profile_version: str
-    database_path: str
+    # `None` only when the caller explicitly opted out via
+    # `write_support_bundle(..., include_local_paths=False)` -- see the
+    # module docstring's Phase J note for what this option does and does
+    # not guarantee.
+    database_path: str | None
+    local_paths_included: bool
     source_count: int
     log_tail_lines_included: int
     log_tail_truncated: bool
@@ -155,6 +178,7 @@ def write_support_bundle(
     *,
     runtime_home: Path | None = None,
     log_tail_lines: int = DEFAULT_LOG_TAIL_LINES,
+    include_local_paths: bool = True,
     now: datetime | None = None,
 ) -> Path:
     """Assemble and write a bounded support bundle `.zip` to `output_path`.
@@ -163,6 +187,10 @@ def write_support_bundle(
     (a full `run_doctor()` report), `sources.json` (structural-only Source
     summaries), and `log_tail.txt` (the most recent, redacted log lines).
     Returns `output_path` on success.
+
+    `include_local_paths=False` redacts this module's own `database_path`
+    manifest field -- see the module docstring's Phase J note for the exact,
+    honestly-disclosed scope of what this option does and does not cover.
     """
 
     generated_at = now or datetime.now(UTC)
@@ -187,7 +215,8 @@ def write_support_bundle(
         app_version=APP_VERSION,
         research_export_schema_version=RESEARCH_EXPORT_SCHEMA_VERSION,
         camtrap_dp_profile_version=CAMTRAP_DP_PROFILE_VERSION,
-        database_path=str(database_path),
+        database_path=str(database_path) if include_local_paths else None,
+        local_paths_included=include_local_paths,
         source_count=len(sources),
         log_tail_lines_included=len(log_lines),
         log_tail_truncated=log_truncated,

@@ -194,6 +194,49 @@ export interface HealthStatus {
   status: string;
 }
 
+// Appliance / Storage / Privacy / Recovery v1: mirrors the backend's shared
+// `mockingbird.diagnostics.error_taxonomy` shape. Attached today only to
+// database-write failures (`SQLAlchemyError`) that reach the API boundary
+// uncaught -- see `ApiError.structuredError` in api/client.ts. A caller
+// that only reads `ApiError.message` (the existing, common case) is
+// unaffected either way.
+export type ErrorComponent =
+  | "host_api"
+  | "camera_node"
+  | "acquisition_provider"
+  | "observation_engine"
+  | "model_runtime"
+  | "database"
+  | "media_storage"
+  | "offline_ingest"
+  | "export_research"
+  | "frontend";
+
+export type ErrorRecoverability = "blocking" | "degraded" | "informational";
+
+export interface ErrorCorrelation {
+  request_id?: string | null;
+  correlation_id?: string | null;
+  observation_session_id?: string | null;
+  source_id?: string | null;
+  stream_id?: string | null;
+  event_id?: string | null;
+  visit_id?: string | null;
+}
+
+export interface StructuredError {
+  code: string;
+  component: ErrorComponent;
+  timestamp: string;
+  message: string;
+  recoverability: ErrorRecoverability;
+  retryable: boolean;
+  correlation: ErrorCorrelation;
+  // Advanced/JSON-only, e.g. a bounded exception summary -- never the
+  // primary user-facing text. Only ever meant for a collapsed disclosure.
+  diagnostic: Record<string, unknown> | null;
+}
+
 export interface TaxonomyLabel {
   id: string;
   label: string;
@@ -392,6 +435,11 @@ export interface CameraNodeIdentityReplacementImpact {
   new_node_id: string;
   zones_review_recommended: boolean;
   message: string;
+  // Appliance / Storage / Privacy / Recovery v1, Phase I: the previous
+  // physical node's own last-self-reported remote-transport backlog count,
+  // when Remote/Intermittent-WAN Transport was configured for it -- `null`
+  // when transport was never configured or has never reported.
+  pending_transport_backlog_count?: number | null;
 }
 
 export interface CameraConfigurationImpactPreview {
@@ -4256,6 +4304,10 @@ export interface ZoneInsightsSummary {
 export interface PlaceActivityReportRequest {
   start_at: string;
   end_at: string;
+  // Camera / Source + Multi-Camera Maturity v1, Phase N: optional, additive
+  // Source filter. Omitted (every existing caller) means the unfiltered
+  // whole-Place report, byte-identical to before this field existed.
+  source_ids?: string[];
 }
 
 // Historical Baseline Maturity + New/Regular Species v1 -- see
@@ -4780,6 +4832,11 @@ export interface StorageRetentionSettings {
   reviewed_non_bird_age_days: number;
   superseded_evidence_age_days: number;
   orphaned_media_age_days: number;
+  // Appliance / Storage / Privacy / Recovery v1, Phase D: opt-in age
+  // threshold for `linked_evidence_or_analysis` media (a file referenced
+  // only by a rejected/suppressed detection/analysis record, never by a
+  // Visit) -- `null` (the default) keeps this category protected forever.
+  rejected_analysis_media_age_days?: number | null;
   maximum_managed_media_bytes?: number | null;
   policy_revision: number;
   persisted: boolean;
@@ -4798,6 +4855,7 @@ export interface StorageRetentionSettingsUpdate {
   reviewed_non_bird_age_days: number;
   superseded_evidence_age_days: number;
   orphaned_media_age_days: number;
+  rejected_analysis_media_age_days?: number | null;
   maximum_managed_media_bytes?: number | null;
   idempotency_key: string;
 }
@@ -4817,9 +4875,20 @@ export interface StorageSummary {
   unresolved_visit_evidence_count: number;
   reviewed_bird_wildlife_evidence_count: number;
   reviewed_non_bird_blank_ambiguous_evidence_count: number;
+  // Appliance / Storage / Privacy / Recovery v1, Phase B/D: media
+  // referenced only by a rejected/suppressed detection/analysis record
+  // (never a Visit) -- retained forever unless `StorageRetentionSettings.
+  // rejected_analysis_media_age_days` opts it into cleanup.
+  linked_evidence_or_analysis_count: number;
+  linked_evidence_or_analysis_bytes: number;
   disk_total_bytes: number;
   disk_free_bytes: number;
   is_writable: boolean;
+  // Appliance / Storage / Privacy / Recovery v1, Phase C: a graduated
+  // healthy/getting_low/action_recommended/critical read of the same disk
+  // facts above. `storage_warning`/`is_writable` are unchanged; this is
+  // additive.
+  storage_health_tier: "healthy" | "getting_low" | "action_recommended" | "critical";
   storage_warning?: string | null;
   message: string;
 }
@@ -4843,6 +4912,11 @@ export interface ProductHealthStatus {
   message: string;
   storage_writable: boolean;
   storage_low_space: boolean;
+  // Appliance / Storage / Privacy / Recovery v1, Phase C/L: graduated
+  // reading of the same disk facts `storage_low_space` already summarizes
+  // as a single boolean. `storage_low_space` keeps its exact existing
+  // meaning/trigger.
+  storage_health_tier: "healthy" | "getting_low" | "action_recommended" | "critical";
   storage_warning?: string | null;
   cameras: { needs_attention_count: number };
   observation: { configured_stream_count: number; monitored_stream_count: number };
@@ -4855,6 +4929,13 @@ export interface ProductHealthStatus {
   previous_shutdown_clean?: boolean | null;
   database_schema_version: number;
   log_path?: string | null;
+  // Appliance / Storage / Privacy / Recovery v1, Phase N: fixed, always-
+  // present compatibility constants (never a live network probe) -- this
+  // host's own supported wire versions, not a live re-check of what a
+  // specific paired Camera Node actually speaks.
+  backup_format_version: number;
+  camera_node_api_version: string;
+  transport_protocol_version: string;
   generated_at: string;
 }
 

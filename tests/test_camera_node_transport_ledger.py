@@ -205,3 +205,65 @@ def test_invalid_node_id_is_rejected(tmp_path) -> None:
     with pytest.raises(TransportLedgerError) as excinfo:
         _declare(ledger, node_id="../escape")
     assert excinfo.value.error_code == "transport_node_id_invalid"
+
+
+# --------------------------------------------------------------------------
+# Appliance / Storage / Privacy / Recovery v1, Phase E: consumer-facing
+# read/delete surface (list_node_ids, list_completed_item_ids,
+# completed_item_metadata, completed_blob_path, delete_completed_item).
+# --------------------------------------------------------------------------
+
+
+def _complete(ledger, *, node_id="node-1", item_id="item-1", payload=b"x" * 10) -> None:
+    content_sha256 = hashlib.sha256(payload).hexdigest()
+    ledger.declare(
+        node_id=node_id, item_id=item_id, kind="evidence_capture", priority=100, media_type="image/jpeg",
+        content_length=len(payload), content_sha256=content_sha256, chunk_size=len(payload), metadata={},
+    )
+    ledger.write_chunk(node_id=node_id, item_id=item_id, chunk_index=0, chunk=payload, declared_sha256=content_sha256)
+    ledger.complete(node_id=node_id, item_id=item_id)
+
+
+def test_list_node_ids_is_empty_before_anything_exists(tmp_path) -> None:
+    assert _ledger(tmp_path).list_node_ids() == []
+
+
+def test_list_node_ids_and_completed_item_ids_reflect_real_completions(tmp_path) -> None:
+    ledger = _ledger(tmp_path)
+    _complete(ledger, node_id="node-a", item_id="item-1")
+    _complete(ledger, node_id="node-a", item_id="item-2")
+    _complete(ledger, node_id="node-b", item_id="item-1")
+    _declare(ledger, node_id="node-a", item_id="item-still-in-progress")  # never completed
+
+    assert ledger.list_node_ids() == ["node-a", "node-b"]
+    assert ledger.list_completed_item_ids("node-a") == ["item-1", "item-2"]
+    assert ledger.list_completed_item_ids("node-b") == ["item-1"]
+
+
+def test_completed_item_metadata_and_blob_path_resolve_only_once_completed(tmp_path) -> None:
+    ledger = _ledger(tmp_path)
+    assert ledger.completed_item_metadata("node-1", "item-1") is None
+    assert ledger.completed_blob_path("node-1", "item-1") is None
+
+    _complete(ledger, payload=b"real-bytes")
+
+    meta = ledger.completed_item_metadata("node-1", "item-1")
+    assert meta is not None
+    assert meta["content_length"] == len(b"real-bytes")
+    blob_path = ledger.completed_blob_path("node-1", "item-1")
+    assert blob_path is not None
+    assert blob_path.read_bytes() == b"real-bytes"
+
+
+def test_delete_completed_item_removes_blob_and_metadata_and_is_idempotent(tmp_path) -> None:
+    ledger = _ledger(tmp_path)
+    _complete(ledger)
+    assert ledger.completed_blob_path("node-1", "item-1") is not None
+
+    ledger.delete_completed_item("node-1", "item-1")
+
+    assert ledger.completed_blob_path("node-1", "item-1") is None
+    assert ledger.completed_item_metadata("node-1", "item-1") is None
+    assert ledger.list_completed_item_ids("node-1") == []
+    # Idempotent: calling it again on an already-gone item is a safe no-op.
+    ledger.delete_completed_item("node-1", "item-1")

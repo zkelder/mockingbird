@@ -267,3 +267,61 @@ async def test_reset_sample_walkthrough_preserves_real_camera_and_zone(
     assert reset.json()["zone_count"] == 4
     assert (await client.get(f"/api/sources/{source_id}")).status_code == 200
     assert (await client.get(f"/api/zones/{zone['id']}")).status_code == 200
+
+
+async def test_remove_sample_data_never_leaves_a_dangling_stream_scoped_settings_row(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    """Appliance / Storage / Privacy / Recovery v1, Phase O: a real,
+    reproduced `PRAGMA foreign_key_check` failure on this project's own
+    development database traced to exactly this gap -- `_delete_sample_
+    graph` deleted the demo Stream but not its lazily-created Stage 7
+    `observation_authority_settings` row, leaving a dangling foreign key
+    that later blocked a real backup-restore-with-rebind. Touch all three
+    of the Stream-scoped tables `_delete_sample_graph` now also cleans up,
+    then prove none of them survive as an orphan after the demo Stream is
+    genuinely deleted (never reseeded -- `remove_sample_data`, unlike
+    `reset_demo_data`, does not recreate it under the same id)."""
+
+    from mockingbird.observation.candidate_visit_authority import ObservationAuthorityMode
+    from mockingbird.repository.product_repository import (
+        ObservationAuthoritySettingsModel,
+        StreamSpeciesCandidatePackSelectionModel,
+    )
+    from mockingbird.storage.models import YardMapStreamPlacementModel
+
+    demo_stream_id = "stream-backyard-feeder"
+    isolated_repository.set_observation_authority_mode(
+        ObservationAuthorityMode.shadow, stream_id=demo_stream_id
+    )
+    with isolated_repository.session_factory() as session:
+        assert session.get(ObservationAuthoritySettingsModel, demo_stream_id) is not None
+
+    await client.post("/api/sources", json={"name": "Real camera"})
+    removed = await client.post("/api/settings/remove-sample-data", json={"confirm": True})
+    assert removed.status_code == 200
+    assert removed.json()["removed"] is True
+
+    from sqlalchemy import select
+
+    with isolated_repository.session_factory() as session:
+        assert session.get(ObservationAuthoritySettingsModel, demo_stream_id) is None
+        assert (
+            session.get(StreamSpeciesCandidatePackSelectionModel, demo_stream_id) is None
+        )
+        # Composite primary key (map_id, stream_id) -- query by stream_id
+        # alone rather than `session.get()`, which needs the full key.
+        assert (
+            session.scalar(
+                select(YardMapStreamPlacementModel).where(
+                    YardMapStreamPlacementModel.stream_id == demo_stream_id
+                )
+            )
+            is None
+        )
+
+    with isolated_repository.engine.connect() as connection:
+        from sqlalchemy import text
+
+        assert connection.execute(text("PRAGMA foreign_key_check")).fetchall() == []
