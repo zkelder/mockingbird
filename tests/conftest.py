@@ -27,7 +27,9 @@ every time, not whether a fixture happened to run first.
 
 from __future__ import annotations
 
+import httpx
 import pytest
+from starlette.testclient import TestClient as _StarletteTestClient
 
 from mockingbird.api import main as api_main
 from mockingbird.api.main import configure_repository
@@ -73,3 +75,195 @@ def _default_isolated_repository(tmp_path_factory: pytest.TempPathFactory):
             configure_repository(None)
         else:
             repository.close()
+
+
+# --- Local Identity, Multi-User & Organization Access v1: shared legacy-
+# HTTP-test authentication (see docs/local-identity-multi-user-contract.md
+# "Authorization") -------------------------------------------------------
+#
+# `mockingbird.api.auth` enforces the real Viewer/Reviewer/Administrator
+# policy on every request, unconditionally -- production request handling
+# never infers "a test is running" from ambient process state, and there is
+# no implicit synthetic actor (see that module's own docstring). Roughly
+# 100 test files predate that milestone and call protected endpoints over
+# real HTTP with no session of their own. `LegacyAuthenticatedTestClient`
+# is the one place their needed session gets minted -- the same way a real
+# client gets one, via a genuine `POST /api/setup/administrator` bootstrap
+# (or, if this test's repository already has an Administrator, a genuine
+# `POST /api/auth/sign-in`) -- never a synthetic identity and never a
+# direct database row. It is opt-in strictly by test construction: a test
+# file chooses this class in place of plain `httpx.AsyncClient` in its own
+# fixture; nothing about it is triggered merely by pytest running.
+#
+# The real HTTP call happens lazily, on this client's first actual request,
+# rather than eagerly at construction time: most of these test files
+# configure their own isolated repository via their own fixture (rather
+# than relying on `_default_isolated_repository` above), and pytest does
+# not guarantee that fixture has already run before this one's own setup
+# runs -- only before the test body itself starts. Deferring to first use
+# sidesteps every one of those files needing to declare that dependency
+# explicitly.
+#
+# Tests that care WHICH identity/role is signed in, that must observe a
+# real 401/403 or no-administrator-yet state, or that need more than one
+# distinct signed-in identity, must not use these classes -- construct a
+# plain `httpx.AsyncClient`/`TestClient` and drive
+# `/api/setup/administrator` + `/api/auth/sign-in` explicitly instead. See
+# `tests/test_local_identity_multi_user.py` for that real, explicit
+# pattern.
+#
+# Both classes key their cached session on `id(api_main._repository)`,
+# re-authenticating whenever it changes, rather than authenticating only
+# once per client instance: a handful of these pre-existing test files
+# share *one* client object at module scope across many tests, each of
+# which gets its own fresh repository from `_default_isolated_repository`
+# above -- a session cached "for the life of this client object" would
+# silently 401 every test after the first. Checking the live repository
+# identity instead makes both a one-client-per-test and a one-client-per-
+# module test file correct without either needing to know which shape the
+# other is, and also re-authenticates correctly for the rare test that
+# swaps the repository singleton itself mid-test (for example a real
+# `POST .../backups/{id}/restore`, which calls `configure_repository`
+# again). It deliberately does NOT re-authenticate just because a *prior*
+# request through the same still-current repository already did --
+# needlessly minting a fresh session (a real write) on every call would
+# itself read as a side effect to any test asserting one of its calls has
+# none (see `tests/test_cross_install_backup_restore.py`).
+#
+# That `id()` check is a fast-path only, not the sole guarantee: CPython
+# reuses a freed object's address, and this suite's own fixture teardown
+# really does close/drop/garbage-collect a repository between tests --
+# confirmed by direct execution that a later test's fresh repository can
+# receive the exact same `id()` a since-closed earlier one had, which
+# would make the check above wrongly believe the client is still
+# authenticated for it. Both classes' `request()` self-heals for this: a
+# 401 despite believing we are already authenticated re-authenticates for
+# real and retries exactly once, rather than trusting the cache blindly.
+
+_LEGACY_TEST_ADMINISTRATOR_DISPLAY_NAME = "Legacy Test Administrator"
+_LEGACY_TEST_ADMINISTRATOR_LOGIN_IDENTITY = "legacy-test-administrator"
+_LEGACY_TEST_ADMINISTRATOR_PASSWORD = "legacy-test-administrator-password-1"
+
+_LEGACY_ADMINISTRATOR_BOOTSTRAP_BODY = {
+    "display_name": _LEGACY_TEST_ADMINISTRATOR_DISPLAY_NAME,
+    "login_identity": _LEGACY_TEST_ADMINISTRATOR_LOGIN_IDENTITY,
+    "password": _LEGACY_TEST_ADMINISTRATOR_PASSWORD,
+}
+_LEGACY_ADMINISTRATOR_SIGN_IN_BODY = {
+    "login_identity": _LEGACY_TEST_ADMINISTRATOR_LOGIN_IDENTITY,
+    "password": _LEGACY_TEST_ADMINISTRATOR_PASSWORD,
+}
+
+
+def _legacy_session_conflict_error(bootstrap_status: int, sign_in_status: int) -> RuntimeError:
+    return RuntimeError(
+        "Legacy authenticated test client: this test's repository already has an "
+        "Administrator under a different identity than the shared legacy default "
+        f"({bootstrap_status} bootstrapping, {sign_in_status} signing in) -- sign in "
+        "explicitly for this test instead of using this shared client."
+    )
+
+
+class LegacyAuthenticatedTestClient(httpx.AsyncClient):
+    """Drop-in `httpx.AsyncClient` replacement for pre-existing HTTP test
+    fixtures that need *some* signed-in identity and do not care which --
+    see the module comment above. Takes exactly the same constructor
+    arguments as `httpx.AsyncClient` (no `__init__` override)."""
+
+    _legacy_authenticated_repository_id: int | None = None
+
+    async def request(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201 - matches httpx's own untyped override target
+        current_repository_id = id(api_main._repository)
+        if self._legacy_authenticated_repository_id != current_repository_id:
+            await self._ensure_legacy_administrator_session()
+            self._legacy_authenticated_repository_id = current_repository_id
+        response = await super().request(*args, **kwargs)
+        if response.status_code == 401:
+            # Self-healing fallback for the `id()`-reuse hazard described
+            # in the module comment above: confirmed by direct execution
+            # (a 30-iteration close/GC-churn repro against this exact
+            # class reliably reproduces the collision) that CPython *does*
+            # reuse a freed repository's address for a later one across
+            # this suite's own real fixture-teardown/garbage-collection
+            # churn -- which would make the cache check above wrongly skip
+            # re-authenticating. A 401 despite believing we are already
+            # authenticated for the live repository means that belief was
+            # wrong; authenticate for real and retry exactly once.
+            await self._ensure_legacy_administrator_session()
+            self._legacy_authenticated_repository_id = current_repository_id
+            response = await super().request(*args, **kwargs)
+        return response
+
+    async def _ensure_legacy_administrator_session(self) -> None:
+        bootstrap = await super().request(
+            "POST", "/api/setup/administrator", json=_LEGACY_ADMINISTRATOR_BOOTSTRAP_BODY
+        )
+        if bootstrap.status_code == 201:
+            return
+        # An Administrator already exists in this test's repository (this
+        # test's own fixture created one before its first request through
+        # this client) -- sign in for real instead of assuming which
+        # credentials it has.
+        signed_in = await super().request(
+            "POST", "/api/auth/sign-in", json=_LEGACY_ADMINISTRATOR_SIGN_IN_BODY
+        )
+        if signed_in.status_code != 200:
+            raise _legacy_session_conflict_error(bootstrap.status_code, signed_in.status_code)
+
+
+class LegacyAuthenticatedSyncTestClient(_StarletteTestClient):
+    """Sync `starlette.testclient.TestClient`/`fastapi.testclient.TestClient`
+    counterpart to `LegacyAuthenticatedTestClient` above, for the smaller
+    set of pre-existing test files built on the synchronous client instead
+    -- same behavior, same rationale, same opt-in-by-construction contract.
+    Built on top of, not instead of, this project's own pre-existing
+    `_patch_testclient_for_pytest` ASGI-transport compatibility patch
+    (`mockingbird.api.main`, unrelated to authentication) -- that patch
+    replaces `StarletteTestClient`'s methods in place, so this subclass's
+    `super().request(...)` already resolves to the patched implementation.
+
+    That patch is also why this class -- unlike the plain `httpx.
+    AsyncClient`-based `LegacyAuthenticatedTestClient` above, which needs
+    no such thing -- has to carry cookies forward itself: confirmed by
+    direct execution that its `request()` rebuilds a brand new, cookie-
+    less `httpx.AsyncClient` on every single call (a real, pre-existing
+    characteristic of that ASGI-transport-hang workaround, unrelated to
+    and predating this milestone), so `self.cookies` never actually
+    accumulates a `Set-Cookie` on its own. `_request_and_capture_cookies`
+    below is the one place this class closes that gap, entirely on the
+    test-infrastructure side -- the pre-existing patch itself is left
+    untouched."""
+
+    _legacy_authenticated_repository_id: int | None = None
+
+    def request(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201 - matches httpx's own untyped override target
+        current_repository_id = id(api_main._repository)
+        if self._legacy_authenticated_repository_id != current_repository_id:
+            self._ensure_legacy_administrator_session()
+            self._legacy_authenticated_repository_id = current_repository_id
+        response = self._request_and_capture_cookies(*args, **kwargs)
+        if response.status_code == 401:
+            # See `LegacyAuthenticatedTestClient.request`'s own comment --
+            # the same `id()`-reuse hazard applies here, confirmed by the
+            # same repro against this synchronous class too.
+            self._ensure_legacy_administrator_session()
+            self._legacy_authenticated_repository_id = current_repository_id
+            response = self._request_and_capture_cookies(*args, **kwargs)
+        return response
+
+    def _request_and_capture_cookies(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
+        response = super().request(*args, **kwargs)
+        self.cookies.update(response.cookies)
+        return response
+
+    def _ensure_legacy_administrator_session(self) -> None:
+        bootstrap = self._request_and_capture_cookies(
+            "POST", "/api/setup/administrator", json=_LEGACY_ADMINISTRATOR_BOOTSTRAP_BODY
+        )
+        if bootstrap.status_code == 201:
+            return
+        signed_in = self._request_and_capture_cookies(
+            "POST", "/api/auth/sign-in", json=_LEGACY_ADMINISTRATOR_SIGN_IN_BODY
+        )
+        if signed_in.status_code != 200:
+            raise _legacy_session_conflict_error(bootstrap.status_code, signed_in.status_code)

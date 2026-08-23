@@ -464,37 +464,44 @@ unchanged.
 
 ## Testing
 
-`~103` pre-existing test files call protected endpoints over real HTTP
-with no session at all -- retrofitting every one of them to authenticate
-was judged out of proportion to this milestone's scope. `mockingbird.api.
-auth` bypasses authorization by default whenever `"pytest" in sys.modules`
-(the exact convention already established by `mockingbird.storage.
-database._running_under_pytest` and `mockingbird.api.main._patch_
-testclient_for_pytest` for this identical class of problem) -- this can
-never be true for the packaged Windows runtime or an ordinary launch
-(pytest is a `[project.optional-dependencies] test` extra no runtime
-import path pulls in). A handler that needs `acting_user` under the
-bypass (review attribution, audit logging) falls back to a synthetic
-`_TEST_DEFAULT_USER`, lazily backed by a *real* `users` row the first time
-it is actually needed (found necessary by direct execution: a purely
-in-memory synthetic identity made `PRAGMA foreign_key_check` -- already
-asserted clean by an existing test -- correctly flag a dangling
-reference) and deliberately given `role="viewer"` (found necessary by
-direct execution: `role="administrator"` made every bypassed test's
-database look like first-run bootstrap had already happened, breaking
-`test_first_run_onboarding.py`'s own assumption).
+`mockingbird.api.auth` enforces the real Viewer/Reviewer/Administrator
+policy on every request, unconditionally -- production request handling
+never infers "a test is running" from `PYTEST_CURRENT_TEST`, `sys.
+modules`, or any other ambient/environment signal, and there is no
+implicit synthetic actor anywhere in it (acceptance-closure v1, following
+this milestone's own initial ship). `~100` pre-existing test files predate
+this milestone and call protected endpoints over real HTTP with no
+session of their own; retrofitting every one of them individually was
+judged out of proportion to this milestone's own scope, so their needed
+session is now minted entirely on the test side instead --
+`tests/conftest.py`'s `LegacyAuthenticatedTestClient`/
+`LegacyAuthenticatedSyncTestClient` (`httpx.AsyncClient`/`TestClient`
+drop-in replacements respectively) lazily bootstrap-or-sign-in a real
+Administrator, via genuine `POST /api/setup/administrator` /
+`POST /api/auth/sign-in` calls, the first time that client actually makes
+a request -- never a synthetic identity, never a direct database row, and
+opt-in strictly by test construction (a test file chooses one of these
+classes in place of the plain `httpx.AsyncClient`/`TestClient` its
+fixture already constructed; nothing about it activates merely because
+pytest happens to be running).
 
-`tests/test_local_identity_multi_user.py` is the one place the bypass is
-turned back off (`_TEST_ENFORCE_AUTH_HEADER` on every request) to actually
-exercise real enforcement -- password hashing; bootstrap race-safety/
-replay-proofing/no-default-credentials; session lifecycle (disable/enable
-and role changes taking effect immediately, self-password-change session
-preservation, admin-reset revocation); Viewer/Reviewer/Administrator
-authorization over real HTTP; review attribution (including the negative
-case: non-human origin and an explicit `reviewer_identity` are never
-overridden); the two-reviewers stale-write conflict (Journey 5); the audit
-trail (content and no-secrets); the legacy-row case (Journey 11); and
-backup/restore identity semantics (Journey 10).
+`tests/test_local_identity_multi_user.py` is the one file that instead
+constructs plain, unmodified `httpx.AsyncClient`/`TestClient` objects
+throughout and drives `/api/setup/administrator` + `/api/auth/sign-in`
+explicitly per identity -- it is the one place real, un-masked 401/403 and
+no-Administrator-yet states must be observable, so it deliberately never
+uses the shared legacy-compat classes above. It covers: password hashing;
+bootstrap race-safety/replay-proofing/no-default-credentials; session
+lifecycle (disable/enable and role changes taking effect immediately,
+self-password-change session preservation, admin-reset revocation);
+Viewer/Reviewer/Administrator authorization over real HTTP; review
+attribution (including the negative case: non-human origin and an
+explicit `reviewer_identity` are never overridden); the two-reviewers
+stale-write conflict for both the single-Visit path (Journey 5) and the
+bulk-correct path (acceptance-closure v1's own new per-item
+`expected_state_tokens` check); the audit trail (content and no-secrets);
+the legacy-row case (Journey 11); and backup/restore identity semantics
+(Journey 10).
 
 `web/e2e/onboarding.spec.ts` (its own genuinely fresh instance) proves
 Journey 1 end-to-end in a real browser: welcome -> create administrator
@@ -519,14 +526,20 @@ automation, ACME/PKI infrastructure, and fine-grained enterprise RBAC.
 
 ## Known bounded gaps
 
-- `POST /api/review-queue/bulk-correct` has no per-item optimistic-
-  concurrency check (its schema has no per-item `expected_state_token` --
-  one label is applied to N target_ids in one request; adding a
-  heterogeneous per-item token list would be a larger, separate schema
-  redesign not clearly justified by the acceptance journeys, which center
-  on a single-Visit scenario). The primary interactive single-Visit review
-  flow (`/api/review-labels`, `/revision`, `/reopen`, Fast Review) is
-  fully protected.
+- `POST /api/review-queue/bulk-correct` accepts an optional per-`target_id`
+  `expected_state_tokens` map (acceptance-closure v1), reusing the same
+  `_review_state_token`/`ReviewRevisionConflictError` mechanism the
+  single-Visit path already used -- a stale item is rejected as its own
+  `failed` result (never a whole-batch abort, matching this endpoint's
+  existing per-item-tolerant convention), while the rest of the batch is
+  unaffected. It stays optional, like the single-Visit field it mirrors,
+  so any caller that omits it keeps today's exact last-write-wins
+  behavior. The one remaining piece: the frontend's own bulk-correct call
+  site (`ReviewQueuePage.tsx`) does not yet populate this map from the
+  `review_state_token` it already holds per queue item -- the backend
+  contract and its dedicated two-reviewer test are complete and this is a
+  bounded, low-risk frontend follow-up, not a correctness gap in the API
+  itself.
 - Frontend button-level hiding for admin/reviewer-only actions was applied
   at the nav-item level (top-level pages), not exhaustively audited
   button-by-button inside every existing page component -- the server-

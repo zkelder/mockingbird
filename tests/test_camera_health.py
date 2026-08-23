@@ -24,6 +24,7 @@ from mockingbird.storage.models import (
     StreamRuntimeCheckpointModel,
     VisitModel,
 )
+from tests.conftest import LegacyAuthenticatedTestClient
 
 
 @pytest.fixture
@@ -694,7 +695,7 @@ def test_camera_health_api_routes_are_bounded_and_read_only(repository: ProductR
 
     async def request(path: str) -> httpx.Response:
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with LegacyAuthenticatedTestClient(transport=transport, base_url="http://testserver") as client:
             return await client.get(path)
 
     try:

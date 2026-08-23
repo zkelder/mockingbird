@@ -20,6 +20,7 @@ from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.source_providers import external_url_preview
 from mockingbird.source_providers.external_url_preview import ExternalUrlPreviewFetchResult
 from mockingbird.storage.models import StreamModel
+from tests.conftest import LegacyAuthenticatedTestClient
 
 pytestmark = pytest.mark.anyio
 
@@ -48,7 +49,7 @@ def anyio_backend() -> str:
 async def client(repository: ProductRepository):
     await get_source_monitor_manager().reset()
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as api_client:
+    async with LegacyAuthenticatedTestClient(transport=transport, base_url="http://testserver") as api_client:
         yield api_client
     await get_source_monitor_manager().reset()
 

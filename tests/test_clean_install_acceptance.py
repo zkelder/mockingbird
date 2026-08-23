@@ -30,6 +30,7 @@ from mockingbird.api import main as api_main
 from mockingbird.api.main import app, configure_repository
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.source_providers.camera_node import CameraNodeClient
+from tests.conftest import LegacyAuthenticatedTestClient
 
 NEVER_ECHO_CREDENTIAL = "never-echo-node-credential"
 
@@ -112,7 +113,7 @@ def _client_for(repository: ProductRepository, requester: _FakeNodeRequester) ->
     api_main._camera_node_client = CameraNodeClient(requester=requester)
     configure_repository(repository)
     transport = httpx.ASGITransport(app=app)
-    return httpx.AsyncClient(transport=transport, base_url="http://testserver")
+    return LegacyAuthenticatedTestClient(transport=transport, base_url="http://testserver")
 
 
 def test_clean_install_reaches_a_first_report_through_the_real_http_api(tmp_path: Path) -> None:

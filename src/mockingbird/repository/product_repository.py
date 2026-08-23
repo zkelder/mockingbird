@@ -23492,7 +23492,20 @@ class ProductRepository:
                         )
                         continue
 
+                    expected_state_token = (payload.expected_state_tokens or {}).get(target_id)
+
                     try:
+                        if expected_state_token is not None:
+                            # Same mechanism `create_review_label`/
+                            # `revise_visit_review`/`reopen_visit_review`
+                            # already use, checked inside this same
+                            # try/except so a stale item is reported
+                            # through the exact same per-item `failed`
+                            # path as any other rejected write below --
+                            # never a whole-batch abort.
+                            current_state_token = self._review_state_token(session, target_type, target_id)
+                            if current_state_token != expected_state_token:
+                                raise ReviewRevisionConflictError("stale_reviewed_visit")
                         review_label, _, _ = self._create_review_label_in_session(
                             session,
                             ReviewCorrectionCreate(
@@ -36126,6 +36139,12 @@ def _review_queue_bulk_correction_failure_message(reason: str) -> str:
         return "Event was not found."
     if reason == "unsupported_target":
         return "Review target type is not supported."
+    if reason == "stale_reviewed_visit":
+        # Same wording as the single-item `POST /api/review-labels` 409
+        # (`mockingbird.api.main.create_review_label`) -- this per-item
+        # bulk result is that endpoint's exact conflict, just reported
+        # inline instead of failing the whole HTTP call.
+        return "This item changed. Refresh it before saving a correction."
     return "Review Queue item could not be corrected."
 
 

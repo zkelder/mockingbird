@@ -21,6 +21,7 @@ from mockingbird import __version__ as APP_VERSION
 from mockingbird.api import main as api_main
 from mockingbird.api.main import _handle_database_error, app
 from mockingbird.repository.product_repository import ProductRepository
+from tests.conftest import LegacyAuthenticatedTestClient
 
 
 def _repository(tmp_path: Path) -> ProductRepository:
@@ -33,7 +34,7 @@ def _repository(tmp_path: Path) -> ProductRepository:
 def _request(path: str, method: str = "GET") -> httpx.Response:
     async def send() -> httpx.Response:
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with LegacyAuthenticatedTestClient(transport=transport, base_url="http://testserver") as client:
             return await client.request(method, path)
 
     return asyncio.run(send())
@@ -56,7 +57,7 @@ def test_every_response_carries_a_request_id_and_api_version_header(isolated_rep
 def test_a_client_supplied_request_id_is_echoed_back(isolated_repository: ProductRepository) -> None:
     async def send() -> httpx.Response:
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with LegacyAuthenticatedTestClient(transport=transport, base_url="http://testserver") as client:
             return await client.get("/api/product/instance", headers={"X-Request-Id": "support-ticket-1234"})
 
     response = asyncio.run(send())
@@ -71,7 +72,7 @@ def test_an_oversized_client_supplied_request_id_is_replaced_not_echoed(
 
     async def send() -> httpx.Response:
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with LegacyAuthenticatedTestClient(transport=transport, base_url="http://testserver") as client:
             return await client.get("/api/product/instance", headers={"X-Request-Id": "x" * 500})
 
     response = asyncio.run(send())

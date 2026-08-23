@@ -1,12 +1,12 @@
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
+from tests.conftest import LegacyAuthenticatedSyncTestClient
 
 from mockingbird.api.main import app, configure_repository
 from mockingbird.repository.product_repository import ProductRepository
 
-client = TestClient(app)
+client = LegacyAuthenticatedSyncTestClient(app)
 
 STREAM_ID = "stream-backyard-feeder"
 FEEDER_ZONE_ID = "zone-feeder"

@@ -12,6 +12,7 @@ from mockingbird.api.schemas import SourceKind, SourceStatus
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.source_providers import external_url_preview
 from mockingbird.storage.models import CameraSourceModel, StreamModel
+from tests.conftest import LegacyAuthenticatedTestClient
 
 pytestmark = pytest.mark.anyio
 
@@ -70,7 +71,7 @@ def anyio_backend() -> str:
 @pytest.fixture
 async def client():
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as api_client:
+    async with LegacyAuthenticatedTestClient(transport=transport, base_url="http://testserver") as api_client:
         yield api_client
 
 

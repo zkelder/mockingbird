@@ -34,6 +34,7 @@ from mockingbird.storage.models import (
     StreamModel,
     VisitModel,
 )
+from tests.conftest import LegacyAuthenticatedTestClient
 
 
 NEVER_ECHO_CREDENTIAL = "never-echo-node-credential"
@@ -153,7 +154,7 @@ def _client_for(repository: ProductRepository, requester) -> httpx.AsyncClient:
     api_main._camera_node_client = CameraNodeClient(requester=requester)
     configure_repository(repository)
     transport = httpx.ASGITransport(app=app)
-    return httpx.AsyncClient(transport=transport, base_url="http://testserver")
+    return LegacyAuthenticatedTestClient(transport=transport, base_url="http://testserver")
 
 
 async def _pair(client: httpx.AsyncClient, *, code: str = "correct-one-time-code") -> httpx.Response:
@@ -377,7 +378,7 @@ def test_no_resumable_setup_is_an_honest_404_not_an_empty_success(tmp_path) -> N
     transport = httpx.ASGITransport(app=app)
     try:
         async def scenario() -> None:
-            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            async with LegacyAuthenticatedTestClient(transport=transport, base_url="http://testserver") as client:
                 response = await client.get("/api/camera-nodes/pending-setup")
                 assert response.status_code == 404
 

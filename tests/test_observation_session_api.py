@@ -15,7 +15,7 @@ from pathlib import Path
 import time
 
 import pytest
-from fastapi.testclient import TestClient
+from tests.conftest import LegacyAuthenticatedSyncTestClient
 
 from mockingbird.api.main import app, configure_repository
 from mockingbird.api.demo_data import STREAM_ID as DEMO_STREAM_ID
@@ -34,11 +34,11 @@ def repository(tmp_path: Path) -> ProductRepository:
 
 
 @pytest.fixture
-def client(repository: ProductRepository) -> TestClient:
-    return TestClient(app)
+def client(repository: ProductRepository) -> LegacyAuthenticatedSyncTestClient:
+    return LegacyAuthenticatedSyncTestClient(app)
 
 
-def configure_unpaired_camera_node(client: TestClient) -> None:
+def configure_unpaired_camera_node(client: LegacyAuthenticatedSyncTestClient) -> None:
     """A real `camera_node` Source (so lane resolution routes to the
     accepted engine) that has never completed pairing."""
 
@@ -49,23 +49,23 @@ def configure_unpaired_camera_node(client: TestClient) -> None:
     assert response.status_code == 200
 
 
-def test_start_on_unknown_stream_returns_404(client: TestClient) -> None:
+def test_start_on_unknown_stream_returns_404(client: LegacyAuthenticatedSyncTestClient) -> None:
     response = client.post("/api/streams/does-not-exist/observation/start")
     assert response.status_code == 404
 
 
-def test_status_on_unknown_stream_returns_404(client: TestClient) -> None:
+def test_status_on_unknown_stream_returns_404(client: LegacyAuthenticatedSyncTestClient) -> None:
     response = client.get("/api/streams/does-not-exist/observation/status")
     assert response.status_code == 404
 
 
-def test_stop_on_unknown_stream_returns_404(client: TestClient) -> None:
+def test_stop_on_unknown_stream_returns_404(client: LegacyAuthenticatedSyncTestClient) -> None:
     response = client.post("/api/streams/does-not-exist/observation/stop")
     assert response.status_code == 404
 
 
 def test_status_before_start_is_stopped_and_side_effect_free(
-    client: TestClient, repository: ProductRepository,
+    client: LegacyAuthenticatedSyncTestClient, repository: ProductRepository,
 ) -> None:
     response = client.get(f"/api/streams/{DEMO_STREAM_ID}/observation/status")
     assert response.status_code == 200
@@ -78,7 +78,7 @@ def test_status_before_start_is_stopped_and_side_effect_free(
 
 
 def test_start_on_stream_with_no_observation_runtime_is_honest_not_a_crash(
-    client: TestClient, repository: ProductRepository,
+    client: LegacyAuthenticatedSyncTestClient, repository: ProductRepository,
 ) -> None:
     """The demo/seed stream has no provider configured at all, so it has no
     integrated observation runtime (Unified Observation Experience v1: an
@@ -100,7 +100,7 @@ def test_start_on_stream_with_no_observation_runtime_is_honest_not_a_crash(
 
 
 def test_start_on_unpaired_camera_node_stream_reports_pairing_reason(
-    client: TestClient, repository: ProductRepository,
+    client: LegacyAuthenticatedSyncTestClient, repository: ProductRepository,
 ) -> None:
     """A genuine `camera_node` Source still routes to the accepted engine
     lane and keeps its existing pairing-required message -- only a Stream
@@ -128,7 +128,7 @@ def test_start_on_unpaired_camera_node_stream_reports_pairing_reason(
 
 
 def test_camera_node_status_advanced_diagnostics_report_runtime_kind(
-    client: TestClient, repository: ProductRepository,
+    client: LegacyAuthenticatedSyncTestClient, repository: ProductRepository,
 ) -> None:
     configure_unpaired_camera_node(client)
 
@@ -139,7 +139,7 @@ def test_camera_node_status_advanced_diagnostics_report_runtime_kind(
 
 
 def test_stop_without_a_running_session_is_a_clean_no_op(
-    client: TestClient, repository: ProductRepository,
+    client: LegacyAuthenticatedSyncTestClient, repository: ProductRepository,
 ) -> None:
     response = client.post(f"/api/streams/{DEMO_STREAM_ID}/observation/stop")
     assert response.status_code == 200
@@ -149,7 +149,7 @@ def test_stop_without_a_running_session_is_a_clean_no_op(
 
 
 def test_status_response_never_exposes_internal_vocabulary(
-    client: TestClient, repository: ProductRepository,
+    client: LegacyAuthenticatedSyncTestClient, repository: ProductRepository,
 ) -> None:
     client.post(f"/api/streams/{DEMO_STREAM_ID}/observation/start")
     response = client.get(f"/api/streams/{DEMO_STREAM_ID}/observation/status")
@@ -165,7 +165,7 @@ def test_status_response_never_exposes_internal_vocabulary(
 # =============================================================================
 
 
-def test_counterfactual_on_unknown_stream_returns_404(client: TestClient) -> None:
+def test_counterfactual_on_unknown_stream_returns_404(client: LegacyAuthenticatedSyncTestClient) -> None:
     response = client.get(
         "/api/streams/does-not-exist/observation/counterfactual",
         params={"start_offset_ms": 0, "end_offset_ms": 1000},
@@ -174,7 +174,7 @@ def test_counterfactual_on_unknown_stream_returns_404(client: TestClient) -> Non
 
 
 def test_counterfactual_before_any_session_is_honest_and_side_effect_free(
-    client: TestClient, repository: ProductRepository,
+    client: LegacyAuthenticatedSyncTestClient, repository: ProductRepository,
 ) -> None:
     response = client.get(
         f"/api/streams/{DEMO_STREAM_ID}/observation/counterfactual",
@@ -189,7 +189,7 @@ def test_counterfactual_before_any_session_is_honest_and_side_effect_free(
 
 
 def test_counterfactual_rejects_invalid_window_and_partial_roi(
-    client: TestClient, repository: ProductRepository,
+    client: LegacyAuthenticatedSyncTestClient, repository: ProductRepository,
 ) -> None:
     bad_window = client.get(
         f"/api/streams/{DEMO_STREAM_ID}/observation/counterfactual",

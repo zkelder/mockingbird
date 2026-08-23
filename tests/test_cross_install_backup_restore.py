@@ -24,6 +24,7 @@ from mockingbird.storage.database import CURRENT_DATABASE_SCHEMA_VERSION
 from mockingbird.storage.models import MediaAssetModel
 from mockingbird.storage.models import ReviewLabelModel
 from mockingbird.storage.models import VisitModel
+from tests.conftest import LegacyAuthenticatedTestClient
 
 
 WINDOWS_DATABASE_PATH = r"C:\Users\Example User\MockingBird\data\mockingbird.sqlite3"
@@ -33,9 +34,14 @@ ARCHIVE_RELATIVE_PATH = "Nested Folder/\u00c9lan bird.jpg"
 
 
 def _api_request(method: str, path: str, **kwargs) -> httpx.Response:
+    # These calls hit Administrator-tier backup/restore endpoints (see
+    # `mockingbird.api.auth.ROUTE_POLICY`) -- `LegacyAuthenticatedTestClient`
+    # signs in for real so the *business-rule* rejection this module tests
+    # (a cross-install archive's restore is refused, no side effect) is what
+    # actually gets exercised, rather than a 401 from never having signed in.
     async def send() -> httpx.Response:
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(
+        async with LegacyAuthenticatedTestClient(
             transport=transport,
             base_url="http://testserver",
         ) as client:
@@ -266,13 +272,26 @@ def test_restore_plan_api_is_explicit_read_only_and_redacted(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    manager, verified, target_root, target_db_before, *_rest = _cross_install_backup(
+    manager, verified, target_root, _target_db_before_setup, *_rest = _cross_install_backup(
         tmp_path
     )
     monkeypatch.setenv(BACKUP_ROOT_ENV_VAR, str(manager.backup_root))
     repository = _repository(target_root)
     configure_repository(repository)
     try:
+        # This test asserts the final `restore` call below has no side
+        # effect on the database beyond its own rejection -- so, unlike
+        # `_api_request` (a fresh client, and thus a fresh real sign-in,
+        # per call), every request here reuses *one*
+        # `LegacyAuthenticatedTestClient` and its one session. Re-signing
+        # in per call would itself be a real write (a new session row)
+        # that would otherwise be misread as a side effect of the restore
+        # call actually under test. The two `restore-plan` calls are
+        # exercised first, on their own dedicated client, so that minting
+        # the shared session (on this test's own client's first request,
+        # below) is not itself mistaken for a `restore-plan` side effect
+        # either -- `restore-plan` is asserted `dry_run`/read-only in its
+        # own right, so any of its own writes should still show up here.
         default_plan = _api_request(
             "POST",
             f"/api/settings/backups/{verified.backup.id}/restore-plan",
@@ -301,11 +320,26 @@ def test_restore_plan_api_is_explicit_read_only_and_redacted(
         assert "Example User" not in response.text
         assert str(target_root) not in response.text
 
-        default_restore = _api_request(
-            "POST",
-            f"/api/settings/backups/{verified.backup.id}/restore",
-            json={"confirm": True, "rebind_managed_storage": False},
-        )
+        async def restore_on_a_fresh_session() -> tuple[httpx.Response, str]:
+            transport = httpx.ASGITransport(app=app)
+            async with LegacyAuthenticatedTestClient(
+                transport=transport, base_url="http://testserver"
+            ) as client:
+                # Mint this call's own session first (its first request,
+                # whatever it is) so `target_db_before` below reflects every
+                # write that will ever happen on this client except the
+                # `restore` call itself.
+                await client.get("/api/setup/state")
+                before = hashlib.sha256(
+                    (target_root / "mockingbird.sqlite3").read_bytes()
+                ).hexdigest()
+                restore_response = await client.post(
+                    f"/api/settings/backups/{verified.backup.id}/restore",
+                    json={"confirm": True, "rebind_managed_storage": False},
+                )
+            return restore_response, before
+
+        default_restore, target_db_before = asyncio.run(restore_on_a_fresh_session())
         assert default_restore.status_code == 409
         assert (
             hashlib.sha256(

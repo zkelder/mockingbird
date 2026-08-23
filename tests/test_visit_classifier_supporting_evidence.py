@@ -44,6 +44,7 @@ from mockingbird.repository.product_repository import (
     VisitEvidenceLinkModel,
 )
 from mockingbird.storage.models import CameraSourceModel, StreamModel
+from tests.conftest import LegacyAuthenticatedSyncTestClient
 
 SOURCE_ID = "source-classifier-evidence-test"
 STREAM_ID = "stream-classifier-evidence-test"
@@ -518,24 +519,6 @@ def test_does_not_alter_suggestion_or_visit_review_state(repository: ProductRepo
 # --- End-to-end API wiring ----------------------------------------------------
 
 
-class _ASGITestClient:
-    """Minimal, self-contained ASGI client -- deliberately not imported from
-    another test module (no cross-test-file import convention exists in
-    this suite); mirrors tests/test_api.py's own small helper of the same
-    shape."""
-
-    def __init__(self) -> None:
-        self.base_url = "http://testserver"
-
-    def get(self, path: str) -> httpx.Response:
-        async def send() -> httpx.Response:
-            transport = httpx.ASGITransport(app=app)
-            async with httpx.AsyncClient(transport=transport, base_url=self.base_url) as api_client:
-                return await api_client.get(path)
-
-        return asyncio.run(send())
-
-
 def test_visit_detail_api_exposes_and_serves_classifier_supporting_evidence(
     repository: ProductRepository,
 ) -> None:
@@ -552,7 +535,7 @@ def test_visit_detail_api_exposes_and_serves_classifier_supporting_evidence(
     )
     configure_repository(repository)
     try:
-        client = _ASGITestClient()
+        client = LegacyAuthenticatedSyncTestClient(app)
         detail_response = client.get(f"/api/visits/{visit_id}/detail")
         assert detail_response.status_code == 200
         body = detail_response.json()
@@ -584,7 +567,7 @@ def test_visit_detail_api_omits_field_cleanly_for_ordinary_visit(repository: Pro
     )
     configure_repository(repository)
     try:
-        client = _ASGITestClient()
+        client = LegacyAuthenticatedSyncTestClient(app)
         detail_response = client.get(f"/api/visits/{visit_id}/detail")
         assert detail_response.status_code == 200
         body = detail_response.json()

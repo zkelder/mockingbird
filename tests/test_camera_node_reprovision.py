@@ -33,6 +33,7 @@ from mockingbird.diagnostics import doctor
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.source_providers.camera_node import CameraNodeClient
 from mockingbird.storage.models import CameraSourceModel, EventModel, ReviewLabelModel, VisitModel, ZoneModel
+from tests.conftest import LegacyAuthenticatedTestClient
 
 
 NEVER_ECHO_OLD_CREDENTIAL = "never-echo-old-hardware-credential"
@@ -110,7 +111,7 @@ def _client_for(repository: ProductRepository, requester: _StatefulNodeRequester
     api_main._camera_node_client = CameraNodeClient(requester=requester)
     configure_repository(repository)
     transport = httpx.ASGITransport(app=app)
-    return httpx.AsyncClient(transport=transport, base_url="http://testserver")
+    return LegacyAuthenticatedTestClient(transport=transport, base_url="http://testserver")
 
 
 def _zone_payload() -> list[dict]:

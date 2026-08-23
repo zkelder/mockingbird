@@ -18,6 +18,7 @@ from mockingbird.storage.models import (
     VisitModel,
     ZoneModel,
 )
+from tests.conftest import LegacyAuthenticatedTestClient
 
 
 SOURCE_A = "source-insights-a"
@@ -52,7 +53,7 @@ def anyio_backend() -> str:
 @pytest.fixture
 async def client():
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as api_client:
+    async with LegacyAuthenticatedTestClient(transport=transport, base_url="http://testserver") as api_client:
         yield api_client
 
 

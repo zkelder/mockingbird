@@ -45,31 +45,26 @@ rationale):
   never by an unauthenticated caller. See docs/local-identity-multi-user-
   contract.md "Authorization" for the full endpoint-by-endpoint
   classification and reasoning.
-* Under pytest (`"pytest" in sys.modules`, the exact convention already
-  established by `mockingbird.storage.database._running_under_pytest` and
-  `mockingbird.api.main._patch_testclient_for_pytest` for this same class
-  of problem), every request is authorized by default WITHOUT a session --
-  this is a deliberate, narrowly-scoped test convenience, not a security
-  hole: it can never be true for the packaged Windows runtime or an
-  ordinary launch (pytest is a `[project.optional-dependencies] test`
-  extra no runtime import path pulls in). It exists because ~103 existing
-  test files call protected endpoints over real HTTP with no session at
-  all, predating this milestone -- retrofitting every one of them was
-  judged out of proportion to this milestone's own scope. A test that
-  specifically wants to exercise REAL enforcement (this module's own new
-  tests do) sets the `_TEST_ENFORCE_AUTH_HEADER` header on that one
-  request to opt back into it. Identity RESOLUTION (reading a real session
-  cookie if one is present) still runs unconditionally either way -- only
-  the pass/fail *decision* is bypassed -- so a test that signs in for real
-  and checks `acting_user`/audit attribution behavior still sees the real
-  signed-in identity, not a synthetic one.
+* This gate enforces the real policy unconditionally -- production request
+  handling never infers "a test is running" from `PYTEST_CURRENT_TEST`,
+  `sys.modules`, or any other ambient/environment signal, and there is no
+  implicit synthetic actor anywhere in this module. Normal app construction
+  (`install_authorization` called once, the same way, from `main.py`) always
+  enforces this policy; nothing about this module changes shape depending on
+  who imported it. ~100 test files predate this milestone and call
+  protected endpoints over real HTTP with no session of their own -- their
+  needed session is now minted by test infrastructure instead
+  (`tests.conftest.LegacyAuthenticatedTestClient`), via genuine
+  `POST /api/setup/administrator` bootstrap + `POST /api/auth/sign-in`
+  calls, deliberately chosen by that test file's own fixture construction
+  -- never by this module. See `tests/test_local_identity_multi_user.py`
+  for the tests that instead exercise this real policy directly (real
+  401/403, real role/disable/session behavior).
 """
 
 from __future__ import annotations
 
-import sys
 from collections.abc import Callable
-from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 
@@ -99,86 +94,6 @@ if TYPE_CHECKING:
     from mockingbird.repository.product_repository import ProductRepository
 
 SESSION_COOKIE_NAME = "mb_session"
-
-# --- Test-only enforcement bypass -------------------------------------------
-# See this module's own docstring, last bullet, for the full rationale.
-
-_TEST_ENFORCE_AUTH_HEADER = "X-MockingBird-Test-Enforce-Auth"
-
-# A stable, obviously-synthetic identity, backed by a REAL `users` row
-# lazily materialized the first time it is actually needed -- see
-# `_ensure_test_default_user_row`. `role=viewer` is deliberate, not
-# arbitrary: under the bypass, `install_authorization`'s middleware skips
-# every role check entirely (this identity's role is never consulted for
-# access control), so the only place its role is ever actually read is
-# `ProductRepository.has_eligible_administrator()` -- found by direct
-# execution that `role=administrator` here made every bypassed test's
-# database look like first-run bootstrap had already happened, breaking
-# `test_first_run_onboarding.py`'s own "no eligible administrator yet"
-# assumption. `viewer` can never trip that check.
-_TEST_DEFAULT_USER = CurrentUser(
-    id="test-default-user",
-    display_name="Test Suite",
-    login_identity="test-default-user",
-    role=UserRole.viewer,
-    enabled=True,
-)
-
-# Set once by `install_authorization` so `current_user_or_401` can lazily
-# materialize `_TEST_DEFAULT_USER`'s backing row only when a handler
-# actually calls it -- not on every bypassed request (most are plain
-# reads that never touch `acting_user`/audit logging at all).
-_get_repository_ref: Callable[[], "ProductRepository"] | None = None
-
-
-def _running_under_pytest() -> bool:
-    return "pytest" in sys.modules
-
-
-def _test_bypass_active(request: Request) -> bool:
-    return _running_under_pytest() and request.headers.get(_TEST_ENFORCE_AUTH_HEADER) != "1"
-
-
-def _ensure_test_default_user_row(repository: "ProductRepository") -> None:
-    """Lazily materializes a REAL `users` row backing `_TEST_DEFAULT_USER`
-    -- found necessary by direct execution: `PRAGMA foreign_key_check`
-    (already asserted clean by an existing test,
-    `test_remove_sample_data_never_leaves_a_dangling_stream_scoped_
-    settings_row`) correctly flagged a purely in-memory synthetic identity
-    as a dangling `reviewed_by_user_id`/`audit_log_entries.actor_user_id`
-    reference the moment any bypassed old test exercised a review or
-    audited-mutation endpoint. A real row closes that honestly. Idempotent
-    (checked-then-inserted once per repository/database) and deliberately
-    avoids the real, ~50-150ms `hash_password` scrypt cost across what
-    would otherwise be a large fraction of the test suite's first hit of
-    this path -- `password_hash` here is never verified against (this row
-    is only ever reached through the pytest bypass, never through `sign_
-    in`), so a fixed placeholder string is both correct and cheap.
-    """
-
-    from datetime import UTC, datetime
-
-    from mockingbird.storage.models import UserModel
-
-    with repository.session_factory() as session:
-        with session.begin():
-            if session.get(UserModel, _TEST_DEFAULT_USER.id) is not None:
-                return
-            now = datetime.now(UTC)
-            session.add(
-                UserModel(
-                    id=_TEST_DEFAULT_USER.id,
-                    display_name=_TEST_DEFAULT_USER.display_name,
-                    login_identity=_TEST_DEFAULT_USER.login_identity,
-                    password_hash="test-default-user-never-verified",
-                    role=_TEST_DEFAULT_USER.role.value,
-                    enabled=True,
-                    created_at=now,
-                    updated_at=now,
-                    password_updated_at=now,
-                )
-            )
-
 
 # --- Role ordering -----------------------------------------------------
 
@@ -231,32 +146,15 @@ def clear_session_cookie(response: Response) -> None:
 
 
 def current_user_or_401(request: Request) -> CurrentUser:
-    """Defense-in-depth in production: every route that calls this is
-    already gated `authenticated`-or-higher by the central policy table
-    below, so `request.state.current_user` should always be populated
-    here. This exists purely so a future policy-table mistake fails as a
-    clear 401 rather than an `AttributeError` 500.
-
-    Under pytest with the enforcement bypass active (see this module's own
-    docstring), falls back to `_TEST_DEFAULT_USER` instead of raising --
-    every one of ~103 pre-existing test files calls a handler that now
-    calls this function with no session set up at all; without this
-    fallback all of them would 401 on their very first line. Never reached
-    outside a pytest process (`_running_under_pytest` is unconditionally
-    false then), and never reached at all once a real session is present.
-    Lazily materializes `_TEST_DEFAULT_USER`'s backing row (see
-    `_ensure_test_default_user_row`) only here, on first actual use by
-    some handler -- not for every bypassed request, most of which are
-    plain reads that never call this function at all.
-    """
+    """Defense-in-depth: every route that calls this is already gated
+    `authenticated`-or-higher by the central policy table below, so
+    `request.state.current_user` should always be populated here. This
+    exists purely so a future policy-table mistake fails as a clear 401
+    rather than an `AttributeError` 500."""
 
     current_user = getattr(request.state, "current_user", None)
     if current_user is not None:
         return current_user
-    if _test_bypass_active(request):
-        if _get_repository_ref is not None:
-            _ensure_test_default_user_row(_get_repository_ref())
-        return _TEST_DEFAULT_USER
     raise HTTPException(status_code=401, detail="Sign in to continue.")
 
 
@@ -655,21 +553,13 @@ def install_authorization(app: "FastAPI", *, get_repository: Callable[[], "Produ
     the actual route list it is checked against are always visibly next
     to each other in review."""
 
-    global _get_repository_ref
-    _get_repository_ref = get_repository
-
     @app.middleware("http")
     async def _authorize(request: Request, call_next):  # noqa: ANN001, ANN201 - Starlette's own untyped middleware signature
         current_user: CurrentUser | None = None
         token = request.cookies.get(SESSION_COOKIE_NAME)
         if token:
-            # Identity resolution always runs, bypass or not -- a test
-            # that signs in for real still sees its real identity here.
             current_user = get_repository().resolve_session(token)
         request.state.current_user = current_user
-
-        if _test_bypass_active(request):
-            return await call_next(request)
 
         tier = _resolve_tier(request)
         if tier in (PolicyTier.public, PolicyTier.device):

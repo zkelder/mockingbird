@@ -8,6 +8,7 @@ from mockingbird.api.main import app, configure_repository
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.storage.database import CURRENT_DATABASE_SCHEMA_VERSION, create_database_engine
 from mockingbird.storage.models import StreamSpeciesCandidatePackSelectionModel
+from tests.conftest import LegacyAuthenticatedTestClient
 
 
 pytestmark = pytest.mark.anyio
@@ -34,7 +35,7 @@ def anyio_backend() -> str:
 @pytest.fixture
 async def client():
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as api_client:
+    async with LegacyAuthenticatedTestClient(transport=transport, base_url="http://testserver") as api_client:
         yield api_client
 
 

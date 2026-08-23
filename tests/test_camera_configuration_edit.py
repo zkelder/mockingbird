@@ -16,6 +16,7 @@ from mockingbird.repository.product_repository import (
     SourceProviderConfigurationModel,
 )
 from mockingbird.storage.models import ZoneModel
+from tests.conftest import LegacyAuthenticatedTestClient
 
 
 @pytest.fixture
@@ -139,7 +140,7 @@ async def test_camera_configuration_api_rejects_provider_changes_and_returns_red
     try:
         completed = _complete_setup(repository, monitoring=True)
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with LegacyAuthenticatedTestClient(transport=transport, base_url="http://testserver") as client:
             edit = await client.get(
                 f"/api/streams/{completed.stream.id}/camera-configuration"
             )

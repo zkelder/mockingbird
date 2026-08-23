@@ -19,6 +19,7 @@ import pytest
 
 from mockingbird.api.main import app, configure_repository, get_source_monitor_manager
 from mockingbird.repository.product_repository import ProductRepository
+from tests.conftest import LegacyAuthenticatedTestClient
 
 pytestmark = pytest.mark.anyio
 
@@ -46,7 +47,7 @@ def repository(tmp_path: Path) -> ProductRepository:
 async def client(repository: ProductRepository):
     await get_source_monitor_manager().reset()
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as api_client:
+    async with LegacyAuthenticatedTestClient(transport=transport, base_url="http://testserver") as api_client:
         yield api_client
     await get_source_monitor_manager().reset()
 

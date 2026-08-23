@@ -25,6 +25,7 @@ from mockingbird.api import main as api_main
 from mockingbird.api.main import app, configure_repository
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.storage.database import CURRENT_DATABASE_SCHEMA_VERSION, create_database_engine
+from tests.conftest import LegacyAuthenticatedTestClient
 
 
 def test_a_v41_installation_upgrades_in_place_and_today_works_over_http(tmp_path: Path) -> None:
@@ -72,7 +73,7 @@ def test_a_v41_installation_upgrades_in_place_and_today_works_over_http(tmp_path
     async def scenario() -> None:
         configure_repository(upgraded)
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with LegacyAuthenticatedTestClient(transport=transport, base_url="http://testserver") as client:
             # 3. Existing Sources/Visits still readable -- through the real
             # API, not a direct repository call.
             sources = await client.get("/api/sources")

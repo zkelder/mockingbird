@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
+from tests.conftest import LegacyAuthenticatedSyncTestClient
 from sqlalchemy import event, func, select
 
 from mockingbird.analytics.zone_insights import (
@@ -378,7 +378,7 @@ def test_zone_insights_use_only_truth_and_return_auditable_denominator(
 def test_zone_insights_api_validates_range_and_is_read_only(repository: ProductRepository) -> None:
     _add_visit(repository, visit_id="api-cardinal", zone_id=FEEDER_ZONE_ID, started_at=RANGE_START + timedelta(minutes=5), reviewed_label="northern_cardinal", review_status="reviewed")
     before = _counts(repository)
-    client = TestClient(app)
+    client = LegacyAuthenticatedSyncTestClient(app)
 
     valid = client.post(
         "/api/analytics/zone-insights",

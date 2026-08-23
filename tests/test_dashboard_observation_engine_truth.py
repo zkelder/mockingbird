@@ -28,7 +28,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
+from tests.conftest import LegacyAuthenticatedSyncTestClient
 
 from mockingbird.api.main import app, configure_repository
 from mockingbird.api.demo_data import STREAM_ID as DEMO_STREAM_ID
@@ -48,11 +48,11 @@ def repository(tmp_path: Path) -> ProductRepository:
 
 
 @pytest.fixture
-def client(repository: ProductRepository) -> TestClient:
-    return TestClient(app)
+def client(repository: ProductRepository) -> LegacyAuthenticatedSyncTestClient:
+    return LegacyAuthenticatedSyncTestClient(app)
 
 
-def _configure_camera_node(client: TestClient, stream_id: str = DEMO_STREAM_ID) -> None:
+def _configure_camera_node(client: LegacyAuthenticatedSyncTestClient, stream_id: str = DEMO_STREAM_ID) -> None:
     """Make the demo Stream's Source a `camera_node` provider (pairing
     status is irrelevant to this fix -- only `provider_key` is read)."""
 
@@ -103,7 +103,7 @@ class _FakeIdleEngineManager:
 
 
 def test_dashboard_summary_reports_an_observing_camera_node_stream_as_monitored(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    client: LegacyAuthenticatedSyncTestClient, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _configure_camera_node(client)
     monkeypatch.setattr(
@@ -122,7 +122,7 @@ def test_dashboard_summary_reports_an_observing_camera_node_stream_as_monitored(
 
 
 def test_dashboard_summary_does_not_falsely_report_an_idle_camera_node_stream(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    client: LegacyAuthenticatedSyncTestClient, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Negative control: a paired-but-not-observing Camera Node must not
     suddenly read as monitored just because the engine manager exists."""
@@ -143,7 +143,7 @@ def test_dashboard_summary_does_not_falsely_report_an_idle_camera_node_stream(
 
 
 def test_dashboard_summary_ignores_engine_status_for_a_non_camera_node_stream(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    client: LegacyAuthenticatedSyncTestClient, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A Stream that never configured `camera_node` must not consult the
     engine manager's status at all, even if it would (incorrectly) report
@@ -203,7 +203,7 @@ class _FakeReconnectingEngineManager:
 
 
 def test_dashboard_summary_flags_a_terminally_unavailable_camera_node_stream(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    client: LegacyAuthenticatedSyncTestClient, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """v0.1 Release Hardening v1 -- 3a: the aggregate Dashboard/health
     summary must not report "Ready"/zero attention while a Camera Node
@@ -234,7 +234,7 @@ def test_dashboard_summary_flags_a_terminally_unavailable_camera_node_stream(
 
 
 def test_dashboard_summary_does_not_alarm_during_a_bounded_reconnect(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    client: LegacyAuthenticatedSyncTestClient, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Negative control: a reconnect still inside its bounded retry budget
     is a deliberately quiet, self-healing state (see
@@ -257,7 +257,7 @@ def test_dashboard_summary_does_not_alarm_during_a_bounded_reconnect(
 
 
 def test_product_health_counts_an_observing_camera_node_stream(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+    client: LegacyAuthenticatedSyncTestClient, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The same defect surfaced most visibly through `ProductHealthPanel`'s
     always-on "Observing X of Y cameras" Dashboard summary line.

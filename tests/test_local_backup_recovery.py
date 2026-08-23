@@ -32,28 +32,10 @@ from mockingbird.storage.models import (
     MonitoringExposureIntervalModel,
     StreamRuntimeCheckpointModel,
 )
+from tests.conftest import LegacyAuthenticatedSyncTestClient
 
 
-class ASGITestClient:
-    def request(self, method: str, path: str, **kwargs) -> httpx.Response:
-        async def send() -> httpx.Response:
-            transport = httpx.ASGITransport(app=app)
-            async with httpx.AsyncClient(
-                transport=transport,
-                base_url="http://testserver",
-            ) as client:
-                return await client.request(method, path, **kwargs)
-
-        return asyncio.run(send())
-
-    def get(self, path: str, **kwargs) -> httpx.Response:
-        return self.request("GET", path, **kwargs)
-
-    def post(self, path: str, **kwargs) -> httpx.Response:
-        return self.request("POST", path, **kwargs)
-
-
-client = ASGITestClient()
+client = LegacyAuthenticatedSyncTestClient(app)
 
 
 def _repository(tmp_path: Path) -> ProductRepository:

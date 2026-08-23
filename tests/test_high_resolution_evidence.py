@@ -7,7 +7,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pytest
-from fastapi.testclient import TestClient
+from tests.conftest import LegacyAuthenticatedSyncTestClient
 
 from mockingbird.api.main import app, configure_repository
 from mockingbird.api.schemas import (
@@ -30,7 +30,7 @@ from mockingbird.storage.models import EventModel, VisitModel
 
 SOURCE_ID = "source-backyard-demo"
 STREAM_ID = "stream-backyard-feeder"
-client = TestClient(app)
+client = LegacyAuthenticatedSyncTestClient(app)
 
 
 @pytest.fixture

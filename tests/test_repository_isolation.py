@@ -38,6 +38,7 @@ from mockingbird.storage.database import (
     resolve_database_url,
     resolve_media_root,
 )
+from tests.conftest import LegacyAuthenticatedTestClient
 
 # The real checkout's persistent dev database this whole milestone protects.
 # Read-only path arithmetic only (`Path.resolve()` never creates or opens
@@ -88,7 +89,7 @@ async def _get(path: str) -> httpx.Response:
     # `tests/test_observation_engine.py` already establish for this exact
     # ASGI-without-lifespan request shape.
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+    async with LegacyAuthenticatedTestClient(transport=transport, base_url="http://testserver") as client:
         return await client.get(path)
 
 

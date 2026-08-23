@@ -19,7 +19,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
-from fastapi.testclient import TestClient
+from tests.conftest import LegacyAuthenticatedSyncTestClient
 
 from mockingbird.analytics.historical_baseline import (
     MIN_DISTINCT_USABLE_DAYS_FOR_REGULAR,
@@ -643,7 +643,7 @@ def test_api_round_trip_exposes_historical_baseline_and_bird_log_regularity(
     _add_visit(repository, visit_id="cardinal-1", at=PERIOD_START + timedelta(hours=8))
     _confirm(repository, visit_id="cardinal-1", label="northern_cardinal")
 
-    client = TestClient(app)
+    client = LegacyAuthenticatedSyncTestClient(app)
 
     report_response = client.post(
         "/api/analytics/place-activity-report",

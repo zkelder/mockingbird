@@ -24,7 +24,7 @@ from time import perf_counter
 from zoneinfo import ZoneInfo
 
 import pytest
-from fastapi.testclient import TestClient
+from tests.conftest import LegacyAuthenticatedSyncTestClient
 from sqlalchemy import event, func, select
 
 from mockingbird.analytics.place_activity_report import MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN
@@ -724,7 +724,7 @@ def test_report_generation_is_read_only(repository: ProductRepository) -> None:
     _report(repository)
     _report(repository)  # calling it twice must be equally inert
 
-    client = TestClient(app)
+    client = LegacyAuthenticatedSyncTestClient(app)
     response = client.post(
         "/api/analytics/place-activity-report",
         json={"start_at": PERIOD_START.isoformat(), "end_at": PERIOD_END.isoformat()},
@@ -745,7 +745,7 @@ def test_api_serialization_contract_exposes_only_documented_fields(
     _add_exposure(repository, interval_id="exposure-api-a", stream_id=STREAM_A, started_at=PERIOD_START, ended_at=PERIOD_END)
     _add_exposure(repository, interval_id="exposure-api-b", stream_id=STREAM_B, started_at=PERIOD_START, ended_at=PERIOD_END)
 
-    client = TestClient(app)
+    client = LegacyAuthenticatedSyncTestClient(app)
     response = client.post(
         "/api/analytics/place-activity-report",
         json={"start_at": PERIOD_START.isoformat(), "end_at": PERIOD_END.isoformat()},
@@ -952,7 +952,7 @@ def test_api_serialization_contract_exposes_only_documented_fields(
 
 
 def test_invalid_reporting_window_inputs_are_rejected(repository: ProductRepository) -> None:
-    client = TestClient(app)
+    client = LegacyAuthenticatedSyncTestClient(app)
 
     end_before_start = client.post(
         "/api/analytics/place-activity-report",

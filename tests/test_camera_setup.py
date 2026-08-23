@@ -18,6 +18,7 @@ from mockingbird.storage.models import (
     VisitModel,
     ZoneModel,
 )
+from tests.conftest import LegacyAuthenticatedTestClient
 
 
 def _repository(tmp_path):
@@ -91,7 +92,7 @@ async def client(tmp_path):
     configure_repository(repository)
     transport = httpx.ASGITransport(app=app)
     try:
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as api_client:
+        async with LegacyAuthenticatedTestClient(transport=transport, base_url="http://testserver") as api_client:
             yield api_client
     finally:
         configure_repository(None)

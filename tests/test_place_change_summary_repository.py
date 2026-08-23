@@ -19,7 +19,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
-from fastapi.testclient import TestClient
+from tests.conftest import LegacyAuthenticatedSyncTestClient
 
 from mockingbird.analytics.place_change_summary import (
     RECENT_WINDOW_USABLE_DAYS,
@@ -598,7 +598,7 @@ def test_api_round_trip_exposes_change_detection_fields(repository: ProductRepos
         _add_visit(repository, visit_id=visit_id, at=day + timedelta(hours=10))
         _confirm(repository, visit_id=visit_id, label="northern_cardinal")
 
-    client = TestClient(app)
+    client = LegacyAuthenticatedSyncTestClient(app)
 
     report_response = client.post(
         "/api/analytics/place-activity-report",

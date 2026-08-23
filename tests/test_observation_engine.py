@@ -15,6 +15,7 @@ from mockingbird.observation import (
     ObservationEngineRegistry,
     SnapshotObservationProvider,
 )
+from tests.conftest import LegacyAuthenticatedTestClient
 
 
 pytestmark = pytest.mark.anyio
@@ -128,7 +129,7 @@ async def test_observation_engine_status_is_read_only_and_names_snapshot_provide
     await get_source_monitor_manager().reset()
     try:
         transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with LegacyAuthenticatedTestClient(transport=transport, base_url="http://testserver") as client:
             response = await client.get("/api/observation-engine/status")
 
         assert response.status_code == 200

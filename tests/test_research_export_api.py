@@ -16,6 +16,7 @@ import pytest
 from mockingbird.api.main import app, configure_repository
 from mockingbird.api.schemas import ReviewCorrectionCreate
 from mockingbird.repository.product_repository import ProductRepository
+from tests.conftest import LegacyAuthenticatedTestClient
 
 pytestmark = pytest.mark.anyio
 
@@ -42,7 +43,7 @@ def isolated_repository(tmp_path: Path) -> ProductRepository:
 @pytest.fixture
 async def client():
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as api_client:
+    async with LegacyAuthenticatedTestClient(transport=transport, base_url="http://testserver") as api_client:
         yield api_client
 
 

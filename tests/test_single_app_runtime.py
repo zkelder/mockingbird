@@ -18,12 +18,13 @@ from mockingbird.runtime import (
     run,
 )
 from mockingbird.web_app import WEB_DIST_ENV_VAR, frontend_response
+from tests.conftest import LegacyAuthenticatedTestClient
 
 
 def request(path: str) -> httpx.Response:
     async def send() -> httpx.Response:
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with LegacyAuthenticatedTestClient(transport=transport, base_url="http://testserver") as client:
             return await client.get(path)
 
     return asyncio.run(send())

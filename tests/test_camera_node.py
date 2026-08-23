@@ -27,6 +27,7 @@ from mockingbird.storage.models import (
     StreamModel,
     VisitModel,
 )
+from tests.conftest import LegacyAuthenticatedTestClient
 from mockingbird_node.app import _PairingState, create_node_app
 from mockingbird_node.config import CameraNodeConfig
 from mockingbird_node.providers import (
@@ -1677,7 +1678,7 @@ async def test_pairing_guided_setup_keeps_credential_masked_and_creates_no_truth
     configure_repository(repository)
     transport = httpx.ASGITransport(app=app)
     try:
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with LegacyAuthenticatedTestClient(transport=transport, base_url="http://testserver") as client:
             before = _counts(repository)
             pair = await client.post("/api/camera-nodes/pair", json={"base_address": "http://127.0.0.1:8787", "pairing_code": "correct-one-time-code"})
             assert pair.status_code == 200
@@ -1759,7 +1760,7 @@ async def test_timed_out_node_preview_creates_no_product_records_or_truth(tmp_pa
     configure_repository(repository)
     transport = httpx.ASGITransport(app=app)
     try:
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with LegacyAuthenticatedTestClient(transport=transport, base_url="http://testserver") as client:
             before = _counts(repository)
             pairing = await client.post("/api/camera-nodes/pair", json={"base_address": "http://127.0.0.1:8787", "pairing_code": "correct-one-time-code"})
             preview = await client.post("/api/camera-nodes/preview", json={"pairing_token": pairing.json()["pairing_token"], "camera_id": "opaque-camera-1"})
@@ -1793,7 +1794,7 @@ async def test_disappeared_camera_cannot_complete_node_setup(tmp_path) -> None:
     configure_repository(repository)
     transport = httpx.ASGITransport(app=app)
     try:
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with LegacyAuthenticatedTestClient(transport=transport, base_url="http://testserver") as client:
             paired = await client.post("/api/camera-nodes/pair", json={"base_address": "http://127.0.0.1:8787", "pairing_code": "correct-one-time-code"})
             before = _counts(repository)
             completed = await client.post("/api/camera-setup/complete", json={
@@ -1824,7 +1825,7 @@ async def test_node_repair_uses_in_place_preview_and_explicit_revocation(tmp_pat
     configure_repository(repository)
     transport = httpx.ASGITransport(app=app)
     try:
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with LegacyAuthenticatedTestClient(transport=transport, base_url="http://testserver") as client:
             pairing = await client.post("/api/camera-nodes/pair", json={"base_address": "http://127.0.0.1:8787", "pairing_code": "first-code"})
             token = pairing.json()["pairing_token"]
             created = await client.post("/api/camera-setup/complete", json={

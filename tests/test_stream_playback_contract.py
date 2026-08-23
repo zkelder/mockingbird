@@ -122,7 +122,7 @@ def anyio_backend() -> str:
 @pytest.fixture
 async def client():
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as api_client:
+    async with LegacyAuthenticatedTestClient(transport=transport, base_url="http://testserver") as api_client:
         yield api_client
 
 
@@ -8449,6 +8449,7 @@ async def test_disabled_zone_does_not_qualify_live_activity(
 # injected-transport tests already use (see tests/test_onvif_client.py).
 
 from mockingbird.source_providers import onvif_client  # noqa: E402
+from tests.conftest import LegacyAuthenticatedTestClient
 
 _ONVIF_CAPABILITIES_XML = b"""<?xml version="1.0"?>
 <soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"

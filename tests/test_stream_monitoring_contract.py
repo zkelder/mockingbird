@@ -28,6 +28,7 @@ from mockingbird.storage.models import (
     VisitModel,
     ZoneModel,
 )
+from tests.conftest import LegacyAuthenticatedSyncTestClient
 
 STREAM_ID = "stream-backyard-feeder"
 
@@ -67,34 +68,6 @@ def _camera_node_stream(repository: ProductRepository, *, key: str) -> str:
         )
     )
     return result.stream.id
-
-
-class ASGITestClient:
-    def request(
-        self,
-        method: str,
-        path: str,
-        *,
-        json: dict[str, object] | None = None,
-    ) -> httpx.Response:
-        async def send() -> httpx.Response:
-            transport = httpx.ASGITransport(app=api_main.app)
-            async with httpx.AsyncClient(
-                transport=transport,
-                base_url="http://testserver",
-            ) as client:
-                return await client.request(method, path, json=json)
-
-        return asyncio.run(send())
-
-    def get(self, path: str) -> httpx.Response:
-        return self.request("GET", path)
-
-    def post(self, path: str, *, json: dict[str, object]) -> httpx.Response:
-        return self.request("POST", path, json=json)
-
-    def put(self, path: str, *, json: dict[str, object]) -> httpx.Response:
-        return self.request("PUT", path, json=json)
 
 
 @pytest.fixture
@@ -178,7 +151,7 @@ def test_monitoring_contract_gets_are_side_effect_free_and_start_no_runtime(
     repository: ProductRepository,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = ASGITestClient()
+    client = LegacyAuthenticatedSyncTestClient(api_main.app)
     before = _persisted_contract_state(repository)
 
     def fail_if_runtime_is_constructed():
@@ -228,7 +201,7 @@ def test_monitoring_contract_gets_are_side_effect_free_and_start_no_runtime(
 def test_monitoring_contract_returns_404_for_unknown_stream(
     repository: ProductRepository,
 ) -> None:
-    client = ASGITestClient()
+    client = LegacyAuthenticatedSyncTestClient(api_main.app)
     assert client.get("/api/streams/missing/monitoring-policy").status_code == 404
     assert client.get("/api/streams/missing/runtime-status").status_code == 404
 
@@ -300,7 +273,7 @@ def test_runtime_status_api_serializes_legacy_naive_checkpoint_as_utc(
             checkpoint.last_healthy_frame_at = timestamp
             checkpoint.updated_at = timestamp
 
-    response = ASGITestClient().get(f"/api/streams/{STREAM_ID}/runtime-status")
+    response = LegacyAuthenticatedSyncTestClient(api_main.app).get(f"/api/streams/{STREAM_ID}/runtime-status")
 
     assert response.status_code == 200
     payload = response.json()
@@ -395,7 +368,7 @@ def test_auto_create_setting_is_durable_for_backend_reconstruction(
 def test_live_motion_settings_persist_auto_create_without_auto_identification(
     repository: ProductRepository,
 ) -> None:
-    response = ASGITestClient().post(
+    response = LegacyAuthenticatedSyncTestClient(api_main.app).post(
         f"/api/streams/{STREAM_ID}/live-motion/settings",
         json={
             "auto_create_review_candidates": True,
@@ -411,7 +384,7 @@ def test_live_motion_settings_persist_auto_create_without_auto_identification(
     policy = repository.get_stream_monitoring_policy(STREAM_ID)
     assert policy is not None and policy.auto_create_review_candidates is True
 
-    omitted = ASGITestClient().post(
+    omitted = LegacyAuthenticatedSyncTestClient(api_main.app).post(
         f"/api/streams/{STREAM_ID}/live-motion/settings",
         json={"auto_identify_review_candidates": False},
     )
@@ -423,7 +396,7 @@ def test_live_motion_settings_persist_auto_create_without_auto_identification(
 def test_monitoring_api_exposes_idempotent_enable_and_bounded_status_read(
     repository: ProductRepository,
 ) -> None:
-    client = ASGITestClient()
+    client = LegacyAuthenticatedSyncTestClient(api_main.app)
 
     enabled = client.put(
         f"/api/streams/{STREAM_ID}/monitoring-policy",
@@ -661,7 +634,7 @@ def test_camera_node_monitoring_guard_api_returns_stable_conflict(
     message, never an unhandled 500, for a raw API call bypassing the UI."""
 
     stream_id = _camera_node_stream(repository, key="guard-api")
-    client = ASGITestClient()
+    client = LegacyAuthenticatedSyncTestClient(api_main.app)
 
     response = client.put(
         f"/api/streams/{stream_id}/monitoring-policy",

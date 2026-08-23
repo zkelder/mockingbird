@@ -10,17 +10,22 @@ Viewer/Reviewer/Administrator tiers over real HTTP; review attribution
 (`reviewed_by_user_id` set from the real signed-in actor, `review_origin`/
 `reviewer_identity` never force-overridden); the pre-existing
 `expected_state_token` optimistic-concurrency mechanism newly reused by
-`POST /api/review-labels`; the audit trail (material actions recorded, no
-secrets in metadata); and backup/restore identity semantics (users/roles/
-audit history survive a restore; a legacy row with no signed-in-user
+`POST /api/review-labels` and, per-item, by `POST /api/review-queue/
+bulk-correct` (a stale item in a batch is rejected on its own -- a
+`failed` result carrying the same conflict message as the single-item
+409 -- without blocking or silently overwriting any other item in that
+same batch); the audit trail (material actions recorded, no secrets in
+metadata); and backup/restore identity semantics (users/roles/audit
+history survive a restore; a legacy row with no signed-in-user
 attribution stays honestly unattributed rather than having one invented).
 
-HTTP-level tests here deliberately set `_TEST_ENFORCE_AUTH_HEADER` on
-every request: `mockingbird.api.auth` bypasses authorization by default
-under pytest (~103 pre-existing test files call protected endpoints with
-no session at all) -- this file is the one place that bypass is turned
-back off, to actually exercise the real enforcement path. See `mockingbird
-.api.auth`'s own module docstring, last bullet, for the full rationale.
+`mockingbird.api.auth` enforces the real Viewer/Reviewer/Administrator
+policy on every request, unconditionally -- HTTP-level tests here exercise
+that real enforcement path directly (real bootstrap, real sign-in, real
+session cookies), unlike the ~100 pre-existing test files elsewhere that
+predate this milestone and get an authenticated session from
+`tests.conftest.LegacyAuthenticatedTestClient` instead. See
+`mockingbird.api.auth`'s own module docstring for the full rationale.
 """
 
 from __future__ import annotations
@@ -32,7 +37,6 @@ import httpx
 import pytest
 from sqlalchemy import select
 
-from mockingbird.api.auth import _TEST_ENFORCE_AUTH_HEADER
 from mockingbird.api.main import app, configure_repository
 from mockingbird.api.schemas import (
     AdministratorBootstrapRequest,
@@ -68,8 +72,6 @@ STREAM_ID = "stream-backyard-feeder"
 VISIT_ID = "visit-local-identity-fixture"
 EVENT_ID = "event-local-identity-fixture"
 
-ENFORCE = {_TEST_ENFORCE_AUTH_HEADER: "1"}
-
 
 @pytest.fixture(autouse=True)
 def isolated_repository(tmp_path: Path) -> ProductRepository:
@@ -94,13 +96,15 @@ async def client():
         yield api_client
 
 
-def add_reviewable_visit(repository: ProductRepository) -> None:
+def add_reviewable_visit(
+    repository: ProductRepository, *, visit_id: str = VISIT_ID, event_id: str = EVENT_ID
+) -> None:
     now = datetime.now(UTC)
     with repository.session_factory() as session:
         with session.begin():
             session.add(
                 EventModel(
-                    id=EVENT_ID,
+                    id=event_id,
                     stream_id=STREAM_ID,
                     title="Local identity fixture",
                     event_type="local_identity_fixture",
@@ -112,8 +116,8 @@ def add_reviewable_visit(repository: ProductRepository) -> None:
             )
             session.add(
                 VisitModel(
-                    id=VISIT_ID,
-                    event_id=EVENT_ID,
+                    id=visit_id,
+                    event_id=event_id,
                     subject_label="bird",
                     species_guess=None,
                     confidence=None,
@@ -210,14 +214,13 @@ async def test_bootstrap_over_http_sets_a_working_session_cookie(client: httpx.A
     )
     assert response.status_code == 201, response.text
     assert "mb_session" in response.cookies
-    session_response = await client.get("/api/auth/session", headers=ENFORCE)
+    session_response = await client.get("/api/auth/session")
     assert session_response.status_code == 200
     assert session_response.json()["role"] == "administrator"
 
     replay = await client.post(
         "/api/setup/administrator",
         json={"display_name": "Eve", "login_identity": "eve", "password": "whatever12345"},
-        headers=ENFORCE,
     )
     assert replay.status_code == 409, replay.text
 
@@ -371,15 +374,15 @@ def test_sign_out_revokes_exactly_that_session(isolated_repository: ProductRepos
 
 
 async def test_unauthenticated_request_is_rejected_server_side(client: httpx.AsyncClient) -> None:
-    response = await client.get("/api/streams", headers=ENFORCE)
+    response = await client.get("/api/streams")
     assert response.status_code == 401
     assert "detail" in response.json()
 
 
 async def test_setup_and_public_endpoints_remain_reachable_unauthenticated(client: httpx.AsyncClient) -> None:
-    assert (await client.get("/api/setup/state", headers=ENFORCE)).status_code == 200
-    assert (await client.get("/api/settings/installation", headers=ENFORCE)).status_code == 200
-    assert (await client.get("/health", headers=ENFORCE)).status_code == 200
+    assert (await client.get("/api/setup/state")).status_code == 200
+    assert (await client.get("/api/settings/installation")).status_code == 200
+    assert (await client.get("/health")).status_code == 200
 
 
 async def test_viewer_can_read_but_cannot_review_or_administer(client: httpx.AsyncClient) -> None:
@@ -390,33 +393,31 @@ async def test_viewer_can_read_but_cannot_review_or_administer(client: httpx.Asy
     created = await client.post(
         "/api/admin/users",
         json={"display_name": "Vic Viewer", "login_identity": "vic", "password": "viewer-password-1", "role": "viewer"},
-        headers=ENFORCE,
     )
     assert created.status_code == 201, created.text
 
     viewer_client_transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=viewer_client_transport, base_url="http://testserver") as viewer_client:
         signed_in = await viewer_client.post(
-            "/api/auth/sign-in", json={"login_identity": "vic", "password": "viewer-password-1"}, headers=ENFORCE
+            "/api/auth/sign-in", json={"login_identity": "vic", "password": "viewer-password-1"}
         )
         assert signed_in.status_code == 200
 
-        readable = await viewer_client.get("/api/streams", headers=ENFORCE)
+        readable = await viewer_client.get("/api/streams")
         assert readable.status_code == 200, "Viewer can read Viewer-safe data"
 
         review_attempt = await viewer_client.post(
             "/api/review-labels",
             json={"target_type": "visit", "target_id": "does-not-matter", "label": "x"},
-            headers=ENFORCE,
         )
         assert review_attempt.status_code == 403
 
         admin_attempt = await viewer_client.post(
-            "/api/sources", json={"name": "New Camera"}, headers=ENFORCE
+            "/api/sources", json={"name": "New Camera"}
         )
         assert admin_attempt.status_code == 403
 
-        users_attempt = await viewer_client.get("/api/admin/users", headers=ENFORCE)
+        users_attempt = await viewer_client.get("/api/admin/users")
         assert users_attempt.status_code == 403
 
 
@@ -428,23 +429,22 @@ async def test_reviewer_can_review_but_cannot_administer(client: httpx.AsyncClie
     await client.post(
         "/api/admin/users",
         json={"display_name": "Rae Reviewer", "login_identity": "rae", "password": "reviewer-password-1", "role": "reviewer"},
-        headers=ENFORCE,
     )
 
     reviewer_transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=reviewer_transport, base_url="http://testserver") as reviewer_client:
         signed_in = await reviewer_client.post(
-            "/api/auth/sign-in", json={"login_identity": "rae", "password": "reviewer-password-1"}, headers=ENFORCE
+            "/api/auth/sign-in", json={"login_identity": "rae", "password": "reviewer-password-1"}
         )
         assert signed_in.status_code == 200
 
         admin_attempt = await reviewer_client.patch(
-            "/api/admin/installation-settings", json={"installation_name": "Hijacked"}, headers=ENFORCE
+            "/api/admin/installation-settings", json={"installation_name": "Hijacked"}
         )
         assert admin_attempt.status_code in (403, 405)  # PUT is the real method; either way, never 200.
 
         put_attempt = await reviewer_client.put(
-            "/api/admin/installation-settings", json={"installation_name": "Hijacked"}, headers=ENFORCE
+            "/api/admin/installation-settings", json={"installation_name": "Hijacked"}
         )
         assert put_attempt.status_code == 403
 
@@ -459,23 +459,22 @@ async def test_disabling_a_user_mid_session_blocks_further_requests_over_http(
     await client.post(
         "/api/admin/users",
         json={"display_name": "Rae Reviewer", "login_identity": "rae", "password": "reviewer-password-1", "role": "reviewer"},
-        headers=ENFORCE,
     )
     reviewer_transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=reviewer_transport, base_url="http://testserver") as reviewer_client:
         await reviewer_client.post(
-            "/api/auth/sign-in", json={"login_identity": "rae", "password": "reviewer-password-1"}, headers=ENFORCE
+            "/api/auth/sign-in", json={"login_identity": "rae", "password": "reviewer-password-1"}
         )
-        assert (await reviewer_client.get("/api/streams", headers=ENFORCE)).status_code == 200
+        assert (await reviewer_client.get("/api/streams")).status_code == 200
 
-        users = (await client.get("/api/admin/users", headers=ENFORCE)).json()
+        users = (await client.get("/api/admin/users")).json()
         rae = next(user for user in users if user["login_identity"] == "rae")
         disabled = await client.patch(
-            f"/api/admin/users/{rae['id']}/enabled", json={"enabled": False}, headers=ENFORCE
+            f"/api/admin/users/{rae['id']}/enabled", json={"enabled": False}
         )
         assert disabled.status_code == 200
 
-        assert (await reviewer_client.get("/api/streams", headers=ENFORCE)).status_code == 401
+        assert (await reviewer_client.get("/api/streams")).status_code == 401
 
 
 async def test_sign_out_over_http_ends_the_session(client: httpx.AsyncClient) -> None:
@@ -483,10 +482,10 @@ async def test_sign_out_over_http_ends_the_session(client: httpx.AsyncClient) ->
         "/api/setup/administrator",
         json={"display_name": "Ada Admin", "login_identity": "ada", "password": "correct horse battery"},
     )
-    assert (await client.get("/api/streams", headers=ENFORCE)).status_code == 200
-    signed_out = await client.post("/api/auth/sign-out", headers=ENFORCE)
+    assert (await client.get("/api/streams")).status_code == 200
+    signed_out = await client.post("/api/auth/sign-out")
     assert signed_out.status_code == 204
-    assert (await client.get("/api/streams", headers=ENFORCE)).status_code == 401
+    assert (await client.get("/api/streams")).status_code == 401
 
 
 # --- Review attribution -------------------------------------------------
@@ -503,19 +502,17 @@ async def test_review_correction_is_attributed_to_the_real_signed_in_reviewer(
     await client.post(
         "/api/admin/users",
         json={"display_name": "Rae Reviewer", "login_identity": "rae", "password": "reviewer-password-1", "role": "reviewer"},
-        headers=ENFORCE,
     )
     reviewer_transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=reviewer_transport, base_url="http://testserver") as reviewer_client:
         signed_in = await reviewer_client.post(
-            "/api/auth/sign-in", json={"login_identity": "rae", "password": "reviewer-password-1"}, headers=ENFORCE
+            "/api/auth/sign-in", json={"login_identity": "rae", "password": "reviewer-password-1"}
         )
         reviewer_id = signed_in.json()["id"]
 
         correction = await reviewer_client.post(
             "/api/review-labels",
             json={"target_type": "visit", "target_id": VISIT_ID, "label": "American Robin", "review_origin": "human"},
-            headers=ENFORCE,
         )
         assert correction.status_code == 201, correction.text
         review_label = correction.json()["review_label"]
@@ -616,34 +613,31 @@ async def test_two_reviewers_stale_write_is_rejected_not_silently_overwritten(
         await client.post(
             "/api/admin/users",
             json={"display_name": name, "login_identity": identity, "password": f"{identity}-password-1", "role": "reviewer"},
-            headers=ENFORCE,
         )
 
     async def sign_in(login_identity: str) -> httpx.AsyncClient:
         transport = httpx.ASGITransport(app=app)
         session = httpx.AsyncClient(transport=transport, base_url="http://testserver")
         await session.post(
-            "/api/auth/sign-in", json={"login_identity": login_identity, "password": f"{login_identity}-password-1"}, headers=ENFORCE
+            "/api/auth/sign-in", json={"login_identity": login_identity, "password": f"{login_identity}-password-1"}
         )
         return session
 
     alice = await sign_in("alice")
     bob = await sign_in("bob")
 
-    alice_view = await alice.get(f"/api/visits/{VISIT_ID}/detail", headers=ENFORCE)
+    alice_view = await alice.get(f"/api/visits/{VISIT_ID}/detail")
     stale_token = alice_view.json()["review_state_token"]
 
     bob_correction = await bob.post(
         "/api/review-labels",
         json={"target_type": "visit", "target_id": VISIT_ID, "label": "bobs_robin", "review_origin": "human", "expected_state_token": stale_token},
-        headers=ENFORCE,
     )
     assert bob_correction.status_code == 201, bob_correction.text
 
     alice_correction = await alice.post(
         "/api/review-labels",
         json={"target_type": "visit", "target_id": VISIT_ID, "label": "alices_cardinal", "review_origin": "human", "expected_state_token": stale_token},
-        headers=ENFORCE,
     )
     assert alice_correction.status_code == 409, alice_correction.text
 
@@ -653,6 +647,118 @@ async def test_two_reviewers_stale_write_is_rejected_not_silently_overwritten(
 
     await alice.aclose()
     await bob.aclose()
+
+
+OTHER_VISIT_ID = "visit-local-identity-fixture-bulk-2"
+OTHER_EVENT_ID = "event-local-identity-fixture-bulk-2"
+
+
+async def test_two_reviewers_bulk_correction_stale_write_is_rejected_not_silently_overwritten(
+    client: httpx.AsyncClient, isolated_repository: ProductRepository,
+) -> None:
+    """Bulk-correct counterpart to Journey 5 above -- with one deliberate
+    difference from that single-item test's scenario, forced by this
+    endpoint's own pre-existing design: `bulk_correct_review_queue_items`
+    already refuses to touch anything that isn't still `needs_review` (see
+    `_review_queue_bulk_correction_skip_reason`), so two SEQUENTIAL
+    *authoritative* bulk corrections of the exact same Visit can never
+    reach this test's new `expected_state_tokens` check at all -- Bob's
+    first (authoritative) write already flips the Visit to `reviewed`,
+    which makes Alice's second attempt bounce off that pre-existing
+    eligibility rule as `skipped`, before her stale token is ever
+    consulted. That pre-existing rule is *not* what this milestone closes.
+
+    What it closes is the gap that rule leaves open: `_review_state_token`
+    also folds in Visit curation state (`_visit_curation_state` -- Zone,
+    supersession, evidence linkage), which can change without the Visit
+    ever leaving `needs_review`. Bob moves the Visit to a different Zone
+    (represented here the same economical way `add_reviewable_visit`
+    itself sets up fixtures -- a direct, minimal repository mutation,
+    rather than standing up a second real Zone/Stream graph just to drive
+    the full `/api/visits/{id}/zone` endpoint's own unrelated validation)
+    while Alice is still holding the token from before that move; her
+    subsequent authoritative bulk correction across two Visits must reject
+    the stale one on its own -- via the *new* per-item token check, since
+    the pre-existing eligibility rule alone would have let it through --
+    while the second, still-fresh Visit succeeds in that same batch call:
+    a stale item never blocks or silently overwrites the rest of the
+    batch."""
+
+    add_reviewable_visit(isolated_repository)
+    add_reviewable_visit(isolated_repository, visit_id=OTHER_VISIT_ID, event_id=OTHER_EVENT_ID)
+    await client.post(
+        "/api/setup/administrator",
+        json={"display_name": "Ada Admin", "login_identity": "ada", "password": "correct horse battery"},
+    )
+    for name, identity in (("Alice Reviewer", "alice"), ("Bob Reviewer", "bob")):
+        await client.post(
+            "/api/admin/users",
+            json={"display_name": name, "login_identity": identity, "password": f"{identity}-password-1", "role": "reviewer"},
+        )
+
+    async def sign_in(login_identity: str) -> httpx.AsyncClient:
+        transport = httpx.ASGITransport(app=app)
+        session = httpx.AsyncClient(transport=transport, base_url="http://testserver")
+        await session.post(
+            "/api/auth/sign-in", json={"login_identity": login_identity, "password": f"{login_identity}-password-1"}
+        )
+        return session
+
+    alice = await sign_in("alice")
+
+    stale_token = (await alice.get(f"/api/visits/{VISIT_ID}/detail")).json()["review_state_token"]
+    fresh_token = (await alice.get(f"/api/visits/{OTHER_VISIT_ID}/detail")).json()["review_state_token"]
+
+    # Bob reassigns the Visit's Zone -- a real Reviewer-tier curation
+    # action (`POST /api/visits/{visit_id}/zone`); done here as a direct
+    # mutation for fixture economy, but its effect on `_visit_curation_
+    # state` is identical either way. `review_status` is untouched (still
+    # `needs_review`, still bulk-correction-eligible), yet the review-state
+    # token has already moved past what Alice is still holding.
+    with isolated_repository.session_factory() as session:
+        with session.begin():
+            moved_visit = session.get(VisitModel, VISIT_ID)
+            moved_visit.zone_id = "zone-a-different-one"
+    with isolated_repository.session_factory() as session:
+        assert session.get(VisitModel, VISIT_ID).review_status == "needs_review", (
+            "a Zone reassignment must never itself establish reviewed truth"
+        )
+
+    alice_correction = await alice.post(
+        "/api/review-queue/bulk-correct",
+        json={
+            "target_type": "visit",
+            "target_ids": [VISIT_ID, OTHER_VISIT_ID],
+            "label": "alices_cardinal",
+            "review_origin": "human",
+            # Alice's tokens reflect what she saw before Bob's note --
+            # `VISIT_ID` is now stale; `OTHER_VISIT_ID` is still fresh.
+            "expected_state_tokens": {VISIT_ID: stale_token, OTHER_VISIT_ID: fresh_token},
+        },
+    )
+    assert alice_correction.status_code == 200, alice_correction.text
+    body = alice_correction.json()
+    assert body["requested_count"] == 2
+    assert body["succeeded_count"] == 1
+    assert body["failed_count"] == 1
+    results_by_target = {result["target_id"]: result for result in body["results"]}
+    assert results_by_target[VISIT_ID]["status"] == "failed"
+    assert results_by_target[VISIT_ID]["message"] == "This item changed. Refresh it before saving a correction."
+    assert results_by_target[OTHER_VISIT_ID]["status"] == "succeeded"
+
+    with isolated_repository.session_factory() as session:
+        stale_visit = session.get(VisitModel, VISIT_ID)
+        assert stale_visit.review_status == "needs_review", (
+            "Alice's stale correction must never silently establish reviewed truth"
+        )
+        assert stale_visit.reviewed_label is None
+        fresh_visit = session.get(VisitModel, OTHER_VISIT_ID)
+        assert fresh_visit.reviewed_label == "alices_cardinal", (
+            "the non-conflicting item in the same batch still succeeds -- a stale "
+            "item is rejected per-item, never a whole-batch abort"
+        )
+
+    await alice.aclose()
 
 
 # --- Audit trail --------------------------------------------------------
@@ -666,13 +772,12 @@ async def test_audit_trail_records_material_actions_with_no_secrets(client: http
     await client.post(
         "/api/admin/users",
         json={"display_name": "Rae Reviewer", "login_identity": "rae", "password": "super-secret-password-1", "role": "reviewer"},
-        headers=ENFORCE,
     )
-    users = (await client.get("/api/admin/users", headers=ENFORCE)).json()
+    users = (await client.get("/api/admin/users")).json()
     rae = next(user for user in users if user["login_identity"] == "rae")
-    await client.patch(f"/api/admin/users/{rae['id']}/role", json={"role": "administrator"}, headers=ENFORCE)
+    await client.patch(f"/api/admin/users/{rae['id']}/role", json={"role": "administrator"})
 
-    audit = await client.get("/api/admin/audit-log", headers=ENFORCE)
+    audit = await client.get("/api/admin/audit-log")
     assert audit.status_code == 200
     entries = audit.json()
     actions = {entry["action"] for entry in entries}
@@ -698,14 +803,13 @@ async def test_audit_log_is_administrator_only(client: httpx.AsyncClient) -> Non
     await client.post(
         "/api/admin/users",
         json={"display_name": "Vic Viewer", "login_identity": "vic", "password": "viewer-password-1", "role": "viewer"},
-        headers=ENFORCE,
     )
     viewer_transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=viewer_transport, base_url="http://testserver") as viewer_client:
         await viewer_client.post(
-            "/api/auth/sign-in", json={"login_identity": "vic", "password": "viewer-password-1"}, headers=ENFORCE
+            "/api/auth/sign-in", json={"login_identity": "vic", "password": "viewer-password-1"}
         )
-        response = await viewer_client.get("/api/admin/audit-log", headers=ENFORCE)
+        response = await viewer_client.get("/api/admin/audit-log")
         assert response.status_code == 403
 
 
@@ -839,14 +943,13 @@ async def test_backup_restore_preserves_users_roles_and_audit_history(
     await client.post(
         "/api/admin/users",
         json={"display_name": "Rae Reviewer", "login_identity": "rae", "password": "reviewer-password-1", "role": "reviewer"},
-        headers=ENFORCE,
     )
     await client.put(
-        "/api/admin/installation-settings", json={"installation_name": "Test Yard"}, headers=ENFORCE
+        "/api/admin/installation-settings", json={"installation_name": "Test Yard"}
     )
-    audit_before = len((await client.get("/api/admin/audit-log", headers=ENFORCE)).json())
+    audit_before = len((await client.get("/api/admin/audit-log")).json())
 
-    backup_response = await client.post("/api/settings/backups", headers=ENFORCE)
+    backup_response = await client.post("/api/settings/backups")
     assert backup_response.status_code == 201, backup_response.text
     backup_id = backup_response.json()["backup"]["id"]
 
@@ -856,13 +959,13 @@ async def test_backup_restore_preserves_users_roles_and_audit_history(
     reviewer_transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=reviewer_transport, base_url="http://testserver") as reviewer_client:
         reviewer_signed_in = await reviewer_client.post(
-            "/api/auth/sign-in", json={"login_identity": "rae", "password": "reviewer-password-1"}, headers=ENFORCE
+            "/api/auth/sign-in", json={"login_identity": "rae", "password": "reviewer-password-1"}
         )
     reviewer_signed_in_token = reviewer_signed_in.cookies.get("mb_session")
     assert reviewer_signed_in_token
 
     restore_response = await client.post(
-        f"/api/settings/backups/{backup_id}/restore", json={"confirm": True}, headers=ENFORCE
+        f"/api/settings/backups/{backup_id}/restore", json={"confirm": True}
     )
     assert restore_response.status_code == 200, restore_response.text
 

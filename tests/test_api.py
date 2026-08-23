@@ -8,34 +8,9 @@ import pytest
 from mockingbird.api.main import app, configure_repository
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.storage.models import EventModel
+from tests.conftest import LegacyAuthenticatedSyncTestClient
 
-
-class ASGITestClient:
-    def __init__(self) -> None:
-        self.base_url = "http://testserver"
-
-    def request(self, method: str, path: str, **kwargs) -> httpx.Response:
-        async def send() -> httpx.Response:
-            transport = httpx.ASGITransport(app=app)
-            async with httpx.AsyncClient(
-                transport=transport,
-                base_url=self.base_url,
-            ) as api_client:
-                return await api_client.request(method, path, **kwargs)
-
-        return asyncio.run(send())
-
-    def get(self, path: str, **kwargs) -> httpx.Response:
-        return self.request("GET", path, **kwargs)
-
-    def post(self, path: str, **kwargs) -> httpx.Response:
-        return self.request("POST", path, **kwargs)
-
-    def patch(self, path: str, **kwargs) -> httpx.Response:
-        return self.request("PATCH", path, **kwargs)
-
-
-client = ASGITestClient()
+client = LegacyAuthenticatedSyncTestClient(app)
 
 SOURCE_ID = "source-backyard-demo"
 STREAM_ID = "stream-backyard-feeder"

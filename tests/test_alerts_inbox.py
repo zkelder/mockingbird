@@ -19,6 +19,7 @@ from mockingbird.api.main import app, configure_repository
 from mockingbird.monitoring.durable_supervisor import DurableMonitoringCandidate
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.storage.models import EventModel, MediaAssetModel, ProductAlertModel, StreamModel, VisitModel
+from tests.conftest import LegacyAuthenticatedTestClient
 
 
 @pytest.fixture
@@ -256,7 +257,7 @@ def test_alert_api_is_empty_then_accepts_idempotent_read_and_dismiss(repository:
 
     async def request(method: str, path: str) -> httpx.Response:
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        async with LegacyAuthenticatedTestClient(transport=transport, base_url="http://testserver") as client:
             return await client.request(method, path)
 
     try:

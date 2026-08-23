@@ -4143,6 +4143,22 @@ class ReviewQueueBulkCorrectionRequest(BaseModel):
     notes: str | None = None
     review_origin: ReviewOrigin | None = None
     reviewer_identity: str | None = Field(default=None, max_length=256)
+    # Local Identity, Multi-User & Organization Access v1 (bulk-correct
+    # concurrency closure): optional `target_id -> expected_state_token`
+    # map, reusing the exact same `_review_state_token`/
+    # `ReviewRevisionConflictError` mechanism `ReviewCorrectionCreate.
+    # expected_state_token` already uses for the single-item path -- see
+    # that field's own docstring for why it stays optional rather than
+    # required. A `target_id` present here is checked immediately before
+    # its own write is attempted; on a mismatch, that one item alone is
+    # rejected as a `failed` result (`ProductRepository.bulk_correct_
+    # review_queue_items`) -- the rest of the batch is unaffected, exactly
+    # like every other per-item failure this endpoint already tolerates.
+    # A `target_id` absent from this map (or the map omitted entirely) is
+    # never checked, preserving today's exact last-write-wins behavior for
+    # that item -- so every existing caller that omits this field is
+    # entirely unaffected.
+    expected_state_tokens: dict[str, str] | None = None
 
 
 class ReviewQueueBulkCorrectionResult(BaseModel):

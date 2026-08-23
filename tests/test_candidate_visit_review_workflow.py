@@ -15,7 +15,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pytest
-from fastapi.testclient import TestClient
+from tests.conftest import LegacyAuthenticatedSyncTestClient
 
 from mockingbird.api.main import app, configure_repository
 from mockingbird.api.schemas import ReviewCorrectionCreate
@@ -298,7 +298,7 @@ def test_visit_detail_api_serves_a_usable_evidence_reference_for_a_candidate_vis
     visit_id = _create_real_candidate(repository, content=real_jpeg)
     configure_repository(repository)
     try:
-        client = TestClient(app)
+        client = LegacyAuthenticatedSyncTestClient(app)
         response = client.get(f"/api/visits/{visit_id}/detail")
         assert response.status_code == 200
         body = response.json()
