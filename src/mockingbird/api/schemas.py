@@ -4024,6 +4024,13 @@ class ReviewLabel(BaseModel):
     # schema migration) -- never `None` and never a fabricated "human".
     review_origin: ReviewOriginStored | None = None
     reviewer_identity: str | None = None
+    # Local Identity, Multi-User & Organization Access v1: the durable
+    # actor reference `reviewer_identity` (a free-text display string) was
+    # explicitly documented as never having. `None` for every row created
+    # before user identity existed, or by a non-interactive/offline
+    # pathway with no signed-in user -- never fabricated. See
+    # `ReviewLabelModel.reviewed_by_user_id`.
+    reviewed_by_user_id: str | None = None
     # Server-computed from `review_origin` via `mockingbird.review_
     # provenance.is_authority_eligible` -- never client-supplied directly,
     # so a caller cannot simply assert authority without an eligible
@@ -4052,6 +4059,17 @@ class ReviewCorrectionCreate(BaseModel):
     # signal. See docs/review-decision-provenance-contract.md.
     review_origin: ReviewOrigin | None = None
     reviewer_identity: str | None = Field(default=None, max_length=256)
+    # Local Identity, Multi-User & Organization Access v1: optional so
+    # every existing non-interactive caller (bulk-correct's internal reuse
+    # of this same schema shape, demo-seed data, offline/CLI callers) is
+    # entirely unaffected -- omitting it preserves today's exact last-
+    # write-wins behavior. The product's own interactive single-Visit
+    # review UI always supplies the `review_state_token` it just fetched;
+    # see `mockingbird.api.main.create_review_label`, which enforces a
+    # mismatch as HTTP 409 exactly like `VisitReviewRevisionCreate` already
+    # does below -- reusing that same tested mechanism rather than adding
+    # a second one.
+    expected_state_token: str | None = Field(default=None, min_length=1, max_length=256)
 
 
 class VisitReviewRevisionCreate(BaseModel):
@@ -7219,3 +7237,136 @@ def _ensure_json_compatible(value: Any, field_name: str) -> None:
         json.dumps(value, allow_nan=False)
     except (TypeError, ValueError) as error:
         raise ValueError(f"{field_name} must be JSON-compatible") from error
+
+
+# --- Local Identity, Multi-User & Organization Access v1 -------------------
+# See docs/local-identity-multi-user-contract.md. A deliberately small
+# 3-value role ladder (Viewer < Reviewer < Administrator) -- see
+# `mockingbird.api.auth.Role` for the ordering/comparison logic used by
+# the authorization middleware; this Enum is the wire representation only.
+
+
+class UserRole(str, Enum):
+    viewer = "viewer"
+    reviewer = "reviewer"
+    administrator = "administrator"
+
+
+class CurrentUser(BaseModel):
+    """The signed-in identity of the caller making this request -- returned
+    by sign-in and `GET /api/auth/session`, and embedded nowhere else (the
+    frontend account menu/review provenance reuses this one shape)."""
+
+    id: str
+    display_name: str
+    login_identity: str
+    role: UserRole
+    enabled: bool
+
+
+class SignInRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    login_identity: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=1, max_length=256)
+
+
+class SelfPasswordChangeRequest(BaseModel):
+    """A signed-in user changing their own password -- requires proving the
+    current one, unlike an Administrator's reset of someone else's."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=1, max_length=256)
+
+
+class UserSummary(BaseModel):
+    """Administrator-facing user listing/detail. Never includes
+    `password_hash` or any session token -- see docs/local-identity-multi-
+    user-contract.md "Privacy"."""
+
+    id: str
+    display_name: str
+    login_identity: str
+    role: UserRole
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class UserCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str = Field(min_length=1, max_length=128)
+    login_identity: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=1, max_length=256)
+    role: UserRole
+
+
+class UserRoleUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: UserRole
+
+
+class UserEnabledUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+
+
+class AdminPasswordResetRequest(BaseModel):
+    """An Administrator setting someone else's password -- no current-
+    password proof required (that's the whole point of a reset), unlike
+    `SelfPasswordChangeRequest`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    new_password: str = Field(min_length=1, max_length=256)
+
+
+class AdministratorBootstrapRequest(BaseModel):
+    """First-run administrator creation -- see `mockingbird.api.auth.
+    create_first_administrator`. No `role` field: the very first account is
+    always Administrator, by construction, never client-chosen."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str = Field(min_length=1, max_length=128)
+    login_identity: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=1, max_length=256)
+
+
+class AuditLogEntry(BaseModel):
+    """One durable audit-trail row (see AuditLogEntryModel). `actor_display_
+    name` is a point-in-time snapshot -- it does not change if the actor is
+    later renamed/disabled."""
+
+    id: str
+    created_at: datetime
+    actor_user_id: str | None = None
+    actor_display_name: str | None = None
+    action: str
+    target_type: str | None = None
+    target_id: str | None = None
+    metadata: dict[str, Any] | None = None
+    correlation_id: str | None = None
+
+
+class InstallationSettings(BaseModel):
+    """Lightweight installation-level display metadata only -- never an
+    `Organization` tenancy record (see InstallationSettingsModel)."""
+
+    installation_name: str | None = None
+    organization_name: str | None = None
+    contact_display: str | None = None
+    updated_at: datetime
+
+
+class InstallationSettingsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    installation_name: str | None = Field(default=None, max_length=128)
+    organization_name: str | None = Field(default=None, max_length=128)
+    contact_display: str | None = Field(default=None, max_length=256)

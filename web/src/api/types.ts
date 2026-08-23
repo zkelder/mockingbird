@@ -4906,6 +4906,88 @@ export interface SetupStateUpdate {
   last_created_stream_id?: string | null;
 }
 
+// --- Local Identity, Multi-User & Organization Access v1 -------------------
+
+export type UserRole = "viewer" | "reviewer" | "administrator";
+
+export interface CurrentUser {
+  id: string;
+  display_name: string;
+  login_identity: string;
+  role: UserRole;
+  enabled: boolean;
+}
+
+export interface UserSummary {
+  id: string;
+  display_name: string;
+  login_identity: string;
+  role: UserRole;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdministratorBootstrapRequest {
+  display_name: string;
+  login_identity: string;
+  password: string;
+}
+
+export interface SignInRequest {
+  login_identity: string;
+  password: string;
+}
+
+export interface SelfPasswordChangeRequest {
+  current_password: string;
+  new_password: string;
+}
+
+export interface UserCreate {
+  display_name: string;
+  login_identity: string;
+  password: string;
+  role: UserRole;
+}
+
+export interface UserRoleUpdate {
+  role: UserRole;
+}
+
+export interface UserEnabledUpdate {
+  enabled: boolean;
+}
+
+export interface AdminPasswordResetRequest {
+  new_password: string;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  created_at: string;
+  actor_user_id?: string | null;
+  actor_display_name?: string | null;
+  action: string;
+  target_type?: string | null;
+  target_id?: string | null;
+  metadata?: Record<string, unknown> | null;
+  correlation_id?: string | null;
+}
+
+export interface InstallationSettings {
+  installation_name?: string | null;
+  organization_name?: string | null;
+  contact_display?: string | null;
+  updated_at: string;
+}
+
+export interface InstallationSettingsUpdate {
+  installation_name?: string | null;
+  organization_name?: string | null;
+  contact_display?: string | null;
+}
+
 export interface ProductHealthStatus {
   app_version: string;
   ready: boolean;

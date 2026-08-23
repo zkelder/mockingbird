@@ -28,6 +28,15 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 from mockingbird import __version__ as APP_VERSION
+from mockingbird.api.auth import (
+    build_admin_users_router,
+    build_auth_router,
+    current_user_or_401,
+    install_authorization,
+    set_session_cookie,
+    setup_mutation_allowed,
+    user_mutation_http_error as _user_mutation_http_error,
+)
 from mockingbird.api.camera_node_transport import (
     TRANSPORT_PROTOCOL_VERSION,
     build_camera_node_transport_router,
@@ -41,6 +50,7 @@ from mockingbird.diagnostics.error_taxonomy import (
 from mockingbird.diagnostics.structured_log import log_error_event
 from mockingbird.research.camtrap_dp import CAMTRAP_DP_PROFILE_VERSION
 from mockingbird.research.research_export import RESEARCH_EXPORT_SCHEMA_VERSION
+from mockingbird.security.passwords import WeakPasswordError
 from mockingbird.api.schemas import (
     CamtrapDpExportRequest,
     CamtrapDpExportResponse,
@@ -375,6 +385,10 @@ from mockingbird.api.schemas import (
     ZoneMutationResult,
     ZoneType,
     ZoneUpdate,
+    AdministratorBootstrapRequest,
+    CurrentUser,
+    InstallationSettings,
+    InstallationSettingsUpdate,
 )
 from mockingbird.motion import (
     MotionCandidate,
@@ -661,6 +675,12 @@ app.include_router(
         ),
     )
 )
+
+# Local Identity, Multi-User & Organization Access v1: same deferred-
+# lookup reasoning as the router immediately above -- `get_repository` is
+# defined further below and cannot be passed directly here yet.
+app.include_router(build_auth_router(lambda: get_repository()))
+app.include_router(build_admin_users_router(lambda: get_repository()))
 
 # A request's own correlation id, bounded to a plain hex token so it is
 # always safe to echo back and to fold into a log line/structured-error
@@ -9244,7 +9264,7 @@ def _camera_node_pairing_http_error(error: CameraNodeClientError) -> HTTPExcepti
 
 
 @app.post("/api/camera-nodes/pair", response_model=CameraNodePairResponse)
-async def pair_camera_node(payload: CameraNodePairRequest) -> CameraNodePairResponse:
+async def pair_camera_node(payload: CameraNodePairRequest, request: Request) -> CameraNodePairResponse:
     """Make the explicitly requested, bounded LAN pairing call exactly once.
 
     The Node's one-time code is consumed by the instant `pair()` below
@@ -9255,6 +9275,7 @@ async def pair_camera_node(payload: CameraNodePairRequest) -> CameraNodePairResp
     Node that already accepted its code.
     """
 
+    current_user = current_user_or_401(request)
     try:
         # Health is deliberately an actual request so "Node found" is never metadata-only.
         get_camera_node_client().health(payload.base_address)
@@ -9271,6 +9292,12 @@ async def pair_camera_node(payload: CameraNodePairRequest) -> CameraNodePairResp
                 pairing=pairing,
             )
         )
+    )
+    get_repository().record_audit_event(
+        actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+        action="camera_node.paired", target_type="camera_node", target_id=pairing.node_id,
+        metadata={"display_name": pairing.display_name},
+        correlation_id=getattr(request.state, "request_id", None),
     )
     return CameraNodePairResponse(
         pairing_token=pending.pairing_token,
@@ -9395,7 +9422,8 @@ async def preview_camera_node(payload: CameraNodePreviewRequest) -> Response:
 
 
 @app.post("/api/camera-nodes/pair/revoke", status_code=204)
-async def revoke_camera_node_pairing(payload: CameraNodePairRevokeRequest) -> Response:
+async def revoke_camera_node_pairing(payload: CameraNodePairRevokeRequest, request: Request) -> Response:
+    current_user = current_user_or_401(request)
     repository = get_repository()
     try:
         secret = repository.camera_node_pairing_secret(payload.stream_id)
@@ -9414,6 +9442,11 @@ async def revoke_camera_node_pairing(payload: CameraNodePairRevokeRequest) -> Re
         raise HTTPException(status_code=502, detail="Camera Node could not confirm pairing revocation.") from None
     get_durable_monitoring_supervisor().stop_stream_for_configuration(payload.stream_id)
     repository.revoke_camera_node_pairing(payload.stream_id)
+    repository.record_audit_event(
+        actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+        action="camera_node.pairing_revoked", target_type="stream", target_id=payload.stream_id,
+        metadata=None, correlation_id=getattr(request.state, "request_id", None),
+    )
     return Response(status_code=204)
 
 
@@ -9501,9 +9534,12 @@ async def complete_camera_setup(
 )
 async def create_camera_source(
     payload: CameraSourceCreate,
+    request: Request,
 ) -> CameraSourceCreateResponse:
+    current_user = current_user_or_401(request)
+    repository = get_repository()
     try:
-        return get_repository().create_camera_source(payload)
+        result = repository.create_camera_source(payload)
     except ValueError as error:
         if str(error) == "source_name_exists":
             raise HTTPException(
@@ -9511,6 +9547,13 @@ async def create_camera_source(
                 detail="A camera with that name already exists.",
             ) from error
         raise
+    repository.record_audit_event(
+        actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+        action="camera.created", target_type="source", target_id=result.source.id,
+        metadata={"name": payload.name},
+        correlation_id=getattr(request.state, "request_id", None),
+    )
+    return result
 
 
 @app.patch(
@@ -9520,7 +9563,9 @@ async def create_camera_source(
 async def update_camera_source(
     source_id: str,
     payload: CameraSourceUpdate,
+    request: Request,
 ) -> CameraSourceMutationResult:
+    current_user = current_user_or_401(request)
     repository = get_repository()
     try:
         result = repository.update_camera_source(source_id, payload)
@@ -9538,6 +9583,13 @@ async def update_camera_source(
         raise
     if result is None:
         raise _not_found("Source", source_id)
+    repository.record_audit_event(
+        actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+        action="camera.archived" if payload.archived else "camera.reconfigured",
+        target_type="source", target_id=source_id,
+        metadata={"archived": payload.archived} if payload.archived is not None else None,
+        correlation_id=getattr(request.state, "request_id", None),
+    )
 
     if payload.archived is True:
         # Archiving preserves product records but explicitly cancels future restart.
@@ -10917,7 +10969,9 @@ async def preview_camera_configuration(
 async def apply_camera_configuration(
     stream_id: str,
     payload: CameraConfigurationApplyRequest,
+    request: Request,
 ) -> CameraConfigurationApplyResponse:
+    current_user = current_user_or_401(request)
     try:
         result = await CameraConfigurationApplicationService(get_repository()).apply(
             stream_id,
@@ -10936,6 +10990,13 @@ async def apply_camera_configuration(
     get_tracked_activity_detector_manager().reset(stream_id)
     if _live_object_detector_manager is not None:
         _live_object_detector_manager.reset(stream_id)
+    get_repository().record_audit_event(
+        actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+        action="camera_node.replaced" if payload.confirm_node_identity_change else "camera.reconfigured",
+        target_type="stream", target_id=stream_id,
+        metadata={"replacement_reason": payload.replacement_reason} if payload.confirm_node_identity_change else None,
+        correlation_id=getattr(request.state, "request_id", None),
+    )
     return result
 
 
@@ -12428,8 +12489,12 @@ async def restore_zone_monitoring_policy_defaults(zone_id: str) -> ZoneMonitorin
     return _zone_monitoring_policy_or_restricted(zone)
 
 
+_PRIVACY_ZONE_TYPES = {ZoneType.privacy, ZoneType.ignore}
+
+
 @app.post("/api/zones", response_model=ZoneMutationResult, status_code=201)
-async def create_zone(payload: ZoneCreate) -> ZoneMutationResult:
+async def create_zone(payload: ZoneCreate, request: Request) -> ZoneMutationResult:
+    current_user = current_user_or_401(request)
     repository = get_repository()
     stream = repository.get_stream(payload.stream_id)
     if stream is None:
@@ -12440,6 +12505,13 @@ async def create_zone(payload: ZoneCreate) -> ZoneMutationResult:
     # Zones are user-authored stream context; later detections and events should
     # respect privacy and ignore zones without making adapters the product center.
     zone = repository.create_zone(payload)
+    repository.record_audit_event(
+        actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+        action="zone.privacy_changed" if payload.zone_type in _PRIVACY_ZONE_TYPES else "zone.created",
+        target_type="zone", target_id=zone.id,
+        metadata={"name": payload.name, "zone_type": payload.zone_type.value},
+        correlation_id=getattr(request.state, "request_id", None),
+    )
     return ZoneMutationResult(
         zone=zone,
         zones=repository.zones_for_stream(zone.stream_id),
@@ -12447,7 +12519,8 @@ async def create_zone(payload: ZoneCreate) -> ZoneMutationResult:
 
 
 @app.patch("/api/zones/{zone_id}", response_model=ZoneMutationResult)
-async def update_zone(zone_id: str, payload: ZoneUpdate) -> ZoneMutationResult:
+async def update_zone(zone_id: str, payload: ZoneUpdate, request: Request) -> ZoneMutationResult:
+    current_user = current_user_or_401(request)
     repository = get_repository()
     existing_zone = repository.get_zone(zone_id)
     if existing_zone is None:
@@ -12458,6 +12531,16 @@ async def update_zone(zone_id: str, payload: ZoneUpdate) -> ZoneMutationResult:
     zone = repository.update_zone(zone_id, payload)
     if zone is None:
         raise _not_found("Zone", zone_id)
+    privacy_relevant = (
+        payload.zone_type in _PRIVACY_ZONE_TYPES or existing_zone.zone_type in _PRIVACY_ZONE_TYPES
+    )
+    repository.record_audit_event(
+        actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+        action="zone.privacy_changed" if privacy_relevant else "zone.updated",
+        target_type="zone", target_id=zone_id,
+        metadata={"zone_type": payload.zone_type.value} if payload.zone_type is not None else None,
+        correlation_id=getattr(request.state, "request_id", None),
+    )
 
     return ZoneMutationResult(
         zone=zone,
@@ -12466,9 +12549,12 @@ async def update_zone(zone_id: str, payload: ZoneUpdate) -> ZoneMutationResult:
 
 
 @app.delete("/api/zones/{zone_id}", response_model=ZoneMutationResult)
-async def delete_zone(zone_id: str) -> ZoneMutationResult:
+async def delete_zone(zone_id: str, request: Request) -> ZoneMutationResult:
+    current_user = current_user_or_401(request)
+    repository = get_repository()
+    existing_zone = repository.get_zone(zone_id)
     try:
-        result = get_repository().delete_zone(zone_id)
+        result = repository.delete_zone(zone_id)
     except ValueError as error:
         if str(error) == "zone_has_review_context":
             raise HTTPException(
@@ -12482,6 +12568,16 @@ async def delete_zone(zone_id: str) -> ZoneMutationResult:
     if result is None:
         raise _not_found("Zone", zone_id)
     deleted_zone, zones = result
+    repository.record_audit_event(
+        actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+        action=(
+            "zone.privacy_changed"
+            if existing_zone is not None and existing_zone.zone_type in _PRIVACY_ZONE_TYPES
+            else "zone.deleted"
+        ),
+        target_type="zone", target_id=zone_id, metadata=None,
+        correlation_id=getattr(request.state, "request_id", None),
+    )
     return ZoneMutationResult(zone=deleted_zone, zones=zones)
 
 
@@ -13185,9 +13281,12 @@ async def reassign_visit_zone(
 async def revise_visit_review(
     visit_id: str,
     payload: VisitReviewRevisionCreate,
+    request: Request,
 ) -> VisitReviewRevisionResponse:
+    current_user = current_user_or_401(request)
+    repository = get_repository()
     try:
-        return get_repository().revise_visit_review(visit_id, payload)
+        result = repository.revise_visit_review(visit_id, payload, acting_user=current_user)
     except ReviewRevisionConflictError as error:
         if str(error) == "review_revision_requires_authority":
             raise HTTPException(
@@ -13203,6 +13302,13 @@ async def revise_visit_review(
         if str(error) == "missing_visit":
             raise _not_found("Visit", visit_id) from error
         raise HTTPException(status_code=400, detail="The reviewed Visit could not be revised.") from error
+    repository.record_audit_event(
+        actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+        action="review.corrected", target_type="visit", target_id=visit_id,
+        metadata={"new_label": payload.label, "review_action": "revision"},
+        correlation_id=getattr(request.state, "request_id", None),
+    )
+    return result
 
 
 @app.post(
@@ -13212,9 +13318,12 @@ async def revise_visit_review(
 async def reopen_visit_review(
     visit_id: str,
     payload: VisitReviewReopenCreate,
+    request: Request,
 ) -> VisitReviewReopenResponse:
+    current_user = current_user_or_401(request)
+    repository = get_repository()
     try:
-        return get_repository().reopen_visit_review(visit_id, payload)
+        result = repository.reopen_visit_review(visit_id, payload, acting_user=current_user)
     except ReviewRevisionConflictError as error:
         if str(error) == "review_reopen_requires_authority":
             raise HTTPException(
@@ -13230,6 +13339,12 @@ async def reopen_visit_review(
         if str(error) == "missing_visit":
             raise _not_found("Visit", visit_id) from error
         raise HTTPException(status_code=400, detail="The reviewed Visit could not be reopened.") from error
+    repository.record_audit_event(
+        actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+        action="review.reopened", target_type="visit", target_id=visit_id, metadata=None,
+        correlation_id=getattr(request.state, "request_id", None),
+    )
+    return result
 
 
 def _yard_map_http_error(error: ValueError, *, item: str = "Yard Map") -> HTTPException:
@@ -14032,9 +14147,12 @@ async def navigate_fast_review_queue(
 )
 async def create_fast_review_correction(
     payload: FastReviewCorrectionCreate,
+    request: Request,
 ) -> FastReviewCorrectionResponse:
+    current_user = current_user_or_401(request)
+    repository = get_repository()
     try:
-        return get_repository().create_fast_review_correction(payload)
+        result = repository.create_fast_review_correction(payload, acting_user=current_user)
     except FastReviewConflictError as error:
         # A queued Visit can be corrected in another tab; never append a second truth row.
         raise HTTPException(status_code=409, detail="Fast Review item is stale or already resolved.") from error
@@ -14044,6 +14162,13 @@ async def create_fast_review_correction(
         if str(error) == "fast_review_visits_only":
             raise HTTPException(status_code=400, detail="Fast Review is available for Visits only.") from error
         raise HTTPException(status_code=400, detail="Fast Review correction could not be saved.") from error
+    repository.record_audit_event(
+        actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+        action="review.corrected", target_type="visit", target_id=payload.target_id,
+        metadata={"new_label": payload.label, "review_action": "fast_review"},
+        correlation_id=getattr(request.state, "request_id", None),
+    )
+    return result
 
 
 @app.post(
@@ -14052,9 +14177,12 @@ async def create_fast_review_correction(
 )
 async def undo_fast_review_correction(
     payload: FastReviewUndoRequest,
+    request: Request,
 ) -> FastReviewUndoResponse:
+    current_user = current_user_or_401(request)
+    repository = get_repository()
     try:
-        return get_repository().undo_fast_review_correction(payload)
+        result = repository.undo_fast_review_correction(payload, acting_user=current_user)
     except FastReviewConflictError as error:
         # Undo is deliberately limited to the caller's latest un-replaced correction.
         raise HTTPException(status_code=409, detail="Fast Review undo is no longer available.") from error
@@ -14062,6 +14190,12 @@ async def undo_fast_review_correction(
         if str(error) == "missing_visit":
             raise _not_found("Visit", payload.review_label_id) from error
         raise HTTPException(status_code=400, detail="Fast Review undo could not be completed.") from error
+    repository.record_audit_event(
+        actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+        action="review.fast_review_undo", target_type="review_label", target_id=payload.review_label_id,
+        metadata=None, correlation_id=getattr(request.state, "request_id", None),
+    )
+    return result
 
 
 @app.post(
@@ -14106,9 +14240,12 @@ def identify_review_queue_item(
 )
 async def bulk_correct_review_queue_items(
     payload: ReviewQueueBulkCorrectionRequest,
+    request: Request,
 ) -> ReviewQueueBulkCorrectionResponse:
+    current_user = current_user_or_401(request)
+    repository = get_repository()
     try:
-        return get_repository().bulk_correct_review_queue_items(payload)
+        result = repository.bulk_correct_review_queue_items(payload, acting_user=current_user)
     except ValueError as error:
         if str(error) == "missing_review_label":
             raise HTTPException(
@@ -14117,6 +14254,18 @@ async def bulk_correct_review_queue_items(
         raise HTTPException(
             status_code=400, detail="Review Queue bulk correction failed."
         ) from error
+    # One summary entry per bulk action, not one per affected row -- see
+    # AuditLogEntryModel's own docstring on staying material, not noisy.
+    repository.record_audit_event(
+        actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+        action="review.bulk_corrected", target_type="review_queue_bulk", target_id=None,
+        metadata={
+            "new_label": payload.label, "target_type": payload.target_type.value,
+            "target_count": len(payload.target_ids),
+        },
+        correlation_id=getattr(request.state, "request_id", None),
+    )
+    return result
 
 
 @app.get("/api/review-labels", response_model=list[ReviewLabel])
@@ -14127,23 +14276,35 @@ async def list_review_labels() -> list[ReviewLabel]:
 @app.post("/api/review-labels", response_model=ReviewCorrectionResult, status_code=201)
 async def create_review_label(
     payload: ReviewCorrectionCreate,
+    request: Request,
 ) -> ReviewCorrectionResult:
+    current_user = current_user_or_401(request)
     repository = get_repository()
 
     if payload.target_type == "visit":
         if repository.get_visit(payload.target_id) is None:
             raise _not_found("Visit", payload.target_id)
-
-        # Review labels are user-confirmed dataset truth; detections remain evidence.
-        return repository.create_review_label(payload)
-
-    if payload.target_type == "event":
+    elif payload.target_type == "event":
         if repository.get_event(payload.target_id) is None:
             raise _not_found("Event", payload.target_id)
+    else:
+        raise _unsupported_target(payload.target_type)
 
-        return repository.create_review_label(payload)
-
-    raise _unsupported_target(payload.target_type)
+    # Review labels are user-confirmed dataset truth; detections remain evidence.
+    try:
+        result = repository.create_review_label(payload, acting_user=current_user)
+    except ReviewRevisionConflictError as error:
+        raise HTTPException(
+            status_code=409,
+            detail="This item changed. Refresh it before saving a correction.",
+        ) from error
+    repository.record_audit_event(
+        actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+        action="review.corrected", target_type=payload.target_type, target_id=payload.target_id,
+        metadata={"new_label": payload.label, "review_action": "correction"},
+        correlation_id=getattr(request.state, "request_id", None),
+    )
+    return result
 
 
 @app.post(
@@ -14499,10 +14660,56 @@ async def get_setup_state() -> SetupState:
 
 
 @app.put("/api/setup/state", response_model=SetupState)
-async def update_setup_state(payload: SetupStateUpdate) -> SetupState:
-    """Persist explicit first-run wizard progress. Creates no Source/Stream/Zone."""
+async def update_setup_state(payload: SetupStateUpdate, request: Request) -> SetupState:
+    """Persist explicit first-run wizard progress. Creates no Source/Stream/Zone.
 
-    return get_repository().update_setup_state(payload)
+    Local Identity, Multi-User & Organization Access v1: this endpoint is
+    tier `public` at the transport gate (a fresh install has no signed-in
+    user yet, and the wizard's `"welcome"`/`"account"` steps must both work
+    before one exists) but enforces its own narrower rule here once real
+    accounts exist -- see `setup_mutation_allowed`'s own docstring.
+    """
+
+    repository = get_repository()
+    if not setup_mutation_allowed(repository, request):
+        raise HTTPException(
+            status_code=403, detail="Sign in as an Administrator to change setup state."
+        )
+    return repository.update_setup_state(payload)
+
+
+@app.post("/api/setup/administrator", response_model=CurrentUser, status_code=201)
+async def create_first_administrator_endpoint(
+    payload: AdministratorBootstrapRequest, request: Request, response: Response
+) -> CurrentUser:
+    """First-run administrator bootstrap -- the onboarding wizard's new
+    `"account"` step (see docs/local-identity-multi-user-contract.md
+    "First-run administrator"). Tier `public` at the transport gate;
+    `ProductRepository.create_first_administrator` is itself the real,
+    race-safe, replay-proof guard (refuses once any enabled Administrator
+    already exists, regardless of who calls it or whether they are
+    signed in)."""
+
+    repository = get_repository()
+    try:
+        current_user, token = repository.create_first_administrator(payload)
+    except WeakPasswordError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except ValueError as error:
+        raise _user_mutation_http_error(error) from error
+    set_session_cookie(
+        request, response, token, max_age_seconds=int(repository.SESSION_LIFETIME.total_seconds())
+    )
+    return current_user
+
+
+@app.get("/api/settings/installation", response_model=InstallationSettings)
+async def get_installation_settings() -> InstallationSettings:
+    """Public read (see `mockingbird.api.auth._ALWAYS_PUBLIC_PATHS`): lets a
+    signed-out sign-in screen show this Host's installation/organization
+    name. Never anything sensitive -- display metadata only."""
+
+    return get_repository().get_installation_settings()
 
 
 def _storage_retention_http_error(error: ValueError) -> HTTPException:
@@ -14550,13 +14757,23 @@ def get_storage_retention_settings() -> StorageRetentionSettings:
 @app.put("/api/settings/storage-retention", response_model=StorageRetentionSettings)
 def update_storage_retention_settings(
     payload: StorageRetentionSettingsUpdate,
+    request: Request,
 ) -> StorageRetentionSettings:
+    current_user = current_user_or_401(request)
+    repository = get_repository()
     _acquire_storage_maintenance_window()
     try:
-        settings, _idempotent = get_repository().update_storage_retention_settings(payload)
+        settings, idempotent = repository.update_storage_retention_settings(payload)
         _sync_local_storage_retention_service(
             enabled=settings.automatic_cleanup_enabled,
         )
+        if not idempotent:
+            repository.record_audit_event(
+                actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+                action="storage.retention_updated", target_type="storage_retention_settings", target_id="1",
+                metadata={"automatic_cleanup_enabled": settings.automatic_cleanup_enabled},
+                correlation_id=getattr(request.state, "request_id", None),
+            )
         return settings
     finally:
         _backup_operation_lock.release()
@@ -14767,7 +14984,21 @@ def plan_local_backup_restore(
 def restore_local_backup(
     backup_id: str,
     payload: LocalBackupRestoreRequest,
+    request: Request,
 ) -> LocalBackupRestoreResponse:
+    # Deliberately NOT resolved here at the top (unlike this file's other
+    # modified handlers): real authorization already happened in the
+    # central middleware before this handler ever ran, so this call's only
+    # remaining job is fetching the identity to attribute the audit entry
+    # to -- there is nothing to gate this early for. Resolved instead
+    # right before that one use, below, so a request this handler itself
+    # goes on to reject (unconfirmed, storage-layout mismatch, etc.) never
+    # touches the database at all -- confirmed necessary by a real test
+    # failure: `test_restore_plan_api_is_explicit_read_only_and_redacted`
+    # asserts a rejected restore leaves the live database byte-for-byte
+    # unchanged, which an early resolution's test-only synthetic-user
+    # side effect (see `mockingbird.api.auth._ensure_test_default_user_
+    # row`) violated.
     if not payload.confirm:
         raise HTTPException(
             status_code=400, detail="Confirm restore before replacing local data."
@@ -14828,6 +15059,22 @@ def restore_local_backup(
         restored_repository_configured = True
         restored_status = restored_repository.local_data_status()
         transaction.commit()
+
+        # Recorded into the newly-active (restored) database, not the one
+        # just replaced -- a "backup restored" entry is only meaningful as
+        # part of the database it now describes going forward. See
+        # docs/local-identity-multi-user-contract.md "Backup/restore
+        # identity behavior": durable users/roles/audit history restore
+        # with the backup by construction (an ordinary table like any
+        # other), so this is the same audit_log_entries table the restored
+        # database already carried.
+        current_user = current_user_or_401(request)
+        restored_repository.record_audit_event(
+            actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+            action="backup.restored", target_type="backup", target_id=backup_id,
+            metadata={"rebind_managed_storage": payload.rebind_managed_storage},
+            correlation_id=getattr(request.state, "request_id", None),
+        )
 
         return LocalBackupRestoreResponse(
             restored_backup=_local_backup_summary(selected.backup),
@@ -14942,3 +15189,12 @@ async def get_web_app_root() -> Response:
 @app.get("/{full_path:path}", include_in_schema=False)
 async def get_web_app_route(full_path: str) -> Response:
     return frontend_response(full_path)
+
+
+# Local Identity, Multi-User & Organization Access v1: installed last, once
+# every route above (including the two `include_router` calls near the top
+# of this file) is registered -- see `install_authorization`'s own
+# docstring for why route *registration* order relative to this call does
+# not itself matter, and docs/local-identity-multi-user-contract.md
+# "Authorization" for the full policy table this enforces.
+install_authorization(app, get_repository=lambda: get_repository())

@@ -2,6 +2,7 @@ import { defineConfig } from "@playwright/test";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { storageStatePath } from "./e2e/global-setup";
 
 const webRoot = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(webRoot, "..");
@@ -37,6 +38,15 @@ const edgeIsInstalled =
 
 export default defineConfig({
   testDir: "./e2e",
+  // onboarding.spec.ts already runs -- exhaustively -- against its own
+  // genuinely fresh instance via playwright.onboarding.config.ts (see
+  // that spec file's own header comment: "separate from the shared
+  // suite's already-configured instance"). This suite's new `globalSetup`
+  // below pre-authenticates its shared instance for the other ~18 spec
+  // files, which is directly incompatible with onboarding.spec.ts's own
+  // "genuinely fresh, no administrator yet" premise -- exclude it here
+  // rather than have the two configs silently fight over one file.
+  testIgnore: ["**/onboarding.spec.ts"],
   fullyParallel: false,
   workers: 1,
   retries: 0,
@@ -46,10 +56,18 @@ export default defineConfig({
   expect: {
     timeout: 10_000,
   },
+  // Local Identity, Multi-User & Organization Access v1: this suite's
+  // ~18 pre-existing spec files predate real authentication. `globalSetup`
+  // bootstraps a real Administrator on this run's own isolated instance
+  // once and marks onboarding complete; every test in every spec file
+  // then starts already signed in via this shared `storageState`, with no
+  // change needed to any of those files. See e2e/global-setup.ts.
+  globalSetup: "./e2e/global-setup.ts",
   use: {
     baseURL,
     headless: true,
     trace: "retain-on-failure",
+    storageState: storageStatePath(runtimeRoot),
     ...(configuredChannel || edgeIsInstalled
       ? { channel: configuredChannel || "msedge" }
       : {}),

@@ -33,6 +33,16 @@ from sqlalchemy import (
 from sqlalchemy import Engine, and_, delete, func, or_, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
+from mockingbird.security.passwords import (
+    WeakPasswordError,
+    generate_session_token,
+    hash_password,
+    hash_session_token,
+    needs_rehash,
+    validate_password_strength,
+    verify_password,
+)
+
 from mockingbird.analytics.historical_baseline import (
     HISTORICAL_BASELINE_WINDOW_DAYS,
     MIN_DISTINCT_USABLE_DAYS_FOR_REGULAR,
@@ -646,6 +656,19 @@ from mockingbird.api.schemas import (
     ZoneInsightsZone,
     ZoneType,
     ZoneUpdate,
+    AdminPasswordResetRequest,
+    AdministratorBootstrapRequest,
+    AuditLogEntry,
+    CurrentUser,
+    InstallationSettings,
+    InstallationSettingsUpdate,
+    SelfPasswordChangeRequest,
+    SignInRequest,
+    UserCreate,
+    UserEnabledUpdate,
+    UserRole,
+    UserRoleUpdate,
+    UserSummary,
 )
 from mockingbird.playback import local_camera_bridge, rtsp_bridge, windows_camera_bridge
 from mockingbird.monitoring.durable_supervisor import DurableMonitoringCandidate
@@ -674,6 +697,7 @@ from mockingbird.storage.database import (
 from mockingbird.storage.models import (
     ActivityLibrarySavedViewModel,
     AppSetupStateModel,
+    AuditLogEntryModel,
     Base,
     BioClipIdentificationAttemptModel,
     CameraSetupOperationModel,
@@ -690,6 +714,7 @@ from mockingbird.storage.models import (
     DetectionProposalModel,
     DetectionRunModel,
     EventModel,
+    InstallationSettingsModel,
     MediaAssetModel,
     MonitoringExposureIntervalModel,
     ProductAlertModel,
@@ -707,6 +732,8 @@ from mockingbird.storage.models import (
     SpeciesCandidatePackModel,
     StreamSpeciesCandidatePackSelectionModel,
     TaxonomyLabelModel,
+    UserModel,
+    UserSessionModel,
     VisitCurationHistoryModel,
     VisitEvidenceLinkModel,
     VisitRelationshipModel,
@@ -3532,6 +3559,14 @@ class ProductRepository:
         # local-first, single-application-runtime product boundary), not
         # cross-process database-level locking.
         self._observation_authority_lock = threading.Lock()
+        # Local Identity, Multi-User & Organization Access v1: guards the
+        # same class of check-then-create critical section as `_observation_
+        # authority_lock` immediately above (first-run administrator
+        # bootstrap must be race-safe if two clients submit simultaneously)
+        # -- identical rationale, identical coarse in-process lock, not
+        # cross-process database-level locking. See `create_first_
+        # administrator`.
+        self._administrator_bootstrap_lock = threading.Lock()
         # Appliance / Storage / Privacy / Recovery v1, Phase B: `storage_
         # summary()` is a full-`MediaAssetModel`-table scan with several
         # queries per row -- exactly the "expensive scan on every page
@@ -3563,6 +3598,513 @@ class ProductRepository:
                 if source_count > 0:
                     return
                 self._seed_session(session)
+
+    # --- Local Identity, Multi-User & Organization Access v1 ---------------
+    # See docs/local-identity-multi-user-contract.md. Kept as one
+    # contiguous block since every method below shares the new `users`/
+    # `user_sessions`/`audit_log_entries`/`installation_settings` tables
+    # (schema 50) and nothing else in this class touches them.
+
+    SESSION_LIFETIME = timedelta(days=30)
+    _SESSION_RENEWAL_THRESHOLD = timedelta(hours=1)
+
+    @staticmethod
+    def _user_summary(model: UserModel) -> UserSummary:
+        return UserSummary(
+            id=model.id,
+            display_name=model.display_name,
+            login_identity=model.login_identity,
+            role=UserRole(model.role),
+            enabled=model.enabled,
+            created_at=_as_utc(model.created_at),
+            updated_at=_as_utc(model.updated_at),
+        )
+
+    @staticmethod
+    def _current_user(model: UserModel) -> CurrentUser:
+        return CurrentUser(
+            id=model.id,
+            display_name=model.display_name,
+            login_identity=model.login_identity,
+            role=UserRole(model.role),
+            enabled=model.enabled,
+        )
+
+    def _create_session_in_session(self, session: Session, *, user_id: str, now: datetime) -> str:
+        token = generate_session_token()
+        session.add(
+            UserSessionModel(
+                id=f"session-{uuid.uuid4().hex[:16]}",
+                user_id=user_id,
+                token_hash=hash_session_token(token),
+                created_at=now,
+                last_seen_at=now,
+                expires_at=now + self.SESSION_LIFETIME,
+                revoked_at=None,
+            )
+        )
+        return token
+
+    @staticmethod
+    def _revoke_all_sessions_in_session(
+        session: Session, *, user_id: str, now: datetime, except_token_hash: str | None = None,
+    ) -> None:
+        rows = session.scalars(
+            select(UserSessionModel).where(
+                UserSessionModel.user_id == user_id, UserSessionModel.revoked_at.is_(None)
+            )
+        )
+        for row in rows:
+            if except_token_hash is not None and row.token_hash == except_token_hash:
+                continue
+            row.revoked_at = now
+
+    def _record_audit_event_in_session(
+        self,
+        session: Session,
+        *,
+        now: datetime,
+        actor_user_id: str | None,
+        actor_display_name: str | None,
+        action: str,
+        target_type: str | None = None,
+        target_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        correlation_id: str | None = None,
+    ) -> None:
+        session.add(
+            AuditLogEntryModel(
+                id=f"audit-{uuid.uuid4().hex[:16]}",
+                created_at=now,
+                actor_user_id=actor_user_id,
+                actor_display_name=actor_display_name,
+                action=action,
+                target_type=target_type,
+                target_id=target_id,
+                metadata_json=json.dumps(metadata) if metadata is not None else None,
+                correlation_id=correlation_id,
+            )
+        )
+
+    def record_audit_event(
+        self,
+        *,
+        actor_user_id: str | None,
+        actor_display_name: str | None,
+        action: str,
+        target_type: str | None = None,
+        target_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        correlation_id: str | None = None,
+    ) -> None:
+        """Standalone audit-entry write for call sites in `mockingbird.api.
+        main` that are not themselves one of this class's own identity
+        methods below -- its own short transaction, called immediately
+        after an already-committed mutation succeeds, rather than
+        threading an actor/correlation-id parameter through dozens of
+        pre-existing method signatures across this file. See
+        `AuditLogEntryModel`'s own docstring for what belongs (and never
+        belongs, e.g. secrets, raw request bodies) in `metadata`.
+        """
+
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                self._record_audit_event_in_session(
+                    session, now=now, actor_user_id=actor_user_id, actor_display_name=actor_display_name,
+                    action=action, target_type=target_type, target_id=target_id, metadata=metadata,
+                    correlation_id=correlation_id,
+                )
+
+    def list_audit_log(self, *, limit: int = 200) -> list[AuditLogEntry]:
+        with self.session_factory() as session:
+            models = session.scalars(
+                select(AuditLogEntryModel).order_by(AuditLogEntryModel.created_at.desc()).limit(limit)
+            ).all()
+            return [
+                AuditLogEntry(
+                    id=model.id, created_at=_as_utc(model.created_at), actor_user_id=model.actor_user_id,
+                    actor_display_name=model.actor_display_name, action=model.action,
+                    target_type=model.target_type, target_id=model.target_id,
+                    metadata=json.loads(model.metadata_json) if model.metadata_json else None,
+                    correlation_id=model.correlation_id,
+                )
+                for model in models
+            ]
+
+    def has_eligible_administrator(self) -> bool:
+        """Whether first-run administrator bootstrap should still be
+        offered. Re-evaluated live on every call (never a one-shot flag
+        cached anywhere) so a Host that somehow loses every enabled
+        Administrator can still recover rather than being permanently
+        locked out -- see `create_first_administrator`, and
+        `update_user_role`/`set_user_enabled` below, which each separately
+        refuse to let the *last* enabled Administrator be demoted/disabled
+        specifically to avoid ever reaching that state by accident (an
+        unauthenticated-bootstrap recovery window is a strictly bigger
+        exposure than preventing the self-lockout in the first place).
+        """
+
+        with self.session_factory() as session:
+            count = (
+                session.scalar(
+                    select(func.count(UserModel.id)).where(
+                        UserModel.role == UserRole.administrator.value, UserModel.enabled.is_(True)
+                    )
+                )
+                or 0
+            )
+            return count > 0
+
+    def create_first_administrator(
+        self, payload: AdministratorBootstrapRequest
+    ) -> tuple[CurrentUser, str]:
+        """Race-safe first-run bootstrap. Returns the new Administrator
+        plus a fresh raw session token -- the caller sets it as the
+        session cookie immediately, so first-run setup ends signed in
+        rather than requiring a second explicit sign-in step.
+
+        Guarded by `_administrator_bootstrap_lock`: the same coarse in-
+        process critical-section pattern `_observation_authority_lock`
+        already established in this class's constructor -- correct for
+        this product's single-process local-first runtime (see that
+        lock's own docstring), not a claim of cross-process safety. Re-
+        checks "no enabled Administrator exists" *inside* the lock, never
+        trusting a caller's earlier, now possibly-stale
+        `has_eligible_administrator()` read, so two concurrent bootstrap
+        requests can never both win.
+        """
+
+        validate_password_strength(payload.password)
+        login_identity = payload.login_identity.strip().lower()
+        if not login_identity:
+            raise ValueError("login_identity_required")
+
+        with self._administrator_bootstrap_lock:
+            if self.has_eligible_administrator():
+                raise ValueError("administrator_already_exists")
+            now = datetime.now(UTC)
+            with self.session_factory() as session:
+                with session.begin():
+                    if session.scalar(
+                        select(func.count(UserModel.id)).where(UserModel.login_identity == login_identity)
+                    ):
+                        raise ValueError("login_identity_already_exists")
+                    user = UserModel(
+                        id=f"user-{uuid.uuid4().hex[:16]}",
+                        display_name=payload.display_name.strip() or login_identity,
+                        login_identity=login_identity,
+                        password_hash=hash_password(payload.password),
+                        role=UserRole.administrator.value,
+                        enabled=True,
+                        created_at=now,
+                        updated_at=now,
+                        password_updated_at=now,
+                    )
+                    session.add(user)
+                    session.flush()
+                    token = self._create_session_in_session(session, user_id=user.id, now=now)
+                    self._record_audit_event_in_session(
+                        session, now=now, actor_user_id=user.id, actor_display_name=user.display_name,
+                        action="user.bootstrap_administrator", target_type="user", target_id=user.id,
+                        metadata={"login_identity": login_identity},
+                    )
+                    return self._current_user(user), token
+
+    def authenticate_user(self, payload: SignInRequest) -> tuple[CurrentUser, str] | None:
+        """Verify credentials and mint a new session. Returns `None` for
+        any failure -- unknown `login_identity`, wrong password, or a
+        disabled user -- deliberately the same generic outcome for all
+        three, so a sign-in attempt cannot be used to tell whether a given
+        `login_identity` exists at all versus merely being disabled.
+        """
+
+        login_identity = payload.login_identity.strip().lower()
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                user = session.scalar(select(UserModel).where(UserModel.login_identity == login_identity))
+                if user is None or not user.enabled:
+                    return None
+                if not verify_password(payload.password, user.password_hash):
+                    return None
+                if needs_rehash(user.password_hash):
+                    user.password_hash = hash_password(payload.password)
+                    user.updated_at = now
+                token = self._create_session_in_session(session, user_id=user.id, now=now)
+                return self._current_user(user), token
+
+    def resolve_session(self, raw_token: str) -> CurrentUser | None:
+        """Resolve a session cookie's raw token to the signed-in user.
+        Returns `None` (never raises) for anything that shouldn't
+        authenticate: unknown/garbled token, or a revoked or expired
+        session, or a disabled user. `UserModel.enabled`/`.role` are read
+        fresh here on every call -- the mechanism that lets a disable or
+        role change take effect on the very next request with no separate
+        revocation sweep (see `UserModel`'s own docstring). Throttles its
+        own `last_seen_at`/`expires_at` renewal write to once per
+        `_SESSION_RENEWAL_THRESHOLD` so an authenticated app is not doing a
+        write on literally every single request.
+
+        Deliberately does NOT also compare `UserModel.password_updated_at`
+        against this session's `created_at` as a second, independent
+        staleness check -- `change_own_password` already revokes every
+        *other* session explicitly (via `_revoke_all_sessions_in_session`)
+        while deliberately preserving the one making that very request (see
+        its own docstring for why); a blanket "session predates the last
+        password change" check here would silently re-invalidate exactly
+        that deliberately-preserved session, defeating the whole point of
+        the exemption. The explicit per-session `revoked_at` sweep at the
+        moment of the password change is the real, correct, sufficient
+        enforcement -- not a second timestamp comparison here.
+        """
+
+        if not raw_token:
+            return None
+        token_hash = hash_session_token(raw_token)
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                row = session.execute(
+                    select(UserSessionModel, UserModel)
+                    .join(UserModel, UserModel.id == UserSessionModel.user_id)
+                    .where(UserSessionModel.token_hash == token_hash)
+                ).one_or_none()
+                if row is None:
+                    return None
+                session_model, user = row
+                if session_model.revoked_at is not None:
+                    return None
+                # SQLite does not itself round-trip tzinfo through `DateTime
+                # (timezone=True)` -- every value read back here needs the
+                # same `normalize_utc` discipline already established
+                # elsewhere in this class (see `_as_utc`) before it is safe
+                # to compare against a fresh `datetime.now(UTC)`.
+                if normalize_utc(session_model.expires_at) <= now:
+                    return None
+                if not user.enabled:
+                    return None
+                if now - normalize_utc(session_model.last_seen_at) > self._SESSION_RENEWAL_THRESHOLD:
+                    session_model.last_seen_at = now
+                    session_model.expires_at = now + self.SESSION_LIFETIME
+                return self._current_user(user)
+
+    def revoke_session(self, raw_token: str) -> None:
+        """Sign out: revoke exactly the one session this cookie names.
+        Silently does nothing for an unknown/already-revoked token -- sign-
+        out is idempotent by design."""
+
+        if not raw_token:
+            return
+        token_hash = hash_session_token(raw_token)
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                session_model = session.scalar(
+                    select(UserSessionModel).where(UserSessionModel.token_hash == token_hash)
+                )
+                if session_model is not None and session_model.revoked_at is None:
+                    session_model.revoked_at = now
+
+    def list_users(self) -> list[UserSummary]:
+        with self.session_factory() as session:
+            models = session.scalars(select(UserModel).order_by(UserModel.created_at)).all()
+            return [self._user_summary(model) for model in models]
+
+    def create_user(self, payload: UserCreate, *, acting_user: CurrentUser) -> UserSummary:
+        validate_password_strength(payload.password)
+        login_identity = payload.login_identity.strip().lower()
+        if not login_identity:
+            raise ValueError("login_identity_required")
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                if session.scalar(
+                    select(func.count(UserModel.id)).where(UserModel.login_identity == login_identity)
+                ):
+                    raise ValueError("login_identity_already_exists")
+                user = UserModel(
+                    id=f"user-{uuid.uuid4().hex[:16]}",
+                    display_name=payload.display_name.strip() or login_identity,
+                    login_identity=login_identity,
+                    password_hash=hash_password(payload.password),
+                    role=payload.role.value,
+                    enabled=True,
+                    created_at=now,
+                    updated_at=now,
+                    password_updated_at=now,
+                )
+                session.add(user)
+                self._record_audit_event_in_session(
+                    session, now=now, actor_user_id=acting_user.id, actor_display_name=acting_user.display_name,
+                    action="user.created", target_type="user", target_id=user.id,
+                    metadata={"login_identity": login_identity, "role": user.role},
+                )
+                return self._user_summary(user)
+
+    def update_user_role(
+        self, user_id: str, payload: UserRoleUpdate, *, acting_user: CurrentUser
+    ) -> UserSummary:
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                user = session.get(UserModel, user_id)
+                if user is None:
+                    raise ValueError("user_not_found")
+                previous_role = user.role
+                if (
+                    previous_role == UserRole.administrator.value
+                    and payload.role != UserRole.administrator
+                    and user.enabled
+                    and self._other_enabled_administrator_count(session, exclude_user_id=user_id) == 0
+                ):
+                    raise ValueError("cannot_remove_last_administrator")
+                user.role = payload.role.value
+                user.updated_at = now
+                self._record_audit_event_in_session(
+                    session, now=now, actor_user_id=acting_user.id, actor_display_name=acting_user.display_name,
+                    action="user.role_changed", target_type="user", target_id=user.id,
+                    metadata={"previous_role": previous_role, "new_role": user.role},
+                )
+                return self._user_summary(user)
+
+    def set_user_enabled(
+        self, user_id: str, payload: UserEnabledUpdate, *, acting_user: CurrentUser
+    ) -> UserSummary:
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                user = session.get(UserModel, user_id)
+                if user is None:
+                    raise ValueError("user_not_found")
+                if (
+                    not payload.enabled
+                    and user.role == UserRole.administrator.value
+                    and user.enabled
+                    and self._other_enabled_administrator_count(session, exclude_user_id=user_id) == 0
+                ):
+                    raise ValueError("cannot_disable_last_administrator")
+                user.enabled = payload.enabled
+                user.updated_at = now
+                self._record_audit_event_in_session(
+                    session, now=now, actor_user_id=acting_user.id, actor_display_name=acting_user.display_name,
+                    action="user.enabled" if payload.enabled else "user.disabled",
+                    target_type="user", target_id=user.id, metadata=None,
+                )
+                return self._user_summary(user)
+
+    @staticmethod
+    def _other_enabled_administrator_count(session: Session, *, exclude_user_id: str) -> int:
+        return (
+            session.scalar(
+                select(func.count(UserModel.id)).where(
+                    UserModel.role == UserRole.administrator.value,
+                    UserModel.enabled.is_(True),
+                    UserModel.id != exclude_user_id,
+                )
+            )
+            or 0
+        )
+
+    def admin_reset_password(
+        self, user_id: str, payload: AdminPasswordResetRequest, *, acting_user: CurrentUser
+    ) -> UserSummary:
+        """An Administrator setting someone else's password. Revokes every
+        one of that user's existing sessions -- there is no "current
+        session" to preserve here, unlike `change_own_password`, since the
+        acting Administrator is a different signed-in identity."""
+
+        validate_password_strength(payload.new_password)
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                user = session.get(UserModel, user_id)
+                if user is None:
+                    raise ValueError("user_not_found")
+                user.password_hash = hash_password(payload.new_password)
+                user.password_updated_at = now
+                user.updated_at = now
+                self._revoke_all_sessions_in_session(session, user_id=user.id, now=now)
+                self._record_audit_event_in_session(
+                    session, now=now, actor_user_id=acting_user.id, actor_display_name=acting_user.display_name,
+                    action="user.password_reset", target_type="user", target_id=user.id, metadata=None,
+                )
+                return self._user_summary(user)
+
+    def change_own_password(
+        self,
+        user_id: str,
+        payload: SelfPasswordChangeRequest,
+        *,
+        current_session_token: str | None = None,
+    ) -> None:
+        """Self-service password change. Revokes every *other* session
+        belonging to this user (any other signed-in browser/workstation)
+        but deliberately preserves the session making this very request --
+        it already just proved itself via the correct current password, so
+        forcing an immediate re-sign-in here would be friction without a
+        security benefit. See `admin_reset_password` for the sibling admin
+        path, which has no "current session" to preserve and revokes all
+        of them."""
+
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                user = session.get(UserModel, user_id)
+                if user is None or not verify_password(payload.current_password, user.password_hash):
+                    raise ValueError("current_password_incorrect")
+                validate_password_strength(payload.new_password)
+                user.password_hash = hash_password(payload.new_password)
+                user.password_updated_at = now
+                user.updated_at = now
+                except_hash = (
+                    hash_session_token(current_session_token) if current_session_token else None
+                )
+                self._revoke_all_sessions_in_session(
+                    session, user_id=user.id, now=now, except_token_hash=except_hash
+                )
+                self._record_audit_event_in_session(
+                    session, now=now, actor_user_id=user.id, actor_display_name=user.display_name,
+                    action="user.password_changed_self", target_type="user", target_id=user.id, metadata=None,
+                )
+
+    def get_installation_settings(self) -> InstallationSettings:
+        with self.session_factory() as session:
+            model = session.get(InstallationSettingsModel, 1)
+            if model is None:
+                return InstallationSettings(updated_at=datetime.now(UTC))
+            return InstallationSettings(
+                installation_name=model.installation_name,
+                organization_name=model.organization_name,
+                contact_display=model.contact_display,
+                updated_at=_as_utc(model.updated_at),
+            )
+
+    def update_installation_settings(
+        self, payload: InstallationSettingsUpdate, *, acting_user: CurrentUser
+    ) -> InstallationSettings:
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(InstallationSettingsModel, 1)
+                if model is None:
+                    model = InstallationSettingsModel(singleton_id=1, updated_at=now)
+                    session.add(model)
+                model.installation_name = payload.installation_name
+                model.organization_name = payload.organization_name
+                model.contact_display = payload.contact_display
+                model.updated_at = now
+                self._record_audit_event_in_session(
+                    session, now=now, actor_user_id=acting_user.id, actor_display_name=acting_user.display_name,
+                    action="settings.installation_updated", target_type="installation_settings",
+                    target_id="1", metadata=None,
+                )
+                return InstallationSettings(
+                    installation_name=model.installation_name,
+                    organization_name=model.organization_name,
+                    contact_display=model.contact_display,
+                    updated_at=model.updated_at,
+                )
 
     def reset_demo_data(self) -> LocalDataStatus:
         # Reset only the sample walkthrough graph. Real cameras and their local
@@ -22483,26 +23025,86 @@ class ProductRepository:
                 or (label.target_type == "visit" and label.target_id in visit_ids)
             ]
 
+    @staticmethod
+    def _reviewer_identity_with_signed_in_default(
+        review_origin: str | None, reviewer_identity: str | None, acting_user: CurrentUser | None,
+    ) -> str | None:
+        """Fill in a blank `reviewer_identity` with the signed-in actor's
+        own display name -- but ONLY for an explicitly `"human"`-origin
+        request that omitted it, never for any other origin (including a
+        merely-omitted one) and never overriding a value the client did
+        supply. Confirmed via direct audit of the existing test suite that
+        no test asserts `reviewer_identity` stays blank for this exact
+        case -- see docs/local-identity-multi-user-contract.md "Review
+        attribution". `review_origin` itself is never touched here or
+        anywhere else in this class: the product's own interactive review
+        UI already stamps it `"human"` at the API client boundary
+        (`web/src/api/client.ts`), so this only ever activates for a real
+        signed-in session's own request, not a client asserting authority
+        it doesn't have.
+        """
+
+        if reviewer_identity or review_origin != "human" or acting_user is None:
+            return reviewer_identity
+        return acting_user.display_name
+
     def create_review_label(
         self,
         payload: ReviewCorrectionCreate,
         created_at: datetime | None = None,
+        *,
+        acting_user: CurrentUser | None = None,
     ) -> ReviewCorrectionResult:
+        """The initial confirm/correct on a Visit or Event. `acting_user` is
+        supplied only by an authenticated HTTP handler in `mockingbird.api.
+        main`; when present it durably attaches `reviewed_by_user_id` --
+        the new, trustworthy actor reference (see `ReviewLabelModel.
+        reviewed_by_user_id`'s docstring). It deliberately does NOT also
+        override `payload.review_origin`/`.reviewer_identity`: the
+        product's own interactive review UI already stamps `review_origin:
+        "human"` itself at the API client boundary (`web/src/api/client.ts`
+        -- confirmed, not assumed), so those two fields stay pure
+        passthrough here exactly as before this milestone, which is also
+        what keeps every existing HTTP-level test (`ReviewCorrectionCreate`
+        payloads constructing `agent_diagnostic`/`imported_curated`/
+        omitted-origin cases) completely unaffected by `acting_user`'s
+        presence.
+
+        `payload.expected_state_token`, when supplied, closes this
+        endpoint's own optimistic-concurrency gap by reusing the exact
+        `_review_state_token`/`ReviewRevisionConflictError` mechanism
+        `revise_visit_review`/`reopen_visit_review` already use -- see
+        `ReviewCorrectionCreate.expected_state_token`'s own docstring for
+        why it stays optional rather than required.
+        """
+
         with self.session_factory() as session:
             with session.begin():
+                if payload.expected_state_token is not None:
+                    current_token = self._review_state_token(session, payload.target_type, payload.target_id)
+                    if current_token != payload.expected_state_token:
+                        raise ReviewRevisionConflictError("stale_reviewed_visit")
                 return self._create_review_label_result_in_session(
                     session,
                     payload,
                     created_at,
                     review_origin=payload.review_origin,
-                    reviewer_identity=payload.reviewer_identity,
+                    reviewer_identity=self._reviewer_identity_with_signed_in_default(
+                        payload.review_origin, payload.reviewer_identity, acting_user
+                    ),
+                    reviewed_by_user_id=acting_user.id if acting_user is not None else None,
                 )
 
     def revise_visit_review(
         self,
         visit_id: str,
         payload: VisitReviewRevisionCreate,
+        *,
+        acting_user: CurrentUser | None = None,
     ) -> VisitReviewRevisionResponse:
+        # See `create_review_label`'s docstring: `acting_user` only sets
+        # `reviewed_by_user_id`, never `review_origin`/`reviewer_identity`.
+        reviewed_by_user_id = acting_user.id if acting_user is not None else None
         with self.session_factory() as session:
             with session.begin():
                 existing = session.scalar(
@@ -22563,7 +23165,10 @@ class ProductRepository:
                     review_action="revision",
                     revision_idempotency_key=payload.idempotency_key,
                     review_origin=payload.review_origin,
-                    reviewer_identity=payload.reviewer_identity,
+                    reviewer_identity=self._reviewer_identity_with_signed_in_default(
+                        payload.review_origin, payload.reviewer_identity, acting_user
+                    ),
+                    reviewed_by_user_id=reviewed_by_user_id,
                 )
                 return VisitReviewRevisionResponse(
                     result=result,
@@ -22574,7 +23179,12 @@ class ProductRepository:
         self,
         visit_id: str,
         payload: VisitReviewReopenCreate,
+        *,
+        acting_user: CurrentUser | None = None,
     ) -> VisitReviewReopenResponse:
+        # See `create_review_label`'s docstring: `acting_user` only sets
+        # `reviewed_by_user_id`, never `review_origin`/`reviewer_identity`.
+        reviewed_by_user_id = acting_user.id if acting_user is not None else None
         with self.session_factory() as session:
             with session.begin():
                 existing = session.scalar(
@@ -22626,7 +23236,12 @@ class ProductRepository:
                         review_action="reopen",
                         revision_idempotency_key=payload.idempotency_key,
                         review_origin=payload.review_origin,
-                        reviewer_identity=_clean_optional_text(payload.reviewer_identity),
+                        reviewer_identity=_clean_optional_text(
+                            self._reviewer_identity_with_signed_in_default(
+                                payload.review_origin, payload.reviewer_identity, acting_user
+                            )
+                        ),
+                        reviewed_by_user_id=reviewed_by_user_id,
                     )
                 )
                 prior_reviewed_label = visit.reviewed_label
@@ -22787,6 +23402,7 @@ class ProductRepository:
         revision_idempotency_key: str | None = None,
         review_origin: str | None = None,
         reviewer_identity: str | None = None,
+        reviewed_by_user_id: str | None = None,
     ) -> ReviewCorrectionResult:
         review_label, visit, event = self._create_review_label_in_session(
             session,
@@ -22799,6 +23415,7 @@ class ProductRepository:
             revision_idempotency_key=revision_idempotency_key,
             review_origin=review_origin,
             reviewer_identity=reviewer_identity,
+            reviewed_by_user_id=reviewed_by_user_id,
         )
         return ReviewCorrectionResult(
             review_label=review_label,
@@ -22811,10 +23428,22 @@ class ProductRepository:
     def bulk_correct_review_queue_items(
         self,
         payload: ReviewQueueBulkCorrectionRequest,
+        *,
+        acting_user: CurrentUser | None = None,
     ) -> ReviewQueueBulkCorrectionResponse:
         correction_label = _clean_optional_text(payload.label)
         if correction_label is None:
             raise ValueError("missing_review_label")
+
+        # See `create_review_label`'s docstring: `acting_user` only sets
+        # `reviewed_by_user_id` (applied uniformly to every target_id in
+        # this one bulk request -- there is no per-item actor), never
+        # `review_origin`; `reviewer_identity` gets the same narrow
+        # signed-in default as every other review-mutation method.
+        reviewed_by_user_id = acting_user.id if acting_user is not None else None
+        effective_reviewer_identity = self._reviewer_identity_with_signed_in_default(
+            payload.review_origin, payload.reviewer_identity, acting_user
+        )
 
         target_type = payload.target_type.value
         notes = _clean_optional_text(payload.notes)
@@ -22873,7 +23502,8 @@ class ProductRepository:
                                 notes=notes,
                             ),
                             review_origin=payload.review_origin,
-                            reviewer_identity=payload.reviewer_identity,
+                            reviewer_identity=effective_reviewer_identity,
+                            reviewed_by_user_id=reviewed_by_user_id,
                         )
                     except ValueError as error:
                         results.append(
@@ -23776,7 +24406,17 @@ class ProductRepository:
     def create_fast_review_correction(
         self,
         payload: FastReviewCorrectionCreate,
+        *,
+        acting_user: CurrentUser | None = None,
     ) -> FastReviewCorrectionResponse:
+        # See `create_review_label`'s docstring: `acting_user` only sets
+        # `reviewed_by_user_id`, never `review_origin`; `reviewer_identity`
+        # gets the same narrow signed-in default as every other review-
+        # mutation method.
+        reviewed_by_user_id = acting_user.id if acting_user is not None else None
+        effective_reviewer_identity = self._reviewer_identity_with_signed_in_default(
+            payload.review_origin, payload.reviewer_identity, acting_user
+        )
         with self.session_factory() as session:
             with session.begin():
                 existing = session.scalar(
@@ -23825,7 +24465,8 @@ class ProductRepository:
                     fast_review_session_id=payload.review_session_id,
                     fast_review_idempotency_key=payload.idempotency_key,
                     review_origin=payload.review_origin,
-                    reviewer_identity=payload.reviewer_identity,
+                    reviewer_identity=effective_reviewer_identity,
+                    reviewed_by_user_id=reviewed_by_user_id,
                 )
                 return FastReviewCorrectionResponse(
                     result=result,
@@ -23835,6 +24476,8 @@ class ProductRepository:
     def undo_fast_review_correction(
         self,
         payload: FastReviewUndoRequest,
+        *,
+        acting_user: CurrentUser | None = None,
     ) -> FastReviewUndoResponse:
         with self.session_factory() as session:
             with session.begin():
@@ -23907,6 +24550,9 @@ class ProductRepository:
                     reversal_of_review_label_id=original.id,
                     fast_review_session_id=payload.review_session_id,
                     fast_review_idempotency_key=payload.idempotency_key,
+                    review_origin="human" if acting_user is not None else None,
+                    reviewer_identity=acting_user.display_name if acting_user is not None else None,
+                    reviewed_by_user_id=acting_user.id if acting_user is not None else None,
                 )
                 session.add(reversal)
                 self._sync_review_alert(session, visit, datetime.now(UTC))
@@ -30739,6 +31385,7 @@ class ProductRepository:
         revision_idempotency_key: str | None = None,
         review_origin: str | None = None,
         reviewer_identity: str | None = None,
+        reviewed_by_user_id: str | None = None,
     ) -> tuple[ReviewLabel, Visit | None, Event | None]:
         # Review Decision Provenance / Truth Boundary v1 (see
         # docs/review-decision-provenance-contract.md): `review_origin` is an
@@ -30771,6 +31418,7 @@ class ProductRepository:
             revision_idempotency_key=revision_idempotency_key,
             review_origin=review_origin,
             reviewer_identity=_clean_optional_text(reviewer_identity),
+            reviewed_by_user_id=reviewed_by_user_id,
         )
 
         visit: Visit | None = None
@@ -37083,6 +37731,7 @@ def _review_label_from_model(label: ReviewLabelModel) -> ReviewLabel:
         created_at=_as_utc(label.created_at),
         review_origin=label.review_origin,
         reviewer_identity=label.reviewer_identity,
+        reviewed_by_user_id=label.reviewed_by_user_id,
         is_authoritative=review_provenance.is_authority_eligible(label.review_origin),
     )
 

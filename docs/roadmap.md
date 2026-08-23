@@ -2938,6 +2938,28 @@ giant program.
 
 ### 1. Local Identity, Multi-User & Organization Access
 
+**Delivered, Local Identity, Multi-User & Organization Access v1
+(2026-08-23; see
+[local-identity-multi-user-contract.md](local-identity-multi-user-contract.md)),
+in full**: local user accounts (scrypt-hashed passwords, no default
+credentials); race-safe/replay-proof first-run administrator bootstrap
+extending the existing onboarding wizard; secure server-side sessions
+(`mb_session` cookie, disable/role-change effective on the very next
+request); Viewer/Reviewer/Administrator roles enforced by one central
+authorization gate (`mockingbird.api.auth`, schema 50); review attribution
+(`reviewed_by_user_id`) without disturbing the pre-existing `review_origin`
+provenance contract; optimistic concurrency for the one remaining
+unprotected review-mutation path, reusing the existing `expected_state_
+token` mechanism rather than inventing a second one; a new generic audit
+trail; a small Users admin page; installation display metadata; local
+network security guidance (dynamic `Secure` cookie attribute, documented
+reverse-proxy posture); and proven many-workstation access (two
+independently-signed-in reviewer sessions, a real stale-write conflict,
+role-based server-side rejection) against the one Host. Camera Node device
+identity was already structurally separate and remains untouched. As
+anticipated below, no LDAP/Active Directory/OIDC/Entra-compatible identity
+was built -- still not a prerequisite for local multi-user operation.
+
 One authoritative Host with many human clients (see "Deployment and
 organization doctrine" in [product-doctrine.md](product-doctrine.md)).
 Scope: local user accounts; secure sessions; Viewer/Reviewer/Administrator

@@ -7,7 +7,10 @@ import type {
   ActivityLibrarySearchRequest,
   ActivityLibrarySearchResponse,
   AdapterEvaluationSummary,
+  AdministratorBootstrapRequest,
+  AdminPasswordResetRequest,
   AnalyticsSummary,
+  AuditLogEntry,
   CameraSource,
   CameraSourceCreateRequest,
   CameraSourceCreateResponse,
@@ -246,6 +249,15 @@ import type {
   ZoneMonitoringPolicyUpdate,
   ZoneMutationResult,
   ZoneUpdate,
+  CurrentUser,
+  InstallationSettings,
+  InstallationSettingsUpdate,
+  SelfPasswordChangeRequest,
+  SignInRequest,
+  UserCreate,
+  UserEnabledUpdate,
+  UserRoleUpdate,
+  UserSummary,
 } from "./types";
 
 const API_BASE_URL =
@@ -289,6 +301,23 @@ function parseStructuredError(value: unknown): StructuredError | undefined {
   return candidate as unknown as StructuredError;
 }
 
+// Local Identity, Multi-User & Organization Access v1: a session can expire
+// (or be revoked -- a password change elsewhere, an admin disabling this
+// account) between page loads without the app itself doing anything wrong.
+// Rather than have every one of dozens of call sites across the app each
+// handle a stray 401, `request()` below notifies these listeners once,
+// centrally, and App.tsx's own listener drops back to the sign-in screen.
+// Harmless to also fire for a wrong-password 401 from the sign-in form
+// itself: the app is already showing the sign-in screen at that point, so
+// the notification is a no-op there; `SignInPage` separately catches and
+// displays that same error inline.
+const sessionExpiredListeners = new Set<() => void>();
+
+export function onSessionExpired(listener: () => void): () => void {
+  sessionExpiredListeners.add(listener);
+  return () => sessionExpiredListeners.delete(listener);
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const isFormData = init?.body instanceof FormData;
   const headers = new Headers(init?.headers);
@@ -297,9 +326,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
+    // Local Identity, Multi-User & Organization Access v1: `fetch`'s own
+    // default is already "same-origin" (every request here is same-origin
+    // in both dev, via Vite's proxy, and the packaged app, which serves
+    // frontend and API from one process) -- stated explicitly rather than
+    // relied on implicitly, so the session cookie is sent without depending
+    // on every environment resolving fetch's unwritten default the same way.
+    credentials: "same-origin",
     ...init,
     headers,
   });
+
+  if (response.status === 401) {
+    sessionExpiredListeners.forEach((listener) => listener());
+  }
 
   if (!response.ok) {
     let detail = response.statusText;
@@ -1281,6 +1321,52 @@ export const apiClient = {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
+  createFirstAdministrator: (payload: AdministratorBootstrapRequest) =>
+    request<CurrentUser>("/api/setup/administrator", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  signIn: (payload: SignInRequest) =>
+    request<CurrentUser>("/api/auth/sign-in", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  signOut: () => request<void>("/api/auth/sign-out", { method: "POST" }),
+  getCurrentUser: () => request<CurrentUser>("/api/auth/session"),
+  changeOwnPassword: (payload: SelfPasswordChangeRequest) =>
+    request<void>("/api/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  getInstallationSettings: () => request<InstallationSettings>("/api/settings/installation"),
+  updateInstallationSettings: (payload: InstallationSettingsUpdate) =>
+    request<InstallationSettings>("/api/admin/installation-settings", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+  listUsers: () => request<UserSummary[]>("/api/admin/users"),
+  createUser: (payload: UserCreate) =>
+    request<UserSummary>("/api/admin/users", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updateUserRole: (userId: string, payload: UserRoleUpdate) =>
+    request<UserSummary>(`/api/admin/users/${encodeURIComponent(userId)}/role`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  setUserEnabled: (userId: string, payload: UserEnabledUpdate) =>
+    request<UserSummary>(`/api/admin/users/${encodeURIComponent(userId)}/enabled`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  resetUserPassword: (userId: string, payload: AdminPasswordResetRequest) =>
+    request<UserSummary>(`/api/admin/users/${encodeURIComponent(userId)}/reset-password`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  getAuditLog: (limit = 200) =>
+    request<AuditLogEntry[]>(`/api/admin/audit-log?limit=${encodeURIComponent(String(limit))}`),
   getProductHealth: () => request<ProductHealthStatus>("/api/product/health"),
   getStorageRetentionSummary: () =>
     request<StorageSummary>("/api/settings/storage-retention/summary"),

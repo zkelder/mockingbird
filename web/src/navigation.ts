@@ -27,7 +27,8 @@ export type Page =
   | "exports"
   | "saved-media-retention"
   | "worker-status"
-  | "settings";
+  | "settings"
+  | "users";
 
 export interface AppRoute {
   page: Page;
@@ -63,6 +64,7 @@ const pagePaths: Partial<Record<Page, string>> = {
   "saved-media-retention": "/retention",
   "worker-status": "/worker-status",
   settings: "/local-data",
+  users: "/users",
 };
 
 const pathPages = new Map(

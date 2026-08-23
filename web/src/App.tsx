@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { apiClient } from "./api/client";
+import { apiClient, onSessionExpired } from "./api/client";
 import type {
   ActivityLibraryFilters,
   AnalyticsSummary,
   CameraSource,
+  CurrentUser,
   DatasetCoverageSummary,
   DatasetExport,
   DatasetQualitySummary,
@@ -15,6 +16,7 @@ import type {
   SetupState,
   SpeciesSuggestion,
   Stream,
+  UserRole,
 } from "./api/types";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { AlertsControl, AlertsInboxPage } from "./components/AlertsInbox";
@@ -42,9 +44,11 @@ import {
   type ReviewQueueInitialContext,
 } from "./pages/ReviewQueuePage";
 import { SavedMediaRetentionPage } from "./pages/SavedMediaRetentionPage";
+import { SignInPage } from "./pages/SignInPage";
 import { SpeciesSuggestionsPage } from "./pages/SpeciesSuggestionsPage";
 import { StreamDetailPage } from "./pages/StreamDetailPage";
 import { StreamsPage } from "./pages/StreamsPage";
+import { UsersPage } from "./pages/UsersPage";
 import { YardMapPage } from "./pages/YardMapPage";
 import { VisitDetailPage } from "./pages/VisitDetailPage";
 import { WorkerStatusPage } from "./pages/WorkerStatusPage";
@@ -87,17 +91,30 @@ const initialData: AppData = {
   modelReadiness: null,
 };
 
-const productNavItems: Array<{ page: Page; label: string }> = [
+// `minRole` (Local Identity, Multi-User & Organization Access v1) hides a
+// nav item entirely below that role rather than showing it disabled --
+// every mutation these pages can reach is still independently enforced
+// server-side regardless of what this list shows (see mockingbird.api.auth
+// ROUTE_POLICY); this is UX calm, not the authorization boundary itself.
+// Omitted `minRole` means every signed-in role (Viewer floor) sees it.
+const productNavItems: Array<{ page: Page; label: string; minRole?: UserRole }> = [
   { page: "dashboard", label: "Dashboard" },
   { page: "streams", label: "Cameras" },
   { page: "import", label: "Import Media" },
-  { page: "review", label: "Review" },
+  { page: "review", label: "Review", minRole: "reviewer" },
   { page: "bird-log", label: "Bird Log" },
   { page: "place-activity-report", label: "Place Report" },
   { page: "activity-library", label: "Activity" },
   { page: "analytics", label: "Insights" },
   { page: "settings", label: "Settings" },
+  { page: "users", label: "Users", minRole: "administrator" },
 ];
+
+const ROLE_RANK: Record<UserRole, number> = { viewer: 0, reviewer: 1, administrator: 2 };
+
+function roleAtLeast(role: UserRole, minimum: UserRole): boolean {
+  return ROLE_RANK[role] >= ROLE_RANK[minimum];
+}
 
 // Bird Log (the doctrine's "Remember" step -- product-doctrine.md's core
 // Observe -> Discover -> Understand -> Confirm -> Remember -> Improve loop,
@@ -171,6 +188,14 @@ export default function App() {
   // rather than trapping an existing user behind a broken wizard -- see
   // docs/local-product-packaging-design.md.
   const [setupState, setSetupState] = useState<SetupState | null>(null);
+  // Local Identity, Multi-User & Organization Access v1: unlike
+  // `setupState`'s fail-open convention above, an auth check that cannot
+  // be confirmed must fail CLOSED -- "loading" renders nothing sensitive
+  // rather than assuming signed-in.
+  const [authStatus, setAuthStatus] = useState<"loading" | "authenticated" | "unauthenticated">(
+    "loading",
+  );
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
 
   function applyRoute(route: AppRoute) {
     setPageState(route.page);
@@ -293,9 +318,15 @@ export default function App() {
     }
   }
 
+  // Only fetches once a session is confirmed -- otherwise a signed-out
+  // load would fire a burst of calls that all 401 (harmless server-side,
+  // but noisy and would briefly show a misleading "camera data could not
+  // be loaded" error instead of the sign-in screen).
   useEffect(() => {
-    void loadAppData();
-  }, []);
+    if (authStatus === "authenticated") {
+      void loadAppData();
+    }
+  }, [authStatus]);
 
   useEffect(() => {
     void apiClient
@@ -303,6 +334,48 @@ export default function App() {
       .then(setSetupState)
       .catch(() => setSetupState({ completed: true, current_step: "done", updated_at: new Date().toISOString() }));
   }, []);
+
+  function checkSession() {
+    return apiClient
+      .getCurrentUser()
+      .then((user) => {
+        setCurrentUser(user);
+        setAuthStatus("authenticated");
+      })
+      .catch(() => {
+        setCurrentUser(null);
+        setAuthStatus("unauthenticated");
+      });
+  }
+
+  useEffect(() => {
+    void checkSession();
+    // A session can end between page loads for reasons this tab did
+    // nothing wrong to cause: it expired, an Administrator disabled the
+    // account, or the password changed elsewhere. `onSessionExpired` fires
+    // once, centrally, on any 401 from any API call -- see client.ts.
+    return onSessionExpired(() => {
+      setCurrentUser(null);
+      setAuthStatus("unauthenticated");
+    });
+  }, []);
+
+  function handleSignedIn(user: CurrentUser) {
+    setCurrentUser(user);
+    setAuthStatus("authenticated");
+  }
+
+  function handleSignOut() {
+    void apiClient.signOut().finally(() => {
+      setCurrentUser(null);
+      setAuthStatus("unauthenticated");
+      // Drop any data fetched under the previous session out of memory
+      // rather than leaving it visible for the instant before the sign-in
+      // screen renders, and so a different user signing in next doesn't
+      // briefly see a stale screen from someone else's session.
+      setData(initialData);
+    });
+  }
 
   function handleOnboardingFinished() {
     setSetupState((current) => (current ? { ...current, completed: true } : current));
@@ -483,6 +556,10 @@ export default function App() {
   }
 
   function renderPage() {
+    if (page === "users" && currentUser) {
+      return <UsersPage currentUser={currentUser} />;
+    }
+
     if (isLoading && page !== "dashboard") {
       return <div className="panel">Loading MockingBird...</div>;
     }
@@ -896,13 +973,30 @@ export default function App() {
       );
   }
 
-  // Gated to the dashboard route only: a real user's browser always opens
-  // there first, and every deep link (including the whole existing browser
-  // test suite) keeps working unaffected during a fresh install. See
-  // docs/local-product-packaging-design.md.
-  if (page === "dashboard" && setupState !== null && !setupState.completed) {
-    return <OnboardingWizard onFinished={handleOnboardingFinished} />;
+  // Local Identity, Multi-User & Organization Access v1: previously gated
+  // to the dashboard route only (a real user's browser always opened
+  // there first, and every deep link kept working unaffected during a
+  // fresh install -- see docs/local-product-packaging-design.md). Now
+  // global instead: onboarding's own "account" step is how the very first
+  // Administrator gets created, so every route is equally meaningless
+  // until that exists, not just the dashboard.
+  if (setupState !== null && !setupState.completed) {
+    return <OnboardingWizard onAccountCreated={handleSignedIn} onFinished={handleOnboardingFinished} />;
   }
+
+  // Deliberately renders nothing (not even a loading shell) while auth
+  // status is still unknown -- fail closed, not "assume signed in."
+  if (setupState === null || authStatus === "loading") {
+    return null;
+  }
+
+  if (authStatus === "unauthenticated" || !currentUser) {
+    return <SignInPage onSignedIn={handleSignedIn} />;
+  }
+
+  const visibleProductNavItems = productNavItems.filter(
+    (item) => !item.minRole || roleAtLeast(currentUser.role, item.minRole),
+  );
 
   return (
     <div className="app-shell">
@@ -917,7 +1011,7 @@ export default function App() {
         <AlertsControl onAction={openAlertAction} onOpenInbox={() => setPage("alerts-inbox")} />
         <nav className="nav-list" aria-label="Product navigation">
           <span className="nav-section-label">Product loop</span>
-          {productNavItems.map((item) => (
+          {visibleProductNavItems.map((item) => (
             <button
               className={page === item.page ? "nav-item active" : "nav-item"}
               key={item.page}
@@ -982,6 +1076,15 @@ export default function App() {
             </button>
           ) : null}
         </nav>
+        <div className="account-menu">
+          <div className="account-menu-identity">
+            <strong>{currentUser.display_name}</strong>
+            <span>{currentUser.role}</span>
+          </div>
+          <button className="text-action" onClick={handleSignOut} type="button">
+            Sign out
+          </button>
+        </div>
         <div className="sidebar-footer">
           <span>Local app</span>
           <strong>{apiClient.baseUrl || "This device"}</strong>

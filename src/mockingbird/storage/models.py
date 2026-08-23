@@ -1171,6 +1171,21 @@ class ReviewLabelModel(Base):
     # `imported_curated`/`agent_diagnostic` origins, optional otherwise
     # (there is no reviewer identity/account system).
     reviewer_identity: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Local Identity, Multi-User & Organization Access v1 (schema 50): the
+    # durable, resolvable actor reference `reviewer_identity` was explicitly
+    # documented above as never having. `NULL` for every row created before
+    # this column existed (or created by a non-interactive/offline pathway
+    # that has no signed-in user -- imported/curated data, an offline
+    # replay/diagnostic script) -- see docs/local-identity-multi-user-
+    # contract.md "Review attribution": history is never rewritten to
+    # invent an actor. Populated only by the authenticated-HTTP review
+    # handlers in mockingbird.api.main, which also overwrite
+    # `reviewer_identity`/`review_origin` with the signed-in user's own
+    # display name / `"human"` for that same request -- never trusted from
+    # client-supplied payload fields once a session exists.
+    reviewed_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
 
 
 class DatasetExportModel(Base):
@@ -1339,3 +1354,161 @@ class CameraOnvifProfileModel(Base):
     advertised_width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     advertised_height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     resolved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class UserModel(Base):
+    """Local Identity, Multi-User & Organization Access v1 (schema 50; see
+    docs/local-identity-multi-user-contract.md): a durable local human
+    account on this one Host. This is the first identity/account table in
+    the product -- deliberately small (`mockingbird.api.auth.Role` is a
+    3-value ladder: viewer < reviewer < administrator) and deliberately
+    local-only (no LDAP/OIDC/cloud-account fields; see the governing
+    milestone's explicit exclusion list).
+
+    `password_hash` is never plaintext and never reversible -- see
+    `mockingbird.security.passwords` (stdlib `hashlib.scrypt`, RFC 7914; no
+    new third-party dependency, matching this project's demonstrated
+    aversion to fragile compiled-wheel closures for its packaged Windows
+    build). The stored string is self-describing
+    (`"scrypt$n=..,r=..,p=.."$<salt_hex>$<hash_hex>`) so a future algorithm
+    change can recognize and re-hash old rows on next successful login
+    without a schema migration.
+
+    `login_identity` is stored lowercase-normalized (a local username, not
+    necessarily an email) and is the sign-in handle; `display_name` is the
+    human-facing name shown in review provenance and audit entries and may
+    be re-cased/changed freely without affecting sign-in.
+
+    `enabled=False` must make every *current and future* request for that
+    user unauthorized on its very next check -- this table is looked up
+    fresh on every session resolution (see
+    `mockingbird.api.auth.resolve_session`), so disabling a user needs no
+    separate session-revocation sweep to take effect immediately.
+
+    `password_updated_at` is an informational record of when the password
+    was last changed. It is deliberately NOT cross-checked against
+    `UserSessionModel.created_at` during session resolution: doing so
+    would also invalidate the one session a self-service password change
+    deliberately preserves (see `ProductRepository.change_own_password`
+    and `.resolve_session`'s own docstring for the full reasoning) --
+    every session that should stop working after a password change is
+    instead revoked explicitly and individually, which is the real
+    enforcement mechanism.
+    """
+
+    __tablename__ = "users"
+    __table_args__ = (UniqueConstraint("login_identity", name="uq_users_login_identity"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    display_name: Mapped[str] = mapped_column(String, nullable=False)
+    login_identity: Mapped[str] = mapped_column(String, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String, nullable=False)
+    role: Mapped[str] = mapped_column(String, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    password_updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class UserSessionModel(Base):
+    """A durable, server-side authenticated session (Local Identity, Multi-
+    User & Organization Access v1, schema 50). Deliberately opaque-server-
+    side rather than a signed/JWT-style client-held session: the browser
+    cookie carries only a high-entropy random token
+    (`secrets.token_urlsafe(32)`); this table stores only
+    `hashlib.sha256(token).hexdigest()`, never the raw token, mirroring how
+    `password_hash` never stores a plaintext password -- a stolen database
+    backup cannot be replayed as a live session cookie.
+
+    Choosing server-side sessions over a self-contained token is what lets
+    `UserModel.enabled` and `.role` changes take effect immediately (the
+    very next request re-reads the live `User` row via `user_id`) with no
+    separate revocation/blocklist machinery -- see `UserModel`'s own
+    docstring.
+
+    `revoked_at` is set (never a hard row delete) on explicit sign-out and
+    on every session belonging to a user whose password just changed --
+    "honest absence" (`NULL` = never revoked), the same convention this
+    codebase already uses for `camera_node_identity_replaced_at` and
+    similar bolt-on lifecycle columns. `expires_at` is a plain rolling
+    absolute expiry, extended (throttled -- see `resolve_session`) on use;
+    there is no separate idle-vs-absolute cap, kept deliberately simple for
+    a local single-Host product (see "Local network security guidance" in
+    the governing milestone brief).
+    """
+
+    __tablename__ = "user_sessions"
+    __table_args__ = (UniqueConstraint("token_hash", name="uq_user_sessions_token_hash"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AuditLogEntryModel(Base):
+    """A generic, append-only audit trail row (Local Identity, Multi-User &
+    Organization Access v1, schema 50). This is a genuine first-of-its-kind
+    table for this codebase: existing "provenance" precedents
+    (`camera_configuration_revisions`, `ReviewLabelModel`'s own lineage
+    columns, the boot-identity/replacement columns bolted onto
+    `camera_sources`) are each one dedicated table or bolt-on column per
+    feature, not a cross-cutting log -- see docs/local-identity-multi-user-
+    contract.md "Audit trail" for why a generic table was still the right
+    shape here (many distinct action families, each needing the same
+    actor/target/timestamp shape, none needing unbounded per-feature
+    growth).
+
+    Deliberately narrow and deliberately *not* comprehensive: only the
+    material, human-initiated mutations the governing milestone brief
+    names explicitly are ever written here (user/role/camera/privacy/
+    retention/backup/review actions) -- never page views, GETs, or routine
+    inference activity. `metadata_json` is a small, hand-picked, bounded
+    structured blob per action (e.g. `{"previous_role": ..., "new_role":
+    ...}`) -- deliberately never a raw request-body dump, so a secret
+    (password, session token, camera credential) can never reach this
+    table by accident the way it could through a generic "log everything"
+    writer. `target_type`/`target_id` mirror `ReviewLabelModel`'s existing
+    polymorphic-target pair rather than inventing a new convention.
+
+    `actor_display_name` is a point-in-time snapshot, not a live join to
+    `UserModel.display_name` -- so a later rename (or the user being
+    disabled) never rewrites how past audit history reads, matching this
+    codebase's established "never retroactively rewrite history" doctrine
+    for reviewed truth.
+    """
+
+    __tablename__ = "audit_log_entries"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    actor_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    actor_display_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    action: Mapped[str] = mapped_column(String, nullable=False)
+    target_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    target_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    correlation_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class InstallationSettingsModel(Base):
+    """One durable installation-level identity record (Local Identity,
+    Multi-User & Organization Access v1, schema 50) -- the exact
+    `singleton_id`-primary-key idiom already established by
+    `AppSetupStateModel`/`StorageRetentionSettingsModel`. Deliberately
+    lightweight display metadata only, never an `Organization` tenancy
+    table: one Host remains one deployment/security boundary (see the
+    governing milestone brief's "Organization metadata" section) -- there
+    is exactly one row, ever.
+    """
+
+    __tablename__ = "installation_settings"
+
+    singleton_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    installation_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    organization_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    contact_display: Mapped[str | None] = mapped_column(String, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

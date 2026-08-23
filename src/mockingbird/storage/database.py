@@ -42,7 +42,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 49
+CURRENT_DATABASE_SCHEMA_VERSION = 50
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -1339,6 +1339,44 @@ def _migrate_to_rejected_analysis_media_retention(connection: Connection) -> Non
         )
 
 
+def _migrate_to_local_identity_multi_user_access(connection: Connection) -> None:
+    """Local Identity, Multi-User & Organization Access v1: add local human
+    accounts, server-side sessions, a generic audit trail, and installation
+    display metadata -- see docs/local-identity-multi-user-contract.md.
+
+    Every operation here is additive (new tables, or one new nullable
+    column on the pre-existing `review_labels` table) and nothing is
+    backfilled: an upgraded installation starts with zero `users` rows,
+    exactly the "no users exist" state first-run bootstrap already expects
+    (see `mockingbird.api.auth`), and every pre-existing `review_labels`
+    row simply gets `reviewed_by_user_id = NULL` -- honestly representing
+    "no signed-in actor," never fabricating one (mirrors this same table's
+    existing `review_origin`/`reviewer_identity` "legacy_unattributed"/
+    `NULL` discipline from the schema-32 migration above).
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Local identity / multi-user migration requires local SQLite storage."
+        )
+    for table_name in (
+        "users",
+        "user_sessions",
+        "audit_log_entries",
+        "installation_settings",
+    ):
+        Base.metadata.tables[table_name].create(bind=connection, checkfirst=True)
+
+    if inspect(connection).has_table("review_labels"):
+        columns = {
+            column["name"] for column in inspect(connection).get_columns("review_labels")
+        }
+        if "reviewed_by_user_id" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE review_labels ADD COLUMN reviewed_by_user_id VARCHAR"
+            )
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -1388,6 +1426,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     47: _migrate_to_cross_camera_visit_association,
     48: _migrate_to_camera_node_transport_ingestion,
     49: _migrate_to_rejected_analysis_media_retention,
+    50: _migrate_to_local_identity_multi_user_access,
 }
 
 

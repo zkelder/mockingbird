@@ -56,29 +56,37 @@ whether to run numbered migrations at all:
   downgrade-replay test fixture, or any future re-entrant call) by never
   overwriting an existing row.
 
-`GET/PUT /api/setup/state` is the only read/write surface. The frontend
-(`OnboardingWizard.tsx`) gates rendering the wizard on the **dashboard route
-only** (`page === "dashboard"`); every other route, including a direct deep
-link during a fresh install, renders the normal application shell
-unaffected. This matches how a real user actually meets the app (the launcher
-always opens the browser at `/`) and keeps the existing Playwright suite
-(`camera-controls.spec.ts`, `observation-panel.spec.ts`,
-`reviewed-product-loop.spec.ts` -- each deep-links straight to `/streams/:id`
-or `/review`, none assert on `/`) unaffected by construction, not by
-coincidence.
+`GET/PUT /api/setup/state` is the only read/write surface. **Updated by
+Local Identity, Multi-User & Organization Access v1 (2026-08-23; see
+[local-identity-multi-user-contract.md](local-identity-multi-user-contract.md)):**
+the frontend (`OnboardingWizard.tsx`) now gates rendering the wizard
+globally (every route, not the dashboard-route-only scope originally
+described here) -- once most `/api/*` reads require a real signed-in
+session, a deep link during a fresh install showing the normal shell with
+no way to sign in would be a dead end rather than a harmless early look.
+`reviewed-product-loop.spec.ts` and the rest of the shared Playwright
+suite are unaffected by this in practice: `web/e2e/global-setup.ts`
+bootstraps a real Administrator and marks setup complete once before that
+whole suite runs, so those deep links never actually encounter an
+incomplete-setup state during a normal test run.
 
 The wizard is a thin orchestrator, not a new implementation:
 
 1. Welcome -- what MockingBird does, in plain language.
-2. Storage -- shows the resolved local data folder (not the database
+2. **Account** (added by the milestone above) -- creates this Host's first
+   Administrator; every later step needs a real session, so this comes
+   right after the purely-informational welcome step and before anything
+   that reads real data. On success the browser is already signed in, with
+   no separate sign-in step.
+3. Storage -- shows the resolved local data folder (not the database
    filename -- see "Storage status" below), current usage, host free space,
    and writability; does not add a relocation UI (that remains the existing
    `MOCKINGBIRD_HOME`/`MOCKINGBIRD_DB_URL` advanced/developer lever).
-3. Camera -- embeds the existing, **unmodified** `CameraSetupPage`, which
+4. Camera -- embeds the existing, **unmodified** `CameraSetupPage`, which
    already implements choose-type -> Camera Node pairing or provider fields
    -> validate -> preview -> draw/confirm Zone -> save. Its own "Discard
    setup" action doubles as "skip for now" in this context.
-4. Observe -- embeds the existing, **unmodified** `ObservationControlPanel`
+5. Observe -- embeds the existing, **unmodified** `ObservationControlPanel`
    for the newly created Stream, plus "Finish setup".
 
 Completing the camera step calls the existing `POST

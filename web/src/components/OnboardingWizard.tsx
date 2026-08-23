@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
-import { apiClient } from "../api/client";
-import type { LocalDataStatus, SetupState, StorageSummary } from "../api/types";
+import { apiClient, ApiError } from "../api/client";
+import type { CurrentUser, LocalDataStatus, SetupState, StorageSummary } from "../api/types";
 import { CameraSetupPage } from "../pages/CameraSetupPage";
 import { ObservationControlPanel } from "./ObservationControlPanel";
 import { formatBytes, parentDirectory } from "../utils";
 
-type WizardStep = "welcome" | "storage" | "camera" | "observe";
+type WizardStep = "welcome" | "account" | "storage" | "camera" | "observe";
 
-const WIZARD_STEP_ORDER: WizardStep[] = ["welcome", "storage", "camera", "observe"];
+const WIZARD_STEP_ORDER: WizardStep[] = ["welcome", "account", "storage", "camera", "observe"];
 
 function isWizardStep(value: string): value is WizardStep {
   return (WIZARD_STEP_ORDER as string[]).includes(value);
@@ -16,16 +16,30 @@ function isWizardStep(value: string): value is WizardStep {
 /**
  * MockingBird Installable Local Product v1: the guided first-run experience.
  *
- * Gated in App.tsx to the dashboard route only, and only while
- * `SetupState.completed` is false -- see docs/local-product-packaging-design.md.
- * This component is a thin orchestrator: the camera step embeds the existing,
- * unmodified `CameraSetupPage` (which already implements the full choose-type
- * / pair-or-configure / validate / draw-Zone / save flow), and the readiness
+ * Gated in App.tsx globally while `SetupState.completed` is false -- see
+ * docs/local-product-packaging-design.md. This component is a thin
+ * orchestrator: the camera step embeds the existing, unmodified
+ * `CameraSetupPage` (which already implements the full choose-type /
+ * pair-or-configure / validate / draw-Zone / save flow), and the readiness
  * step embeds the existing, unmodified `ObservationControlPanel`. Progress is
  * persisted after every step so a refresh, a closed tab, or an app restart
  * mid-wizard resumes at the right step instead of starting over.
+ *
+ * `"account"` (Local Identity, Multi-User & Organization Access v1) is the
+ * new second step: it creates this Host's first Administrator and, on
+ * success, signs the browser in via `onAccountCreated` -- every later step
+ * needs an authenticated session (see `mockingbird.api.auth.ROUTE_POLICY`'s
+ * safe `authenticated`-floor default), which is exactly why account
+ * creation comes right after the purely-informational "welcome" step and
+ * before anything that reads real data.
  */
-export function OnboardingWizard({ onFinished }: { onFinished: () => void }) {
+export function OnboardingWizard({
+  onAccountCreated,
+  onFinished,
+}: {
+  onAccountCreated: (user: CurrentUser) => void;
+  onFinished: () => void;
+}) {
   const [step, setStep] = useState<WizardStep>("welcome");
   const [createdStreamId, setCreatedStreamId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -34,12 +48,25 @@ export function OnboardingWizard({ onFinished }: { onFinished: () => void }) {
   useEffect(() => {
     void apiClient
       .getSetupState()
-      .then((state: SetupState) => {
+      .then(async (state: SetupState) => {
         if (state.completed) {
           onFinished();
           return;
         }
-        setStep(isWizardStep(state.current_step) ? state.current_step : "welcome");
+        let resumedStep = isWizardStep(state.current_step) ? state.current_step : "welcome";
+        // A rare edge case: an installation caught mid-wizard (already past
+        // "welcome") by an app upgrade to this exact milestone, from a
+        // build old enough to predate the "account" step entirely. Later
+        // steps all need a real session; resuming one without ever having
+        // created an account would otherwise just look like a broken load.
+        if (resumedStep !== "welcome" && resumedStep !== "account") {
+          try {
+            await apiClient.getCurrentUser();
+          } catch {
+            resumedStep = "account";
+          }
+        }
+        setStep(resumedStep);
         setCreatedStreamId(state.last_created_stream_id ?? null);
       })
       .catch(() => {
@@ -112,7 +139,15 @@ export function OnboardingWizard({ onFinished }: { onFinished: () => void }) {
         </div>
       </section>
       {error ? <div className="error-panel">{error}</div> : null}
-      {step === "welcome" ? <WelcomeStep onContinue={() => void advance("storage")} /> : null}
+      {step === "welcome" ? <WelcomeStep onContinue={() => void advance("account")} /> : null}
+      {step === "account" ? (
+        <AccountStep
+          onCreated={(user) => {
+            onAccountCreated(user);
+            void advance("storage");
+          }}
+        />
+      ) : null}
       {step === "storage" ? <StorageStep onContinue={() => void advance("camera")} /> : null}
       {step === "camera" ? (
         <CameraSetupPage
@@ -166,6 +201,83 @@ function WelcomeStep({ onContinue }: { onContinue: () => void }) {
         </button>
       </div>
     </section>
+  );
+}
+
+function AccountStep({ onCreated }: { onCreated: (user: CurrentUser) => void }) {
+  const [displayName, setDisplayName] = useState("");
+  const [loginIdentity, setLoginIdentity] = useState("");
+  const [password, setPassword] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setIsSubmitting(true);
+    try {
+      const user = await apiClient.createFirstAdministrator({
+        display_name: displayName,
+        login_identity: loginIdentity,
+        password,
+      });
+      onCreated(user);
+    } catch (caught) {
+      setError(
+        caught instanceof ApiError ? caught.message : "Could not create your administrator account.",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <form className="panel page-stack auth-form" onSubmit={(event) => void handleSubmit(event)}>
+      <h2>Create your administrator account</h2>
+      <p>
+        This is the first account on this Host, with full access to cameras, users, and system
+        settings. You can add Viewer and Reviewer accounts for others later from Users.
+      </p>
+      {error ? <div className="error-panel">{error}</div> : null}
+      <label>
+        Your name
+        <input
+          autoFocus
+          onChange={(event) => setDisplayName(event.target.value)}
+          type="text"
+          value={displayName}
+        />
+      </label>
+      <label>
+        Login identity
+        <input
+          autoComplete="username"
+          onChange={(event) => setLoginIdentity(event.target.value)}
+          type="text"
+          value={loginIdentity}
+        />
+      </label>
+      <label>
+        Password
+        <input
+          autoComplete="new-password"
+          minLength={10}
+          onChange={(event) => setPassword(event.target.value)}
+          type="password"
+          value={password}
+        />
+        <span className="meta-text">At least 10 characters.</span>
+      </label>
+      <div className="panel-actions">
+        <button
+          className="primary-action"
+          disabled={isSubmitting || !displayName || !loginIdentity || password.length < 10}
+          type="submit"
+        >
+          {isSubmitting ? "Creating…" : "Create account"}
+        </button>
+      </div>
+    </form>
   );
 }
 

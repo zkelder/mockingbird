@@ -1,28 +1,43 @@
-import { expect, test } from "@playwright/test";
+import { expect, Page, test } from "@playwright/test";
 
 // MockingBird Installable Local Product v1: first-run onboarding
-// (docs/local-product-packaging-design.md). Runs against its own isolated,
-// genuinely fresh MockingBird instance (see playwright.onboarding.config.ts)
-// -- separate from the shared suite's already-configured instance, and
-// separate from the heavier real-camera/real-observation validation this
-// milestone performs directly against the API and a real paired Camera
-// Node (browser automation cannot supply real camera hardware).
+// (docs/local-product-packaging-design.md), extended by Local Identity,
+// Multi-User & Organization Access v1 with a new "account" step (see
+// docs/local-identity-multi-user-contract.md "First-run administrator").
+// Runs against its own isolated, genuinely fresh MockingBird instance (see
+// playwright.onboarding.config.ts) -- separate from the shared suite's
+// already-configured instance, and separate from the heavier real-camera/
+// real-observation validation this milestone performs directly against the
+// API and a real paired Camera Node (browser automation cannot supply real
+// camera hardware).
 
-// Runs before the completion test below, in file order (this config uses
-// one worker against one shared fresh instance): a direct deep link must
-// bypass the wizard specifically while setup is still genuinely incomplete.
-test("a direct deep link during a fresh install renders the normal app, not the wizard", async ({
+const ADMIN_LOGIN_IDENTITY = "admin";
+const ADMIN_PASSWORD = "correct horse battery staple";
+
+async function signIn(page: Page, loginIdentity = ADMIN_LOGIN_IDENTITY, password = ADMIN_PASSWORD) {
+  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+  await page.getByLabel("Login identity").fill(loginIdentity);
+  await page.getByLabel("Password").fill(password);
+  await page.getByRole("button", { name: "Sign in" }).click();
+}
+
+// Runs before the other tests below, in file order (this config uses one
+// worker against one shared fresh instance): a fresh install has no
+// Administrator account yet, so every route -- not just the dashboard --
+// must show the wizard's own "account" step first. This is a deliberate
+// behavior change from the wizard's pre-multi-user, dashboard-only gate:
+// once routes can require a real signed-in session, a deep link during
+// fresh install showing the normal app (with no way to sign in) would be a
+// dead end rather than a harmless early look.
+test("a direct deep link during a fresh install still reaches guided setup, not a dead end", async ({
   page,
 }) => {
-  // The onboarding gate applies to the dashboard route only (see
-  // docs/local-product-packaging-design.md) -- a bookmarked or shared link
-  // must not be hijacked into a setup wizard.
   await page.goto("/review");
 
-  await expect(page.getByRole("heading", { name: "Welcome to MockingBird" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Welcome to MockingBird" })).toBeVisible();
 });
 
-test("a fresh install shows guided setup, persists progress across a reload, and finishing reaches the normal Dashboard", async ({
+test("a fresh install creates the first administrator, shows guided setup, persists progress across a reload, and finishing reaches the normal Dashboard", async ({
   page,
 }) => {
   await page.goto("/");
@@ -36,8 +51,21 @@ test("a fresh install shows guided setup, persists progress across a reload, and
   }
   await page.getByRole("button", { name: "Get started" }).click();
 
+  // Account: the new first-run administrator step (Local Identity, Multi-
+  // User & Organization Access v1) -- no default credentials, a real name/
+  // login identity/password must be entered.
+  await expect(page.getByRole("heading", { name: "Create your administrator account" })).toBeVisible();
+  const createAccountButton = page.getByRole("button", { name: "Create account" });
+  await expect(createAccountButton).toBeDisabled();
+  await page.getByLabel("Your name").fill("Ada Admin");
+  await page.getByLabel("Login identity").fill(ADMIN_LOGIN_IDENTITY);
+  await page.getByLabel("Password").fill(ADMIN_PASSWORD);
+  await createAccountButton.click();
+
   // Storage: local data location/usage/writability, no SQLite internals --
-  // a folder to look at, never the database filename/engine itself.
+  // a folder to look at, never the database filename/engine itself. Only
+  // reachable once signed in -- proves account creation left the browser
+  // authenticated, not merely "account exists, now sign in again."
   await expect(page.getByRole("heading", { name: "Where MockingBird keeps your data" })).toBeVisible();
   await expect(page.getByText("Writable")).toBeVisible();
   const storageBodyText = await page.locator("body").innerText();
@@ -50,7 +78,8 @@ test("a fresh install shows guided setup, persists progress across a reload, and
   await expect(page.getByRole("heading", { name: "Add Camera" })).toBeVisible();
 
   // A reload mid-wizard must resume at the saved step, not restart --
-  // "close/reopen without losing configuration."
+  // "close/reopen without losing configuration." Also proves the signed-in
+  // session itself survives a reload (a cookie, not in-memory-only state).
   await page.reload();
   await expect(page.getByRole("heading", { name: "Add Camera" })).toBeVisible();
 
@@ -62,10 +91,20 @@ test("a fresh install shows guided setup, persists progress across a reload, and
   await page.getByRole("button", { name: "Do this later" }).click();
   await expect(page.getByRole("heading", { name: "Today in Your Yard" })).toBeVisible();
 
-  // Onboarding must never reappear after completion, including on reload.
+  // Onboarding must never reappear after completion, including on reload,
+  // and the account menu now shows the signed-in Administrator.
   await page.reload();
   await expect(page.getByRole("heading", { name: "Today in Your Yard" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Welcome to MockingBird" })).toHaveCount(0);
+  await expect(page.getByText("Ada Admin")).toBeVisible();
+
+  // First-run bootstrap must never be replayable once an Administrator
+  // exists -- signing out returns to sign-in, never back to account setup.
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Create your administrator account" })).toHaveCount(0);
+  await signIn(page);
+  await expect(page.getByRole("heading", { name: "Today in Your Yard" })).toBeVisible();
 });
 
 // First-Run & Pairing Reliability v1
@@ -73,13 +112,17 @@ test("a fresh install shows guided setup, persists progress across a reload, and
 // Camera directly at its own stable route (`/cameras/setup`, unaffected by
 // whether onboarding itself is complete -- see navigation.ts) rather than
 // re-walking the wizard above, so they stay independent of the tests'
-// shared server/database and of each other's order. A real Camera Node
-// pairing needs real device hardware that browser automation cannot
-// supply (see the file header); Camera Node responses are mocked at the
-// browser's own network boundary with `page.route`, exercising exactly
-// the part only a real browser can prove: reload/resume UI behavior,
-// never re-implementing the backend pairing-persistence contract already
-// covered directly in tests/test_camera_node_pairing_persistence.py.
+// shared server/database and of each other's order. By this point in file
+// order, setup is already complete (the test above finished it) and each
+// test below runs in its own fresh browser context with no session, so it
+// must sign in as the Administrator that test already created before
+// reaching the camera-setup content. A real Camera Node pairing needs real
+// device hardware that browser automation cannot supply (see the file
+// header); Camera Node responses are mocked at the browser's own network
+// boundary with `page.route`, exercising exactly the part only a real
+// browser can prove: reload/resume UI behavior, never re-implementing the
+// backend pairing-persistence contract already covered directly in
+// tests/test_camera_node_pairing_persistence.py.
 
 const FAKE_CAMERAS = [
   { camera_id: "cam-1", display_name: "Feeder view", status: "available", snapshot_supported: true, setup_hint: null, provider_type: "v4l2" },
@@ -119,6 +162,7 @@ function fakePendingSetup(overrides: Record<string, unknown> = {}) {
 
 test("Camera name starts as a real editable default, never an empty field masquerading as filled", async ({ page }) => {
   await page.goto("/cameras/setup");
+  await signIn(page);
 
   const cameraName = page.getByLabel("Camera name");
   // A real value in the box, not merely gray placeholder text sitting over
@@ -129,6 +173,7 @@ test("Camera name starts as a real editable default, never an empty field masque
 
 test("Finish is never silently disabled -- every missing prerequisite is named nearby", async ({ page }) => {
   await page.goto("/cameras/setup");
+  await signIn(page);
 
   const finishButton = page.getByRole("button", { name: /^Finish/ });
   await expect(finishButton).toBeDisabled();
@@ -145,6 +190,7 @@ test("a paired Camera Node survives a reload: resumes at camera selection, never
   await page.route("**/api/camera-nodes/pair", (route) => route.fulfill({ status: 200, json: fakePairResponse() }));
 
   await page.goto("/cameras/setup");
+  await signIn(page);
 
   // The resumable pairing is discovered on load alone -- no address/code
   // entry, no second "Pair Camera Node" click.
@@ -172,6 +218,7 @@ test("a pairing that needs renewal explains why and offers one clear recovery ac
   });
 
   await page.goto("/cameras/setup");
+  await signIn(page);
 
   // Shown twice by design: the dedicated banner explains it, and the same
   // fact also appears as a Finish-disabled reason -- exact text tells the
