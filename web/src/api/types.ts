@@ -3656,6 +3656,12 @@ export interface ReviewQueueBulkCorrectionRequest {
   notes?: string | null;
   review_origin?: ReviewOrigin | null;
   reviewer_identity?: string | null;
+  // Local Identity, Multi-User & Organization Access v1 (bulk-correct
+  // concurrency closure): optional target_id -> review_state_token map,
+  // the same per-item token already returned on every ReviewQueueItem.
+  // Omitting an id (or the whole map) preserves prior last-write-wins
+  // behavior for that item -- see the backend field's own docstring.
+  expected_state_tokens?: Record<string, string> | null;
 }
 
 export interface ReviewQueueBulkCorrectionResult {

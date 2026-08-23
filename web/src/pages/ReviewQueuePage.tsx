@@ -2370,6 +2370,20 @@ export function ReviewQueuePage({
       return;
     }
 
+    // Each selected item's own current review_state_token -- the exact
+    // field GET /api/review-queue already returns per item and the
+    // single-item correction/revision flow already sends (see
+    // `activeItem.review_state_token` below) -- so a target whose state
+    // moved after this page last loaded it is caught as a per-item
+    // conflict instead of silently overwriting a newer review. Built from
+    // `selectedItems` (not `selectedEligibleItems`): `hasEligibleBulkSelection`
+    // above already guarantees every selected item is eligible by this
+    // point, and `selectedItems` is the exact set `selectedTargetIds` was
+    // derived from, so every id below has a matching token.
+    const expectedStateTokens = Object.fromEntries(
+      selectedItems.map((item) => [reviewQueueTargetId(item), item.review_state_token]),
+    );
+
     setIsBulkSaving(true);
     setMessage(null);
     setBulkResult(null);
@@ -2380,6 +2394,7 @@ export function ReviewQueuePage({
         target_ids: selectedTargetIds,
         label: trimmedLabel,
         notes: bulkDraft.notes.trim() || undefined,
+        expected_state_tokens: expectedStateTokens,
       });
       const refreshedQueue = await apiClient.getReviewQueue({ includeReviewed: true });
       setQueueItems(refreshedQueue);
@@ -2407,7 +2422,12 @@ export function ReviewQueuePage({
       setMessage(
         `${result.succeeded_count} correction${
           result.succeeded_count === 1 ? "" : "s"
-        } saved as local dataset truth.`,
+        } saved as local dataset truth.` +
+          (result.failed_count > 0
+            ? ` ${result.failed_count} item${
+                result.failed_count === 1 ? "" : "s"
+              } could not be saved -- see the bulk correction result below.`
+            : ""),
       );
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "Bulk correction could not be saved.");
@@ -2838,12 +2858,32 @@ export function ReviewQueuePage({
             </span>
           ) : null}
           {bulkResult ? (
-            <div className="notice-panel review-bulk-result">
+            <div aria-live="polite" className="notice-panel review-bulk-result">
               <strong>Bulk correction result</strong>
               <span>
                 {bulkResult.succeeded_count} saved, {bulkResult.skipped_count} skipped,{" "}
                 {bulkResult.failed_count} failed.
               </span>
+              {bulkResult.failed_count > 0 ? (
+                <span>
+                  {bulkResult.failed_count} item{bulkResult.failed_count === 1 ? "" : "s"} changed
+                  since this page last loaded {bulkResult.failed_count === 1 ? "it" : "them"} and{" "}
+                  {bulkResult.failed_count === 1 ? "was" : "were"} not saved -- refresh and review{" "}
+                  {bulkResult.failed_count === 1 ? "it" : "them"} again below.
+                </span>
+              ) : null}
+              {bulkResult.results.length > 0 ? (
+                <details className="review-diagnostic-details">
+                  <summary>Per-item batch results</summary>
+                  <div className="review-diagnostic-grid">
+                    {bulkResult.results.map((item) => (
+                      <span key={item.target_id}>
+                        {item.target_id}: {formatLabel(item.status)}. {item.message}
+                      </span>
+                    ))}
+                  </div>
+                </details>
+              ) : null}
             </div>
           ) : null}
         </details>
