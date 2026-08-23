@@ -51,13 +51,16 @@ expected of any bounded local capture in this product).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 
 from mockingbird.source_providers import media_provenance
+from mockingbird.time_utils import utc_now
 
 #: BirdNET-Analyzer's own native analysis sample rate -- verified directly
 #: against the real bundled model (see docs/acoustic-birdnet-observation-
@@ -318,6 +321,42 @@ def _stop_process(process: subprocess.Popen[bytes]) -> None:
         process.wait(timeout=_PROCESS_STOP_TIMEOUT_SECONDS)
 
 
+@dataclass(frozen=True)
+class CapturedSegment:
+    """One finalized live-capture segment, with real temporal provenance --
+    Acoustic Runtime & Quality v1 (Phase F: "timestamped segment identity").
+    `poll_new_finalized_segments` (unchanged) returns bare `Path`s only;
+    this is the richer shape the automatic runtime consumes.
+
+    `sequence_index` is parsed directly from ffmpeg's own `segment-%08d.wav`
+    filename -- the segment muxer's own ground truth, not a separately
+    tracked Python counter that could desync from what actually landed on
+    disk. `started_at`/`ended_at` are derived as `session_started_at +
+    sequence_index * segment_seconds` (nominal, assuming ffmpeg's segment
+    muxer produces exactly back-to-back segments with no gap or drift) --
+    disclosed, not silently treated as lab-verified: this codebase has no
+    physical microphone to confirm real segment-boundary timing against a
+    long real capture. A future milestone with real microphone hardware
+    should verify actual segment timing against a real, long-running ffmpeg
+    process and check for accumulated drift."""
+
+    path: Path
+    sequence_index: int
+    started_at: datetime
+    ended_at: datetime
+
+
+def _segment_sequence_index(path: Path) -> int:
+    """Parse the zero-padded sequence number ffmpeg's own `segment` muxer
+    embeds in `segment-%08d.wav` -- the muxer's own ground truth. Returns 0
+    for any name that does not match the expected pattern (defensive only;
+    every segment this module itself writes always matches)."""
+
+    stem = path.stem
+    _, _, suffix = stem.rpartition("-")
+    return int(suffix) if suffix.isdigit() else 0
+
+
 class MicrophoneCaptureSession:
     """One bounded, explicit-start/stop, current-process-only live capture.
 
@@ -339,14 +378,23 @@ class MicrophoneCaptureSession:
         segment_seconds: int = DEFAULT_SEGMENT_SECONDS,
         ffmpeg_binary: str = "ffmpeg",
         platform_name: str | None = None,
+        clock: Callable[[], datetime] = utc_now,
     ) -> None:
         self._device = device
         self._output_directory = output_directory
         self._segment_seconds = segment_seconds
         self._ffmpeg_binary = ffmpeg_binary
         self._platform_name = platform_name
+        self._clock = clock
         self._process: subprocess.Popen[bytes] | None = None
         self._known_segments: set[Path] = set()
+        #: Real wall-clock instant `.start()` began capture -- the anchor
+        #: `CapturedSegment.started_at` is derived from (see its own
+        #: docstring's disclosed "nominal, assumes gapless segments" caveat).
+        #: Injectable via `clock` for deterministic tests, mirroring
+        #: `platform_name`'s identical "never read the real ambient value
+        #: inside a test" convention.
+        self._session_started_at: datetime | None = None
 
     @property
     def is_running(self) -> bool:
@@ -371,6 +419,7 @@ class MicrophoneCaptureSession:
             )
         except FileNotFoundError as error:
             raise AudioDecodeError("ffmpeg_unavailable") from error
+        self._session_started_at = self._clock()
 
     def stop(self) -> None:
         if self._process is not None:
@@ -384,6 +433,15 @@ class MicrophoneCaptureSession:
         or the process has exited) and has not been returned before.
         Bounded: never returns a segment still being actively written."""
 
+        return [segment.path for segment in self.poll_new_finalized_segments_with_timing()]
+
+    def poll_new_finalized_segments_with_timing(self) -> list[CapturedSegment]:
+        """Identical finalization/bookkeeping semantics to
+        `poll_new_finalized_segments` (this method IS its implementation --
+        that method just strips the timing back off), but returns each
+        segment's derived temporal identity too. This is the method
+        `acoustic_runtime` uses."""
+
         if not self._output_directory.is_dir():
             return []
         all_segments = sorted(self._output_directory.glob("segment-*.wav"))
@@ -394,7 +452,17 @@ class MicrophoneCaptureSession:
             all_segments = all_segments[:-1]
         newly_finalized = [path for path in all_segments if path not in self._known_segments]
         self._known_segments.update(newly_finalized)
-        return newly_finalized
+        session_started_at = self._session_started_at or self._clock()
+        return [
+            CapturedSegment(
+                path=path,
+                sequence_index=(index := _segment_sequence_index(path)),
+                started_at=session_started_at + timedelta(seconds=index * self._segment_seconds),
+                ended_at=session_started_at
+                + timedelta(seconds=(index + 1) * self._segment_seconds),
+            )
+            for path in newly_finalized
+        ]
 
 
 class MicrophoneSessionManager:
@@ -451,6 +519,23 @@ class MicrophoneSessionManager:
             return []
         return session.poll_new_finalized_segments()
 
+    def poll_new_finalized_segments_with_timing(self, stream_id: str) -> list[CapturedSegment]:
+        session = self._sessions.get(stream_id)
+        if session is None:
+            return []
+        return session.poll_new_finalized_segments_with_timing()
+
+    def running_stream_ids(self) -> list[str]:
+        """Every Stream this process currently has an active capture session
+        for -- `acoustic_runtime.AcousticRuntimeService` polls exactly this
+        set each tick, never a full Stream table scan."""
+
+        return [
+            stream_id
+            for stream_id, session in self._sessions.items()
+            if session.is_running
+        ]
+
     def stop_all(self) -> None:
         """Bounded application-shutdown cleanup -- mirrors
         `LiveCameraSessionManager`'s identical "graceful application
@@ -468,6 +553,7 @@ __all__ = [
     "DEFAULT_SEGMENT_SECONDS",
     "AudioDecodeError",
     "AudioTranscodeResult",
+    "CapturedSegment",
     "MicrophoneCaptureSession",
     "MicrophoneSessionManager",
     "build_audio_transcode_command",

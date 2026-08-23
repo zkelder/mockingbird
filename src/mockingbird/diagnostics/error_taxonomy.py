@@ -401,6 +401,55 @@ for _code, _message in (
         ),
     )
 
+# -- MODEL_RUNTIME: Acoustic Runtime & Quality v1 (see
+#    mockingbird.observation.acoustic_runtime) -- the bounded acoustic
+#    reconcile loop's own queue/retry/retention codes. New -- BirdNET's own
+#    pre-existing bounded-vocabulary codes (`birdnet_runtime_unavailable`
+#    etc., `mockingbird.species.birdnet_adapter`) predate this milestone and
+#    were never registered here either; registering them retroactively
+#    would be a separate, out-of-scope backfill, not something this
+#    milestone's new automatic runtime needs in order to be diagnosable. --
+for _code, _message, _recoverability, _retryable, _user_action in (
+    (
+        "acoustic_queue_capacity_exceeded",
+        "An acoustic segment was dropped because analysis fell behind and the queue reached its bounded capacity.",
+        ErrorRecoverability.DEGRADED,
+        False,
+        "If this happens often, acoustic analysis is falling behind real capture -- check MockingBird Doctor.",
+    ),
+    (
+        "acoustic_analysis_interrupted",
+        "Acoustic analysis was interrupted before it finished and will be retried automatically.",
+        ErrorRecoverability.DEGRADED,
+        True,
+        "No action needed -- this segment will be retried automatically.",
+    ),
+    (
+        "acoustic_segment_probe_failed",
+        "A captured audio segment could not be read and was discarded.",
+        ErrorRecoverability.DEGRADED,
+        False,
+        "If this happens often, check the microphone/capture device configuration.",
+    ),
+    (
+        "acoustic_retention_delete_failed",
+        "MockingBird could not delete an expired, non-evidence audio working file.",
+        ErrorRecoverability.DEGRADED,
+        True,
+        "Check available disk space and file permissions under the media storage directory.",
+    ),
+):
+    _register(
+        _code,
+        ErrorTaxonomyEntry(
+            component=ErrorComponent.MODEL_RUNTIME,
+            message=_message,
+            recoverability=_recoverability,
+            retryable=_retryable,
+            user_action=_user_action,
+        ),
+    )
+
 # -- DATABASE: new -- see "Structured logging" B4/B2 in the milestone brief;
 #    no prior code existed for a raw DB write failure at all. --
 _register(

@@ -691,6 +691,19 @@ class MediaAssetModel(Base):
     # mirroring `duration_seconds`'s identical discipline immediately above.
     audio_sample_rate_hz: Mapped[int | None] = mapped_column(Integer, nullable=True)
     audio_channel_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Acoustic Runtime & Quality v1 (schema 44): `True` only for a segment
+    # `ProductRepository.create_audio_segment_media_asset` itself imported
+    # from an automatic capture/simulation source; `False`/default for
+    # every other row, including every existing pre-migration row and
+    # every asset a human explicitly imported (`create_media_import`/
+    # `import_folder_media`). The one and only eligibility gate for
+    # `run_working_audio_retention_sweep` -- found via review: without an
+    # explicit positive marker, that sweep could not honestly distinguish
+    # its own ephemeral working audio from a user's deliberately uploaded
+    # recording that simply has not (yet) been linked as evidence, and
+    # would delete the latter after its TTL. See that method's own
+    # docstring.
+    acoustic_working_segment: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
 class StorageRetentionSettingsModel(Base):

@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from mockingbird.api.schemas import (
@@ -653,6 +654,88 @@ def test_schema_42_upgrades_to_current_with_acoustic_observation_foundation(
                 for row in connection.exec_driver_sql("PRAGMA table_info(species_suggestions)").fetchall()
             }
             assert {"window_start_ms", "window_end_ms", "model_provenance_json"} <= species_suggestion_columns
+    finally:
+        migrated.close()
+
+
+def test_schema_43_upgrades_to_current_with_acoustic_runtime_queue(
+    tmp_path: Path,
+) -> None:
+    """Acoustic Runtime & Quality v1: a real database at the previously-
+    current schema (v43), with a real, pre-existing `acoustic_analysis_
+    runs` row (from the prior milestone's manual-analysis path), upgrades
+    cleanly through the new additive retry/claim columns without disturbing
+    that existing row's data -- mirroring `test_schema_42_upgrades_to_
+    current_with_acoustic_observation_foundation`'s own upgrade-in-place
+    proof for the table itself."""
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = repository_for(db_path)
+    existing_source_count = len(repository.list_sources())
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        for column in ("consecutive_failure_count", "next_retry_at", "claimed_by", "claimed_at"):
+            try:
+                connection.exec_driver_sql(f"ALTER TABLE acoustic_analysis_runs DROP COLUMN {column}")
+            except Exception:  # pragma: no cover - only if the host sqlite predates DROP COLUMN support
+                pytest.skip("This host's sqlite3 does not support ALTER TABLE DROP COLUMN.")
+        connection.exec_driver_sql("DROP INDEX IF EXISTS ix_acoustic_analysis_runs_status_created")
+        connection.exec_driver_sql("ALTER TABLE media_assets DROP COLUMN acoustic_working_segment")
+        # A real pre-migration row, exactly as the v43 manual path would
+        # have left it: only the original v43 columns exist at this point.
+        connection.execute(
+            text(
+                "INSERT INTO acoustic_analysis_runs "
+                "(id, media_asset_id, stream_id, pipeline_version, status, min_confidence, "
+                "windows_analyzed, detections_above_threshold, species_suggestions_created, "
+                "events_created, visits_created, started_at, created_at) "
+                "VALUES ('acoustic-analysis-run-legacy', 'media-legacy', :stream_id, "
+                "'birdnet-analyzer-global-6k-v2.4-v1', 'completed', 0.5, 3, 1, 1, 1, 1, "
+                ":now, :now)"
+            ),
+            {"stream_id": STREAM_ID, "now": datetime.now(UTC)},
+        )
+        connection.exec_driver_sql("UPDATE mockingbird_schema SET version = 43 WHERE singleton_id = 1")
+    engine.dispose()
+
+    migrated = repository_for(db_path)
+    try:
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+        assert len(migrated.list_sources()) == existing_source_count
+
+        with migrated.engine.connect() as connection:
+            run_columns = {
+                row[1]
+                for row in connection.exec_driver_sql("PRAGMA table_info(acoustic_analysis_runs)").fetchall()
+            }
+            assert {"consecutive_failure_count", "next_retry_at", "claimed_by", "claimed_at"} <= run_columns
+
+            index_names = {
+                row[1]
+                for row in connection.exec_driver_sql(
+                    "PRAGMA index_list(acoustic_analysis_runs)"
+                ).fetchall()
+            }
+            assert "ix_acoustic_analysis_runs_status_created" in index_names
+
+            media_asset_columns = {
+                row[1] for row in connection.exec_driver_sql("PRAGMA table_info(media_assets)").fetchall()
+            }
+            assert "acoustic_working_segment" in media_asset_columns
+
+        # The pre-existing row survived, and the new columns backfilled to
+        # the truthful "never retried, never claimed by the new reconcile
+        # loop" state for a row that predates it.
+        legacy_run = migrated.get_acoustic_analysis_run("acoustic-analysis-run-legacy")
+        assert legacy_run is not None
+        assert legacy_run.status == "completed"
+        assert legacy_run.windows_analyzed == 3
+        assert legacy_run.consecutive_failure_count == 0
+        assert legacy_run.next_retry_at is None
+        assert legacy_run.claimed_by is None
+        assert legacy_run.claimed_at is None
     finally:
         migrated.close()
 

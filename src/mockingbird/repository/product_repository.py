@@ -2406,6 +2406,17 @@ class AcousticAnalysisRunModel(Base):
     this model/config," never silently duplicated; explicit re-analysis
     under a materially different BirdNET model/config supplies a different
     `pipeline_version` string instead.
+
+    Acoustic Runtime & Quality v1 (schema 44) additively turns this same row
+    into a durable queue entry, not just an attempt log: a row can now be
+    inserted `queued` (never analyzed yet) instead of always `processing`,
+    and four new nullable columns (`consecutive_failure_count`,
+    `next_retry_at`, `claimed_by`, `claimed_at`) carry bounded retry/backoff
+    and a crash-safe ownership token -- mirroring `StreamRuntimeCheckpoint
+    Model`'s established `consecutive_failure_count`/`next_retry_at`
+    columns, adapted to per-item (not per-Stream) granularity. See
+    `mockingbird.observation.acoustic_runtime` for the reconcile loop that
+    reads/writes these.
     """
 
     __tablename__ = "acoustic_analysis_runs"
@@ -2418,6 +2429,11 @@ class AcousticAnalysisRunModel(Base):
             "ix_acoustic_analysis_runs_asset_pipeline",
             "media_asset_id",
             "pipeline_version",
+        ),
+        Index(
+            "ix_acoustic_analysis_runs_status_created",
+            "status",
+            "created_at",
         ),
     )
 
@@ -2443,6 +2459,12 @@ class AcousticAnalysisRunModel(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Schema 44 (Acoustic Runtime & Quality v1) -- bounded retry/backoff and
+    # a crash-safe claim token; see the class docstring above.
+    consecutive_failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    claimed_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 def _acoustic_analysis_run_from_model(row: AcousticAnalysisRunModel) -> AcousticAnalysisRun:
@@ -2466,6 +2488,10 @@ def _acoustic_analysis_run_from_model(row: AcousticAnalysisRunModel) -> Acoustic
         started_at=row.started_at,
         completed_at=row.completed_at,
         created_at=row.created_at,
+        consecutive_failure_count=row.consecutive_failure_count,
+        next_retry_at=row.next_retry_at,
+        claimed_by=row.claimed_by,
+        claimed_at=row.claimed_at,
     )
 
 
@@ -2686,12 +2712,97 @@ class AcousticDetectionFacts:
 class AcousticCandidateVisitOutcome:
     """Always returned, never raised, for an ordinary idempotent-repeat
     outcome -- mirrors `CandidateVisitCreationOutcome`'s identical
-    contract. `outcome` is `"created"` or `"idempotent_repeat"`."""
+    contract. `outcome` is `"created"`, `"idempotent_repeat"`, `"extended"`
+    (Acoustic Runtime & Quality v1 cross-segment consolidation -- see
+    `extend_acoustic_candidate_visit`), or `"not_extendable"` (the target
+    Visit was reviewed/superseded between the caller's lookup and this call;
+    the caller must fall back to `create_acoustic_candidate_visit`)."""
 
     outcome: str
     visit_id: str | None
     event_id: str | None
     species_suggestion_id: str | None
+
+
+#: Acoustic Runtime & Quality v1 -- bounded retry budget shared by both the
+#: crash-recovery reclaim path (`reclaim_stale_acoustic_analysis_work`) and
+#: the live-failure path (`retry_or_fail_acoustic_analysis_run`), so the two
+#: can never silently disagree about when a segment gives up for good.
+#: Mirrors `durable_supervisor.DEFAULT_MAX_CONSECUTIVE_FAILURES`/`DEFAULT_
+#: RETRY_DELAYS_SECONDS`'s identical shape (fixed ladder, not an exponential
+#: formula) -- deliberately reusing the same small numbers this codebase
+#: already validated for Camera Node reconnect backoff, rather than
+#: inventing a second bounded-retry convention. Noted during review: with
+#: `max_attempts=3`, `_apply_acoustic_retry_decision` only ever indexes the
+#: ladder's first two entries (5s, 30s) before terminating on the third
+#: failure -- the 120s entry is unreachable. This is the exact same shape
+#: `durable_supervisor._recover_from_failure` already has with its own
+#: `DEFAULT_MAX_CONSECUTIVE_FAILURES=3`/`DEFAULT_RETRY_DELAYS_SECONDS=
+#: (5,30,120)` (an accepted, shipped precedent) -- kept identical rather
+#: than deviated from here, not re-litigated by this milestone.
+ACOUSTIC_RETRY_MAX_ATTEMPTS = 3
+ACOUSTIC_RETRY_BACKOFF_SECONDS: tuple[float, ...] = (5.0, 30.0, 120.0)
+
+
+@dataclass(frozen=True)
+class AcousticQueueDiagnostics:
+    """Bounded, always-derived-from-durable-rows runtime snapshot (Phase J)
+    -- never a separately maintained in-memory counter that could drift
+    from what the database actually holds."""
+
+    queued_count: int
+    processing_count: int
+    oldest_queued_age_seconds: float | None
+    recent_failure_count_24h: int
+    recent_capacity_evicted_count_24h: int
+
+
+@dataclass(frozen=True)
+class AcousticRetentionSweepResult:
+    """The bounded outcome of one `run_working_audio_retention_sweep` pass."""
+
+    deleted_count: int
+    failed_count: int
+    considered_count: int
+
+
+def _apply_acoustic_retry_decision(
+    row: AcousticAnalysisRunModel,
+    *,
+    now: datetime,
+    max_attempts: int,
+    backoff_seconds_ladder: tuple[float, ...],
+    error_code: str,
+    error_message: str,
+) -> str:
+    """Shared bounded-retry decision, mutating `row` in place within the
+    caller's already-open transaction. Returns `"requeued"` or `"failed"`.
+    The one place this decision is made -- both `reclaim_stale_acoustic_
+    analysis_work` (crash/stall recovery) and `retry_or_fail_acoustic_
+    analysis_run` (a live, caught failure) call this instead of each
+    re-implementing the backoff ladder, so a future change to the retry
+    budget can never accidentally apply to only one of the two paths."""
+
+    failure_count = row.consecutive_failure_count + 1
+    if failure_count >= max_attempts:
+        row.status = "failed"
+        row.error_code = error_code
+        row.error_message = error_message
+        row.completed_at = now
+        row.consecutive_failure_count = failure_count
+        row.next_retry_at = None
+        row.claimed_by = None
+        row.claimed_at = None
+        return "failed"
+    delay_seconds = backoff_seconds_ladder[min(failure_count - 1, len(backoff_seconds_ladder) - 1)]
+    row.status = "queued"
+    row.consecutive_failure_count = failure_count
+    row.next_retry_at = now + timedelta(seconds=delay_seconds)
+    row.claimed_by = None
+    row.claimed_at = None
+    row.error_code = error_code
+    row.error_message = error_message
+    return "requeued"
 
 
 @dataclass(frozen=True)
@@ -4080,11 +4191,25 @@ class ProductRepository:
         pipeline_version: str,
         min_confidence: float,
         now: datetime,
+        status: str = "processing",
     ) -> AcousticAnalysisRun:
-        """Insert one new `processing` run row. Mirrors
-        `create_recorded_media_analysis_run`'s identical bounded,
-        single-process-adequate concurrency guard."""
+        """Insert one new run row. Mirrors `create_recorded_media_analysis_
+        run`'s identical bounded, single-process-adequate concurrency guard.
 
+        `status` defaults to `"processing"` -- the original, unchanged
+        behavior for the manual on-demand `/analyze-audio` path, which
+        starts real work immediately in the same request. Acoustic Runtime
+        & Quality v1's automatic pipeline instead passes
+        `status="queued"` (`enqueue_acoustic_analysis`, below): the row
+        exists durably before any BirdNET work has started, and a later
+        reconcile-loop claim (`claim_next_queued_acoustic_analysis`) is what
+        moves it to `processing`. Either way the same in-progress guard
+        below prevents a second concurrent row for the same
+        `(media_asset_id, pipeline_version)` -- including two enqueue
+        attempts for the same still-queued segment."""
+
+        if status not in ("queued", "processing"):
+            raise ValueError("invalid_initial_analysis_run_status")
         with self.session_factory() as session:
             with session.begin():
                 in_progress = session.scalars(
@@ -4101,11 +4226,12 @@ class ProductRepository:
                 run_id = self._next_id(session, AcousticAnalysisRunModel, "acoustic-analysis-run")
                 model = AcousticAnalysisRunModel(
                     id=run_id, media_asset_id=media_asset_id, stream_id=stream_id,
-                    pipeline_version=pipeline_version, status="processing",
+                    pipeline_version=pipeline_version, status=status,
                     min_confidence=min_confidence, windows_analyzed=0,
                     detections_above_threshold=0, species_suggestions_created=0,
                     events_created=0, visits_created=0, started_at=now, completed_at=None,
-                    created_at=now,
+                    created_at=now, consecutive_failure_count=0, next_retry_at=None,
+                    claimed_by=None, claimed_at=None,
                 )
                 session.add(model)
                 session.flush()
@@ -4336,6 +4462,716 @@ class ProductRepository:
                     event_id=event_id,
                     species_suggestion_id=suggestion_id,
                 )
+
+    # -------------------------------------------------------------------
+    # Acoustic Runtime & Quality v1 (see docs/acoustic-runtime-quality-v1-
+    # contract.md): the durable queue/backpressure/retention/consolidation
+    # primitives layered on top of the block immediately above.
+    # `mockingbird.observation.acoustic_runtime` is the reconcile loop that
+    # calls these; nothing here is reachable from the existing manual
+    # `/analyze-audio` path, which continues to call `create_acoustic_
+    # analysis_run`/`create_acoustic_candidate_visit` directly, unchanged.
+    # -------------------------------------------------------------------
+
+    def enqueue_acoustic_analysis(
+        self,
+        *,
+        media_asset_id: str,
+        stream_id: str,
+        pipeline_version: str,
+        min_confidence: float,
+        now: datetime,
+    ) -> tuple[AcousticAnalysisRun, str]:
+        """Durable, idempotent queue admission for one already-imported audio
+        `MediaAsset`. Returns `(row, outcome)` where `outcome` is:
+
+        - `"queued"`: a new row was inserted with `status="queued"`.
+        - `"already_in_flight"`: a `queued`/`processing` row already exists
+          for this exact `(media_asset_id, pipeline_version)` -- the
+          existing row is returned unchanged, never duplicated (this is
+          `create_acoustic_analysis_run`'s own in-progress guard, reused
+          verbatim -- it already treats `queued` and `processing` alike).
+        - `"already_processed"`: a prior `completed` row exists for this
+          exact pair -- returned as-is, matching `run_acoustic_analysis`'s
+          own idempotent-skip semantics for the manual path.
+        """
+
+        existing = self.find_acoustic_analysis_run(
+            media_asset_id=media_asset_id, pipeline_version=pipeline_version,
+        )
+        if existing is not None and existing.status in ("queued", "processing"):
+            return existing, "already_in_flight"
+        if existing is not None and existing.status == "completed":
+            return existing, "already_processed"
+        try:
+            created = self.create_acoustic_analysis_run(
+                media_asset_id=media_asset_id, stream_id=stream_id,
+                pipeline_version=pipeline_version, min_confidence=min_confidence,
+                now=now, status="queued",
+            )
+        except ValueError as error:
+            if str(error) != "analysis_already_in_progress":
+                raise
+            # A benign race against a concurrent enqueue for the same
+            # MediaAsset (e.g. two reconcile ticks overlapping) -- the
+            # in-progress guard already caught it; read back the winner.
+            refreshed = self.find_acoustic_analysis_run(
+                media_asset_id=media_asset_id, pipeline_version=pipeline_version,
+            )
+            if refreshed is None:  # pragma: no cover - defensive, guard implies a row exists
+                raise
+            return refreshed, "already_in_flight"
+        return created, "queued"
+
+    def count_in_flight_acoustic_analysis(self, stream_id: str) -> int:
+        """Side-effect-free: how many `queued`/`processing` rows currently
+        exist for this Stream -- the intake-time backpressure check
+        (`acoustic_runtime.AcousticRuntimeService`'s per-Stream cap), read
+        *before* a new segment is ever imported as a MediaAsset."""
+
+        with self.session_factory() as session:
+            return (
+                session.scalars(
+                    select(func.count(AcousticAnalysisRunModel.id)).where(
+                        AcousticAnalysisRunModel.stream_id == stream_id,
+                        AcousticAnalysisRunModel.status.in_(("queued", "processing")),
+                    )
+                ).one()
+                or 0
+            )
+
+    def claim_next_queued_acoustic_analysis(
+        self, *, now: datetime, claimed_by: str,
+    ) -> AcousticAnalysisRun | None:
+        """Atomically claim the single oldest eligible `queued` row (created-
+        at ascending -- strict FIFO, never starves an old segment behind a
+        stream of newer ones) whose backoff has elapsed (`next_retry_at` is
+        `NULL` or already past), moving it to `processing` with an
+        ownership token and claim timestamp. Returns `None` if nothing is
+        eligible right now -- a legitimate, common outcome (see
+        `reconcile_once`'s identical "nothing to do this tick" contract),
+        never an error.
+
+        SQLite serializes writers at the file level, so a plain
+        select-then-update inside one transaction (this codebase's
+        established `session.begin()` convention throughout this module) is
+        already race-safe for this product's current single-process
+        deployment model; the explicit `claimed_by ownership token still
+        makes a future multi-process deployment diagnosable rather than
+        silently unsafe.
+        """
+
+        with self.session_factory() as session:
+            with session.begin():
+                candidate = session.scalars(
+                    select(AcousticAnalysisRunModel)
+                    .where(
+                        AcousticAnalysisRunModel.status == "queued",
+                        (AcousticAnalysisRunModel.next_retry_at.is_(None))
+                        | (AcousticAnalysisRunModel.next_retry_at <= now),
+                    )
+                    .order_by(AcousticAnalysisRunModel.created_at.asc())
+                    .limit(1)
+                ).first()
+                if candidate is None:
+                    return None
+                candidate.status = "processing"
+                candidate.claimed_by = claimed_by
+                candidate.claimed_at = now
+                session.flush()
+                return _acoustic_analysis_run_from_model(candidate)
+
+    def reclaim_stale_acoustic_analysis_work(
+        self,
+        *,
+        now: datetime,
+        stale_after: timedelta,
+        max_attempts: int = ACOUSTIC_RETRY_MAX_ATTEMPTS,
+        backoff_seconds_ladder: tuple[float, ...] = ACOUSTIC_RETRY_BACKOFF_SECONDS,
+    ) -> int:
+        """Restart/stall recovery: reclaim every row still `processing` that
+        this reconcile loop itself claimed (`claimed_at` set -- see below)
+        whose claim is older than `stale_after` (a fresh process calls this
+        once at startup with `stale_after=timedelta(0)`, which reclaims
+        *every* such row unconditionally -- a brand-new process cannot have
+        legitimately claimed any of them, mirroring `prepare_for_
+        supervision`'s identical "any nonterminal checkpoint is a crash
+        leftover" reasoning; the running reconcile loop separately calls
+        this with a larger duration, e.g. 10 minutes, as a defensive sweep
+        against a same-process worker that hung mid-item without crashing).
+
+        Deliberately excludes any `processing` row with `claimed_at IS
+        NULL` -- found via review: that is exactly the shape of a row the
+        *manual* `/analyze-audio` path creates (`create_acoustic_analysis_
+        run`'s default `status="processing"`, `claimed_by`/`claimed_at`
+        left `None` -- it has no claim concept at all, it runs
+        synchronously in the same request). An earlier version of this
+        predicate matched `claimed_at IS NULL` unconditionally, which meant
+        the very next reconcile tick after a user started a manual
+        analysis would treat that live, in-progress request as an
+        "interrupted" crash leftover and requeue it out from under the
+        still-running request -- a second, concurrent, duplicate BirdNET
+        analysis of the same clip. Manual-path rows are never reachable
+        from this automatic runtime at all, by construction, now.
+
+        Each reclaimed row is bumped through the same bounded backoff
+        decision `retry_or_fail_acoustic_analysis_run` uses (`queued` again
+        with a fresh `next_retry_at`, or terminal `failed` once
+        `max_attempts` is exhausted) -- never silently re-claimed forever.
+        Returns the count reclaimed, for diagnostics."""
+
+        cutoff = now - stale_after
+        with self.session_factory() as session:
+            with session.begin():
+                stale_rows = session.scalars(
+                    select(AcousticAnalysisRunModel).where(
+                        AcousticAnalysisRunModel.status == "processing",
+                        AcousticAnalysisRunModel.claimed_at.is_not(None),
+                        AcousticAnalysisRunModel.claimed_at <= cutoff,
+                    )
+                ).all()
+                for row in stale_rows:
+                    _apply_acoustic_retry_decision(
+                        row, now=now, max_attempts=max_attempts,
+                        backoff_seconds_ladder=backoff_seconds_ladder,
+                        error_code="acoustic_analysis_interrupted",
+                        error_message="Acoustic analysis was interrupted before it finished.",
+                    )
+                session.flush()
+                return len(stale_rows)
+
+    def retry_or_fail_acoustic_analysis_run(
+        self,
+        run_id: str,
+        *,
+        error_code: str,
+        error_message: str,
+        now: datetime,
+        max_attempts: int = ACOUSTIC_RETRY_MAX_ATTEMPTS,
+        backoff_seconds_ladder: tuple[float, ...] = ACOUSTIC_RETRY_BACKOFF_SECONDS,
+    ) -> str:
+        """A live analysis attempt (not a crash/restart -- the worker is
+        still running and caught a real exception) failed. Returns
+        `"requeued"` (status reset to `queued`, bounded backoff applied) or
+        `"failed"` (terminal, `max_attempts` exhausted) -- the same decision
+        `reclaim_stale_acoustic_analysis_work` applies to a crash-orphaned
+        row, factored into one shared helper so both paths can never
+        silently disagree about the retry budget. Never raises for a
+        missing row, mirroring `complete_acoustic_analysis_run`'s identical
+        discipline."""
+
+        with self.session_factory() as session:
+            with session.begin():
+                row = session.get(AcousticAnalysisRunModel, run_id)
+                if row is None:
+                    return "missing"
+                outcome = _apply_acoustic_retry_decision(
+                    row, now=now, max_attempts=max_attempts,
+                    backoff_seconds_ladder=backoff_seconds_ladder,
+                    error_code=error_code, error_message=error_message,
+                )
+                session.flush()
+                return outcome
+
+    def enforce_acoustic_queue_capacity(
+        self, *, max_queued: int, now: datetime,
+    ) -> list[str]:
+        """Bounded queue-depth backpressure (Phase D): while more than
+        `max_queued` rows are currently `queued`, evict the oldest ones to
+        a terminal `failed` state (`error_code="acoustic_queue_capacity_
+        exceeded"`) -- never deleted outright, so eviction stays diagnosable
+        (the row, and the audio it points at, remain until the ordinary
+        working-audio retention sweep reclaims them like any other
+        non-evidence segment). Prefers keeping the *newest* queued work,
+        per this milestone's "prefer recent, useful, attributable evidence"
+        doctrine -- a segment that has been waiting the longest is the
+        least actionable if the queue is genuinely falling behind. Returns
+        the evicted run ids, for diagnostics/logging."""
+
+        if max_queued < 0:
+            raise ValueError("invalid_max_queued")
+        with self.session_factory() as session:
+            with session.begin():
+                total_queued = session.scalars(
+                    select(func.count(AcousticAnalysisRunModel.id)).where(
+                        AcousticAnalysisRunModel.status == "queued",
+                    )
+                ).one()
+                overflow = total_queued - max_queued
+                if overflow <= 0:
+                    return []
+                oldest_queued = session.scalars(
+                    select(AcousticAnalysisRunModel)
+                    .where(AcousticAnalysisRunModel.status == "queued")
+                    .order_by(AcousticAnalysisRunModel.created_at.asc())
+                    .limit(overflow)
+                ).all()
+                evicted_ids: list[str] = []
+                for row in oldest_queued:
+                    row.status = "failed"
+                    row.error_code = "acoustic_queue_capacity_exceeded"
+                    row.error_message = (
+                        "This segment was dropped because acoustic analysis fell behind "
+                        "and the queue reached its bounded capacity."
+                    )
+                    row.completed_at = now
+                    row.next_retry_at = None
+                    evicted_ids.append(row.id)
+                session.flush()
+                return evicted_ids
+
+    def acoustic_analysis_queue_diagnostics(self, now: datetime) -> AcousticQueueDiagnostics:
+        """Side-effect-free bounded runtime snapshot (Phase J) -- queue
+        depth/oldest-pending-age/recent-failure counts, always derived
+        directly from durable rows (never a separately-maintained counter
+        that could drift from reality)."""
+
+        with self.session_factory() as session:
+            queued_count = session.scalars(
+                select(func.count(AcousticAnalysisRunModel.id)).where(
+                    AcousticAnalysisRunModel.status == "queued",
+                )
+            ).one()
+            processing_count = session.scalars(
+                select(func.count(AcousticAnalysisRunModel.id)).where(
+                    AcousticAnalysisRunModel.status == "processing",
+                )
+            ).one()
+            oldest_queued_created_at = session.scalars(
+                select(AcousticAnalysisRunModel.created_at)
+                .where(AcousticAnalysisRunModel.status == "queued")
+                .order_by(AcousticAnalysisRunModel.created_at.asc())
+                .limit(1)
+            ).first()
+            recent_cutoff = now - timedelta(hours=24)
+            recent_failure_count = session.scalars(
+                select(func.count(AcousticAnalysisRunModel.id)).where(
+                    AcousticAnalysisRunModel.status == "failed",
+                    AcousticAnalysisRunModel.completed_at.is_not(None),
+                    AcousticAnalysisRunModel.completed_at >= recent_cutoff,
+                )
+            ).one()
+            capacity_evicted_count = session.scalars(
+                select(func.count(AcousticAnalysisRunModel.id)).where(
+                    AcousticAnalysisRunModel.error_code == "acoustic_queue_capacity_exceeded",
+                    AcousticAnalysisRunModel.completed_at.is_not(None),
+                    AcousticAnalysisRunModel.completed_at >= recent_cutoff,
+                )
+            ).one()
+            oldest_pending_age_seconds = (
+                (now - normalize_utc(oldest_queued_created_at)).total_seconds()
+                if oldest_queued_created_at is not None
+                else None
+            )
+            return AcousticQueueDiagnostics(
+                queued_count=queued_count,
+                processing_count=processing_count,
+                oldest_queued_age_seconds=oldest_pending_age_seconds,
+                recent_failure_count_24h=recent_failure_count,
+                recent_capacity_evicted_count_24h=capacity_evicted_count,
+            )
+
+    def create_audio_segment_media_asset(
+        self,
+        *,
+        stream_id: str,
+        source_path: Path,
+        original_filename: str,
+        captured_at: datetime,
+        sample_rate_hz: int | None,
+        channel_count: int | None,
+        file_size_bytes: int,
+        content_type: str = "audio/wav",
+        now: datetime,
+    ) -> MediaAsset:
+        """Import one already-finalized, already-on-disk audio segment file
+        as an ordinary `MediaAssetModel` (`media_type="audio"`) --
+        deliberately WITHOUT the Event/Visit `create_media_import` always
+        creates for an explicit manual upload. A raw captured segment is not
+        yet known to contain anything: most segments in continuous
+        unattended operation will hold no bird sound at all, and creating a
+        needs-review placeholder Visit for every one of them would spam the
+        Review Queue with silence (see this milestone's "no bird is
+        present... no fabricated wildlife Observation" doctrine). A
+        candidate Visit is created later, only if BirdNET actually finds
+        something, via the existing, unmodified `create_acoustic_candidate_
+        visit`/`extend_acoustic_candidate_visit`.
+
+        Copies the file into the managed media root (`_copy_media_file`,
+        the same primitive `import_folder_media` uses for an on-disk
+        source) rather than reading it into memory first, preserving the
+        existing "never buffer audio fully in memory" discipline."""
+
+        stream_model_id = stream_id
+        with self.session_factory() as session:
+            with session.begin():
+                stream_model = session.get(StreamModel, stream_id)
+                if stream_model is None:
+                    raise ValueError("missing_stream")
+                media_id = self._next_id(session, MediaAssetModel, "media-asset")
+                filename = f"{media_id}-{_safe_filename(original_filename)}"
+                filename, local_path = self._copy_media_file(filename, source_path)
+                asset_model = MediaAssetModel(
+                    id=media_id,
+                    source_id=stream_model.source_id,
+                    stream_id=stream_model_id,
+                    filename=filename,
+                    content_type=content_type,
+                    media_type="audio",
+                    local_path=str(local_path),
+                    original_filename=original_filename,
+                    file_size_bytes=file_size_bytes,
+                    created_at=now,
+                    captured_at=captured_at,
+                    audio_sample_rate_hz=sample_rate_hz,
+                    audio_channel_count=channel_count,
+                    acoustic_working_segment=True,
+                    notes=(
+                        "Captured live microphone segment awaiting acoustic analysis. "
+                        "Creates no Events, Visits, ReviewLabels, or truth until BirdNET "
+                        "analysis creates a candidate."
+                    ),
+                )
+                session.add(asset_model)
+                session.flush()
+                return _media_asset_from_model(asset_model)
+
+    def resolve_acoustic_species_guess(self, common_name: str) -> str:
+        """Side-effect-free: the exact `species_guess` a fresh `create_
+        acoustic_candidate_visit` call would resolve `common_name` to (the
+        same `_taxonomy_label_model_for_input` lookup, with the same
+        fallback-to-raw-name-if-unmatched behavior) -- the one shared
+        resolver, so the runtime's consolidation lookup
+        (`find_extendable_acoustic_candidate`) can never silently diverge
+        from what a newly-created Visit's own `species_guess` would
+        actually be."""
+
+        with self.session_factory() as session:
+            taxonomy_match = self._taxonomy_label_model_for_input(session, common_name)
+            return taxonomy_match.label if taxonomy_match is not None else common_name
+
+    def find_extendable_acoustic_candidate(
+        self,
+        *,
+        stream_id: str,
+        species_guess: str,
+        detection_start_at: datetime,
+        gap: timedelta,
+    ) -> tuple[str, str] | None:
+        """Side-effect-free consolidation lookup (Phase I): the most
+        recently created, still-`needs_review`, acoustic-origin candidate
+        Visit for this exact `(stream_id, species_guess)` whose Event ended
+        within `gap` of `detection_start_at`, if any. Returns `(visit_id,
+        event_id)` or `None`.
+
+        Scoped to `EventModel.event_type == "acoustic_observation_
+        candidate"` so this can never match a visually-created Visit that
+        happens to share a species guess. Only `needs_review` Visits are
+        eligible -- a Visit a human has already reviewed (confirmed,
+        corrected, or rejected) must never be silently extended with new
+        evidence after the fact (reviewed-truth authority is preserved by
+        construction here, not just by the caller's re-check inside
+        `extend_acoustic_candidate_visit`'s own transaction)."""
+
+        with self.session_factory() as session:
+            # `VisitModel` alone carries everything the caller needs
+            # (`id`/`event_id`) -- `EventModel` is joined only to filter/
+            # order by its `stream_id`/`event_type`/`ended_at`, never
+            # selected itself (a multi-entity `select()` would need
+            # `session.execute(...).first()`'s `Row` tuple, not
+            # `session.scalars(...)`, which collapses to the first entity
+            # only).
+            visit_model = session.scalars(
+                select(VisitModel)
+                .join(EventModel, VisitModel.event_id == EventModel.id)
+                .where(
+                    EventModel.stream_id == stream_id,
+                    EventModel.event_type == "acoustic_observation_candidate",
+                    VisitModel.species_guess == species_guess,
+                    VisitModel.review_status == ReviewStatus.needs_review.value,
+                    VisitModel.is_superseded.is_(False),
+                    EventModel.ended_at >= detection_start_at - gap,
+                    EventModel.ended_at <= detection_start_at,
+                )
+                .order_by(EventModel.ended_at.desc())
+                .limit(1)
+            ).first()
+            if visit_model is None:
+                return None
+            return visit_model.id, visit_model.event_id
+
+    def extend_acoustic_candidate_visit(
+        self,
+        *,
+        visit_id: str,
+        event_id: str,
+        stream_id: str,
+        media_asset_id: str,
+        detection: AcousticDetectionFacts,
+        model_provenance: dict[str, Any],
+        observed_at: datetime,
+        adapter_id: str,
+        adapter_name: str,
+    ) -> AcousticCandidateVisitOutcome:
+        """Extend an existing acoustic candidate Visit with one more
+        BirdNET-positive window from a *later* segment of the same
+        continuous vocal event, instead of minting a brand-new Visit for it
+        -- the cross-segment sibling of `_merge_same_species_detections`'s
+        existing same-clip merge (Phase I). Adds one new
+        `VisitEvidenceLinkModel` (a different `media_asset_id` than the
+        original -- each 15s segment is its own file) and one new
+        `SpeciesSuggestionModel` row (preserving that window's own original
+        provenance/offsets exactly, never overwriting or discarding the
+        first suggestion), extends `EventModel.ended_at`, and raises
+        `VisitModel.confidence` to the peak across the whole encounter.
+        Never touches `review_status`/`reviewed_label`.
+
+        Idempotent exactly like `create_acoustic_candidate_visit`: checked
+        first, by the identical `(media_asset_id, window_start_ms,
+        window_end_ms, adapter_id)` key.
+
+        Re-verifies the target Visit is still `needs_review` and not
+        superseded *inside this transaction* -- a human could have reviewed
+        it in the gap between the caller's lookup
+        (`find_extendable_acoustic_candidate`) and this call. If it is no
+        longer extendable, returns `outcome="not_extendable"` and writes
+        nothing; the caller falls back to `create_acoustic_candidate_visit`
+        rather than losing the detection."""
+
+        with self.session_factory() as session:
+            with session.begin():
+                existing = session.scalars(
+                    select(SpeciesSuggestionModel)
+                    .where(
+                        SpeciesSuggestionModel.media_asset_id == media_asset_id,
+                        SpeciesSuggestionModel.window_start_ms == detection.window_start_ms,
+                        SpeciesSuggestionModel.window_end_ms == detection.window_end_ms,
+                        SpeciesSuggestionModel.adapter_id == adapter_id,
+                    )
+                    .limit(1)
+                ).first()
+                if existing is not None:
+                    return AcousticCandidateVisitOutcome(
+                        outcome="idempotent_repeat",
+                        visit_id=existing.visit_id,
+                        event_id=existing.event_id,
+                        species_suggestion_id=existing.id,
+                    )
+
+                visit_model = session.get(VisitModel, visit_id)
+                event_model = session.get(EventModel, event_id)
+                media_asset_model = session.get(MediaAssetModel, media_asset_id)
+                if visit_model is None or event_model is None or media_asset_model is None:
+                    return AcousticCandidateVisitOutcome(
+                        outcome="not_extendable", visit_id=None, event_id=None,
+                        species_suggestion_id=None,
+                    )
+                if (
+                    visit_model.review_status != ReviewStatus.needs_review.value
+                    or visit_model.is_superseded
+                ):
+                    return AcousticCandidateVisitOutcome(
+                        outcome="not_extendable", visit_id=None, event_id=None,
+                        species_suggestion_id=None,
+                    )
+
+                stream_model = session.get(StreamModel, stream_id)
+                if stream_model is None:
+                    raise ValueError("missing_stream")
+
+                window_duration_ms = max(0, detection.window_end_ms - detection.window_start_ms)
+                new_ended_at = observed_at + timedelta(milliseconds=window_duration_ms)
+                # SQLite does not actually preserve tzinfo through
+                # `DateTime(timezone=True)` -- an ORM-loaded value here can
+                # come back naive even though every value this repository
+                # ever writes is UTC-aware (this codebase's own established
+                # `normalize_utc` discipline, see `time_utils.py`). Compare
+                # normalized values so a naive-vs-aware `TypeError` can never
+                # surface here.
+                if new_ended_at > normalize_utc(event_model.ended_at):
+                    event_model.ended_at = new_ended_at
+                visit_model.confidence = max(visit_model.confidence or 0.0, detection.confidence)
+
+                # The Nth extension needs the Nth `sort_order` -- found via
+                # review: a hardcoded `1` here meant every extension past
+                # the second segment of one continuous encounter (a bird
+                # calling across 3+ consecutive segments) collided on the
+                # same `sort_order`, leaving evidence-gallery ordering for
+                # that Visit arbitrary from the third segment on.
+                next_sort_order = session.scalar(
+                    select(func.count(VisitEvidenceLinkModel.id)).where(
+                        VisitEvidenceLinkModel.visit_id == visit_id,
+                    )
+                )
+                session.add(
+                    VisitEvidenceLinkModel(
+                        id=f"visit-evidence-{uuid.uuid4().hex}",
+                        visit_id=visit_id,
+                        media_asset_id=media_asset_id,
+                        captured_at=observed_at,
+                        frame_sequence=None,
+                        sort_order=next_sort_order,
+                        is_primary=False,
+                        evidence_role="identification",
+                        created_at=observed_at,
+                    )
+                )
+                suggestion_id = self._next_id(session, SpeciesSuggestionModel, "species-suggestion")
+                session.add(
+                    SpeciesSuggestionModel(
+                        id=suggestion_id,
+                        source_id=stream_model.source_id,
+                        stream_id=stream_id,
+                        event_id=event_id,
+                        visit_id=visit_id,
+                        media_asset_id=media_asset_id,
+                        motion_evidence_id=None,
+                        adapter_id=adapter_id,
+                        adapter_name=adapter_name,
+                        suggested_label=visit_model.species_guess,
+                        suggested_common_name=detection.common_name,
+                        suggested_scientific_name=detection.scientific_name,
+                        confidence=detection.confidence,
+                        rank=1,
+                        alternatives_json="[]",
+                        evidence_region_json=None,
+                        status=SpeciesSuggestionStatus.pending.value,
+                        created_at=observed_at,
+                        notes="Cross-segment consolidation of one continuous vocal event.",
+                        window_start_ms=detection.window_start_ms,
+                        window_end_ms=detection.window_end_ms,
+                        model_provenance_json=json.dumps(model_provenance, sort_keys=True),
+                    )
+                )
+                session.flush()
+                self._sync_review_alert(session, visit_model, observed_at)
+                return AcousticCandidateVisitOutcome(
+                    outcome="extended", visit_id=visit_id, event_id=event_id,
+                    species_suggestion_id=suggestion_id,
+                )
+
+    def run_working_audio_retention_sweep(
+        self, *, older_than: datetime, limit: int = 200,
+    ) -> AcousticRetentionSweepResult:
+        """Bounded lifecycle for non-evidence acoustic *working* audio
+        (Phase E) -- deliberately small and separate from the general
+        `StorageRetentionSettingsModel`/`_storage_retention_evaluation`
+        system (never touched by this method), and NOT gated behind
+        `automatic_cleanup_enabled`: staying bounded is this new runtime's
+        own correctness property, not a user retention preference, exactly
+        like the queue-depth cap above.
+
+        Eligible, ALL filtered in one SQL query (found via review -- two
+        real bugs in an earlier version, both fixed by this shape):
+
+        - `MediaAssetModel.acoustic_working_segment.is_(True)` -- the one
+          and only positive marker this sweep will ever act on, set solely
+          by `create_audio_segment_media_asset`. A human-imported audio
+          file (`create_media_import`/`import_folder_media`) is never
+          eligible, *regardless* of whether it ever became evidence --
+          those paths create an Event/Visit directly rather than a
+          `VisitEvidenceLinkModel`, so "zero evidence links" alone cannot
+          honestly distinguish "the runtime's own ephemeral working audio"
+          from "a user's own recording that just hasn't been analyzed
+          yet." An earlier version without this marker could have deleted
+          a real user-uploaded file after 48h.
+        - Zero `VisitEvidenceLinkModel` rows reference it (a `NOT EXISTS`
+          subquery, not a separate Python-side set) -- it never became
+          evidence.
+        - No `queued`/`processing` `AcousticAnalysisRunModel` row still
+          references it (a `NOT IN` subquery) -- never touches something
+          still being worked on.
+        - `created_at < older_than`.
+
+        Filtering entirely in SQL (rather than fetching the oldest `limit`
+        rows first and excluding ineligible ones in Python afterward) is
+        deliberate: an earlier version's `LIMIT` was applied *before*
+        exclusion, so once enough old evidence-linked audio existed, every
+        sweep would re-examine the same permanently-ineligible window and
+        `deleted_count` would silently stay `0` forever even though
+        genuinely eligible newer rows existed just outside that window.
+        With the eligibility filters inside the query itself, `LIMIT` only
+        ever returns rows this sweep can actually act on.
+
+        Deletes the file first (best-effort) and only removes the DB rows
+        if the file is confirmed gone -- the opposite order would risk a
+        silent orphaned file (undiagnosable disk growth) on a partial
+        failure, which is exactly what this sweep exists to prevent. Each
+        row's eligibility is re-verified inside its own delete transaction
+        (not just trusted from the earlier snapshot) so a segment that
+        became evidence or in-flight in the gap between the snapshot query
+        and this item's turn is safely skipped rather than deleted out from
+        under a concurrent analysis. A file-deletion failure leaves the row
+        in place (retried next sweep) and is counted, never silently
+        swallowed (Phase J "retention cleanup failures")."""
+
+        deleted_count = 0
+        failed_count = 0
+        evidence_exists = (
+            select(VisitEvidenceLinkModel.id)
+            .where(VisitEvidenceLinkModel.media_asset_id == MediaAssetModel.id)
+            .exists()
+        )
+        in_flight_ids = select(AcousticAnalysisRunModel.media_asset_id).where(
+            AcousticAnalysisRunModel.status.in_(("queued", "processing")),
+        )
+        with self.session_factory() as session:
+            candidates = session.scalars(
+                select(MediaAssetModel)
+                .where(
+                    MediaAssetModel.media_type == "audio",
+                    MediaAssetModel.acoustic_working_segment.is_(True),
+                    MediaAssetModel.created_at < older_than,
+                    ~evidence_exists,
+                    MediaAssetModel.id.not_in(in_flight_ids),
+                )
+                .order_by(MediaAssetModel.created_at.asc())
+                .limit(limit)
+            ).all()
+            candidate_ids = [asset.id for asset in candidates]
+            candidate_paths = {asset.id: asset.local_path for asset in candidates}
+
+        for asset_id in candidate_ids:
+            file_path = Path(candidate_paths[asset_id])
+            try:
+                if file_path.is_file():
+                    file_path.unlink()
+            except OSError as error:
+                log_error_event(
+                    "acoustic_runtime", "acoustic_retention_cleanup_failed",
+                    code="acoustic_retention_delete_failed", exception=error,
+                    media_asset_id=asset_id,
+                )
+                failed_count += 1
+                continue
+            with self.session_factory() as session:
+                with session.begin():
+                    # Re-verify eligibility inside this transaction -- a
+                    # concurrent manual re-analysis or a new evidence link
+                    # could have arrived since the snapshot query above.
+                    still_eligible = session.scalars(
+                        select(MediaAssetModel.id).where(
+                            MediaAssetModel.id == asset_id,
+                            MediaAssetModel.acoustic_working_segment.is_(True),
+                            ~evidence_exists,
+                            MediaAssetModel.id.not_in(in_flight_ids),
+                        )
+                    ).first()
+                    if still_eligible is None:
+                        continue
+                    session.execute(
+                        delete(AcousticAnalysisRunModel).where(
+                            AcousticAnalysisRunModel.media_asset_id == asset_id,
+                        )
+                    )
+                    session.execute(
+                        delete(MediaAssetModel).where(MediaAssetModel.id == asset_id)
+                    )
+            deleted_count += 1
+        return AcousticRetentionSweepResult(
+            deleted_count=deleted_count, failed_count=failed_count,
+            considered_count=len(candidates),
+        )
 
     # -------------------------------------------------------------------
     # Scene confusor suspicion (see docs/scene-confusor-suspicion-

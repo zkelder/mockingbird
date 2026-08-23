@@ -319,6 +319,97 @@ class TestRunAcousticAnalysis:
         assert matching[0].primary_evidence.content_type == "audio/wav"
 
 
+@requires_ffmpeg
+class TestNonAvianSoundscapeFiltering:
+    """Acoustic Runtime & Quality v1, Phase H (benchmark-discovered): BirdNET's
+    own non-avian "soundscape" classes must never become a fabricated
+    "bird" candidate. See `acoustic_ingest.NON_AVIAN_SOUNDSCAPE_LABELS`'s
+    own docstring for exactly how/why this was found (a real, CC-licensed
+    lawnmower recording scoring `Engine` at 0.607 -- above the *default*
+    0.5 floor -- with real BirdNET inference; the acceptance proof for that
+    real fixture lives in `test_acoustic_ingest_real_model.py`, this class
+    covers the same policy hermetically via `FakeRecording`)."""
+
+    def test_every_corpus_confusor_label_is_denylisted(self) -> None:
+        # A cheap, direct sanity check that the exact 13 labels this
+        # module's own docstring cites are really in the denylist --
+        # catches an accidental typo/omission independent of any BirdNET
+        # inference at all.
+        assert acoustic_ingest.NON_AVIAN_SOUNDSCAPE_LABELS == {
+            "Dog", "Engine", "Environmental", "Fireworks", "Gryllus assimilis",
+            "Gun", "Human non-vocal", "Human vocal", "Human whistle",
+            "Miogryllus saussurei", "Noise", "Power tools", "Siren",
+        }
+
+    def test_non_avian_only_detection_creates_no_candidate_but_reports_honestly(
+        self, repository: ProductRepository, tmp_path: Path,
+    ) -> None:
+        audio_path = tmp_path / "clip.wav"
+        _generate_tone(audio_path)
+        _seed_audio_media_asset(repository, media_asset_id="media-audio-1", audio_path=audio_path)
+        review_queue_count_before = len(repository.review_queue_items())
+
+        result = acoustic_ingest.run_acoustic_analysis(
+            repository, media_asset_id="media-audio-1",
+            recording=FakeRecording(
+                detections=[
+                    {
+                        "common_name": "Engine", "scientific_name": "Engine",
+                        "confidence": 0.61, "start_time": 0.0, "end_time": 3.0,
+                    },
+                    {
+                        "common_name": "Power tools", "scientific_name": "Power tools",
+                        "confidence": 0.53, "start_time": 3.0, "end_time": 6.0,
+                    },
+                ],
+                duration=9.0,
+            ),
+        )
+
+        assert result.status == "completed"
+        # Honest raw BirdNET facts are preserved -- these two windows really
+        # did fire above the confidence floor.
+        assert result.detections_above_threshold == 2
+        assert result.windows_analyzed == 3
+        # But zero fabricated "bird" candidates.
+        assert result.species_suggestions_created == 0
+        assert result.visits_created == 0
+        assert result.events_created == 0
+        assert result.visit_ids == ()
+        assert len(repository.review_queue_items()) == review_queue_count_before
+
+    def test_mixed_bird_and_non_avian_creates_only_the_bird_candidate(
+        self, repository: ProductRepository, tmp_path: Path,
+    ) -> None:
+        audio_path = tmp_path / "clip.wav"
+        _generate_tone(audio_path)
+        _seed_audio_media_asset(repository, media_asset_id="media-audio-1", audio_path=audio_path)
+
+        result = acoustic_ingest.run_acoustic_analysis(
+            repository, media_asset_id="media-audio-1",
+            recording=FakeRecording(
+                detections=[
+                    CARDINAL_DETECTION,
+                    {
+                        "common_name": "Siren", "scientific_name": "Siren",
+                        "confidence": 0.72, "start_time": 3.0, "end_time": 6.0,
+                    },
+                ],
+                duration=9.0,
+            ),
+        )
+
+        assert result.status == "completed"
+        assert result.detections_above_threshold == 2
+        assert result.species_suggestions_created == 1
+        assert result.visits_created == 1
+        assert len(result.visit_ids) == 1
+
+        visit = repository.get_visit(result.visit_ids[0])
+        assert visit is not None
+        assert visit.species_guess == "northern_cardinal"
+
+
 class TestRunAcousticAnalysisErrorHandling:
     def test_missing_media_asset_raises(self, repository: ProductRepository) -> None:
         with pytest.raises(acoustic_ingest.AcousticIngestError, match="media_asset_not_found"):

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -228,6 +229,64 @@ class TestMicrophoneCaptureSession:
         assert session.is_running is False
         finalized = session.poll_new_finalized_segments()
         assert [path.name for path in finalized] == ["segment-00000000.wav"]
+
+
+class TestCapturedSegmentTiming:
+    """Acoustic Runtime & Quality v1, Phase F: deterministic segment
+    timestamp identity. `sequence_index` is parsed from ffmpeg's own
+    filename (the muxer's own ground truth); `started_at`/`ended_at` are
+    derived as `session_started_at + sequence_index * segment_seconds` --
+    proven deterministic here via an injected clock, never the real
+    ambient clock inside a test."""
+
+    def test_timing_is_derived_from_session_start_plus_sequence_index(self, tmp_path: Path) -> None:
+        output_dir = tmp_path / "capture"
+        output_dir.mkdir()
+        (output_dir / "segment-00000000.wav").write_bytes(b"seg-0")
+        (output_dir / "segment-00000001.wav").write_bytes(b"seg-1")
+        (output_dir / "segment-00000002.wav").write_bytes(b"still-writing")
+
+        fixed_start = datetime(2026, 8, 22, 10, 0, 0, tzinfo=UTC)
+        session = audio_capture.MicrophoneCaptureSession(
+            device="default", output_directory=output_dir, segment_seconds=15,
+            clock=lambda: fixed_start,
+        )
+        session._process = _FakeCaptureProcess()  # simulate "running" without a real subprocess
+        session._session_started_at = fixed_start  # mirrors what .start() would have set
+
+        segments = session.poll_new_finalized_segments_with_timing()
+
+        assert [s.sequence_index for s in segments] == [0, 1]
+        assert segments[0].started_at == fixed_start
+        assert segments[0].ended_at == fixed_start + timedelta(seconds=15)
+        assert segments[1].started_at == fixed_start + timedelta(seconds=15)
+        assert segments[1].ended_at == fixed_start + timedelta(seconds=30)
+
+    def test_already_returned_segments_are_never_returned_again(self, tmp_path: Path) -> None:
+        output_dir = tmp_path / "capture"
+        output_dir.mkdir()
+        (output_dir / "segment-00000000.wav").write_bytes(b"seg-0")
+
+        session = audio_capture.MicrophoneCaptureSession(
+            device="default", output_directory=output_dir,
+            clock=lambda: datetime(2026, 8, 22, 10, 0, 0, tzinfo=UTC),
+        )
+        first = session.poll_new_finalized_segments_with_timing()
+        second = session.poll_new_finalized_segments_with_timing()
+        assert len(first) == 1
+        assert second == []
+
+    def test_bare_path_method_still_returns_the_same_finalized_paths(self, tmp_path: Path) -> None:
+        # The pre-existing `poll_new_finalized_segments` must remain
+        # byte-for-byte unchanged for existing callers/tests -- it now
+        # delegates to the timing-aware method internally, stripping the
+        # timing back off.
+        output_dir = tmp_path / "capture"
+        output_dir.mkdir()
+        (output_dir / "segment-00000000.wav").write_bytes(b"seg-0")
+
+        session = audio_capture.MicrophoneCaptureSession(device="default", output_directory=output_dir)
+        assert [p.name for p in session.poll_new_finalized_segments()] == ["segment-00000000.wav"]
 
 
 class TestMicrophoneSessionManager:

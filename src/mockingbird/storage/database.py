@@ -42,7 +42,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 43
+CURRENT_DATABASE_SCHEMA_VERSION = 44
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -1132,6 +1132,77 @@ def _migrate_to_acoustic_observation_foundation(connection: Connection) -> None:
     Base.metadata.tables["acoustic_analysis_runs"].create(bind=connection, checkfirst=True)
 
 
+def _migrate_to_acoustic_runtime_queue(connection: Connection) -> None:
+    """Acoustic Runtime & Quality v1 (see docs/acoustic-runtime-quality-v1-
+    contract.md): small, nullable/defaulted additive columns so one
+    `acoustic_analysis_runs` row can serve as both a durable queue entry
+    and its own attempt-history record -- no new table, no change to the
+    existing `status` vocabulary (it already included `queued`; nothing
+    ever inserted a row with it before this milestone). Also adds the
+    explicit `media_assets.acoustic_working_segment` marker
+    `run_working_audio_retention_sweep` requires (see that method's own
+    docstring for why an explicit positive marker, not an inferred one, is
+    required), and the `acoustic_analysis_runs` status/created_at index
+    already declared on the model but never actually created for an
+    upgraded (as opposed to freshly-created) database -- found via review:
+    `initialize_database`'s `Base.metadata.create_all(checkfirst=True)`
+    skips index creation for a table that already exists, so this
+    migration must create it explicitly or every upgraded installation
+    would silently full-table-scan the claim/reclaim/capacity/diagnostics
+    queries this milestone adds, while a fresh database would not.
+
+    An installation upgrading from schema 43 has real `acoustic_analysis_
+    runs` rows, but every one of them is already terminal (`completed`/
+    `failed` -- the prior milestone only ever created rows directly as
+    `processing` then completed them synchronously in the same request), so
+    backfilling `consecutive_failure_count=0`/`next_retry_at=NULL`/
+    `claimed_by=NULL`/`claimed_at=NULL` for existing rows is exactly the
+    truthful state: none of them were ever retried or claimed by the new
+    reconcile loop. Every existing `media_assets` row backfills `acoustic_
+    working_segment=0` -- also exactly truthful: no automatic capture
+    pipeline existed before this milestone, so nothing could have been
+    imported by it."""
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Acoustic runtime queue migration requires local SQLite storage."
+        )
+    if inspect(connection).has_table("acoustic_analysis_runs"):
+        run_columns = {
+            column["name"] for column in inspect(connection).get_columns("acoustic_analysis_runs")
+        }
+        if "consecutive_failure_count" not in run_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE acoustic_analysis_runs "
+                "ADD COLUMN consecutive_failure_count INTEGER NOT NULL DEFAULT 0"
+            )
+        if "next_retry_at" not in run_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE acoustic_analysis_runs ADD COLUMN next_retry_at DATETIME"
+            )
+        if "claimed_by" not in run_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE acoustic_analysis_runs ADD COLUMN claimed_by TEXT"
+            )
+        if "claimed_at" not in run_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE acoustic_analysis_runs ADD COLUMN claimed_at DATETIME"
+            )
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_acoustic_analysis_runs_status_created "
+            "ON acoustic_analysis_runs (status, created_at)"
+        )
+    if inspect(connection).has_table("media_assets"):
+        media_asset_columns = {
+            column["name"] for column in inspect(connection).get_columns("media_assets")
+        }
+        if "acoustic_working_segment" not in media_asset_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE media_assets "
+                "ADD COLUMN acoustic_working_segment BOOLEAN NOT NULL DEFAULT 0"
+            )
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -1175,6 +1246,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     41: _migrate_to_recorded_media_analysis_runs,
     42: _migrate_to_research_collections,
     43: _migrate_to_acoustic_observation_foundation,
+    44: _migrate_to_acoustic_runtime_queue,
 }
 
 

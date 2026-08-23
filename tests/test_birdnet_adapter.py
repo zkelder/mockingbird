@@ -8,6 +8,7 @@ convention this codebase already uses elsewhere."""
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -108,6 +109,29 @@ class TestGetBirdNetStatus:
         monkeypatch.setattr(birdnet_adapter, "_missing_runtime_packages", lambda: [])
         status = birdnet_adapter.get_birdnet_status()
         assert status.status == "available"
+        assert status.runtime_available is True
+
+    def test_never_raises_after_the_tflite_runtime_shim_has_already_installed(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Acoustic Runtime & Quality v1 (found via a real end-to-end
+        acceptance run, not assumed): once `_install_tflite_runtime_shim`
+        has installed its bare `types.ModuleType` shim (no real
+        `__spec__`), a later `get_birdnet_status()` call must never raise
+        -- `importlib.util.find_spec` raises `ValueError` for exactly a
+        `sys.modules` entry whose `__spec__` is `None`, which is precisely
+        what the shim installs. A real deployment calling `GET /api/
+        birdnet/status` (or this milestone's own new runtime diagnostics)
+        *after* any real acoustic analysis has already run in the same
+        process would otherwise 500 instead of returning a clean status."""
+
+        import types
+
+        shim = types.ModuleType("tflite_runtime")
+        monkeypatch.setitem(sys.modules, "tflite_runtime", shim)
+        assert shim.__spec__ is None  # exactly the shape the real shim installs
+
+        status = birdnet_adapter.get_birdnet_status()  # must not raise
         assert status.runtime_available is True
 
 

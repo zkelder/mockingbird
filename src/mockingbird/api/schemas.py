@@ -6388,6 +6388,12 @@ class AcousticAnalysisRun(BaseModel):
     started_at: datetime
     completed_at: datetime | None = None
     created_at: datetime
+    # Acoustic Runtime & Quality v1 (schema 44): bounded retry/backoff and a
+    # crash-safe claim token -- see `AcousticAnalysisRunModel`.
+    consecutive_failure_count: int = Field(default=0, ge=0)
+    next_retry_at: datetime | None = None
+    claimed_by: str | None = None
+    claimed_at: datetime | None = None
 
 
 class AudioCaptureStatusResponse(BaseModel):

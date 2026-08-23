@@ -471,6 +471,72 @@ def test_interpret_offline_ingest_all_recent_runs_succeeded_is_pass() -> None:
 
 
 # --------------------------------------------------------------------------
+# Acoustic runtime (Acoustic Runtime & Quality v1)
+# --------------------------------------------------------------------------
+
+
+def test_interpret_acoustic_runtime_schema_not_migrated_yet_is_informational() -> None:
+    result = doctor._interpret_acoustic_runtime(
+        {"sampled_count": 0, "failed_count": 0, "table_available": False, "birdnet_runtime_available": True}
+    )
+    assert result.status == DoctorStatus.PASS
+    assert result.recoverability == DoctorRecoverability.INFORMATIONAL
+
+
+def test_interpret_acoustic_runtime_birdnet_not_installed_is_informational() -> None:
+    result = doctor._interpret_acoustic_runtime(
+        {"sampled_count": 0, "failed_count": 0, "table_available": True, "birdnet_runtime_available": False}
+    )
+    assert result.status == DoctorStatus.PASS
+    assert result.recoverability == DoctorRecoverability.INFORMATIONAL
+    assert "not installed" in result.summary.lower()
+
+
+def test_interpret_acoustic_runtime_no_runs_yet_is_informational() -> None:
+    result = doctor._interpret_acoustic_runtime(
+        {"sampled_count": 0, "failed_count": 0, "table_available": True, "birdnet_runtime_available": True}
+    )
+    assert result.status == DoctorStatus.PASS
+    assert result.recoverability == DoctorRecoverability.INFORMATIONAL
+
+
+def test_interpret_acoustic_runtime_stale_queue_warns_never_blocks() -> None:
+    result = doctor._interpret_acoustic_runtime(
+        {
+            "sampled_count": 5, "failed_count": 0, "table_available": True, "birdnet_runtime_available": True,
+            "oldest_queued_age_seconds": 900.0,
+        }
+    )
+    assert result.status == DoctorStatus.WARN
+    assert result.recoverability == DoctorRecoverability.DEGRADED
+    assert result.recoverability != DoctorRecoverability.BLOCKING
+
+
+def test_interpret_acoustic_runtime_recent_failure_warns() -> None:
+    result = doctor._interpret_acoustic_runtime(
+        {
+            "sampled_count": 5, "failed_count": 2, "most_recent_error_code": "ffmpeg_unavailable",
+            "table_available": True, "birdnet_runtime_available": True, "oldest_queued_age_seconds": None,
+        }
+    )
+    assert result.status == DoctorStatus.WARN
+    assert result.recoverability == DoctorRecoverability.DEGRADED
+    assert result.recoverability != DoctorRecoverability.BLOCKING
+    assert result.diagnostic_context["failed_count"] == 2
+
+
+def test_interpret_acoustic_runtime_all_recent_runs_succeeded_is_pass() -> None:
+    result = doctor._interpret_acoustic_runtime(
+        {
+            "sampled_count": 3, "failed_count": 0, "table_available": True, "birdnet_runtime_available": True,
+            "oldest_queued_age_seconds": None,
+        }
+    )
+    assert result.status == DoctorStatus.PASS
+    assert result.recoverability is None
+
+
+# --------------------------------------------------------------------------
 # Research / export
 # --------------------------------------------------------------------------
 

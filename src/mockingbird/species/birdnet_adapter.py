@@ -155,6 +155,28 @@ def resolve_birdnet_config(
     )
 
 
+def _tflite_runtime_importable() -> bool:
+    """Safe availability check for the `tflite_runtime` name specifically --
+    Acoustic Runtime & Quality v1 (found via a real end-to-end acceptance
+    run, not assumed): once `_install_tflite_runtime_shim` has installed
+    its bare `types.ModuleType` shim into `sys.modules["tflite_runtime"]`,
+    that module has no real `__spec__` (it was never actually imported
+    through the normal machinery), and `importlib.util.find_spec` raises
+    `ValueError: tflite_runtime.__spec__ is None` for exactly that shape --
+    it refuses to guess about a `sys.modules` entry with no spec, rather
+    than treating it as absent. `_tflite_backend_name` (below) already
+    guards against this correctly (`"tflite_runtime" in sys.modules or
+    ...find_spec(...)`, short-circuiting before ever calling `find_spec`);
+    this mirrors that exact, already-proven-correct guard as one shared
+    helper so the two call sites can never silently drift apart again."""
+
+    if "tflite_runtime" in sys.modules:
+        return True
+    import importlib.util
+
+    return importlib.util.find_spec("tflite_runtime") is not None
+
+
 def _missing_runtime_packages() -> list[str]:
     """Side-effect-free (does not import/load anything heavy): which
     required packages are not installed. Mirrors `bioclip_adapter.
@@ -164,7 +186,7 @@ def _missing_runtime_packages() -> list[str]:
     import importlib.util
 
     missing = [name for name in _REQUIRED_RUNTIME_PACKAGES if importlib.util.find_spec(name) is None]
-    if importlib.util.find_spec("tflite_runtime") is None and all(
+    if not _tflite_runtime_importable() and all(
         importlib.util.find_spec(candidate) is None
         for candidate in ("ai_edge_litert", "tensorflow")
     ):
@@ -372,7 +394,7 @@ def _tflite_backend_name() -> str:
 
     if importlib.util.find_spec("ai_edge_litert") is not None:
         return "ai-edge-litert"
-    if "tflite_runtime" in sys.modules or importlib.util.find_spec("tflite_runtime") is not None:
+    if _tflite_runtime_importable():
         return "tflite_runtime"
     if importlib.util.find_spec("tensorflow") is not None:
         return "tensorflow"

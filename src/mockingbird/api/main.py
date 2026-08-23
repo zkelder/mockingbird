@@ -440,6 +440,7 @@ from mockingbird.observation.counterfactual_lineage import classify_rejection_at
 from mockingbird.observation.offline_ingest import OfflineIngestError, run_offline_video_ingest
 from mockingbird.observation.acoustic_ingest import AcousticIngestError, run_acoustic_analysis
 from mockingbird.observation import audio_capture
+from mockingbird.observation.acoustic_runtime import AcousticRuntimeService, MicrophoneSegmentSource
 from mockingbird.species.birdnet_adapter import get_birdnet_status
 from mockingbird.observation.engine_runtime import (
     ObservationEngineSessionManager,
@@ -529,6 +530,13 @@ async def _app_lifespan(_app: FastAPI):
     get_durable_monitoring_supervisor().start()
     if repository.storage_retention_settings().automatic_cleanup_enabled:
         get_local_storage_retention_service().start()
+    # Acoustic Runtime & Quality v1: always started, mirroring the durable
+    # monitoring supervisor above (not gated behind a user setting the way
+    # storage cleanup is) -- it is a bounded, cheap no-op loop whenever no
+    # Stream currently has live microphone capture running, and the one
+    # place restart recovery (Phase C) actually happens for any acoustic
+    # work a previous process left mid-flight.
+    get_acoustic_runtime_service().start()
     try:
         yield
     finally:
@@ -540,6 +548,8 @@ async def _app_lifespan(_app: FastAPI):
                 _live_object_detector_manager.shutdown()
                 detector_drained = True
 
+        if _acoustic_runtime_service is not None:
+            _acoustic_runtime_service.shutdown()
         if _local_storage_retention_service is not None:
             _local_storage_retention_service.shutdown()
         if _durable_monitoring_supervisor is not None:
@@ -752,6 +762,7 @@ _observation_engine_session_manager: ObservationEngineSessionManager | None = No
 _live_preview_lease_manager: live_preview_leases.LivePreviewLeaseManager | None = None
 _durable_monitoring_supervisor: DurableMonitoringSupervisor | None = None
 _local_storage_retention_service: LocalStorageRetentionService | None = None
+_acoustic_runtime_service: AcousticRuntimeService | None = None
 _camera_node_client: CameraNodeClient | None = None
 _automatic_review_identification_assist: AutomaticReviewIdentificationAssist | None = (
     None
@@ -1338,7 +1349,7 @@ def _stop_runtime_activity(*, reason: str) -> None:
     global _durable_monitoring_supervisor, _local_storage_retention_service
     global _source_monitor_manager, _live_camera_session_manager, _live_preview_lease_manager
     global _live_object_detector_manager, _tracked_activity_detector_manager
-    global _observation_engine_session_manager
+    global _observation_engine_session_manager, _acoustic_runtime_service
     detector_drained = False
 
     def drain_live_detector() -> None:
@@ -1357,6 +1368,15 @@ def _stop_runtime_activity(*, reason: str) -> None:
     if _local_storage_retention_service is not None:
         _local_storage_retention_service.shutdown()
         _local_storage_retention_service = None
+    if _acoustic_runtime_service is not None:
+        # Found via review: an earlier version never stopped this here, so
+        # a local-backup restore (which swaps the live DB/media root out
+        # from under every other runtime reader/writer, precisely why this
+        # function exists) left the acoustic reconcile thread ticking
+        # against the pre-restore repository -- importing/deleting files
+        # under a media root that was concurrently being replaced.
+        _acoustic_runtime_service.shutdown()
+        _acoustic_runtime_service = None
     if _source_monitor_manager is not None:
         _source_monitor_manager.cancel_all()
         _source_monitor_manager = None
@@ -1542,6 +1562,26 @@ def get_microphone_session_manager() -> audio_capture.MicrophoneSessionManager:
     if _microphone_session_manager is None:
         _microphone_session_manager = audio_capture.MicrophoneSessionManager()
     return _microphone_session_manager
+
+
+def get_acoustic_runtime_service() -> AcousticRuntimeService:
+    """Return the single app-owned acoustic runtime -- Acoustic Runtime &
+    Quality v1. Mirrors `get_durable_monitoring_supervisor`'s identical
+    lazy-singleton shape; polls whichever Streams `get_microphone_session_
+    manager()` currently has an active live-microphone capture session for
+    (`MicrophoneSegmentSource`), so this is a harmless, cheap no-op loop
+    when no capture is running (the common case today, since no physical
+    microphone is available in this sandbox) -- it only does real work once
+    an operator explicitly starts microphone capture, exactly like every
+    other optional capability this product has."""
+
+    global _acoustic_runtime_service
+    if _acoustic_runtime_service is None:
+        _acoustic_runtime_service = AcousticRuntimeService(
+            repository=get_repository(),
+            segment_source=MicrophoneSegmentSource(get_microphone_session_manager()),
+        )
+    return _acoustic_runtime_service
 
 
 def get_observation_engine_session_manager() -> ObservationEngineSessionManager:

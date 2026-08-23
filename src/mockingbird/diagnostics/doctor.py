@@ -38,7 +38,7 @@ import queue
 import threading
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Any, TypeVar
@@ -144,6 +144,14 @@ _CAMERA_NODE_REPLACEMENT_REVIEW_WINDOW_SECONDS = 7 * 24 * 60 * 60.0
 # diagnosis" (see docs/mockingbird-doctor-operational-health-contract.md).
 _RECENT_RUN_SAMPLE_SIZE = 20
 
+#: Acoustic Runtime & Quality v1: how long the oldest still-`queued`
+#: acoustic segment may wait before Doctor treats the runtime as genuinely
+#: falling behind (WARN) rather than merely busy -- generous relative to
+#: BirdNET's own measured ~23x-real-time CPU throughput (see
+#: `acoustic_runtime`'s own bounded-capacity constants), so this only fires
+#: for a genuine stall, never ordinary bursty load.
+_STALE_ACOUSTIC_QUEUE_AGE_SECONDS = 600.0
+
 
 class DoctorStatus(str, Enum):
     """Bounded, machine-readable per-check outcome."""
@@ -200,6 +208,7 @@ class DoctorCheckCode(str, Enum):
     CLOCK = "clock"
     OFFLINE_INGEST = "offline_ingest"
     RESEARCH_EXPORT = "research_export"
+    ACOUSTIC_RUNTIME = "acoustic_runtime"
 
 
 class DoctorCheckResult(BaseModel):
@@ -1429,6 +1438,166 @@ def _interpret_offline_ingest(gathered: dict[str, Any]) -> DoctorCheckResult:
 
 
 # --------------------------------------------------------------------------
+# Acoustic runtime (Acoustic Runtime & Quality v1)
+# --------------------------------------------------------------------------
+
+
+def _gather_acoustic_runtime(engine: Engine) -> dict[str, Any]:
+    """Mirrors `_gather_offline_ingest`'s exact "lazy model import, bare
+    read-only Core query, `OperationalError` means not-yet-migrated"
+    discipline -- plus queue-depth/oldest-pending-age aggregates (Phase J's
+    own bounded-runtime-information list) and whether the optional BirdNET
+    runtime package is installed."""
+
+    from sqlalchemy import func as sa_func
+    from sqlalchemy.exc import OperationalError
+
+    from mockingbird.repository.product_repository import AcousticAnalysisRunModel
+    from mockingbird.species.birdnet_adapter import get_birdnet_status
+
+    birdnet_status = get_birdnet_status()
+    try:
+        with engine.connect() as connection:
+            rows = connection.execute(
+                select(AcousticAnalysisRunModel.status, AcousticAnalysisRunModel.error_code)
+                .order_by(AcousticAnalysisRunModel.created_at.desc())
+                .limit(_RECENT_RUN_SAMPLE_SIZE)
+            ).all()
+            queued_count = connection.execute(
+                select(sa_func.count(AcousticAnalysisRunModel.id)).where(
+                    AcousticAnalysisRunModel.status == "queued",
+                )
+            ).scalar_one()
+            processing_count = connection.execute(
+                select(sa_func.count(AcousticAnalysisRunModel.id)).where(
+                    AcousticAnalysisRunModel.status == "processing",
+                )
+            ).scalar_one()
+            oldest_queued_created_at = connection.execute(
+                select(AcousticAnalysisRunModel.created_at)
+                .where(AcousticAnalysisRunModel.status == "queued")
+                .order_by(AcousticAnalysisRunModel.created_at.asc())
+                .limit(1)
+            ).scalar_one_or_none()
+            # 24h-windowed, matching `ProductRepository.acoustic_analysis_
+            # queue_diagnostics`'s identical scoping exactly (found via
+            # review: an earlier version counted all-time here, so this
+            # check and the runtime's own `status()` snapshot silently
+            # reported two different numbers for what looked like the same
+            # fact).
+            recent_cutoff = datetime.now(UTC) - timedelta(hours=24)
+            capacity_evicted_count = connection.execute(
+                select(sa_func.count(AcousticAnalysisRunModel.id)).where(
+                    AcousticAnalysisRunModel.error_code == "acoustic_queue_capacity_exceeded",
+                    AcousticAnalysisRunModel.completed_at.is_not(None),
+                    AcousticAnalysisRunModel.completed_at >= recent_cutoff,
+                )
+            ).scalar_one()
+    except OperationalError:
+        # A database whose recorded schema predates schema 43 (this table's
+        # own migration) has no such table yet -- an honest "not migrated to
+        # that point" fact, not an unexpected Doctor failure; the Database
+        # Schema check above already reports the version gap itself.
+        return {
+            "sampled_count": 0, "failed_count": 0, "table_available": False,
+            "birdnet_runtime_available": birdnet_status.runtime_available,
+        }
+    statuses = [row[0] for row in rows]
+    oldest_queued_age_seconds = None
+    if oldest_queued_created_at is not None:
+        oldest_queued_age_seconds = (
+            datetime.now(UTC) - normalize_utc(oldest_queued_created_at)
+        ).total_seconds()
+    return {
+        "sampled_count": len(statuses),
+        "failed_count": sum(1 for status in statuses if status == "failed"),
+        "most_recent_error_code": next((row[1] for row in rows if row[0] == "failed"), None),
+        "table_available": True,
+        "queued_count": queued_count,
+        "processing_count": processing_count,
+        "oldest_queued_age_seconds": oldest_queued_age_seconds,
+        "capacity_evicted_count": capacity_evicted_count,
+        "birdnet_runtime_available": birdnet_status.runtime_available,
+    }
+
+
+def _interpret_acoustic_runtime(gathered: dict[str, Any]) -> DoctorCheckResult:
+    context = {
+        "sampled_run_count": gathered.get("sampled_count", 0),
+        "failed_count": gathered.get("failed_count", 0),
+        "queued_count": gathered.get("queued_count"),
+        "processing_count": gathered.get("processing_count"),
+        "oldest_queued_age_seconds": gathered.get("oldest_queued_age_seconds"),
+        "capacity_evicted_count": gathered.get("capacity_evicted_count"),
+        "birdnet_runtime_available": gathered.get("birdnet_runtime_available"),
+    }
+    if gathered.get("table_available") is False:
+        return DoctorCheckResult(
+            code=DoctorCheckCode.ACOUSTIC_RUNTIME,
+            component="Acoustic runtime",
+            status=DoctorStatus.PASS,
+            summary="Acoustic analysis history isn't available yet.",
+            detail="This database has not been migrated to the schema version that added it. See the Database Schema check.",
+            recoverability=DoctorRecoverability.INFORMATIONAL,
+            diagnostic_context=context,
+        )
+    if not gathered.get("birdnet_runtime_available"):
+        return DoctorCheckResult(
+            code=DoctorCheckCode.ACOUSTIC_RUNTIME,
+            component="Acoustic runtime",
+            status=DoctorStatus.PASS,
+            summary="The optional BirdNET acoustic runtime is not installed.",
+            detail="Visual observation is unaffected; recorded-audio/microphone analysis is unavailable until it is installed.",
+            recoverability=DoctorRecoverability.INFORMATIONAL,
+            diagnostic_context=context,
+        )
+    if gathered.get("sampled_count", 0) == 0:
+        return DoctorCheckResult(
+            code=DoctorCheckCode.ACOUSTIC_RUNTIME,
+            component="Acoustic runtime",
+            status=DoctorStatus.PASS,
+            summary="No acoustic analysis has been run yet.",
+            detail="This is expected until a recorded audio clip is analyzed or live microphone capture is used.",
+            recoverability=DoctorRecoverability.INFORMATIONAL,
+            diagnostic_context=context,
+        )
+    oldest_queued_age_seconds = gathered.get("oldest_queued_age_seconds")
+    if oldest_queued_age_seconds is not None and oldest_queued_age_seconds > _STALE_ACOUSTIC_QUEUE_AGE_SECONDS:
+        return DoctorCheckResult(
+            code=DoctorCheckCode.ACOUSTIC_RUNTIME,
+            component="Acoustic runtime",
+            status=DoctorStatus.WARN,
+            summary=(
+                f"Acoustic analysis has fallen behind: the oldest queued segment has been "
+                f"waiting {oldest_queued_age_seconds / 60:.0f} minute(s)."
+            ),
+            detail="Visual observation is unaffected; this only concerns acoustic/microphone analysis.",
+            recoverability=DoctorRecoverability.DEGRADED,
+            user_action="Check that the application process is running and not overloaded.",
+            diagnostic_context=context,
+        )
+    failed_count = gathered.get("failed_count", 0)
+    if failed_count > 0:
+        return DoctorCheckResult(
+            code=DoctorCheckCode.ACOUSTIC_RUNTIME,
+            component="Acoustic runtime",
+            status=DoctorStatus.WARN,
+            summary=f"{failed_count} of the last {gathered.get('sampled_count', 0)} acoustic analysis run(s) failed.",
+            detail="Visual observation is unaffected; this only concerns acoustic/microphone analysis.",
+            recoverability=DoctorRecoverability.DEGRADED,
+            user_action="Check the most recent acoustic analysis error code, or try analyzing the recording again.",
+            diagnostic_context=context,
+        )
+    return DoctorCheckResult(
+        code=DoctorCheckCode.ACOUSTIC_RUNTIME,
+        component="Acoustic runtime",
+        status=DoctorStatus.PASS,
+        summary=f"The last {gathered.get('sampled_count', 0)} acoustic analysis run(s) completed without error.",
+        diagnostic_context=context,
+    )
+
+
+# --------------------------------------------------------------------------
 # Research / export
 # --------------------------------------------------------------------------
 
@@ -1717,6 +1886,15 @@ def run_doctor(
                 timeout_seconds=timeout_seconds,
             )
         )
+        checks.append(
+            _execute_check(
+                code=DoctorCheckCode.ACOUSTIC_RUNTIME,
+                component="Acoustic runtime",
+                gather=lambda: _gather_acoustic_runtime(engine),
+                interpret=_interpret_acoustic_runtime,
+                timeout_seconds=timeout_seconds,
+            )
+        )
     else:
         checks.append(
             _execute_check(
@@ -1733,6 +1911,15 @@ def run_doctor(
                 component="Research / export",
                 gather=None,
                 interpret=_interpret_research_export,
+                skip_reason="Skipped because the database is unavailable.",
+            )
+        )
+        checks.append(
+            _execute_check(
+                code=DoctorCheckCode.ACOUSTIC_RUNTIME,
+                component="Acoustic runtime",
+                gather=None,
+                interpret=_interpret_acoustic_runtime,
                 skip_reason="Skipped because the database is unavailable.",
             )
         )
