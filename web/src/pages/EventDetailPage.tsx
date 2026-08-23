@@ -375,6 +375,7 @@ export function EventDetailPage({
           <div className="species-visit-list">
             {speciesVisits.map((visit) => {
               const visitLabel = visit.reviewed_label ?? visit.species_guess ?? visit.subject_label;
+              const preview = detail.visit_previews?.[visit.id];
               return (
                 <button
                   className="detail-link-card"
@@ -382,6 +383,15 @@ export function EventDetailPage({
                   onClick={() => onOpenVisit(visit.id)}
                   type="button"
                 >
+                  {preview ? (
+                    <div className="detail-link-card-preview">
+                      {preview.content_type.startsWith("audio/") ? (
+                        <div className="detail-link-card-preview-audio" aria-hidden="true">🔊 Heard</div>
+                      ) : (
+                        <img alt="" src={`${apiClient.baseUrl}${preview.preview_url}`} />
+                      )}
+                    </div>
+                  ) : null}
                   <span>{displayTaxonomyLabel(visitLabel, taxonomyLabels)}</span>
                   <TaxonomyBadge label={findTaxonomyLabel(visitLabel, taxonomyLabels)} value={visitLabel} />
                   <strong>{visit.reviewed_label ? "Reviewed species" : "Resolve species"}</strong>
@@ -463,17 +473,29 @@ export function EventDetailPage({
             <h2>Visits</h2>
           </div>
           <div className="list-stack">
-            {detail.visits.map((visit) => (
-              <button className="detail-link-card" key={visit.id} onClick={() => onOpenVisit(visit.id)}>
-                <span>
-                  {displayTaxonomyLabel(
-                    visit.reviewed_label ?? visit.species_guess ?? visit.subject_label,
-                    taxonomyLabels,
-                  )}
-                </span>
-                <strong>{formatLabel(visit.review_status)}</strong>
-              </button>
-            ))}
+            {detail.visits.map((visit) => {
+              const preview = detail.visit_previews?.[visit.id];
+              return (
+                <button className="detail-link-card" key={visit.id} onClick={() => onOpenVisit(visit.id)}>
+                  {preview ? (
+                    <div className="detail-link-card-preview">
+                      {preview.content_type.startsWith("audio/") ? (
+                        <div className="detail-link-card-preview-audio" aria-hidden="true">🔊 Heard</div>
+                      ) : (
+                        <img alt="" src={`${apiClient.baseUrl}${preview.preview_url}`} />
+                      )}
+                    </div>
+                  ) : null}
+                  <span>
+                    {displayTaxonomyLabel(
+                      visit.reviewed_label ?? visit.species_guess ?? visit.subject_label,
+                      taxonomyLabels,
+                    )}
+                  </span>
+                  <strong>{formatLabel(visit.review_status)}</strong>
+                </button>
+              );
+            })}
             {detail.visits.length === 0 ? (
               <span className="meta-text">No visits are attached to this event.</span>
             ) : null}

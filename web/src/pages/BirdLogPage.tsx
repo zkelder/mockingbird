@@ -497,7 +497,7 @@ export function BirdLogPage({
           if (active) setOverview(next);
         })
         .catch(() => {
-          if (active) setError("Could not load Wildlife Journal. Your reviewed activity remains in the Activity Library.");
+          if (active) setError("Could not load Bird Log. Your reviewed activity remains in the Activity Library.");
         })
         .finally(() => {
           if (active) setIsLoading(false);
@@ -509,7 +509,7 @@ export function BirdLogPage({
           if (active) setHistory(next);
         })
         .catch((caught) => {
-          if (active) setError(caught instanceof Error ? caught.message : "Could not load this Journal history.");
+          if (active) setError(caught instanceof Error ? caught.message : "Could not load this Bird Log history.");
         })
         .finally(() => {
           if (active) setIsLoading(false);
@@ -583,7 +583,7 @@ export function BirdLogPage({
       <div className="page-stack">
         <PageHeader
           eyebrow="Reviewed wildlife history"
-          title="Wildlife Journal"
+          title="Bird Log"
           description="Confirmed wildlife from current reviewed corrections. Suggestions and unresolved activity stay in review context."
           actions={
             <>
@@ -623,11 +623,11 @@ export function BirdLogPage({
           </section>
         ) : null}
         {error ? <div className="error-panel">{error}</div> : null}
-        {isLoading && !overview ? <div className="panel">Loading Wildlife Journal…</div> : null}
+        {isLoading && !overview ? <div className="panel">Loading Bird Log…</div> : null}
         {overview?.labels.length === 0 && !isLoading ? (
           <EmptyState
-            title={streams.length === 0 ? "No cameras to journal yet" : "No confirmed wildlife observations yet"}
-            description={streams.length === 0 ? "Add a camera or local media Source, then review outdoor activity." : "Review a Visit to create a confirmed local wildlife observation. Suggestions are not Journal entries."}
+            title={streams.length === 0 ? "No cameras connected yet" : "No confirmed wildlife observations yet"}
+            description={streams.length === 0 ? "Add a camera or local media Source, then review outdoor activity." : "Review a Visit to create a confirmed local wildlife observation. Suggestions are not Bird Log entries."}
             action={<button className="secondary-action" onClick={streams.length === 0 ? onOpenStreams : onOpenReview} type="button">{streams.length === 0 ? "Add Camera" : "Open Review Queue"}</button>}
           />
         ) : null}
@@ -667,15 +667,29 @@ export function BirdLogPage({
   }
 
   const activeHistory = history;
+  // Everyday Product / Discovery UX Closure v1: a multi-subject Visit
+  // Assembly Event (schema 36) can have two simultaneous individuals of the
+  // same species -- with nothing marking them as concurrent, a same-species
+  // pair on this page read as a plausible duplicate/glitch rather than two
+  // real individuals. Detected within the currently-loaded gallery page
+  // only (no extra request): count each event_id's occurrences among the
+  // observations already fetched.
+  const galleryEventIdCounts = new Map<string, number>();
+  for (const observation of activeHistory?.gallery.observations ?? []) {
+    galleryEventIdCounts.set(
+      observation.event_id,
+      (galleryEventIdCounts.get(observation.event_id) ?? 0) + 1,
+    );
+  }
   return (
     <div className="page-stack">
       <PageHeader
         eyebrow="Reviewed wildlife history"
-        title={activeHistory ? activeHistory.display_name : "Wildlife Journal"}
+        title={activeHistory ? activeHistory.display_name : "Bird Log"}
         description="One bounded history of current reviewed observations. Open a Visit for full evidence and correction audit context."
         actions={
           <>
-            <button className="secondary-action" onClick={() => navigateJournalLabel(null)} type="button">All Journal labels</button>
+            <button className="secondary-action" onClick={() => navigateJournalLabel(null)} type="button">All Bird Log species</button>
             <button className="secondary-action" onClick={openActivityLibrary} type="button">Open Activity Library</button>
             <button className="secondary-action" onClick={onOpenCollections} type="button">Collections</button>
           </>
@@ -758,7 +772,7 @@ export function BirdLogPage({
       {error ? <div className="error-panel">{error}</div> : null}
       {collectionMessage ? <div className="notice-panel" role="status">{collectionMessage}</div> : null}
       {tagMessage ? <div className="notice-panel" role="status">{tagMessage}</div> : null}
-      {isLoading && !activeHistory ? <div className="panel">Loading reviewed Journal history…</div> : null}
+      {isLoading && !activeHistory ? <div className="panel">Loading reviewed Bird Log history…</div> : null}
       {activeHistory ? (
         <>
           <div className="journal-scope-note">{activeHistory.scope.start_date ?? "All recorded dates"}{activeHistory.scope.end_date ? ` to ${activeHistory.scope.end_date}` : ""}{activeHistory.scope.favorites_only ? " · favorites only" : ""}{activeHistory.scope.tag_id ? " · gallery tag filter" : ""} · local time ({activeHistory.scope.timezone_name})</div>
@@ -766,7 +780,7 @@ export function BirdLogPage({
             <EmptyState
               title="No active confirmed observations in this scope"
               description="This label may have been revised, reopened, superseded, or filtered out. Review history remains available on individual Visits."
-              action={<button className="secondary-action" onClick={() => commitLocation({ ...location, preset: "all_time", startDate: "", endDate: "", streamId: "", zoneId: "", favoritesOnly: false, tagId: "", offset: 0 })} type="button">Clear Journal filters</button>}
+              action={<button className="secondary-action" onClick={() => commitLocation({ ...location, preset: "all_time", startDate: "", endDate: "", streamId: "", zoneId: "", favoritesOnly: false, tagId: "", offset: 0 })} type="button">Clear Bird Log filters</button>}
             />
           ) : (
             <>
@@ -830,8 +844,8 @@ export function BirdLogPage({
                   <article className="journal-gallery-card" key={observation.visit_id}>
                     <button className="journal-gallery-image" onClick={() => onOpenVisit(observation.visit_id)} type="button"><JournalThumbnail label={observation.display_name} observedAt={observation.observed_at} representative={observation} /></button>
                     <div className="journal-gallery-body">
-                      <div className="section-heading"><div><h3>{formatDateTime(observation.observed_at)}</h3><span className="meta-text">{observation.source_name} · {observation.stream_name}{observation.zone_name ? ` · ${observation.zone_name}` : ""}</span></div><StatusPill label="Reviewed" tone="good" /></div>
-                      <div className="journal-gallery-facts"><span>Duration <strong>{durationLabel(observation.duration_seconds)}</strong></span><span>Evidence frames <strong>{observation.evidence_frame_count}</strong></span><span>Correction <strong>{observation.display_name}</strong></span></div>
+                      <div className="section-heading"><div><h3>{formatDateTime(observation.observed_at)}</h3><span className="meta-text">{observation.source_name} · {observation.stream_name}{observation.zone_name ? ` · ${observation.zone_name}` : ""}</span></div><div className="journal-gallery-status-pills">{(galleryEventIdCounts.get(observation.event_id) ?? 0) > 1 ? <StatusPill label="Shared encounter" tone="quiet" /> : null}<StatusPill label="Confirmed" tone="good" /></div></div>
+                      <div className="journal-gallery-facts"><span>Duration <strong>{durationLabel(observation.duration_seconds)}</strong></span><span>{observation.primary_evidence?.content_type.startsWith("audio/") ? "Evidence clip" : "Evidence frames"} <strong>{observation.evidence_frame_count}</strong></span><span>Correction <strong>{observation.display_name}</strong></span></div>
                       <div className="journal-gallery-milestones">{observation.is_favorite ? <StatusPill label="Favorite" tone="good" /> : null}{observation.has_note ? <StatusPill label="Note" tone="quiet" /> : null}{observation.collection_count > 0 ? <StatusPill label={`${observation.collection_count} Collection${observation.collection_count === 1 ? "" : "s"}`} tone="quiet" /> : null}{observation.tags.map((tag) => <StatusPill key={tag} label={tag} tone="quiet" />)}{observation.has_curation_history ? <StatusPill label="Curated" tone="quiet" /> : null}{observation.has_review_revision ? <StatusPill label="Revised" tone="quiet" /> : null}{observation.is_first_on_stream ? <StatusPill label="First on Stream" tone="quiet" /> : null}{observation.is_first_in_zone ? <StatusPill label="First in Zone" tone="quiet" /> : null}</div>
                       <button className="secondary-action" onClick={() => onOpenVisit(observation.visit_id)} type="button">Open Visit Detail</button>
                       <button className="text-action" disabled={!selectedCollectionId} onClick={() => void addObservationToCollection(observation.visit_id)} type="button">Add to Collection</button>

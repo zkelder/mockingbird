@@ -313,6 +313,7 @@ from mockingbird.api.schemas import (
     TaxonomyLabel,
     Visit,
     VisitDetail,
+    VisitEvidenceFrame,
     VisitOrganizationState,
     VisitOrganizationUpdate,
     VisitOrganizationBulkRequest,
@@ -1699,6 +1700,36 @@ def _not_found(product_type: str, product_id: str) -> HTTPException:
         status_code=404,
         detail=f"{product_type} '{product_id}' was not found.",
     )
+
+
+def _redact_visit(visit: Visit) -> Visit:
+    """Strip the server-local `representative_media_path` before a Visit crosses the API boundary.
+
+    `VisitEvidenceFrame` (api/schemas.py) documents the underlying rule directly --
+    "Bounded, observational media for one Visit. Never expose its local path." --
+    and `get_visit_detail` already applies it to the single primary `VisitDetail.visit`
+    field. Every other response shape that returns a bare `Visit` (sibling/resulting
+    Visits, an Event's Visit list, plain Visit listings) must scrub it the same way,
+    not just the one field a reviewer happens to load first.
+    """
+    if visit.representative_media_path is None:
+        return visit
+    return visit.model_copy(update={"representative_media_path": None})
+
+
+def _redact_visits(visits: list[Visit]) -> list[Visit]:
+    return [_redact_visit(visit) for visit in visits]
+
+
+def _redact_media_asset(media_asset: MediaAsset | None) -> MediaAsset | None:
+    """Strip the server-local `local_path` before a MediaAsset crosses the API boundary.
+
+    Mirrors `get_visit_detail`'s existing `media_asset.model_copy(update={"local_path": ""})`
+    -- every response shape that can return a bare `MediaAsset` must redact it the same way.
+    """
+    if media_asset is None or not media_asset.local_path:
+        return media_asset
+    return media_asset.model_copy(update={"local_path": ""})
 
 
 def _unsupported_target(target_type: str) -> HTTPException:
@@ -10498,10 +10529,21 @@ async def _dashboard_runtime_by_stream(
 
 
 @app.get("/api/dashboard/summary", response_model=DashboardSummary)
-async def get_dashboard_summary() -> DashboardSummary:
+async def get_dashboard_summary(
+    local_date: date | None = Query(
+        default=None,
+        description=(
+            "The viewer's own local calendar date for 'today' (YYYY-MM-DD). Everyday "
+            "Product / Discovery UX Closure v1: without this, 'today' silently defaulted "
+            "to the server's local time, which can disagree with the browser-local "
+            "boundary the Today report panel already computes for the same page -- "
+            "omitting it preserves the prior server-local default."
+        ),
+    ),
+) -> DashboardSummary:
     repository = get_repository()
     runtime_by_stream = await _dashboard_runtime_by_stream(repository)
-    return repository.dashboard_summary(runtime_by_stream)
+    return repository.dashboard_summary(runtime_by_stream, local_date=local_date)
 
 
 # States a healthy or merely-idle camera can be in; anything else is a basic
@@ -12349,6 +12391,22 @@ async def get_event_detail(event_id: str) -> EventDetail:
         ),
         None,
     )
+    # Everyday Product / Discovery UX Closure v1: `media_asset` above depends
+    # entirely on the legacy `representative_media_path` being set, which the
+    # dominant current Visit-creation path (Camera Node/offline ingest)
+    # leaves null -- an Event case file could show zero photos anywhere and
+    # gave no way to tell multiple Visits/subjects apart. Reuses each Visit's
+    # own already-resolved evidence frames (the exact same resolution
+    # `VisitDetail.evidence_frames` uses), never a fabricated placeholder for
+    # a Visit with nothing saved.
+    visit_previews: dict[str, VisitEvidenceFrame] = {}
+    for visit in visits:
+        frames = repository.visit_evidence_frames(visit.id)
+        if not frames:
+            continue
+        visit_previews[visit.id] = next(
+            (frame for frame in frames if frame.is_primary), frames[0]
+        )
     dataset_ready = repository.event_is_dataset_ready(event)
     detection_proposals = repository.detection_proposals_for_event(event.id)
     return EventDetail(
@@ -12359,9 +12417,10 @@ async def get_event_detail(event_id: str) -> EventDetail:
             if event.primary_zone_id is not None
             else None
         ),
-        visits=visits,
+        visits=_redact_visits(visits),
+        visit_previews=visit_previews,
         motion_evidence=repository.motion_evidence_for_event(event.id),
-        media_asset=media_asset,
+        media_asset=_redact_media_asset(media_asset),
         detection_proposals=detection_proposals,
         detection_runs=_detection_runs_for_proposals(repository, detection_proposals),
         review_labels=repository.review_labels_for_event_tree(event.id),
@@ -12376,12 +12435,12 @@ async def list_event_visits(event_id: str) -> list[Visit]:
     event = repository.get_event(event_id)
     if event is None:
         raise _not_found("Event", event_id)
-    return repository.visits_for_event(event_id)
+    return _redact_visits(repository.visits_for_event(event_id))
 
 
 @app.get("/api/visits", response_model=list[Visit])
 async def list_visits() -> list[Visit]:
-    return get_repository().list_visits()
+    return _redact_visits(get_repository().list_visits())
 
 
 @app.post("/api/activity-library/search", response_model=ActivityLibrarySearchResponse)
@@ -12713,7 +12772,7 @@ async def get_visit(visit_id: str) -> Visit:
     visit = get_repository().get_visit(visit_id)
     if visit is None:
         raise _not_found("Visit", visit_id)
-    return visit
+    return _redact_visit(visit)
 
 
 @app.get("/api/visits/{visit_id}/detail", response_model=VisitDetail)
@@ -12744,7 +12803,7 @@ async def get_visit_detail(visit_id: str) -> VisitDetail:
         sibling for sibling in repository.visits_for_event(event.id) if sibling.id != visit.id
     ]
     return VisitDetail(
-        visit=visit.model_copy(update={"representative_media_path": None}),
+        visit=_redact_visit(visit),
         event=event,
         stream=stream,
         primary_zone=(
@@ -12754,11 +12813,7 @@ async def get_visit_detail(visit_id: str) -> VisitDetail:
         ),
         detections=event.detections,
         motion_evidence=repository.motion_evidence_for_visit(visit.id),
-        media_asset=(
-            media_asset.model_copy(update={"local_path": ""})
-            if media_asset is not None
-            else None
-        ),
+        media_asset=_redact_media_asset(media_asset),
         evidence_frames=repository.visit_evidence_frames(visit.id),
         effective_primary=repository.effective_primary_preview(visit.id),
         classifier_supporting_evidence=repository.classifier_supporting_evidence(visit.id),
@@ -12772,8 +12827,8 @@ async def get_visit_detail(visit_id: str) -> VisitDetail:
         ),
         correction_history=review_history.entries,
         curation_history=repository.visit_curation_history(visit.id),
-        resulting_visits=repository.resulting_visits_for(visit.id),
-        sibling_visits=sibling_visits,
+        resulting_visits=_redact_visits(repository.resulting_visits_for(visit.id)),
+        sibling_visits=_redact_visits(sibling_visits),
         eligible_zones=[
             zone
             for zone in repository.zones_for_stream(event.stream_id)

@@ -637,6 +637,16 @@ export function VisitDetailPage({
   const hasWebhookEvidence = Boolean(webhookProvenance?.isWebhook);
   const hasSavedPreviewMedia = isSavedPreviewMedia(detail.media_asset);
   const hasFolderImportMedia = isFolderImportMedia(detail.media_asset);
+  // Everyday Product / Discovery UX Closure v1: every Visit-curation write path
+  // (evidence select/save, refined crop, split, merge) can point
+  // representative_media_path at an asset that is already a member of
+  // evidence_frames -- the "Attached media" panel below then silently
+  // rendered the identical photo a second time with no indication it was the
+  // same one shown in "Visit evidence" above.
+  const isMediaAssetShownInEvidenceAbove = Boolean(
+    detail.media_asset &&
+      detail.evidence_frames.some((frame) => frame.media_asset_id === detail.media_asset!.id),
+  );
   const mediaProvenance = formatMediaProvenance(detail.media_asset);
   const mediaContextTitle = hasWebhookEvidence
     ? "Webhook metadata evidence"
@@ -834,7 +844,11 @@ export function VisitDetailPage({
         <div className="section-heading">
           <div>
             <h2>Visit evidence</h2>
-            <span className="meta-text">What your camera captured for this Visit.</span>
+            <span className="meta-text">
+              {detail.evidence_frames[0]?.content_type.startsWith("audio/")
+                ? "What your microphone recorded for this Visit."
+                : "What your camera captured for this Visit."}
+            </span>
           </div>
           <EvidenceBadge label="Evidence only" tone="evidence" />
         </div>
@@ -875,17 +889,18 @@ export function VisitDetailPage({
           <div className="section-heading">
             <div>
               <h2>High-resolution evidence</h2>
-              <span className="meta-text">Adjusting a crop creates a new derived review image; the full still and automatic crop remain intact.</span>
+              <span className="meta-text">Adjusting a crop creates a new derived review image; the full still and automatic crop remain intact. Uses the same evidence shown above.</span>
             </div>
             <EvidenceBadge label="Evidence only" tone="evidence" />
           </div>
-          {detail.evidence_frames.length > 0 ? (
-            <VisitEvidenceSequence
-              frames={detail.evidence_frames}
-              recommendedMediaAssetId={recommendedMediaAssetId}
-              recommendationNote={recommendationNote}
-            />
-          ) : null}
+          {/* Everyday Product / Discovery UX Closure v1: this used to render a
+              second, independent VisitEvidenceSequence over the identical
+              evidence_frames the "Visit evidence" section above already
+              shows -- two separate zoom/pan/selected-frame states for the
+              same photo could visibly diverge as a reviewer interacted with
+              one and not the other. The crop editor below is self-contained
+              (its own image + drag handles), so the duplicate viewer added
+              no unique capability. */}
           <div className="detail-actions">
             <RefinedCropEditor
               fullFrame={fullResolutionFrame}
@@ -1176,7 +1191,14 @@ export function VisitDetailPage({
             <h2>{mediaContextTitle}</h2>
             <span className="meta-text">{mediaProvenance}</span>
           </div>
-          <MediaAssetPreview asset={detail.media_asset} />
+          {isMediaAssetShownInEvidenceAbove ? (
+            <p className="meta-text">
+              This is the same {detail.media_asset?.media_type === "audio" ? "recording" : "photo"} already
+              shown in Visit evidence above.
+            </p>
+          ) : (
+            <MediaAssetPreview asset={detail.media_asset} />
+          )}
           <div className="attached-media-provenance">
             <strong>Correction boundary</strong>
             <span>{visitCorrectionTruthCopy}</span>
@@ -1453,11 +1475,8 @@ export function VisitDetailPage({
                   >
                     <div className="item-title-row">
                       <div>
-                        <span className="meta-text">
-                          {suggestion.adapter_name} - {suggestion.adapter_id}
-                        </span>
+                        <span className="meta-text">{suggestion.adapter_name}</span>
                         <h4>{displayTaxonomyLabel(suggestion.suggested_label, taxonomyLabels)}</h4>
-                        <span className="meta-text">Label: {suggestion.suggested_label}</span>
                         {suggestion.suggested_common_name ||
                         suggestion.suggested_scientific_name ? (
                           <span className="meta-text">

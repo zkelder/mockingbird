@@ -365,9 +365,15 @@ async def test_journal_resolves_current_reviewed_truth_and_combines_scope_filter
     overview = await client.get("/api/bird-log/journal?order=alphabetical")
     assert overview.status_code == 200
     labels = overview.json()["labels"]
+    # Everyday Product / Discovery UX Closure v1: a confirmed non-bird
+    # wildlife taxon ("squirrel-reviewed", above) is no longer silently
+    # invisible here -- MockingBird is "bird-first but wildlife-native"
+    # (product-doctrine.md), and this response's own contract is "confirmed
+    # wildlife," not "confirmed birds."
     assert [(row["label"], row["observation_count"]) for row in labels] == [
         ("blue_jay", 2),
         ("northern_cardinal", 3),
+        ("squirrel", 1),
     ]
     cardinal = next(row for row in labels if row["label"] == "northern_cardinal")
     assert cardinal["representative"]["visit_id"] == "moved-cardinal"

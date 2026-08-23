@@ -136,7 +136,7 @@ function BreakdownList({
               <button className="text-action" onClick={() => onOpenStream(item.drilldown.stream_id!)} type="button">Stream</button>
             ) : null}
             {item.drilldown.confirmed_label ? (
-              <button className="text-action" onClick={() => openJournalHistory(item.drilldown.confirmed_label!)} type="button">Journal</button>
+              <button className="text-action" onClick={() => openJournalHistory(item.drilldown.confirmed_label!)} type="button">Bird Log</button>
             ) : null}
             {item.representative ? (
               <button className="text-action" onClick={() => onOpenVisit(item.representative!.visit_id)} type="button">Visit</button>

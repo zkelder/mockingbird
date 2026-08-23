@@ -829,7 +829,13 @@ async def test_motion_evidence_promotion_preserves_snapshot_media_reference(
     assert event_detail_response.status_code == 200
     assert visit_detail_response.status_code == 200
     assert evidence_response.json()["snapshot_media_asset_id"] == asset.id
-    assert visit_response.json()["representative_media_path"] == asset.local_path
+    # Everyday Product / Discovery UX Closure v1: `representative_media_path`
+    # is now redacted on every API response (it is a server-local filesystem
+    # path -- see api/schemas.py's "Never expose its local path" contract on
+    # its sibling VisitEvidenceFrame). Verify the underlying Visit->MediaAsset
+    # link directly against the repository instead of the now-redacted field.
+    assert visit_response.json()["representative_media_path"] is None
+    assert isolated_repository.get_visit(result["visit_id"]).representative_media_path == asset.local_path
     assert event_detail_response.json()["media_asset"]["id"] == asset.id
     assert visit_detail_response.json()["media_asset"]["id"] == asset.id
     assert event_detail_response.json()["dataset_ready"] is False
@@ -891,7 +897,10 @@ async def test_motion_evidence_promotion_can_attach_snapshot_media_reference(
     visit_detail_response = await client.get(f"/api/visits/{result['visit_id']}/detail")
     assert visit_response.status_code == 200
     assert visit_detail_response.status_code == 200
-    assert visit_response.json()["representative_media_path"] == asset.local_path
+    # Everyday Product / Discovery UX Closure v1: see the identical comment in
+    # test_motion_evidence_promotion_preserves_snapshot_media_reference above.
+    assert visit_response.json()["representative_media_path"] is None
+    assert isolated_repository.get_visit(result["visit_id"]).representative_media_path == asset.local_path
     assert visit_detail_response.json()["media_asset"]["id"] == asset.id
 
 

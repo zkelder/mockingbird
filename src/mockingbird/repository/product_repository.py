@@ -4250,6 +4250,15 @@ class ProductRepository:
                     taxonomy_match.label if taxonomy_match is not None else detection.common_name
                 )
 
+                # Everyday Product / Discovery UX Closure v1: `observed_at` is the
+                # BirdNET window's own start instant (see the caller,
+                # `acoustic_ingest.py`'s `boundary_anchor + start_ms`) -- use the
+                # window's real, already-known end instant here too instead of
+                # collapsing started_at/ended_at to the same timestamp, which
+                # rendered as a dishonest "Duration 0 sec" on every audio card
+                # (Bird Log, Visit/Event detail) despite the clip genuinely having
+                # a duration.
+                window_duration_ms = max(0, detection.window_end_ms - detection.window_start_ms)
                 event_id = self._next_id(session, EventModel, "event-acoustic-candidate")
                 session.add(
                     EventModel(
@@ -4258,7 +4267,7 @@ class ProductRepository:
                         title=f"Machine-heard {detection.common_name} activity (needs review)",
                         event_type="acoustic_observation_candidate",
                         started_at=observed_at,
-                        ended_at=observed_at,
+                        ended_at=observed_at + timedelta(milliseconds=window_duration_ms),
                         primary_zone_id=None,
                         review_status=ReviewStatus.needs_review.value,
                     )
@@ -11948,7 +11957,34 @@ class ProductRepository:
                     frame.media_asset_id,
                 ),
             )
-            return ordered[0].captured_at, ordered[-1].captured_at
+            started_at = ordered[0].captured_at
+            ended_at = ordered[-1].captured_at
+            # `event.ended_at` is a raw persisted column -- may come back
+            # naive from SQLite -- while `started_at` is always an
+            # already-`_as_utc`-normalized frame timestamp; normalize before
+            # comparing, matching this file's established convention (see
+            # `_visit_activity_window`, directly below) to avoid a naive/aware
+            # comparison error.
+            normalized_event_ended_at = (
+                _as_utc(event.ended_at) if event.ended_at is not None else None
+            )
+            if (
+                started_at == ended_at
+                and len(ordered) == 1
+                and ordered[0].content_type.startswith("audio/")
+                and normalized_event_ended_at is not None
+                and normalized_event_ended_at > started_at
+            ):
+                # A single audio evidence frame can only carry one instant
+                # (`VisitEvidenceLinkModel.captured_at` is the BirdNET window's
+                # start), but the acoustic Event's own window genuinely spans
+                # the clip's real start/end (see `create_acoustic_candidate_
+                # visit`) -- prefer that honest duration over a false
+                # "Duration 0 sec" (Everyday Product / Discovery UX Closure v1).
+                # Scoped to audio specifically: an image Visit's single frame
+                # legitimately means an instantaneous capture.
+                return started_at, normalized_event_ended_at
+            return started_at, ended_at
         return self._visit_activity_window(event, evidence)
 
     def _visit_reviewed_label(
@@ -16375,6 +16411,20 @@ class ProductRepository:
             for link, asset in parsed
         ]
 
+    @staticmethod
+    def _evidence_preview_url(media_asset_id: str, media_type_or_content_type: str) -> str:
+        """The bounded-preview endpoint (`get_media_preview`) only ever serves images --
+        it unconditionally rejects audio/video with a 413. An evidence frame's
+        `preview_url` must resolve to the unrestricted `/file` endpoint for any
+        non-image asset, or its primary evidence player renders a dead, silently
+        non-functional control (Everyday Product / Discovery UX Closure v1,
+        Visit/Evidence detail D1). Accepts either a coarse `media_type`
+        ("image"/"audio"/"video") or a MIME `content_type` ("image/jpeg") --
+        both start with "image" for, and only for, an actual image.
+        """
+        endpoint = "preview" if media_type_or_content_type.startswith("image") else "file"
+        return f"/api/media/{media_asset_id}/{endpoint}"
+
     def _visit_evidence_frame_from_link_and_asset(
         self,
         link: VisitEvidenceLinkModel | None,
@@ -16404,7 +16454,7 @@ class ProductRepository:
 
         return VisitEvidenceFrame(
             media_asset_id=asset.id,
-            preview_url=f"/api/media/{asset.id}/preview",
+            preview_url=self._evidence_preview_url(asset.id, asset.media_type),
             captured_at=_as_utc(link.captured_at if link is not None else (asset.captured_at or asset.created_at)),
             relative_position=relative_position,
             frame_sequence=link.frame_sequence if link is not None else None,
@@ -16614,7 +16664,7 @@ class ProductRepository:
         return [
             VisitEvidenceFrame(
                 media_asset_id=asset.id,
-                preview_url=f"/api/media/{asset.id}/preview",
+                preview_url=self._evidence_preview_url(asset.id, asset.media_type),
                 captured_at=asset.created_at,
                 relative_position=0.0,
                 frame_sequence=None,
@@ -18043,7 +18093,7 @@ class ProductRepository:
         return [
             VisitEvidenceFrame(
                 media_asset_id=media_asset_id,
-                preview_url=f"/api/media/{media_asset_id}/preview",
+                preview_url=self._evidence_preview_url(media_asset_id, content_type),
                 captured_at=captured_at,
                 relative_position=(
                     0.0
@@ -20572,6 +20622,7 @@ class ProductRepository:
                 effective_media_asset_id=best_media_asset_id,
             ),
             review_status=ReviewStatus(visit.review_status),
+            reviewed_label=visit.reviewed_label,
             review_state_token=self._review_state_token(session, "visit", visit.id),
             reason="Review saved Visit evidence and explicitly correct the final label.",
         )
@@ -25320,7 +25371,12 @@ class ProductRepository:
 
         with self.session_factory() as session:
             taxonomy = self._taxonomy_label_model_for_input(session, label)
-            if taxonomy is None or taxonomy.category != LabelCategory.bird.value:
+            # Everyday Product / Discovery UX Closure v1: this guard used to require
+            # exactly `bird`, which 404'd the drill-down for a confirmed non-bird
+            # wildlife taxon (squirrel, deer, ...) even after `_wildlife_journal_
+            # confirmed_records` above was fixed to list it on the overview page --
+            # match that same wildlife-denylist boundary here instead.
+            if taxonomy is None or not is_wildlife_category(taxonomy.category):
                 return None
             canonical_label = taxonomy.label
             all_label_records = [
@@ -25607,7 +25663,13 @@ class ProductRepository:
                     else None
                 ),
                 representative=self._wildlife_journal_representative(session, ordered),
-                busiest_stream=stream_breakdown[0] if stream_breakdown else None,
+                # Everyday Product / Discovery UX Closure v1: this was the one
+                # ungated superlative claim of the three on this response --
+                # busiest_zone/peak_activity_hour already apply the same
+                # has_pattern_support floor above; a single confirmed Visit
+                # should not crown its own Stream "busiest" any more than it
+                # should crown a Zone or hour.
+                busiest_stream=stream_breakdown[0] if stream_breakdown and has_pattern_support else None,
                 busiest_zone=busiest_zone_entry if has_pattern_support else None,
                 peak_activity_hour=(
                     max(hour_counts, key=lambda hour: (hour_counts[hour], -hour))
@@ -25662,15 +25724,27 @@ class ProductRepository:
     ) -> list[dict[str, Any]]:
         # This single resolver keeps Journal, Insights, and Activity Library on the
         # existing latest-review, active-Visit truth boundary.
-        return [
-            record
-            for record in self._wildlife_insight_records(
-                session,
-                start_at=start_at,
-                end_at=end_at,
-            )
-            if record["summary"].review_outcome == VisitReviewOutcome.confirmed_bird
-        ]
+        #
+        # Everyday Product / Discovery UX Closure v1: `VisitReviewOutcome.
+        # confirmed_bird` is deliberately bird-only (see `_visit_review_outcome`),
+        # but this resolver's own contract is "confirmed wildlife" -- MockingBird
+        # is "bird-first but wildlife-native" (product-doctrine.md). A confirmed
+        # non-bird wildlife taxon (squirrel, deer, ...) resolves to the coarser
+        # `non_bird` outcome, which also contains non-wildlife categories (pet/
+        # person/vehicle) -- re-resolve the actual taxonomy category for that
+        # narrower bucket via the same canonical resolver `_visit_review_outcome`
+        # itself used, so a real confirmed wildlife encounter is never silently
+        # invisible here just because it isn't a bird.
+        records: list[dict[str, Any]] = []
+        for record in self._wildlife_insight_records(session, start_at=start_at, end_at=end_at):
+            summary = record["summary"]
+            if summary.review_outcome == VisitReviewOutcome.confirmed_bird:
+                records.append(record)
+            elif summary.review_outcome == VisitReviewOutcome.non_bird and summary.reviewed_label:
+                taxonomy = self._taxonomy_label_model_for_input(session, summary.reviewed_label)
+                if taxonomy is not None and is_wildlife_category(taxonomy.category):
+                    records.append(record)
+        return records
 
     @staticmethod
     def _wildlife_journal_ordered_records(
@@ -27452,6 +27526,26 @@ class ProductRepository:
             default=None,
         )
 
+    def _current_effective_review_label_model_for_event(
+        self,
+        session: Session,
+        event_id: str,
+    ) -> ReviewLabelModel | None:
+        """The latest *authoritative* row for this Event -- the Event-level
+        sibling of `_current_effective_review_label_model_for_visit`, above,
+        for the no-Visit-ever-existed review queue item type (raw activity/
+        person/vehicle events)."""
+
+        return max(
+            (
+                label
+                for label in self._review_label_models_for_event(session, event_id)
+                if review_provenance.is_authority_eligible(label.review_origin)
+            ),
+            key=lambda label: (label.created_at, label.id),
+            default=None,
+        )
+
     def _visit_review_history_from_session(
         self,
         session: Session,
@@ -28235,6 +28329,7 @@ class ProductRepository:
                     effective_media_asset_id=best_media_asset_id,
                 ),
                 review_status=visit.review_status,
+                reviewed_label=visit.reviewed_label,
                 review_state_token=self._review_state_token(session, "visit", visit.id),
                 reason="Confirm or correct the suggested species label.",
                 **_review_queue_product_context(
@@ -28306,6 +28401,14 @@ class ProductRepository:
                 media_asset_id=best_media_asset_id,
                 evidence=evidence,
             )
+            event_effective_label = (
+                self._current_effective_review_label_model_for_event(session, event.id)
+                if event.review_status == ReviewStatus.reviewed.value
+                else None
+            )
+            event_reviewed_label = (
+                event_effective_label.label if event_effective_label is not None else None
+            )
 
             queue_item = ReviewQueueItem(
                 id=f"review-queue-{event.id}",
@@ -28331,6 +28434,7 @@ class ProductRepository:
                 **_review_focus_crop_fields(focus_crop_context),
                 media_asset=media_asset,
                 review_status=event.review_status,
+                reviewed_label=event_reviewed_label,
                 review_state_token=self._review_state_token(session, "event", event.id),
                 reason="Review detected outdoor activity and correct the event meaning.",
                 **_review_queue_product_context(
@@ -32412,7 +32516,19 @@ def _review_queue_product_context(
     # genuinely recognized person/vehicle label narrows the category, and
     # every other non-blank broad class (including "unknown_animal") reads
     # as "animal" rather than staying unclassified.
-    if detector_class is None and event_type == "observation_engine_candidate":
+    #
+    # Everyday Product / Discovery UX Closure v1: an acoustic candidate Visit
+    # (`event_type == "acoustic_observation_candidate"`, `create_acoustic_
+    # candidate_visit`) has the identical gap for the identical reason -- it
+    # never populates MotionEvidence either, and was silently invisible to
+    # Today's "confirmed_bird_visit_count"/best-moments/new-species queries
+    # even after a human confirmed a real species. `subject_label` is always
+    # the literal `"bird"` for this event_type (never person/vehicle), so
+    # this always resolves to `detector_class = "animal"`, correctly.
+    if detector_class is None and event_type in {
+        "observation_engine_candidate",
+        "acoustic_observation_candidate",
+    }:
         normalized_subject_label = (subject_label or "").strip().lower()
         if normalized_subject_label in {"person", "vehicle"}:
             detector_class = normalized_subject_label

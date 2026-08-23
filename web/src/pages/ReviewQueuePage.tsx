@@ -88,7 +88,7 @@ function matchesProductReviewTab(
   return item.product_category === "unchecked";
 }
 
-function productReviewTitle(item: ReviewQueueItem): string {
+function productReviewTitle(item: ReviewQueueItem, taxonomyLabels: TaxonomyLabel[]): string {
   if (item.product_category === "animal") {
     // Acoustic / BirdNET Observation Foundation v1: honest about whether
     // this candidate's evidence was heard or seen.
@@ -103,7 +103,12 @@ function productReviewTitle(item: ReviewQueueItem): string {
     return "Activity needs evidence review";
   }
   if (item.product_category === "reviewed") {
-    return "Reviewed activity";
+    // Everyday Product / Discovery UX Closure v1: say what this was actually
+    // reviewed as instead of an undifferentiated "Reviewed activity" for
+    // every card in this tab.
+    return item.reviewed_label
+      ? `Reviewed: ${displayTaxonomyLabel(item.reviewed_label, taxonomyLabels)}`
+      : "Reviewed activity";
   }
   return "Legacy or test activity";
 }
@@ -1586,7 +1591,16 @@ export function ReviewQueuePage({
         if (!matchesTargetFilter(item, targetTypeFilter)) {
           return false;
         }
-        if (!matchesStatusFilter(item, reviewStatusFilter)) {
+        // Everyday Product / Discovery UX Closure v1: the "Reviewed" tab's
+        // own definition (product_category === "reviewed") already fully
+        // determines review status -- every matching item's review_status
+        // is always "reviewed". The separate Status filter below defaults
+        // to "unreviewed" (a sensible default for the other tabs), so
+        // applying it here too silently ANDed an unsatisfiable condition:
+        // opening the Reviewed tab always showed an empty "No review items
+        // match these filters" with no indication why, since the
+        // conflicting Status control lives in a collapsed panel.
+        if (productTab !== "reviewed" && !matchesStatusFilter(item, reviewStatusFilter)) {
           return false;
         }
         if (!matchesEvidenceFilter(metadata, evidenceFilter)) {
@@ -3706,7 +3720,7 @@ function ProductReviewCard({
       <div className="review-product-card-copy">
         <div className="queue-card-heading">
           <div>
-            <strong>{productReviewTitle(item)}</strong>
+            <strong>{productReviewTitle(item, taxonomyLabels)}</strong>
             <span className="meta-text">
               {capturedAt ? formatDateTime(capturedAt) : "Capture time unavailable"} · {location}
             </span>
@@ -4231,6 +4245,12 @@ function FastReviewPanel({
       } else if (event.key.toLowerCase() === "p") {
         event.preventDefault();
         void navigate("previous");
+      } else if (event.key.toLowerCase() === "c") {
+        event.preventDefault();
+        void saveAndNext("bird", "Confirmed bird in Fast Review.");
+      } else if (event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        void saveAndNext("unknown_bird", "Marked unknown bird in Fast Review.");
       } else if (event.key.toLowerCase() === "b") {
         event.preventDefault();
         void saveAndNext("blank", "Marked blank or no activity in Fast Review.");
@@ -4462,8 +4482,9 @@ function FastReviewPanel({
               disabled={isSaving}
               onClick={() => void saveAndNext("bird", "Confirmed bird in Fast Review.")}
               type="button"
+              title="Records generic 'bird', not whatever species is suggested above. To confirm a specific species, choose a suggestion chip first."
             >
-              Confirm bird
+              Generic bird (no species)
             </button>
             <button
               className="secondary-action"
@@ -4517,7 +4538,8 @@ function FastReviewPanel({
           <details className="fast-review-shortcuts">
             <summary>Keyboard shortcuts</summary>
             <span>Left / Right: evidence frame · Space: play/pause · Ctrl/Cmd+Enter: save & next</span>
-            <span>N / P: next / previous Visit · B: blank · X: non-bird · U: ambiguous · Z: undo</span>
+            <span>N / P: next / previous Visit · C: generic bird (no species) · K: unknown bird</span>
+            <span>B: blank · X: non-bird · U: ambiguous · Z: undo</span>
             <span>Shortcuts are paused while typing in a search or notes field.</span>
           </details>
         </div>
@@ -4848,7 +4870,7 @@ function CorrectionSuccessPanel({
               ? `${summary.succeededCount} correction${
                   summary.succeededCount === 1 ? "" : "s"
                 } created explicitly for ${appliedLabel}.`
-              : `Correction ${summary.reviewLabelId} created explicitly for ${appliedLabel}.`}
+              : `Correction created explicitly for ${appliedLabel}.`}
           </p>
         </div>
         <StatusPill

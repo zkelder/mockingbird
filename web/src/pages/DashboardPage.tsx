@@ -58,6 +58,21 @@ function todayLocalRange(): { start_at: string; end_at: string } {
   return { start_at: start.toISOString(), end_at: end.toISOString() };
 }
 
+// Everyday Product / Discovery UX Closure v1: `getDashboardSummary`'s "today"
+// (Best Moments/New Today/Recent Regulars/Cameras needing attention) used to
+// default to the *server's* local time, which could disagree with this same
+// page's own `todayLocalRange()` browser-local boundary above near local
+// midnight or across devices on different timezones. `YYYY-MM-DD` in the
+// browser's own local calendar -- deliberately not `toISOString()`, which
+// would convert to UTC and reintroduce the exact drift this fixes.
+function todayLocalDateString(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 // cameraHealthLabel/cameraHealthTone now live in ../utils (First-Hour
 // Onboarding + Whole-Product Observability Closure v1, "B7 health model")
 // -- shared with Yard & Camera Map so the same CameraHealthState can never
@@ -65,7 +80,12 @@ function todayLocalRange(): { start_at: string; end_at: string } {
 
 function outcomeLabel(visit: DashboardVisitSummary): string {
   if (visit.review_outcome === "needs_review") {
-    return "Needs review";
+    // Everyday Product / Discovery UX Closure v1: the identical Visit could
+    // read "Likely American Robin" in Best Moments (effectiveSpeciesText,
+    // above) but a generic "Needs review" here in Recent Activity -- consult
+    // the same suggestion instead of discarding it.
+    const suggestion = effectiveSpeciesText(visit);
+    return suggestion ? `Needs review — ${suggestion}` : "Needs review";
   }
   if (visit.review_outcome === "confirmed_bird") {
     return visit.reviewed_label
@@ -170,7 +190,7 @@ export function DashboardPage({
     }
     try {
       const [nextSummary, monitoringStatuses, nextStorageSummary, nextReport] = await Promise.all([
-        apiClient.getDashboardSummary(),
+        apiClient.getDashboardSummary(todayLocalDateString()),
         apiClient.getStreamMonitoringStatuses().catch(() => null),
         apiClient.getStorageRetentionSummary().catch(() => null),
         apiClient.getPlaceActivityReport(todayLocalRange()).catch(() => null),

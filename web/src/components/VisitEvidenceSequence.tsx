@@ -38,6 +38,10 @@ function relativeLabel(frame: VisitEvidenceFrame): string {
 }
 
 function evidenceRoleLabel(frame: VisitEvidenceFrame): string {
+  // Everyday Product / Discovery UX Closure v1: an acoustic candidate Visit
+  // (create_acoustic_candidate_visit) uses these same Observation Engine
+  // evidence_role values, but "image" wording misdescribes a BirdNET clip.
+  const isAudio = frame.content_type.startsWith("audio/");
   const labels: Record<string, string> = {
     user_refined_crop: "User-refined high-resolution crop",
     activity_crop: "High-resolution activity crop",
@@ -45,9 +49,9 @@ function evidenceRoleLabel(frame: VisitEvidenceFrame): string {
     pretrigger: "Pre-trigger context",
     tracked_best_frame: "Tracked monitoring frame",
     // Observation Engine candidate evidence roles.
-    identification: "Best identification image",
-    context: "Context image",
-    alternate: "Alternate image",
+    identification: isAudio ? "Best identification clip" : "Best identification image",
+    context: isAudio ? "Context clip" : "Context image",
+    alternate: isAudio ? "Alternate clip" : "Alternate image",
     // Visit Same-Frame Classifier Evidence Visibility v1: only ever appears
     // via the dedicated `classifier_supporting_evidence` panel below, never
     // in this gallery itself (the role is structurally excluded from
@@ -55,7 +59,7 @@ function evidenceRoleLabel(frame: VisitEvidenceFrame): string {
     // instance gets a real, specific caption instead of the generic fallback.
     classifier_same_frame: "Frame used for species suggestion",
   };
-  return labels[frame.evidence_role] ?? "Monitoring context";
+  return labels[frame.evidence_role] ?? (isAudio ? "Monitoring audio" : "Monitoring context");
 }
 
 /** A local frame-sequence player for already-serialized Visit evidence. */
@@ -153,10 +157,17 @@ export function VisitEvidenceSequence({
   return (
     <div className="review-evidence-sequence">
       <div className="review-evidence-sequence-image">
-        {isAudioFrame ? (
+        {isAudioFrame && isPreviewUnavailable ? (
+          <span className="review-evidence-preview-unavailable">Saved audio evidence is unavailable.</span>
+        ) : isAudioFrame ? (
           <div className="media-preview-audio-stage">
             <span className="media-preview-audio-icon" aria-hidden="true">🔊</span>
-            <audio controls preload="metadata" src={previewUrl(selectedFrame)} />
+            <audio
+              controls
+              preload="metadata"
+              src={previewUrl(selectedFrame)}
+              onError={() => setIsPreviewUnavailable(true)}
+            />
           </div>
         ) : isPreviewUnavailable ? (
           <span className="review-evidence-preview-unavailable">Saved preview is unavailable.</span>

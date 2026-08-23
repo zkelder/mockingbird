@@ -3119,6 +3119,9 @@ export interface ReviewQueueItem {
   evidence_frames: VisitEvidenceFrame[];
   stale_species_suggestions: boolean;
   review_status: ReviewStatus;
+  // Everyday Product / Discovery UX Closure v1: the current authoritative label.
+  // `null`/omitted while `review_status` is still "needs_review".
+  reviewed_label?: string | null;
   review_state_token: string;
   reason: string;
   product_category: "animal" | "other_activity" | "unchecked" | "legacy_activity" | "reviewed";
@@ -3582,6 +3585,10 @@ export interface EventDetail {
   stream: Stream;
   primary_zone?: Zone | null;
   visits: Visit[];
+  // Everyday Product / Discovery UX Closure v1: one resolved evidence
+  // preview per Visit, keyed by Visit id. A Visit with nothing resolvable
+  // is simply absent, never a fabricated placeholder.
+  visit_previews?: Record<string, VisitEvidenceFrame>;
   motion_evidence?: MotionEvidence | null;
   media_asset?: MediaAsset | null;
   detection_proposals: DetectionProposal[];

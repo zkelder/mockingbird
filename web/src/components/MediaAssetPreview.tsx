@@ -89,10 +89,14 @@ export function MediaAssetPreview({
             <audio controls onError={() => setPreviewFailed(true)} preload="metadata" src={fileUrl} />
           </div>
         ) : (
+          // Everyday Product / Discovery UX Closure v1: `local_path` is a
+          // server-local filesystem path -- API responses redact it to "",
+          // but this fallback must never render it even if a future caller
+          // forgets to. Say plainly that preview isn't available instead.
           <div className="media-preview-fallback">
             <strong>{asset.original_filename}</strong>
             <span>{asset.content_type}</span>
-            <span>{asset.local_path}</span>
+            <span>Preview unavailable for this file.</span>
           </div>
         )}
         {canPreview && (asset.media_type === "video" || asset.media_type === "audio") ? surfaceOverlay : null}

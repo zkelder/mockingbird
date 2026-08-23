@@ -1548,6 +1548,14 @@ a.secondary-action {
   flex: 1 1 auto;
 }
 
+.journal-gallery-status-pills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .section-heading h2,
 .section-heading h1,
 .section-heading h3,
@@ -5836,6 +5844,35 @@ a.secondary-action {
 .detail-link-card:hover {
   border-color: #2e6f5e;
   background: #eef7ee;
+}
+
+/* Everyday Product / Discovery UX Closure v1: a compact per-Visit evidence
+   thumbnail for detail-link-card rows (Event Detail's Visit lists) --
+   purely additive, does not change .detail-link-card's own layout, so every
+   existing text-only usage is unaffected. */
+.detail-link-card-preview {
+  width: 100%;
+  height: 72px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #eaf0e8;
+}
+
+.detail-link-card-preview img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.detail-link-card-preview-audio {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  color: #24382d;
+  font-size: 0.86rem;
+  font-weight: 700;
 }
 
 .evidence-list,

@@ -3880,6 +3880,11 @@ class ReviewQueueItem(BaseModel):
     effective_primary: EffectivePrimaryEvidence | None = None
     stale_species_suggestions: bool = False
     review_status: ReviewStatus
+    # Everyday Product / Discovery UX Closure v1: the current authoritative label,
+    # so the Reviewed tab can say what a card was actually reviewed as instead of
+    # an undifferentiated "Reviewed activity" for every card. `None` while
+    # `review_status` is still `needs_review`; present once reviewed.
+    reviewed_label: str | None = None
     review_state_token: str = ""
     reason: str
     # Product Mode is derived from durable source and detector provenance. It is
@@ -6498,6 +6503,16 @@ class EventDetail(BaseModel):
     stream: Stream
     primary_zone: Zone | None = None
     visits: list[Visit]
+    # Everyday Product / Discovery UX Closure v1: `media_asset` below depends
+    # entirely on some Visit's legacy `representative_media_path` being set,
+    # which the dominant current Visit-creation path (Camera Node/offline
+    # ingest) leaves null -- an Event case file could show zero photos
+    # anywhere, and gave no way to tell multiple Visits/subjects apart. Keyed
+    # by `Visit.id`; a Visit with no resolvable evidence is simply absent
+    # from this dict rather than a fabricated placeholder entry. Reuses the
+    # exact same per-Visit evidence-frame resolution `VisitDetail.evidence_
+    # frames` already uses -- no new evidence-selection logic.
+    visit_previews: dict[str, VisitEvidenceFrame] = Field(default_factory=dict)
     motion_evidence: MotionEvidenceResponse | None = None
     media_asset: MediaAsset | None = None
     detection_proposals: list[DetectionProposal] = Field(default_factory=list)

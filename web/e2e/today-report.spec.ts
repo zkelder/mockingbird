@@ -282,8 +282,13 @@ async function mockDashboardHeadline(
   page: Page,
   headlineOverrides: Record<string, unknown>,
 ) {
-  await page.route("**/api/dashboard/summary", async (route) => {
-    const real = await page.request.get("/api/dashboard/summary");
+  // Everyday Product / Discovery UX Closure v1: DashboardPage now requests
+  // `/api/dashboard/summary?local_date=YYYY-MM-DD` (the browser's own local
+  // "today" boundary, matching TodayReportPanel's existing todayLocalRange())
+  // -- the trailing "**" keeps this interception matching regardless of that
+  // query string, the same way it already matched the bare path before.
+  await page.route("**/api/dashboard/summary**", async (route) => {
+    const real = await page.request.get(route.request().url());
     const body = await real.json();
     Object.assign(body.headline, headlineOverrides);
     await route.fulfill({ status: real.status(), contentType: "application/json", body: JSON.stringify(body) });
@@ -1235,7 +1240,11 @@ test("Bird Log is reachable from the persistent nav without enabling Developer M
   await expect(birdLogNavItem).toBeVisible();
   await birdLogNavItem.click();
   await expect(page).toHaveURL(/\/bird-log$/);
-  await expect(page.getByRole("heading", { name: "Wildlife Journal" })).toBeVisible();
+  // Everyday Product / Discovery UX Closure v1: the page's own heading used
+  // to say "Wildlife Journal" while every entry point into it (this nav
+  // item included) said "Bird Log" -- no on-page confirmation a user landed
+  // in the right place. Now consistent everywhere.
+  await expect(page.getByRole("heading", { name: "Bird Log" })).toBeVisible();
 });
 
 test("Import Media is reachable from the persistent nav without enabling Developer Mode", async ({

@@ -219,6 +219,22 @@ TAXONOMY_LABELS: list[TaxonomyLabel] = [
         is_reviewable=True,
         sort_order=20,
     ),
+    # Everyday Product / Discovery UX Closure v1: the Fast Review "Ambiguous /
+    # unknown" action (distinct from "Unknown bird" -- this covers activity too
+    # unclear to tell what it even was, not just an unidentified bird) wrote this
+    # literal label with no matching taxonomy row, unlike its sibling unknown_*
+    # rows above. Same category/shape as those siblings for consistent
+    # resolution/display/export-eligibility handling.
+    TaxonomyLabel(
+        id="ambiguous",
+        label="ambiguous",
+        display_name="Ambiguous / Unknown",
+        category=LabelCategory.unknown,
+        aliases=["unclear", "ambiguous activity"],
+        is_species=False,
+        is_reviewable=True,
+        sort_order=25,
+    ),
     TaxonomyLabel(
         id="bird",
         label="bird",

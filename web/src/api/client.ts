@@ -548,7 +548,12 @@ export const apiClient = {
     request<SourceMonitorStatusResponse>(
       `/api/streams/${encodeURIComponent(streamId)}/monitor/status`,
     ),
-  getDashboardSummary: () => request<DashboardSummary>("/api/dashboard/summary"),
+  getDashboardSummary: (localDate?: string) =>
+    request<DashboardSummary>(
+      localDate
+        ? `/api/dashboard/summary?local_date=${encodeURIComponent(localDate)}`
+        : "/api/dashboard/summary",
+    ),
   getYardMap: (range: YardMapRange = "today") => request<YardMapResponse>(`/api/yard-map?range=${encodeURIComponent(range)}`),
   createBlankYardMap: (payload: YardMapBlankCreate) => request<YardMapResponse>("/api/yard-map/blank", { method: "POST", body: JSON.stringify(payload) }),
   updateYardMapSettings: (payload: YardMapSettingsUpdate) => request<YardMapResponse>("/api/yard-map", { method: "PATCH", body: JSON.stringify(payload) }),

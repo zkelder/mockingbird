@@ -11,14 +11,18 @@ const filters: Array<{ value: AlertCategory | undefined; label: string }> = [
   { value: "review", label: "Review" },
   { value: "monitoring", label: "Monitoring" },
   { value: "storage", label: "Storage" },
-  { value: "journal", label: "Journal" },
+  // Everyday Product / Discovery UX Closure v1: the visible label says "Bird
+  // Log" (the product-facing name used by nav/Today/Insights everywhere
+  // else); the filter `value` stays "journal" -- it's the internal
+  // AlertCategory key, not user-visible text.
+  { value: "journal", label: "Bird Log" },
 ];
 
 function actionLabel(action: ProductAlertAction): string {
   if (action.action_type === "review_visit") return "Review Visit";
   if (action.action_type === "open_stream") return "Open Stream";
   if (action.action_type === "open_storage_retention") return "Open Storage & Retention";
-  return "Open Wildlife Journal";
+  return "Open Bird Log";
 }
 
 function tone(alert: ProductAlert): "good" | "review" | "quiet" {
@@ -108,7 +112,7 @@ export function AlertsControl({
         <section className="alerts-drawer" aria-label="Recent alerts">
           <div className="section-heading"><div><h2>Alerts</h2><span className="meta-text">Local attention items only.</span></div><button className="text-action" onClick={onOpenInbox} type="button">Open inbox</button></div>
           {error ? <div className="error-panel">{error}</div> : null}
-          {!alerts.length ? <EmptyState title="No alerts right now" description="Important review, monitoring, storage, and Journal milestones appear here." /> : alerts.slice(0, 5).map((alert) => <AlertRow alert={alert} key={alert.id} onAction={onAction} onChanged={refresh} />)}
+          {!alerts.length ? <EmptyState title="No alerts right now" description="Important review, monitoring, storage, and Bird Log milestones appear here." /> : alerts.slice(0, 5).map((alert) => <AlertRow alert={alert} key={alert.id} onAction={onAction} onChanged={refresh} />)}
         </section>
       ) : null}
     </div>
