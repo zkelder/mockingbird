@@ -6,9 +6,16 @@ foundations briefly and keeps detailed historical phase narration in
 
 ## Product outcome
 
-MockingBird is a local-first, hardware-agnostic, bird-first but
-wildlife-native nature observatory that helps people notice, understand,
-confirm, and remember wildlife around a place. Detection, tracking, and
+MockingBird is a local-first, hardware-agnostic, evidence-backed ecosystem
+observatory for understanding how a Place changes over time -- across
+wildlife, acoustics, plants and habitat, environmental measurements,
+external ecological context, and human knowledge. Its purpose is to help
+people notice, understand, and remember the living environment around a
+place. MockingBird is wildlife-first in its existing maturity, bird-first
+historically but increasingly biodiversity-native, local-first,
+evidence-first, privacy-conscious, discovery-oriented, and capable of
+scaling from home use to serious research/organizational field monitoring
+-- not a surveillance platform, not an NVR clone. Detection, tracking, and
 classification are infrastructure; trustworthy Observations, coherent
 Visits, good evidence, honest uncertainty, efficient review, meaningful
 discoveries, durable history, and growing understanding of a place are the
@@ -16,29 +23,36 @@ product. See [product-doctrine.md](product-doctrine.md) for the full
 doctrine this roadmap sequences.
 
 The user-facing loop is **Observe → Discover → Understand → Confirm →
-Remember → Improve**. The internal evidence/truth architecture is Source →
-Stream → Zone → Activity Session → Visit → Evidence → Detection Proposal →
-Interpretation → Review Decision → Observation → Export/Analytics
-(product-doctrine.md; implementation vocabulary still uses
-Event/Visit/Detection/ReviewLabel, see [glossary.md](glossary.md)).
-Detectors and SpeciesSuggestions are evidence; explicit correction is the
-only reviewed truth used for confirmed species, history, exports, and
-analytics; unknown and abstained outcomes are valid.
+Remember → Improve**, and it applies the same way to a bird at the feeder,
+a shrub coming into flower, or a season's rainfall -- Confirm is what makes
+something durable Reviewed history, not a gate a Measured or Inferred fact
+must pass before it is useful (see "Measured, Inferred, and Reviewed" in
+[product-doctrine.md](product-doctrine.md)). The internal evidence/truth
+architecture is Source → Stream → Zone → Activity Session → Visit →
+Evidence → Detection Proposal → Interpretation → Review Decision →
+Observation → Export/Analytics (product-doctrine.md; implementation
+vocabulary still uses Event/Visit/Detection/ReviewLabel, see
+[glossary.md](glossary.md)). Detectors and SpeciesSuggestions are evidence;
+explicit correction is the only reviewed truth used for confirmed species,
+history, exports, and analytics; unknown and abstained outcomes are valid.
+Wildlife remains this roadmap's most mature domain; habitat/phenology and
+environmental context extend the identical architecture rather than forking
+a second one (see "Remaining roadmap -- canonical sequence," below).
 
-## Governing priority for v0.1
+## Governing priority before release
 
 Two different kinds of quality govern this product, and they do not carry
 equal release weight.
 
 **Trustworthy detection, encounter reconstruction, Visit correctness, and
-evidence correctness must be highly reliable before v0.1.** A user must be
+evidence correctness must be highly reliable before release.** A user must be
 able to trust that MockingBird noticed the wildlife that was actually there,
 represented it as a coherent Visit (or Visits, for genuinely separate
 subjects), and preserved evidence that actually shows what happened.
 
 **Species identification only needs to be useful, honest, calibrated,
 abstention-capable assistance for human review.** Perfect species top-1
-accuracy is not a v0.1 requirement; a confident wrong species is worse than
+accuracy is not a release requirement; a confident wrong species is worse than
 an honest "bird, species uncertain."
 
 MockingBird will not spend months chasing another few points of species
@@ -46,14 +60,14 @@ top-1 accuracy while real animals are missed, one encounter becomes three
 Visits, several simultaneous birds collapse into one subject, empty frames
 become bird Visits, evidence points at the wrong frame, or processing delay
 looks indistinguishable from a detection miss. See Gate A and Gate B in
-"v0.1 release gates," below, for what this means operationally.
+"release gates," below, for what this means operationally.
 
 ## Current status
 
 - **Current phase:** Phase 1 -- Trustworthy Single-Site Observatory (below).
 - **Current exit gate:** one representative installation can run for days
   and create trustworthy useful history without developer babysitting.
-- **v0.1 release-gate mapping:** see "v0.1 release gates," below, for the
+- **release-gate mapping:** see "release gates," below, for the
   authoritative small gate set this phase's still-open work maps onto --
   principally Gate A (detection/encounter/Visit correctness, including the
   new multi-subject requirement) and part of Gate E (reliability/
@@ -957,33 +971,40 @@ invocation silently did nothing (missing `__main__` guard). Decision:
 **D -- incumbents retained after benchmark; v0.1 feature freeze now active**
 (see "v0.1 feature freeze," below).
 
-## v0.1 scope freeze
+## Release scope discipline
 
-Public v0.1 means, approximately: install MockingBird → connect a supported
-camera → reliably notice wildlife → preserve useful evidence → assemble
-correct Visits → provide honest species assistance → let the user
-confirm/correct → create durable Observations → return later and understand
-what has been happening at the Place.
+The first public release means, approximately: install MockingBird →
+connect a supported camera → reliably notice wildlife → preserve useful
+evidence → assemble correct Visits → provide honest species assistance →
+let the user confirm/correct → create durable Observations → return later
+and understand how the Place has been changing. This is the wildlife-first
+slice of the ecosystem-observatory destination (see "Product outcome,"
+above) that release readiness is measured against; it is not a separate
+product ceiling -- habitat, environmental-context, and biodiversity
+capability extend the same released product afterward (see "Remaining
+roadmap -- canonical sequence," below), they do not wait for a second
+release to begin.
 
-A new requirement enters v0.1 scope only when at least one of these is true:
+A new requirement enters release scope only when at least one of these is
+true:
 
 - direct field evidence shows product correctness depends on it;
 - safety, privacy, or security requires it;
 - release, install, or recovery correctness requires it;
 - a previously accepted assumption is empirically invalidated.
 
-An idea does not become a v0.1 requirement merely because it is interesting,
-ambitious, or would make the product more capable later. The 2026-08-19
-multi-animal, duplicate-Visit, evidence-latency, and detection-recall field
-findings (see "Current status," above) qualify under the first criterion --
-they are direct field evidence, not speculation. The 2026-08-20 Camera Node
-bad-boot incident (see "Current status," above) qualifies the same way: a
-real reference device failed to boot in the field, not hypothetically, and
-the product's own reconnect diagnosis needed to -- and did -- tell that
-apart from a host or GPU problem; see "Camera Node field hardware
-resilience / bad-boot recovery" under Gate D, below. Remote/cellular/solar
-hardware does not qualify under any criterion today; see "Post-v0.1 lanes,"
-below.
+An idea does not become a release requirement merely because it is
+interesting, ambitious, or would make the product more capable later. The
+2026-08-19 multi-animal, duplicate-Visit, evidence-latency, and
+detection-recall field findings (see "Current status," above) qualify under
+the first criterion -- they are direct field evidence, not speculation. The
+2026-08-20 Camera Node bad-boot incident (see "Current status," above)
+qualifies the same way: a real reference device failed to boot in the
+field, not hypothetically, and the product's own reconnect diagnosis needed
+to -- and did -- tell that apart from a host or GPU problem; see "Camera
+Node field hardware resilience / bad-boot recovery" under Gate D, below.
+Remote/cellular/solar hardware does not qualify under any criterion today;
+see "After-release lanes," below.
 
 ## Scope-reopening rule
 
@@ -1000,10 +1021,14 @@ Settled direction, not up for casual reconsideration:
 
 - Observation is the semantic center; detection is infrastructure.
 - Local-first; cloud is optional, never required.
-- Human review creates truth; nothing else does.
+- Human review creates truth; nothing else does -- Measured and Inferred
+  information may be shown immediately and usefully without it, but never
+  silently become Reviewed truth (see "Measured, Inferred, and Reviewed" in
+  [product-doctrine.md](product-doctrine.md)).
 - Hardware- and provider-agnostic; Raspberry Pi is a reference
   implementation, not product identity.
-- Remote field hardware (LTE/solar/custom carrier) is post-v0.1.
+- Remote field hardware (LTE/solar/custom carrier) is deferred to after
+  release.
 - Research-grade credibility is earned through sustained real deployment,
   not declared.
 - Custom hardware requires accumulated deployment evidence first, not the
@@ -1011,57 +1036,60 @@ Settled direction, not up for casual reconsideration:
 - SpeciesNet remains an unadopted, evidence-only candidate (see Gate B,
   below); any future look is a fresh re-evaluation, not resuming a prior
   adoption that never happened.
+- One authoritative local Host per deployment; Camera Nodes authenticate as
+  devices, humans authenticate as users, and the two credential systems
+  stay separate (see "Deployment and organization doctrine" in
+  [product-doctrine.md](product-doctrine.md)).
+- Zones are optional image-space regions, not proof of physical geography,
+  camera overlap, or durable location after a camera moves (see "Spatial
+  doctrine" in [product-doctrine.md](product-doctrine.md)).
+- Agriculture/land-management and professional biodiversity/field research
+  are applications of the same MockingBird core, not separate products or
+  derivatives (see "Professional and research positioning" in
+  [product-doctrine.md](product-doctrine.md)).
 
 This is intentionally the last general, open-ended roadmap/doctrine audit
-before v0.1. Future audits should be gate-specific ("what prevents Gate X
-from passing," not "what else could we improve") unless new empirical field
-evidence invalidates something above.
+before the first release. Future audits should be gate-specific ("what
+prevents Gate X from passing," not "what else could we improve") unless new
+empirical field evidence invalidates something above, or a genuine
+doctrine reconciliation is warranted the way this one was.
 
-## v0.1 feature freeze
+## Release readiness vs. continued capability work
 
-**Active as of 2026-08-22**, declared by Detection & Species Model
-Benchmark / Promotion v1 (see "Current status," above, and
-[its report](detection-species-model-benchmark-promotion-v1-report.md)) --
-the deliberately-last pre-v0.1 milestone permitted to add capability. No
-release-blocking perception-quality defect was found: the production MDv5
-detector and BioCLIP-2 species configuration both remain the strongest
-governed choice against every real challenger tested.
+A capability freeze was declared **2026-08-22** by Detection & Species
+Model Benchmark / Promotion v1 (see "Current status," above, and
+[its report](detection-species-model-benchmark-promotion-v1-report.md)),
+intended as the deliberately-last pre-release milestone permitted to add
+capability, with defect fixes/reliability/performance/UX/packaging/
+security/documentation/compatibility/storage-recovery/field-acceptance/
+clean-install/release-presentation work permitted to continue. In practice,
+real accepted capability work continued afterward: Acoustic/BirdNET
+Observation Foundation v1 and Multimodal Observation & Soundscape v1 (see
+"Audio" in "After-release lanes," below) and Camera/Source + Multi-Camera
+Maturity v1 (see Phase 7, above) all shipped real new capability after that
+declaration; Appliance/Storage/Privacy/Recovery v1 (accepted HEAD as of
+this reconciliation) shipped further real capability after them, with no
+corresponding roadmap-prose update of its own, which is direct evidence of
+the same thing -- capability work does not wait for a roadmap update to
+count as real. Together these supersede the freeze in practice, even
+though the roadmap prose was never updated to say so until this
+reconciliation.
 
-Feature freeze is a *capability* freeze, distinct from the "v0.1 scope
-freeze" above (which governs what counts as an in-scope *requirement*, not
-when new capability work stops) and distinct from "Gate A/E field
-acceptance being formally closed" (representative field acceptance --
-accepted minimum Visit recall, false-Visit rate, fragmentation rate, evidence
-survival, latency, coverage -- remains open work; see Gate A, below). From
-this point forward, only the following are permitted before v0.1, unless a
-release-blocking acceptance failure explicitly reopens capability scope:
+This reconciliation formally retires the version-named feature freeze as a
+governing mechanism: MockingBird does not gate new capability behind one
+named pre-release milestone. What still governs, unchanged: release-blocking
+correctness work (Gate A and Gate B principally) takes priority order over
+new capability, per "Governing priority before release," above, and the
+scope discipline above (a requirement enters release scope only when
+evidenced) still applies. Readiness for the first public release and
+continued ecosystem-capability work (see "Remaining roadmap -- canonical
+sequence," below) now proceed together, bounded per milestone -- see
+"Execution discipline" in that section -- rather than via a blanket
+freeze/unfreeze toggle tied to a version number.
 
-- defect fixes
-- reliability
-- performance
-- UX/accessibility polish
-- packaging
-- security
-- documentation
-- compatibility
-- storage/recovery
-- field acceptance
-- clean-install/upgrade
-- release presentation
+## Release gates
 
-Two items remain deliberately preserved as real, intentional post-v0.1/pre-v1
-capability work, not silently dropped: acoustic/BirdNET multimodal
-observation, and LTE/intermittent-WAN remote field capability (see
-"Post-v0.1 lanes," below). A bounded BioCLIP 2.5 calibration study (see
-"Detection & Species Model Benchmark / Promotion v1" above) is recorded as
-the concrete next candidate for the already-non-blocking "Species
-Classification Re-evaluation / Promotion v2" item under Gate B, should a
-future session choose to pursue it -- not started by this freeze
-declaration itself.
-
-## v0.1 release gates
-
-The remaining path to v0.1 is a small, ordered set of release gates, not an
+The remaining path to release is a small, ordered set of release gates, not an
 open-ended list of phases. Gate order is priority order: do not spend
 material effort on a later gate while an earlier one has a known, evidenced
 gap, except where independent work genuinely does not depend on the
@@ -1069,13 +1097,13 @@ unanswered question (see "Field-testing doctrine," below).
 
 Historical Phase numbering ("Phase sequencing," below) remains the
 structural/historical record of how the product got here and is not
-renumbered. Each phase's still-open v0.1-relevant work maps onto one or more
+renumbered. Each phase's still-open release-relevant work maps onto one or more
 gates here; use this section, not phase number, to answer "what's actually
-left before v0.1."
+left before release."
 
 ### Gate A -- Trustworthy Detection, Encounter & Visit Correctness
 
-The hardest and highest-priority v0.1 gate. The product question is not "is
+The hardest and highest-priority release gate. The product question is not "is
 the detector benchmark good" -- it is **did MockingBird correctly notice and
 represent what actually happened outside.** Passing this gate requires
 measuring the full perception funnel, not an isolated model score: capture
@@ -1189,13 +1217,13 @@ persisting evidence only when needed, never continuous video storage, never
 an NVR -- is a candidate solution if capture timing turns out to be a
 material Gate A blocker; it is not scoped or implemented in this pass.
 
-#### Multi-subject Visit correctness (new, hard v0.1 requirement)
+#### Multi-subject Visit correctness (new, hard release requirement)
 
 `Visit = exactly one animal` is not a valid product assumption --
 [product-doctrine.md](product-doctrine.md) already says so ("Do not assume
 one Visit equals one bird... every Visit contains exactly one individual").
 What is new, from direct 2026-08-19 field evidence, is that this is now a
-**hard v0.1 release gate**, not only a modeling caution: ordinary
+**hard release gate**, not only a modeling caution: ordinary
 feeder/property scenes with multiple simultaneous birds (the real, current
 example: a nuthatch plus two finches present at once) must not become zero
 Visits, one falsely singular bird, several duplicate Visits for one
@@ -1217,7 +1245,7 @@ of the concurrent-subject case specifically.
   [tracklet-visit-assembly-contract.md](tracklet-visit-assembly-contract.md)
   "Structural incompatibility." This is a deliberate, historically-correct
   design boundary (it protects against fabricating false continuity), not a
-  bug -- but its downstream effect is now an explicit v0.1 correctness gap:
+  bug -- but its downstream effect is now an explicit release correctness gap:
   2026-08-19 evidence traced two fragmentation cases directly to it, one
   producing three Visits with three different species labels
   (`tufted_titmouse`, `american_robin`, `american_robin`) for what is almost
@@ -1244,20 +1272,20 @@ of the concurrent-subject case specifically.
   independent boxes). The gap is downstream, at assembly, persistence, and
   review -- not at capture.
 
-**Scope boundary, explicit:** required before v0.1 is reliable
+**Scope boundary, explicit:** required before release is reliable
 *within-encounter* multi-subject tracking/association sufficient for
 trustworthy Visit construction and review. Not required, and out of scope:
 recognizing the same individual animal tomorrow, biometric individual
 identification, persistent cross-Visit ReID, perfect identity across
 arbitrarily long occlusion, or research-grade population estimation (all
-remain explicitly deprioritized; see "v0.1 non-blockers," below). If subject
+remain explicitly deprioritized; see "release non-blockers," below). If subject
 identity becomes ambiguous mid-encounter, MockingBird must preserve that
 ambiguity rather than fabricate continuity -- the same principle that
 justified the conservative boundary in the first place.
 
 This is a design problem, not something to solve in a documentation pass. A
 focused **Multi-Subject Visit Assembly & Review v1** milestone is now an
-explicit v0.1 prerequisite. Its design authority is the existing
+explicit release prerequisite. Its design authority is the existing
 [tracklet-visit-assembly-contract.md](tracklet-visit-assembly-contract.md)
 (assembly/merge-boundary mechanism) and
 [candidate-visit-authority-contract.md](candidate-visit-authority-contract.md)
@@ -1330,7 +1358,7 @@ validate a hypothesis, it does not replace the live proof.
 
 ### Gate B -- Useful Species Assistance
 
-Perfect top-1 species identification is not a v0.1 requirement. The purpose
+Perfect top-1 species identification is not a release requirement. The purpose
 of automatic identification before review is useful, honest assistance --
 not the product outcome by itself (see
 [product-doctrine.md](product-doctrine.md) "Product promise"). Acceptance
@@ -1428,7 +1456,7 @@ for the full trace, a deterministic regression fixture reproducing the
 exact mechanism, and why no confidence/count-based Gate-A signal can
 separate this case from real same-session birds.
 
-v0.1 invariant: background/empty evidence must either fail the
+Release invariant: background/empty evidence must either fail the
 credible-animal gate or cause species inference to abstain/not run. If a
 real animal existed, the Visit must preserve and display the correct source
 evidence used for interpretation. Do not fix this solely by raising the
@@ -1467,7 +1495,7 @@ adapter (Phase 26A/26B). Any future SpeciesNet work is a fresh
 re-evaluation against then-current evidence, not resuming an adoption that
 never happened.
 
-#### Species Classification Re-evaluation / Promotion v2 (bounded future milestone, not v0.1-blocking)
+#### Species Classification Re-evaluation / Promotion v2 (bounded future milestone, not release-blocking)
 
 One bounded candidate-model milestone, once Gate B's abstention/safety
 requirements are otherwise met: compare the current deployed BioCLIP path,
@@ -1483,7 +1511,7 @@ Measure top-1, top-k, coverage, calibration, abstention, confidently-wrong
 rate, crop-vs-full-frame, geography on/off where relevant, and runtime cost.
 Do not build a SpeciesNet/BioCLIP ensemble or router first -- determine
 whether one model materially wins overall, or a repeatable domain split
-justifies the added complexity, before building either. Once a v0.1
+justifies the added complexity, before building either. Once a release
 selection is accepted, it is settled direction (see "Scope-reopening rule,"
 above) absent materially new evidence.
 
@@ -1498,7 +1526,7 @@ incumbent); BioCLIP 2.5 produced a real, materially better top-1 result on
 the exact difficult sibling-taxa cohort this section names, but its own
 full-frame calibration is measurably unresolved (true/false-positive scores
 are not separable) and was not promoted. Still open, genuinely deferred
-(not v0.1-blocking, per this section's own framing): the broader
+(not release-blocking, per this section's own framing): the broader
 domain-stratified sweep above (night/IR, motion blur, geography,
 non-bird-wildlife breadth) and a proper BioCLIP 2.5 calibration study before
 any real promotion decision.
@@ -1811,8 +1839,8 @@ Scope is the *current* supported Camera Node and host: install,
 pairing/configuration, health, reboot recovery, provider/capability
 reporting, monitoring, first useful Observation/report, support-safe
 recovery. This is not the same gate as Remote Field Node (LTE/solar/
-battery/remote enclosure/custom hardware) -- that is post-v0.1; see
-"Post-v0.1 lanes," below. **Current disposition:** the Camera Node's own
+battery/remote enclosure/custom hardware) -- that is after release; see
+"After-release lanes," below. **Current disposition:** the Camera Node's own
 install/service/reboot-supervision path is proven on real Pi 4 hardware
 (crash, clean-restart, and network-interruption recovery all verified
 live); the MockingBird host's own install/upgrade/recovery experience
@@ -2191,24 +2219,24 @@ replaced node is a routine field event, not a data-loss incident.
 
 Recovery from a node that is powered but never boots requires an
 independent actor -- today, a person physically present to power-cycle it,
-exactly what closed the 2026-08-20 incident. MockingBird does not, and for
-v0.1 will not, claim to recover a node no software action can reach.
+exactly what closed the 2026-08-20 incident. MockingBird does not, and will
+not, claim to recover a node no software action can reach.
 Managed PoE power cycling, smart power control, or an external hardware
 supervisor may become useful for a future advanced/remote deployment (the
 "Power / solar" lane already names a possible future low-power supervisory
-MCU with hard-reset capability for that context; see "Post-v0.1 lanes,"
+MCU with hard-reset capability for that context; see "After-release lanes,"
 below) -- but automated, independent power-cycling of the golden home Pi
-path stays post-v0.1 and optional unless future field evidence
-demonstrates it is actually necessary there, not merely convenient (see
-the extended "v0.1 non-blockers," below).
+path stays deferred to after release, and optional, unless future field
+evidence demonstrates it is actually necessary there, not merely convenient
+(see the extended "Release non-blockers," below).
 
-#### Independent Power / Node Supervisor (optional, post-v0.1)
+#### Independent Power / Node Supervisor (optional, after release)
 
 For remote, solar, battery, PoE, or otherwise unattended installations,
 MockingBird may integrate with an external supervisor that remains
 operational when the Camera Node itself has failed -- the concrete
 mechanism "External recovery boundary," above, and the "Power / solar"
-lane (see "Post-v0.1 lanes," below) already anticipated without naming or
+lane (see "After-release lanes," below) already anticipated without naming or
 defining. The architecture stays hardware-agnostic: this is a
 capability-driven interface, not a dependency on any specific device.
 Possible capabilities MAY include -- MockingBird must not require all of
@@ -2255,9 +2283,9 @@ failure" under "Camera Node field-recovery ladder," above) -- an endless
 power-cycle loop is exactly the failure mode this must not reproduce at
 the power layer.
 
-This entire capability stays post-v0.1 and optional (see the extended
-"v0.1 non-blockers," below); it does not change the v0.1 obligation
-already stated in "External recovery boundary," above.
+This entire capability stays deferred to after release, and optional (see
+the extended "Release non-blockers," below); it does not change the
+release obligation already stated in "External recovery boundary," above.
 
 #### Field-failure acceptance matrix (Gate D/E, extends "Fault injection," above)
 
@@ -2342,7 +2370,7 @@ specific claim like "boot media failed" or "SD card corrupted" the host
 has no way to actually know. An honest "offline, last seen" is more
 useful, and more truthful, than a confident wrong diagnosis -- the same
 principle Gate B already applies to species identification (see
-"Governing priority for v0.1," above), extended here to node health.
+"Governing priority before release," above), extended here to node health.
 
 ### Gate F -- OSS / Security / Compatibility / Packaging Closure
 
@@ -2392,6 +2420,12 @@ Today/report usefulness, recovery, and diagnostics under conditions this
 project cannot fully simulate itself. Beta findings outrank speculative
 architecture work. Not started; no existing doctrine to reconcile.
 
+The first public release may be described externally as a beta -- that is a
+distribution/expectation-setting label, not reduced ambition. Release is
+release: it should be polished, credible, production-minded, and treated as
+the real public launch, backed by the non-software readiness in "Public
+release readiness," below.
+
 ### Numeric release budgets
 
 Where a valid numeric threshold already exists, it is preserved here rather
@@ -2427,10 +2461,43 @@ field cohort has actually justified. Establishing these budgets, from a
 broader body of field evidence than any single session, is itself part of
 what closes Gate A.
 
-## Post-v0.1 lanes
+## Public release readiness
 
-Real future direction, deliberately not implemented now and not gating
-v0.1. Kept here so it is not lost, not so it grows into a second roadmap.
+The first public release is the real product launch (see "Release is
+release" in Gate G, above), not a soft/internal milestone. Distinct from
+Gate F's engineering-packaging closure, above, non-software readiness the
+canonical roadmap must retain -- eventually, not now -- includes:
+
+- code/license decision for the MockingBird codebase itself;
+- exact dependency/model/dataset/media license inventory;
+- BirdNET licensing disposition;
+- custom-model training-data provenance;
+- privacy/data-ownership policy;
+- contribution/IP policy;
+- responsible camera/audio-use guidance;
+- brand/name/domain/trademark-conflict review;
+- serious GitHub project presence;
+- website/docs;
+- a documented Personal/Home deployment path;
+- a documented Organization/Research deployment/admin path (see
+  "Deployment and organization doctrine" in
+  [product-doctrine.md](product-doctrine.md));
+- hardware/BOM/compatibility truth;
+- a beta/RC acceptance cohort (Gate G, above);
+- support/security/community plan;
+- release artifacts/versioning/checksums/SBOM/signing where practical;
+- launch media built from real MockingBird evidence, never staged/synthetic
+  imagery.
+
+Do not implement these now. This section exists so the canonical roadmap
+retains them rather than losing them to a documentation pass that only
+talks about engineering gates.
+
+## After-release lanes
+
+Real future direction, deliberately not implemented now and not gating the
+first release. Kept here so it is not lost, not so it grows into a second
+roadmap.
 
 **Remote / Intermittent-WAN Camera Node.** The *current* Camera Node
 reference implementation is explicitly LAN/Wi-Fi-scoped today
@@ -2468,8 +2535,8 @@ target, ~30-50W-class is the desirable normal Remote Field Node range,
 100W per camera means reconsidering architecture rather than just adding
 panel area. None of this is implemented now.
 
-**Remote / energy-constrained field profile.** A bounded post-v0.1
-deployment profile, not a new architecture: it complements the existing
+**Remote / energy-constrained field profile.** A bounded deployment
+profile scoped to after release, not a new architecture: it complements the existing
 local-first, hardware-agnostic design rather than replacing it, and
 implies nothing about normal mains-powered home deployments, which stay
 the primary product target unchanged. Assumptions this profile may
@@ -2502,11 +2569,13 @@ proprietary radio unless justified much later. Pi/CM is an implementation
 ecosystem, not product identity (see "Scope-reopening rule," above).
 
 **Deployment classes, one core.** Home/Property Observatory (primary
-product), Remote Field Node (advanced field deployment, earned),
-Research/Conservation Deployment (earned future capability) -- one
+product, the Personal/Home profile), Remote Field Node (advanced field
+deployment, earned), Research/Conservation Deployment (the
+Organization/Research profile, earned future capability) -- one
 architecture, not forked products (see
-[product-doctrine.md](product-doctrine.md) "Product profiles"). Research
-credibility specifically requires evidence before the label is used:
+[product-doctrine.md](product-doctrine.md) "Deployment and organization
+doctrine"). Research credibility specifically requires evidence before the
+label is used:
 ~60-90+ day unattended deployments, no silent evidence loss,
 coverage/sampling accounting, reliable timestamps, known deployment
 configuration, model/provenance history, documented power/network behavior,
@@ -2582,7 +2651,7 @@ request flag, no effect yet -- see "Explicitly deferred" in that contract
 doc). GBIF, eBird, Wildlife Insights (the external destination -- distinct
 from MockingBird's own `/analytics` Wildlife Insights panel), Darwin Core,
 and iNaturalist interoperability still do not exist anywhere in the
-repository (confirmed absent) -- genuinely new post-v0.1 direction for each
+repository (confirmed absent) -- genuinely new after release direction for each
 specific destination, not a correction. External sharing always consumes
 data already permitted by the existing reviewed-truth/research-eligibility
 contract; do not build a second "human verification" mechanism per
@@ -2593,7 +2662,7 @@ becomes MockingBird's internal truth model. GBIF: future publication
 interoperability through the now-existing Camtrap DP export where
 appropriate. Other legitimate destinations (iNaturalist, other research
 datasets): keep the architecture extensible; verify each destination's
-actual current rules/API when actually built. None of this delays v0.1.
+actual current rules/API when actually built. None of this delays release.
 
 **Public benchmark / training governance.** See
 [public-benchmark-governance.md](public-benchmark-governance.md) (new --
@@ -2613,10 +2682,11 @@ prioritization -- that remains the lowest-numbered phase whose exit
 condition is not yet met.
 
 This phase framework is the historical/structural record of how the
-roadmap arrived here. For v0.1 release sequencing specifically, use "v0.1
-release gates," above, as the authoritative answer to "what's actually
-left" -- each phase's still-open, v0.1-relevant work maps onto one or more
-gates there.
+roadmap arrived here. For release sequencing specifically, use "release
+gates," above, as the authoritative answer to "what's actually
+left" -- each phase's still-open, release-relevant work maps onto one or more
+gates there. For what comes after the first release, use "Remaining
+roadmap -- canonical sequence," below, instead of old Phase numbers.
 
 ### Phase 1 -- Trustworthy Single-Site Observatory (current)
 
@@ -2650,7 +2720,7 @@ but not exhaustively verified under representative unattended field
 conditions.
 
 The former "Phase 24 hardening" sub-gates A-F (an unrelated, unlettered-in-
-spirit internal checklist from that phase -- do not confuse with the v0.1
+spirit internal checklist from that phase -- do not confuse with the
 release gates A-G defined above) are superseded by this exit gate and by
 [development-workflow.md](development-workflow.md)'s validation tiers.
 Sub-gates A and D are substantially fulfilled by development-workflow.md
@@ -2728,11 +2798,11 @@ report for the full candidate table, the one real, currently-unresolved
 BioCLIP 2.5 calibration gap that blocks its promotion, and why multi-frame
 species consensus remains correctly unpromoted even against fresher real
 data. This closes Phase 2's detector/species benchmark-and-promotion
-question for v0.1; see "v0.1 feature freeze," above.
+question for release; see "Release scope discipline," above.
 
 Exit condition: we can explain quantitatively where the vision pipeline is
 good, where it fails, and whether a candidate actually improves the
-product -- **met for v0.1** by the two Detection/Species Model Benchmark /
+product -- **met before release** by the two Detection/Species Model Benchmark /
 Promotion milestones above. Extending the ad hoc benchmarks into
 architecture.md's full 14-stage accounting as a standing structure remains
 open, non-blocking future work.
@@ -2795,25 +2865,32 @@ without WSL, cloning GitHub, or understanding internal services.
 
 ### Phase 5 -- Place Intelligence
 
-Not started. Add baselines, Zone/time preferences, meaningful changes,
-returning/seasonal patterns, cautious anomalies, useful summaries, and
-external ecological enrichment with provenance, once history is adequate to
-support them.
+Not started as its own phase, though Gate C above delivered several real
+bounded slices (baseline maturity, new/regular species, meaningful-change
+detection, per-species Zone/time patterns, representative evidence, the
+Calm Daily Digest). **Superseded, for prioritization purposes, by
+"Biodiversity & Place Intelligence" (Layer 4) in "Remaining roadmap --
+canonical sequence," below** -- this Phase 5 heading and its original scope
+description remain as historical/structural record, per the convention
+"Phase sequencing" states above; use Layer 4, not this entry, to answer
+"what's next" for Place Intelligence.
 
 Exit condition: the product becomes more useful as history accumulates.
 
 ### Phase 6 -- Mobile / Remote Convenience
 
-Not started. Add Today, review, highlights, history, health, notifications,
-and optional secure remote access, exposing the same authoritative local
-Observation/history model rather than separate mobile truth semantics. Keep
-cloud optional.
+Not started. **Superseded, for prioritization purposes, by "Mobile/PWA +
+Calm Notifications" (Layer 7) in "Remaining roadmap -- canonical sequence,"
+below** -- same convention as Phase 5, above. Original scope: Today,
+review, highlights, history, health, notifications, and optional secure
+remote access, exposing the same authoritative local Observation/history
+model rather than separate mobile truth semantics. Keep cloud optional.
 
 ### Phase 7 -- Multi-Camera / Richer Wildlife
 
 Explicitly gated behind stable single-camera Observation semantics
 (Phases 1-3); this framework note is preserved as historical record and the
-phase remains not formally started. Camera / Source + Multi-Camera
+phase remains not formally started in full. Camera / Source + Multi-Camera
 Maturity v1 (2026-08-23) deliberately pulled forward one bounded slice
 ahead of that gate -- Camera/Source/Area vocabulary, provider compatibility
 classification, health-state coherence, source attribution, and (the most
@@ -2823,14 +2900,234 @@ see
 [camera-source-multi-camera-maturity-v1-contract.md](camera-source-multi-camera-maturity-v1-contract.md)) --
 without redesigning the data model, building the full multi-property remote
 product, or starting mobile/PWA. Broader wildlife, behavioral proposals,
-and richer habitat/Zone understanding remain fully unstarted.
+and richer habitat/Zone understanding remain fully unstarted; the
+habitat/Zone piece specifically now belongs to "Habitat & Phenology
+Foundation" (Layer 3) in "Remaining roadmap -- canonical sequence," below,
+not to this phase.
 
 ### Phase 8 -- Learning / Contributor Ecosystem
 
 Not started, and explicitly gated behind mature evidence and dataset
 governance (Phase 2). Covers dataset creation, opt-in contribution,
 candidate-model workflows, benchmark sharing, research exports, and broader
-ecosystem integration.
+ecosystem integration. **Folded, for prioritization purposes, into
+"Remaining product maturity" (Layer 8) in "Remaining roadmap -- canonical
+sequence," below** ("site-specific learning/fine-tuning" and "ecological/
+research interoperability" there cover this phase's scope; "Professional
+and research positioning" in [product-doctrine.md](product-doctrine.md)
+covers why this is not a separate track).
+
+## Remaining roadmap -- canonical sequence
+
+This section is the authoritative answer to "what's next after the first
+release" -- for that question, use this section, not the old Phase 5/6/7/8
+headings above (which remain as historical/structural record, per the
+"Phase sequencing" convention stated above). "Release gates," above,
+remains the authoritative answer to "what's left before the first
+release" and keeps priority order over everything here, per "Governing
+priority before release," above. Do not undo accepted engineering
+milestones while sequencing this: everything already shipped under old
+Phase 1-4 and Phase 7, and every Gate C slice already delivered, stands.
+
+These are major capability layers, not a strict waterfall -- later layers
+may pull forward bounded slices ahead of an earlier layer's full
+completion, exactly as Camera/Source + Multi-Camera Maturity v1 already did
+for Phase 7 ahead of Phase 1-3 fully closing. See "Execution discipline,"
+below, for how this becomes bounded implementation commands rather than a
+giant program.
+
+### 1. Local Identity, Multi-User & Organization Access
+
+One authoritative Host with many human clients (see "Deployment and
+organization doctrine" in [product-doctrine.md](product-doctrine.md)).
+Scope: local user accounts; secure sessions; Viewer/Reviewer/Administrator
+roles (an Owner role only if destructive recovery/account ownership
+genuinely requires one); server-side authorization; review attribution;
+optimistic concurrency for simultaneous review/config edits; a meaningful
+audit trail; user administration; local TLS/security guidance; and
+many-workstation access against the one Host. Later, optional
+organizational identity -- LDAP, Active Directory, OIDC, Entra-compatible
+identity -- is not a prerequisite for local multi-user operation; do not
+make it one.
+
+### 2. Environmental Context Foundation
+
+A generic, local-first environmental/ecological context substrate.
+Conceptually support: provider; Place/Source relation; observed/valid
+time; measurement/value/unit; spatial resolution/distance; quality flags;
+provenance; source version; cache/fetch time; and license/attribution.
+Initial/high-value context: sunrise/sunset, twilight, day length,
+solar/time-relative context, weather, and historical climate/anomalies.
+Architecture must support later providers -- local environmental sensors,
+eBird, BirdCast where sanctioned access exists, USA-NPN, GBIF/iNaturalist,
+land cover, soils, water, satellite vegetation -- without being built as a
+large integration platform now (see "External ecological context" in
+[product-doctrine.md](product-doctrine.md)). External data may
+contextualize, prioritize, explain, support interpretation, and support
+local associative/predictive analysis; it must **never** create
+observational truth, and loss of internet must never disable local
+observation.
+
+### 3. Habitat & Phenology Foundation
+
+A first-class persistent habitat/plant observation domain, separate from
+wildlife Visits, built on the spatial doctrine above rather than through
+Zones (see "Spatial doctrine" in
+[product-doctrine.md](product-doctrine.md)). Key concepts: a HabitatScene
+(comparable view) tied to a Source, scheduled sampling, stable view/pose
+identity, sampling cadence, an optional ROI, and comparability/quality
+status; scheduled (not activity-triggered) sampling supporting comparable
+repeat imagery; view-change/re-baseline semantics that detect or expose a
+material camera/view change, suspend misleading longitudinal comparison,
+and allow a new baseline; and a HabitatObservation domain whose initial
+semantic phenomena may include flowering, fruiting, bud break, green
+leaves, colored/senescing leaves, leaf loss, vegetation coverage,
+greenness, growth/change, browning/senescence, disturbance, and visible
+stress/change flags. Initial analyzer candidates: PhenoVision, PhenoVisionL,
+PlantCV-style measurements, or others justified by benchmark evidence.
+Native evidence remains preserved; model results remain Inferred/
+provisional unless Reviewed (see "Measured, Inferred, and Reviewed" in
+product-doctrine.md). Do not require individual plant tracking, plant
+species ID as a prerequisite, disease diagnosis, nutrient diagnosis, yield
+prediction, irrigation recommendations, hyperspectral/thermal support, or
+perfect PTZ registration. Plant identification may be added later as useful
+provisional Inferred intelligence under the same doctrine.
+
+### 4. Biodiversity & Place Intelligence
+
+Combine the accepted wildlife/acoustic system with habitat and
+environmental context at the Place level. Substantial real foundation
+already shipped under Gate C, above -- baseline maturity, new/regular
+species status, meaningful-change detection, per-species Zone/time
+patterns, representative evidence, and the Calm Daily Digest (see
+[historical-baseline-maturity-contract.md](historical-baseline-maturity-contract.md),
+[meaningful-change-detection-contract.md](meaningful-change-detection-contract.md),
+[place-activity-report-contract.md](place-activity-report-contract.md)) --
+this layer extends that foundation rather than starting over. User-facing
+capabilities should evolve toward: reviewed taxon richness; broad
+taxonomic composition; first/returning/regular taxa; seasonality;
+phenological patterns; monitoring-effort-normalized comparisons;
+vegetation/habitat change; biodiversity change; habitat-associated wildlife
+patterns; pollinator/flowering relationships; weather/environment-
+associated activity; conservative cross-domain relationships; and
+meaningful change over time. Avoid raw species-count gamification where
+monitoring effort differs. Relationship language stays to "associated
+with," "coincided with," "historically higher/lower under," and "changed
+during the same period" unless causal evidence genuinely exists.
+
+### 5. Land Management / Agriculture
+
+An application of Place Intelligence, not a separate product architecture
+(see "Professional and research positioning" in
+[product-doctrine.md](product-doctrine.md)). Support useful capabilities
+such as emergence, flowering, fruiting, canopy development, vegetation
+growth/change, visible stress/change flags, wildlife pressure, pest/
+target/invasive animal activity, pollinator activity, target/invasive
+species monitoring, intervention records, before/after comparisons,
+plot/site comparisons, and restoration trajectories. Add generic
+environmental-sensor ingestion (MQTT, HTTP, import) before
+vendor-specific integrations. Canonical measurements may include air
+temperature, humidity, rainfall, wind, soil temperature, soil moisture,
+light/PAR, leaf wetness, water level, and water temperature. Do not claim
+disease diagnosis, nutrient diagnosis, expected yield, irrigation
+prescriptions, or causal intervention effects without future evidence
+validating those capabilities.
+
+### 6. Ecosystem UX Closure
+
+Do not build separate, disconnected wildlife/plant/weather/agriculture
+dashboards. Converge around one coherent user model:
+
+- **Today** -- what is happening around this Place now? May include
+  meaningful wildlife activity, notable habitat change, flowering/
+  fruiting, environmental context, useful provisional (Inferred)
+  intelligence, and high-value review opportunities.
+- **Place / History** -- how has this Place changed? May include
+  biodiversity history, wildlife/acoustic history, habitat/phenology,
+  vegetation change, environmental history, interventions, and
+  comparable-period analysis.
+- **Explore** -- help me understand the relationships. May include
+  activity by environmental conditions, phenology, pollinator/flowering
+  relationships, restoration/agricultural comparisons, sensor history, and
+  deeper evidence-backed reports.
+
+Complete ecosystem UX also requires: first-use setup; habitat-scene
+onboarding; a camera-movement/re-baseline flow; sample-quality/eligibility
+states; missing/stale external-data states; provider/sensor health;
+scheduled-media retention; evidence/time-series drilldown; user
+validation/correction; an intervention workflow; sparse/low-support states;
+and plain-language explanation of associations.
+
+### 7. Mobile/PWA + Calm Notifications
+
+Mobile uses the same authoritative Host, the same user identity/
+authorization system (Layer 1, above), and the same Observation/Place
+intelligence -- no second cloud truth layer (see "Mobile is an access
+surface" in [product-doctrine.md](product-doctrine.md)). Primary mobile
+surfaces remain Today, history/Bird Log/Place, review, evidence,
+camera/source health, and later habitat/environment intelligence where
+appropriate. Notifications stay calm and meaningful (see
+"Calm-observatory notifications" in product-doctrine.md); do not turn
+habitat/environment additions into high-volume alert spam.
+
+### 8. Remaining product maturity
+
+Retain remaining important lanes: site-specific learning/fine-tuning;
+broader wildlife/taxonomy maturity; ecological/research interoperability
+(see "Ecological export & sharing interoperability" in "After-release
+lanes," above); ecosystem/provider integrations; professional field/
+research validation; organization deployment/admin documentation; full
+responsive/accessibility/performance polish; legal/license closure;
+model-license manifest; hardware/BOM/compatibility documentation; public
+launch assets/docs/site; field acceptance; security/packaging/OSS
+hardening (Gate F, above); and the first public release itself (see
+"Public release readiness," above). Do not let consolidating the layers
+above accidentally drop any of these.
+
+### Professional and research positioning
+
+Professional biodiversity monitoring and field research are part of
+MockingBird's intended mature use, not a separate derivative product (see
+"Professional and research positioning" in
+[product-doctrine.md](product-doctrine.md)). The same authoritative
+Observation/evidence semantics scale from backyard/home, to enthusiast, to
+conservation, restoration, university/research, and organizational field
+monitoring -- no separate "MockingBird Pro" truth model.
+
+### Hunting / other derivatives
+
+Not on the active roadmap. If discussed in roadmap context at all: the
+underlying local field-observation architecture (Host, Camera Nodes,
+evidence, review, Place Intelligence) may later support separate products
+such as hunting/scouting or other decision-support systems. MockingBird
+should prove the ecosystem-observatory architecture first; do not
+generalize or extract a platform prematurely (see "Hunting and other
+future derivatives" in [product-doctrine.md](product-doctrine.md)).
+
+### Execution discipline
+
+Implement this as approximately five bounded capability milestones (5-7
+implementation commands total), not a giant program -- for example,
+roughly: (1) Local Identity, Multi-User & Organization Access on its own;
+(2) Environmental Context Foundation together with the parts of Habitat &
+Phenology Foundation that share its provider/provenance substrate; (3) the
+rest of Habitat & Phenology Foundation; (4) Biodiversity & Place
+Intelligence together with Land Management/Agriculture (the latter is an
+application of the former) and Ecosystem UX Closure; (5) Mobile/PWA + Calm
+Notifications. This grouping is illustrative, not binding -- re-derive it
+at implementation time against then-current evidence, the same way Camera/
+Source Multi-Camera Maturity v1 was itself a deliberately pulled-forward
+bounded slice rather than a full phase. "Remaining product maturity"
+(Layer 8) is ongoing/cross-cutting, not one more milestone in the sequence.
+
+Use hard archaeology stops for each milestone: read the governing docs and
+the specific contracts a milestone actually touches, not the whole
+repository. Do not issue a giant audit command unless a concrete unresolved
+risk requires one. For each implementation: focused tests during work,
+affected-subsystem validation before integration, normal full closure
+validation when warranted, one implementation review, and one acceptance
+review. Do not let a question about one implementation detail collapse the
+whole layer's scope.
 
 ## Explicit phase gates
 
@@ -2851,6 +3148,19 @@ ecosystem integration.
 - Do not let unbounded field testing stall independent product development.
 - Do not architect the product around the current Raspberry Pi even though it
   remains a primary validation adapter.
+- Do not treat Zones as the semantic center, as 3D habitat geometry, or as
+  proof that two cameras observe the same physical area (see "Spatial
+  doctrine" in [product-doctrine.md](product-doctrine.md)).
+- Do not require human confirmation before Inferred, model-derived
+  intelligence may be shown as useful information (see "Measured, Inferred,
+  and Reviewed" in product-doctrine.md) -- but never let it silently become
+  Reviewed truth either.
+- Do not treat agriculture/land-management or professional biodiversity/
+  field research as separate product architectures or derivatives (see
+  "Professional and research positioning" in product-doctrine.md).
+- Do not build a separate MockingBird installation/database per workstation;
+  many human clients share one authoritative Host (see "Deployment and
+  organization doctrine" in product-doctrine.md).
 
 ## Explicit deprioritization
 
@@ -2878,18 +3188,25 @@ second, separate inventory.
 - Redis, Kafka, or another message-broker/cache service adopted for
   architecture's own sake rather than a measured need
 - Kubernetes, microservices, or a second primary database
+- SaaS multi-tenancy or centrally-managed-fleet architecture ahead of real
+  near-term need (see "Deployment and organization doctrine" in
+  [product-doctrine.md](product-doctrine.md))
 - a custom optical-flow stack
 - max-FPS continuous GPU inference
 - complicated model ensembles
 - a learned evidence selector
 - continuous online retraining
 - proprietary hardware architecture
+- extracting a general-purpose platform, or building hunting/scouting or
+  other non-ecosystem-observatory derivative products, ahead of the core
+  architecture proving itself (see "Hunting and other future derivatives"
+  in [product-doctrine.md](product-doctrine.md))
 
-## v0.1 non-blockers
+## Release non-blockers
 
 Distinct from "Explicit deprioritization," above (the longer-standing
-critical-path list): these specific items do not delay v0.1 release, absent
-new empirical evidence that changes a real dependency --
+critical-path list): these specific items do not delay the first release,
+absent new empirical evidence that changes a real dependency --
 
 LTE, solar, battery/BMS integration, managed PoE, custom CM hardware,
 custom PCB, manufactured hardware, research-grade claims, advanced field
@@ -3096,11 +3413,26 @@ See [roadmap-history.md](roadmap-history.md) for the concise phase record.
 - Each implementation task uses the task packet and validation tiers in
   [development-workflow.md](development-workflow.md).
 - Detection, encounter reconstruction, and Visit correctness are the harder,
-  higher-priority v0.1 gate; species identification needs to be useful and
-  honest, not perfect -- see "Governing priority for v0.1," above.
+  higher-priority release gate; species identification needs to be useful and
+  honest, not perfect -- see "Governing priority before release," above.
 - Reviewed truth is necessary for training/reporting eligibility but does
   not by itself grant public-release rights -- see
   [public-benchmark-governance.md](public-benchmark-governance.md).
+- The Measured/Inferred/Reviewed truth contract applies across every
+  current and future domain -- wildlife, plant identification, phenology,
+  habitat condition, agriculture/land-management signals, and future model
+  providers -- not only species identification; see "Measured, Inferred,
+  and Reviewed" in [product-doctrine.md](product-doctrine.md).
+- Zones are optional image-space regions, useful for privacy, confusor
+  exclusion, labels, filtering, and bounded ROIs -- never proof of physical
+  geography, camera overlap, or durable location after a camera moves; see
+  "Spatial doctrine" in product-doctrine.md.
+- One authoritative local Host per deployment owns the database/history,
+  evidence, inference/runtime, Source/Camera-Node relationships, storage/
+  recovery, and user permissions; Camera Nodes and other Sources are
+  replaceable field infrastructure the same way, device credentials and
+  human credentials stay separate; see "Deployment and organization
+  doctrine" in product-doctrine.md.
 
 ## Roadmap non-goals
 
@@ -3108,8 +3440,16 @@ See [roadmap-history.md](roadmap-history.md) for the concise phase record.
 - No cloud dependency or telemetry requirement for the core product.
 - No new administration page merely for lifecycle or engineering controls.
 - No provider, audio, camera-integration-count, or unrelated automation
-  expansion ahead of the current Phase 1 gate without explicit evidence and
+  expansion ahead of the current release gates without explicit evidence and
   scope; see "Explicit deprioritization," above, for the complete list.
+- No separate agriculture product architecture, and no separate
+  professional-biodiversity/field-research derivative -- both are
+  applications of the same MockingBird core; see "Professional and research
+  positioning" in [product-doctrine.md](product-doctrine.md).
+- No separate MockingBird installation or database per workstation as the
+  primary architecture, and no Kubernetes/HA/SaaS-tenancy requirement for
+  the Organization/Research deployment profile; see "Deployment and
+  organization doctrine" in product-doctrine.md.
 
 ## WSL activation checkpoint
 

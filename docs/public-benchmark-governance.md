@@ -88,18 +88,20 @@ be published, not merely internally reviewed:
 - Third-party model-weight licenses (tracked per-model, e.g.
   [model-selection.md](model-selection.md)).
 - Future destination-specific interoperability (eBird, Camtrap DP, GBIF,
-  Wildlife Insights, iNaturalist) -- see "Post-v0.1 lanes" /
+  Wildlife Insights, iNaturalist) -- see "After-release lanes" /
   "Ecological export & sharing interoperability" in
   [roadmap.md](roadmap.md). Those consume data already cleared under this
   document; they do not define a second release-eligibility system.
-- Contributor/community dataset workflows -- gated behind Phase 8
-  ("Learning / Contributor Ecosystem") in [roadmap.md](roadmap.md), which
+- Contributor/community dataset workflows -- gated behind mature evidence
+  and dataset governance ("Remaining product maturity" in "Remaining
+  roadmap -- canonical sequence" in [roadmap.md](roadmap.md), which
+  succeeds the former Phase 8 "Learning / Contributor Ecosystem"), which
   this document is a prerequisite for, not a replacement of.
 
-## v0.1 relevance
+## Release relevance
 
 This is a Gate F item, not a blocker in the sense of delaying core product
 work -- see "Explicit phase gates" in [roadmap.md](roadmap.md). It matters
-for v0.1 only to the extent v0.1 packaging/release work references or ships
-any benchmark/example corpus publicly; it fully gates any future public
-benchmark release regardless of v0.1 timing.
+for the first release only to the extent that release's packaging work
+references or ships any benchmark/example corpus publicly; it fully gates
+any future public benchmark release regardless of release timing.
