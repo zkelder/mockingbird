@@ -396,7 +396,17 @@ async def test_wildlife_insights_aggregate_only_current_active_reviewed_truth(
         },
     )
     assert confirmed_garden.status_code == 200
+    # Everyday Discovery / Product Experience v2 (Phase K): `confirmed_
+    # wildlife` was bird-only before this milestone, silently excluding
+    # "squirrel-activity" (confirmed non-bird wildlife, started_at 2026-07-03,
+    # newer than the other two -- hence first) despite it being exactly the
+    # "current active reviewed truth" this test's own name asserts -- see
+    # docs/canonical-new-regular-species-contract.md and
+    # `_activity_library_review_filter_matches`. Now wildlife-inclusive,
+    # matching `wildlife_insights`' own aggregate above (unaffected by this
+    # fix, already correct).
     assert [visit["id"] for visit in confirmed_garden.json()["visits"]] == [
+        "squirrel-activity",
         "cardinal-no-thumbnail",
         "garden-cardinal",
     ]

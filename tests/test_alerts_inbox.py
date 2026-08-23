@@ -12,6 +12,8 @@ from mockingbird.api.schemas import (
     ReviewCorrectionCreate,
     StorageRetentionFrequency,
     StorageRetentionSettingsUpdate,
+    VisitReviewReopenCreate,
+    VisitReviewRevisionCreate,
 )
 from mockingbird.api.main import app, configure_repository
 from mockingbird.monitoring.durable_supervisor import DurableMonitoringCandidate
@@ -84,6 +86,118 @@ def test_review_alert_is_deduplicated_resolved_and_reopened(repository: ProductR
             repository._sync_review_alert(session, visit, datetime.now(UTC))
     assert len(_alerts(repository, "review")) == 2
     assert _alerts(repository, "journal")[0].deduplication_key == "journal:first-label:northern_cardinal"
+
+
+def _unresolved_journal_alert(repository: ProductRepository, label: str) -> ProductAlertModel | None:
+    key = f"journal:first-label:{label}"
+    return next(
+        (alert for alert in _alerts(repository, "journal") if alert.deduplication_key == key and alert.resolved_at is None),
+        None,
+    )
+
+
+def test_revising_a_confirmed_visit_to_a_new_label_resolves_the_stale_milestone_alert(
+    repository: ProductRepository,
+) -> None:
+    """Everyday Discovery / Product Experience v2 (Phase L -- stale milestone
+    truth reconciliation): a "first confirmed local observation" alert must
+    not keep presenting a species as current truth once the sole Visit that
+    earned it is authoritatively corrected to a different species -- exercised
+    through the real `revise_visit_review` path (not a hand-set model
+    mutation, matching this file's other alert-lifecycle tests)."""
+
+    _add_reviewable_visit(repository)
+    repository.create_review_label(
+        ReviewCorrectionCreate(
+            target_type="visit", target_id="visit-alert", label="northern_cardinal", notes=None,
+            review_origin="human",
+        )
+    )
+    assert _unresolved_journal_alert(repository, "northern_cardinal") is not None
+
+    with repository.session_factory() as session:
+        token = repository._review_state_token(session, "visit", "visit-alert")
+    repository.revise_visit_review(
+        "visit-alert",
+        VisitReviewRevisionCreate(
+            label="blue_jay",
+            expected_state_token=token,
+            idempotency_key="revise-to-blue-jay",
+            review_origin="human",
+        ),
+    )
+
+    assert _unresolved_journal_alert(repository, "northern_cardinal") is None
+    assert _unresolved_journal_alert(repository, "blue_jay") is not None
+
+
+def test_reopening_the_sole_confirmed_visit_resolves_its_milestone_alert(
+    repository: ProductRepository,
+) -> None:
+    """Companion to the revision case above: reopening (clearing truth
+    entirely, not replacing it) must resolve the same stale milestone alert,
+    through the real `reopen_visit_review` path."""
+
+    _add_reviewable_visit(repository)
+    repository.create_review_label(
+        ReviewCorrectionCreate(
+            target_type="visit", target_id="visit-alert", label="northern_cardinal", notes=None,
+            review_origin="human",
+        )
+    )
+    assert _unresolved_journal_alert(repository, "northern_cardinal") is not None
+
+    with repository.session_factory() as session:
+        token = repository._review_state_token(session, "visit", "visit-alert")
+    repository.reopen_visit_review(
+        "visit-alert",
+        VisitReviewReopenCreate(
+            expected_state_token=token,
+            idempotency_key="reopen-cardinal",
+            review_origin="human",
+        ),
+    )
+
+    assert _unresolved_journal_alert(repository, "northern_cardinal") is None
+
+
+def test_correcting_one_of_two_confirmed_visits_keeps_the_milestone_alert_while_another_still_earns_it(
+    repository: ProductRepository,
+) -> None:
+    """The alert must NOT be resolved merely because one Visit stopped
+    carrying the label -- only once no reviewed Visit carries it at all. See
+    `_maybe_resolve_stale_journal_milestone_alert`'s docstring."""
+
+    _add_reviewable_visit(repository, visit_id="visit-alert")
+    _add_reviewable_visit(repository, visit_id="visit-alert-2")
+    repository.create_review_label(
+        ReviewCorrectionCreate(
+            target_type="visit", target_id="visit-alert", label="northern_cardinal", notes=None,
+            review_origin="human",
+        )
+    )
+    repository.create_review_label(
+        ReviewCorrectionCreate(
+            target_type="visit", target_id="visit-alert-2", label="northern_cardinal", notes=None,
+            review_origin="human",
+        )
+    )
+    assert _unresolved_journal_alert(repository, "northern_cardinal") is not None
+
+    with repository.session_factory() as session:
+        token = repository._review_state_token(session, "visit", "visit-alert")
+    repository.revise_visit_review(
+        "visit-alert",
+        VisitReviewRevisionCreate(
+            label="blue_jay",
+            expected_state_token=token,
+            idempotency_key="revise-first-of-two",
+            review_origin="human",
+        ),
+    )
+
+    # visit-alert-2 still confirms northern_cardinal -- the milestone claim remains true.
+    assert _unresolved_journal_alert(repository, "northern_cardinal") is not None
 
 
 def test_monitoring_retries_share_one_alert_and_recovery_resolves(repository: ProductRepository) -> None:

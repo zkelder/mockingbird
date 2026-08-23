@@ -27,6 +27,7 @@ import { TaxonomyBadge } from "../components/TaxonomyBadge";
 import { VisitEvidenceSequence } from "../components/VisitEvidenceSequence";
 import { RefinedCropEditor } from "../components/RefinedCropEditor";
 import { displayTaxonomyLabel, findTaxonomyLabel, isBirdReviewLabel } from "../components/taxonomy";
+import { explainMultimodalAssociation } from "../components/suggestionExplanation";
 import { formatDateTime, formatLabel } from "../utils";
 
 interface VisitDetailPageProps {
@@ -832,42 +833,57 @@ export function VisitDetailPage({
         correction surface, matching the sibling-Visits panel above exactly.
       */}
       {detail.multimodal_associations.length > 0
-        ? detail.multimodal_associations.map((association) => (
-            <div className="notice-panel" key={association.association_id}>
-              <EvidenceBadge
-                label={association.other_modality === "acoustic" ? "Also heard nearby" : "Also seen nearby"}
-                tone="evidence"
-              />
-              {association.taxon_agreement === "agrees" ? (
-                <EvidenceBadge label="Evidence agrees" tone="evidence" />
-              ) : association.taxon_agreement === "differs" ? (
-                <EvidenceBadge label="Evidence differs" tone="review" />
-              ) : null}
-              {association.tier === "possible" ? (
-                <EvidenceBadge label="Needs review" tone="quiet" />
-              ) : null}
-              <p>
-                {association.tier === "associated"
-                  ? "Likely the same encounter."
-                  : "Possibly related -- not confirmed as the same encounter."}
-              </p>
-              <div className="detail-actions">
-                <button
-                  className="secondary-action"
-                  onClick={() => onOpenVisit(association.other_visit.id)}
-                  type="button"
-                >
-                  {displayTaxonomyLabel(
-                    association.other_visit.reviewed_label ??
-                      association.other_visit.species_guess ??
-                      association.other_visit.subject_label,
-                    taxonomyLabels,
-                  )}{" "}
-                  ({formatLabel(association.other_visit.review_status)})
-                </button>
+        ? detail.multimodal_associations.map((association) => {
+            const otherVisitLabel = displayTaxonomyLabel(
+              association.other_visit.reviewed_label ??
+                association.other_visit.species_guess ??
+                association.other_visit.subject_label,
+              taxonomyLabels,
+            );
+            // Only a component that genuinely has both a visual and an
+            // acoustic suggestion to compare composes this sentence -- see
+            // suggestionExplanation.ts's own doc comment. This panel is that
+            // place: `association.taxon_agreement` is already resolved
+            // server-side, and both sides' labels are already on this page.
+            const multimodalSentence = explainMultimodalAssociation({
+              currentLabel: displayTaxonomyLabel(visitLabel, taxonomyLabels),
+              otherLabel: otherVisitLabel,
+              otherModality: association.other_modality,
+              tier: association.tier,
+              taxonAgreement: association.taxon_agreement,
+            });
+            return (
+              <div className="notice-panel" key={association.association_id}>
+                <EvidenceBadge
+                  label={association.other_modality === "acoustic" ? "Also heard nearby" : "Also seen nearby"}
+                  tone="evidence"
+                />
+                {association.taxon_agreement === "agrees" ? (
+                  <EvidenceBadge label="Evidence agrees" tone="evidence" />
+                ) : association.taxon_agreement === "differs" ? (
+                  <EvidenceBadge label="Evidence differs" tone="review" />
+                ) : null}
+                {association.tier === "possible" ? (
+                  <EvidenceBadge label="Needs review" tone="quiet" />
+                ) : null}
+                <p>
+                  {association.tier === "associated"
+                    ? "Likely the same encounter."
+                    : "Possibly related -- not confirmed as the same encounter."}
+                </p>
+                {multimodalSentence ? <p>{multimodalSentence}</p> : null}
+                <div className="detail-actions">
+                  <button
+                    className="secondary-action"
+                    onClick={() => onOpenVisit(association.other_visit.id)}
+                    type="button"
+                  >
+                    {otherVisitLabel} ({formatLabel(association.other_visit.review_status)})
+                  </button>
+                </div>
               </div>
-            </div>
-          ))
+            );
+          })
         : null}
 
       {message ? <div className="notice-panel">{message}</div> : null}

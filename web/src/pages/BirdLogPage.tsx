@@ -24,7 +24,7 @@ import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { changeStatusBadge, formatDateTime } from "../utils";
+import { changeStatusBadge, formatDateTime, historicalStatusBadge, modalityBadge } from "../utils";
 
 interface BirdLogPageProps {
   sources: CameraSource[];
@@ -36,6 +36,7 @@ interface BirdLogPageProps {
   onOpenReview: () => void;
   onOpenExports: () => void;
   onOpenCollections: () => void;
+  onOpenPlaceActivityReport: () => void;
 }
 
 interface JournalLocation {
@@ -378,6 +379,7 @@ export function BirdLogPage({
   onOpenStreams,
   onOpenReview,
   onOpenCollections,
+  onOpenPlaceActivityReport,
 }: BirdLogPageProps) {
   const [journalLabel, setJournalLabel] = useState<string | null>(readJournalLabel);
   const [location, setLocation] = useState<JournalLocation>(readJournalLocation);
@@ -590,6 +592,7 @@ export function BirdLogPage({
               <button className="secondary-action" onClick={() => navigatePath("/analytics")} type="button">Wildlife Insights</button>
               <button className="secondary-action" onClick={onOpenReview} type="button">Review Queue</button>
               <button className="secondary-action" onClick={onOpenCollections} type="button">Collections</button>
+              <button className="secondary-action" onClick={onOpenPlaceActivityReport} type="button">Full Place Report</button>
             </>
           }
         />
@@ -643,7 +646,22 @@ export function BirdLogPage({
                     <div>
                       <h2>{item.display_name}</h2>
                       <span className="meta-text">{item.observation_count} reviewed observation{item.observation_count === 1 ? "" : "s"}</span>
-                      {item.is_regular ? <StatusPill label="Regular here" tone="good" /> : null}
+                      {(() => {
+                        // Everyday Discovery / Product Experience v2 (Phase
+                        // E/H): the canonical New/Regular badge, now visible
+                        // at grid level for the first time -- previously
+                        // only `is_regular` (never "new") rendered here. See
+                        // docs/canonical-new-regular-species-contract.md.
+                        // Falls back to the older `is_regular`-only signal
+                        // when `historical_status` is the backend's own
+                        // documented defensive-fallback `null` (a label
+                        // outside the canonical call's Stream scope) --
+                        // never silently drops an honest "Regular here".
+                        const badge =
+                          historicalStatusBadge(item.historical_status) ??
+                          (item.is_regular ? { label: "Regular here", tone: "good" as const } : null);
+                        return badge ? <StatusPill label={badge.label} tone={badge.tone} /> : null;
+                      })()}
                       {(() => {
                         const badge = changeStatusBadge(item.change_status);
                         return badge ? <StatusPill label={badge.label} tone={badge.tone} /> : null;
@@ -784,14 +802,29 @@ export function BirdLogPage({
             />
           ) : (
             <>
-              {activeHistory.is_regular ? (
-                <div className="section-heading">
-                  <span className="meta-text">
-                    Confirmed on {activeHistory.distinct_confirmed_usable_days} well-monitored days in this Place's recent history
-                  </span>
-                  <StatusPill label="Regular here" tone="good" />
-                </div>
-              ) : null}
+              {(() => {
+                // Everyday Discovery / Product Experience v2 (Phase E/H):
+                // the canonical, always-on New/Regular badge -- unlike
+                // `is_new_label_in_range` below, this is never hidden just
+                // because the viewer is on the default "all_time" scope.
+                // Replaces this page's own former hand-rolled maturity-
+                // gated wording ternary; both Today and Bird Log now word
+                // this identically because both read the same shared
+                // `historicalStatusBadge` helper over the same backend
+                // field. See docs/canonical-new-regular-species-contract.md.
+                const badge =
+                  historicalStatusBadge(activeHistory.historical_status) ??
+                  (activeHistory.is_regular ? { label: "Regular here", tone: "good" as const } : null);
+                if (!badge) return null;
+                return (
+                  <div className="section-heading">
+                    <span className="meta-text">
+                      Confirmed on {activeHistory.distinct_confirmed_usable_days} well-monitored days in this Place's recent history
+                    </span>
+                    <StatusPill label={badge.label} tone={badge.tone} />
+                  </div>
+                );
+              })()}
               {activeHistory.change_status ? (
                 <div className="section-heading">
                   <span className="meta-text">
@@ -844,8 +877,15 @@ export function BirdLogPage({
                   <article className="journal-gallery-card" key={observation.visit_id}>
                     <button className="journal-gallery-image" onClick={() => onOpenVisit(observation.visit_id)} type="button"><JournalThumbnail label={observation.display_name} observedAt={observation.observed_at} representative={observation} /></button>
                     <div className="journal-gallery-body">
-                      <div className="section-heading"><div><h3>{formatDateTime(observation.observed_at)}</h3><span className="meta-text">{observation.source_name} · {observation.stream_name}{observation.zone_name ? ` · ${observation.zone_name}` : ""}</span></div><div className="journal-gallery-status-pills">{(galleryEventIdCounts.get(observation.event_id) ?? 0) > 1 ? <StatusPill label="Shared encounter" tone="quiet" /> : null}<StatusPill label="Confirmed" tone="good" /></div></div>
-                      <div className="journal-gallery-facts"><span>Duration <strong>{durationLabel(observation.duration_seconds)}</strong></span><span>{observation.primary_evidence?.content_type.startsWith("audio/") ? "Evidence clip" : "Evidence frames"} <strong>{observation.evidence_frame_count}</strong></span><span>Correction <strong>{observation.display_name}</strong></span></div>
+                      <div className="section-heading"><div><h3>{formatDateTime(observation.observed_at)}</h3><span className="meta-text">{observation.source_name} · {observation.stream_name}{observation.zone_name ? ` · ${observation.zone_name}` : ""}</span></div><div className="journal-gallery-status-pills">{(galleryEventIdCounts.get(observation.event_id) ?? 0) > 1 ? <StatusPill label="Shared encounter" tone="quiet" /> : null}{(() => {
+                        // Everyday Discovery / Product Experience v2 (Phase
+                        // B): a confidently-associated visual+acoustic pair
+                        // already collapsed into this one card server-side
+                        // -- see docs/multimodal-list-presentation-contract.md.
+                        const badge = modalityBadge(observation.evidence_modality);
+                        return badge ? <StatusPill label={badge.label} tone="quiet" /> : null;
+                      })()}<StatusPill label="Confirmed" tone="good" /></div></div>
+                      <div className="journal-gallery-facts"><span>Duration <strong>{durationLabel(observation.duration_seconds)}</strong></span><span>{observation.primary_evidence?.content_type.startsWith("audio/") ? "Evidence clip" : "Evidence frames"} <strong>{observation.evidence_frame_count}</strong></span></div>
                       <div className="journal-gallery-milestones">{observation.is_favorite ? <StatusPill label="Favorite" tone="good" /> : null}{observation.has_note ? <StatusPill label="Note" tone="quiet" /> : null}{observation.collection_count > 0 ? <StatusPill label={`${observation.collection_count} Collection${observation.collection_count === 1 ? "" : "s"}`} tone="quiet" /> : null}{observation.tags.map((tag) => <StatusPill key={tag} label={tag} tone="quiet" />)}{observation.has_curation_history ? <StatusPill label="Curated" tone="quiet" /> : null}{observation.has_review_revision ? <StatusPill label="Revised" tone="quiet" /> : null}{observation.is_first_on_stream ? <StatusPill label="First on Stream" tone="quiet" /> : null}{observation.is_first_in_zone ? <StatusPill label="First in Zone" tone="quiet" /> : null}</div>
                       <button className="secondary-action" onClick={() => onOpenVisit(observation.visit_id)} type="button">Open Visit Detail</button>
                       <button className="text-action" disabled={!selectedCollectionId} onClick={() => void addObservationToCollection(observation.visit_id)} type="button">Add to Collection</button>

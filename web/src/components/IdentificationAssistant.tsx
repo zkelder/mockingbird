@@ -1,4 +1,5 @@
 import type { VisitIdentificationAssistantResponse } from "../api/types";
+import { explainSpeciesSuggestion } from "./suggestionExplanation";
 import { formatDateTime, formatLabel } from "../utils";
 
 interface IdentificationAssistantProps {
@@ -39,7 +40,13 @@ export function IdentificationAssistant({
             Analyze only saved Visit evidence. Suggestions never save or revise a correction on their own.
           </span>
         </div>
-        <strong>{availability?.adapter_name ?? "Analyzer unavailable"}</strong>
+        {/*
+          The specific analyzer name (e.g. a model/architecture identifier)
+          is deliberately not shown here -- see suggestionExplanation.ts's
+          file header. "Availability" below already reports plain-language
+          readiness status.
+        */}
+        <strong>{availability ? "Local identification analyzer" : "Analyzer unavailable"}</strong>
       </div>
 
       {isLoading ? <span className="meta-text">Checking local analyzer availability...</span> : null}
@@ -49,7 +56,11 @@ export function IdentificationAssistant({
           <div className="data-row">
             <span>Availability</span>
             <strong>{formatLabel(availability.status)}</strong>
-            <small>{availability.message}</small>
+            <small>
+              {availability.status === "identification_uncertain"
+                ? explainSpeciesSuggestion({ isUncertain: true })
+                : availability.message}
+            </small>
           </div>
           <div className="data-row">
             <span>Selected model input</span>
@@ -122,14 +133,21 @@ export function IdentificationAssistant({
                 </div>
                 <strong>Rank {suggestion.rank}</strong>
               </div>
-              <div className="species-suggestion-meta">
-                <span>{suggestion.provider}</span>
-                <span>{suggestion.frame_role} frame</span>
-                <span>Appeared in {suggestion.support_count} analyzed frame{suggestion.support_count === 1 ? "" : "s"}</span>
-                {suggestion.score != null ? <span>{suggestion.score_label}: {suggestion.score.toFixed(3)}</span> : null}
-                <span>{formatDateTime(suggestion.analyzed_at)}</span>
-              </div>
-              {suggestion.model_runtime_version ? <span className="meta-text">Model/runtime: {suggestion.model_runtime_version}</span> : null}
+              <p>
+                {explainSpeciesSuggestion({ label: suggestion.label }) ??
+                  `Suggested label: ${suggestion.label}.`}
+              </p>
+              <span className="meta-text">{formatDateTime(suggestion.analyzed_at)}</span>
+              <details className="review-diagnostic-details">
+                <summary>Suggestion details</summary>
+                <div className="species-suggestion-meta">
+                  <span>{suggestion.provider}</span>
+                  <span>{suggestion.frame_role} frame</span>
+                  <span>Appeared in {suggestion.support_count} analyzed frame{suggestion.support_count === 1 ? "" : "s"}</span>
+                  {suggestion.score != null ? <span>{suggestion.score_label}: {suggestion.score.toFixed(3)}</span> : null}
+                </div>
+                {suggestion.model_runtime_version ? <span className="meta-text">Model/runtime: {suggestion.model_runtime_version}</span> : null}
+              </details>
               <div className="suggestion-action-stack">
                 <button
                   className="secondary-action"
@@ -156,7 +174,11 @@ export function IdentificationAssistant({
           </div>
         </div>
       ) : assistant && !isLoading ? (
-        <span className="meta-text">No useful suggestion is available yet. You can still review and save a correction normally.</span>
+        <span className="meta-text">
+          {explainSpeciesSuggestion({
+            isUncertain: assistant.availability?.status === "identification_uncertain",
+          }) ?? "No useful suggestion is available yet. You can still review and save a correction normally."}
+        </span>
       ) : null}
     </section>
   );

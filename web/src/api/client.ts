@@ -90,6 +90,8 @@ import type {
   ProductHealthStatus,
   SetupState,
   SetupStateUpdate,
+  SoundscapeSummaryRequest,
+  SoundscapeSummaryResponse,
   StorageCleanupHistoryResponse,
   StorageCleanupPreviewResponse,
   StorageCleanupResult,
@@ -1210,6 +1212,11 @@ export const apiClient = {
     }),
   getPlaceActivityReport: (payload: PlaceActivityReportRequest) =>
     request<PlaceActivityReportResponse>("/api/analytics/place-activity-report", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  getSoundscapeSummary: (payload: SoundscapeSummaryRequest) =>
+    request<SoundscapeSummaryResponse>("/api/analytics/soundscape-summary", {
       method: "POST",
       body: JSON.stringify(payload),
     }),

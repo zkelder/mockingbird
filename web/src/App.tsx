@@ -36,6 +36,7 @@ import { ManualImportPage } from "./pages/ManualImportPage";
 import { ModelAdaptersPage } from "./pages/ModelAdaptersPage";
 import { MotionEvidenceDetailPage } from "./pages/MotionEvidenceDetailPage";
 import { MotionEvidencePage } from "./pages/MotionEvidencePage";
+import { PlaceActivityReportPage } from "./pages/PlaceActivityReportPage";
 import {
   ReviewQueuePage,
   type ReviewQueueInitialContext,
@@ -92,6 +93,7 @@ const productNavItems: Array<{ page: Page; label: string }> = [
   { page: "import", label: "Import Media" },
   { page: "review", label: "Review" },
   { page: "bird-log", label: "Bird Log" },
+  { page: "place-activity-report", label: "Place Report" },
   { page: "activity-library", label: "Activity" },
   { page: "analytics", label: "Insights" },
   { page: "settings", label: "Settings" },
@@ -371,6 +373,22 @@ export default function App() {
     navigate(collectionId ? { page: "collection-detail", collectionId } : { page: "collections" });
   }
 
+  // Shared by YardMapPage's identical inline callback and
+  // PlaceActivityReportPage's per-taxon "View in Bird Log" links: with no
+  // label, opens Bird Log's overview; with one, deep-links straight to
+  // that species' own history.
+  function openBirdLogLabel(label?: string) {
+    if (!label) {
+      setPage("bird-log");
+      return;
+    }
+    const path = `/bird-log/${encodeURIComponent(label)}`;
+    if (`${window.location.pathname}${window.location.search}` !== path) {
+      window.history.pushState({}, "", path);
+    }
+    applyRoute({ page: "bird-log" });
+  }
+
   function openAlertAction(action: ProductAlertAction) {
     if (action.action_type === "review_visit" && action.visit_id) {
       openVisit(action.visit_id);
@@ -490,6 +508,7 @@ export default function App() {
           onOpenBirdLog={() => setPage("bird-log")}
           onOpenInsights={() => setPage("analytics")}
           onOpenVisit={openVisit}
+          onOpenPlaceActivityReport={() => setPage("place-activity-report")}
         />
       );
     }
@@ -781,6 +800,16 @@ export default function App() {
           onOpenReview={() => openReviewQueue()}
           onOpenExports={() => setPage("exports")}
           onOpenCollections={() => openCollections()}
+          onOpenPlaceActivityReport={() => setPage("place-activity-report")}
+        />
+      );
+    }
+
+    if (page === "place-activity-report") {
+      return (
+        <PlaceActivityReportPage
+          onOpenBirdLog={openBirdLogLabel}
+          onOpenVisit={openVisit}
         />
       );
     }

@@ -38,6 +38,7 @@ from mockingbird.analytics.historical_baseline import (
     MIN_DISTINCT_USABLE_DAYS_FOR_REGULAR,
     HistoricalPlaceBaseline,
     SpeciesHistoricalStatus,
+    SpeciesHistoricalStatusValue,
     bucket_intervals_by_local_day,
     compute_baseline_maturity,
     compute_historical_place_baseline,
@@ -191,7 +192,7 @@ from mockingbird.species.identification_eligibility import (
     evaluate_identification_eligibility,
 )
 from mockingbird import review_provenance
-from mockingbird.wildlife_taxonomy import is_wildlife_category
+from mockingbird.wildlife_taxonomy import NON_WILDLIFE_LABEL_CATEGORIES, is_wildlife_category
 from mockingbird.species.bioclip_adapter import (
     BIOCLIP_ADAPTER_ID,
     BIOCLIP_ADAPTER_NAME,
@@ -571,6 +572,7 @@ from mockingbird.api.schemas import (
     VisitMergeCandidatesResponse,
     VisitMergePreview,
     VisitMultimodalAssociation,
+    VisitMultimodalPartnerSummary,
     VisitMergePreviewRequest,
     VisitMergeRequest,
     VisitMergeResponse,
@@ -4410,6 +4412,181 @@ class ProductRepository:
                     )
                 )
             return summaries
+
+    def _bulk_multimodal_pair_summaries(
+        self, session: Session, visit_ids: Sequence[str],
+    ) -> dict[str, VisitMultimodalPartnerSummary]:
+        """One bulk query resolving each of `visit_ids`'s *strongest*
+        multimodal association (if any) to a compact partner summary --
+        the N-query-free counterpart to calling `_strongest_multimodal_
+        tier`/`multimodal_associations_for_visit` once per row (Everyday
+        Discovery / Product Experience v2, Phase B; the exact N+1 shape
+        this codebase already found and fixed once for BioCLIP status --
+        see the "BioCLIP Status / Review Queue Performance v1" milestone).
+        `"associated"` always outranks `"possible"` for a Visit with rows
+        of both tiers, matching `_strongest_multimodal_tier`'s own rule.
+        Callers deciding whether to collapse two list rows into one must
+        still confirm the partner id is present in their own list -- this
+        method only resolves the *fact* of an association, never which
+        rows a particular list happens to include.
+        """
+
+        ids = set(visit_ids)
+        if not ids:
+            return {}
+        rows = session.scalars(
+            select(VisitAssociationModel).where(
+                or_(
+                    VisitAssociationModel.visual_visit_id.in_(ids),
+                    VisitAssociationModel.acoustic_visit_id.in_(ids),
+                )
+            )
+        ).all()
+        if not rows:
+            return {}
+        other_ids = {row.visual_visit_id for row in rows} | {row.acoustic_visit_id for row in rows}
+        visit_models = {
+            model.id: model
+            for model in session.scalars(
+                select(VisitModel).where(VisitModel.id.in_(other_ids))
+            ).all()
+        }
+        best_row_by_visit_id: dict[str, VisitAssociationModel] = {}
+        for row in rows:
+            for visit_id in (row.visual_visit_id, row.acoustic_visit_id):
+                if visit_id not in ids:
+                    continue
+                current = best_row_by_visit_id.get(visit_id)
+                if current is None or (current.tier != "associated" and row.tier == "associated"):
+                    best_row_by_visit_id[visit_id] = row
+
+        summaries: dict[str, VisitMultimodalPartnerSummary] = {}
+        for visit_id, row in best_row_by_visit_id.items():
+            if row.visual_visit_id == visit_id:
+                other_id = row.acoustic_visit_id
+            else:
+                other_id = row.visual_visit_id
+            this_model = visit_models.get(visit_id) or session.get(VisitModel, visit_id)
+            other_model = visit_models.get(other_id)
+            summaries[visit_id] = VisitMultimodalPartnerSummary(
+                visit_id=other_id,
+                tier=row.tier,
+                taxon_agreement=classify_taxon_agreement(
+                    self._effective_taxon_label(this_model) if this_model else None,
+                    self._effective_taxon_label(other_model) if other_model else None,
+                ),
+            )
+        return summaries
+
+    def _collapse_associated_multimodal_pairs(
+        self, session: Session, summaries: Sequence[DashboardVisitSummary],
+    ) -> list[DashboardVisitSummary]:
+        """Everyday Discovery / Product Experience v2 (Phase B; see docs/
+        multimodal-list-presentation-contract.md): presentation-only
+        collapse of a confidently-associated visual+acoustic pair into one
+        list row, when *both* sides already independently qualified for
+        `summaries` under the caller's own existing eligibility rules (this
+        never widens or changes which Visits are eligible, only how many
+        rows a genuinely-paired encounter occupies). Only `tier ==
+        "associated"` pairs ever collapse -- `"possible"` always stays two
+        separate, individually-visible rows, matching the association
+        engine's own confidence semantics. Never mutates the database,
+        never marks a Visit `is_superseded`, never picks a "winning" species
+        -- both original Visits, evidence, and provenance remain fully
+        independently reachable (via `multimodal_partner.visit_id` and the
+        Visit Detail page's own full association panel); this only changes
+        which *rows render* in the caller's own list.
+        """
+
+        by_id = {summary.id: summary for summary in summaries}
+        if len(by_id) < 2:
+            return list(summaries)
+        pairs = self._bulk_multimodal_pair_summaries(session, list(by_id))
+        drop: set[str] = set()
+        updated: dict[str, DashboardVisitSummary] = {}
+        for visit_id, pair in pairs.items():
+            if pair.tier != "associated" or visit_id in drop or pair.visit_id in drop:
+                continue
+            partner_id = pair.visit_id
+            if partner_id not in by_id:
+                # The partner isn't shown in this particular list -- collapsing
+                # here would make its own evidence disappear with nothing left
+                # to point to it. Leave this row exactly as it already was.
+                continue
+            this_summary = by_id[visit_id]
+            partner_summary = by_id[partner_id]
+            this_needs_review = this_summary.review_status == ReviewStatus.needs_review
+            partner_needs_review = partner_summary.review_status == ReviewStatus.needs_review
+            if this_needs_review != partner_needs_review:
+                # Phase I: review must stay visible wherever correction would
+                # help -- never let an already-resolved partner's row hide
+                # the one side of a collapsed pair that still needs it.
+                primary_id, secondary_id = (
+                    (visit_id, partner_id) if this_needs_review else (partner_id, visit_id)
+                )
+            elif this_summary.evidence_modality == "visual":
+                # Otherwise image evidence stays the center of the experience
+                # (product-doctrine.md) -- the visual row is kept as primary,
+                # the acoustic partner's fact merged into it.
+                primary_id, secondary_id = visit_id, partner_id
+            else:
+                primary_id, secondary_id = partner_id, visit_id
+            drop.add(secondary_id)
+            primary_summary = by_id[primary_id]
+            updated[primary_id] = primary_summary.model_copy(
+                update={
+                    "evidence_modality": "seen_and_heard",
+                    "multimodal_partner": VisitMultimodalPartnerSummary(
+                        visit_id=secondary_id, tier=pair.tier, taxon_agreement=pair.taxon_agreement,
+                    ),
+                }
+            )
+        return [
+            updated.get(summary.id, summary) for summary in summaries if summary.id not in drop
+        ]
+
+    def _collapse_associated_multimodal_journal_observations(
+        self, session: Session, observations: Sequence[WildlifeJournalObservation],
+    ) -> list[WildlifeJournalObservation]:
+        """`WildlifeJournalObservation` counterpart to `_collapse_associated_
+        multimodal_pairs` (see its docstring for the full contract) --
+        Bird Log's gallery is confirmed-only by construction (`_wildlife_
+        journal_confirmed_records`), so unlike Today's lists there is never
+        a "still needs review" side to prefer keeping visible; the visual
+        row is always kept as primary."""
+
+        by_id = {observation.visit_id: observation for observation in observations}
+        if len(by_id) < 2:
+            return list(observations)
+        pairs = self._bulk_multimodal_pair_summaries(session, list(by_id))
+        drop: set[str] = set()
+        updated: dict[str, WildlifeJournalObservation] = {}
+        for visit_id, pair in pairs.items():
+            if pair.tier != "associated" or visit_id in drop or pair.visit_id in drop:
+                continue
+            partner_id = pair.visit_id
+            if partner_id not in by_id:
+                continue
+            this_observation = by_id[visit_id]
+            if this_observation.evidence_modality == "visual":
+                primary_id, secondary_id = visit_id, partner_id
+            else:
+                primary_id, secondary_id = partner_id, visit_id
+            drop.add(secondary_id)
+            primary_observation = by_id[primary_id]
+            updated[primary_id] = primary_observation.model_copy(
+                update={
+                    "evidence_modality": "seen_and_heard",
+                    "multimodal_partner": VisitMultimodalPartnerSummary(
+                        visit_id=secondary_id, tier=pair.tier, taxon_agreement=pair.taxon_agreement,
+                    ),
+                }
+            )
+        return [
+            updated.get(observation.visit_id, observation)
+            for observation in observations
+            if observation.visit_id not in drop
+        ]
 
     def soundscape_summary(self, *, start_at: datetime, end_at: datetime) -> SoundscapeSummaryResponse:
         """Multimodal Observation & Soundscape v1, Phase K (see docs/
@@ -12887,8 +13064,19 @@ class ProductRepository:
                     )
                 )
             elif payload.review_filter == ActivityLibraryReviewFilter.confirmed_wildlife:
+                # Everyday Discovery / Product Experience v2 (Phase K): this
+                # was bird-only (`category == bird`), silently excluding a
+                # confirmed non-bird wildlife record (squirrel, deer, ...)
+                # from a filter literally labeled "Confirmed wildlife" --
+                # inconsistent with the canonical `is_wildlife_category`
+                # denylist boundary Bird Log/Today already use (see
+                # `_wildlife_journal_confirmed_records`). A taxonomy row is
+                # wildlife whenever its category is not in the denylist;
+                # `TaxonomyLabelModel.id.is_(None)` (no matched taxonomy row
+                # at all, e.g. a free-form reviewed label) is never wildlife.
                 query = query.where(VisitModel.review_status == ReviewStatus.reviewed.value).where(
-                    TaxonomyLabelModel.category == LabelCategory.bird.value
+                    TaxonomyLabelModel.id.is_not(None),
+                    TaxonomyLabelModel.category.not_in(NON_WILDLIFE_LABEL_CATEGORIES),
                 )
             elif payload.review_filter == ActivityLibraryReviewFilter.non_bird:
                 query = query.where(VisitModel.review_status == ReviewStatus.reviewed.value).where(
@@ -12967,6 +13155,7 @@ class ProductRepository:
                 summary
                 for summary in summaries
                 if self._activity_library_review_filter_matches(
+                    session,
                     summary,
                     payload.review_filter,
                 )
@@ -13022,6 +13211,7 @@ class ProductRepository:
 
     def _activity_library_review_filter_matches(
         self,
+        session: Session,
         summary: ActivityLibraryVisitSummary,
         review_filter: ActivityLibraryReviewFilter,
     ) -> bool:
@@ -13036,7 +13226,18 @@ class ProductRepository:
                 VisitReviewOutcome.reviewed_other,
             }
         if review_filter == ActivityLibraryReviewFilter.confirmed_wildlife:
-            return summary.review_outcome == VisitReviewOutcome.confirmed_bird
+            # Everyday Discovery / Product Experience v2 (Phase K): wildlife-
+            # inclusive, matching the query-level fix above and the
+            # canonical `is_wildlife_category` boundary Bird Log/Today
+            # already use -- a confirmed non-bird wildlife outcome
+            # (`non_bird`) is real confirmed wildlife, not merely excluded
+            # "everything else."
+            if summary.review_outcome == VisitReviewOutcome.confirmed_bird:
+                return True
+            if summary.review_outcome == VisitReviewOutcome.non_bird and summary.reviewed_label:
+                taxonomy = self._taxonomy_label_model_for_input(session, summary.reviewed_label)
+                return bool(taxonomy is not None and is_wildlife_category(taxonomy.category))
+            return False
         if review_filter == ActivityLibraryReviewFilter.non_bird:
             return summary.review_outcome == VisitReviewOutcome.non_bird
         if review_filter == ActivityLibraryReviewFilter.blank_false:
@@ -13309,6 +13510,9 @@ class ProductRepository:
             has_suggestion=suggestion is not None,
             evidence_frame_count=len(evidence_frames),
             primary_evidence=primary_evidence,
+            evidence_modality=(
+                "acoustic" if event.event_type == "acoustic_observation_candidate" else "visual"
+            ),
         )
 
     def _visit_activity_window(
@@ -13680,10 +13884,18 @@ class ProductRepository:
                 )
                 .limit(25)
             ).all()
-            recent_activity = [
-                self._dashboard_visit_summary_from_models(session, visit, event)
-                for visit, event in recent_rows
-            ]
+            # Everyday Discovery / Product Experience v2 (Phase B; see docs/
+            # multimodal-list-presentation-contract.md): a confidently-
+            # associated visual+acoustic pair collapses to one row here so
+            # it never reads as two independent encounters -- see
+            # `_collapse_associated_multimodal_pairs`'s own docstring.
+            recent_activity = self._collapse_associated_multimodal_pairs(
+                session,
+                [
+                    self._dashboard_visit_summary_from_models(session, visit, event)
+                    for visit, event in recent_rows
+                ],
+            )
             # The query is bounded so the landing surface cannot become an event log.
 
             needs_review_visits = [
@@ -13762,6 +13974,7 @@ class ProductRepository:
                 day_end=day_end,
                 local_timezone=local_now.tzinfo,
                 camera_attention=camera_attention,
+                stream_ids=list(stream_ids),
             )
 
             return DashboardSummary(
@@ -13795,6 +14008,35 @@ class ProductRepository:
                 warnings=warnings[:12],
             )
 
+    @staticmethod
+    def _best_moments_diversity_capped(
+        ranked: Sequence[DashboardVisitSummary], *, limit: int, max_per_label: int,
+    ) -> list[DashboardVisitSummary]:
+        """Everyday Discovery / Product Experience v2 (Phase D): take the
+        top `limit` items from an already-ranked list, but skip a candidate
+        once its own reviewed (or, absent that, suggested) label has already
+        contributed `max_per_label` -- a simple, interpretable diversity cap
+        so one common species confirmed several times in one day cannot
+        occupy every "Best moments" slot. A Visit with neither a reviewed
+        nor a suggested label (an unresolved encounter) is never capped --
+        there is no label to be "the same species" as another one by.
+        `ranked`'s own ordering is otherwise fully preserved; this never
+        reorders, only selectively skips.
+        """
+
+        selected: list[DashboardVisitSummary] = []
+        label_counts: Counter[str] = Counter()
+        for item in ranked:
+            if len(selected) == limit:
+                break
+            label = item.reviewed_label or item.suggested_label
+            if label is not None and label_counts[label] >= max_per_label:
+                continue
+            selected.append(item)
+            if label is not None:
+                label_counts[label] += 1
+        return selected
+
     def _dashboard_today_summary(
         self,
         session: Session,
@@ -13803,6 +14045,7 @@ class ProductRepository:
         day_end: datetime,
         local_timezone: Any,
         camera_attention: list[CameraHealthSummary],
+        stream_ids: list[str],
     ) -> DashboardTodaySummary:
         """Build one bounded local-day nature story without treating suggestions as truth."""
 
@@ -13947,34 +14190,40 @@ class ProductRepository:
                 self._normalize_label_from_session(session, summary.reviewed_label), []
             ).append(summary)
 
-        previous_rows = session.execute(
-            select(VisitModel, EventModel, StreamModel, CameraSourceModel)
-            .join(EventModel, VisitModel.event_id == EventModel.id)
-            .join(StreamModel, EventModel.stream_id == StreamModel.id)
-            .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
-            .where(
-                VisitModel.is_superseded.is_(False),
-                VisitModel.review_status == ReviewStatus.reviewed.value,
-                CameraSourceModel.status != SourceStatus.archived.value,
-                EventModel.started_at < day_start,
+        # Canonical New/Regular Species v1 (Everyday Discovery / Product
+        # Experience v2; see docs/canonical-new-regular-species-contract.md):
+        # `new_today`/`recent_regulars` now consume the exact same
+        # `compute_species_historical_statuses` machinery Today's own Place
+        # Activity Report digest and Bird Log already use, rather than a
+        # second, independent computation that was bird-only, coverage-blind,
+        # and could (and did) disagree with them for the same species on the
+        # same day. `period_start_at`/`period_end_at` are today's own
+        # `day_start`/`day_end` -- the identical boundaries `TodayReportPanel`
+        # requests via `getPlaceActivityReport(todayLocalRange())` -- so a
+        # taxon's "new"/"first_record"/"regular" verdict here is always
+        # identical to the one the digest would show for the same taxon. This
+        # also replaces the previous `previous_rows` (5000-row-capped) scan
+        # with an unbounded `GROUP BY` aggregate -- strictly cheaper, and
+        # immune to the truncation-driven false "new" the old cap allowed.
+        taxonomy_index = self._taxonomy_label_index(session)
+        _historical_baseline, species_historical_statuses, _change_summary, _taxon_place_patterns = (
+            self._historical_place_baseline_and_species_statuses(
+                session,
+                stream_ids=stream_ids,
+                taxonomy_index=taxonomy_index,
+                window_end_at=day_end,
+                local_timezone=local_timezone,
+                period_start_at=day_start,
+                period_end_at=day_end,
             )
-            .order_by(EventModel.started_at.desc(), EventModel.id.desc(), VisitModel.id.desc())
-            .limit(5001)
-        ).all()
-        previous_history_truncated = len(previous_rows) > 5000
-        previous_labels = {
-            self._normalize_label_from_session(session, summary.reviewed_label)
-            for visit, event, _stream, _source in previous_rows[:5000]
-            if self._dashboard_today_is_nature_event(event.event_type)
-            for summary in [self._dashboard_visit_summary_from_models(session, visit, event)]
-            if self._dashboard_today_is_nature_visit(summary)
-            and self._dashboard_today_is_confirmed_species(session, summary)
-            and summary.reviewed_label is not None
-        }
+        )
         new_today = [
-            self._dashboard_today_species(session, label, summaries, distinct_days=1)
+            self._dashboard_today_species(
+                session, label, summaries, distinct_days=1, historical_status=status.status,
+            )
             for label, summaries in confirmed_species.items()
-            if label not in previous_labels
+            if (status := species_historical_statuses.get(label)) is not None
+            and status.status in ("new", "first_record")
         ]
         regulars = [
             self._dashboard_today_species(
@@ -13987,14 +14236,11 @@ class ProductRepository:
                         for item in summaries
                     }
                 ),
+                historical_status="regular",
             )
             for label, summaries in species_history.items()
-            if len(
-                {
-                    item.activity_started_at.astimezone(local_timezone).date()
-                    for item in summaries
-                }
-            ) >= 3
+            if (status := species_historical_statuses.get(label)) is not None
+            and status.status == "regular"
         ]
         order = lambda item: (item.latest_visit.activity_started_at, item.label)
         likely_today = [
@@ -14003,17 +14249,45 @@ class ProductRepository:
             )
             for label, summaries in likely_species.items()
         ]
-        best_moments = sorted(
-            qualified,
-            key=lambda item: (
-                item.review_status == ReviewStatus.reviewed and item.primary_evidence is not None,
-                item.activity_started_at,
-                item.id,
+        # Everyday Discovery / Product Experience v2 (Phase B/D): collapse
+        # before ranking/truncating to 6, not after -- a confidently-
+        # associated pair should cost one "Best moments" slot, not two, and
+        # collapsing first lets a real 7th distinct encounter fill the freed
+        # slot. See `_collapse_associated_multimodal_pairs`'s own docstring.
+        #
+        # Phase D -- Best Moments: a fixed-tier, interpretable ranking (the
+        # same bounded-tuple house style `daily_digest.py`'s own `_sort_key`
+        # already established -- never a learned/weighted score), not pure
+        # recency. Tiers, in priority order: reviewed with visible evidence;
+        # multimodal (doctrine's own named "multimodal evidence" signal);
+        # strong representative evidence (the identical `resolution_
+        # provenance == "synchronized"` signal `place_activity_report_
+        # adapter.has_strong_representative_evidence` already uses -- no new
+        # threshold invented); has a real subject region; most recent.
+        # `_best_moments_diversity_capped` then bounds any single species to
+        # at most 2 of the 6 slots so one common, frequently-confirmed
+        # species cannot crowd out a rarer single encounter.
+        best_moments = self._best_moments_diversity_capped(
+            sorted(
+                self._collapse_associated_multimodal_pairs(session, qualified),
+                key=lambda item: (
+                    item.review_status == ReviewStatus.reviewed and item.primary_evidence is not None,
+                    item.evidence_modality == "seen_and_heard",
+                    bool(
+                        item.primary_evidence
+                        and item.primary_evidence.resolution_provenance == "synchronized"
+                    ),
+                    bool(item.primary_evidence and item.primary_evidence.normalized_track_box),
+                    item.activity_started_at,
+                    item.id,
+                ),
+                reverse=True,
             ),
-            reverse=True,
-        )[:6]
+            limit=6,
+            max_per_label=2,
+        )
         warnings = []
-        if truncated or detector_count_truncated or history_truncated or previous_history_truncated:
+        if truncated or detector_count_truncated or history_truncated:
             warnings.append("Today is showing a bounded recent set of Visits.")
         return DashboardTodaySummary(
             detector_qualified_animal_visit_count=detector_qualified_animal_visit_count,
@@ -14093,10 +14367,26 @@ class ProductRepository:
         session: Session,
         summary: DashboardVisitSummary,
     ) -> bool:
-        if summary.review_outcome != VisitReviewOutcome.confirmed_bird or not summary.reviewed_label:
+        # Everyday Discovery / Product Experience v2 -- Canonical New/Regular
+        # Species v1 (see docs/canonical-new-regular-species-contract.md):
+        # wildlife-inclusive, matching `_wildlife_journal_confirmed_records`'s
+        # identical bird-or-wildlife boundary. A confirmed non-bird wildlife
+        # taxon (squirrel, deer, ...) is real historical-species truth, not
+        # just a bird -- this was previously bird-only, one of the two
+        # disagreeing New/Regular implementations the contract closes.
+        if summary.review_outcome not in (
+            VisitReviewOutcome.confirmed_bird,
+            VisitReviewOutcome.non_bird,
+        ):
+            return False
+        if not summary.reviewed_label:
             return False
         taxonomy = self._taxonomy_label_model_for_input(session, summary.reviewed_label)
-        return bool(taxonomy is not None and taxonomy.is_species)
+        return bool(
+            taxonomy is not None
+            and taxonomy.is_species
+            and is_wildlife_category(taxonomy.category)
+        )
 
     def _dashboard_today_is_likely_species(
         self,
@@ -14124,6 +14414,7 @@ class ProductRepository:
         *,
         distinct_days: int,
         is_confirmed: bool = True,
+        historical_status: SpeciesHistoricalStatusValue | None = None,
     ) -> DashboardTodaySpecies:
         taxonomy = self._taxonomy_label_model_for_input(session, label)
         latest = max(summaries, key=lambda item: (item.activity_started_at, item.id))
@@ -14133,6 +14424,7 @@ class ProductRepository:
             distinct_days_seen=distinct_days,
             latest_visit=latest,
             is_confirmed=is_confirmed,
+            historical_status=historical_status,
         )
 
     @staticmethod
@@ -14534,6 +14826,37 @@ class ProductRepository:
             stream_id=stream.id if stream else None, zone_id=visit.zone_id or event.primary_zone_id,
             visit_id=visit.id, source_id=stream.source_id if stream else None,
         )
+
+    def _maybe_resolve_stale_journal_milestone_alert(
+        self, session: Session, *, old_label: str, now: datetime,
+    ) -> None:
+        """Resolve a "first confirmed local observation" milestone alert for
+        `old_label` once no other active, reviewed Visit still carries it.
+
+        Everyday Discovery / Product Experience v2 (Phase L -- stale
+        milestone truth reconciliation, see docs/canonical-new-regular-
+        species-contract.md): `_sync_journal_milestone_alert` only ever
+        evaluates a Visit's *new* label, so a milestone claim about the
+        label a Visit is being corrected or reopened *away from* would
+        otherwise never be resolved and could keep presenting as current
+        truth indefinitely. Call this whenever a reviewed Visit's
+        `reviewed_label` is about to be cleared (reopen) or replaced
+        (correction) with a *different* label, passing the label it is
+        leaving. A no-op if another reviewed Visit still carries `old_label`
+        -- the milestone claim ("first confirmed") remains true for that
+        other Visit.
+        """
+
+        normalized = self._normalize_label_from_session(session, old_label)
+        remaining = session.scalar(
+            select(func.count(VisitModel.id)).where(
+                VisitModel.is_superseded.is_(False),
+                VisitModel.review_status == ReviewStatus.reviewed.value,
+                VisitModel.reviewed_label == normalized,
+            )
+        ) or 0
+        if remaining == 0:
+            self._resolve_product_alerts(session, f"journal:first-label:{normalized}", now)
 
     def _sync_monitoring_alert(self, session: Session, stream_id: str, now: datetime) -> None:
         # Monitoring lifecycle is the sole writer. Alert and incident resolution
@@ -21099,10 +21422,27 @@ class ProductRepository:
                         reviewer_identity=_clean_optional_text(payload.reviewer_identity),
                     )
                 )
+                prior_reviewed_label = visit.reviewed_label
                 visit.reviewed_label = None
                 visit.review_status = ReviewStatus.needs_review.value
                 event.review_status = ReviewStatus.needs_review.value
-                self._sync_review_alert(session, visit, datetime.now(UTC))
+                now = datetime.now(UTC)
+                self._sync_review_alert(session, visit, now)
+                # Everyday Discovery / Product Experience v2 (Phase L): this
+                # Visit no longer carries `prior_reviewed_label` -- resolve
+                # any "first confirmed local observation" milestone alert for
+                # it that no other reviewed Visit still earns. See
+                # `_maybe_resolve_stale_journal_milestone_alert`'s docstring.
+                # The flush before it is required, not cosmetic: that helper
+                # counts remaining reviewed Visits with a raw `session.
+                # scalar(select(...))`, which does not implicitly see this
+                # session's own pending `reviewed_label = None` write until
+                # flushed.
+                if prior_reviewed_label:
+                    session.flush()
+                    self._maybe_resolve_stale_journal_milestone_alert(
+                        session, old_label=prior_reviewed_label, now=now,
+                    )
                 session.flush()
                 return self._visit_review_reopen_response(session, visit.id)
 
@@ -26611,30 +26951,58 @@ class ProductRepository:
             usable_dates, _has_history, _total_seconds = self._historical_usable_dates(
                 session, stream_ids=stream_ids, window_end_at=window_end_at, local_timezone=local_timezone
             )
-            baseline_maturity = compute_baseline_maturity(len(usable_dates))
+            # `baseline_maturity` itself now comes from the canonical call's
+            # own `historical_baseline.maturity` below (identical formula,
+            # same `usable_dates`) -- `usable_dates` is still needed here as
+            # the defensive per-label fallback's own input.
 
-            # Gate C -- Meaningful Change Detection v1 (see docs/meaningful-
-            # change-detection-contract.md) needs the fuller historical-
-            # facts computation (not just `_historical_usable_dates` above)
-            # so each label can also carry a `change_status` -- this
-            # internally recomputes `usable_dates` a second time (still one
-            # bounded interval query, not O(labels)/O(Visits)) plus a
-            # taxonomy index and two further bounded queries; `historical_
-            # baseline`/`_species_historical_statuses` are discarded here --
-            # this surface's own `baseline_maturity`/`is_regular` above are
-            # unchanged and remain the source of truth for this response.
+            # Canonical New/Regular Species v1 (Everyday Discovery / Product
+            # Experience v2; see docs/canonical-new-regular-species-contract.md):
+            # this call also backs Gate C -- Meaningful Change Detection v1
+            # (docs/meaningful-change-detection-contract.md), so each label
+            # can also carry a `change_status` -- one bounded interval query
+            # (not O(labels)/O(Visits)) plus a taxonomy index and two further
+            # bounded queries. `species_historical_statuses` was previously
+            # discarded here in favor of an independently-recomputed `is_
+            # regular`/`distinct_confirmed_usable_days` below -- that was
+            # exactly the kind of second, drift-prone computation the
+            # canonical-semantics contract closes; it is now the source of
+            # truth for both fields, with the old computation kept only as a
+            # defensive fallback for a label this call's own Stream scope
+            # cannot see (see the per-label loop below).
+            #
+            # `period_start_at` is deliberately *today's* local midnight, not
+            # `window_start_at` (366 days back), even though this call also
+            # anchors the regularity/baseline lookback at `window_end_at`:
+            # `compute_species_historical_statuses`'s "new"/"first_record"
+            # check fires whenever a taxon's all-time-first confirmation
+            # falls inside `[period_start_at, period_end_at)`, and that
+            # priority-1 check runs *before* the "regular" check -- passing
+            # the full 366-day window here would wrongly keep every taxon
+            # first confirmed at any point in the last year permanently
+            # "new"/"first_record" and never "regular" until a full year had
+            # elapsed. Today's own call (`_dashboard_today_summary`) already
+            # narrows this to its own day boundaries for the identical
+            # reason; Bird Log is a live view, so "today" (not a fixed report
+            # period) is its equivalent narrow window. `period_start_at`/
+            # `period_end_at` affect only this one check -- `change_summary`/
+            # `taxon_place_patterns` below key off `window_end_at` alone.
+            local_day_start_at = _as_utc(
+                datetime.combine(local_now.date(), datetime.min.time(), local_timezone)
+            )
             taxonomy_index = self._taxonomy_label_index(session)
-            _historical_baseline, _species_historical_statuses, change_summary, _taxon_place_patterns = (
+            historical_baseline, species_historical_statuses, change_summary, _taxon_place_patterns = (
                 self._historical_place_baseline_and_species_statuses(
                     session,
                     stream_ids=stream_ids,
                     taxonomy_index=taxonomy_index,
                     window_end_at=window_end_at,
                     local_timezone=local_timezone,
-                    period_start_at=window_start_at,
+                    period_start_at=local_day_start_at,
                     period_end_at=window_end_at,
                 )
             )
+            baseline_maturity = historical_baseline.maturity
             change_status_by_label = {status.taxon.label: status for status in change_summary.taxa}
 
             records = self._wildlife_journal_confirmed_records(session)
@@ -26652,21 +27020,34 @@ class ProductRepository:
                     <= record["observed_at"].astimezone(local_timezone).date()
                     <= recent_end
                 )
-                # Distinct genuinely-monitored days this label was confirmed
-                # on, within the same trailing historical window -- never
-                # raw observation_count, which one busy afternoon could
-                # inflate. Reuses the exact same `usable_dates` set (and the
-                # exact same `MIN_DISTINCT_USABLE_DAYS_FOR_REGULAR` bar) the
-                # Today report's own `SpeciesHistoricalStatus.status ==
-                # "regular"` uses, applied to this surface's own
-                # already-fetched confirmed-bird records rather than a
-                # second Visit query.
-                confirmed_dates_in_window = {
-                    record["observed_at"].astimezone(local_timezone).date()
-                    for record in ordered
-                    if window_start_at <= record["observed_at"] < window_end_at
-                }
-                distinct_confirmed_usable_days = len(confirmed_dates_in_window & usable_dates)
+                # Canonical New/Regular Species v1: source `distinct_
+                # confirmed_usable_days`/`is_regular`/`historical_status`
+                # from the exact same `SpeciesHistoricalStatus` Today's
+                # digest uses (see the canonical call above), rather than an
+                # independently-recomputed local count -- see docs/canonical-
+                # new-regular-species-contract.md for why the two are no
+                # longer allowed to drift. Falls back to the previous local
+                # computation only in the defensive edge case where this
+                # label's confirmed records fall entirely outside the
+                # canonical call's own Stream scope (e.g. an archived
+                # Stream) -- `species_historical_statuses` would then have no
+                # entry for it at all, and a real confirmed label must never
+                # silently vanish from Bird Log just because it can't be
+                # canonically classified.
+                canonical_status = species_historical_statuses.get(label)
+                if canonical_status is not None:
+                    distinct_confirmed_usable_days = canonical_status.distinct_confirmed_usable_days
+                    is_regular = canonical_status.status == "regular"
+                    historical_status: SpeciesHistoricalStatusValue | None = canonical_status.status
+                else:
+                    confirmed_dates_in_window = {
+                        record["observed_at"].astimezone(local_timezone).date()
+                        for record in ordered
+                        if window_start_at <= record["observed_at"] < window_end_at
+                    }
+                    distinct_confirmed_usable_days = len(confirmed_dates_in_window & usable_dates)
+                    is_regular = distinct_confirmed_usable_days >= MIN_DISTINCT_USABLE_DAYS_FOR_REGULAR
+                    historical_status = None
                 summaries.append(
                     WildlifeJournalLabelSummary(
                         label=label,
@@ -26691,7 +27072,8 @@ class ProductRepository:
                         ],
                         representative=self._wildlife_journal_representative(session, ordered),
                         distinct_confirmed_usable_days=distinct_confirmed_usable_days,
-                        is_regular=distinct_confirmed_usable_days >= MIN_DISTINCT_USABLE_DAYS_FOR_REGULAR,
+                        is_regular=is_regular,
+                        historical_status=historical_status,
                         change_status=taxon_change_status_response(change_status_by_label.get(label)),
                     )
                 )
@@ -26794,32 +27176,45 @@ class ProductRepository:
                 window_end_at=history_window_end_at,
                 local_timezone=local_timezone,
             )
-            baseline_maturity = compute_baseline_maturity(len(usable_dates))
-            confirmed_dates_in_window = {
-                record["observed_at"].astimezone(local_timezone).date()
-                for record in all_label_records
-                if history_window_start_at <= record["observed_at"] < history_window_end_at
-            }
-            distinct_confirmed_usable_days = len(confirmed_dates_in_window & usable_dates)
-            is_regular = distinct_confirmed_usable_days >= MIN_DISTINCT_USABLE_DAYS_FOR_REGULAR
 
-            # Gate C -- Meaningful Change Detection v1 (see docs/meaningful-
-            # change-detection-contract.md) -- see the identical comment in
-            # `wildlife_journal_overview` for why this is a separate,
-            # additive computation rather than a change to the historical-
-            # baseline facts above.
+            # Canonical New/Regular Species v1 (Everyday Discovery / Product
+            # Experience v2; see docs/canonical-new-regular-species-contract.md)
+            # -- see the identical comment in `wildlife_journal_overview` for
+            # why `period_start_at` is deliberately *today*, not the full
+            # 366-day `history_window_start_at`, and why `species_historical_
+            # statuses`/`historical_baseline.maturity` are now this label's
+            # source of truth (with the previous local computation kept only
+            # as a defensive fallback).
+            local_day_start_at = _as_utc(
+                datetime.combine(local_now.date(), datetime.min.time(), local_timezone)
+            )
             taxonomy_index = self._taxonomy_label_index(session)
-            _historical_baseline, _species_historical_statuses, change_summary, _taxon_place_patterns = (
+            historical_baseline, species_historical_statuses, change_summary, _taxon_place_patterns = (
                 self._historical_place_baseline_and_species_statuses(
                     session,
                     stream_ids=stream_ids,
                     taxonomy_index=taxonomy_index,
                     window_end_at=history_window_end_at,
                     local_timezone=local_timezone,
-                    period_start_at=history_window_start_at,
+                    period_start_at=local_day_start_at,
                     period_end_at=history_window_end_at,
                 )
             )
+            baseline_maturity = historical_baseline.maturity
+            canonical_status = species_historical_statuses.get(canonical_label)
+            if canonical_status is not None:
+                distinct_confirmed_usable_days = canonical_status.distinct_confirmed_usable_days
+                is_regular = canonical_status.status == "regular"
+                historical_status: SpeciesHistoricalStatusValue | None = canonical_status.status
+            else:
+                confirmed_dates_in_window = {
+                    record["observed_at"].astimezone(local_timezone).date()
+                    for record in all_label_records
+                    if history_window_start_at <= record["observed_at"] < history_window_end_at
+                }
+                distinct_confirmed_usable_days = len(confirmed_dates_in_window & usable_dates)
+                is_regular = distinct_confirmed_usable_days >= MIN_DISTINCT_USABLE_DAYS_FOR_REGULAR
+                historical_status = None
             change_status = next(
                 (status for status in change_summary.taxa if status.taxon.label == canonical_label), None
             )
@@ -26966,50 +27361,62 @@ class ProductRepository:
                 first_on_stream.setdefault(summary.stream_id, summary.id)
                 if summary.zone_id is not None:
                     first_in_zone.setdefault(summary.zone_id, summary.id)
+            # Everyday Discovery / Product Experience v2 (Phase B; see docs/
+            # multimodal-list-presentation-contract.md): collapse this page's
+            # confidently-associated pairs into one row each, exactly as
+            # Today's lists do -- see `_collapse_associated_multimodal_
+            # journal_observations`'s own docstring. A pair may occasionally
+            # straddle a page boundary, in which case only the visible side
+            # collapses; this is the same accepted bound every other
+            # pagination-vs-presentation tradeoff in this method already has.
             gallery = WildlifeJournalGallery(
                 order=payload.gallery_order,
-                observations=[
-                    WildlifeJournalObservation(
-                        visit_id=record["summary"].id,
-                        event_id=record["summary"].event_id,
-                        stream_id=record["summary"].stream_id,
-                        stream_name=record["stream_name"],
-                        source_name=record["source_name"],
-                        zone_id=record["summary"].zone_id,
-                        zone_name=record["summary"].zone_name,
-                        observed_at=record["observed_at"],
-                        activity_started_at=record["summary"].activity_started_at,
-                        activity_ended_at=record["summary"].activity_ended_at,
-                        duration_seconds=record["summary"].duration_seconds,
-                        evidence_frame_count=record["summary"].evidence_frame_count,
-                        reviewed_label=canonical_label,
-                        display_name=record["display_name"],
-                        primary_evidence=record["summary"].primary_evidence,
-                        has_curation_history=record["summary"].id in curation_visit_ids,
-                        has_review_revision=revision_counts[record["summary"].id] > 1,
-                        is_first_on_stream=(
-                            first_on_stream.get(record["summary"].stream_id)
-                            == record["summary"].id
-                        ),
-                        is_first_in_zone=(
-                            record["summary"].zone_id is not None
-                            and first_in_zone.get(record["summary"].zone_id)
-                            == record["summary"].id
-                        ),
-                        is_favorite=bool(
-                            organization_by_visit_id.get(record["summary"].id)
-                            and organization_by_visit_id[record["summary"].id].is_favorite
-                        ),
-                        has_note=bool(
-                            organization_by_visit_id.get(record["summary"].id)
-                            and organization_by_visit_id[record["summary"].id].note
-                            and organization_by_visit_id[record["summary"].id].note.strip()
-                        ),
-                        collection_count=collection_counts.get(record["summary"].id, 0),
-                        tags=tags_by_visit_id.get(record["summary"].id, [])[:MAX_TAGS_PER_VISIT],
-                    )
-                    for record in page_records
-                ],
+                observations=self._collapse_associated_multimodal_journal_observations(
+                    session,
+                    [
+                        WildlifeJournalObservation(
+                            visit_id=record["summary"].id,
+                            event_id=record["summary"].event_id,
+                            stream_id=record["summary"].stream_id,
+                            stream_name=record["stream_name"],
+                            source_name=record["source_name"],
+                            zone_id=record["summary"].zone_id,
+                            zone_name=record["summary"].zone_name,
+                            observed_at=record["observed_at"],
+                            activity_started_at=record["summary"].activity_started_at,
+                            activity_ended_at=record["summary"].activity_ended_at,
+                            duration_seconds=record["summary"].duration_seconds,
+                            evidence_frame_count=record["summary"].evidence_frame_count,
+                            reviewed_label=canonical_label,
+                            display_name=record["display_name"],
+                            primary_evidence=record["summary"].primary_evidence,
+                            has_curation_history=record["summary"].id in curation_visit_ids,
+                            has_review_revision=revision_counts[record["summary"].id] > 1,
+                            is_first_on_stream=(
+                                first_on_stream.get(record["summary"].stream_id)
+                                == record["summary"].id
+                            ),
+                            is_first_in_zone=(
+                                record["summary"].zone_id is not None
+                                and first_in_zone.get(record["summary"].zone_id)
+                                == record["summary"].id
+                            ),
+                            is_favorite=bool(
+                                organization_by_visit_id.get(record["summary"].id)
+                                and organization_by_visit_id[record["summary"].id].is_favorite
+                            ),
+                            has_note=bool(
+                                organization_by_visit_id.get(record["summary"].id)
+                                and organization_by_visit_id[record["summary"].id].note
+                                and organization_by_visit_id[record["summary"].id].note.strip()
+                            ),
+                            collection_count=collection_counts.get(record["summary"].id, 0),
+                            tags=tags_by_visit_id.get(record["summary"].id, [])[:MAX_TAGS_PER_VISIT],
+                            evidence_modality=record["summary"].evidence_modality,
+                        )
+                        for record in page_records
+                    ],
+                ),
                 has_more=has_more,
                 next_offset=(payload.offset + payload.page_size) if has_more else None,
             )
@@ -27073,6 +27480,7 @@ class ProductRepository:
                 distinct_confirmed_usable_days=distinct_confirmed_usable_days,
                 is_regular=is_regular,
                 baseline_maturity=baseline_maturity,
+                historical_status=historical_status,
                 change_status=taxon_change_status_response(change_status),
                 activity_library_drilldown=WildlifeJournalDrilldown(
                     confirmed_label=canonical_label,
@@ -29157,6 +29565,14 @@ class ProductRepository:
                     event_model.review_status if event_model is not None else None
                 )
 
+            # Everyday Discovery / Product Experience v2 (Phase L): captured
+            # before the overwrite below so a stale milestone alert for the
+            # label this Visit is being corrected *away from* can be
+            # resolved at the end of this method -- see `_sync_journal_
+            # milestone_alert`'s docstring for why that only ever evaluates
+            # the Visit's new label, never the one it is leaving.
+            prior_reviewed_label = visit_model.reviewed_label
+
             session.add(label_model)
             visit_model.reviewed_label = normalized_label
             visit_model.review_status = ReviewStatus.reviewed.value
@@ -29201,6 +29617,10 @@ class ProductRepository:
                 now = created_at or datetime.now(UTC)
                 self._sync_review_alert(session, current_visit, now)
                 self._sync_journal_milestone_alert(session, current_visit, now)
+                if prior_reviewed_label and prior_reviewed_label != normalized_label:
+                    self._maybe_resolve_stale_journal_milestone_alert(
+                        session, old_label=prior_reviewed_label, now=now,
+                    )
         return _review_label_from_model(label_model), visit, event
 
     def _review_queue_bulk_correction_skip_reason(

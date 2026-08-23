@@ -2524,6 +2524,22 @@ class VisitZoneReassignmentResponse(BaseModel):
     message: str
 
 
+class VisitMultimodalPartnerSummary(BaseModel):
+    """Everyday Discovery / Product Experience v2 (Phase B; see docs/
+    multimodal-list-presentation-contract.md): the compact, list-row-safe
+    counterpart to `VisitMultimodalAssociation` -- naming only the paired
+    Visit's id (never the full nested `Visit`, unlike the detail-page
+    version) so ordinary list summaries stay cheap. Present on a
+    `StreamVisitSummary`/`WildlifeJournalObservation` only when that row's
+    own `evidence_modality` is `"seen_and_heard"` (a confidently-associated
+    pair collapsed into this one row) -- never for a `"possible"`
+    association, which always stays two separate, uncollapsed rows."""
+
+    visit_id: str
+    tier: Literal["associated", "possible"]
+    taxon_agreement: Literal["agrees", "differs", "not_comparable"]
+
+
 class StreamVisitSummary(BaseModel):
     # Compact, Stream-scoped history. Full evidence is loaded only on inspection.
     id: str
@@ -2543,6 +2559,18 @@ class StreamVisitSummary(BaseModel):
     has_suggestion: bool = False
     evidence_frame_count: int = Field(ge=0)
     primary_evidence: VisitEvidenceFrame | None = None
+    # Everyday Discovery / Product Experience v2 (Phase B): this Visit's own
+    # recording modality -- always "visual" or "acoustic" as resolved from
+    # its Event, *unless* a caller that opts into presentation-level
+    # multimodal collapse (Today's `best_moments`/`recent_activity`, Bird
+    # Log's gallery -- see `_collapse_associated_multimodal_pairs`) merged a
+    # confidently-associated opposite-modality partner into this row, in
+    # which case it is "seen_and_heard" and `multimodal_partner` names the
+    # (still independently real, never deleted) Visit it absorbed. Ordinary
+    # callers that never opt into collapse always see plain "visual"/
+    # "acoustic" and a `None` `multimodal_partner`.
+    evidence_modality: Literal["visual", "acoustic", "seen_and_heard"] = "visual"
+    multimodal_partner: VisitMultimodalPartnerSummary | None = None
 
 
 class ActivityLibraryReviewFilter(str, Enum):
@@ -2737,6 +2765,14 @@ class DashboardTodaySpecies(BaseModel):
     distinct_days_seen: int = Field(default=1, ge=1, le=14)
     latest_visit: DashboardVisitSummary
     is_confirmed: bool = True
+    # Canonical New/Regular Species v1 (Everyday Discovery / Product
+    # Experience v2; see docs/canonical-new-regular-species-contract.md): the
+    # exact same `SpeciesHistoricalStatusValue` the Place Activity Report
+    # digest and Bird Log use, so `new_today`/`recent_regulars` word "new"
+    # vs. "first record" identically to every other surface instead of a
+    # single fixed caption regardless of Place baseline maturity. Always
+    # `None` for `likely_today` (provisional, never establishes history).
+    historical_status: Literal["new", "first_record", "regular", "seen_before"] | None = None
 
 
 class DashboardTodayZoneActivity(BaseModel):
@@ -5587,6 +5623,22 @@ class WildlifeJournalLabelSummary(BaseModel):
     # either figure.
     distinct_confirmed_usable_days: int = Field(default=0, ge=0)
     is_regular: bool = False
+    # Canonical New/Regular Species v1 (Everyday Discovery / Product
+    # Experience v2; see docs/canonical-new-regular-species-contract.md): the
+    # same `SpeciesHistoricalStatusValue` the Today digest uses, sourced from
+    # the identical `compute_species_historical_statuses` call --
+    # `is_regular`/`distinct_confirmed_usable_days` above are now populated
+    # from this same canonical fact rather than an independently-recomputed
+    # one, so this grid can never disagree with Today. Unlike `is_regular`,
+    # this also makes "new"/"first_record" visible at grid level for the
+    # first time (previously only `WildlifeJournalHistoryResponse.is_new_
+    # label_in_range` existed, and only inside a manually-narrowed date
+    # filter). `None` only in the defensive edge case where this label falls
+    # outside the canonical computation's own Stream scope (e.g. all its
+    # confirmations are on an archived Stream); `is_regular`/`distinct_
+    # confirmed_usable_days` fall back to this surface's own computation in
+    # that case rather than silently disappearing.
+    historical_status: Literal["new", "first_record", "regular", "seen_before"] | None = None
     # Gate C -- Meaningful Change Detection / Baseline Comparison v1 -- see
     # docs/meaningful-change-detection-contract.md. `None` under the
     # identical truth-contract condition as `historical_status` elsewhere:
@@ -5653,6 +5705,11 @@ class WildlifeJournalObservation(BaseModel):
     has_note: bool = False
     collection_count: int = Field(default=0, ge=0)
     tags: list[str] = Field(default_factory=list, max_length=20)
+    # Everyday Discovery / Product Experience v2 (Phase B): identical
+    # contract to `StreamVisitSummary.evidence_modality`/`multimodal_
+    # partner` -- see that field's docstring.
+    evidence_modality: Literal["visual", "acoustic", "seen_and_heard"] = "visual"
+    multimodal_partner: VisitMultimodalPartnerSummary | None = None
 
 
 class WildlifeJournalGallery(BaseModel):
@@ -5676,6 +5733,12 @@ class WildlifeJournalHistoryResponse(BaseModel):
     stream_breakdown: list[WildlifeJournalBreakdown] = Field(default_factory=list, max_length=50)
     zone_breakdown: list[WildlifeJournalBreakdown] = Field(default_factory=list, max_length=50)
     activity_by_hour: list[WildlifeJournalHourBucket] = Field(default_factory=list, max_length=24)
+    # Deliberately distinct from `historical_status` below: this is scoped to
+    # whatever date range the viewer currently has selected (including
+    # "all_time", where it is unconditionally False -- see
+    # `_wildlife_journal_date_range`), answering "is this taxon's debut
+    # visible in the range I'm looking at" rather than the canonical,
+    # always-on "is this taxon new" fact.
     is_new_label_in_range: bool = False
     # Historical Baseline Maturity + New/Regular Species v1 -- see
     # `WildlifeJournalLabelSummary.distinct_confirmed_usable_days`/
@@ -5685,6 +5748,14 @@ class WildlifeJournalHistoryResponse(BaseModel):
     distinct_confirmed_usable_days: int = Field(default=0, ge=0)
     is_regular: bool = False
     baseline_maturity: Literal["insufficient", "developing", "established"] = "insufficient"
+    # Canonical New/Regular Species v1 (Everyday Discovery / Product
+    # Experience v2; see docs/canonical-new-regular-species-contract.md): the
+    # same all-time, period-agnostic `SpeciesHistoricalStatusValue` the Today
+    # digest and the overview grid use -- unlike `is_new_label_in_range`,
+    # this is never `False` merely because the viewer is on "all_time". See
+    # `WildlifeJournalLabelSummary.historical_status` for the identical
+    # fallback-to-`None` edge case.
+    historical_status: Literal["new", "first_record", "regular", "seen_before"] | None = None
     # Gate C -- Meaningful Change Detection / Baseline Comparison v1 -- see
     # `WildlifeJournalLabelSummary.change_status` and
     # docs/meaningful-change-detection-contract.md.

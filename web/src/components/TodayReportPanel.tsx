@@ -245,6 +245,20 @@ export function TodayReportPanel({
   // server-side (see "I.11 Developing installation" -- one calm,
   // already-accepted baseline sentence, not a second one invented here).
   const changeMessage = digest.place_change_note;
+  // Everyday Discovery / Product Experience v2 (Phase F): the evidence
+  // behind that one sentence -- previously computed every request but never
+  // rendered anywhere (`report.overall_change_status` was dead payload) --
+  // shown only when the backend itself reports a directional, supported
+  // change; the sentence alone already covers every other (baseline-
+  // building/insufficient-coverage/no-change) case honestly. Mirrors Bird
+  // Log's own identical "Recent: N of M usable monitored days" wording
+  // (`BirdLogPage.tsx`) so the same underlying fact never reads differently
+  // on the two surfaces.
+  const changeEvidence =
+    report.overall_change_status.status === "more_activity_recorded" ||
+    report.overall_change_status.status === "less_activity_recorded"
+      ? `Recent: ${report.overall_change_status.recent_presence_days} of ${report.overall_change_status.recent_usable_day_count} usable monitored days · Reference: ${report.overall_change_status.reference_presence_days} of ${report.overall_change_status.reference_usable_day_count} usable monitored days`
+      : null;
 
   return (
     <section aria-label="Today's wildlife report" className="panel today-report">
@@ -262,7 +276,12 @@ export function TodayReportPanel({
       {coveragePartial && coverageNote ? (
         <p className="meta-text today-report-coverage-note">{coverageNote}</p>
       ) : null}
-      {changeMessage ? <p className="meta-text today-report-change-note">{changeMessage}</p> : null}
+      {changeMessage ? (
+        <p className="meta-text today-report-change-note">
+          {changeMessage}
+          {changeEvidence ? <span className="today-report-change-evidence"> · {changeEvidence}</span> : null}
+        </p>
+      ) : null}
 
       {hasWildlife ? (
         <>
@@ -400,6 +419,15 @@ export function TodayReportPanel({
       )}
 
       <div className="today-report-footer">
+        {/* Everyday Discovery / Product Experience v2 (Phase I): considered
+            breaking this flat count down by unresolved-vs-provisional, but
+            `e2e/today-report.spec.ts`'s "unresolved and provisional
+            activity stays a quiet affordance" test encodes a deliberate
+            existing decision to keep this link calm and jargon-free (it
+            explicitly asserts no "AI suggestion" wording ever appears here)
+            -- review prominence already reads as adequate per this
+            milestone's own archaeology; left unchanged rather than
+            reopening an already-settled call. */}
         {reviewCount > 0 ? (
           <button className="text-action" onClick={onOpenReview} type="button">
             {plural(reviewCount, "item")} worth reviewing

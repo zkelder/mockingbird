@@ -1776,6 +1776,21 @@ export interface EffectivePrimaryEvidence {
   would_change_automatically: boolean;
 }
 
+// Everyday Discovery / Product Experience v2 (Phase B; see docs/multimodal-
+// list-presentation-contract.md): a list row's own recording modality --
+// "visual"/"acoustic" as resolved from its Event, or "seen_and_heard" when a
+// confidently-associated opposite-modality partner was collapsed into this
+// row. Deliberately a separate type from `EvidenceModality` (the 2-value
+// type describing the *other side* of one association on the detail page) --
+// this one names what the row itself now represents.
+export type ListEvidenceModality = "visual" | "acoustic" | "seen_and_heard";
+
+export interface VisitMultimodalPartnerSummary {
+  visit_id: string;
+  tier: "associated" | "possible";
+  taxon_agreement: "agrees" | "differs" | "not_comparable";
+}
+
 export interface StreamVisitSummary {
   id: string;
   event_id: string;
@@ -1794,6 +1809,8 @@ export interface StreamVisitSummary {
   has_suggestion: boolean;
   evidence_frame_count: number;
   primary_evidence?: VisitEvidenceFrame | null;
+  evidence_modality: ListEvidenceModality;
+  multimodal_partner?: VisitMultimodalPartnerSummary | null;
 }
 
 export interface DashboardVisitSummary extends StreamVisitSummary {
@@ -1932,12 +1949,18 @@ export interface DashboardHeadline {
   reviewed_observation_count_today: number;
 }
 
+// Everyday Discovery / Product Experience v2 (Phase E; see docs/canonical-
+// new-regular-species-contract.md): the single canonical status every
+// surface (Today, Bird Log) now sources from the same backend computation.
+export type SpeciesHistoricalStatus = "new" | "first_record" | "regular" | "seen_before";
+
 export interface DashboardTodaySpecies {
   label: string;
   display_name: string;
   distinct_days_seen: number;
   latest_visit: DashboardVisitSummary;
   is_confirmed: boolean;
+  historical_status?: SpeciesHistoricalStatus | null;
 }
 
 export interface DashboardTodayZoneActivity {
@@ -3617,6 +3640,36 @@ export interface VisitMultimodalAssociation {
   gap_ms: number;
 }
 
+// Multimodal Observation & Soundscape v1, Phase K -- the bounded acoustic-
+// history foundation for an explicit period (see docs/multimodal-
+// observation-soundscape-v1-contract.md). Mirrors PlaceActivityReportRequest.
+export interface SoundscapeSummaryRequest {
+  start_at: string;
+  end_at: string;
+}
+
+export interface SoundscapeSpeciesHeardEntry {
+  label: string;
+  display_name: string;
+  encounter_count: number;
+}
+
+export interface SoundscapeHourlyActivity {
+  hour: number;
+  encounter_count: number;
+}
+
+export interface SoundscapeSummaryResponse {
+  period_start: string;
+  period_end: string;
+  species_heard: SoundscapeSpeciesHeardEntry[];
+  acoustic_encounter_count: number;
+  visual_only_count: number;
+  acoustic_only_count: number;
+  multimodal_count: number;
+  hourly_acoustic_activity: SoundscapeHourlyActivity[];
+}
+
 export interface VisitDetail {
   visit: Visit;
   event: Event;
@@ -4503,6 +4556,10 @@ export interface WildlifeJournalLabelSummary {
   // docs/historical-baseline-maturity-contract.md.
   distinct_confirmed_usable_days: number;
   is_regular: boolean;
+  // Everyday Discovery / Product Experience v2 (Phase E) -- the same
+  // canonical status Today uses; see docs/canonical-new-regular-species-
+  // contract.md. `null` only in the defensive edge case documented there.
+  historical_status?: SpeciesHistoricalStatus | null;
   // Gate C -- Meaningful Change Detection / Baseline Comparison v1 -- see
   // docs/meaningful-change-detection-contract.md.
   change_status?: PlaceActivityReportTaxonChangeStatus | null;
@@ -4559,6 +4616,10 @@ export interface WildlifeJournalObservation {
   has_note: boolean;
   collection_count: number;
   tags: string[];
+  // Everyday Discovery / Product Experience v2 (Phase B) -- see
+  // docs/multimodal-list-presentation-contract.md.
+  evidence_modality: ListEvidenceModality;
+  multimodal_partner?: VisitMultimodalPartnerSummary | null;
 }
 
 export interface WildlifeJournalGallery {
@@ -4589,6 +4650,9 @@ export interface WildlifeJournalHistoryResponse {
   distinct_confirmed_usable_days: number;
   is_regular: boolean;
   baseline_maturity: "insufficient" | "developing" | "established";
+  // Everyday Discovery / Product Experience v2 (Phase E) -- see
+  // docs/canonical-new-regular-species-contract.md.
+  historical_status?: SpeciesHistoricalStatus | null;
   // Gate C -- Meaningful Change Detection / Baseline Comparison v1 -- see
   // docs/meaningful-change-detection-contract.md.
   change_status?: PlaceActivityReportTaxonChangeStatus | null;

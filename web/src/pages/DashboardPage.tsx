@@ -20,6 +20,8 @@ import {
   effectiveSpeciesText,
   formatDateTime,
   formatLabel,
+  historicalStatusBadge,
+  modalityBadge,
   unconfirmedActivityText,
 } from "../utils";
 
@@ -39,6 +41,7 @@ interface DashboardPageProps {
   onOpenBirdLog: () => void;
   onOpenInsights: () => void;
   onOpenVisit: (visitId: string) => void;
+  onOpenPlaceActivityReport: () => void;
 }
 
 const DASHBOARD_REFRESH_INTERVAL_MS = 30_000;
@@ -128,14 +131,19 @@ function durationLabel(seconds: number): string {
 
 function VisitPreview({ visit }: { visit: DashboardVisitSummary }) {
   const [unavailable, setUnavailable] = useState(false);
+  const badge = modalityBadge(visit.evidence_modality);
   if (!visit.primary_evidence || unavailable) {
     return <div className="dashboard-visit-preview dashboard-preview-unavailable">Preview unavailable</div>;
   }
-  // Acoustic / BirdNET Observation Foundation v1: audio evidence has no
+  // Acoustic / BirdNET Observation Foundation v1, extended by Everyday
+  // Discovery / Product Experience v2 (Phase B): audio-only evidence has no
   // visual thumbnail to show here -- an honest "heard, not seen" icon,
   // never a fabricated image standing in for it. Full playback is
-  // available from Visit Detail.
-  if (visit.primary_evidence.content_type.startsWith("audio/")) {
+  // available from Visit Detail. Uses `evidence_modality`, not a raw
+  // content-type sniff, so a collapsed "seen and heard" row (whose primary
+  // evidence is always the image side -- see docs/multimodal-list-
+  // presentation-contract.md) never mistakenly renders as audio-only.
+  if (visit.evidence_modality === "acoustic") {
     return (
       <div className="dashboard-visit-preview dashboard-preview-audio" aria-label="Heard, no image evidence">
         🔊
@@ -143,12 +151,19 @@ function VisitPreview({ visit }: { visit: DashboardVisitSummary }) {
     );
   }
   return (
-    <img
-      alt={`Visit from ${formatDateTime(visit.captured_at)}`}
-      className="dashboard-visit-preview"
-      onError={() => setUnavailable(true)}
-      src={`${apiClient.baseUrl}${visit.primary_evidence.preview_url}`}
-    />
+    <div className="dashboard-visit-preview-wrap">
+      <img
+        alt={`Visit from ${formatDateTime(visit.captured_at)}`}
+        className="dashboard-visit-preview"
+        onError={() => setUnavailable(true)}
+        src={`${apiClient.baseUrl}${visit.primary_evidence.preview_url}`}
+      />
+      {badge ? (
+        <span className="dashboard-visit-preview-badge" title={badge.label}>
+          {badge.icon}
+        </span>
+      ) : null}
+    </div>
   );
 }
 
@@ -158,6 +173,16 @@ function VisitContext({ visit }: { visit: DashboardVisitSummary }) {
       {visit.stream_name} · {visit.zone_name ? visit.zone_name : "No Zone"} · {durationLabel(visit.duration_seconds)}
     </span>
   );
+}
+
+// Everyday Discovery / Product Experience v2 (Phase B): the ordinary-
+// language modality line for a row's text column -- "Seen and heard" (or,
+// on the rare row `VisitPreview` cannot badge visually, "Heard"). `null`
+// (nothing rendered) for the ordinary single-visual case.
+function ModalityNote({ visit }: { visit: DashboardVisitSummary }) {
+  const badge = modalityBadge(visit.evidence_modality);
+  if (!badge) return null;
+  return <span className="meta-text dashboard-visit-modality">{badge.icon} {badge.label}</span>;
 }
 
 export function DashboardPage({
@@ -170,6 +195,7 @@ export function DashboardPage({
   onOpenBirdLog,
   onOpenInsights,
   onOpenVisit,
+  onOpenPlaceActivityReport,
 }: DashboardPageProps) {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [report, setReport] = useState<PlaceActivityReportResponse | null>(null);
@@ -275,6 +301,21 @@ export function DashboardPage({
   }
 
   const { today } = summary;
+  // Everyday Discovery / Product Experience v2 (Phase C): "New today"/
+  // "Recent regulars" are the *complete* wildlife-inclusive list (Today's
+  // digest above only ever names its own top-5 "highlights"), so a species
+  // already named there would otherwise repeat one section down -- the
+  // exact "redundant cards"/"repeated information across sections"
+  // anti-pattern this milestone's own archaeology flagged. Filter out
+  // anything the digest already named by label; both sections now show
+  // only what the digest's own bounded top-5 didn't already cover.
+  const highlightedLabels = new Set(report?.digest.primary_highlights.map((h) => h.label) ?? []);
+  const newTodayOverflow = today.new_today.filter((species) => !highlightedLabels.has(species.label));
+  const recentRegularsOverflow = today.recent_regulars.filter(
+    (species) => !highlightedLabels.has(species.label),
+  );
+  const dayHasAnyOwnActivity =
+    today.best_moments.length > 0 || newTodayOverflow.length > 0 || recentRegularsOverflow.length > 0;
   return (
     <div className="page-stack dashboard-operations-page">
       <section className="dashboard-hero dashboard-operations-hero">
@@ -303,8 +344,6 @@ export function DashboardPage({
           </button>
         </div>
       </section>
-
-      <ProductHealthPanel />
 
       {refreshError ? (
         <div className="dashboard-refresh-notice" role="status">
@@ -336,57 +375,102 @@ export function DashboardPage({
         onOpenStreams={onOpenStreams}
         report={report}
       />
+      {/* Everyday Discovery / Product Experience v2 (Phase G): Today's own
+          report above only ever shows one busiest_zone winner and a single
+          change sentence -- this links to the fuller exploration surface
+          over the same underlying Place Activity Report, for a period the
+          reviewer chooses. Deliberately not the "Zone & Feeder Insights"
+          button above (a separate, bird-only, differently-computed BI
+          surface) -- the two are never the same link. */}
+      <div className="place-report-entry-link">
+        <button className="text-action" onClick={onOpenPlaceActivityReport} type="button">
+          See the full place report
+        </button>
+      </div>
 
       <section aria-label="Recent highlights" className="page-stack">
-        <section className="panel">
-          <div className="section-heading">
-            <div>
-              <h2>Best moments</h2>
-              <span className="meta-text">Evidence-backed animal Visits, with reviewed wildlife first</span>
-            </div>
-          </div>
-          {today.best_moments.length > 0 ? (
-            <div className="dashboard-visit-list">
-              {today.best_moments.map((visit) => (
-                <article className="dashboard-visit-row" key={visit.id}>
-                  <VisitPreview visit={visit} />
+        {dayHasAnyOwnActivity ? (
+          <>
+            {today.best_moments.length > 0 ? (
+              <section className="panel">
+                <div className="section-heading">
                   <div>
-                    <strong>
-                      {effectiveSpeciesText(visit) ??
-                        unconfirmedActivityText(visit.primary_evidence?.content_type)}
-                    </strong>
-                    <VisitContext visit={visit} />
-                    <span className="meta-text">{formatDateTime(visit.captured_at)}</span>
+                    <h2>Best moments</h2>
+                    <span className="meta-text">The encounters most worth opening today</span>
                   </div>
-                  <button className="text-action" onClick={() => onOpenVisit(visit.id)} type="button">View</button>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <EmptyState title="No animal Visits yet today" description="New evidence-backed animal activity will appear here." />
-          )}
-        </section>
+                </div>
+                <div className="dashboard-visit-list">
+                  {today.best_moments.map((visit) => (
+                    <article className="dashboard-visit-row" key={visit.id}>
+                      <VisitPreview visit={visit} />
+                      <div>
+                        <strong>
+                          {effectiveSpeciesText(visit) ??
+                            unconfirmedActivityText(visit.primary_evidence?.content_type)}
+                        </strong>
+                        <VisitContext visit={visit} />
+                        <ModalityNote visit={visit} />
+                        <span className="meta-text">{formatDateTime(visit.captured_at)}</span>
+                      </div>
+                      <button className="text-action" onClick={() => onOpenVisit(visit.id)} type="button">View</button>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            ) : null}
 
-        <section className="dashboard-observation-grid dashboard-secondary-section">
+            {newTodayOverflow.length > 0 || recentRegularsOverflow.length > 0 ? (
+              <section className="dashboard-observation-grid dashboard-secondary-section">
+                {newTodayOverflow.length > 0 ? (
+                  <section className="panel">
+                    <div className="section-heading"><div><h2>New today</h2><span className="meta-text">Beyond today’s highlights above</span></div></div>
+                    {newTodayOverflow.map((species) => {
+                      const badge = historicalStatusBadge(species.historical_status);
+                      return (
+                        <article className="dashboard-observation-row" key={species.label}>
+                          <VisitPreview visit={species.latest_visit} />
+                          <div>
+                            <strong>{species.display_name}</strong>
+                            <span>{badge?.label ?? "First confirmed here today"}</span>
+                          </div>
+                          <button className="text-action" onClick={() => onOpenVisit(species.latest_visit.id)} type="button">View</button>
+                        </article>
+                      );
+                    })}
+                  </section>
+                ) : null}
+                {recentRegularsOverflow.length > 0 ? (
+                  <section className="panel">
+                    <div className="section-heading"><div><h2>Recent regulars</h2><span className="meta-text">Beyond today’s highlights above</span></div></div>
+                    {recentRegularsOverflow.map((species) => (
+                      <article className="dashboard-observation-row" key={species.label}>
+                        <VisitPreview visit={species.latest_visit} />
+                        <div>
+                          <strong>{species.display_name}</strong>
+                          <span>Regular here · seen on {species.distinct_days_seen} of the last 14 days</span>
+                        </div>
+                        <button className="text-action" onClick={() => onOpenVisit(species.latest_visit.id)} type="button">View</button>
+                      </article>
+                    ))}
+                  </section>
+                ) : null}
+              </section>
+            ) : null}
+          </>
+        ) : (
+          // Everyday Discovery / Product Experience v2 (Phase C/M): one
+          // calm note instead of three separate "nothing here" cards
+          // (Best moments / New today / Recent regulars) -- Today’s report
+          // above already gave the honest reason (no monitoring yet,
+          // genuinely quiet day, ...); repeating "nothing to show" three
+          // more times in three more words is noise, not information.
           <section className="panel">
-            <div className="section-heading"><div><h2>New today</h2><span className="meta-text">First confirmed here today</span></div></div>
-            {today.new_today.length > 0 ? today.new_today.map((species) => (
-              <article className="dashboard-observation-row" key={species.label}>
-                <VisitPreview visit={species.latest_visit} /><div><strong>{species.display_name}</strong><span>First confirmed here today</span></div>
-                <button className="text-action" onClick={() => onOpenVisit(species.latest_visit.id)} type="button">View</button>
-              </article>
-            )) : <EmptyState title="No new confirmed species today" description="Species appear here only after a reviewed correction." />}
+            <EmptyState
+              title="Nothing else to show for today yet"
+              description="New animal activity, new species, and regulars will appear here as today unfolds."
+            />
           </section>
-          <section className="panel">
-            <div className="section-heading"><div><h2>Recent regulars</h2><span className="meta-text">Reviewed species active on at least 3 of the last 14 days</span></div></div>
-            {today.recent_regulars.length > 0 ? today.recent_regulars.map((species) => (
-              <article className="dashboard-observation-row" key={species.label}>
-                <VisitPreview visit={species.latest_visit} /><div><strong>{species.display_name}</strong><span>Seen on {species.distinct_days_seen} of the last 14 days</span></div>
-                <button className="text-action" onClick={() => onOpenVisit(species.latest_visit.id)} type="button">View</button>
-              </article>
-            )) : <EmptyState title="No regular species yet" description="Regulars appear after reviewed occurrences on three different local days." />}
-          </section>
-        </section>
+        )}
       </section>
 
       {monitorActionError ? <div className="dashboard-action-error" role="alert">{monitorActionError}</div> : null}
@@ -405,7 +489,7 @@ export function DashboardPage({
                 <div>
                   <StatusPill label={cameraHealthLabel(camera.state)} tone={cameraHealthTone(camera.state)} />
                   <strong>{camera.stream_name}</strong>
-                  <span className="meta-text">{camera.source_name} · {camera.desired_mode} / {camera.actual_state}</span>
+                  <span className="meta-text">{camera.source_name} · {formatLabel(camera.desired_mode)} / {formatLabel(camera.actual_state)}</span>
                   <span className="meta-text">
                     Last good frame {camera.last_good_frame_at ? formatDateTime(camera.last_good_frame_at) : "not yet received"}
                     {camera.last_evidence_persisted_at ? ` · Evidence write ${formatDateTime(camera.last_evidence_persisted_at)}` : ""}
@@ -440,6 +524,14 @@ export function DashboardPage({
         streams={summary.streams}
       />
 
+      {/* Everyday Discovery / Product Experience v2 (Phase C): app/storage/
+          backup health is real, useful information, but it is not "what
+          happened here today" -- moved below the wildlife-discovery content
+          instead of leading the page, matching the milestone's priority
+          order (product-doctrine.md: this is a nature observatory, not an
+          operations dashboard). */}
+      <ProductHealthPanel />
+
       <section className="panel dashboard-recent-activity">
         <div className="section-heading">
           <div>
@@ -457,6 +549,7 @@ export function DashboardPage({
                   <strong>{outcomeLabel(visit)}</strong>
                   <span>{formatDateTime(visit.captured_at)}</span>
                   <VisitContext visit={visit} />
+                  <ModalityNote visit={visit} />
                 </div>
                 <div className="detail-actions">
                   {visit.review_status === "needs_review" ? (

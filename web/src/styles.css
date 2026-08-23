@@ -658,6 +658,33 @@ a.secondary-action {
   font-size: 1.4rem;
 }
 
+/* Everyday Discovery / Product Experience v2 (Phase B): a small modality
+   badge overlaid on a collapsed "seen and heard" row's own image preview --
+   see docs/multimodal-list-presentation-contract.md. */
+.dashboard-visit-preview-wrap {
+  position: relative;
+  flex: 0 0 82px;
+  width: 82px;
+  height: 62px;
+}
+
+.dashboard-visit-preview-wrap .dashboard-visit-preview {
+  width: 100%;
+  height: 100%;
+}
+
+.dashboard-visit-preview-badge {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  background: rgba(20, 24, 20, 0.72);
+  color: #fff;
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-size: 0.72rem;
+  line-height: 1.3;
+}
+
 .camera-overview-panel {
   display: grid;
   gap: 14px;
@@ -9438,4 +9465,57 @@ a.secondary-action {
   border: 1px solid #d6ddd1;
   font-size: 0.85rem;
   overflow-wrap: anywhere;
+}
+
+/* Everyday Discovery / Product Experience v2 (Phase G): Place Activity
+   Report exploration surface (PlaceActivityReportPage.tsx). Reuses
+   .panel/.section-heading/.meta-text/.metric-grid/.bar-list/.bar-row/
+   .journal-label-grid/.journal-label-card/.journal-filter-panel/
+   .status-pill/.empty-state/.notice-panel/.error-panel wherever they
+   already fit -- only the hourly activity chart below has no existing
+   equivalent (a plain-CSS 24-bar sparkline; no charting library). */
+.place-report-hour-chart {
+  display: grid;
+  grid-template-columns: repeat(24, minmax(0, 1fr));
+  align-items: end;
+  gap: 3px;
+  height: 100px;
+  padding-top: 8px;
+}
+
+.place-report-hour-bar {
+  display: flex;
+  align-items: end;
+  height: 100%;
+}
+
+.place-report-hour-bar i {
+  display: block;
+  width: 100%;
+  min-height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: #a8c0a0;
+}
+
+.place-report-hour-bar-busiest i {
+  background: #2e6f5e;
+}
+
+.place-report-hour-labels {
+  display: grid;
+  grid-template-columns: repeat(24, minmax(0, 1fr));
+  margin-top: 6px;
+  color: #7a8a70;
+  font-size: 0.68rem;
+  text-align: center;
+}
+
+.place-report-gap-list {
+  display: grid;
+  gap: 4px;
+}
+
+.place-report-entry-link {
+  display: flex;
+  justify-content: flex-start;
 }

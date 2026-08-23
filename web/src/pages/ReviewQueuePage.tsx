@@ -26,6 +26,7 @@ import { ReviewFilterTabs, type ReviewFilterOption } from "../components/ReviewF
 import { VisitEvidenceSequence } from "../components/VisitEvidenceSequence";
 import { RefinedCropEditor } from "../components/RefinedCropEditor";
 import { speciesSuggestionMetricLabel } from "../components/speciesSuggestion";
+import { explainSpeciesSuggestion } from "../components/suggestionExplanation";
 import { StatusPill } from "../components/StatusPill";
 import { TaxonomyLabelInput } from "../components/TaxonomyLabelInput";
 import { TaxonomyBadge } from "../components/TaxonomyBadge";
@@ -3741,12 +3742,11 @@ function ProductReviewCard({
           <div className="review-product-suggestion">
             <strong>Species suggestions</strong>
             <span>
-              {displayTaxonomyLabel(explicitSuggestion.suggested_label, taxonomyLabels)}
-              {explicitSuggestion.confidence != null
-                ? ` · relative score ${explicitSuggestion.confidence.toFixed(3)}`
-                : ""}
-              {" · evidence only"}
+              {explainSpeciesSuggestion({
+                label: displayTaxonomyLabel(explicitSuggestion.suggested_label, taxonomyLabels),
+              })}
             </span>
+            <span className="meta-text">Evidence only.</span>
             <span>
               {item.identification?.candidate_pack
                 ? `Candidate pack ${item.identification.candidate_pack.display_name} v${item.identification.candidate_pack.version}`

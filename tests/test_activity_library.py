@@ -340,3 +340,47 @@ async def test_activity_pagination_saved_views_fast_review_scope_and_export_sele
     assert [record["visit_id"] for record in response["export"]["manifest"]["records"]] == [
         "visit-page-1"
     ]
+
+
+async def test_activity_search_confirmed_wildlife_includes_non_bird_wildlife(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    """Everyday Discovery / Product Experience v2 (Phase K): the
+    `confirmed_wildlife` review filter previously behaved as birds-only
+    (`TaxonomyLabelModel.category == bird`), silently excluding a confirmed
+    non-bird wildlife record despite wildlife-native product semantics. It
+    must now match the same canonical `is_wildlife_category` boundary Bird
+    Log/Today already use: confirmed squirrels/deer/etc. included, confirmed
+    non-wildlife (blank/false-positive/person/vehicle) still excluded.
+    """
+
+    start = datetime(2026, 7, 10, 12, tzinfo=UTC)
+    add_visit(isolated_repository, visit_id="visit-blank", event_id="event-blank", started_at=start)
+    await review_visit(client, "visit-blank", "blank")
+    add_visit(
+        isolated_repository,
+        visit_id="visit-confirmed-bird",
+        event_id="event-confirmed-bird",
+        started_at=start + timedelta(hours=1),
+    )
+    await review_visit(client, "visit-confirmed-bird", "northern_cardinal")
+
+    wildlife_rows = await client.post(
+        "/api/activity-library/search",
+        json={"review_filter": "confirmed_wildlife", "page_size": 50},
+    )
+    assert wildlife_rows.status_code == 200
+    wildlife_ids = {row["id"] for row in wildlife_rows.json()["visits"]}
+    # A freshly-confirmed bird and the seeded confirmed non-bird wildlife
+    # (squirrel) record must both be present.
+    assert "visit-confirmed-bird" in wildlife_ids
+    assert "visit-squirrel-ground-001" in wildlife_ids
+    assert "visit-blank" not in wildlife_ids
+
+    all_wildlife_are_actually_wildlife = await client.post(
+        "/api/activity-library/search",
+        json={"review_filter": "confirmed_wildlife", "page_size": 50},
+    )
+    for row in all_wildlife_are_actually_wildlife.json()["visits"]:
+        assert row["reviewed_label"] not in {"blank", "false_positive", "person", "vehicle"}

@@ -1,4 +1,9 @@
-import type { CameraHealthState, PlaceActivityReportTaxonChangeStatus } from "./api/types";
+import type {
+  CameraHealthState,
+  ListEvidenceModality,
+  PlaceActivityReportTaxonChangeStatus,
+  SpeciesHistoricalStatus,
+} from "./api/types";
 
 /**
  * First-Hour Onboarding + Whole-Product Observability Closure v1 ("B7
@@ -100,6 +105,53 @@ export function unconfirmedActivityText(evidenceContentType?: string | null): st
   return evidenceContentType?.startsWith("audio/")
     ? "Bird heard — species not confirmed"
     : "Animal detected — species not confirmed";
+}
+
+/**
+ * Everyday Discovery / Product Experience v2 (Phase B/J; see docs/
+ * multimodal-list-presentation-contract.md): ordinary-language modality
+ * badge for a list row, shared by Today and Bird Log so the same underlying
+ * fact never reads differently on two surfaces. Deliberately `null` for the
+ * plain "visual" case -- an ordinary photo Visit needs no special callout;
+ * only the cases worth a reader's attention (audio-only, or a collapsed
+ * "seen and heard" pair) get a badge at all, matching this file's existing
+ * "only render a pill when there is something worth saying" convention
+ * (see `changeStatusBadge`).
+ */
+export function modalityBadge(
+  modality: ListEvidenceModality,
+): { label: string; icon: string } | null {
+  switch (modality) {
+    case "acoustic":
+      return { label: "Heard", icon: "🔊" };
+    case "seen_and_heard":
+      return { label: "Seen and heard", icon: "👁️🔊" };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Everyday Discovery / Product Experience v2 (Phase E; see docs/canonical-
+ * new-regular-species-contract.md): the single canonical New/Regular
+ * wording, shared by Today and Bird Log so the same `historical_status`
+ * value never reads differently on two surfaces (mirrors the identical
+ * server-side wording in `mockingbird.analytics.daily_digest`). `null` for
+ * "seen_before" -- the calm, ordinary case gets no badge at all.
+ */
+export function historicalStatusBadge(
+  status: SpeciesHistoricalStatus | null | undefined,
+): { label: string; tone: "good" | "quiet" } | null {
+  switch (status) {
+    case "new":
+      return { label: "New to your reviewed history", tone: "good" };
+    case "first_record":
+      return { label: "First confirmed record so far", tone: "quiet" };
+    case "regular":
+      return { label: "Regular here", tone: "good" };
+    default:
+      return null;
+  }
 }
 
 export function formatDateTime(value: string): string {

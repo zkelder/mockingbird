@@ -13,6 +13,7 @@ import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { PageHeader } from "../components/PageHeader";
 import { speciesSuggestionMetricLabel } from "../components/speciesSuggestion";
+import { explainSpeciesSuggestion } from "../components/suggestionExplanation";
 import { formatDateTime, formatLabel } from "../utils";
 
 type SpeciesSuggestionFilter = "all" | SpeciesSuggestionStatus;
@@ -885,6 +886,11 @@ export function SpeciesSuggestionsPage({
                   </div>
                   <SuggestionStatusBadge status={suggestion.status} />
                 </div>
+                <div>
+                  {explainSpeciesSuggestion({
+                    label: suggestion.suggested_common_name ?? formatLabel(suggestion.suggested_label),
+                  })}
+                </div>
                 <div className="species-suggestion-meta">
                   <span>Rank {suggestion.rank}</span>
                   <span>
@@ -912,6 +918,14 @@ export function SpeciesSuggestionsPage({
                   </div>
                   <SuggestionStatusBadge status={selectedSuggestion.status} />
                 </div>
+
+                <p>
+                  {explainSpeciesSuggestion({
+                    label:
+                      selectedSuggestion.suggested_common_name ??
+                      formatLabel(selectedSuggestion.suggested_label),
+                  })}
+                </p>
 
                 <div className="species-suggestion-detail-grid">
                   <DetailItem label="Suggestion ID" value={selectedSuggestion.id} />

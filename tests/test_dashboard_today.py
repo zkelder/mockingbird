@@ -17,6 +17,7 @@ from mockingbird.storage.models import (
     CameraSourceModel,
     EventModel,
     MediaAssetModel,
+    MonitoringExposureIntervalModel,
     ReviewLabelModel,
     StreamModel,
     VisitModel,
@@ -189,6 +190,36 @@ def _add_visit(
             )
 
 
+def _add_usable_day(repository: ProductRepository, *, day: datetime) -> None:
+    """One durable monitoring interval clearing Canonical New/Regular Species
+    v1's 2-hour usable-day bar (`historical_baseline.USABLE_DAY_MONITORED_
+    SECONDS_THRESHOLD`), wholly inside `day`'s own local calendar day. `day`
+    may be tz-aware in any zone (typically `LOCAL_TIMEZONE`'s own midnight)
+    but is always stored as UTC -- matching every other datetime this module
+    persists (see `_utc`) and avoiding a SQLite `DateTime(timezone=True)`
+    round-trip losing the original offset."""
+
+    start_at = _utc(day)
+    end_at = _utc(day + timedelta(hours=3))
+    interval_id = f"exposure-{STREAM_ID}-{day.date().isoformat()}"
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                MonitoringExposureIntervalModel(
+                    id=interval_id,
+                    stream_id=STREAM_ID,
+                    source_id=SOURCE_ID,
+                    runtime_generation_id=f"generation-{interval_id}",
+                    started_at=start_at,
+                    last_confirmed_fresh_at=end_at,
+                    ended_at=end_at,
+                    close_reason="provider_failure",
+                    created_at=start_at,
+                    updated_at=end_at,
+                )
+            )
+
+
 def _durable_counts(repository: ProductRepository) -> tuple[int, int, int, int, int]:
     with repository.session_factory() as session:
         return (
@@ -266,9 +297,21 @@ def test_today_summary_uses_selected_local_day_and_current_reviewed_truth(
     ] == 1
 
 
-def test_today_summary_regulars_use_distinct_days_and_exclude_non_nature_records(
+def test_today_summary_regulars_require_usable_day_coverage_and_exclude_non_nature_records(
     repository: ProductRepository,
 ) -> None:
+    """Canonical New/Regular Species v1 (Everyday Discovery / Product
+    Experience v2; see docs/canonical-new-regular-species-contract.md):
+    `recent_regulars` must consult genuinely-monitored ("usable") days, not
+    merely distinct calendar days a Visit happens to exist on -- otherwise a
+    species confirmed on 3 calendar days with negligible actual monitoring
+    each day could misleadingly read "Regular here". This seeds a real
+    `MonitoringExposureIntervalModel` row (>=2 monitored hours) for each of
+    the cardinal's 3 days so the canonical bar is genuinely cleared; compare
+    `test_today_summary_new_and_regulars_omit_unmonitored_days` below, which
+    proves the negative case (3 calendar days, zero coverage -> no regular).
+    """
+
     noon = datetime(2026, 7, 29, 12, tzinfo=LOCAL_TIMEZONE)
     for offset in (0, 1, 2):
         _add_visit(
@@ -276,6 +319,12 @@ def test_today_summary_regulars_use_distinct_days_and_exclude_non_nature_records
             visit_id=f"cardinal-day-{offset}",
             observed_at=_utc(noon - timedelta(days=offset)),
             reviewed_label="northern_cardinal",
+        )
+        _add_usable_day(
+            repository,
+            day=datetime.combine(
+                (noon - timedelta(days=offset)).date(), datetime.min.time(), LOCAL_TIMEZONE
+            ),
         )
     for index in range(3):
         _add_visit(
@@ -346,6 +395,86 @@ def test_today_summary_regulars_use_distinct_days_and_exclude_non_nature_records
     assert excluded_ids.isdisjoint(
         {moment.id for moment in summary.today.best_moments}
     )
+    regular = summary.today.recent_regulars[0]
+    assert regular.historical_status == "regular"
+
+
+def test_today_summary_new_and_regulars_omit_unmonitored_days(
+    repository: ProductRepository,
+) -> None:
+    """Canonical New/Regular Species v1 (Everyday Discovery / Product
+    Experience v2): the negative case for the coverage-aware bar above --
+    3 distinct calendar days with a confirmed Visit but *zero* recorded
+    monitoring exposure must NOT read "Regular here". Before this milestone,
+    `recent_regulars` counted raw distinct calendar days a Visit happened to
+    exist on (independent of `test_historical_baseline_repository.py`'s
+    canonical, coverage-gated definition) -- a species confirmed on 3
+    calendar days with negligible actual monitoring each day could
+    misleadingly earn "Regular here" on Today while Bird Log (already
+    coverage-gated) correctly withheld it. No `_add_usable_day` calls here,
+    unlike the sibling test above -- that is the entire point of this case.
+    """
+
+    noon = datetime(2026, 7, 29, 12, tzinfo=LOCAL_TIMEZONE)
+    for offset in (0, 1, 2):
+        _add_visit(
+            repository,
+            visit_id=f"wren-day-{offset}",
+            observed_at=_utc(noon - timedelta(days=offset)),
+            reviewed_label="carolina_wren",
+        )
+
+    summary = repository.dashboard_summary(now=LOCAL_NOW, local_date=SELECTED_DAY)
+
+    assert summary.today.recent_regulars == []
+    assert "carolina_wren" not in {species.label for species in summary.today.new_today}
+
+
+def test_today_summary_new_today_is_wildlife_inclusive_not_bird_only(
+    repository: ProductRepository,
+) -> None:
+    """Canonical New/Regular Species v1: `new_today` must recognize a
+    confirmed non-bird wildlife taxon exactly like a confirmed bird --
+    previously `_dashboard_today_is_confirmed_species` required
+    `VisitReviewOutcome.confirmed_bird` specifically, so a genuinely first-
+    ever confirmed non-bird wildlife encounter could never appear here no
+    matter how novel, unlike Bird Log's own wildlife-inclusive Journal. The
+    stock seed taxonomy has no non-bird `is_species=True` label (a separate,
+    known bounded gap -- see the milestone report), so this inserts one
+    directly, exactly as a future non-bird species-level taxonomy entry
+    would look.
+    """
+
+    with repository.session_factory() as session:
+        with session.begin():
+            from mockingbird.storage.models import TaxonomyLabelModel
+
+            session.add(
+                TaxonomyLabelModel(
+                    id="eastern_gray_squirrel",
+                    label="eastern_gray_squirrel",
+                    display_name="Eastern Gray Squirrel",
+                    category="mammal",
+                    scientific_name=None,
+                    aliases_json="[]",
+                    is_species=True,
+                    is_reviewable=True,
+                    sort_order=500,
+                )
+            )
+
+    noon = datetime(2026, 7, 29, 12, tzinfo=LOCAL_TIMEZONE)
+    _add_visit(
+        repository,
+        visit_id="squirrel-today",
+        observed_at=_utc(noon),
+        reviewed_label="eastern_gray_squirrel",
+    )
+
+    summary = repository.dashboard_summary(now=LOCAL_NOW, local_date=SELECTED_DAY)
+
+    new_labels = {species.label: species.historical_status for species in summary.today.new_today}
+    assert new_labels.get("eastern_gray_squirrel") in ("new", "first_record")
 
 
 def test_today_summary_bounds_moments_and_help_with_honest_deterministic_media(
@@ -377,6 +506,43 @@ def test_today_summary_bounds_moments_and_help_with_honest_deterministic_media(
     assert [visit.id for visit in first.today.needs_help] == [
         visit.id for visit in second.today.needs_help
     ]
+
+
+def test_today_summary_best_moments_caps_one_species_and_stays_diverse(
+    repository: ProductRepository,
+) -> None:
+    """Everyday Discovery / Product Experience v2 (Phase D): a single
+    frequently-confirmed species must not occupy every "Best moments" slot.
+    5 confirmed cardinals (the 5 most recent Visits, so recency alone would
+    otherwise fill 5 of 6 slots with the same species) plus one confirmed
+    jay and one confirmed wren (older): the cap (max 2 per label) must keep
+    cardinal to 2 slots and include both other species, never silently
+    dropping one of them in cardinal's favor."""
+
+    noon = datetime(2026, 7, 29, 12, tzinfo=LOCAL_TIMEZONE)
+    _add_visit(
+        repository, visit_id="wren", observed_at=_utc(noon), reviewed_label="carolina_wren",
+    )
+    _add_visit(
+        repository,
+        visit_id="jay",
+        observed_at=_utc(noon + timedelta(minutes=1)),
+        reviewed_label="blue_jay",
+    )
+    for index in range(5):
+        _add_visit(
+            repository,
+            visit_id=f"cardinal-{index}",
+            observed_at=_utc(noon + timedelta(minutes=10 + index)),
+            reviewed_label="northern_cardinal",
+        )
+
+    summary = repository.dashboard_summary(now=LOCAL_NOW, local_date=SELECTED_DAY)
+
+    labels = [visit.reviewed_label for visit in summary.today.best_moments]
+    assert labels.count("northern_cardinal") <= 2
+    assert "blue_jay" in labels
+    assert "carolina_wren" in labels
 
 
 # --- Automatic Species Suggestion v1: `likely_today` provisional grouping --

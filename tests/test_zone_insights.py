@@ -337,9 +337,21 @@ def test_zone_insights_use_only_truth_and_return_auditable_denominator(
             **feeder.reviewed_non_bird_drilldown.filters.model_dump(),
         )
     )
+    # Everyday Discovery / Product Experience v2 (Phase K): the
+    # `confirmed_wildlife` drilldown filter was bird-only before this
+    # milestone (the same defect fixed for Activity Library's own search box
+    # -- see docs/canonical-new-regular-species-contract.md and
+    # `_activity_library_review_filter_matches`), so this Zone Insights
+    # drilldown silently excluded the confirmed squirrel too. It is now
+    # wildlife-inclusive, and genuinely, correctly overlaps with the
+    # unrelated (unchanged) `non_bird` drilldown for a non-bird wildlife
+    # taxon -- the two answer different questions ("is this confirmed
+    # wildlife" vs. "is this specifically not a bird") that were only ever
+    # mutually exclusive by the old bird-only bug's accident, not by design.
     assert {visit.id for visit in confirmed.visits} == {
         "confirmed-cardinal",
         "confirmed-blue-jay",
+        "squirrel",
     }
     assert [visit.id for visit in blank.visits] == ["blank"]
     assert [visit.id for visit in non_bird.visits] == ["squirrel"]

@@ -42,7 +42,7 @@ from mockingbird.repository.product_repository import (
     ProductRepository,
     VisitModel,
 )
-from mockingbird.api.schemas import ReviewCorrectionCreate
+from mockingbird.api.schemas import ReviewCorrectionCreate, WildlifeJournalHistoryRequest
 
 STREAM_ID = "stream-backyard-feeder"
 FEEDER_ZONE_ID = "zone-feeder"
@@ -509,3 +509,115 @@ def test_scenario_9_reassociation_after_restart_is_deterministic_and_creates_no_
         assert second_pass[0].other_visit.id == acoustic_outcome.visit_id
     finally:
         restarted.close()
+
+
+# --- Scenario 10: Today list-level presentation (Everyday Discovery / -------
+# --- Product Experience v2, Phase B) ----------------------------------------
+
+
+def test_scenario_10_confident_association_collapses_to_one_today_row_seen_and_heard(
+    repository: ProductRepository,
+) -> None:
+    """The bounded gap this milestone's own contract doc named as
+    "explicitly deferred": a confidently-associated visual+acoustic pair
+    must render as ONE row (not two independent encounters) in Today's
+    `best_moments`/`recent_activity`, tagged "seen_and_heard", with both
+    Visits still independently real and retrievable."""
+
+    _activate(repository)
+    visual_outcome = _create_visual_visit(repository, proposal_id="p-scenario-10", observed_at=NOW)
+    assert visual_outcome.outcome == "created"
+    _seed_audio_media_asset(repository, media_asset_id="media-scenario-10", captured_at=NOW)
+    acoustic_outcome = _create_acoustic_visit(
+        repository, media_asset_id="media-scenario-10", common_name="Northern Cardinal",
+        scientific_name="Cardinalis cardinalis", observed_at=NOW + timedelta(seconds=2),
+    )
+    assert acoustic_outcome.outcome == "created"
+    associations = repository.multimodal_associations_for_visit(visual_outcome.visit_id)
+    assert associations and associations[0].tier == "associated"  # sanity: this pair is confident, not merely possible
+
+    summary = repository.dashboard_summary(now=NOW, local_date=NOW.date())
+    all_ids = {item.id for item in [*summary.today.best_moments, *summary.recent_activity]}
+    assert visual_outcome.visit_id in all_ids
+    assert acoustic_outcome.visit_id not in all_ids  # collapsed away, not a second independent row
+
+    collapsed = next(
+        item
+        for item in [*summary.today.best_moments, *summary.recent_activity]
+        if item.id == visual_outcome.visit_id
+    )
+    assert collapsed.evidence_modality == "seen_and_heard"
+    assert collapsed.multimodal_partner is not None
+    assert collapsed.multimodal_partner.visit_id == acoustic_outcome.visit_id
+    assert collapsed.multimodal_partner.tier == "associated"
+
+    # Both underlying Visits remain fully real and independently reachable --
+    # collapse is presentation-only, never a Visit deletion/supersession.
+    assert repository.get_visit(visual_outcome.visit_id) is not None
+    assert repository.get_visit(acoustic_outcome.visit_id) is not None
+    partner_associations = repository.multimodal_associations_for_visit(acoustic_outcome.visit_id)
+    assert partner_associations and partner_associations[0].other_visit.id == visual_outcome.visit_id
+
+
+def test_scenario_10b_possible_association_stays_two_separate_rows(
+    repository: ProductRepository,
+) -> None:
+    """The negative case: a merely-"possible" association (per doctrine,
+    "possible association remains visibly uncertain or separate") must
+    never collapse -- both Visits keep their own row."""
+
+    _activate(repository)
+    visual_outcome = _create_visual_visit(repository, proposal_id="p-scenario-10b", observed_at=NOW)
+    _seed_audio_media_asset(repository, media_asset_id="media-scenario-10b", captured_at=NOW)
+    # Outside the strict window but inside the wider "possible" window --
+    # the same boundary Scenario 5c already proves yields tier "possible".
+    acoustic_outcome = _create_acoustic_visit(
+        repository, media_asset_id="media-scenario-10b", common_name="Blue Jay",
+        scientific_name="Cyanocitta cristata", observed_at=NOW + timedelta(seconds=45),
+    )
+    associations = repository.multimodal_associations_for_visit(visual_outcome.visit_id)
+    assert associations and associations[0].tier == "possible"  # sanity
+
+    summary = repository.dashboard_summary(now=NOW, local_date=NOW.date())
+    all_items = [*summary.today.best_moments, *summary.recent_activity]
+    ids = {item.id for item in all_items}
+    assert visual_outcome.visit_id in ids
+    assert acoustic_outcome.visit_id in ids  # both rows still present, uncollapsed
+    for item in all_items:
+        if item.id in (visual_outcome.visit_id, acoustic_outcome.visit_id):
+            assert item.evidence_modality != "seen_and_heard"
+            assert item.multimodal_partner is None
+
+
+def test_scenario_10c_confident_association_collapses_in_bird_log_gallery_too(
+    repository: ProductRepository,
+) -> None:
+    """Phase B names both Today AND Bird Log -- the identical collapse must
+    hold in Bird Log's per-label gallery once both sides are confirmed."""
+
+    _activate(repository)
+    visual_outcome = _create_visual_visit(repository, proposal_id="p-scenario-10c", observed_at=NOW)
+    _seed_audio_media_asset(repository, media_asset_id="media-scenario-10c", captured_at=NOW)
+    acoustic_outcome = _create_acoustic_visit(
+        repository, media_asset_id="media-scenario-10c", common_name="Northern Cardinal",
+        scientific_name="Cardinalis cardinalis", observed_at=NOW + timedelta(seconds=2),
+    )
+    associations = repository.multimodal_associations_for_visit(visual_outcome.visit_id)
+    assert associations and associations[0].tier == "associated"  # sanity
+    _confirm(repository, visual_outcome.visit_id, "northern_cardinal")
+    _confirm(repository, acoustic_outcome.visit_id, "northern_cardinal")
+
+    history = repository.wildlife_journal_history("northern_cardinal", WildlifeJournalHistoryRequest(), now=NOW)
+    assert history is not None
+    gallery_ids = {observation.visit_id for observation in history.gallery.observations}
+    assert visual_outcome.visit_id in gallery_ids
+    assert acoustic_outcome.visit_id not in gallery_ids
+    collapsed = next(
+        observation
+        for observation in history.gallery.observations
+        if observation.visit_id == visual_outcome.visit_id
+    )
+    assert collapsed.evidence_modality == "seen_and_heard"
+    assert collapsed.multimodal_partner is not None
+    assert collapsed.multimodal_partner.visit_id == acoustic_outcome.visit_id
+    assert collapsed.multimodal_partner.taxon_agreement == "agrees"

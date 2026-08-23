@@ -1106,7 +1106,15 @@ test("a quiet, intentional empty state appears when there is no wildlife activit
   await expect(reportPanel.getByText("No reviewed wildlife records yet today.")).toBeVisible();
   // Not a blank analytics shell -- the rest of the page still renders.
   await expect(page.getByRole("heading", { name: "Today in Your Yard" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Best moments" })).toBeVisible();
+  // Everyday Discovery / Product Experience v2 (Phase C/M): on a genuinely
+  // empty day, Best moments / New today / Recent regulars now collapse into
+  // one calm note instead of three separate "nothing here" cards each with
+  // their own heading -- see DashboardPage.tsx's `dayHasAnyOwnActivity`.
+  // This is the current, intentional replacement for the "Best moments"
+  // heading this test used to assert stayed visible even when empty; the
+  // underlying intent (the page is not a blank shell) is preserved below.
+  await expect(page.getByRole("heading", { name: "Best moments" })).toHaveCount(0);
+  await expect(page.getByText("Nothing else to show for today yet")).toBeVisible();
 });
 
 test("Dashboard's real request to the Place Activity Report endpoint succeeds against the real backend", async ({
