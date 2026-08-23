@@ -12,6 +12,7 @@ import dataclasses
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime, timedelta, tzinfo
 import hashlib
+import hmac
 import json
 import math
 import os
@@ -1625,6 +1626,20 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
                 secret=True,
                 description="Opaque Node profile selected during pairing for bounded evidence capture.",
                 placeholder="Selected during pairing",
+            ),
+            SourceProviderField(
+                key="node_transport_credential",
+                label="Transport credential",
+                required=False,
+                secret=True,
+                # Remote / Intermittent-WAN Transport Foundation v1: absent
+                # for an old Node, or one with no host address configured
+                # (see `CameraNodePairing.transport_credential`). Distinct
+                # from `node_credential` above -- see
+                # `mockingbird_node.transport_credential`'s module docstring
+                # for why this is a separate secret.
+                description="Created by pairing; presented by the Node to authenticate its own outbound deliveries.",
+                placeholder="Created during pairing, if the Node supports transport",
             ),
         ],
     ),
@@ -6736,6 +6751,39 @@ class ProductRepository:
                 session.flush()
                 stream_ids = self._stream_ids_for_source(session, source_id)
                 return _source_provider_configuration_from_model(source, model, stream_ids)
+
+    def resolve_camera_node_transport_source(self, credential: str) -> tuple[str, str] | None:
+        """Remote / Intermittent-WAN Transport Foundation v1: identify which
+        paired Camera Node source a *presented* transport credential belongs
+        to, for the new Node -> host delivery endpoints.
+
+        A bounded scan, not an index lookup: a home installation has a
+        handful of camera sources, not thousands, and this avoids any new
+        schema/index for one credential comparison per inbound transport
+        call. Comparison is constant-time (`hmac.compare_digest`), matching
+        this codebase's existing pairing-credential-comparison convention
+        (see `mockingbird_node.app._PairingState.authenticated`). Returns
+        `(source_id, node_id)` or `None`.
+        """
+
+        if not credential:
+            return None
+        with self.session_factory() as session:
+            rows = session.execute(
+                select(CameraSourceModel.id, SourceProviderConfigurationModel.config_json).join(
+                    SourceProviderConfigurationModel,
+                    SourceProviderConfigurationModel.source_id == CameraSourceModel.id,
+                ).where(SourceProviderConfigurationModel.provider_key == "camera_node")
+            ).all()
+            for source_id, config_json in rows:
+                try:
+                    config = json.loads(config_json)
+                except (TypeError, ValueError):
+                    continue
+                stored = config.get("node_transport_credential")
+                if isinstance(stored, str) and stored and hmac.compare_digest(stored, credential):
+                    return source_id, str(config.get("node_id") or "")
+        return None
 
     def record_onvif_profile(
         self,
@@ -31966,6 +32014,7 @@ def _sanitize_source_provider_config(
             "node_capability_fingerprint",
             "node_monitoring_profile_id",
             "node_evidence_profile_id",
+            "node_transport_credential",
         }:
             # Pairing writes these locally once. The generic configuration surface
             # still renders only configured/not-configured markers for every one.

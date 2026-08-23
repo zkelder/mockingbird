@@ -169,6 +169,12 @@ class CameraNodePairing:
     cameras: list[CameraNodeCamera]
     capability_fingerprint: str
     recommended_snapshot_timeout_seconds: float | None = None
+    # Remote / Intermittent-WAN Transport Foundation v1: additive-only --
+    # absent (None) from an old Node that predates transport, or one with
+    # no host address configured (see `CameraNodeConfig.transport_enabled`
+    # on the Node side). A *separate* secret from `credential` above; see
+    # `mockingbird_node.transport_credential`'s module docstring for why.
+    transport_credential: str | None = None
 
 
 class CameraNodeRequester(Protocol):
@@ -270,6 +276,17 @@ def _recommended_snapshot_timeout(value: object) -> float | None:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return None
     return _snapshot_timing(float(value)).response_timeout_seconds
+
+
+def _transport_credential(value: object) -> str | None:
+    # C3 additive compatibility (same reasoning as `_camera_items` elsewhere
+    # in this module): an old Node, or one with no host address configured,
+    # simply omits this field. Anything present but malformed is treated the
+    # same as absent (never a hard pairing failure over optional transport
+    # metadata) -- see Remote / Intermittent-WAN Transport Foundation v1.
+    if not isinstance(value, str) or not value or len(value) > 160:
+        return None
+    return value
 
 
 def _jpeg_dimensions(data: bytes) -> tuple[int, int] | None:
@@ -599,6 +616,7 @@ class CameraNodeClient:
             _camera_items(body.get("cameras")),
             secrets.token_hex(16),
             _recommended_snapshot_timeout(capabilities.get("recommended_snapshot_timeout_seconds")),
+            _transport_credential(body.get("transport_credential")),
         )
 
     def capabilities(self, *, base_address: str, credential: str) -> dict[str, Any]:

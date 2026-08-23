@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 
 DEFAULT_PORT = 8787
@@ -14,12 +15,57 @@ DEFAULT_MAX_IMAGE_HEIGHT = 1080
 DEFAULT_PAIRING_TTL_SECONDS = 10 * 60
 DEFAULT_MAX_PREVIEW_VIEWERS = 2
 DEFAULT_LOG_LEVEL = "warning"
+
+# Remote / Intermittent-WAN Transport Foundation v1: the Node's own outbound
+# delivery defaults. Deliberately conservative for Pi-class hardware and an
+# unknown/possibly-metered link -- see docs/remote-intermittent-wan
+# -transport-v1-design.md "Bandwidth-aware policy" and "Bounds / eviction".
+DEFAULT_TRANSPORT_CHUNK_SIZE_BYTES = 262_144
+DEFAULT_TRANSPORT_MAX_CONCURRENT_UPLOADS = 1
+DEFAULT_TRANSPORT_MAX_BYTES_PER_SECOND = 0  # 0 == unpaced
+DEFAULT_TRANSPORT_BACKOFF_BASE_SECONDS = 2.0
+DEFAULT_TRANSPORT_BACKOFF_CAP_SECONDS = 300.0
+DEFAULT_TRANSPORT_SPOOL_MAX_BYTES = 512_000_000
+DEFAULT_TRANSPORT_SPOOL_MAX_ITEMS = 2000
+DEFAULT_TRANSPORT_SPOOL_MIN_FREE_BYTES = 100_000_000
 # uvicorn's own accepted `log_level` values (uvicorn.config.LOG_LEVELS keys).
 # Validated here rather than left to uvicorn's own error path so a bad value
 # fails through the same clean `CameraNodeConfig` error surface as every
 # other field -- see "Diagnostics implementation" in
 # docs/camera-node-installer-design.md.
 _VALID_LOG_LEVELS = frozenset({"critical", "error", "warning", "info", "debug", "trace"})
+
+
+def normalize_host_base_address(value: str) -> str:
+    """Validate a Node->host address without the host->node LAN restriction.
+
+    A remote Camera Node's path back to the host may legitimately cross a
+    VPN/tunnel/dyndns hostname -- provisioning that path is explicitly out
+    of this milestone's scope (see "Scope exclusions": no VPN/mobile
+    remote-access product, no cloud relay). This only rejects an
+    obviously-malformed address (embedded credentials, a query/fragment, a
+    sub-path, an unsupported scheme) the same way
+    `camera_node.normalize_camera_node_address` already does for the
+    opposite direction, so a bad value fails fast and safely rather than
+    surfacing as a mysterious connection failure later.
+    """
+
+    raw = value.strip()
+    if not raw or len(raw) > 260:
+        raise ValueError("mockingbird_node_host_base_address_invalid")
+    parsed = urlsplit(raw)
+    if (
+        parsed.scheme.lower() not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in {"", "/"}
+    ):
+        raise ValueError("mockingbird_node_host_base_address_invalid")
+    host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+    return urlunsplit((parsed.scheme.lower(), host if parsed.port is None else f"{host}:{parsed.port}", "", "", ""))
 
 
 @dataclass(frozen=True)
@@ -41,6 +87,24 @@ class CameraNodeConfig:
     evidence_max_image_width: int | None = None
     evidence_max_image_height: int | None = None
     pairing_state_path: Path | None = None
+    # Remote / Intermittent-WAN Transport Foundation v1. `host_base_address`
+    # is None by default: an un-configured Node keeps behaving exactly as
+    # before (no outbound worker starts -- see `transport_enabled`). Unlike
+    # `normalize_camera_node_address` (host->node, LAN-only by design), this
+    # address is Node->host and, for a genuinely remote node, may legitimately
+    # be a VPN/tunnel/public hostname -- so it is validated but not
+    # LAN-restricted; see `normalize_host_base_address`.
+    host_base_address: str | None = None
+    transport_spool_dir: Path | None = None
+    transport_credential_state_path: Path | None = None
+    transport_chunk_size_bytes: int = DEFAULT_TRANSPORT_CHUNK_SIZE_BYTES
+    transport_max_concurrent_uploads: int = DEFAULT_TRANSPORT_MAX_CONCURRENT_UPLOADS
+    transport_max_bytes_per_second: int = DEFAULT_TRANSPORT_MAX_BYTES_PER_SECOND
+    transport_backoff_base_seconds: float = DEFAULT_TRANSPORT_BACKOFF_BASE_SECONDS
+    transport_backoff_cap_seconds: float = DEFAULT_TRANSPORT_BACKOFF_CAP_SECONDS
+    transport_spool_max_bytes: int = DEFAULT_TRANSPORT_SPOOL_MAX_BYTES
+    transport_spool_max_items: int = DEFAULT_TRANSPORT_SPOOL_MAX_ITEMS
+    transport_spool_min_free_bytes: int = DEFAULT_TRANSPORT_SPOOL_MIN_FREE_BYTES
 
     @property
     def effective_evidence_max_image_bytes(self) -> int:
@@ -53,6 +117,19 @@ class CameraNodeConfig:
     @property
     def effective_evidence_max_image_height(self) -> int:
         return self.evidence_max_image_height or self.max_image_height
+
+    @property
+    def transport_enabled(self) -> bool:
+        """No host configured yet == transport worker never starts.
+
+        Never a crash, never a required field: the product must keep
+        working exactly as it does today for an operator who has not
+        opted into remote delivery -- see the milestone's "no assumption of
+        constant host reachability" doctrine, which cuts both ways (a Node
+        with no host address configured is not an error state).
+        """
+
+        return bool(self.host_base_address)
 
     @classmethod
     def from_environment(cls) -> "CameraNodeConfig":
@@ -145,6 +222,43 @@ class CameraNodeConfig:
         log_level = os.getenv("MOCKINGBIRD_NODE_LOG_LEVEL", DEFAULT_LOG_LEVEL).strip().lower()
         if log_level not in _VALID_LOG_LEVELS:
             raise ValueError("mockingbird_node_log_level_invalid")
+
+        raw_host_base_address = os.getenv("MOCKINGBIRD_NODE_HOST_BASE_ADDRESS", "").strip()
+        host_base_address = normalize_host_base_address(raw_host_base_address) if raw_host_base_address else None
+        transport_spool_dir = Path(
+            os.getenv(
+                "MOCKINGBIRD_NODE_TRANSPORT_SPOOL_DIR",
+                str(state_home / "mockingbird-camera-node" / "transport"),
+            )
+        ).expanduser()
+        if not transport_spool_dir.is_absolute():
+            raise ValueError("mockingbird_node_transport_spool_dir_invalid")
+        transport_credential_state_path = Path(
+            os.getenv(
+                "MOCKINGBIRD_NODE_TRANSPORT_CREDENTIAL_STATE_PATH",
+                str(state_home / "mockingbird-camera-node" / "transport-credential.json"),
+            )
+        ).expanduser()
+        if not transport_credential_state_path.is_absolute():
+            raise ValueError("mockingbird_node_transport_credential_state_path_invalid")
+        transport_backoff_base_seconds = float(
+            integer(
+                "MOCKINGBIRD_NODE_TRANSPORT_BACKOFF_BASE_MS",
+                int(DEFAULT_TRANSPORT_BACKOFF_BASE_SECONDS * 1000),
+                minimum=100,
+                maximum=60_000,
+            )
+        ) / 1000.0
+        transport_backoff_cap_seconds = float(
+            integer(
+                "MOCKINGBIRD_NODE_TRANSPORT_BACKOFF_CAP_MS",
+                int(DEFAULT_TRANSPORT_BACKOFF_CAP_SECONDS * 1000),
+                minimum=1_000,
+                maximum=3_600_000,
+            )
+        ) / 1000.0
+        if transport_backoff_cap_seconds < transport_backoff_base_seconds:
+            raise ValueError("mockingbird_node_transport_backoff_invalid")
         return cls(
             display_name=display_name,
             bind_host=bind_host,
@@ -166,4 +280,45 @@ class CameraNodeConfig:
             evidence_max_image_width=evidence_max_image_width,
             evidence_max_image_height=evidence_max_image_height,
             pairing_state_path=pairing_state_path,
+            host_base_address=host_base_address,
+            transport_spool_dir=transport_spool_dir,
+            transport_credential_state_path=transport_credential_state_path,
+            transport_chunk_size_bytes=integer(
+                "MOCKINGBIRD_NODE_TRANSPORT_CHUNK_SIZE_BYTES",
+                DEFAULT_TRANSPORT_CHUNK_SIZE_BYTES,
+                minimum=16_384,
+                maximum=4_000_000,
+            ),
+            transport_max_concurrent_uploads=integer(
+                "MOCKINGBIRD_NODE_TRANSPORT_MAX_CONCURRENT_UPLOADS",
+                DEFAULT_TRANSPORT_MAX_CONCURRENT_UPLOADS,
+                minimum=1,
+                maximum=4,
+            ),
+            transport_max_bytes_per_second=integer(
+                "MOCKINGBIRD_NODE_TRANSPORT_MAX_BYTES_PER_SECOND",
+                DEFAULT_TRANSPORT_MAX_BYTES_PER_SECOND,
+                minimum=0,
+                maximum=1_000_000_000,
+            ),
+            transport_backoff_base_seconds=transport_backoff_base_seconds,
+            transport_backoff_cap_seconds=transport_backoff_cap_seconds,
+            transport_spool_max_bytes=integer(
+                "MOCKINGBIRD_NODE_TRANSPORT_SPOOL_MAX_BYTES",
+                DEFAULT_TRANSPORT_SPOOL_MAX_BYTES,
+                minimum=1_000_000,
+                maximum=10_000_000_000,
+            ),
+            transport_spool_max_items=integer(
+                "MOCKINGBIRD_NODE_TRANSPORT_SPOOL_MAX_ITEMS",
+                DEFAULT_TRANSPORT_SPOOL_MAX_ITEMS,
+                minimum=1,
+                maximum=100_000,
+            ),
+            transport_spool_min_free_bytes=integer(
+                "MOCKINGBIRD_NODE_TRANSPORT_SPOOL_MIN_FREE_BYTES",
+                DEFAULT_TRANSPORT_SPOOL_MIN_FREE_BYTES,
+                minimum=0,
+                maximum=10_000_000_000,
+            ),
         )

@@ -28,6 +28,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 from mockingbird import __version__ as APP_VERSION
+from mockingbird.api.camera_node_transport import build_camera_node_transport_router
 from mockingbird.diagnostics.error_taxonomy import (
     ErrorComponent,
     ErrorCorrelation,
@@ -597,6 +598,21 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+# Remote / Intermittent-WAN Transport Foundation v1: one new, separately
+# -owned router (see camera_node_transport.py's module docstring for why
+# this isn't more inline endpoints on `app` directly). The lambda defers
+# the `get_repository` lookup to request time -- by then the module has
+# finished loading and `get_repository` (defined further below) exists;
+# passing the function object itself here, before its own definition, would
+# not.
+app.include_router(
+    build_camera_node_transport_router(
+        resolve_transport_source=lambda credential: get_repository().resolve_camera_node_transport_source(
+            credential
+        )
+    )
 )
 
 # A request's own correlation id, bounded to a plain hex token so it is
@@ -1285,6 +1301,11 @@ def _camera_node_prepared_config(
     return {
         "node_base_address": pairing.base_address,
         "node_credential": pairing.credential,
+        # Remote / Intermittent-WAN Transport Foundation v1: additive key,
+        # None for an old/un-transport-configured Node -- stored the same
+        # way `node_credential` already is (never returned to the browser;
+        # see `_sanitize_source_provider_config`'s redaction list).
+        "node_transport_credential": pairing.transport_credential,
         "node_camera_id": camera_id,
         "node_id": pairing.node_id,
         "node_display_name": pairing.display_name,
@@ -1313,7 +1334,16 @@ def _camera_node_prepared_edit_payload(
         pairing_token=payload.node_pairing_token,
         verify_camera=verify_camera,
     )
-    for key in {"node_monitoring_profile_id", "node_evidence_profile_id"}:
+    # Remote / Intermittent-WAN Transport Foundation v1: `node_transport_
+    # credential` is optional/nullable exactly like the two profile ids
+    # below it (absent for an old Node or one with no host address
+    # configured -- see `CameraNodePairing.transport_credential`), so it
+    # follows their same "pop if falsy, remove-vs-replace" handling rather
+    # than the unconditionally-required set just below (a real regression
+    # this milestone's own Tier 2 pass caught: leaving it out of both loops
+    # left a `None`-valued key with no secret_action classification, which
+    # the downstream configuration-apply validation correctly rejected).
+    for key in {"node_monitoring_profile_id", "node_evidence_profile_id", "node_transport_credential"}:
         if not configured.get(key):
             configured.pop(key, None)
     secret_actions = dict(payload.secret_actions)
@@ -1325,7 +1355,7 @@ def _camera_node_prepared_edit_payload(
         "node_capability_fingerprint",
     }:
         secret_actions[key] = CameraConfigurationSecretAction.replace
-    for key in {"node_monitoring_profile_id", "node_evidence_profile_id"}:
+    for key in {"node_monitoring_profile_id", "node_evidence_profile_id", "node_transport_credential"}:
         secret_actions[key] = (
             CameraConfigurationSecretAction.replace
             if configured.get(key)

@@ -34,6 +34,7 @@ Design invariants
 
 from __future__ import annotations
 
+import json
 import queue
 import threading
 import time
@@ -44,7 +45,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.engine import Engine
 
 from mockingbird import __version__ as APP_VERSION
@@ -73,6 +74,10 @@ from mockingbird.storage.database import (
     database_schema_version_is_compatible,
     probe_local_storage_disk,
     sqlite_database_path,
+)
+from mockingbird.storage.camera_node_transport_ledger import (
+    TRANSPORT_ROOT_ENV_VAR,
+    read_camera_node_transport_backlog_summary,
 )
 from mockingbird.storage.models import (
     CameraSourceModel,
@@ -201,6 +206,7 @@ class DoctorCheckCode(str, Enum):
     STORAGE = "storage"
     BACKUP = "backup"
     CAMERA_NODE = "camera_node"
+    CAMERA_NODE_TRANSPORT = "camera_node_transport"
     FFMPEG = "ffmpeg"
     DETECTOR_MODEL = "detector_model"
     SPECIES_IDENTIFICATION = "species_identification"
@@ -267,6 +273,12 @@ class DoctorEnvironment(BaseModel):
     # relative-path convention.
     research_export_root: Path
     classifier_manifest_export_root: Path
+    # Remote / Intermittent-WAN Transport Foundation v1: same
+    # runtime_home-anchored-default convention as `media_root`/
+    # `backup_root` above, not `camera_node_transport_ledger`'s own
+    # cwd-relative `resolve_transport_root()` default -- Doctor must work
+    # from any starting working directory (see this class's own docstring).
+    transport_root: Path
 
 
 def resolve_doctor_environment(*, runtime_home: Path | None = None) -> DoctorEnvironment:
@@ -285,6 +297,7 @@ def resolve_doctor_environment(*, runtime_home: Path | None = None) -> DoctorEnv
     backup_root = Path(os.getenv(BACKUP_ROOT_ENV_VAR) or str(home / "data" / "backups"))
     research_export_root = home / "data" / "research_exports"
     classifier_manifest_export_root = home / "data" / "classifier_manifest_exports"
+    transport_root = Path(os.getenv(TRANSPORT_ROOT_ENV_VAR) or str(home / "data" / "camera_node_transport"))
     return DoctorEnvironment(
         runtime_home=home,
         db_url=db_url,
@@ -292,6 +305,7 @@ def resolve_doctor_environment(*, runtime_home: Path | None = None) -> DoctorEnv
         backup_root=backup_root,
         research_export_root=research_export_root,
         classifier_manifest_export_root=classifier_manifest_export_root,
+        transport_root=transport_root,
     )
 
 
@@ -1128,6 +1142,125 @@ def _interpret_camera_node(gathered: dict[str, Any], *, now: datetime) -> Doctor
 
 
 # --------------------------------------------------------------------------
+# Camera Node transport (Remote / Intermittent-WAN Transport Foundation v1)
+# --------------------------------------------------------------------------
+
+# A backlog summary older than this is presented as stale rather than
+# current -- the Node only reports it as a side effect of an outbound
+# transport call (see camera_node_transport.py's module docstring: Doctor
+# never dials out itself), so a long silence here means "we don't know," not
+# "the backlog is empty." Deliberately generous: an intermittently-connected
+# remote Node over a slow/metered link should not read as broken just
+# because it has not phoned home in the last few minutes.
+CAMERA_NODE_TRANSPORT_STALE_AFTER_SECONDS = 3600.0
+
+
+def _gather_camera_node_transport(engine: Engine, *, transport_root: Path) -> dict[str, Any]:
+    # Raw SQL, not `select(SourceProviderConfigurationModel...)`: that ORM
+    # class is defined in `repository.product_repository` (a much heavier
+    # module `diagnostics.doctor` deliberately does not import today -- see
+    # every other `_gather_*` here, which reads `storage.models` classes
+    # only). The table itself (`source_provider_configurations`) is stable,
+    # durable product schema; reading it by name avoids inventing that new
+    # cross-module dependency for one bounded read.
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT camera_sources.id, camera_sources.name, source_provider_configurations.config_json "
+                "FROM source_provider_configurations "
+                "JOIN camera_sources ON camera_sources.id = source_provider_configurations.source_id "
+                "WHERE source_provider_configurations.provider_key = 'camera_node'"
+            )
+        ).all()
+    sources: list[dict[str, Any]] = []
+    for source_id, name, config_json in rows:
+        try:
+            config = json.loads(config_json)
+        except (TypeError, ValueError):
+            config = {}
+        node_id = config.get("node_id")
+        transport_configured = bool(config.get("node_transport_credential"))
+        summary = (
+            read_camera_node_transport_backlog_summary(node_id, transport_root=transport_root)
+            if node_id
+            else None
+        )
+        sources.append(
+            {
+                "source_id": source_id,
+                "name": name,
+                "node_id": node_id,
+                "transport_configured": transport_configured,
+                "backlog_summary": summary,
+            }
+        )
+    return {"sources": sources}
+
+
+def _interpret_camera_node_transport(gathered: dict[str, Any], *, now: datetime) -> DoctorCheckResult:
+    sources = gathered.get("sources", [])
+    transport_sources = [item for item in sources if item.get("transport_configured")]
+    if not transport_sources:
+        return DoctorCheckResult(
+            code=DoctorCheckCode.CAMERA_NODE_TRANSPORT,
+            component="Camera Node transport",
+            status=DoctorStatus.PASS,
+            summary="No paired Camera Node has remote transport configured.",
+            recoverability=DoctorRecoverability.INFORMATIONAL,
+            detail="Remote / Intermittent-WAN Transport Foundation v1 is available but not in use.",
+        )
+    context: dict[str, Any] = {"sources": []}
+    worst_status = DoctorStatus.PASS
+    summaries: list[str] = []
+    for item in transport_sources:
+        summary = item.get("backlog_summary")
+        entry: dict[str, Any] = {"source_id": item["source_id"], "name": item["name"], "node_id": item["node_id"]}
+        if summary is None:
+            entry["state"] = "never_contacted"
+            worst_status = DoctorStatus.WARN
+            summaries.append(f"{item['name']}: no transport contact yet")
+        else:
+            reported_at = summary.get("reported_at")
+            age_seconds = (now.timestamp() - reported_at) if isinstance(reported_at, (int, float)) else None
+            stale = age_seconds is None or age_seconds > CAMERA_NODE_TRANSPORT_STALE_AFTER_SECONDS
+            pending_count = summary.get("pending_count", 0)
+            failed_terminal_count = summary.get("failed_terminal_count", 0)
+            entry.update(
+                state="stale" if stale else "reporting",
+                age_seconds=age_seconds,
+                pending_count=pending_count,
+                pending_bytes=summary.get("pending_bytes", 0),
+                failed_terminal_count=failed_terminal_count,
+                last_error=summary.get("last_error"),
+            )
+            if stale:
+                worst_status = DoctorStatus.WARN
+                summaries.append(f"{item['name']}: last transport contact was over an hour ago")
+            elif failed_terminal_count:
+                worst_status = DoctorStatus.WARN
+                summaries.append(f"{item['name']}: {failed_terminal_count} item(s) cannot be delivered (incompatible)")
+            elif pending_count:
+                summaries.append(f"{item['name']}: {pending_count} item(s) backlogged, draining")
+            else:
+                summaries.append(f"{item['name']}: backlog clear")
+        context["sources"].append(entry)
+    return DoctorCheckResult(
+        code=DoctorCheckCode.CAMERA_NODE_TRANSPORT,
+        component="Camera Node transport",
+        status=worst_status,
+        summary="; ".join(summaries) if summaries else "Camera Node transport is healthy.",
+        recoverability=DoctorRecoverability.DEGRADED if worst_status != DoctorStatus.PASS else None,
+        user_action=(
+            "Check host reachability from the Camera Node, or run the Node's own "
+            "`/node/v1/transport/status` if the Node itself is reachable."
+            if worst_status != DoctorStatus.PASS
+            else None
+        ),
+        diagnostic_context=context,
+    )
+
+
+# --------------------------------------------------------------------------
 # FFmpeg
 # --------------------------------------------------------------------------
 
@@ -1814,6 +1947,27 @@ def run_doctor(
             skip_reason="Skipped because the database is unavailable.",
         )
     checks.append(camera_check)
+
+    if engine is not None:
+        checks.append(
+            _execute_check(
+                code=DoctorCheckCode.CAMERA_NODE_TRANSPORT,
+                component="Camera Node transport",
+                gather=lambda: _gather_camera_node_transport(engine, transport_root=environment.transport_root),
+                interpret=lambda gathered: _interpret_camera_node_transport(gathered, now=current_time),
+                timeout_seconds=timeout_seconds,
+            )
+        )
+    else:
+        checks.append(
+            _execute_check(
+                code=DoctorCheckCode.CAMERA_NODE_TRANSPORT,
+                component="Camera Node transport",
+                gather=None,
+                interpret=lambda gathered: _interpret_camera_node_transport(gathered, now=current_time),
+                skip_reason="Skipped because the database is unavailable.",
+            )
+        )
 
     checks.append(
         _execute_check(

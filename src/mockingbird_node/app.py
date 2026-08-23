@@ -29,6 +29,14 @@ from .providers import (
     create_camera_provider,
 )
 from .selftest import run_startup_self_test
+from .transport_client import TRANSPORT_PROTOCOL_VERSION, TransportClient
+from .transport_credential import (
+    clear_transport_credential,
+    load_transport_credential,
+    mint_and_persist_transport_credential,
+)
+from .transport_spool import PRIORITY_NORMAL, SpoolCapacityError, TransportSpool
+from .transport_worker import TransportWorkerState, run_transport_worker_loop
 from .watchdog import (
     WatchdogProgress,
     notify_socket_path,
@@ -58,6 +66,34 @@ class PairResponse(BaseModel):
     api_version: str
     credential: str
     cameras: list[dict[str, object]]
+    # Remote / Intermittent-WAN Transport Foundation v1: additive-only field
+    # -- an old host client that does not know this key simply ignores it
+    # (see the C3 additive-compatibility precedent already used elsewhere in
+    # this file/module). None when this Node has no host address configured
+    # (`config.transport_enabled` is False): there is nothing to push to,
+    # so nothing is minted. See transport_credential.py's module docstring
+    # for why this is a *separate* secret from `credential` above.
+    transport_credential: str | None = None
+
+
+class QueueEvidenceRequest(BaseModel):
+    """Enqueue one bounded evidence capture for durable, retried delivery.
+
+    Reuses the exact profile/provider/`camera_busy` machinery
+    `CaptureRequest`/`capture_response` already use -- this is not a new
+    capture mechanism, only a new "durably queue it instead of returning it
+    synchronously" wrapper around the existing one.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    profile_id: str = Field(min_length=1, max_length=120)
+    priority: int = Field(default=PRIORITY_NORMAL, ge=0, le=1000)
+    reason: str = Field(default="manual", min_length=1, max_length=60, pattern=r"^[A-Za-z0-9_.:-]+$")
+
+
+class QueueEvidenceResponse(BaseModel):
+    item_id: str
+    status: str
 
 
 class CaptureRequest(BaseModel):
@@ -293,6 +329,36 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
         min(_ANALYSIS_MAX_CONNECTIONS, max(1, config.max_preview_viewers))
     )
 
+    # Remote / Intermittent-WAN Transport Foundation v1. The spool exists
+    # whenever a directory was given -- it durably retains queued evidence
+    # even if no host address is configured yet (see
+    # `CameraNodeConfig.transport_enabled`); only the *worker* that drains
+    # it to a host is conditional on that. `transport_spool_dir=None` (the
+    # dataclass default many existing tests construct `CameraNodeConfig`
+    # with directly, bypassing `from_environment`) degrades the same way
+    # `pairing_state_path=None` already does elsewhere in this file: no
+    # crash, the feature is simply unavailable for that instance.
+    transport_spool = (
+        TransportSpool(
+            config.transport_spool_dir,
+            max_bytes=config.transport_spool_max_bytes,
+            max_items=config.transport_spool_max_items,
+            min_free_bytes=config.transport_spool_min_free_bytes,
+            backoff_base_seconds=config.transport_backoff_base_seconds,
+            backoff_cap_seconds=config.transport_backoff_cap_seconds,
+        )
+        if config.transport_spool_dir is not None
+        else None
+    )
+    transport_worker_state = TransportWorkerState()
+    transport_credential_holder: dict[str, str | None] = {
+        "value": (
+            load_transport_credential(config.transport_credential_state_path, expected_node_id=node_id)
+            if config.transport_credential_state_path is not None
+            else None
+        )
+    }
+
     # Boot Identity + Autonomous Recovery v1: resolved once, synchronously,
     # before this app is ever returned to uvicorn -- so the very first
     # `/node/v1/health` response already carries them, with zero per-request
@@ -324,7 +390,14 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
             ),
         )
 
-    def capture_response(camera_id: str, profile_id: str) -> Response:
+    def capture_image(camera_id: str, profile_id: str) -> tuple[bytes, NodeCaptureProfile, int, int, str | None]:
+        """Shared by `/capture`, `/evidence-burst`, and the transport
+        `queue/evidence` producer -- one profile/provider/`camera_busy`
+        code path, not three. Raises the identical `HTTPException`s the
+        original inline `capture_response` body raised; this is a pure
+        extraction, not a behavior change (see Remote / Intermittent-WAN
+        Transport Foundation v1)."""
+
         camera = {item.camera_id: item for item in provider.cameras()}.get(camera_id)
         if camera is None:
             raise HTTPException(status_code=404, detail="Camera is unavailable.")
@@ -382,6 +455,10 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
                 detail="Camera frame is outside the selected profile bounds.",
                 headers={"X-MockingBird-Node-Error": "node_snapshot_invalid"},
             )
+        return image, profile, dimensions[0], dimensions[1], monitoring_recovery
+
+    def capture_response(camera_id: str, profile_id: str) -> Response:
+        image, profile, _width, _height, monitoring_recovery = capture_image(camera_id, profile_id)
         captured_at = datetime.now(UTC).isoformat()
         headers = {
             "Cache-Control": "no-store",
@@ -539,7 +616,28 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
         except ValueError as error:
             status, detail = {"pairing_code_expired": (410, "Pairing code expired."), "pairing_code_used": (409, "Pairing code was already used."), "pairing_rate_limited": (429, "Pairing attempts are temporarily limited.")}.get(str(error), (401, "Pairing code was rejected."))
             raise HTTPException(status_code=status, detail=detail) from None
-        return PairResponse(node_id=node_id, display_name=config.display_name, api_version=NODE_API_VERSION, credential=credential, cameras=[camera_payload(camera) for camera in provider.cameras()])
+        # Remote / Intermittent-WAN Transport Foundation v1: minted exactly
+        # once per successful pairing, mirroring the pairing credential's
+        # own one-shot lifecycle (`pairing.pair` above can itself only
+        # succeed once until a revoke) -- never re-minted on an already
+        # -transport-paired restart, since `transport_credential_holder` was
+        # already loaded from durable state at app construction.
+        transport_credential = transport_credential_holder["value"]
+        if config.transport_enabled and transport_credential is None:
+            transport_credential = (
+                mint_and_persist_transport_credential(config.transport_credential_state_path, node_id=node_id)
+                if config.transport_credential_state_path is not None
+                else secrets.token_urlsafe(32)
+            )
+            transport_credential_holder["value"] = transport_credential
+        return PairResponse(
+            node_id=node_id,
+            display_name=config.display_name,
+            api_version=NODE_API_VERSION,
+            credential=credential,
+            cameras=[camera_payload(camera) for camera in provider.cameras()],
+            transport_credential=transport_credential,
+        )
 
     @app.get("/node/v1/capabilities")
     def capabilities(_: str = Depends(require_pairing)) -> dict[str, object]:
@@ -697,9 +795,92 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
         response.headers["X-MockingBird-Shadow-Only"] = "true"
         return response
 
+    @app.post(
+        "/node/v1/cameras/{camera_id}/queue/evidence",
+        response_model=QueueEvidenceResponse,
+        status_code=202,
+    )
+    def queue_evidence(
+        camera_id: str,
+        payload: QueueEvidenceRequest,
+        _: str = Depends(require_pairing),
+    ) -> QueueEvidenceResponse:
+        """Capture one bounded evidence still and durably queue it for
+        delivery instead of returning it synchronously (contrast `/capture`).
+        This is the Remote / Intermittent-WAN Transport Foundation v1
+        producer side -- see docs/remote-intermittent-wan-transport-v1
+        -design.md, "Unit of queued transport work"."""
+
+        if transport_spool is None:
+            raise HTTPException(status_code=503, detail="Transport is not configured on this Node.")
+        image, profile, width, height, _monitoring_recovery = capture_image(camera_id, payload.profile_id)
+        try:
+            item_id = transport_spool.enqueue(
+                kind="evidence_capture",
+                payload=image,
+                media_type="image/jpeg",
+                priority=payload.priority,
+                metadata={
+                    "camera_id": camera_id,
+                    "profile_id": profile.profile_id,
+                    "reason": payload.reason,
+                    "width": width,
+                    "height": height,
+                    "captured_at": datetime.now(UTC).isoformat(),
+                },
+            )
+        except SpoolCapacityError as error:
+            raise HTTPException(
+                status_code=507,
+                detail="Transport spool capacity is exhausted.",
+                headers={"X-MockingBird-Node-Error": f"transport_spool_{error}"},
+            ) from None
+        return QueueEvidenceResponse(item_id=item_id, status="queued")
+
+    @app.get("/node/v1/transport/status")
+    def transport_status(_: str = Depends(require_pairing)) -> dict[str, object]:
+        """Local, paired-only transport diagnostics -- same shape family as
+        `/node/v1/health`. See Phase K: this is what a support bundle reads
+        to tell "Camera Node itself unhealthy" apart from "host unreachable"
+        or "backlog pending/draining"."""
+
+        if transport_spool is None:
+            return {"transport_enabled": False}
+        diagnostics = transport_spool.diagnostics()
+        return {
+            "transport_enabled": config.transport_enabled,
+            "transport_protocol_version": TRANSPORT_PROTOCOL_VERSION,
+            "connected": transport_worker_state.connected,
+            "active_uploads": transport_worker_state.active_uploads,
+            "last_contact_attempt_at": transport_worker_state.last_contact_attempt_at,
+            "last_contact_success_at": transport_worker_state.last_contact_success_at,
+            "last_error": transport_worker_state.last_error,
+            "consecutive_failures": transport_worker_state.consecutive_failures,
+            "delivered_count_total": transport_worker_state.delivered_count_total,
+            "protocol_incompatible_since": transport_worker_state.protocol_incompatible_since,
+            "authentication_rejected_since": transport_worker_state.authentication_rejected_since,
+            "pending_count": diagnostics.pending_count,
+            "pending_bytes": diagnostics.pending_bytes,
+            "transmitting_count": diagnostics.transmitting_count,
+            "failed_terminal_count": diagnostics.failed_terminal_count,
+            "oldest_pending_age_seconds": diagnostics.oldest_pending_age_seconds,
+            "evicted_count_total": diagnostics.evicted_count_total,
+            "evicted_bytes_total": diagnostics.evicted_bytes_total,
+            "last_eviction_reason": diagnostics.last_eviction_reason,
+            "acknowledged_count_total": diagnostics.acknowledged_count_total,
+            "free_bytes": diagnostics.free_bytes,
+        }
+
     @app.post("/node/v1/pair/revoke", status_code=204)
     def revoke(credential: str = Depends(require_pairing)) -> Response:
         pairing.revoke(credential)
+        # A revoked Node should not keep presenting a transport credential
+        # the host may no longer recognize as attached to any Source --
+        # mirrors `_PairingState.revoke()` clearing its own digest just
+        # above.
+        transport_credential_holder["value"] = None
+        if config.transport_credential_state_path is not None:
+            clear_transport_credential(config.transport_credential_state_path)
         return Response(status_code=204)
 
     @app.on_event("startup")
@@ -748,11 +929,49 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
                 )
             )
 
+    @app.on_event("startup")
+    async def start_transport_worker() -> None:
+        # Remote / Intermittent-WAN Transport Foundation v1: only starts
+        # when there is both somewhere to send work (`transport_enabled`,
+        # i.e. a host address is configured) and somewhere durable to hold
+        # it (`transport_spool` constructed). An un-configured Node keeps
+        # behaving exactly as before -- no background task, no outbound
+        # connection ever attempted.
+        if transport_spool is None or not config.transport_enabled:
+            return
+        app.state.transport_stop_event = asyncio.Event()
+        app.state.transport_task = asyncio.create_task(
+            run_transport_worker_loop(
+                spool=transport_spool,
+                client=TransportClient(),
+                state=transport_worker_state,
+                host_base_address=config.host_base_address,
+                credential_provider=lambda: transport_credential_holder["value"],
+                node_id=node_id,
+                chunk_size=config.transport_chunk_size_bytes,
+                max_concurrent_uploads=config.transport_max_concurrent_uploads,
+                max_bytes_per_second=config.transport_max_bytes_per_second,
+                stop_event=app.state.transport_stop_event,
+            )
+        )
+
     @app.on_event("shutdown")
-    def shutdown_provider() -> None:
+    async def shutdown_provider() -> None:
         watchdog_task = getattr(app.state, "watchdog_task", None)
         if watchdog_task is not None:
             watchdog_task.cancel()
+        transport_task = getattr(app.state, "transport_task", None)
+        if transport_task is not None:
+            stop_event = getattr(app.state, "transport_stop_event", None)
+            if stop_event is not None:
+                stop_event.set()
+            transport_task.cancel()
+            try:
+                await transport_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        if transport_spool is not None:
+            transport_spool.close()
         provider.close()
 
     app.state.analysis_parts_for_test = analysis_parts  # local contract test only; never an HTTP response
@@ -762,4 +981,9 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
     app.state.self_test_result = self_test_result
     app.state.watchdog_progress = watchdog_progress
     app.state.watchdog_task = None
+    app.state.transport_spool = transport_spool  # local test/diagnostic access only
+    app.state.transport_worker_state = transport_worker_state
+    app.state.transport_credential_holder = transport_credential_holder
+    app.state.transport_task = None
+    app.state.transport_stop_event = None
     return app
