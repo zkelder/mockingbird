@@ -2541,9 +2541,30 @@ reviewed truth by itself; the existing, completely unmodified `ReviewLabel`
 correction path as the sole truth boundary; and Today/Bird Log/history
 surfacing with no backend changes required. Audio feeds Evidence →
 Interpretation → Review Decision → Observation, exactly as this entry
-originally specified; no second truth system was created. Visual/audio/
-context fusion (associating an acoustic and a visual detection of the same
-encounter) remains explicitly future work, not attempted here.
+originally specified; no second truth system was created.
+
+Visual/audio/context fusion -- the piece explicitly left as future work
+above -- shipped as Multimodal Observation & Soundscape v1 (2026-08-23, see
+[multimodal-observation-soundscape-v1-contract.md](multimodal-observation-soundscape-v1-contract.md)):
+a bounded, deterministic temporal-association engine (explicit fixed
+windows, never a probabilistic fusion framework) links a visual and an
+acoustic candidate Visit judged to describe the same or a possibly-related
+encounter, additively (`visit_associations`, schema 46) -- never a merged
+truth object, never a modification to either Visit's own evidence or review
+state. Reproduced and closed the carried-forward acoustic idempotency gap:
+two distinct species detected in an identical merged BirdNET window used to
+collide (the second silently dropped); species is now part of the
+idempotency key, backed by a new DB-level unique index (schema 45).
+Conservative multi-subject/multi-species handling (an acoustic detection
+near several simultaneous visual subjects is never confidently assigned to
+one of them; multiple simultaneous acoustic species each survive and
+associate independently) is proven directly in a nine-scenario acceptance
+corpus. Extends Visit Detail, research export, and a new bounded read-only
+Soundscape summary endpoint; deliberately does not implement Today/Bird
+Log list-level deduplication of a confidently-associated pair (a real,
+disclosed, bounded gap -- see the contract doc's "Known limitations") or
+real hardware timing validation (no colocated camera+microphone exists yet
+to measure actual clock alignment).
 
 **Ecological export & sharing interoperability.** Research / Conservation /
 Export Interoperability v1 (2026-08-22, see "Completed foundations" below

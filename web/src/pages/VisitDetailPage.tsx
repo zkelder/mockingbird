@@ -820,6 +820,56 @@ export function VisitDetailPage({
         </div>
       ) : null}
 
+      {/*
+        Multimodal Observation & Soundscape v1 (see docs/multimodal-
+        observation-soundscape-v1-contract.md): a durable, additive link to
+        an opposite-modality Visit the association engine judged temporally
+        related -- empty, and therefore invisible, for the ordinary single-
+        modality case. Plain wording only ("Also heard/seen nearby",
+        "Evidence agrees/differs") -- never "BioCLIP"/"BirdNET"/raw scores.
+        Each associated Visit remains its own independently reviewable
+        Visit; this panel is navigation/context only, never a shared
+        correction surface, matching the sibling-Visits panel above exactly.
+      */}
+      {detail.multimodal_associations.length > 0
+        ? detail.multimodal_associations.map((association) => (
+            <div className="notice-panel" key={association.association_id}>
+              <EvidenceBadge
+                label={association.other_modality === "acoustic" ? "Also heard nearby" : "Also seen nearby"}
+                tone="evidence"
+              />
+              {association.taxon_agreement === "agrees" ? (
+                <EvidenceBadge label="Evidence agrees" tone="evidence" />
+              ) : association.taxon_agreement === "differs" ? (
+                <EvidenceBadge label="Evidence differs" tone="review" />
+              ) : null}
+              {association.tier === "possible" ? (
+                <EvidenceBadge label="Needs review" tone="quiet" />
+              ) : null}
+              <p>
+                {association.tier === "associated"
+                  ? "Likely the same encounter."
+                  : "Possibly related -- not confirmed as the same encounter."}
+              </p>
+              <div className="detail-actions">
+                <button
+                  className="secondary-action"
+                  onClick={() => onOpenVisit(association.other_visit.id)}
+                  type="button"
+                >
+                  {displayTaxonomyLabel(
+                    association.other_visit.reviewed_label ??
+                      association.other_visit.species_guess ??
+                      association.other_visit.subject_label,
+                    taxonomyLabels,
+                  )}{" "}
+                  ({formatLabel(association.other_visit.review_status)})
+                </button>
+              </div>
+            </div>
+          ))
+        : null}
+
       {message ? <div className="notice-panel">{message}</div> : null}
 
       {/*

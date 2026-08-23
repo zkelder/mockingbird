@@ -9,7 +9,7 @@ the real product database -- mirroring the established
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -26,10 +26,12 @@ from mockingbird.api.schemas import (
 )
 from mockingbird.observation.candidate_visit_authority import ObservationAuthorityMode
 from mockingbird.repository.product_repository import (
+    AcousticDetectionFacts,
     CandidateEvidenceItem,
     CandidateVisitProposalFacts,
     CreateCandidateVisitRequest,
     EventModel,
+    MediaAssetModel,
     ProductRepository,
     VisitModel,
 )
@@ -386,6 +388,77 @@ def test_multi_subject_event_exports_separate_subject_observations(repository: P
     assert first.event_id == second.event_id  # one shared Event
     assert first.observation_id != second.observation_id  # two distinct Observations
     assert {first.taxon_label, second.taxon_label} == {"northern_cardinal", "house_finch"}
+
+
+# --- Multimodal Observation & Soundscape v1, Phase L ------------------------
+
+
+def _seed_audio_media_asset(repository: ProductRepository, *, media_asset_id: str, captured_at: datetime) -> None:
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                MediaAssetModel(
+                    id=media_asset_id, source_id="source-backyard-demo", stream_id=STREAM_ID,
+                    filename=f"{media_asset_id}.wav", content_type="audio/wav", media_type="audio",
+                    local_path=f"/tmp/{media_asset_id}.wav", original_filename=f"{media_asset_id}.wav",
+                    file_size_bytes=1024, created_at=datetime.now(UTC), captured_at=captured_at,
+                    notes="Test-seeded audio MediaAsset.",
+                )
+            )
+
+
+def test_export_distinguishes_visual_acoustic_and_multimodal_evidence(repository: ProductRepository) -> None:
+    """Phase L: research-safe export can distinguish visual, acoustic, and
+    multimodally-associated evidence without ever letting model agreement
+    become observational authority -- `evidence_modality`/`multimodal_
+    association` are separate, honest facts alongside the unchanged
+    reviewed-truth precedence the rest of this test file already proves."""
+
+    _activate(repository)
+
+    visual_only_id = _create_visit(repository, proposal_id="visit-episode:visual-only", observed_at=NOW)
+
+    associated_visual_id = _create_visit(
+        repository, proposal_id="visit-episode:multimodal-visual", observed_at=NOW + timedelta(hours=1),
+    )
+    _seed_audio_media_asset(
+        repository, media_asset_id="media-audio-export", captured_at=NOW + timedelta(hours=1, seconds=2),
+    )
+    acoustic_outcome = repository.create_acoustic_candidate_visit(
+        stream_id=STREAM_ID, media_asset_id="media-audio-export",
+        detection=AcousticDetectionFacts(
+            common_name="Northern Cardinal", scientific_name="Cardinalis cardinalis",
+            confidence=0.9, window_start_ms=0, window_end_ms=3000,
+        ),
+        model_provenance={"model": "birdnet-test"}, observed_at=NOW + timedelta(hours=1, seconds=2),
+        adapter_id="birdnet", adapter_name="BirdNET-Analyzer",
+    )
+    assert acoustic_outcome.outcome == "created"
+
+    observations, _ = repository.research_export_eligibility_preview(ResearchExportFilters())
+    by_id = {obs.observation_id: obs for obs in observations}
+
+    visual_only = by_id[visual_only_id]
+    assert visual_only.evidence_modality == "visual"
+    assert visual_only.multimodal_association == "none"
+
+    acoustic_only = by_id[acoustic_outcome.visit_id]
+    assert acoustic_only.evidence_modality == "acoustic"
+
+    associated_visual = by_id[associated_visual_id]
+    assert associated_visual.evidence_modality == "visual"
+    assert associated_visual.multimodal_association == "associated"
+    assert acoustic_only.multimodal_association == "associated"
+
+    # Round-trips into the JSON/CSV row shapes without dropping the facts.
+    from mockingbird.research.research_export import observation_to_csv_row, observation_to_json
+
+    json_row = observation_to_json(associated_visual)
+    assert json_row["evidence_modality"] == "visual"
+    assert json_row["multimodal_association"] == "associated"
+    csv_row = observation_to_csv_row(associated_visual)
+    assert csv_row["evidence_modality"] == "visual"
+    assert csv_row["multimodal_association"] == "associated"
 
 
 # --- filters (regression #25: no-Zone configuration) ------------------------

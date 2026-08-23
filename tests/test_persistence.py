@@ -740,6 +740,101 @@ def test_schema_43_upgrades_to_current_with_acoustic_runtime_queue(
         migrated.close()
 
 
+def test_schema_44_upgrades_to_current_with_acoustic_species_scoped_idempotency(
+    tmp_path: Path,
+) -> None:
+    """Multimodal Observation & Soundscape v1, Phase B: a real database at
+    the previously-current schema (v44), with a real pre-existing
+    `species_suggestions` row (from before the species-scoped idempotency
+    fix existed), upgrades cleanly through the new unique index without
+    disturbing that row -- mirroring `test_schema_43_upgrades_to_current_
+    with_acoustic_runtime_queue`'s own upgrade-in-place proof."""
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = repository_for(db_path)
+    existing_source_count = len(repository.list_sources())
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql("DROP INDEX IF EXISTS ux_species_suggestions_acoustic_idempotency")
+        # A real pre-migration row, exactly as the v44 acoustic path would
+        # have left it: only the original columns matter here.
+        connection.execute(
+            text(
+                "INSERT INTO species_suggestions "
+                "(id, adapter_id, adapter_name, suggested_label, rank, alternatives_json, status, "
+                "created_at, window_start_ms, window_end_ms) "
+                "VALUES ('species-suggestion-legacy', 'birdnet', 'BirdNET-Analyzer', "
+                "'northern_cardinal', 1, '[]', 'pending', :now, 0, 3000)"
+            ),
+            {"now": datetime.now(UTC)},
+        )
+        connection.exec_driver_sql("UPDATE mockingbird_schema SET version = 44 WHERE singleton_id = 1")
+    engine.dispose()
+
+    migrated = repository_for(db_path)
+    try:
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+        assert len(migrated.list_sources()) == existing_source_count
+
+        with migrated.engine.connect() as connection:
+            index_names = {
+                row[1]
+                for row in connection.exec_driver_sql("PRAGMA index_list(species_suggestions)").fetchall()
+            }
+            assert "ux_species_suggestions_acoustic_idempotency" in index_names
+
+            row = connection.execute(
+                text("SELECT suggested_label, window_start_ms FROM species_suggestions WHERE id = :id"),
+                {"id": "species-suggestion-legacy"},
+            ).first()
+            assert row is not None
+            assert row[0] == "northern_cardinal"
+            assert row[1] == 0
+    finally:
+        migrated.close()
+
+
+def test_schema_45_upgrades_to_current_with_visit_multimodal_association(
+    tmp_path: Path,
+) -> None:
+    """Multimodal Observation & Soundscape v1, Phase D/E: a real database at
+    the previously-current schema (v45) upgrades cleanly through the new
+    additive `visit_associations` table -- mirroring `_migrate_to_scene_
+    confusor_regions`'s own "additive table, no seeded row" proof pattern
+    (`test_schema_34...` equivalent) applied to this milestone's table."""
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = repository_for(db_path)
+    existing_source_count = len(repository.list_sources())
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql("DROP TABLE visit_associations")
+        connection.exec_driver_sql("UPDATE mockingbird_schema SET version = 45 WHERE singleton_id = 1")
+    engine.dispose()
+
+    migrated = repository_for(db_path)
+    try:
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+        assert len(migrated.list_sources()) == existing_source_count
+
+        with migrated.engine.connect() as connection:
+            columns = {
+                row[1] for row in connection.exec_driver_sql("PRAGMA table_info(visit_associations)").fetchall()
+            }
+            assert {
+                "id", "visual_visit_id", "acoustic_visit_id", "tier", "overlap_ms", "gap_ms",
+                "engine_version", "created_at", "updated_at",
+            } <= columns
+            count = connection.exec_driver_sql("SELECT COUNT(*) FROM visit_associations").scalar()
+            assert count == 0
+    finally:
+        migrated.close()
+
+
 def test_a_mid_chain_migration_failure_rolls_back_every_step_not_only_its_own(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -283,6 +283,8 @@ from mockingbird.api.schemas import (
     OnvifRecordProfileResponse,
     PlaceActivityReportRequest,
     PlaceActivityReportResponse,
+    SoundscapeSummaryRequest,
+    SoundscapeSummaryResponse,
     SourceFolderImportPreviewRequest,
     SourceFolderImportPreviewResponse,
     SourceProviderConfiguration,
@@ -12899,6 +12901,10 @@ async def get_visit_detail(visit_id: str) -> VisitDetail:
         curation_history=repository.visit_curation_history(visit.id),
         resulting_visits=_redact_visits(repository.resulting_visits_for(visit.id)),
         sibling_visits=_redact_visits(sibling_visits),
+        multimodal_associations=[
+            association.model_copy(update={"other_visit": _redact_visit(association.other_visit)})
+            for association in repository.multimodal_associations_for_visit(visit.id)
+        ],
         eligible_zones=[
             zone
             for zone in repository.zones_for_stream(event.stream_id)
@@ -14292,6 +14298,23 @@ async def get_place_activity_report(
     exposure history; creates no review/Observation/product state."""
 
     return get_repository().place_activity_report(payload)
+
+
+@app.post(
+    "/api/analytics/soundscape-summary",
+    response_model=SoundscapeSummaryResponse,
+)
+async def get_soundscape_summary(
+    payload: SoundscapeSummaryRequest,
+) -> SoundscapeSummaryResponse:
+    """Multimodal Observation & Soundscape v1, Phase K (see docs/
+    multimodal-observation-soundscape-v1-contract.md): the bounded
+    acoustic-history foundation for an explicit reporting period -- which
+    species were heard, acoustic encounter counts, hourly activity, and
+    the visual-only/acoustic-only/multimodal breakdown. Read-only; creates
+    no review/Observation/product state."""
+
+    return get_repository().soundscape_summary(start_at=payload.start_at, end_at=payload.end_at)
 
 
 @app.get("/api/alerts/unread", response_model=ProductAlertUnreadResponse)

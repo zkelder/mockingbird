@@ -27,7 +27,9 @@ from typing import Any, Iterable, Sequence
 from urllib.parse import urlsplit, urlunsplit
 import uuid
 
-from sqlalchemy import CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text,
+)
 from sqlalchemy import Engine, and_, delete, func, or_, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
@@ -60,6 +62,11 @@ from mockingbird.analytics.place_activity_report_adapter import (
     visit_fact_from_stream_visit_summary,
 )
 from mockingbird.analytics.place_change_summary import PlaceChangeSummary, compute_place_change_summary
+from mockingbird.analytics.soundscape import (
+    SoundscapeSummary,
+    SoundscapeVisitFact,
+    compute_soundscape_summary,
+)
 from mockingbird.analytics.representative_evidence import (
     EvidenceCandidateFact,
     select_representative_evidence,
@@ -151,6 +158,14 @@ from mockingbird.observation.candidate_visit_authority import (
 from mockingbird.observation.candidate_quality_gate import evaluate_evidence_admission
 from mockingbird.observation.contracts import CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE
 from mockingbird.observation.localization_attribution import geometry_attribution_from_json
+from mockingbird.observation.multimodal_association import (
+    ENGINE_VERSION as MULTIMODAL_ASSOCIATION_ENGINE_VERSION,
+    POSSIBLE_WINDOW_MS as MULTIMODAL_POSSIBLE_WINDOW_MS,
+    AssociationCandidate,
+    classify_taxon_agreement,
+    evaluate_temporal_association,
+)
+from mockingbird.observation.temporal_evidence import event_evidence_interval
 from mockingbird.observation.scene_confusor import (
     SceneConfusorConfig,
     SceneRegionSnapshot,
@@ -549,9 +564,13 @@ from mockingbird.api.schemas import (
     RepresentativeEvidence,
     VisitCropHistoryEntry,
     VisitEvidenceFrame,
+    SoundscapeHourlyActivity,
+    SoundscapeSpeciesHeardEntry,
+    SoundscapeSummaryResponse,
     VisitMergeCandidate,
     VisitMergeCandidatesResponse,
     VisitMergePreview,
+    VisitMultimodalAssociation,
     VisitMergePreviewRequest,
     VisitMergeRequest,
     VisitMergeResponse,
@@ -2102,6 +2121,37 @@ class MotionEvidenceModel(Base):
 
 class SpeciesSuggestionModel(Base):
     __tablename__ = "species_suggestions"
+    __table_args__ = (
+        # Multimodal Observation & Soundscape v1, Phase B (schema 45, see
+        # docs/multimodal-observation-soundscape-v1-contract.md,
+        # "Acoustic idempotency"): the acoustic candidate-Visit idempotency
+        # key was `(media_asset_id, window_start_ms, window_end_ms,
+        # adapter_id)` -- species was never part of it, so two distinct
+        # species genuinely detected in the identical merged window
+        # collided: the second species' insert matched the first species'
+        # already-inserted row and was silently dropped as
+        # `idempotent_repeat`. `create_acoustic_candidate_visit`/`extend_
+        # acoustic_candidate_visit` now filter on `suggested_label` too
+        # (application-level fix); this index is the DB-level backstop.
+        # Provably safe to add on any pre-existing real database: the *old*
+        # 4-column key already guaranteed at most one row per
+        # (media_asset_id, window_start_ms, window_end_ms, adapter_id)
+        # combination regardless of species, so no two rows can already
+        # share the *stricter* 5-column key either -- a real historical
+        # duplicate under the new key is structurally impossible, only a
+        # missing second-species row (see the migration for the full proof).
+        # Scoped to `window_start_ms IS NOT NULL` (SQLite's own NULL-is-
+        # distinct semantics would already exclude every image-backed
+        # suggestion from colliding, but an explicit partial index matches
+        # this codebase's established convention, e.g.
+        # `VisitCollectionModel.uq_visit_collections_active_normalized_name`).
+        Index(
+            "ux_species_suggestions_acoustic_idempotency",
+            "media_asset_id", "window_start_ms", "window_end_ms", "adapter_id", "suggested_label",
+            unique=True,
+            sqlite_where=text("window_start_ms IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     source_id: Mapped[str | None] = mapped_column(ForeignKey("camera_sources.id"), nullable=True)
@@ -2138,6 +2188,62 @@ class SpeciesSuggestionModel(Base):
     # pre-schema-43 row and every suggestion whose adapter does not supply
     # one reads back `None`, never a fabricated value.
     model_provenance_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class VisitAssociationModel(Base):
+    """Multimodal Observation & Soundscape v1, Phase D/E (schema 46, see
+    docs/multimodal-observation-soundscape-v1-contract.md): a durable,
+    additive link between one visual candidate Visit and one acoustic
+    candidate Visit that `multimodal_association.evaluate_temporal_
+    association` judged temporally related. Deliberately NOT a merged
+    "MultimodalObservation" truth object -- both original Visits/Events
+    remain independently reviewable exactly as before; this table only
+    records that a relationship was found, and how confidently.
+
+    Species/taxon agreement is never stored here -- it is recomputed at
+    read time from whatever each Visit's current top `SpeciesSuggestion`
+    or `reviewed_label` is (see `multimodal_associations_for_visit`), so a
+    later re-suggestion or human correction can never leave a stale
+    "agrees"/"differs" fact behind.
+
+    Only positive findings are persisted: two Visits judged clearly
+    independent (outside even the wider `possible` window) never get a row
+    at all -- consistent with this codebase's "never fabricate a
+    relationship that was never found" convention (mirrors
+    `SceneConfusorRegionModel`/`ObservationCandidateVisitModel` only ever
+    recording what actually happened).
+
+    Rows are upserted, not append-only: `ProductRepository._reconcile_
+    multimodal_association_for_event` always recomputes every row for a
+    visual Event's *current* full sibling set from scratch, so a Visit that
+    was uniquely `"associated"` with one acoustic Visit correctly downgrades
+    to `"possible"` the moment a second visual sibling later makes the
+    acoustic evidence genuinely ambiguous (Phase H) -- never a stale,
+    overconfident claim left standing after new evidence arrives."""
+
+    __tablename__ = "visit_associations"
+    __table_args__ = (
+        UniqueConstraint("visual_visit_id", "acoustic_visit_id", name="uq_visit_association_pair"),
+        Index("ix_visit_associations_visual_visit", "visual_visit_id"),
+        Index("ix_visit_associations_acoustic_visit", "acoustic_visit_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    visual_visit_id: Mapped[str] = mapped_column(ForeignKey("visits.id"), nullable=False)
+    acoustic_visit_id: Mapped[str] = mapped_column(ForeignKey("visits.id"), nullable=False)
+    # "associated" (clear) | "possible" (temporally coincident, not
+    # confidently exclusive) -- see `multimodal_association.AssociationTier`.
+    # There is deliberately no "independent" value; see class docstring.
+    tier: Mapped[str] = mapped_column(String, nullable=False)
+    overlap_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    gap_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Which version of the deterministic tiering rule produced this row --
+    # mirrors `ObservationCandidateVisitModel.assembler_version`'s own
+    # precedent, so a future stricter/looser engine can tell which rule
+    # decided a given historical row without guessing.
+    engine_version: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class SourceProviderConfigurationModel(Base):
@@ -3190,6 +3296,32 @@ def _camera_node_pending_setup_from_model(
     )
 
 
+def _soundscape_summary_response(summary: SoundscapeSummary) -> SoundscapeSummaryResponse:
+    """Reshape the pure `analytics.soundscape.SoundscapeSummary` dataclass
+    into its API response shape -- mirrors `place_activity_report_adapter.
+    place_activity_report_response`'s identical "pure dataclass -> Pydantic
+    response" role, kept local here since this one is small."""
+
+    return SoundscapeSummaryResponse(
+        period_start=summary.period_start,
+        period_end=summary.period_end,
+        species_heard=[
+            SoundscapeSpeciesHeardEntry(
+                label=entry.label, display_name=entry.display_name, encounter_count=entry.encounter_count,
+            )
+            for entry in summary.species_heard
+        ],
+        acoustic_encounter_count=summary.acoustic_encounter_count,
+        visual_only_count=summary.visual_only_count,
+        acoustic_only_count=summary.acoustic_only_count,
+        multimodal_count=summary.multimodal_count,
+        hourly_acoustic_activity=[
+            SoundscapeHourlyActivity(hour=entry.hour, encounter_count=entry.encounter_count)
+            for entry in summary.hourly_acoustic_activity
+        ],
+    )
+
+
 class ProductRepository:
     """Persist product-level stream, zone, event, review, and export state.
 
@@ -3988,6 +4120,14 @@ class ProductRepository:
         visit_for_alert = session.get(VisitModel, visit_id)
         if visit_for_alert is not None:
             self._sync_review_alert(session, visit_for_alert, observed_at)
+        # Multimodal Observation & Soundscape v1, Phase D/H: this Visit's
+        # own Event -- whether freshly minted or an existing multi-subject
+        # Event this Visit just joined as a sibling -- may now temporally
+        # relate to a nearby acoustic candidate Visit. Always a full
+        # recomputation over the Event's current sibling set (see the
+        # method's own docstring for why this is what correctly downgrades
+        # a stale "associated" row the moment a second sibling arrives).
+        self._reconcile_multimodal_association_for_event(session, event_id=event_id, now=observed_at)
         return CandidateVisitCreationOutcome(
             "created",
             "candidate_visit_created_shared_event" if shared_event_id is not None else "candidate_visit_created",
@@ -4038,6 +4178,324 @@ class ProductRepository:
             .limit(1)
         ).first()
         return row.event_id if row is not None else None
+
+    # -------------------------------------------------------------------
+    # Multimodal Observation & Soundscape v1 (see docs/multimodal-
+    # observation-soundscape-v1-contract.md): a bounded, deterministic
+    # temporal-association engine linking one visual candidate Visit and
+    # one acoustic candidate Visit judged to describe the same or a
+    # possibly-related wildlife encounter. Additive only -- neither Visit's
+    # own evidence, suggestion, or review state is ever touched here.
+    # -------------------------------------------------------------------
+
+    def _nearby_visual_event_ids(self, session: Session, *, acoustic_event: EventModel) -> tuple[str, ...]:
+        """Bounded lookback for the acoustic-side call sites: which visual
+        Event(s) fall within the association window of one acoustic
+        candidate's own interval. `event_type != "acoustic_observation_
+        candidate"` is deliberately a denylist, not an allowlist of just
+        `"observation_engine_candidate"` -- a legacy-lane visual Visit
+        (motion-evidence promotion, folder import, webhook, ...) is an
+        equally legitimate association candidate; excluding it would be an
+        undocumented, arbitrary gap (mirrors `wildlife_taxonomy.
+        is_wildlife_category`'s own "denylist so a future category is
+        included by default" convention). Does not filter by Stream/Source:
+        a microphone Source is never the same Stream as the camera it sits
+        near, so Place-level (today: the whole single-site install)
+        association is the documented v1 boundary -- see the contract doc's
+        "Known limitations."""
+
+        window_start = acoustic_event.started_at - timedelta(milliseconds=MULTIMODAL_POSSIBLE_WINDOW_MS)
+        window_end = (
+            acoustic_event.ended_at or acoustic_event.started_at
+        ) + timedelta(milliseconds=MULTIMODAL_POSSIBLE_WINDOW_MS)
+        rows = session.scalars(
+            select(EventModel.id)
+            .where(
+                EventModel.event_type != "acoustic_observation_candidate",
+                EventModel.started_at <= window_end,
+                func.coalesce(EventModel.ended_at, EventModel.started_at) >= window_start,
+            )
+            .distinct()
+        ).all()
+        return tuple(rows)
+
+    def _reconcile_multimodal_association_for_event(
+        self, session: Session, *, event_id: str, now: datetime,
+    ) -> None:
+        """Recompute (upsert) every `VisitAssociationModel` row between
+        `event_id`'s *current* full sibling set and every acoustic
+        candidate Visit in temporal range, from scratch. Called after
+        creating/joining a visual sibling Visit under this Event
+        (`_create_candidate_visit_locked`), and after the acoustic side
+        creates/extends a candidate near this Event (via `_nearby_visual_
+        event_ids`, above).
+
+        Always a full recomputation, never an incremental patch -- so an
+        already-persisted row correctly downgrades from `"associated"` to
+        `"possible"` the moment a second sibling makes the acoustic
+        evidence genuinely ambiguous (Phase H), and a row whose candidate
+        fell out of range (a widened/narrowed Event boundary) is removed
+        rather than left as a fabricated relationship. `event_id` naming an
+        acoustic Event, or an Event with no live Visits, is a defensive
+        no-op -- this method is only ever meaningfully called with a
+        *visual* Event id."""
+
+        event = session.get(EventModel, event_id)
+        if event is None or event.event_type == "acoustic_observation_candidate":
+            return
+        siblings = session.scalars(
+            select(VisitModel).where(
+                VisitModel.event_id == event_id, VisitModel.is_superseded.is_(False),
+            )
+        ).all()
+        if not siblings:
+            return
+
+        window_start = event.started_at - timedelta(milliseconds=MULTIMODAL_POSSIBLE_WINDOW_MS)
+        window_end = (event.ended_at or event.started_at) + timedelta(milliseconds=MULTIMODAL_POSSIBLE_WINDOW_MS)
+        acoustic_rows = session.execute(
+            select(VisitModel, EventModel)
+            .join(EventModel, VisitModel.event_id == EventModel.id)
+            .where(
+                EventModel.event_type == "acoustic_observation_candidate",
+                VisitModel.is_superseded.is_(False),
+                EventModel.started_at <= window_end,
+                func.coalesce(EventModel.ended_at, EventModel.started_at) >= window_start,
+            )
+        ).all()
+
+        # Every visual sibling shares this one Event, and therefore this
+        # one `started_at`/`ended_at` range -- `VisitModel` carries no
+        # per-sibling timestamp of its own (see the contract doc's "Known
+        # limitations": per-subject sub-interval timing inside one multi-
+        # subject Event is future work), so every sibling's interval is
+        # necessarily identical for association purposes. This is honest,
+        # not a bug: it is exactly why more than one sibling in range can
+        # never resolve to the confident "associated" tier below.
+        visual_interval = event_evidence_interval(
+            started_at=event.started_at, ended_at=event.ended_at, clock_provenance="visual_event_range",
+        )
+        visual_candidates = tuple(
+            AssociationCandidate(visit_id=sibling.id, interval=visual_interval) for sibling in siblings
+        )
+        sibling_ids = {sibling.id for sibling in siblings}
+
+        for acoustic_visit, acoustic_event in acoustic_rows:
+            acoustic_interval = event_evidence_interval(
+                started_at=acoustic_event.started_at, ended_at=acoustic_event.ended_at,
+                clock_provenance="acoustic_event_range",
+            )
+            decisions = {
+                decision.visit_id: decision
+                for decision in evaluate_temporal_association(acoustic_interval, visual_candidates)
+            }
+            existing_rows = {
+                row.visual_visit_id: row
+                for row in session.scalars(
+                    select(VisitAssociationModel).where(
+                        VisitAssociationModel.acoustic_visit_id == acoustic_visit.id,
+                        VisitAssociationModel.visual_visit_id.in_(sibling_ids),
+                    )
+                ).all()
+            }
+            for sibling_id in sibling_ids:
+                decision = decisions.get(sibling_id)
+                existing_row = existing_rows.get(sibling_id)
+                if decision is None:
+                    if existing_row is not None:
+                        session.delete(existing_row)
+                    continue
+                if existing_row is not None:
+                    if (
+                        existing_row.tier != decision.tier
+                        or existing_row.overlap_ms != decision.overlap_ms
+                        or existing_row.gap_ms != decision.gap_ms
+                    ):
+                        existing_row.tier = decision.tier
+                        existing_row.overlap_ms = decision.overlap_ms
+                        existing_row.gap_ms = decision.gap_ms
+                        existing_row.engine_version = MULTIMODAL_ASSOCIATION_ENGINE_VERSION
+                        existing_row.updated_at = now
+                else:
+                    session.add(
+                        VisitAssociationModel(
+                            id=self._next_id(session, VisitAssociationModel, "visit-association"),
+                            visual_visit_id=sibling_id,
+                            acoustic_visit_id=acoustic_visit.id,
+                            tier=decision.tier,
+                            overlap_ms=decision.overlap_ms,
+                            gap_ms=decision.gap_ms,
+                            engine_version=MULTIMODAL_ASSOCIATION_ENGINE_VERSION,
+                            created_at=now,
+                            updated_at=now,
+                        )
+                    )
+                    session.flush()
+
+    @staticmethod
+    def _effective_taxon_label(visit: VisitModel) -> str | None:
+        """Confirmed always outranks provisional -- mirrors `place_activity_
+        report.py`'s own truth-precedence convention, applied here only to
+        decide which label two associated Visits' agreement is judged
+        against. Never itself a truth write."""
+
+        if visit.review_status == ReviewStatus.reviewed.value and visit.reviewed_label:
+            return visit.reviewed_label
+        return visit.species_guess
+
+    @staticmethod
+    def _strongest_multimodal_tier(session: Session, visit_id: str) -> str:
+        """Cheap tier-only lookup for callers (Research Export) that need
+        only "is this Observation multimodally associated, and how
+        confidently" -- never the full resolved opposite Visit. `"associated"`
+        outranks `"possible"`; `"none"` is the ordinary single-modality case."""
+
+        rows = session.scalars(
+            select(VisitAssociationModel.tier).where(
+                or_(
+                    VisitAssociationModel.visual_visit_id == visit_id,
+                    VisitAssociationModel.acoustic_visit_id == visit_id,
+                )
+            )
+        ).all()
+        if "associated" in rows:
+            return "associated"
+        if "possible" in rows:
+            return "possible"
+        return "none"
+
+    def multimodal_associations_for_visit(self, visit_id: str) -> list[VisitMultimodalAssociation]:
+        """Read-only (Phase I): every association row touching this Visit,
+        from either side, resolved to the full opposite-modality `Visit`
+        (mirrors `sibling_visits`'s own "return the real Visit" precedent)
+        and with `taxon_agreement` recomputed fresh against each side's
+        *current* effective label -- never a stored, potentially stale
+        fact (see `VisitAssociationModel`'s own docstring)."""
+
+        with self.session_factory() as session:
+            this_visit_model = session.get(VisitModel, visit_id)
+            if this_visit_model is None:
+                return []
+            rows = session.scalars(
+                select(VisitAssociationModel).where(
+                    or_(
+                        VisitAssociationModel.visual_visit_id == visit_id,
+                        VisitAssociationModel.acoustic_visit_id == visit_id,
+                    )
+                )
+            ).all()
+            if not rows:
+                return []
+            this_label = self._effective_taxon_label(this_visit_model)
+            summaries: list[VisitMultimodalAssociation] = []
+            for row in rows:
+                if row.visual_visit_id == visit_id:
+                    other_id, other_modality = row.acoustic_visit_id, "acoustic"
+                else:
+                    other_id, other_modality = row.visual_visit_id, "visual"
+                other_visit_model = session.get(VisitModel, other_id)
+                if other_visit_model is None:
+                    continue
+                summaries.append(
+                    VisitMultimodalAssociation(
+                        association_id=row.id,
+                        other_visit=_visit_from_model(other_visit_model),
+                        other_modality=other_modality,
+                        tier=row.tier,
+                        taxon_agreement=classify_taxon_agreement(
+                            this_label, self._effective_taxon_label(other_visit_model),
+                        ),
+                        overlap_ms=row.overlap_ms,
+                        gap_ms=row.gap_ms,
+                    )
+                )
+            return summaries
+
+    def soundscape_summary(self, *, start_at: datetime, end_at: datetime) -> SoundscapeSummaryResponse:
+        """Multimodal Observation & Soundscape v1, Phase K (see docs/
+        multimodal-observation-soundscape-v1-contract.md): the bounded
+        acoustic-history foundation for the explicit `[start_at, end_at)`
+        period. Read-only, reuses the identical canonical per-Visit
+        resolver (`_stream_visit_summary_from_models`) and taxonomy
+        adapter (`visit_fact_from_stream_visit_summary`) `place_activity_
+        report` already uses -- see that method's own docstring -- so
+        truth precedence cannot diverge between them; all aggregation math
+        is delegated to the pure `mockingbird.analytics.soundscape`
+        module. This method performs none of its own."""
+
+        period_start_at = _as_utc(start_at)
+        period_end_at = _as_utc(end_at)
+
+        with self.session_factory() as session:
+            stream_ids = list(
+                session.scalars(
+                    select(StreamModel.id)
+                    .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+                    .where(CameraSourceModel.status != SourceStatus.archived.value)
+                ).all()
+            )
+            if not stream_ids:
+                return _soundscape_summary_response(
+                    compute_soundscape_summary((), period_start=period_start_at, period_end=period_end_at)
+                )
+
+            taxonomy_index = self._taxonomy_label_index(session)
+
+            def resolve_taxon(label: str | None) -> TaxonFact | None:
+                if not label:
+                    return None
+                taxonomy = taxonomy_index.get(_taxonomy_key(label))
+                if taxonomy is None:
+                    return None
+                return taxon_fact_from_taxonomy_label(_taxonomy_label_from_model(taxonomy))
+
+            visit_rows = session.execute(
+                select(VisitModel, EventModel)
+                .join(EventModel, VisitModel.event_id == EventModel.id)
+                .where(
+                    VisitModel.is_superseded.is_(False),
+                    EventModel.stream_id.in_(stream_ids),
+                    EventModel.started_at >= period_start_at,
+                    EventModel.started_at < period_end_at,
+                )
+                .order_by(EventModel.started_at, EventModel.id, VisitModel.id)
+            ).all()
+
+            facts: list[SoundscapeVisitFact] = []
+            for visit, event in visit_rows:
+                summary = self._stream_visit_summary_from_models(
+                    session, visit, event, taxonomy_index=taxonomy_index,
+                )
+                confirmed_taxon = resolve_taxon(summary.reviewed_label)
+                visit_fact = visit_fact_from_stream_visit_summary(
+                    summary, confirmed_taxon=confirmed_taxon,
+                    provisional_taxon=resolve_taxon(summary.suggested_label),
+                )
+                # Confirmed always outranks provisional (matches `_classify`'s
+                # own truth precedence exactly); a provisional suggestion only
+                # ever counts a species "heard" when it is itself wildlife and
+                # species-level -- never a bare genus/unknown/non-wildlife
+                # guess.
+                effective_taxon = visit_fact.confirmed_taxon
+                if effective_taxon is None and visit_fact.provisional_taxon is not None:
+                    candidate = visit_fact.provisional_taxon
+                    if is_wildlife_category(candidate.category) and candidate.is_species:
+                        effective_taxon = candidate
+                facts.append(
+                    SoundscapeVisitFact(
+                        visit_id=visit.id,
+                        evidence_modality=(
+                            "acoustic" if event.event_type == "acoustic_observation_candidate" else "visual"
+                        ),
+                        activity_started_at=summary.activity_started_at,
+                        multimodal_tier=self._strongest_multimodal_tier(session, visit.id),
+                        effective_taxon=effective_taxon,
+                    )
+                )
+
+            return _soundscape_summary_response(
+                compute_soundscape_summary(tuple(facts), period_start=period_start_at, period_end=period_end_at)
+            )
 
     # -------------------------------------------------------------------
     # Offline / Recorded Observation Ingest v1 (see docs/offline-recorded-
@@ -4366,6 +4824,19 @@ class ProductRepository:
                 if media_asset_model is None:
                     raise ValueError("missing_media_asset")
 
+                taxonomy_match = self._taxonomy_label_model_for_input(
+                    session, detection.common_name,
+                )
+                species_guess = (
+                    taxonomy_match.label if taxonomy_match is not None else detection.common_name
+                )
+
+                # Multimodal Observation & Soundscape v1, Phase B: species is
+                # now part of the idempotency key (see `SpeciesSuggestionModel.
+                # __table_args__` for the full defect this closes) -- two
+                # distinct species detected in the identical merged window now
+                # correctly become two independent candidates instead of the
+                # second colliding with the first and being silently dropped.
                 existing = session.scalars(
                     select(SpeciesSuggestionModel)
                     .where(
@@ -4373,6 +4844,7 @@ class ProductRepository:
                         SpeciesSuggestionModel.window_start_ms == detection.window_start_ms,
                         SpeciesSuggestionModel.window_end_ms == detection.window_end_ms,
                         SpeciesSuggestionModel.adapter_id == adapter_id,
+                        SpeciesSuggestionModel.suggested_label == species_guess,
                     )
                     .limit(1)
                 ).first()
@@ -4383,13 +4855,6 @@ class ProductRepository:
                         event_id=existing.event_id,
                         species_suggestion_id=existing.id,
                     )
-
-                taxonomy_match = self._taxonomy_label_model_for_input(
-                    session, detection.common_name,
-                )
-                species_guess = (
-                    taxonomy_match.label if taxonomy_match is not None else detection.common_name
-                )
 
                 # Everyday Product / Discovery UX Closure v1: `observed_at` is the
                 # BirdNET window's own start instant (see the caller,
@@ -4471,6 +4936,19 @@ class ProductRepository:
                 )
                 session.flush()
                 self._sync_review_alert(session, visit_model, observed_at)
+                # Multimodal Observation & Soundscape v1, Phase D: this new
+                # acoustic candidate may temporally relate to an already-
+                # persisted visual candidate Visit nearby -- reconcile every
+                # visual Event in range rather than assuming there is at
+                # most one.
+                acoustic_event_model = session.get(EventModel, event_id)
+                if acoustic_event_model is not None:
+                    for visual_event_id in self._nearby_visual_event_ids(
+                        session, acoustic_event=acoustic_event_model,
+                    ):
+                        self._reconcile_multimodal_association_for_event(
+                            session, event_id=visual_event_id, now=observed_at,
+                        )
                 return AcousticCandidateVisitOutcome(
                     outcome="created",
                     visit_id=visit_id,
@@ -4955,24 +5433,6 @@ class ProductRepository:
 
         with self.session_factory() as session:
             with session.begin():
-                existing = session.scalars(
-                    select(SpeciesSuggestionModel)
-                    .where(
-                        SpeciesSuggestionModel.media_asset_id == media_asset_id,
-                        SpeciesSuggestionModel.window_start_ms == detection.window_start_ms,
-                        SpeciesSuggestionModel.window_end_ms == detection.window_end_ms,
-                        SpeciesSuggestionModel.adapter_id == adapter_id,
-                    )
-                    .limit(1)
-                ).first()
-                if existing is not None:
-                    return AcousticCandidateVisitOutcome(
-                        outcome="idempotent_repeat",
-                        visit_id=existing.visit_id,
-                        event_id=existing.event_id,
-                        species_suggestion_id=existing.id,
-                    )
-
                 visit_model = session.get(VisitModel, visit_id)
                 event_model = session.get(EventModel, event_id)
                 media_asset_model = session.get(MediaAssetModel, media_asset_id)
@@ -4988,6 +5448,35 @@ class ProductRepository:
                     return AcousticCandidateVisitOutcome(
                         outcome="not_extendable", visit_id=None, event_id=None,
                         species_suggestion_id=None,
+                    )
+
+                # Multimodal Observation & Soundscape v1, Phase B: species-
+                # scoped exactly like `create_acoustic_candidate_visit` (see
+                # that method's identical comment and `SpeciesSuggestionModel.
+                # __table_args__`). The target species for an extend call is
+                # this specific Visit's own `species_guess` --
+                # `find_extendable_acoustic_candidate` already matched on it
+                # before ever calling this method, so re-reading it here
+                # rather than trusting the caller's `detection.common_name`
+                # keeps this idempotency check keyed on the same taxonomy-
+                # normalized identity every other acoustic path uses.
+                existing = session.scalars(
+                    select(SpeciesSuggestionModel)
+                    .where(
+                        SpeciesSuggestionModel.media_asset_id == media_asset_id,
+                        SpeciesSuggestionModel.window_start_ms == detection.window_start_ms,
+                        SpeciesSuggestionModel.window_end_ms == detection.window_end_ms,
+                        SpeciesSuggestionModel.adapter_id == adapter_id,
+                        SpeciesSuggestionModel.suggested_label == visit_model.species_guess,
+                    )
+                    .limit(1)
+                ).first()
+                if existing is not None:
+                    return AcousticCandidateVisitOutcome(
+                        outcome="idempotent_repeat",
+                        visit_id=existing.visit_id,
+                        event_id=existing.event_id,
+                        species_suggestion_id=existing.id,
                     )
 
                 stream_model = session.get(StreamModel, stream_id)
@@ -5060,6 +5549,20 @@ class ProductRepository:
                 )
                 session.flush()
                 self._sync_review_alert(session, visit_model, observed_at)
+                # Multimodal Observation & Soundscape v1, Phase D: an
+                # extension can widen `EventModel.ended_at`, which can bring
+                # a previously out-of-range visual Event into range (or vice
+                # versa) -- reconcile again exactly like `create_acoustic_
+                # candidate_visit` rather than assuming the first pass at
+                # creation time still holds.
+                acoustic_event_model = session.get(EventModel, event_id)
+                if acoustic_event_model is not None:
+                    for visual_event_id in self._nearby_visual_event_ids(
+                        session, acoustic_event=acoustic_event_model,
+                    ):
+                        self._reconcile_multimodal_association_for_event(
+                            session, event_id=visual_event_id, now=observed_at,
+                        )
                 return AcousticCandidateVisitOutcome(
                     outcome="extended", visit_id=visit_id, event_id=event_id,
                     species_suggestion_id=suggestion_id,
@@ -27002,6 +27505,8 @@ class ProductRepository:
             ),
             evidence=tuple(evidence_records),
             eligibility=eligibility,
+            evidence_modality="acoustic" if event.event_type == "acoustic_observation_candidate" else "visual",
+            multimodal_association=self._strongest_multimodal_tier(session, visit.id),
             suggested_taxon_label=(
                 suggested_taxonomy.label if suggested_taxonomy is not None
                 else (suggestion.suggested_label if suggestion is not None else None)

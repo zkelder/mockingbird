@@ -5353,6 +5353,54 @@ class PlaceActivityReportDigest(BaseModel):
     confirmed_wildlife_visit_count: int = Field(ge=0)
 
 
+class SoundscapeSummaryRequest(BaseModel):
+    """An explicit, bounded reporting period for one Soundscape summary
+    (Multimodal Observation & Soundscape v1, Phase K -- see docs/
+    multimodal-observation-soundscape-v1-contract.md). Mirrors
+    `PlaceActivityReportRequest` exactly: server-resolved timezone, no
+    caller-supplied Place/timezone field."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    start_at: datetime
+    end_at: datetime
+
+    @model_validator(mode="after")
+    def validate_range(self) -> "SoundscapeSummaryRequest":
+        if self.end_at <= self.start_at:
+            raise ValueError("soundscape_summary_end_must_follow_start")
+        if self.end_at - self.start_at > timedelta(days=366):
+            raise ValueError("soundscape_summary_range_must_not_exceed_366_days")
+        return self
+
+
+class SoundscapeSpeciesHeardEntry(BaseModel):
+    label: str
+    display_name: str
+    encounter_count: int
+
+
+class SoundscapeHourlyActivity(BaseModel):
+    hour: int
+    encounter_count: int
+
+
+class SoundscapeSummaryResponse(BaseModel):
+    """The bounded acoustic-history foundation this milestone's Phase K
+    calls for -- not a soundscape analytics product. No raw inference
+    dump, no spectrogram, no ecological claim beyond the observed/reviewed
+    data for this explicit period."""
+
+    period_start: datetime
+    period_end: datetime
+    species_heard: list[SoundscapeSpeciesHeardEntry] = Field(default_factory=list)
+    acoustic_encounter_count: int
+    visual_only_count: int
+    acoustic_only_count: int
+    multimodal_count: int
+    hourly_acoustic_activity: list[SoundscapeHourlyActivity] = Field(default_factory=list)
+
+
 class PlaceActivityReportResponse(BaseModel):
     """One deterministic current-period activity report for a Place (see
     docs/place-activity-report-contract.md). Every count is a Visit count,
@@ -6533,6 +6581,29 @@ class EventDetail(BaseModel):
     review_summary: str
 
 
+class VisitMultimodalAssociation(BaseModel):
+    """Multimodal Observation & Soundscape v1, Phase D/E/I (see docs/
+    multimodal-observation-soundscape-v1-contract.md): one durable
+    `VisitAssociationModel` row touching this Visit, resolved to the full
+    opposite-modality Visit it points at -- mirrors `VisitDetail.
+    sibling_visits`'s own "return the real nested Visit, not a summary"
+    precedent so the frontend reuses its existing Visit-rendering logic
+    rather than needing a second species/evidence-display path.
+
+    `taxon_agreement` is always recomputed fresh at read time from each
+    Visit's *current* top label (see `VisitAssociationModel`'s own
+    docstring) -- never a stored, potentially stale fact.
+    """
+
+    association_id: str
+    other_visit: Visit
+    other_modality: Literal["visual", "acoustic"]
+    tier: Literal["associated", "possible"]
+    taxon_agreement: Literal["agrees", "differs", "not_comparable"]
+    overlap_ms: int
+    gap_ms: int
+
+
 class VisitDetail(BaseModel):
     visit: Visit
     event: Event
@@ -6567,6 +6638,13 @@ class VisitDetail(BaseModel):
     # carries; this never changes review/correction/truth semantics -- each
     # sibling remains an independently reviewable `Visit`.
     sibling_visits: list[Visit] = Field(default_factory=list)
+    # Multimodal Observation & Soundscape v1 (see docs/multimodal-
+    # observation-soundscape-v1-contract.md): every durable association
+    # this Visit has to an opposite-modality Visit (visual <-> acoustic) --
+    # empty for the common single-modality case. Never merges/overwrites
+    # this Visit's own evidence or review state; each associated Visit
+    # remains independently reviewable.
+    multimodal_associations: list[VisitMultimodalAssociation] = Field(default_factory=list)
     eligible_zones: list[Zone] = Field(default_factory=list)
     review_state_token: str
     dataset_ready: bool

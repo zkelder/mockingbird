@@ -3598,6 +3598,25 @@ export interface EventDetail {
   review_summary: string;
 }
 
+// Multimodal Observation & Soundscape v1 (see docs/multimodal-observation-
+// soundscape-v1-contract.md): a durable link between this Visit and one
+// opposite-modality Visit (visual <-> acoustic) the association engine
+// judged temporally related. `other_visit` is the real, full Visit -- reuse
+// ordinary Visit rendering rather than a second species/evidence display.
+export type MultimodalTier = "associated" | "possible";
+export type TaxonAgreement = "agrees" | "differs" | "not_comparable";
+export type EvidenceModality = "visual" | "acoustic";
+
+export interface VisitMultimodalAssociation {
+  association_id: string;
+  other_visit: Visit;
+  other_modality: EvidenceModality;
+  tier: MultimodalTier;
+  taxon_agreement: TaxonAgreement;
+  overlap_ms: number;
+  gap_ms: number;
+}
+
 export interface VisitDetail {
   visit: Visit;
   event: Event;
@@ -3620,6 +3639,10 @@ export interface VisitDetail {
   // Multi-Subject Visit Assembly & Review v1, Phase 2: other Visits sharing
   // this Visit's own Event -- empty for the ordinary single-subject case.
   sibling_visits: Visit[];
+  // Multimodal Observation & Soundscape v1: every durable association this
+  // Visit has to an opposite-modality Visit -- empty for the common single-
+  // modality case.
+  multimodal_associations: VisitMultimodalAssociation[];
   eligible_zones: Zone[];
   review_state_token: string;
   dataset_ready: boolean;

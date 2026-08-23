@@ -42,7 +42,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 44
+CURRENT_DATABASE_SCHEMA_VERSION = 46
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -1203,6 +1203,65 @@ def _migrate_to_acoustic_runtime_queue(connection: Connection) -> None:
             )
 
 
+def _migrate_to_acoustic_species_scoped_idempotency(connection: Connection) -> None:
+    """Multimodal Observation & Soundscape v1, Phase B (see docs/
+    multimodal-observation-soundscape-v1-contract.md, "Acoustic
+    idempotency"): add the species-scoped unique index backstopping
+    `SpeciesSuggestionModel.__table_args__` on `species_suggestions`.
+
+    Provably safe to add on any pre-existing real database without a
+    defensive cleanup pass first: the *prior* idempotency key --
+    `(media_asset_id, window_start_ms, window_end_ms, adapter_id)`, with no
+    species column at all -- already guaranteed at most one row could ever
+    exist per that 4-tuple, regardless of species. The new key is that same
+    4-tuple plus `suggested_label`; since the old code already permitted at
+    most one row for the whole 4-tuple, no two rows can already share the
+    *stricter* 5-tuple either. A pre-fix installation that hit the actual
+    defect (two distinct species detected in one identical merged window)
+    has exactly one persisted row for that window today, not two
+    duplicates -- the second species' row was silently never created at
+    all, not created twice and left behind. This migration only ever adds
+    an index; it writes no data.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Acoustic species-scoped idempotency migration requires local SQLite storage."
+        )
+    # Mirrors `_migrate_to_acoustic_runtime_queue`'s own `has_table` guard,
+    # immediately above: a handful of narrow migration-path tests construct
+    # a deliberately minimal ad-hoc database (only the handful of tables
+    # their own specific version range needs) rather than a full schema, so
+    # this must not assume `species_suggestions` exists.
+    if inspect(connection).has_table("species_suggestions"):
+        connection.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_species_suggestions_acoustic_idempotency "
+            "ON species_suggestions (media_asset_id, window_start_ms, window_end_ms, adapter_id, suggested_label) "
+            "WHERE window_start_ms IS NOT NULL"
+        )
+
+
+def _migrate_to_visit_multimodal_association(connection: Connection) -> None:
+    """Multimodal Observation & Soundscape v1, Phase D/E: add the empty,
+    additive `visit_associations` table (see docs/multimodal-observation-
+    soundscape-v1-contract.md).
+
+    No row is seeded here: the table starts genuinely empty for every
+    installation, including one upgrading from real historical acoustic and
+    visual candidate Visits -- this migration never backfills association
+    history retroactively (an upgraded installation's multimodal
+    association mechanism starts exactly as cold as a brand-new one),
+    mirroring `_migrate_to_scene_confusor_regions`'s own "additive table, no
+    seeded row" precedent exactly.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Visit multimodal association migration requires local SQLite storage."
+        )
+    Base.metadata.tables["visit_associations"].create(bind=connection, checkfirst=True)
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -1247,6 +1306,8 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     42: _migrate_to_research_collections,
     43: _migrate_to_acoustic_observation_foundation,
     44: _migrate_to_acoustic_runtime_queue,
+    45: _migrate_to_acoustic_species_scoped_idempotency,
+    46: _migrate_to_visit_multimodal_association,
 }
 
 

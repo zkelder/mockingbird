@@ -31,6 +31,20 @@ from mockingbird.research.eligibility import ResearchExportEligibility
 
 AcquisitionType = Literal["continuous_live", "recorded_video", "still_image", "unknown"]
 TimestampConfidence = Literal["recorded", "unknown"]
+#: Multimodal Observation & Soundscape v1, Phase L (see docs/multimodal-
+#: observation-soundscape-v1-contract.md): which sensor produced this
+#: Observation's own evidence -- orthogonal to `AcquisitionType` (live/
+#: offline capture *path*), never conflated with it. "acoustic" never
+#: implies a fabricated visual detection; "visual" never implies a
+#: fabricated audio one.
+EvidenceModality = Literal["visual", "acoustic"]
+#: Whether this Observation has a durable `VisitAssociationModel` link to an
+#: opposite-modality Visit, and at the strongest tier found (an Observation
+#: can have more than one association -- e.g. two acoustic species both
+#: near one visual sighting -- this reports the single strongest, never a
+#: fabricated blend). "none" is the ordinary single-modality case, not an
+#: error.
+MultimodalAssociationTier = Literal["none", "possible", "associated"]
 
 #: The generic research export's own schema version -- bumped only when the
 #: exported row *shape* changes, independent of `CURRENT_DATABASE_SCHEMA_
@@ -105,6 +119,14 @@ class ResearchObservation:
 
     eligibility: ResearchExportEligibility
 
+    # Multimodal Observation & Soundscape v1, Phase L: which sensor produced
+    # this Observation, and whether it has a durable association to an
+    # opposite-modality Visit. Defaulted so every pre-existing caller/test
+    # constructing a `ResearchObservation` for a visual-only record keeps
+    # working unchanged.
+    evidence_modality: EvidenceModality = "visual"
+    multimodal_association: MultimodalAssociationTier = "none"
+
     # Machine-classification provenance (see "Camtrap DP truth mapping" in
     # the governing brief): the most recent `SpeciesSuggestion` on this
     # Visit, if any -- exported only as clearly-separated machine provenance
@@ -162,6 +184,8 @@ def observation_to_json(observation: ResearchObservation) -> dict[str, Any]:
         "zone_name": observation.zone_name,
         "zone_type": observation.zone_type,
         "resolution_provenance": observation.resolution_provenance,
+        "evidence_modality": observation.evidence_modality,
+        "multimodal_association": observation.multimodal_association,
         "evidence_count": len(observation.evidence),
         "evidence_media_ids": [item.media_id for item in observation.evidence],
         "suggested_taxon_label": observation.suggested_taxon_label,
@@ -184,6 +208,7 @@ OBSERVATION_CSV_FIELDNAMES: tuple[str, ...] = (
     "review_status", "reviewed_at", "reviewed_by", "classification",
     "taxon_label", "taxon_display_name", "taxon_scientific_name", "taxon_category", "is_species",
     "zone_id", "zone_name", "zone_type", "resolution_provenance",
+    "evidence_modality", "multimodal_association",
     "evidence_count", "evidence_ids",
     "suggested_taxon_label", "suggested_taxon_display_name", "suggested_taxon_scientific_name",
     "suggested_by", "suggested_confidence", "suggested_at",
