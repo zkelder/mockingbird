@@ -212,6 +212,95 @@ path. Wildlife detection, review, Visit assembly, and export are
 untouched by this milestone and function identically with zero
 environmental data configured.
 
+## Solar temporal semantics acceptance closure
+
+A follow-up closure corrected a real error in this milestone's *first*
+version of this document and its code: it described `astral` as
+"mislabeling" a sunset's calendar date by a day when called with
+`tzinfo=UTC` for a longitude far from Greenwich, and worked around that
+supposed defect with a longitude-derived pseudo-timezone (`_approximate_
+local_offset`/`approximate_local_date`) passed to `astral` as if it were
+the Place's real civil time.
+
+**That framing was wrong on two counts, confirmed by direct inspection of
+`astral`'s own behavior, not merely reasoned about:**
+
+1. `astral.sun.sun`'s `date` argument is interpreted *in the timezone
+   passed as `tzinfo`*. Passing `tzinfo=UTC` asks, correctly, for
+   "whichever sunrise/sunset instant falls within this UTC calendar day" --
+   a real, well-defined, unambiguous pair of instants. A sunset instant
+   landing on a UTC calendar date a naive reader might not expect (for a
+   longitude far from Greenwich) is not a bug and not a mislabeling; it is
+   exactly what "the sunset associated with this UTC day" means for that
+   longitude. Confirmed directly: for New York, `date=2026-06-21,
+   tzinfo=UTC` gives `sunrise=2026-06-21 09:25 UTC` and `sunset=2026-06-21
+   00:30 UTC` -- both instants genuinely fall within UTC calendar day
+   2026-06-21 itself, exactly as asked.
+2. A longitude-derived offset is not a real timezone -- no DST, no
+   political boundary, no legal standing -- and presenting one as if it
+   resolved "the Place's local date" was itself the actual defect, not a
+   workaround for one.
+
+**The corrected model.** Day/night classification and "today's"
+sunrise/sunset depend on exactly two inputs -- Place coordinates and the
+UTC instant being evaluated -- and never on any timezone concept, real or
+approximate:
+
+- `compute_daily_solar_facts(latitude, longitude, for_date)` is unchanged
+  in shape, but its contract is now stated precisely: it returns the
+  sunrise/sunset that fall within *UTC calendar date* `for_date` (plain
+  `tzinfo=UTC`, nothing else). Both instants are guaranteed to carry that
+  same UTC date (confirmed directly, east and west of Greenwich alike),
+  but the pair is **not** guaranteed to be a chronologically sane
+  [sunrise, sunset) window by itself -- for a longitude far enough from
+  Greenwich in *either* direction, `sunset_at` can carry an earlier
+  time-of-day than `sunrise_at` on that same date (each is independently
+  "whichever instance of that event falls in this UTC day"; the two need
+  not belong to the same real day/night cycle).
+- `find_daylight_window(candidates, instant)` (new) is the one place a
+  usable [sunrise_at, sunset_at) pair is ever constructed: given the
+  `DailySolarFacts` for `instant`'s own UTC calendar date and the day
+  immediately before and after it (`candidate_dates_for_window`, new --
+  three dates always suffice to bracket any instant, confirmed by direct
+  hourly-resolution sweep across multiple hemispheres/longitudes/seasons,
+  not merely reasoned about), it finds the most recent sunrise at or
+  before `instant` and pairs it with the next sunset after that sunrise --
+  never by pairing one date's own two fields. `classify_daylight_state`
+  is unchanged (a plain three-argument compare) but is now always fed a
+  window `find_daylight_window` actually vouches for.
+- The repository's `_get_daylight_window_in_session` is the one place
+  this fetch-three-candidate-dates-then-bracket logic runs against the
+  cache (`_get_or_compute_daily_solar_facts_in_session`, now returning
+  `DailySolarFacts` per date rather than a bare tuple): caching 3 dates
+  per lookup (6 rows) instead of 1 (2 rows) is the direct, accepted cost
+  of removing the pseudo-timezone shortcut -- still fully bounded (a fixed
+  small multiple of distinct calendar dates ever queried, not unbounded
+  per-Visit growth).
+- `for_date` on `EnvironmentalContextRecordModel` keeps its column and its
+  role as the cache lookup key, but its definition is now stated
+  precisely: **the UTC calendar date passed to `astral.sun.sun` with
+  `tzinfo=UTC`** -- never a claim about the Place's local/civil date. The
+  same correction applies to `PlaceEnvironmentalContext.for_date`: it is
+  the UTC calendar date "now" falls on, not a claim that the returned
+  sunrise/sunset both "belong" to that date (the window can legitimately
+  span two UTC dates).
+- No civil/legal timezone model was added. No timezone configuration or
+  selection UX was added to the product. `find_daylight_window` structurally
+  cannot regress into "correct in one season, wrong in another because of
+  an unstated DST assumption," because no DST concept, and no timezone
+  concept of any kind, appears anywhere in the classification path --
+  directly proven by a test that classifies the same kind of instant
+  (mid-morning daylight) in both January and July and confirms identical,
+  correct behavior with no season-specific code path to regress.
+- The UI was reviewed and needed no change: `formatTimeOfDay` already
+  renders the real, exact UTC instant returned by the backend in the
+  *viewer's own real system timezone* (the same `Intl.DateTimeFormat`
+  convention every other timestamp in this app already uses) -- that was
+  never the dishonest part. The word "local" in the product copy ("local
+  sunrise/sunset," "local device") means "at this geographic location,"
+  the ordinary English sense, not a claim about civil time, and was left
+  as-is.
+
 ## Data model
 
 `EnvironmentalContextSettingsModel` (table `environmental_context_settings`,
@@ -237,16 +326,15 @@ schema 51):
   carries the fact; reserved for future numeric/categorical metrics, e.g.
   temperature would populate `value_numeric`/`unit`)
 - `observed_at: datetime` (required), `observed_at_end: datetime | None`
-- `for_date: date | None` -- the calendar date (at `basis_latitude`/
-  `basis_longitude`'s approximate local reckoning) this fact is anchored
-  to; the actual lookup key for "the day's sunrise/sunset," computed once
-  at write time via `solar_context.approximate_local_date`. Not derived
-  from `observed_at` at query time: a naive UTC-calendar-day range query
-  over `observed_at` would reproduce the exact date-boundary bug
-  `compute_daily_solar_facts` itself works around (an instant can fall on
-  the UTC-adjacent calendar date from the local date it actually belongs
-  to, depending on longitude -- confirmed directly against `astral` during
-  implementation). `NULL` for a future metric with no natural single day.
+- `for_date: date | None` -- the *UTC calendar date* passed to
+  `astral.sun.sun` as `date` (with `tzinfo=timezone.utc`) to produce this
+  row -- never a claim about the Place's local/civil date (see "Solar
+  temporal semantics acceptance closure," below, for why that distinction
+  matters and what this milestone originally got wrong about it). The
+  lookup key for "the sunrise/sunset facts for this UTC date," computed
+  once at write time. A single row's `for_date` does not by itself imply
+  a coherent [sunrise, sunset) window -- see `find_daylight_window`.
+  `NULL` for a future metric with no natural single day.
 - `retrieved_at: datetime` (required)
 - `basis_latitude: float | None`, `basis_longitude: float | None`
 - `provenance_json: str | None` (Text; small fixed-shape object)
@@ -269,10 +357,21 @@ New module `mockingbird.environment.solar_context` (new package
   (never raises; `"not_configured"` when either coordinate is `None`,
   otherwise `"available"`)
 - `compute_daily_solar_facts(latitude, longitude, for_date) ->
-  DailySolarFacts` (`sunrise_at`, `sunset_at`, both UTC-aware; uses
-  `astral.sun.sun`)
+  DailySolarFacts` (the sunrise/sunset within *UTC calendar date*
+  `for_date`, both UTC-aware; plain `astral.sun.sun(..., tzinfo=UTC)`, no
+  other timezone concept -- see "Solar temporal semantics acceptance
+  closure," below, for why this function's own single-date pair is not
+  always a self-consistent window)
 - `classify_daylight_state(instant, sunrise_at, sunset_at) ->
-  Literal["day", "night"]`
+  Literal["day", "night"]` (a plain three-argument compare; correct only
+  when fed a genuinely bracketing pair)
+- `candidate_dates_for_window(instant) -> tuple[date, date, date]` (the
+  three UTC calendar dates -- `instant`'s own plus the one immediately
+  before and after -- that always suffice to bracket it)
+- `find_daylight_window(candidates, instant) -> tuple[datetime, datetime]
+  | None` (the actual [sunrise_at, sunset_at) window for `instant`,
+  depending only on the supplied facts and `instant` -- no timezone
+  concept anywhere)
 
 v1 deliberately implements day/night only, not civil/nautical/astronomical
 twilight bands -- the roadmap's "twilight" bullet is explicitly deferred
@@ -290,23 +389,27 @@ call):
   EnvironmentalContextSettings` (rounds to 1 decimal; writes an
   `settings.environmental_context_updated` audit entry)
 - `_get_or_compute_daily_solar_facts_in_session(session, *, now, for_date,
-  latitude, longitude) -> tuple[datetime, datetime] | None` (private,
-  session-scoped cacheable primitive shared by both public methods below:
-  look up existing rows for that date; if absent, compute and insert one
+  latitude, longitude) -> solar_context.DailySolarFacts | None` (private,
+  session-scoped, single-*UTC-calendar-date* cacheable primitive: look up
+  existing rows for that date; if absent, compute and insert one
   sunrise/sunset pair and return it; `None` only for a genuine polar
-  day/night date)
+  day/night UTC date)
+- `_get_daylight_window_in_session(session, *, now, instant, latitude,
+  longitude) -> tuple[datetime, datetime] | None` (private: fetches, via
+  the primitive above, the three UTC calendar dates `solar_context.
+  candidate_dates_for_window(instant)` names, then hands whichever did not
+  hit a polar-night gap to `solar_context.find_daylight_window` -- the one
+  place a usable window is produced; depends only on coordinates and
+  `instant`)
 - `get_visit_environmental_context(visit_id) -> VisitEnvironmentalContext |
   None` (`None` means the Visit itself does not exist -- the API layer
   maps that to 404; resolves the Visit's `activity_started_at` via the
-  existing `_stream_visit_summary_from_models` path, derives its
-  approximate local calendar date via `solar_context.
-  approximate_local_date` -- which alone is sufficient to classify day/
-  night correctly even near local midnight, since the classification only
-  ever compares against *that one* date's sunrise/sunset -- then calls the
-  private primitive above; absence-safe throughout when no location is
-  configured)
+  existing `_stream_visit_summary_from_models` path, then calls the
+  window primitive above with that instant; absence-safe throughout when
+  no location is configured)
 - `get_place_environmental_context_today() -> PlaceEnvironmentalContext`
-  (same primitive, for "today," for the dashboard)
+  (same window primitive, called with `datetime.now(UTC)` as the instant,
+  for the dashboard)
 
 ## API surface
 
@@ -374,21 +477,28 @@ auto-fill from the new setting; any species-activity-vs-weather analytics
 ## Testing
 
 Tier 1: model/provenance round-trip; `derived`/`measured_local`/
-`external_provider` stay distinct; `compute_daily_solar_facts`/
-`classify_daylight_state`/`approximate_local_date` unit tests against
-known reference dates, including a regression test for a real `astral`
-date-labeling bug found and worked around during implementation; coordinate
-rounding (both schema-layer and repository-layer, plus the ~11 km accuracy
-claim itself, numerically verified); absence behavior (no coordinates
-configured -> every new API returns "unavailable", never raises, never
-fabricates); polar-night handling (a genuine no-sunrise/sunset date is
-"unavailable," never a crash); repository idempotency (calling
-`get_place_environmental_context_today` twice for the same day does not
-create duplicate rows); `activity_started_at` association resolves
-correctly including a near-midnight boundary case; a direct proof that
-reading environmental context never mutates a Visit's review truth; API
-request/response round trip for all four routes, including authentication
-and validation failure cases.
+`external_provider` stay distinct; `compute_daily_solar_facts`'s exact UTC-
+calendar-date contract (including that its own sunrise/sunset pair is not
+always self-ordered, verified directly for both west- and east-of-
+Greenwich coordinates); `find_daylight_window`/`candidate_dates_for_window`
+against western-longitude (sunset crosses UTC midnight) and eastern-
+longitude counterparts, exact sunrise/sunset boundary instants, and an
+hourly-resolution 72-hour sweep across four hemispheres/longitudes proving
+exactly the expected number of day/night transitions with no hidden
+failure mode; a direct proof that classification of an unambiguously-
+daylight UTC instant is identical in January and July, since no season or
+timezone concept exists anywhere in the classification path to regress;
+coordinate rounding (both schema-layer and repository-layer, plus the
+~11 km accuracy claim itself, numerically verified); absence behavior (no
+coordinates configured -> every new API returns "unavailable", never
+raises, never fabricates); polar-night handling (a genuine no-sunrise/
+sunset UTC date is "unavailable," never a crash); repository idempotency
+(calling `get_place_environmental_context_today` twice does not create
+duplicate rows -- 6 bounded rows across the 3 bracketing UTC dates, not
+2, and not unbounded); `activity_started_at` association resolves
+correctly; a direct proof that reading environmental context never
+mutates a Visit's review truth; API request/response round trip for all
+four routes, including authentication and validation failure cases.
 
 Tier 2: `test_persistence.py` schema-51 migration test (mirroring the
 schema-45/48 templates); a backup/restore round-trip test for the new

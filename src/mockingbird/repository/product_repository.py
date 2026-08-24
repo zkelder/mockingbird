@@ -4169,13 +4169,21 @@ class ProductRepository:
         for_date: date,
         latitude: float,
         longitude: float,
-    ) -> tuple[datetime, datetime] | None:
-        """Returns `(sunrise_at, sunset_at)` in UTC for `for_date` at this
-        (already-rounded) coordinate, reusing existing rows if present,
-        else computing and persisting one pair. Returns `None` only for a
-        genuine polar day/night date (see `solar_context.
-        SolarContextUnavailableError`) -- never for a transient failure,
-        since this provider has none.
+    ) -> solar_context.DailySolarFacts | None:
+        """Returns the sunrise/sunset that fall within *UTC calendar date*
+        `for_date` at this (already-rounded) coordinate, reusing existing
+        rows if present, else computing and persisting one pair. Returns
+        `None` only for a genuine polar day/night UTC date (see
+        `solar_context.SolarContextUnavailableError`) -- never for a
+        transient failure, since this provider has none.
+
+        This is the single-date primitive; see
+        `_get_daylight_window_in_session`, below, for how callers turn one
+        or more dates' worth of these facts into an actual [sunrise,
+        sunset) window for a specific instant -- never by pairing one
+        date's own `sunrise_at`/`sunset_at` blindly (see
+        `solar_context.DailySolarFacts`'s docstring for why that pairing
+        is not always chronologically sane on its own).
 
         Idempotency: see `EnvironmentalContextRecordModel`'s own
         docstring -- a rare duplicate pair is tolerated (the first row per
@@ -4194,9 +4202,10 @@ class ProductRepository:
         for row in existing:
             by_metric.setdefault(row.metric, row)
         if "sunrise" in by_metric and "sunset" in by_metric:
-            return (
-                _as_utc(by_metric["sunrise"].observed_at),
-                _as_utc(by_metric["sunset"].observed_at),
+            return solar_context.DailySolarFacts(
+                for_date=for_date,
+                sunrise_at=_as_utc(by_metric["sunrise"].observed_at),
+                sunset_at=_as_utc(by_metric["sunset"].observed_at),
             )
 
         try:
@@ -4235,7 +4244,43 @@ class ProductRepository:
                     created_at=now,
                 )
             )
-        return facts.sunrise_at, facts.sunset_at
+        return facts
+
+    def _get_daylight_window_in_session(
+        self,
+        session: Session,
+        *,
+        now: datetime,
+        instant: datetime,
+        latitude: float,
+        longitude: float,
+    ) -> tuple[datetime, datetime] | None:
+        """The [sunrise_at, sunset_at) window relevant to `instant`,
+        depending only on `latitude`/`longitude` and `instant` itself --
+        no timezone concept, real or approximate, is used anywhere in this
+        resolution (see "Solar temporal semantics" in
+        docs/environmental-context-foundation-v1-contract.md). Fetches (via
+        the cache-or-compute primitive above, so each date is computed at
+        most once ever) the three UTC calendar dates `solar_context.
+        candidate_dates_for_window` names, then hands whichever of those
+        did not hit a polar day/night gap to `solar_context.
+        find_daylight_window`. Returns `None` only if no window could be
+        found (no coordinates ever reach this method unconfigured -- every
+        caller already checked -- so in practice this means every
+        candidate date was polar day/night).
+        """
+
+        candidates = [
+            facts
+            for facts in (
+                self._get_or_compute_daily_solar_facts_in_session(
+                    session, now=now, for_date=candidate_date, latitude=latitude, longitude=longitude,
+                )
+                for candidate_date in solar_context.candidate_dates_for_window(instant)
+            )
+            if facts is not None
+        ]
+        return solar_context.find_daylight_window(candidates, instant)
 
     def get_place_environmental_context_today(self) -> PlaceEnvironmentalContext:
         now = datetime.now(UTC)
@@ -4248,15 +4293,14 @@ class ProductRepository:
                     return PlaceEnvironmentalContext(
                         available=False, reason="not_configured", for_date=now.date()
                     )
-                for_date = solar_context.approximate_local_date(now, longitude)
-                result = self._get_or_compute_daily_solar_facts_in_session(
-                    session, now=now, for_date=for_date, latitude=latitude, longitude=longitude,
+                window = self._get_daylight_window_in_session(
+                    session, now=now, instant=now, latitude=latitude, longitude=longitude,
                 )
-                if result is None:
+                if window is None:
                     return PlaceEnvironmentalContext(
-                        available=False, reason="unavailable_for_date", for_date=for_date
+                        available=False, reason="unavailable_for_date", for_date=now.date()
                     )
-                sunrise_at, sunset_at = result
+                sunrise_at, sunset_at = window
                 return PlaceEnvironmentalContext(
                     available=True,
                     reason="computed",
@@ -4267,7 +4311,12 @@ class ProductRepository:
                     information_class="derived",
                     basis_latitude=latitude,
                     basis_longitude=longitude,
-                    for_date=for_date,
+                    # The UTC calendar date `now` falls on -- not a claim
+                    # that the sunrise/sunset above both "belong" to this
+                    # date; the window can legitimately span two UTC dates
+                    # (see "Solar temporal semantics" in docs/environmental-
+                    # context-foundation-v1-contract.md).
+                    for_date=now.date(),
                 )
 
     def get_visit_environmental_context(self, visit_id: str) -> VisitEnvironmentalContext | None:
@@ -4300,18 +4349,17 @@ class ProductRepository:
                         visit_id=visit_id,
                         evaluated_at=evaluated_at,
                     )
-                for_date = solar_context.approximate_local_date(evaluated_at, longitude)
-                result = self._get_or_compute_daily_solar_facts_in_session(
-                    session, now=now, for_date=for_date, latitude=latitude, longitude=longitude,
+                window = self._get_daylight_window_in_session(
+                    session, now=now, instant=evaluated_at, latitude=latitude, longitude=longitude,
                 )
-                if result is None:
+                if window is None:
                     return VisitEnvironmentalContext(
                         available=False,
                         reason="unavailable_for_date",
                         visit_id=visit_id,
                         evaluated_at=evaluated_at,
                     )
-                sunrise_at, sunset_at = result
+                sunrise_at, sunset_at = window
                 return VisitEnvironmentalContext(
                     available=True,
                     reason="computed",

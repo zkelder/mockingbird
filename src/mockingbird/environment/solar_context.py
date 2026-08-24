@@ -1,14 +1,30 @@
 """Local solar/daylight context: sunrise, sunset, and day/night
 classification derived deterministically from a Place's coordinates and a
-date. No network access; `astral` is a small, pure-Python, Apache-2.0 core
-dependency (see pyproject.toml), not an optional heavy runtime the way the
-species-suggestion adapters' ML libraries are -- so unlike
-`bioclip_adapter`/`birdnet_adapter`, this module has no "unavailable,
-missing dependency" case to guard against. Its only "not ready" case is
-"no coordinates configured yet."
+UTC instant. No network access; `astral` is a small, pure-Python,
+Apache-2.0 core dependency (see pyproject.toml), not an optional heavy
+runtime the way the species-suggestion adapters' ML libraries are -- so
+unlike `bioclip_adapter`/`birdnet_adapter`, this module has no
+"unavailable, missing dependency" case to guard against. Its only "not
+ready" case is "no coordinates configured yet."
 
-See docs/environmental-context-foundation-v1-contract.md "Provider: local
-solar context".
+Temporal semantics (corrected during "Solar Temporal-Semantics Acceptance
+Closure" -- see docs/environmental-context-foundation-v1-contract.md):
+`astral.sun.sun`'s `date` argument is interpreted *in the timezone passed
+as `tzinfo`*. Passing `tzinfo=UTC` asks, honestly and correctly, for
+"whichever sunrise/sunset instant falls within this UTC calendar day" --
+that is real, well-defined, unambiguous per-event behavior, not a bug, and
+not evidence that astral "mislabels" anything. An earlier version of this
+module treated a sunset instant landing one UTC calendar day later than a
+naive reader might expect (for a longitude far from Greenwich) as an
+astral defect, and worked around it with a longitude-derived pseudo-
+timezone passed as `tzinfo` -- presenting an approximation as if it were
+the Place's real civil time. That framing was wrong on two counts: astral
+was not misbehaving, and a longitude-derived offset is not a real
+timezone (no DST, no political boundary, no legal standing) and must never
+be presented as one. See `find_daylight_window`, below, for the corrected
+approach: classification and "today's" sunrise/sunset depend on exactly
+two inputs -- Place coordinates and the UTC instant being evaluated -- and
+never on any timezone concept, real or approximate.
 """
 
 from __future__ import annotations
@@ -27,13 +43,14 @@ SOLAR_ALGORITHM_VERSION = "3.2"
 
 SolarContextStatusValue = Literal["available", "not_configured"]
 DaylightState = Literal["day", "night"]
+SolarEventKind = Literal["sunrise", "sunset"]
 
 
 class SolarContextUnavailableError(ValueError):
-    """Raised only for a genuine polar day/night date (the sun does not
-    rise or set at all) at the configured coordinates -- never for a
-    missing dependency or a transient failure. Callers should treat this
-    the same as "unavailable for this date," not as a bug."""
+    """Raised only for a genuine polar day/night UTC calendar date (the
+    sun does not rise or set within it) at the configured coordinates --
+    never for a missing dependency or a transient failure. Callers should
+    treat this the same as "unavailable for this date," not as a bug."""
 
 
 @dataclass(frozen=True)
@@ -50,8 +67,23 @@ class SolarContextStatus:
 
 @dataclass(frozen=True)
 class DailySolarFacts:
-    """One calendar date's sunrise/sunset, in UTC, for one coordinate pair."""
+    """Sunrise/sunset as exact, UTC-aware instants, both guaranteed to
+    fall within `for_date` itself in UTC terms (confirmed directly:
+    `astral.sun.sun(..., tzinfo=UTC).date() == for_date` holds for every
+    coordinate tested, east and west of Greenwich alike).
 
+    `for_date` is the *UTC calendar date* passed to `astral.sun.sun` as
+    `date`, with `tzinfo=timezone.utc` -- nothing more. It is never a
+    claim about the Place's local/civil date: for a longitude far from
+    Greenwich, `sunset_at` can carry an earlier time-of-day than
+    `sunrise_at` on this same `for_date` (each is independently "whichever
+    instance of that event falls in this UTC day," and the two need not
+    belong to the same real day/night cycle) -- do not pair one row's own
+    `sunrise_at`/`sunset_at` together as if they were a coherent day/night
+    window; use `find_daylight_window` instead.
+    """
+
+    for_date: date
     sunrise_at: datetime
     sunset_at: datetime
 
@@ -73,50 +105,14 @@ def get_solar_context_status(
     )
 
 
-def _approximate_local_offset(longitude: float) -> timezone:
-    """A coarse, no-secret stand-in for "this coordinate's local timezone,"
-    good only for picking the right *calendar date* -- never shown to a
-    user or persisted as a claimed real timezone.
-
-    `astral.sun.sun` anchors its `date` argument to whatever `tzinfo` it is
-    given: pass it a real local zone and `date=D` correctly means "the
-    calendar day D runs from local midnight to local midnight there."
-    Pass it `timezone.utc` for a location far from Greenwich instead, and
-    the *labeled date* of an event that actually falls right after local
-    midnight silently shifts by a day -- confirmed directly: for New York
-    (UTC-4 in June), asking for `date=2026-06-21, tzinfo=UTC` returns a
-    `sunset` of `2026-06-21 00:30 UTC`, one full calendar day earlier than
-    the correct `2026-06-22 00:30 UTC` (verified against the same
-    computation using the real `America/New_York` zone). A fixed
-    15-degrees-per-hour offset derived from longitude is not a real
-    timezone (no DST, no political boundaries), but it is accurate enough
-    to resolve which calendar day an event belongs to -- the only thing
-    `date` is used for here; the returned instants are still exact,
-    UTC-aware, and converted back to UTC before being returned.
-    """
-
-    offset_hours = max(-12, min(12, round(longitude / 15)))
-    return timezone(timedelta(hours=offset_hours))
-
-
-def approximate_local_date(instant: datetime, longitude: float) -> date:
-    """The calendar date `instant` (a real, exact UTC-aware instant) falls
-    on on the local side of this coordinate -- using the same coarse
-    per-15-degrees offset `compute_daily_solar_facts` anchors its own
-    `date` argument to, so the two stay consistent with each other."""
-
-    if instant.tzinfo is None:
-        raise ValueError("approximate_local_date requires a timezone-aware instant")
-    offset = _approximate_local_offset(longitude)
-    return instant.astimezone(offset).date()
-
-
 def compute_daily_solar_facts(
     latitude: float, longitude: float, for_date: date
 ) -> DailySolarFacts:
-    """Compute sunrise/sunset for one calendar date, at this coordinate's
-    approximate local day boundary (see `_approximate_local_offset`), as
-    exact UTC-aware instants.
+    """Compute the sunrise/sunset that fall within *UTC calendar date*
+    `for_date` -- literally `astral.sun.sun(observer, date=for_date,
+    tzinfo=timezone.utc)`, no other timezone involved anywhere. See this
+    module's own docstring and `DailySolarFacts`'s for why this pair is
+    not always a chronologically sane [sunrise, sunset) window on its own.
 
     Uses `astral`'s standard geometric sunrise/sunset (center of the solar
     disc crossing the horizon, with standard atmospheric refraction) -- not
@@ -125,20 +121,20 @@ def compute_daily_solar_facts(
     contract.md for why civil/nautical/astronomical twilight is deferred.
 
     Raises `SolarContextUnavailableError` for a genuine polar day/night
-    date where the sun does not rise or set -- callers must treat this as
-    "unavailable for this date," never as a crash.
+    UTC calendar date where the sun does not rise or set -- callers must
+    treat this as "unavailable for this date," never as a crash.
     """
 
     observer = Observer(latitude=latitude, longitude=longitude)
-    anchor_tz = _approximate_local_offset(longitude)
     try:
-        facts = sun(observer, date=for_date, tzinfo=anchor_tz)
+        facts = sun(observer, date=for_date, tzinfo=timezone.utc)
     except ValueError as exc:
         raise SolarContextUnavailableError(
-            f"No sunrise/sunset at this location for {for_date.isoformat()} "
-            "(likely polar day/night)."
+            f"No sunrise/sunset within UTC calendar date {for_date.isoformat()} "
+            "at this location (likely polar day/night)."
         ) from exc
     return DailySolarFacts(
+        for_date=for_date,
         sunrise_at=facts["sunrise"].astimezone(timezone.utc),
         sunset_at=facts["sunset"].astimezone(timezone.utc),
     )
@@ -150,11 +146,74 @@ def classify_daylight_state(
     """"day" when `instant` falls within [sunrise_at, sunset_at), else
     "night". All three datetimes must be timezone-aware; naive datetimes
     raise ValueError rather than silently comparing against an assumed
-    zone."""
+    zone. `sunrise_at`/`sunset_at` must be a genuinely bracketing pair for
+    `instant` (`sunrise_at <= sunset_at`) -- obtain that pair from
+    `find_daylight_window`, not by pairing one `DailySolarFacts` row's own
+    two fields blindly."""
 
     if instant.tzinfo is None or sunrise_at.tzinfo is None or sunset_at.tzinfo is None:
         raise ValueError("classify_daylight_state requires timezone-aware datetimes")
     return "day" if sunrise_at <= instant < sunset_at else "night"
+
+
+def candidate_dates_for_window(instant: datetime) -> tuple[date, date, date]:
+    """The three *UTC calendar dates* `find_daylight_window` needs facts
+    for for `instant` to be safely bracketed: the UTC calendar date
+    `instant` itself falls on, plus the one immediately before and after
+    it. Three is always enough: `compute_daily_solar_facts` guarantees
+    both of a date's returned instants fall within that same UTC day, so
+    the true most-recent sunrise before `instant` is always found on
+    `instant`'s own UTC date or the one immediately preceding it, and the
+    true next sunset after that sunrise is always found on `instant`'s own
+    UTC date or the one immediately following it -- regardless of
+    longitude (confirmed directly for both east- and west-of-Greenwich
+    coordinates)."""
+
+    if instant.tzinfo is None:
+        raise ValueError("candidate_dates_for_window requires a timezone-aware instant")
+    center = instant.date()
+    return (center - timedelta(days=1), center, center + timedelta(days=1))
+
+
+def find_daylight_window(
+    candidates: list[DailySolarFacts], instant: datetime
+) -> tuple[datetime, datetime] | None:
+    """The [sunrise_at, sunset_at) pair relevant to `instant`: the most
+    recent sunrise at or before `instant`, paired with the next sunset
+    after that sunrise. Found by treating every candidate's sunrise and
+    sunset as independent events on one sorted timeline -- never by
+    pairing one `DailySolarFacts` row's own two fields together (see
+    `DailySolarFacts`'s docstring for why that pairing is not always
+    chronologically sane by itself). Depends only on the supplied facts
+    and `instant`; no timezone concept, real or approximate, is used here.
+
+    `candidates` should be the `DailySolarFacts` for the three dates
+    `candidate_dates_for_window(instant)` names (fewer than three -- for
+    example, because a candidate date was polar day/night and skipped --
+    is tolerated and simply narrows the search). Returns `None` only if
+    the supplied candidates do not actually bracket `instant` (an
+    incomplete candidate list, or enough candidate dates being polar
+    day/night) -- callers must treat that the same as "unavailable,"
+    never as a crash.
+    """
+
+    if instant.tzinfo is None:
+        raise ValueError("find_daylight_window requires a timezone-aware instant")
+
+    events: list[tuple[datetime, SolarEventKind]] = []
+    for facts in candidates:
+        events.append((facts.sunrise_at, "sunrise"))
+        events.append((facts.sunset_at, "sunset"))
+    events.sort(key=lambda event: event[0])
+
+    preceding_sunrises = [at for at, kind in events if kind == "sunrise" and at <= instant]
+    if not preceding_sunrises:
+        return None
+    sunrise_at = preceding_sunrises[-1]
+    following_sunsets = [at for at, kind in events if kind == "sunset" and at > sunrise_at]
+    if not following_sunsets:
+        return None
+    return sunrise_at, following_sunsets[0]
 
 
 __all__ = [
@@ -164,11 +223,13 @@ __all__ = [
     "SOLAR_ALGORITHM_VERSION",
     "SolarContextStatusValue",
     "DaylightState",
+    "SolarEventKind",
     "SolarContextUnavailableError",
     "SolarContextStatus",
     "DailySolarFacts",
     "get_solar_context_status",
-    "approximate_local_date",
     "compute_daily_solar_facts",
     "classify_daylight_state",
+    "candidate_dates_for_window",
+    "find_daylight_window",
 ]

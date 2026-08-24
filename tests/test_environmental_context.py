@@ -1,17 +1,21 @@
 """Environmental Context Foundation v1 (see docs/environmental-context-
-foundation-v1-contract.md).
+foundation-v1-contract.md), including its "Solar Temporal-Semantics
+Acceptance Closure" correction.
 
-Covers: the local solar/daylight provider (sunrise/sunset/day-night,
-longitude-aware calendar-date resolution -- including a regression test for
-a real `astral` date-labeling bug found and worked around during
-implementation -- coarse-rounding accuracy, and polar-night handling); the
+Covers: the local solar/daylight provider (sunrise/sunset/day-night
+depending only on Place coordinates and a UTC instant -- never on any
+timezone concept, real or approximate -- across western and eastern
+longitudes, both hemispheres, and both solstice seasons; the bracketing
+[sunrise, sunset) window search across UTC-calendar-date boundaries;
+coarse-rounding accuracy; and polar-night handling); the
 environmental-context settings singleton (coarse rounding, clearing, audit
 trail, both-or-neither validation); the provider-neutral observation table
 (bounded provenance, idempotent daily caching); Visit/Place association
-(the canonical `activity_started_at` field, near-midnight correctness,
-absence-safe throughout, and direct proof that environmental-context reads
-never mutate reviewed wildlife truth); the real HTTP surface; and
-backup/restore survival.
+(the canonical `activity_started_at` field, exact sunrise/sunset boundary
+instants, a direct proof that varying the season alone cannot change a
+UTC-instant classification, absence-safe throughout, and direct proof that
+environmental-context reads never mutate reviewed wildlife truth); the
+real HTTP surface; and backup/restore survival.
 """
 
 from __future__ import annotations
@@ -28,9 +32,10 @@ from mockingbird.api.main import app, configure_repository, get_repository
 from mockingbird.api.schemas import CurrentUser, EnvironmentalContextSettingsUpdate, UserRole
 from mockingbird.environment.solar_context import (
     SolarContextUnavailableError,
-    approximate_local_date,
+    candidate_dates_for_window,
     classify_daylight_state,
     compute_daily_solar_facts,
+    find_daylight_window,
     get_solar_context_status,
 )
 from mockingbird.repository.product_repository import ProductRepository
@@ -118,37 +123,79 @@ def test_get_solar_context_status_reflects_configuration() -> None:
     assert get_solar_context_status(40.7, -74.0).status == "available"
 
 
-def test_compute_daily_solar_facts_orders_sunset_after_sunrise_across_hemispheres() -> None:
-    for latitude, longitude in ((40.7, -74.0), (35.68, 139.7), (-33.9, 151.2), (51.5, -0.1)):
-        facts = compute_daily_solar_facts(latitude, longitude, date(2026, 3, 20))
-        assert facts.sunset_at > facts.sunrise_at
-
-
 def test_compute_daily_solar_facts_matches_known_reference_for_nyc() -> None:
     # Real-world reference: NYC summer solstice sunrise/sunset are
     # approximately 05:25/20:30 EDT (UTC-4). Tolerance is generous (a few
     # minutes) since this checks "roughly right against an independent
     # real-world reference," not bit-exactness against a second computation.
+    #
+    # `facts.sunset_at` here is the *raw single-date* sunset -- the one
+    # that falls within UTC calendar day 2026-06-21 itself, which for this
+    # longitude is the tail of the *previous* local evening (2026-06-20
+    # 20:30 EDT), not "today's" 2026-06-21 20:30 EDT sunset a naive reader
+    # might expect (that one carries UTC date 2026-06-22; see
+    # `test_compute_daily_solar_facts_for_date_is_the_utc_calendar_date_
+    # not_a_civil_date`, above). This is exactly why Visit/Place context
+    # never uses one date's raw pair directly -- see `find_daylight_
+    # window`, exercised separately below.
     facts = compute_daily_solar_facts(NYC_LATITUDE, NYC_LONGITUDE, date(2026, 6, 21))
     local_sunrise = facts.sunrise_at - timedelta(hours=4)
     local_sunset = facts.sunset_at - timedelta(hours=4)
     assert abs((local_sunrise - datetime(2026, 6, 21, 5, 25, tzinfo=UTC)).total_seconds()) < 300
-    assert abs((local_sunset - datetime(2026, 6, 21, 20, 30, tzinfo=UTC)).total_seconds()) < 300
+    assert abs((local_sunset - datetime(2026, 6, 20, 20, 30, tzinfo=UTC)).total_seconds()) < 300
+
+    # The Visit-relevant sunset (via the bracket search) is the real,
+    # intuitively-expected one: 2026-06-21 20:30 EDT.
+    afternoon = datetime(2026, 6, 21, 20, 0, tzinfo=UTC)
+    _, real_sunset_at = _daylight_window(NYC_LATITUDE, NYC_LONGITUDE, afternoon)
+    assert abs((real_sunset_at - timedelta(hours=4) - datetime(2026, 6, 21, 20, 30, tzinfo=UTC)).total_seconds()) < 300
 
 
-def test_compute_daily_solar_facts_date_boundary_is_longitude_aware_not_utc_naive() -> None:
-    """Regression test for a real bug found during implementation:
-    `astral.sun.sun` mislabels an event's calendar date by a full day when
-    given `tzinfo=UTC` for a longitude far from Greenwich (confirmed
-    directly: NYC's `date=2026-06-21` sunset came back dated `2026-06-21
-    00:30 UTC`, a full day before the correct `2026-06-22 00:30 UTC`, cross-
-    checked against the real `America/New_York` zone). `compute_daily_
-    solar_facts` anchors to an approximate local offset instead of raw UTC
-    specifically to avoid this."""
+def test_compute_daily_solar_facts_for_date_is_the_utc_calendar_date_not_a_civil_date() -> None:
+    """`compute_daily_solar_facts(..., for_date=D)` means exactly "the
+    sunrise/sunset that fall within UTC calendar day D" -- confirmed here
+    directly rather than assumed. For a longitude west of Greenwich (NYC),
+    that UTC-day sunset genuinely carries the *same* UTC date as the
+    sunrise, at an earlier time-of-day -- this is not a bug, and not a
+    mislabeling; it is what "the sunset associated with UTC day D" means
+    for this longitude (the sunset instant that happens to fall inside D's
+    own 00:00-24:00 UTC window is the tail of the previous local evening).
+
+    This directly replaces this suite's earlier ("Environmental Context
+    Foundation v1", before this closure) claim that `astral` "mislabels" a
+    date here -- that claim was based solely on calling astral with
+    `tzinfo=UTC` and expecting a *civil*-calendar-date answer; astral's own
+    contract is that `date` is interpreted in whatever `tzinfo` is given,
+    so a UTC answer to a UTC question is correct by construction, not a
+    defect. See docs/environmental-context-foundation-v1-contract.md
+    "Solar temporal semantics" for the full record.
+    """
 
     facts = compute_daily_solar_facts(NYC_LATITUDE, NYC_LONGITUDE, date(2026, 6, 21))
+    assert facts.for_date == date(2026, 6, 21)
     assert facts.sunrise_at.date() == date(2026, 6, 21)
-    assert facts.sunset_at.date() == date(2026, 6, 22)  # correctly crosses UTC midnight
+    assert facts.sunset_at.date() == date(2026, 6, 21)  # same UTC date as for_date, by construction
+    assert facts.sunset_at < facts.sunrise_at  # earlier time-of-day; see docstring above
+
+
+def test_compute_daily_solar_facts_ordering_within_one_date_depends_on_longitude() -> None:
+    """Whether `sunset_at` falls before or after `sunrise_at` *within the
+    same `for_date`* depends only on how far local solar noon is offset
+    from UTC noon by longitude -- not on hemisphere, not on season. A
+    longitude far enough from Greenwich in *either* direction can put
+    local noon early or late in the UTC day, inverting the naive
+    same-date ordering; near Greenwich, it holds normally. None of this
+    is a defect: see `find_daylight_window`, which never relies on one
+    date's own pair being self-ordered."""
+
+    close_to_greenwich = compute_daily_solar_facts(51.5, -0.1, date(2026, 3, 20))  # London
+    assert close_to_greenwich.sunset_at > close_to_greenwich.sunrise_at
+
+    far_east = compute_daily_solar_facts(35.68, 139.7, date(2026, 3, 20))  # Tokyo
+    assert far_east.sunset_at < far_east.sunrise_at
+
+    far_west = compute_daily_solar_facts(40.7, -74.0, date(2026, 6, 21))  # NYC, solstice
+    assert far_west.sunset_at < far_west.sunrise_at
 
 
 def test_compute_daily_solar_facts_raises_typed_error_for_polar_night() -> None:
@@ -168,24 +215,162 @@ def test_coarse_rounding_changes_sunrise_by_well_under_a_minute() -> None:
 
 
 def test_classify_daylight_state_day_and_night() -> None:
-    facts = compute_daily_solar_facts(NYC_LATITUDE, NYC_LONGITUDE, date(2026, 6, 21))
-    noon = facts.sunrise_at + (facts.sunset_at - facts.sunrise_at) / 2
-    well_before_dawn = facts.sunrise_at - timedelta(hours=2)
-    assert classify_daylight_state(noon, facts.sunrise_at, facts.sunset_at) == "day"
-    assert classify_daylight_state(well_before_dawn, facts.sunrise_at, facts.sunset_at) == "night"
+    sunrise_at = datetime(2026, 6, 21, 9, 25, tzinfo=UTC)
+    sunset_at = datetime(2026, 6, 22, 0, 30, tzinfo=UTC)
+    noon = sunrise_at + (sunset_at - sunrise_at) / 2
+    well_before_dawn = sunrise_at - timedelta(hours=2)
+    assert classify_daylight_state(noon, sunrise_at, sunset_at) == "day"
+    assert classify_daylight_state(well_before_dawn, sunrise_at, sunset_at) == "night"
 
 
 def test_classify_daylight_state_rejects_naive_datetime() -> None:
-    facts = compute_daily_solar_facts(NYC_LATITUDE, NYC_LONGITUDE, date(2026, 6, 21))
+    sunrise_at = datetime(2026, 6, 21, 9, 25, tzinfo=UTC)
+    sunset_at = datetime(2026, 6, 22, 0, 30, tzinfo=UTC)
     with pytest.raises(ValueError):
-        classify_daylight_state(datetime(2026, 6, 21, 12, 0), facts.sunrise_at, facts.sunset_at)
+        classify_daylight_state(datetime(2026, 6, 21, 12, 0), sunrise_at, sunset_at)
 
 
-def test_approximate_local_date_resolves_near_midnight_correctly() -> None:
-    two_am_local = datetime(2026, 6, 21, 6, 0, tzinfo=UTC)  # ~2am EDT, still "last night" locally
-    assert approximate_local_date(two_am_local, NYC_LONGITUDE) == date(2026, 6, 21)
-    eleven_pm_local = datetime(2026, 6, 22, 3, 0, tzinfo=UTC)  # ~11pm EDT, already "tomorrow" in UTC
-    assert approximate_local_date(eleven_pm_local, NYC_LONGITUDE) == date(2026, 6, 21)
+def test_classify_daylight_state_exact_boundary_instants() -> None:
+    """The boundary itself belongs to the following state on both ends:
+    `[sunrise_at, sunset_at)` -- the instant of sunrise is already "day,"
+    the instant of sunset is already "night," matching how `find_daylight_
+    window` constructs this pair (a sunrise is never later than the
+    instant it was found relative to; see that function's own docstring)."""
+
+    sunrise_at = datetime(2026, 6, 21, 9, 25, tzinfo=UTC)
+    sunset_at = datetime(2026, 6, 22, 0, 30, tzinfo=UTC)
+    assert classify_daylight_state(sunrise_at - timedelta(seconds=1), sunrise_at, sunset_at) == "night"
+    assert classify_daylight_state(sunrise_at, sunrise_at, sunset_at) == "day"
+    assert classify_daylight_state(sunset_at - timedelta(seconds=1), sunrise_at, sunset_at) == "day"
+    assert classify_daylight_state(sunset_at, sunrise_at, sunset_at) == "night"
+
+
+def _daylight_window(latitude: float, longitude: float, instant: datetime) -> tuple[datetime, datetime]:
+    """Test-only helper mirroring `ProductRepository._get_daylight_window_
+    in_session`'s pure-function core, without a database: compute the
+    three candidate dates, fetch each directly (no caching needed for a
+    test), and hand them to `find_daylight_window`."""
+
+    candidates = []
+    for candidate_date in candidate_dates_for_window(instant):
+        try:
+            candidates.append(compute_daily_solar_facts(latitude, longitude, candidate_date))
+        except SolarContextUnavailableError:
+            continue
+    window = find_daylight_window(candidates, instant)
+    assert window is not None
+    return window
+
+
+def test_find_daylight_window_western_longitude_sunset_crosses_utc_midnight() -> None:
+    """NYC (west of Greenwich): a Visit at real local mid-afternoon (UTC
+    instant), classified using only coordinates + that UTC instant, must
+    resolve a self-consistent window whose sunset genuinely follows its
+    sunrise in absolute time, even though the two fall on different UTC
+    calendar dates."""
+
+    instant = datetime(2026, 6, 21, 20, 0, tzinfo=UTC)  # 16:00 EDT, mid-afternoon
+    sunrise_at, sunset_at = _daylight_window(NYC_LATITUDE, NYC_LONGITUDE, instant)
+    assert sunrise_at < sunset_at
+    assert sunrise_at <= instant < sunset_at
+    assert sunrise_at.date() == date(2026, 6, 21)
+    assert sunset_at.date() == date(2026, 6, 22)  # correctly the following UTC date
+    assert classify_daylight_state(instant, sunrise_at, sunset_at) == "day"
+
+
+def test_find_daylight_window_eastern_longitude_date_boundary_counterpart() -> None:
+    """Tokyo (east of Greenwich): the same property, on the hemisphere
+    where the UTC-date-boundary crossing runs the other direction."""
+
+    instant = datetime(2026, 6, 21, 3, 0, tzinfo=UTC)  # 12:00 JST, local noon
+    sunrise_at, sunset_at = _daylight_window(35.68, 139.7, instant)
+    assert sunrise_at < sunset_at
+    assert sunrise_at <= instant < sunset_at
+    assert classify_daylight_state(instant, sunrise_at, sunset_at) == "day"
+    # This window's own sunrise/sunset genuinely fall on two different UTC
+    # calendar dates -- confirms this used the cross-date bracket for
+    # real, not merely a same-date pair that happened to work out.
+    assert sunrise_at.date() == date(2026, 6, 20)
+    assert sunset_at.date() == date(2026, 6, 21)
+
+
+def test_find_daylight_window_visit_just_before_and_after_sunrise() -> None:
+    reference = compute_daily_solar_facts(NYC_LATITUDE, NYC_LONGITUDE, date(2026, 6, 21))
+    just_before = reference.sunrise_at - timedelta(minutes=1)
+    just_after = reference.sunrise_at + timedelta(minutes=1)
+    sunrise_before, sunset_before = _daylight_window(NYC_LATITUDE, NYC_LONGITUDE, just_before)
+    sunrise_after, sunset_after = _daylight_window(NYC_LATITUDE, NYC_LONGITUDE, just_after)
+    assert classify_daylight_state(just_before, sunrise_before, sunset_before) == "night"
+    assert classify_daylight_state(just_after, sunrise_after, sunset_after) == "day"
+
+
+def test_find_daylight_window_visit_just_before_and_after_sunset() -> None:
+    reference = compute_daily_solar_facts(NYC_LATITUDE, NYC_LONGITUDE, date(2026, 6, 21))
+    # This UTC-day's own sunset (see the "for_date is the UTC calendar
+    # date" test above) is the *real* upcoming sunset relative to a
+    # mid-day instant one day later in local terms -- use the window
+    # finder itself (not the raw per-date fact) to get the one genuinely
+    # relevant to a concrete Visit instant, matching how the repository
+    # always does this.
+    afternoon = datetime(2026, 6, 21, 20, 0, tzinfo=UTC)
+    _, sunset_at = _daylight_window(NYC_LATITUDE, NYC_LONGITUDE, afternoon)
+    just_before = sunset_at - timedelta(minutes=1)
+    just_after = sunset_at + timedelta(minutes=1)
+    sunrise_before, sunset_before = _daylight_window(NYC_LATITUDE, NYC_LONGITUDE, just_before)
+    sunrise_after, sunset_after = _daylight_window(NYC_LATITUDE, NYC_LONGITUDE, just_after)
+    assert classify_daylight_state(just_before, sunrise_before, sunset_before) == "day"
+    assert classify_daylight_state(just_after, sunrise_after, sunset_after) == "night"
+
+
+def test_daylight_classification_unaffected_by_season_with_no_civil_timezone_stored() -> None:
+    """Direct proof of requirement: DST season must not alter UTC-instant
+    solar classification merely because no civil timezone is stored.
+    Nothing in this module ever reads a season, a DST flag, or any
+    timezone -- classification is a pure function of coordinates and a
+    UTC instant. Pick a January (EST-season, if a civil zone existed) and
+    a July (EDT-season) instant that are each unambiguously mid-morning
+    daylight in NYC, and confirm both classify correctly with the exact
+    same code path -- there is no DST-aware branch to regress."""
+
+    winter_midmorning = datetime(2026, 1, 15, 15, 0, tzinfo=UTC)  # ~10am EST equivalent
+    summer_midmorning = datetime(2026, 7, 15, 15, 0, tzinfo=UTC)  # ~11am EDT equivalent
+    for instant in (winter_midmorning, summer_midmorning):
+        sunrise_at, sunset_at = _daylight_window(NYC_LATITUDE, NYC_LONGITUDE, instant)
+        assert classify_daylight_state(instant, sunrise_at, sunset_at) == "day"
+
+
+@pytest.mark.parametrize(
+    ("latitude", "longitude", "label"),
+    [
+        (40.7, -74.0, "NYC (west, northern summer)"),
+        (35.68, 139.7, "Tokyo (east, northern summer)"),
+        (-33.9, 151.2, "Sydney (east, southern winter)"),
+        (51.5, -0.1, "London (near Greenwich)"),
+    ],
+)
+def test_find_daylight_window_hourly_sweep_is_self_consistent(
+    latitude: float, longitude: float, label: str
+) -> None:
+    """Property-style sweep (not just hand-picked instants): for 72
+    consecutive hourly UTC instants, the window found is always self-
+    consistent (`sunrise_at <= instant < sunset_at` or the instant is
+    correctly "night"), and exactly two day/night transitions occur per
+    ~24h -- proving the bracket search has no hidden longitude-specific
+    failure mode across these hemispheres."""
+
+    instant = datetime(2026, 6, 20, 0, 0, tzinfo=UTC)
+    previous_state = None
+    transitions = 0
+    for _ in range(72):
+        sunrise_at, sunset_at = _daylight_window(latitude, longitude, instant)
+        assert sunrise_at <= instant
+        assert sunrise_at < sunset_at
+        state = classify_daylight_state(instant, sunrise_at, sunset_at)
+        if previous_state is not None and state != previous_state:
+            transitions += 1
+        previous_state = state
+        instant += timedelta(hours=1)
+    assert transitions == 6, f"{label}: expected 6 transitions in 72h, got {transitions}"
 
 
 # --- Repository: settings ----------------------------------------------------
@@ -292,7 +477,13 @@ def test_daily_solar_context_is_cached_not_recomputed(repository: ProductReposit
 
     with repository.session_factory() as session:
         rows = session.scalars(select(EnvironmentalContextRecordModel)).all()
-        assert len(rows) == 2  # exactly one sunrise + one sunset row, never duplicated
+        # Bounded, not unbounded: one sunrise + one sunset row for each of
+        # the 3 UTC calendar dates `_get_daylight_window_in_session`
+        # brackets "now" with (see `candidate_dates_for_window`) -- 6
+        # rows total, cached once and reused by the second call above,
+        # never growing further on repeated calls for the same "now".
+        assert len(rows) == 6
+        assert len({row.for_date for row in rows}) == 3  # exactly 3 distinct bracketing dates
         assert {row.metric for row in rows} == {"sunrise", "sunset"}
         for row in rows:
             assert row.information_class == "derived"
@@ -353,9 +544,10 @@ def test_visit_environmental_context_uses_activity_started_at_and_classifies_cor
     assert noon_context.daylight_state == "day"
     assert noon_context.evaluated_at == datetime(2026, 6, 21, 16, 0, tzinfo=UTC)
 
-    # ~2am EDT (06:00 UTC the following day) is unambiguously nighttime, and
-    # falls on the UTC-adjacent calendar date from its own local date -- the
-    # exact boundary case `approximate_local_date` exists to get right.
+    # ~2am EDT (06:00 UTC the following day) is unambiguously nighttime --
+    # exercised through the real repository path (not the pure functions
+    # tested above) to confirm `_get_daylight_window_in_session`'s cross-
+    # date bracketing works end to end, including its own caching.
     _add_visit(repository, visit_id="night-visit", at=datetime(2026, 6, 22, 6, 0, tzinfo=UTC))
     night_context = repository.get_visit_environmental_context("night-visit")
     assert night_context is not None
@@ -490,4 +682,6 @@ def test_backup_restore_preserves_environmental_context_settings_and_records(
     assert restored_settings.coarse_longitude == -74.0
     with restored_repository.session_factory() as session:
         rows = session.scalars(select(EnvironmentalContextRecordModel)).all()
-        assert len(rows) == 2
+        # 6, not 2: one "today" lookup caches all 3 bracketing UTC dates
+        # (see `test_daily_solar_context_is_cached_not_recomputed`, above).
+        assert len(rows) == 6

@@ -1575,19 +1575,19 @@ class EnvironmentalContextRecordModel(Base):
     instants, not intervals); its presence lets a future daily
     min/max-style aggregate express an interval without a schema change.
 
-    `for_date` is the calendar date (at this record's own `basis_latitude`/
-    `basis_longitude`'s approximate local reckoning -- see
-    `mockingbird.environment.solar_context.approximate_local_date`) this
-    fact is anchored to; `NULL` for a future metric with no natural single
-    day. This exists because `observed_at` alone is not a safe lookup key
-    for "the day's sunrise/sunset": a naive UTC-calendar-day range query
-    over `observed_at` reproduces the exact date-boundary bug
-    `solar_context.compute_daily_solar_facts` documents and works around
-    (an instant can fall on the UTC-adjacent calendar date from the local
-    date it actually belongs to, depending on longitude). `for_date` is
-    computed once, at write time, using that same approximate-local-date
-    reckoning, so a lookup is a plain equality match, never a re-derivation
-    of it from `observed_at`.
+    `for_date` is the *UTC calendar date* passed to `astral.sun.sun` as
+    `date` (with `tzinfo=timezone.utc`) to produce this row -- see
+    `mockingbird.environment.solar_context.compute_daily_solar_facts` --
+    never a claim about this record's `basis_latitude`/`basis_longitude`'s
+    local/civil date (see "Solar temporal semantics acceptance closure" in
+    docs/environmental-context-foundation-v1-contract.md for a real,
+    corrected mistake this milestone first made in exactly that
+    direction). `NULL` for a future metric with no natural single day.
+    `for_date` is the lookup key so a query is a plain equality match, not
+    a re-derivation from `observed_at` -- but one row's own `for_date`
+    does not by itself imply a coherent [sunrise, sunset) window (see
+    `solar_context.find_daylight_window` for how a real window is
+    constructed from one or more of these rows).
 
     `basis_latitude`/`basis_longitude` snapshot the coordinates actually
     used to compute this one record, independent of the live
