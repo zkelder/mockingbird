@@ -58,10 +58,20 @@ const SUPPRESSED_REASON_LABELS: Record<string, string> = {
 // non-technical user needs -- never "region", "occurrence count", or any
 // other model-internal term (see docs/scene-confusor-suspicion-contract.md,
 // "Operator surface").
+//
+// Acceptance correction (2026-08-24): evidence-based state (is anything
+// being learned/evaluated from reviewed activity?) is checked before, and
+// independently of, whether production adaptation is currently turned on --
+// collecting/evaluating reviewed evidence never stops just because
+// production adaptation is off (the default), so this must never say
+// "disabled" while that evaluation is still ongoing. The enable/disable
+// button below already communicates the operator's own current production
+// setting; this line only ever describes what the evidence itself shows.
 function learningStatusLabel(status: SceneConfusorLearningStatus | null): string {
   if (!status) return "Reading…";
-  if (!status.reviewed_evidence_enabled) return "Local adjustment disabled";
-  if (status.regions_currently_adjusted > 0) return "Local adjustment active";
+  if (status.regions_currently_adjusted > 0) {
+    return status.reviewed_evidence_enabled ? "Local adjustment active" : "Learning from reviewed activity on this camera";
+  }
   if (status.regions_with_reviewed_evidence > 0) return "Learning from reviewed activity on this camera";
   return "Not enough reviewed history yet";
 }

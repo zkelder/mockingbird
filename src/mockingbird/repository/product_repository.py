@@ -2531,28 +2531,42 @@ class ObservationAuthoritySettingsModel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     # Site-Specific Learning & Local Adaptation v1 (schema 53, see
     # docs/scene-confusor-suspicion-contract.md, "Reset / disable"): the
-    # operator-facing "Local adjustment disabled" control, scoped to only
-    # the new reviewed-negative-evidence suspicion path -- `False` restores
-    # exactly this Stream's pre-milestone shipped scene-confusor behavior
-    # (unreviewed occurrence-count recurrence only), while every already-
-    # accumulated `reviewed_real_count`/`reviewed_false_count` on this
-    # Stream's own regions is preserved untouched, ready to resume the
-    # instant this is re-enabled. Distinct from "Reset local learning"
-    # (`purge_scene_confusor_regions_for_stream`), which deletes region
-    # history outright. Defaults `True`: the module's own minimum-evidence
-    # abstention gate already makes this a no-op on any Stream that has not
-    # yet earned it, so enabling by default has no observable effect until
-    # genuine reviewed history accumulates. Unlike this file's usual
-    # "nullable, no backfill, honest absence" convention (there is no
-    # honest "unknown" state for an on/off control -- it must always read
-    # as one or the other): `server_default` in addition to the ORM-level
-    # `default` so a freshly created table (`Base.metadata.create_all`) and
-    # a migrated one (this column's own `ALTER TABLE ... DEFAULT 1`) carry
-    # an identical real schema-level default, not just an ORM-level one --
-    # correct for any raw-SQL insert that omits this column too, not only
-    # ordinary `session.add(...)` construction.
+    # operator-facing production-activation control, scoped to only the new
+    # reviewed-negative-evidence suspicion path -- `False` (the default, see
+    # below) leaves exactly this Stream's pre-milestone shipped scene-
+    # confusor behavior in production (unreviewed occurrence-count
+    # recurrence only), while every already-accumulated `reviewed_real_
+    # count`/`reviewed_false_count` on this Stream's own regions still
+    # accumulates, and remains fully visible to status/counterfactual
+    # reporting, regardless of this flag. Distinct from "Reset local
+    # learning" (`purge_scene_confusor_regions_for_stream`), which deletes
+    # region history outright.
+    #
+    # Acceptance correction (2026-08-24): defaults `False`, not `True`.
+    # `min_reviewed_false_to_suspect` (see `scene_confusor.
+    # DEFAULT_MIN_REVIEWED_FALSE_TO_SUSPECT`) is disclosed as a candidate
+    # threshold pending organic field validation, not a field-validated one
+    # (this repository's own real local database has zero organic
+    # `scene_confusor_regions` history to have validated it against) -- a
+    # `True` default would have let an unvalidated threshold begin
+    # influencing production admission the moment any Stream's own future
+    # field use happened to produce two authority-eligible `false_positive`
+    # reviews at the same geometry, with no explicit operator decision ever
+    # made. `False` requires that decision to be explicit (see
+    # `set_scene_confusor_reviewed_evidence_enabled`) -- an operator running
+    # local field testing can still turn it on per-Stream at any time; nothing
+    # about the mechanism's own accumulation, provenance, reversibility, or
+    # reporting depends on this flag. Unlike this file's usual "nullable, no
+    # backfill, honest absence" convention (there is no honest "unknown"
+    # state for an on/off control -- it must always read as one or the
+    # other): `server_default` in addition to the ORM-level `default` so a
+    # freshly created table (`Base.metadata.create_all`) and a migrated one
+    # (this column's own `ALTER TABLE ... DEFAULT 0`) carry an identical real
+    # schema-level default, not just an ORM-level one -- correct for any
+    # raw-SQL insert that omits this column too, not only ordinary
+    # `session.add(...)` construction.
     scene_confusor_reviewed_evidence_enabled: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True, server_default=text("1"),
+        Boolean, nullable=False, default=False, server_default=text("0"),
     )
 
 
@@ -3218,12 +3232,18 @@ class ObservationAuthorityStatus:
     last_proposal_id: str | None
     # Site-Specific Learning & Local Adaptation v1 (see docs/scene-confusor-
     # suspicion-contract.md, "Operator surface"): the smallest honest status
-    # a "Learning from reviewed activity on this camera" / "Not enough
-    # reviewed history yet" / "Local adjustment active" / "Local adjustment
-    # disabled" UI needs, without exposing region ids, geometry, or model
-    # jargon. Both counts are bounded, indexed, on-demand aggregates over
-    # this Stream's own already-capped (`max_regions_per_stream`) region
-    # set -- never a per-frame or hot-path computation.
+    # a "Not enough reviewed history yet" / "Learning from reviewed activity
+    # on this camera" / "Local adjustment active" UI needs, without exposing
+    # region ids, geometry, or model jargon. `scene_confusor_reviewed_
+    # evidence_enabled` reports this Stream's own current production-
+    # activation setting honestly, but `regions_with_reviewed_evidence`/
+    # `regions_eligible_from_reviewed_evidence` are computed unconditionally
+    # of it (see `_scene_confusor_reviewed_evidence_summary`) -- collection
+    # and evaluation of reviewed evidence are never themselves "disabled",
+    # only whether that evaluation is currently allowed to influence
+    # production admission is. Both counts are bounded, indexed, on-demand
+    # aggregates over this Stream's own already-capped (`max_regions_per_
+    # stream`) region set -- never a per-frame or hot-path computation.
     scene_confusor_reviewed_evidence_enabled: bool
     scene_confusor_regions_with_reviewed_false_evidence: int
     scene_confusor_regions_eligible_from_reviewed_evidence: int
@@ -5053,8 +5073,14 @@ class ProductRepository:
                     # Stage 7 admission attempt, so it structurally cannot
                     # have any scene-confusor region history either --
                     # honest zeros, not an extra query for a set that must
-                    # already be empty.
-                    scene_confusor_reviewed_evidence_enabled=True,
+                    # already be empty. `False` matches the same
+                    # conservative-by-default value `_get_or_create_
+                    # authority_settings` gives an actual new row (see that
+                    # column's own docstring) -- a Stream reporting this
+                    # fallback must never claim a different default than the
+                    # one it would actually receive the instant a row is
+                    # created for it.
+                    scene_confusor_reviewed_evidence_enabled=False,
                     scene_confusor_regions_with_reviewed_false_evidence=0,
                     scene_confusor_regions_eligible_from_reviewed_evidence=0,
                 )
@@ -5135,17 +5161,30 @@ class ProductRepository:
     def set_scene_confusor_reviewed_evidence_enabled(
         self, *, stream_id: str, enabled: bool, now: datetime | None = None,
     ) -> ObservationAuthorityStatus:
-        """The "Local adjustment active" / "Local adjustment disabled"
-        operator control (see docs/scene-confusor-suspicion-contract.md,
-        "Reset / disable"). Immediate, restart-free, and Stream-isolated --
+        """The explicit operator opt-in/opt-out for the reviewed-negative-
+        evidence *production* admission shortcut (see docs/scene-confusor-
+        suspicion-contract.md, "Reviewed-negative-evidence production
+        activation"). Immediate, restart-free, and Stream-isolated --
         identical propagation shape to `set_observation_authority_mode`'s
         own kill switch, but scoped to only the new reviewed-negative-
-        evidence suspicion path: disabling this never touches the pre-
-        milestone shipped occurrence-count mechanism, and never deletes any
-        already-accumulated `reviewed_real_count`/`reviewed_false_count`
-        bookkeeping -- re-enabling resumes exactly where it left off. See
-        `purge_scene_confusor_regions_for_stream` for the separate, more
-        destructive "Reset local learning" action."""
+        evidence suspicion path: neither direction ever touches the pre-
+        milestone shipped occurrence-count mechanism, and neither direction
+        ever deletes any already-accumulated `reviewed_real_count`/
+        `reviewed_false_count` bookkeeping, which keeps accumulating and
+        stays fully visible to status/counterfactual reporting either way.
+
+        `enabled=True` is a genuine, deliberate widening of production
+        behavior -- this milestone's own `min_reviewed_false_to_suspect`
+        threshold is disclosed as a candidate pending organic field
+        validation, not a field-validated default (see `scene_confusor.
+        DEFAULT_MIN_REVIEWED_FALSE_TO_SUSPECT`), so this call is how an
+        operator running local field testing makes that an explicit,
+        attributable decision for one specific Stream, rather than
+        inheriting it silently. `enabled=False` (the per-Stream default)
+        restores production admission to occurrence-count recurrence only,
+        re-enabling resumes exactly where the preserved bookkeeping left
+        off. See `purge_scene_confusor_regions_for_stream` for the separate,
+        more destructive "Reset local learning" action."""
 
         moment = now or datetime.now(UTC)
         with self.session_factory() as session:
@@ -5252,7 +5291,7 @@ class ProductRepository:
         evidence_items: tuple[CandidateEvidenceItem, ...],
         limits: AuthorityLimits,
         observed_at: datetime,
-        scene_confusor_reviewed_evidence_enabled: bool = True,
+        scene_confusor_reviewed_evidence_enabled: bool = False,
     ) -> CandidateVisitCreationOutcome:
         """Called only from inside `create_candidate_visit_from_proposal`'s
         own transaction, only after the gate already returned `create`.
@@ -5260,9 +5299,13 @@ class ProductRepository:
         `scene_confusor_reviewed_evidence_enabled` is this Stream's own
         already-fetched `ObservationAuthoritySettingsModel.scene_confusor_
         reviewed_evidence_enabled` -- threaded through rather than re-
-        queried, so the operator disable control costs zero additional
-        database reads on this already-hot admission path (the settings row
-        is already loaded by the caller for the authority-mode check)."""
+        queried, so the operator enable/disable control costs zero
+        additional database reads on this already-hot admission path (the
+        settings row is already loaded by the caller for the authority-mode
+        check). Defaults `False` here too (matching the column's own
+        conservative default) purely as defensive-in-depth for a caller that
+        somehow omits it -- the real production caller always threads the
+        Stream's own actual setting explicitly."""
 
         stream_model = session.get(StreamModel, proposal.stream_id)
         if stream_model is None:
@@ -8069,7 +8112,9 @@ class ProductRepository:
             max_candidates_per_hour=_DEFAULT_MAX_CANDIDATES_PER_HOUR,
             max_evidence_items_per_candidate=_DEFAULT_MAX_EVIDENCE_ITEMS_PER_CANDIDATE,
             max_evidence_bytes_per_candidate=_DEFAULT_MAX_EVIDENCE_BYTES_PER_CANDIDATE,
-            scene_confusor_reviewed_evidence_enabled=True,
+            # Conservative by default (acceptance correction, 2026-08-24) --
+            # see the column's own docstring on `ObservationAuthoritySettingsModel`.
+            scene_confusor_reviewed_evidence_enabled=False,
             updated_at=moment,
         )
         session.add(settings)

@@ -8,11 +8,15 @@ Never touches the real product database. Every case below runs twice,
 through the real, unmodified `ProductRepository.create_candidate_visit_from_
 proposal` / `create_review_label` code paths -- once against a fresh,
 isolated, disposable SQLite database with the new mechanism's per-Stream
-`scene_confusor_reviewed_evidence_enabled` setting left at its pre-milestone
-value (`False`, "baseline"), and once against a second, independently fresh
-isolated database with it left at its shipped default (`True`, "adapted").
-Both runs replay the identical construction sequence, so the only variable
-between them is whether the new reviewed-evidence path can fire.
+`scene_confusor_reviewed_evidence_enabled` setting left at its pre-milestone,
+and (as of the 2026-08-24 acceptance correction) shipped-default value
+(`False`, "baseline"), and once against a second, independently fresh
+isolated database with an operator having explicitly turned it on for local
+field testing (`True`, "adapted") via `set_scene_confusor_reviewed_evidence_
+enabled` -- exactly the explicit opt-in this evaluation itself is meant to
+inform, not a default either database inherits silently. Both runs replay
+the identical construction sequence, so the only variable between them is
+whether the new reviewed-evidence path can fire.
 
 Disclosed honestly, not glossed over: this repository's own real local
 database (`data/mockingbird.sqlite3`) has zero pre-existing

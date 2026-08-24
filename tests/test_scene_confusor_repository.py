@@ -148,7 +148,18 @@ def _region_count(repository) -> int:
 
 
 def test_recurring_static_confusor_is_eventually_suspected_and_blocked(repository: ProductRepository) -> None:
+    """This Stream's own default settings (acceptance correction,
+    2026-08-24: `scene_confusor_reviewed_evidence_enabled` now defaults
+    `False`) must still reproduce the pre-existing, already-field-validated
+    occurrence-based scene-confusor behavior exactly, unaffected -- the new
+    reviewed-negative-evidence path is never touched anywhere in this test,
+    so this is the "default install preserves baseline occurrence-based
+    behavior" guarantee end-to-end."""
+
     _activate(repository)
+    assert repository.get_observation_authority_state(
+        stream_id=STREAM_ID
+    ).scene_confusor_reviewed_evidence_enabled is False
     outcomes = []
     for index, box in enumerate(CONFUSOR_JITTER):
         outcome = _attempt(repository, box, proposal_id=f"visit-episode:confusor-{index}", at=NOW + timedelta(minutes=index))
@@ -437,15 +448,65 @@ def _single_region(repository: ProductRepository, *, stream_id: str = STREAM_ID)
 # evidence is a genuine, independent, reversible learning signal ------------
 
 
-def test_reviewed_false_evidence_alone_suspects_a_region_below_occurrence_threshold(
+def test_reviewed_false_evidence_alone_does_not_suspect_under_default_settings(
+    repository: ProductRepository,
+) -> None:
+    """Acceptance correction (2026-08-24): a fresh Stream's own default
+    production settings must not let two authority-eligible `false_positive`
+    reviews alone block a third attempt at the same recurring geometry --
+    `min_reviewed_false_to_suspect` is a disclosed candidate threshold
+    pending organic field validation (see docs/scene-confusor-suspicion-
+    contract.md, "Reviewed-negative-evidence production activation"), so it
+    must not influence production admission until an operator explicitly
+    opts in (see the sibling `..._once_explicitly_enabled` test, below).
+    Baseline (occurrence-count) behavior must be preserved: only two
+    admission attempts have ever happened here at all, one short of
+    `min_occurrences_to_suspect` (3), so the third must still be created."""
+
+    _activate(repository)
+    created_ids = []
+    for index, box in enumerate(CONFUSOR_JITTER[:2]):
+        outcome = _attempt(
+            repository, box, proposal_id=f"visit-episode:revfalse-default-{index}", at=NOW + timedelta(minutes=index),
+        )
+        assert outcome.outcome == "created"
+        created_ids.append(outcome.visit_id)
+
+    for offset, visit_id in enumerate(created_ids):
+        repository.create_review_label(
+            ReviewCorrectionCreate(
+                target_type="visit", target_id=visit_id, label="false_positive",
+                review_origin="human", reviewer_identity="test-reviewer",
+            ),
+            created_at=NOW + timedelta(minutes=10 + offset),
+        )
+
+    region = _single_region(repository)
+    assert region.occurrence_count == 2
+    assert region.reviewed_false_count == DEFAULT_MIN_REVIEWED_FALSE_TO_SUSPECT
+
+    # Never explicitly enabled -- this Stream's settings row, if it exists at
+    # all, still carries its own conservative default.
+    status = repository.get_observation_authority_state(stream_id=STREAM_ID)
+    assert status.scene_confusor_reviewed_evidence_enabled is False
+
+    outcome = _attempt(
+        repository, CONFUSOR_JITTER[2], proposal_id="visit-episode:revfalse-default-followup", at=NOW + timedelta(hours=1),
+    )
+    assert outcome.outcome == "created"
+
+
+def test_reviewed_false_evidence_alone_suspects_a_region_once_explicitly_enabled(
     repository: ProductRepository,
 ) -> None:
     """The core new capability (Journey 2 of the governing milestone
-    brief): two authority-eligible `false_positive` reviews at the same
-    recurring geometry are enough to block a third attempt there, even
+    brief), engaged: two authority-eligible `false_positive` reviews at the
+    same recurring geometry are enough to block a third attempt there, even
     though only two admission attempts have ever happened at all -- one
-    short of the pre-existing, unreviewed `min_occurrences_to_suspect`
-    (3)."""
+    short of the pre-existing, unreviewed `min_occurrences_to_suspect` (3)
+    -- once an operator has explicitly turned production adaptation on for
+    this Stream (acceptance correction, 2026-08-24: no longer the default,
+    see the sibling `..._under_default_settings` test, above)."""
 
     _activate(repository)
     created_ids = []
@@ -468,6 +529,11 @@ def test_reviewed_false_evidence_alone_suspects_a_region_below_occurrence_thresh
     region = _single_region(repository)
     assert region.occurrence_count == 2
     assert region.reviewed_false_count == DEFAULT_MIN_REVIEWED_FALSE_TO_SUSPECT
+
+    enabled_status = repository.set_scene_confusor_reviewed_evidence_enabled(
+        stream_id=STREAM_ID, enabled=True, now=NOW + timedelta(minutes=15),
+    )
+    assert enabled_status.scene_confusor_reviewed_evidence_enabled is True
 
     outcome = _attempt(
         repository, CONFUSOR_JITTER[2], proposal_id="visit-episode:revfalse-alone-followup", at=NOW + timedelta(hours=1),
@@ -616,13 +682,19 @@ def test_reviewed_false_evidence_on_one_stream_does_not_leak_to_another(reposito
     own scene-confusor state -- regions are keyed by `stream_id`, and this
     proves it end-to-end for the new reviewed-evidence path specifically,
     not just the pre-existing occurrence-count path other tests already
-    cover."""
+    cover. Explicitly enabled for `STREAM_ID` only (acceptance correction,
+    2026-08-24: no longer the default) -- Stream isolation of the *setting*
+    itself is exactly what this asserts by never touching `other_stream_id`'s
+    own: its first-ever attempt at this geometry must be created regardless,
+    both because it has no history at all yet and because its own setting
+    was never enabled."""
 
     _activate(repository)
     completed = _complete_setup(repository)
     other_stream_id = completed.stream.id
     _activate(repository, stream_id=other_stream_id)
     assert other_stream_id != STREAM_ID
+    repository.set_scene_confusor_reviewed_evidence_enabled(stream_id=STREAM_ID, enabled=True, now=NOW)
 
     created_ids = []
     for index, box in enumerate(CONFUSOR_JITTER[:2]):
@@ -659,12 +731,16 @@ def test_reviewed_false_evidence_on_one_stream_does_not_leak_to_another(reposito
 
 
 def test_disabling_reviewed_evidence_falls_back_to_pre_milestone_behavior(repository: ProductRepository) -> None:
-    """The "Local adjustment disabled" operator control, end-to-end: with
-    it off, a region that reviewed-false evidence alone would otherwise
-    suspect must behave exactly as this Stream's scene-confusor mechanism
-    did before this milestone -- occurrence-count recurrence only. Already-
-    accumulated review counts are preserved, not deleted, so re-enabling
-    would resume immediately (distinct from "Reset local learning")."""
+    """The production-activation operator control, end-to-end, exercised in
+    both directions regardless of its own default: explicitly re-disabling
+    after an explicit enable must behave exactly as this Stream's
+    scene-confusor mechanism did before this milestone -- occurrence-count
+    recurrence only -- and re-enabling afterward must resume immediately.
+    Already-accumulated review counts are preserved throughout, not
+    deleted, distinct from "Reset local learning". (See the module-level
+    default itself in `test_reviewed_false_evidence_alone_does_not_suspect_
+    under_default_settings` -- this test only covers the explicit-toggle
+    round trip.)"""
 
     _activate(repository)
     created_ids = []
@@ -703,6 +779,101 @@ def test_disabling_reviewed_evidence_falls_back_to_pre_milestone_behavior(reposi
         repository, CONFUSOR_JITTER[2], proposal_id="visit-episode:disable-reenabled", at=NOW + timedelta(hours=2),
     )
     assert reenabled_outcome.outcome == "blocked_scene_confusor_suspected"
+
+
+def test_shadow_evaluation_sees_eligible_evidence_even_while_production_adaptation_is_off(
+    repository: ProductRepository,
+) -> None:
+    """Acceptance correction (2026-08-24): the status/counterfactual
+    surface (`_scene_confusor_reviewed_evidence_summary`, backing both the
+    HTTP status endpoint and the counterfactual script) must report exactly
+    the same reviewed-evidence facts whether or not production adaptation
+    is currently turned on for this Stream -- "is this Stream's own
+    reviewed history sufficient to suspect this geometry" is never itself
+    hidden by leaving production admission unaffected."""
+
+    _activate(repository)
+    created_ids = []
+    for index, box in enumerate(CONFUSOR_JITTER[:2]):
+        outcome = _attempt(
+            repository, box, proposal_id=f"visit-episode:shadow-visible-{index}", at=NOW + timedelta(minutes=index),
+        )
+        assert outcome.outcome == "created"
+        created_ids.append(outcome.visit_id)
+    for offset, visit_id in enumerate(created_ids):
+        repository.create_review_label(
+            ReviewCorrectionCreate(
+                target_type="visit", target_id=visit_id, label="false_positive",
+                review_origin="human", reviewer_identity="test-reviewer",
+            ),
+            created_at=NOW + timedelta(minutes=10 + offset),
+        )
+
+    # Production adaptation is still off (the default) -- a real admission
+    # attempt at this exact geometry is still created, not blocked.
+    baseline_attempt = _attempt(
+        repository, CONFUSOR_JITTER[2], proposal_id="visit-episode:shadow-visible-followup", at=NOW + timedelta(hours=1),
+    )
+    assert baseline_attempt.outcome == "created"
+
+    # But the same evidence the (still-off) production path would use if
+    # enabled is already fully visible to shadow/counterfactual status --
+    # collection and evaluation never pause just because production
+    # admission was left unaffected.
+    status = repository.get_observation_authority_state(stream_id=STREAM_ID)
+    assert status.scene_confusor_reviewed_evidence_enabled is False
+    assert status.scene_confusor_regions_with_reviewed_false_evidence == 1
+    assert status.scene_confusor_regions_eligible_from_reviewed_evidence == 1
+
+
+def test_reversibility_operates_independently_of_the_production_toggle_default(
+    repository: ProductRepository,
+) -> None:
+    """Acceptance correction (2026-08-24): reviewed-evidence state
+    accumulation, provenance, and reversibility (revision/reopen) must
+    remain fully operational regardless of the production toggle's own
+    (now conservative) default -- this correction only ever gates
+    production *admission*, never the mechanism's own bookkeeping. Proven
+    here with the toggle left at its default (`False`) throughout: a
+    reviewed-false correction is created, contributes to a region's count,
+    and reopening it retracts that contribution exactly as it would if
+    production adaptation were active (see `test_reopen_retracts_reviewed_
+    false_contribution` for the original, toggle-agnostic proof this
+    explicitly re-confirms is unaffected by the new default)."""
+
+    _activate(repository)
+    outcome = _attempt(repository, CONFUSOR_JITTER[0], proposal_id="visit-episode:reversibility-default-0", at=NOW)
+    assert outcome.outcome == "created"
+    visit_id = outcome.visit_id
+
+    repository.create_review_label(
+        ReviewCorrectionCreate(
+            target_type="visit", target_id=visit_id, label="false_positive",
+            review_origin="human", reviewer_identity="test-reviewer",
+        ),
+        created_at=NOW + timedelta(minutes=5),
+    )
+
+    # The toggle was never touched -- still its own conservative default.
+    status = repository.get_observation_authority_state(stream_id=STREAM_ID)
+    assert status.scene_confusor_reviewed_evidence_enabled is False
+    assert _single_region(repository).reviewed_false_count == 1
+
+    history = repository.visit_review_history(visit_id)
+    assert history is not None
+    repository.reopen_visit_review(
+        visit_id,
+        VisitReviewReopenCreate(
+            expected_state_token=history.review_state_token,
+            idempotency_key="reversibility-default-reopen-001",
+            review_origin="human",
+            reviewer_identity="test-reviewer",
+        ),
+    )
+
+    assert _single_region(repository).reviewed_false_count == 0
+    # Reversibility never implicitly flips the production toggle either.
+    assert repository.get_observation_authority_state(stream_id=STREAM_ID).scene_confusor_reviewed_evidence_enabled is False
 
 
 def test_reset_purges_reviewed_evidence_but_leaves_review_truth_untouched(repository: ProductRepository) -> None:
@@ -812,9 +983,16 @@ def test_conflicting_evidence_a_later_reviewed_real_animal_reprotects_the_region
     reviewer confirms a genuinely different real animal at the same
     geometry. Reviewed-real protection must win from that point forward,
     regardless of which evidence accumulated first -- conflicting reviewed
-    signals must always resolve toward recall safety, not suppression."""
+    signals must always resolve toward recall safety, not suppression.
+    Explicitly enabled (acceptance correction, 2026-08-24: this scenario
+    exercises what happens once an operator has opted a Stream in, not the
+    conservative default -- see `test_reviewed_false_evidence_alone_does_
+    not_suspect_under_default_settings` for that)."""
 
     _activate(repository)
+    repository.set_scene_confusor_reviewed_evidence_enabled(
+        stream_id=STREAM_ID, enabled=True, now=NOW,
+    )
     created_ids = []
     for index, box in enumerate(CONFUSOR_JITTER[:2]):
         outcome = _attempt(repository, box, proposal_id=f"visit-episode:conflict-{index}", at=NOW + timedelta(minutes=index))

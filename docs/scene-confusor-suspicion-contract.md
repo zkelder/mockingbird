@@ -573,14 +573,19 @@ it never bypasses a single existing safety check.
 controls (see "Operator surface," below), because they answer different
 questions:
 
-- **Disable** (`observation_authority_settings.scene_confusor_reviewed_
-  evidence_enabled`, per-Stream, default `True`): "stop consulting reviewed
-  evidence for suspicion." Restores this Stream's exact pre-milestone
-  shipped behavior (occurrence-count recurrence only). Already-accumulated
-  `reviewed_real_count`/`reviewed_false_count` bookkeeping is preserved,
-  not deleted -- re-enabling resumes immediately from the same history.
+- **Enable / disable** (`observation_authority_settings.scene_confusor_
+  reviewed_evidence_enabled`, per-Stream, default **`False`** -- see
+  "Reviewed-negative-evidence production activation," below, for why this
+  default changed from this mechanism's own original `True`): whether
+  reviewed-false evidence is currently allowed to *influence production
+  admission*. `False` (the default) restores this Stream's exact
+  pre-milestone shipped behavior (occurrence-count recurrence only);
+  `True` is an explicit operator opt-in, e.g. for local field testing.
+  Already-accumulated `reviewed_real_count`/`reviewed_false_count`
+  bookkeeping is preserved and keeps accumulating either way, not deleted
+  or paused -- re-enabling resumes immediately from the same history.
   Never touches the pre-existing, already-accepted occurrence-count
-  mechanism at all.
+  mechanism at all, in either direction.
 - **Reset** (`purge_scene_confusor_regions_for_stream`, already existed for
   reconfiguration invalidation, now also operator-triggerable): "delete
   every accumulated region for this Stream," both the pre-existing
@@ -588,6 +593,53 @@ questions:
   Observations/reviews/evidence that produced that history are completely
   untouched -- only this derived, reconstructible local-adaptation state
   resets.
+
+**Reviewed-negative-evidence production activation (acceptance correction,
+2026-08-24).** This mechanism originally shipped with `reviewed_evidence_
+enabled`/`scene_confusor_reviewed_evidence_enabled` defaulting `True` ("a
+production default, not shadow-mode"), reasoning that the abstention gate
+above already made it a no-op wherever a Stream had not yet earned it, so
+"enabled by default" changed no *currently observed* behavior. That argument
+never addressed the future: `min_reviewed_false_to_suspect` (default 2) is,
+by its own original docstring's own disclosure, "not derived from a real-
+cohort grid search" the way `min_occurrences_to_suspect`/`geometry_spread_
+ceiling` were -- this repository's own real local database had (and, as of
+this correction, still has) zero organic `scene_confusor_regions` history to
+validate it against, only a constructed six-scenario counterfactual (see
+"Counterfactual evaluation," below). A `True` default meant the very first
+time any real Stream's own future field use produced two authority-eligible
+`false_positive` reviews at the same recurring geometry, this unvalidated
+threshold would have started influencing production admission with no
+operator ever having made that decision.
+
+The correction: **the default is now `False`.** Nothing else about the
+mechanism changed --
+
+- The pre-existing, already-field-validated occurrence-count scene-confusor
+  behavior (`min_occurrences_to_suspect`, `geometry_spread_ceiling`, both
+  confidence escapes, permanent `reviewed_real` protection, TTL, LRU,
+  reconfiguration purge) is exactly as it was, unconditionally, regardless of
+  this flag.
+- `reviewed_real_count`/`reviewed_false_count` state accumulation (every
+  admission attempt's occurrence bookkeeping, and every authority-eligible
+  review's own increment/decrement), the `review_labels.scene_confusor_
+  region_id` provenance stamp, and both reversibility paths (revision,
+  reopen) are all unconditional -- none of them read this flag at all (see
+  `_update_scene_confusor_region_from_review`/`_retract_scene_confusor_
+  region_contribution` in `product_repository.py`, neither of which takes an
+  `enabled` parameter).
+- `ProductRepository._scene_confusor_reviewed_evidence_summary` (the
+  `regions_with_reviewed_evidence`/`regions_eligible_from_reviewed_evidence`
+  status aggregate) is likewise computed unconditionally of this flag -- an
+  operator, and the counterfactual script below, can always see exactly what
+  the reviewed-evidence path *would* do, whether or not it is currently
+  allowed to act on production admission. This is what makes the toggle a
+  genuine production on/off switch and not a "pause evaluation" switch.
+- An operator may still explicitly set `enabled=True` per Stream at any time
+  (`set_scene_confusor_reviewed_evidence_enabled`) -- e.g. to run local field
+  testing deliberately, with full knowledge the threshold is a candidate, not
+  yet a validated default. This is a real, informed widening of production
+  behavior for that Stream, not merely a diagnostic toggle.
 
 **Reversibility (the second half of this milestone's work).** A real gap
 was found and fixed alongside the new gate, in the *already-shipped*
@@ -631,10 +683,17 @@ reviewed_evidence_summary` -- two `COUNT` queries over an already-capped
 region set, never a hot or per-frame path) surfaced in the existing
 collapsed "Advanced diagnostics" `<details>` on the Observation panel (`web/
 src/components/ObservationControlPanel.tsx`), exactly where scene-confusor
-diagnostics already lived. Four possible plain-language states only --
+diagnostics already lived. Three possible plain-language status states --
 "Not enough reviewed history yet," "Learning from reviewed activity on this
-camera," "Local adjustment active," "Local adjustment disabled" -- with a
-count of reviewed examples supporting the adaptation as the one advanced
+camera," "Local adjustment active" -- plus a separate enable/disable button
+whose own label ("Enable local adjustment" / "Disable local adjustment")
+carries the operator's current production setting. The status line and the
+button are deliberately independent (acceptance correction, 2026-08-24):
+collecting/evaluating reviewed evidence is never itself "disabled" merely
+because production adaptation is off (the default) -- a Stream with eligible
+reviewed evidence but production adaptation still off reports "Learning from
+reviewed activity on this camera," never a claim that nothing is happening.
+A count of reviewed examples supporting the adaptation is the one advanced
 detail. No region ids, geometry, occurrence counts, or other model-internal
 vocabulary is ever exposed.
 

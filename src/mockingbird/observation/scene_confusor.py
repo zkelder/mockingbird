@@ -175,7 +175,15 @@ DEFAULT_REGION_TTL_DAYS = 45
 # history). 2 is a disclosed, conservative starting point pending real
 # field evidence, exactly like every other "insufficient evidence yet"
 # posture this milestone's own doctrine treats as a legitimate, honest
-# state -- not a hypothetical hedge.
+# state -- not a hypothetical hedge. Acceptance correction (2026-08-24,
+# see "Reviewed-negative-evidence production activation" in
+# docs/scene-confusor-suspicion-contract.md): precisely *because* this value
+# was never organically field-validated, `SceneConfusorConfig.
+# reviewed_evidence_enabled` now defaults `False` -- this gate remains fully
+# defined, structurally floored, and available for a caller (production, once
+# an operator opts in; a shadow/counterfactual evaluation always) to engage
+# explicitly, but no longer engages itself in production admission merely by
+# existing.
 DEFAULT_MIN_REVIEWED_FALSE_TO_SUSPECT = 2
 
 SceneConfusorOutcome = Literal["not_suspected", "suspected_confusor"]
@@ -208,11 +216,32 @@ class SceneConfusorConfig:
     # behavior (occurrence-count recurrence only) without discarding any
     # already-accumulated `reviewed_real_count`/`reviewed_false_count`
     # bookkeeping -- disabling is instant and reversible, distinct from
-    # resetting (deleting) region history entirely. Defaults `True`: the
-    # abstention gate above already makes this a no-op wherever real
-    # evidence has not yet accumulated, so enabling it has no observable
-    # effect on any Source until genuine reviewed history earns it.
-    reviewed_evidence_enabled: bool = True
+    # resetting (deleting) region history entirely.
+    #
+    # Acceptance correction (2026-08-24): defaults `False`, not `True` --
+    # conservative-by-default, not merely "harmless by default." The
+    # original `True` default relied entirely on the abstention gate above
+    # (this path is a no-op wherever `reviewed_false_count` has not yet
+    # earned it) to argue enabling it changed no *currently* observed
+    # behavior. That argument says nothing about the future: the very first
+    # time a real Stream's own field use produces two authority-eligible
+    # `false_positive` reviews at the same recurring geometry, a `True`
+    # default would have started influencing production admission on an
+    # unvalidated threshold (`min_reviewed_false_to_suspect`, disclosed
+    # candidate-not-field-validated -- see its own docstring) with no
+    # explicit operator decision ever having been made. `False` makes that
+    # decision require an actual, explicit, informed opt-in (see
+    # `ProductRepository.set_scene_confusor_reviewed_evidence_enabled`) --
+    # exactly the field-testing posture this milestone's own doctrine
+    # otherwise asks for. Nothing else about the mechanism is gated by this
+    # flag: occurrence-count recurrence (the pre-existing, already-
+    # field-validated mechanism), reviewed-evidence state accumulation,
+    # reversibility (revision/reopen retraction), and status/counterfactual
+    # reporting are all unconditional and continue exactly as before,
+    # regardless of this flag's value -- only step 3's independent
+    # reviewed-false recurrence gate (`evaluate_scene_confusor_suspicion`,
+    # below) reads it at all.
+    reviewed_evidence_enabled: bool = False
 
     def __post_init__(self) -> None:
         if not (0.0 <= self.geometry_iou_threshold <= 1.0):

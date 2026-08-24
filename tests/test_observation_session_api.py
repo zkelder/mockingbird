@@ -216,19 +216,22 @@ def test_scene_confusor_learning_status_on_unknown_stream_returns_404(
     assert response.status_code == 404
 
 
-def test_scene_confusor_learning_status_defaults_enabled_with_no_history(
+def test_scene_confusor_learning_status_defaults_disabled_with_no_history(
     client: LegacyAuthenticatedSyncTestClient,
 ) -> None:
-    """Journey 1 of the governing milestone brief: a brand-new Place/Stream
-    reports honest, empty status -- enabled by default, but with zero
-    reviewed evidence to act on yet."""
+    """Journey 1 of the governing milestone brief, corrected 2026-08-24: a
+    brand-new Place/Stream reports honest, empty status -- production
+    adaptation *disabled* by default (a candidate threshold pending organic
+    field validation must not influence production admission merely by
+    existing), and zero reviewed evidence accumulated to act on yet
+    either way."""
 
     response = client.get(f"/api/streams/{DEMO_STREAM_ID}/observation/scene-confusor-learning")
     assert response.status_code == 200
     payload = response.json()
     assert payload == {
         "stream_id": DEMO_STREAM_ID,
-        "reviewed_evidence_enabled": True,
+        "reviewed_evidence_enabled": False,
         "regions_with_reviewed_evidence": 0,
         "regions_currently_adjusted": 0,
     }
@@ -237,6 +240,10 @@ def test_scene_confusor_learning_status_defaults_enabled_with_no_history(
 def test_scene_confusor_learning_disable_and_reenable_round_trips_over_http(
     client: LegacyAuthenticatedSyncTestClient,
 ) -> None:
+    """The explicit toggle contract, both directions -- valid regardless of
+    a Stream's own current default (as of 2026-08-24, `False`): setting it
+    explicitly always echoes back exactly what was set."""
+
     disabled = client.post(
         f"/api/streams/{DEMO_STREAM_ID}/observation/scene-confusor-learning", json={"enabled": False},
     )

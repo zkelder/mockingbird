@@ -173,7 +173,7 @@ one choke point (`_create_review_label_in_session`), gated on
 | Gate | Value | Notes |
 |---|---|---|
 | `min_occurrences_to_suspect` | 3 (unchanged) | Real-cohort grid-searched, 2026-08-19. |
-| `min_reviewed_false_to_suspect` | **2 (new)** | Structurally floored at 2 in `SceneConfusorConfig.__post_init__` — a config value of 1 or 0 cannot even be constructed. Not empirically re-derived (see §12, remaining gaps) — this repository's real local database has zero pre-existing regions to grid-search against. |
+| `min_reviewed_false_to_suspect` | **2 (new); candidate, not field-validated** | Structurally floored at 2 in `SceneConfusorConfig.__post_init__` — a config value of 1 or 0 cannot even be constructed. Not empirically re-derived (see §12, remaining gaps) — this repository's real local database has zero pre-existing regions to grid-search against. Precisely because of this, it no longer influences production admission by default — see §20. |
 | `geometry_spread_ceiling` | 0.008 (unchanged) | Applies regardless of which recurrence gate fired. |
 | Confidence escapes (relative + absolute) | unchanged | Apply regardless of which recurrence gate fired. |
 | `reviewed_real_count > 0` protection | unchanged, checked first | Unconditional; wins over any amount of reviewed-false evidence. |
@@ -216,17 +216,41 @@ broader scope than the camera-specific pattern it already was.
   `test_conflicting_evidence_a_later_reviewed_real_animal_reprotects_the_
   region`.
 
-## 9. Production behavior: changes, but is currently a no-op on real data
+## 9. Production behavior: conservative by default (corrected 2026-08-24)
 
-**Production, not shadow-mode** — `scene_confusor_reviewed_evidence_enabled`
-defaults `True` per-Stream. This was a deliberate decision, not a default
-left unexamined: the mechanism's own minimum-evidence abstention gate
-already makes it provably a no-op wherever a Stream has not yet earned it,
-so "enabled by default" changes zero currently-observed behavior on any
+**Original milestone text (superseded — kept for the historical record, see
+§20):** ~~Production, not shadow-mode — `scene_confusor_reviewed_evidence_
+enabled` defaults `True` per-Stream. This was a deliberate decision, not a
+default left unexamined: the mechanism's own minimum-evidence abstention
+gate already makes it provably a no-op wherever a Stream has not yet earned
+it, so "enabled by default" changes zero currently-observed behavior on any
 installation until genuine field evidence accumulates through ordinary
-future use — exactly the "insufficient evidence → preserve baseline" posture
-Phase 2 Invariant 5 asks for, working as a *production* default rather than
-a reason to withhold production status.
+future use.~~ An acceptance-correction pass (§20) found this reasoning
+addressed only *currently observed* behavior, never the future: the first
+time any real Stream's own field use produced two authority-eligible
+`false_positive` reviews at the same geometry, a `True` default would have
+begun influencing production admission on `min_reviewed_false_to_suspect` —
+a threshold this same report discloses in §6/§18 as a **candidate pending
+organic field validation, not a field-validated product default** — with no
+operator ever having made that decision. Corrected.
+
+**Current behavior: `scene_confusor_reviewed_evidence_enabled` defaults
+`False` per-Stream.** The pre-existing, already-field-validated
+occurrence-count scene-confusor mechanism (2026-08-19) is completely
+unaffected and remains production behavior exactly as before, regardless of
+this flag. Reviewed-evidence *state* — `reviewed_real_count`/`reviewed_
+false_count` accumulation, `review_labels.scene_confusor_region_id`
+provenance, and both reversibility paths (revision, reopen) — is
+unconditional and keeps operating exactly as designed regardless of this
+flag; only whether the independent reviewed-false recurrence gate (§4-§7)
+is allowed to influence *production admission* is gated by it. An operator
+may explicitly set it `True` per Stream at any time (`set_scene_confusor_
+reviewed_evidence_enabled`) — e.g. to run local field testing deliberately,
+with full knowledge of the threshold's own candidate status — and the
+identical evidence is always visible to shadow/counterfactual evaluation
+(`_scene_confusor_reviewed_evidence_summary`) regardless of the flag, so
+nothing about "is this Stream accumulating evidence toward eligibility" is
+ever hidden by leaving production adaptation off.
 
 **Disclosed, checked directly against this repository's own real local
 database** (`data/mockingbird.sqlite3`, read-only query, no writes):
@@ -236,11 +260,12 @@ live admission path that touches regions requires a genuinely live,
 sustained Observation Engine session; this database's own history
 evidently never accumulated matching-geometry recurrence at any single
 spot. **The new mechanism is therefore fully wired, fully tested, and
-currently behaviorally inert on this specific real dataset** — it will
-only begin to differ from pre-milestone behavior once a Stream's own future
-field use produces two authority-eligible `false_positive` reviews at the
-same recurring geometry. This is reported as a genuine finding, not
-smoothed over.
+currently behaviorally inert on this specific real dataset regardless of
+this flag's value** — it will only ever begin to differ from pre-milestone
+behavior once a Stream's own future field use produces two authority-
+eligible `false_positive` reviews at the same recurring geometry *and* an
+operator has explicitly opted that Stream in. This is reported as a genuine
+finding, not smoothed over.
 
 ## 10. Counterfactual evaluation (Phase 4)
 
@@ -284,19 +309,24 @@ never a hot or per-frame path), surfaced in the existing collapsed
 "Advanced diagnostics" `<details>` on the Observation panel:
 
 - `GET /api/streams/{id}/observation/scene-confusor-learning` — status.
-- `POST .../scene-confusor-learning` (`{"enabled": bool}`) — "Local
-  adjustment active"/"disabled" toggle, scoped to only the new path.
+- `POST .../scene-confusor-learning` (`{"enabled": bool}`) — the explicit
+  production-activation opt-in/opt-out, scoped to only the new path.
+  Defaults `False` per Stream (corrected 2026-08-24, see §20/§9).
 - `POST .../scene-confusor-learning/reset` — "Reset local learning",
   deletes all accumulated region history for the Stream (both halves).
 
-Four plain-language states only: "Not enough reviewed history yet,"
+Three plain-language status states: "Not enough reviewed history yet,"
 "Learning from reviewed activity on this camera," "Local adjustment
-active," "Local adjustment disabled," plus one advanced-detail count of
-reviewed examples supporting the adaptation. No region ids, geometry,
-occurrence counts, or ML jargon anywhere in the surface — verified directly
-by a Playwright test asserting a jargon denylist (`tensor`, `embedding`,
-`optimizer`, `gradient`, `epoch`, `region_id`, `occurrence_count`) never
-appears, even inside the advanced view.
+active," plus the enable/disable button's own label carrying the operator's
+current production setting, plus one advanced-detail count of reviewed
+examples supporting the adaptation. Corrected 2026-08-24: the status line
+and the enable/disable setting are deliberately independent — collecting/
+evaluating reviewed evidence is never described as "disabled" merely
+because production adaptation is off (the default); see §20. No region ids,
+geometry, occurrence counts, or ML jargon anywhere in the surface — verified
+directly by a Playwright test asserting a jargon denylist (`tensor`,
+`embedding`, `optimizer`, `gradient`, `epoch`, `region_id`,
+`occurrence_count`) never appears, even inside the advanced view.
 
 A real UX defect was found and fixed in self-review before it ever ran:
 the panel's existing primary `error` state, when set, replaces this whole
@@ -426,7 +456,12 @@ Confirmed: all work is local-only, `main` ahead of `origin/main` throughout
   real field use produces enough reviewed-false-then-later-reviewed-again
   history, re-running an updated version of this milestone's own
   counterfactual script against organic data (rather than constructed
-  scenarios) is the natural way to validate or revise this default.
+  scenarios) is the natural way to validate or revise this default. **This
+  is precisely why it no longer influences production admission by
+  default** — see §20's acceptance correction (2026-08-24): a candidate
+  threshold pending organic field validation should not silently gate
+  production behavior, and now doesn't unless an operator explicitly opts
+  a Stream in.
 - **`broad_class`-scoped bounding is inherited, not revisited.** The
   pre-existing per-`(stream_id, broad_class)` region cap (not strictly
   per-Stream) is unchanged and was out of this milestone's scope.
@@ -463,3 +498,154 @@ Two reasonable, substrate-ready directions, in priority order:
    one rather than deciding under this milestone's own time/scope pressure.
 
 Not started automatically, per the governing brief.
+
+## 20. Acceptance correction (2026-08-24)
+
+**Starting HEAD:** `de84b24` (this report's own original closure commit).
+**Ending HEAD:** this correction's own commit. Not pushed, same as every
+prior commit in this repository's history.
+
+**What was found.** Everything else about this milestone — architecture,
+the reversibility fix, schema v53, reviewed-truth lineage, Source isolation,
+counterfactual tooling, operator controls, and validation — was accepted
+as-is. One promotion-policy issue remained: the new reviewed-negative
+scene-confusor trigger (`min_reviewed_false_to_suspect=2`) was enabled by
+default in production despite zero organic `scene_confusor_regions` history
+in the real local database, no organic reviewed cohort to validate the
+threshold against, only a constructed six-scenario counterfactual
+evaluation, and this report's own §18 already disclosing the threshold as
+not field-validated. §9's original "Production, not shadow-mode" framing
+argued only that enabling it by default changed no *currently observed*
+behavior (the abstention gate already made it a no-op on this repository's
+own history) — it never addressed that the same `True` default would have
+started influencing production admission the first time any real Stream's
+own future field use happened to produce two authority-eligible
+`false_positive` reviews at the same geometry, with no operator ever having
+made that decision.
+
+**What changed.** `scene_confusor_reviewed_evidence_enabled` now defaults
+`False` at every construction site (`SceneConfusorConfig`'s own dataclass
+default, `ObservationAuthoritySettingsModel`'s ORM/`server_default`,
+schema 53's own migration SQL, and the two repository fallback/construction
+sites that previously hardcoded `True`). The mechanism itself was not
+touched: `evaluate_scene_confusor_suspicion`'s decision order, the
+independent reviewed-false recurrence gate, every downstream escape, and
+the unconditional `reviewed_real` protection are byte-for-byte unchanged.
+Also unchanged: the pre-existing, already-field-validated occurrence-count
+scene-confusor mechanism (§2/§6); reviewed-evidence state accumulation
+(`reviewed_real_count`/`reviewed_false_count`), provenance
+(`review_labels.scene_confusor_region_id`), and both reversibility paths
+(revision, reopen) — none of these read the toggle at all, confirmed by
+their own function signatures taking no `enabled` parameter; and status/
+counterfactual reporting (`_scene_confusor_reviewed_evidence_summary`),
+which computes `regions_with_reviewed_evidence`/`regions_eligible_from_
+reviewed_evidence` unconditionally of the toggle, exactly as before.
+
+The one operator control this milestone already built
+(`set_scene_confusor_reviewed_evidence_enabled` / `POST .../scene-confusor-
+learning`) turned out to already cleanly represent exactly the needed
+distinction — production-admission influence, and nothing else — so no
+redesign of the toggle's own scope was needed, only its default value and
+the surrounding documentation/status wording (§9, §11, docs/scene-confusor-
+suspicion-contract.md's "Reset / disable" and "Operator surface," a new
+"Reviewed-negative-evidence production activation" subsection there, and the
+two `api/main.py` endpoint docstrings that also named the old four-state
+list).
+
+**UI honesty fix.** `ObservationControlPanel.tsx`'s `learningStatusLabel`
+previously checked `!reviewed_evidence_enabled` *first*, so a fresh
+Stream's status read "Local adjustment disabled" even with zero reviewed
+evidence ever accumulated — indistinguishable from a Stream whose eligible
+evidence was being deliberately withheld from production. Reordered to
+check evidence-based state first, independent of the toggle: "Not enough
+reviewed history yet" (no evidence at all) → "Learning from reviewed
+activity on this camera" (evidence accumulating and/or eligible but
+production adaptation not currently applying it) → "Local adjustment
+active" (eligible *and* the operator has turned production adaptation on).
+The three-state design deliberately never uses the word "disabled" to
+describe an evidence/evaluation state — only the enable/disable button's
+own label communicates the operator's current production setting, keeping
+"is evidence being collected/evaluated" and "is production adaptation
+active" honestly independent, per this correction's own explicit
+requirement.
+
+**Validation.**
+
+- `tests/test_scene_confusor.py`: 40 passed (was 38; +2 new — the
+  conservative-default assertion at the pure-decision layer, and a
+  dataclass-default regression test — plus 3 existing tests updated to
+  explicitly engage the reviewed-evidence path they were built to exercise,
+  since the module's own default no longer does).
+- `tests/test_scene_confusor_repository.py`: 25 passed (was 22; +3 new —
+  default-settings non-suspicion, shadow/counterfactual visibility
+  independent of the toggle, and reversibility independent of the toggle's
+  default — plus 2 existing tests updated to explicitly opt in where they
+  specifically exercise the reviewed-evidence-engaged path, and 2 more
+  given a one-line toggle-state assertion for explicitness without changing
+  their own logic).
+- `tests/test_observation_session_api.py`: 18 passed (unchanged count; the
+  brand-new-Stream default-status test renamed and its assertion flipped to
+  `False`).
+- Directly affected regression suites re-run together, unmodified:
+  `test_review_decision_provenance.py`, `test_alerts_inbox.py`,
+  `test_local_identity_multi_user.py`, `test_historical_baseline_
+  repository.py`, `test_place_biodiversity_summary_repository.py`,
+  `test_place_change_summary_repository.py`, `test_doctor.py`,
+  `test_upgrade_path_acceptance.py`, `test_persistence.py`,
+  `test_local_backup_recovery.py`, `test_cross_install_backup_restore.py`,
+  and the seven schema-version-pinned files from the original milestone
+  (`test_camera_health.py`, `test_camera_node.py`,
+  `test_candidate_visit_repository.py`, `test_species_candidate_packs.py`,
+  `test_visit_collections.py`, `test_visit_tags.py`, `test_yard_map.py`):
+  **403 passed**. `test_counterfactual_lineage.py`,
+  `test_camera_configuration_edit.py`, `test_candidate_visit_authority.py`,
+  `test_candidate_visit_authority_acceptance.py`: **72 passed**.
+- `scripts/scene_confusor_reviewed_evidence_counterfactual.py` re-run
+  end-to-end: identical table to §10 (adapted differs from baseline in
+  exactly the one case designed to exercise it; zero recall-affecting
+  regressions) — confirms the script's own explicit `enabled=` threading
+  for both arms was never dependent on the default, so this correction does
+  not disturb it.
+- Frontend: `tsc --noEmit` and `vite build` both clean; the affected
+  Playwright spec (`web/e2e/observation-panel.spec.ts`, 3 tests, one
+  restructured for the new default/label behavior) re-run against a real
+  dev server: all 3 pass.
+- `ruff check` on every touched Python file: 47 findings, all confirmed
+  pre-existing via a `git stash push -u`/`pop` round-trip comparison against
+  the unmodified `de84b24` baseline for the identical file set (identical
+  count and identical unrelated locations before and after this
+  correction's own edits) — zero new findings introduced.
+- Tier B Core gate (`scripts/verify_core.py`, `pytest -m "not slow"`): run in
+  full despite the narrow surface area, because this correction touches
+  schema 53's own migration SQL and the Visit-admission decision path
+  directly — both explicitly named in docs/test-suite-validation-tiers-
+  contract.md's escalation rules as requiring Core "regardless of how small
+  the diff looks." **Result: 4576 passed, 0 failed**, 2 skipped, 23
+  deselected, 11 xfailed (860.66s) — clean on the first run, no
+  investigation needed. Exactly 5 more passing tests than the original
+  milestone's own final Core run (4571), matching this correction's own net
+  new test count (+2 in `test_scene_confusor.py`, +3 in `test_scene_
+  confusor_repository.py`).
+
+**Schema.** v53, unchanged — no migration added or removed; only the
+existing schema-53 migration's own column *default value* changed
+(`DEFAULT 1` → `DEFAULT 0`), verified directly against this repository's
+own real local database (`data/mockingbird.sqlite3`): its recorded schema
+version was still 49 at the time of this correction (migrations 50-53,
+including this one, had not yet been applied to it), so there was no
+already-migrated row anywhere carrying the stale `True` default to correct
+— the new default takes effect cleanly the first time this database is
+next opened.
+
+**Preserved files.** The same seven pre-existing untracked files confirmed
+untouched throughout (`git status --porcelain`, unchanged `??` entries):
+`docs/wildlife-detector-training-contract.md.orig`,
+`scripts/evaluate_small_bird_detector.py`,
+`scripts/materialize_wildlife_stage2.py.orig`,
+`scripts/train_wildlife_stage2_rfdetr.py.orig`,
+`src/mockingbird/detectors/small_bird_benchmark.py`,
+`src/mockingbird/training/wildlife.py.orig`,
+`tests/test_small_bird_benchmark.py`.
+
+**Not pushed.** Consistent with every prior milestone in this repository's
+history.

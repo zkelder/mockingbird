@@ -412,14 +412,16 @@ def test_config_rejects_out_of_bounds_thresholds() -> None:
 # contract.md.
 
 
-def test_reviewed_false_evidence_past_its_own_threshold_is_suspected_below_occurrence_threshold() -> None:
-    """The core new capability: two authority-eligible `false_positive`
-    reviews at the same recurring geometry are enough to suspect a region
-    even though only two admission attempts have ever happened there at all
-    -- one occurrence short of the unreviewed `min_occurrences_to_suspect`
-    (3). Reviewed evidence is authoritative human truth, not raw pattern
-    noise, so a smaller bound is justified (see `DEFAULT_MIN_REVIEWED_
-    FALSE_TO_SUSPECT`'s own docstring)."""
+def test_reviewed_false_evidence_alone_does_not_suspect_under_default_config() -> None:
+    """Acceptance correction (2026-08-24): `SceneConfusorConfig`'s own
+    default is now conservative (`reviewed_evidence_enabled=False`) --
+    precisely because `min_reviewed_false_to_suspect` is a disclosed
+    candidate threshold pending organic field validation, not a
+    field-validated one (see its own docstring), it must not influence
+    production admission merely by existing. Two authority-eligible
+    `false_positive` reviews alone, with occurrence count one short of its
+    own threshold, must fall back to the pre-existing, already-validated
+    occurrence-only behavior under the ordinary, unconfigured default."""
 
     region = _region(
         occurrence_count=DEFAULT_MIN_OCCURRENCES_TO_SUSPECT - 1,
@@ -428,6 +430,41 @@ def test_reviewed_false_evidence_past_its_own_threshold_is_suspected_below_occur
     )
     decision = evaluate_scene_confusor_suspicion(
         candidate_box=FEEDER_BOX, broad_class="animal", max_confidence=0.3, regions=(region,),
+    )
+    assert decision.outcome == "not_suspected"
+    assert decision.reason == "insufficient_recurrence_history"
+
+
+def test_default_config_reviewed_evidence_enabled_is_false() -> None:
+    """The dataclass default itself, not just repository/production wiring,
+    is conservative -- defense in depth matching `min_reviewed_false_to_
+    suspect`'s own structural floor of 2, so any caller that forgets to
+    thread an explicit setting gets the safe behavior, not the widened
+    one."""
+
+    assert SceneConfusorConfig().reviewed_evidence_enabled is False
+
+
+def test_reviewed_false_evidence_past_its_own_threshold_is_suspected_when_explicitly_enabled() -> None:
+    """The core new capability, engaged: two authority-eligible
+    `false_positive` reviews at the same recurring geometry are enough to
+    suspect a region even though only two admission attempts have ever
+    happened there at all -- one occurrence short of the unreviewed
+    `min_occurrences_to_suspect` (3) -- once an operator has explicitly
+    enabled the reviewed-negative-evidence path (see the sibling default-off
+    test, above, for the conservative baseline this is no longer the
+    default). Reviewed evidence is authoritative human truth, not raw
+    pattern noise, so a smaller bound is justified (see `DEFAULT_MIN_
+    REVIEWED_FALSE_TO_SUSPECT`'s own docstring)."""
+
+    region = _region(
+        occurrence_count=DEFAULT_MIN_OCCURRENCES_TO_SUSPECT - 1,
+        reviewed_false_count=DEFAULT_MIN_REVIEWED_FALSE_TO_SUSPECT,
+        max_confidence_observed=0.3,
+    )
+    decision = evaluate_scene_confusor_suspicion(
+        candidate_box=FEEDER_BOX, broad_class="animal", max_confidence=0.3, regions=(region,),
+        config=SceneConfusorConfig(reviewed_evidence_enabled=True),
     )
     assert decision.outcome == "suspected_confusor"
     assert decision.reason == "recurring_geometry_with_reviewed_false_history"
@@ -454,11 +491,14 @@ def test_reviewed_false_evidence_below_its_own_threshold_never_alone_suspects() 
 
 
 def test_reviewed_evidence_disabled_falls_back_to_pre_milestone_behavior() -> None:
-    """The per-Stream "Local adjustment disabled" control: with
-    `reviewed_evidence_enabled=False`, a region that would otherwise be
-    suspected purely from reviewed-false evidence must behave exactly as
-    this module did before this milestone -- occurrence-count recurrence
-    only."""
+    """The per-Stream production-activation control, explicitly set to its
+    own default value: with `reviewed_evidence_enabled=False`, a region that
+    would otherwise be suspected purely from reviewed-false evidence must
+    behave exactly as this module did before this milestone -- occurrence-
+    count recurrence only. Kept alongside `test_reviewed_false_evidence_
+    alone_does_not_suspect_under_default_config` (which proves the same
+    property via the *implicit* default) to prove the explicit and implicit
+    forms of "off" agree."""
 
     config = SceneConfusorConfig(reviewed_evidence_enabled=False)
     region = _region(
@@ -498,7 +538,12 @@ def test_geometry_spread_escape_still_applies_via_the_reviewed_false_path() -> N
     3) -- every escape past it still applies exactly as before. A region
     whose own geometry has spread beyond a static artifact's shape must
     stay protected even once the reviewed-false threshold alone would
-    otherwise have been enough to suspect it."""
+    otherwise have been enough to suspect it. Explicitly enabled (see
+    `test_reviewed_false_evidence_alone_does_not_suspect_under_default_
+    config` for the conservative default this shadow/counterfactual-style
+    check does not itself change): this proves the escape holds *whenever*
+    the reviewed-false path is engaged, by an operator or by an evaluation,
+    not only under the default."""
 
     region = _region(
         occurrence_count=1,
@@ -508,6 +553,7 @@ def test_geometry_spread_escape_still_applies_via_the_reviewed_false_path() -> N
     )
     decision = evaluate_scene_confusor_suspicion(
         candidate_box=FEEDER_BOX, broad_class="animal", max_confidence=0.2, regions=(region,),
+        config=SceneConfusorConfig(reviewed_evidence_enabled=True),
     )
     assert decision.outcome == "not_suspected"
     assert decision.reason == "region_geometry_too_varied_for_static_artifact"
@@ -517,7 +563,9 @@ def test_independently_strong_detection_escapes_even_via_the_reviewed_false_path
     """A genuinely new, strong detection at a region reviewed-false
     evidence would otherwise suspect must still escape -- this is exactly
     the "new-to-Place species can still be discovered" guarantee at the
-    decision-logic level (see Journey 5 in the governing milestone brief)."""
+    decision-logic level (see Journey 5 in the governing milestone brief).
+    Explicitly enabled, same rationale as the geometry-spread escape test
+    above."""
 
     # Equal to the region's own historical max (no *relative* escape --
     # mirrors `test_independently_strong_detection_escapes_regardless_of_
@@ -531,6 +579,7 @@ def test_independently_strong_detection_escapes_even_via_the_reviewed_false_path
     )
     decision = evaluate_scene_confusor_suspicion(
         candidate_box=FEEDER_BOX, broad_class="animal", max_confidence=0.855, regions=(region,),
+        config=SceneConfusorConfig(reviewed_evidence_enabled=True),
     )
     assert decision.outcome == "not_suspected"
     assert decision.reason == "independently_strong_detection"

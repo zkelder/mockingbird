@@ -115,8 +115,12 @@ test("Site-Specific Learning & Local Adaptation: advanced diagnostics shows rest
   await details.locator("summary").click();
   await expect(details).toHaveAttribute("open", "");
 
-  // A brand-new Stream, honestly: enabled by default, nothing to act on yet.
+  // A brand-new Stream, honestly: production adaptation is off by default
+  // (acceptance correction, 2026-08-24 -- the reviewed-negative threshold is
+  // a candidate pending organic field validation, not a field-validated
+  // default), and there is nothing to act on yet either way.
   await expect(details.getByText("Local learning: Not enough reviewed history yet")).toBeVisible();
+  await expect(details.getByRole("button", { name: "Enable local adjustment" })).toBeVisible();
 
   const visibleText = await panel.innerText();
   for (const forbidden of FORBIDDEN_BASIC_VOCABULARY) {
@@ -128,12 +132,22 @@ test("Site-Specific Learning & Local Adaptation: advanced diagnostics shows rest
     expect(visibleText.toLowerCase()).not.toContain(jargon);
   }
 
+  // Explicit operator opt-in (e.g. for local field testing) flips the
+  // button and the setting, but with zero reviewed evidence still
+  // accumulated there is honestly nothing yet for it to have activated --
+  // the status line must not fabricate an "active" claim it cannot support.
+  await details.getByRole("button", { name: "Enable local adjustment" }).click();
+  await expect(details.getByRole("button", { name: "Disable local adjustment" })).toBeVisible();
+  await expect(details.getByText("Local learning: Not enough reviewed history yet")).toBeVisible();
+
+  // Disabling it again is a clean round trip back to the default control.
   await details.getByRole("button", { name: "Disable local adjustment" }).click();
-  await expect(details.getByText("Local learning: Local adjustment disabled")).toBeVisible();
   await expect(details.getByRole("button", { name: "Enable local adjustment" })).toBeVisible();
+  await expect(details.getByText("Local learning: Not enough reviewed history yet")).toBeVisible();
 
   await details.getByRole("button", { name: "Reset local learning" }).click();
   // Reset is a clean no-op with no accumulated history yet -- the enabled
   // toggle it does not touch stays exactly where the operator left it.
-  await expect(details.getByText("Local learning: Local adjustment disabled")).toBeVisible();
+  await expect(details.getByRole("button", { name: "Enable local adjustment" })).toBeVisible();
+  await expect(details.getByText("Local learning: Not enough reviewed history yet")).toBeVisible();
 });

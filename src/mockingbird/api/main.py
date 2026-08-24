@@ -11689,9 +11689,14 @@ def _scene_confusor_learning_status_response(
 async def get_stream_scene_confusor_learning_status(stream_id: str) -> SceneConfusorLearningStatusResponse:
     """Site-Specific Learning & Local Adaptation v1 (see docs/scene-
     confusor-suspicion-contract.md, "Operator surface"): the smallest
-    honest status backing "Learning from reviewed activity on this camera"
-    / "Not enough reviewed history yet" / "Local adjustment active" /
-    "Local adjustment disabled." Side-effect-free, matching `/observation/
+    honest status backing "Not enough reviewed history yet" / "Learning
+    from reviewed activity on this camera" / "Local adjustment active" --
+    plus the separate enable/disable setting this response also carries
+    (`reviewed_evidence_enabled`, default `False` as of the 2026-08-24
+    acceptance correction), which the status line deliberately never
+    collapses into a fourth "disabled" state of its own: collecting/
+    evaluating reviewed evidence is never itself "disabled" merely because
+    production adaptation is off. Side-effect-free, matching `/observation/
     counterfactual`'s own read-only convention -- never creates a settings
     row merely by being read."""
 
@@ -11710,12 +11715,15 @@ async def update_stream_scene_confusor_learning_enabled(
     payload: SceneConfusorLearningEnabledUpdate,
     request: Request,
 ) -> SceneConfusorLearningStatusResponse:
-    """The "Local adjustment active" / "Local adjustment disabled" operator
-    control. Scoped to only the new reviewed-negative-evidence suspicion
-    path -- never touches this Stream's pre-existing, already-shipped
-    occurrence-count scene-confusor behavior, and never deletes any
-    already-accumulated review-evidence bookkeeping (see `.../scene-
-    confusor-learning/reset` for the separate, more destructive action)."""
+    """The explicit production-activation enable/disable operator control
+    for the reviewed-negative-evidence suspicion path (default `False` as of
+    the 2026-08-24 acceptance correction -- see `ProductRepository.
+    set_scene_confusor_reviewed_evidence_enabled`'s own docstring for why).
+    Neither direction ever touches this Stream's pre-existing, already-
+    shipped occurrence-count scene-confusor behavior, and neither direction
+    ever deletes any already-accumulated review-evidence bookkeeping (see
+    `.../scene-confusor-learning/reset` for the separate, more destructive
+    action)."""
 
     current_user_or_401(request)
     _stream_live_playback_config_or_404(stream_id)

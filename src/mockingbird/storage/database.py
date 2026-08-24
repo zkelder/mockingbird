@@ -1445,12 +1445,19 @@ def _migrate_to_scene_confusor_reviewed_evidence_learning(connection: Connection
     honestly, reconstruct which historical label produced which increment.
 
     `observation_authority_settings.scene_confusor_reviewed_evidence_enabled`
-    (`NOT NULL DEFAULT 1`): the new operator-facing enable/disable control.
-    Every Stream that already has a settings row starts enabled -- safe
-    because the mechanism's own minimum-evidence abstention gate already
-    makes it a no-op wherever a Stream has not yet earned it (see
-    `scene_confusor.DEFAULT_MIN_REVIEWED_FALSE_TO_SUSPECT`), so defaulting
-    to "on" changes no installation's observed behavior at migration time.
+    (`NOT NULL DEFAULT 0`): the new operator-facing production-activation
+    control for the reviewed-negative-evidence suspicion path. Every Stream
+    that already has a settings row starts *without* it applying to
+    production admission -- conservative by default (acceptance correction,
+    2026-08-24), not merely "harmless by default": `min_reviewed_false_to_
+    suspect` (see `scene_confusor.DEFAULT_MIN_REVIEWED_FALSE_TO_SUSPECT`) is
+    disclosed as a candidate threshold pending organic field validation, so
+    activating it for any given Stream's own production admission is left to
+    an explicit operator decision (`ProductRepository.set_scene_confusor_
+    reviewed_evidence_enabled`), not a silent migration default. This gates
+    production admission only -- reviewed-evidence state accumulation,
+    provenance, reversibility, and status/counterfactual reporting are all
+    unconditional and unaffected by this column's value.
 
     Purely additive: neither column touches `visits`, `events`, or any
     other wildlife-truth table.
@@ -1473,7 +1480,7 @@ def _migrate_to_scene_confusor_reviewed_evidence_learning(connection: Connection
         if "scene_confusor_reviewed_evidence_enabled" not in columns:
             connection.exec_driver_sql(
                 "ALTER TABLE observation_authority_settings "
-                "ADD COLUMN scene_confusor_reviewed_evidence_enabled BOOLEAN NOT NULL DEFAULT 1"
+                "ADD COLUMN scene_confusor_reviewed_evidence_enabled BOOLEAN NOT NULL DEFAULT 0"
             )
 
 
