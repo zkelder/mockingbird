@@ -6,11 +6,13 @@ rationale -- not repeated in full here.
 
 - **Starting HEAD:** `34ad8bc183436dc21cba5aa6cf5c627a77a401d9` (Site-Specific
   Learning v1)
-- **Ending HEAD:** see commit recorded at closure below
+- **Ending HEAD:** `9114f9e09f8eced72239c8beccaeaa5b3179a0bb` (this
+  milestone's single commit, local `main`)
 - **Schema:** unchanged, v53 -- every fix in this milestone was reachable
   through existing schema/semantics (new *seed data*, not new columns/
   tables/migrations)
-- **Nothing pushed** (confirmed: no `git push` run this session)
+- **Nothing pushed** (confirmed: no `git push` run this session; local
+  `main` is 177 commits ahead of `origin/main`)
 
 ## P0/P1/P2 archaeology findings (summary)
 
@@ -323,8 +325,9 @@ small_bird_benchmark.py`, `src/mockingbird/training/wildlife.py.orig`,
 
 ## Nothing pushed
 
-Confirmed: no `git push` invoked this session. All work is local commits
-on `main` (see ending HEAD above).
+Confirmed: no `git push` invoked this session. All work is one local
+commit (`9114f9e`) on `main` (see ending HEAD above); local `main` is 177
+commits ahead of `origin/main`.
 
 ## Remaining bounded broader-wildlife gaps
 
