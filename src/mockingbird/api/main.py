@@ -392,6 +392,13 @@ from mockingbird.api.schemas import (
     InstallationSettings,
     InstallationSettingsUpdate,
     PlaceEnvironmentalContext,
+    PlaceHabitatContext,
+    PlaceHabitatFact,
+    PlaceHabitatFactCreate,
+    PlaceHabitatFactUpdate,
+    PlacePhenologyObservation,
+    PlacePhenologyObservationCreate,
+    PlacePhenologyObservationUpdate,
     VisitEnvironmentalContext,
 )
 from mockingbird.motion import (
@@ -14778,6 +14785,115 @@ async def update_environmental_context_settings(
     return get_repository().update_environmental_context_settings(
         payload, acting_user=current_user
     )
+
+
+# --- Habitat & Phenology Foundation v1 --------------------------------------
+# See docs/habitat-phenology-foundation-v1-contract.md. A separate domain
+# from Environmental Context above (durable/dated *user-recorded* facts
+# about a Place, never a sensor/solar computation). Unlike `GET /api/
+# settings/installation` (a narrow, documented exception on
+# `mockingbird.api.auth._ALWAYS_PUBLIC_PATHS` letting a signed-out sign-in
+# screen show an installation name), no route in this domain is on that
+# allowlist: every route here, reads included, requires a signed-in
+# session, matching the rest of this product's ordinary data.
+
+
+@app.get("/api/place/habitat", response_model=list[PlaceHabitatFact])
+async def list_place_habitat_facts() -> list[PlaceHabitatFact]:
+    """Every recorded habitat fact for this Place. An empty list is a
+    normal, honest "nothing recorded yet" outcome -- never presented as
+    "this Place has no habitat features."""
+
+    return get_repository().list_place_habitat_facts()
+
+
+@app.post("/api/place/habitat", response_model=PlaceHabitatFact, status_code=201)
+async def create_place_habitat_fact(
+    payload: PlaceHabitatFactCreate, request: Request
+) -> PlaceHabitatFact:
+    current_user = current_user_or_401(request)
+    return get_repository().add_place_habitat_fact(payload, acting_user=current_user)
+
+
+@app.patch("/api/place/habitat/{fact_id}", response_model=PlaceHabitatFact)
+async def update_place_habitat_fact(
+    fact_id: str, payload: PlaceHabitatFactUpdate, request: Request
+) -> PlaceHabitatFact:
+    current_user = current_user_or_401(request)
+    fact = get_repository().update_place_habitat_fact(fact_id, payload, acting_user=current_user)
+    if fact is None:
+        raise _not_found("Habitat fact", fact_id)
+    return fact
+
+
+@app.delete("/api/place/habitat/{fact_id}", status_code=204)
+async def delete_place_habitat_fact(fact_id: str, request: Request) -> Response:
+    current_user = current_user_or_401(request)
+    if not get_repository().remove_place_habitat_fact(fact_id, acting_user=current_user):
+        raise _not_found("Habitat fact", fact_id)
+    return Response(status_code=204)
+
+
+@app.get("/api/place/phenology", response_model=list[PlacePhenologyObservation])
+async def list_place_phenology_observations() -> list[PlacePhenologyObservation]:
+    """Every recorded phenology observation for this Place, newest-observed
+    -first, each carrying a `status` ("current"/"recent"/"past") computed
+    against today's UTC calendar date -- see `PlacePhenologyObservation`'s
+    own docstring. This is the full history list (used for editing and for
+    the Place Report page's period-scoped history view); see
+    `get_place_habitat_context_today`, below, for the narrower current/
+    recent-only bundle a Today-style surface should prefer."""
+
+    return get_repository().list_place_phenology_observations()
+
+
+@app.post("/api/place/phenology", response_model=PlacePhenologyObservation, status_code=201)
+async def create_place_phenology_observation(
+    payload: PlacePhenologyObservationCreate, request: Request
+) -> PlacePhenologyObservation:
+    current_user = current_user_or_401(request)
+    return get_repository().add_place_phenology_observation(payload, acting_user=current_user)
+
+
+@app.patch(
+    "/api/place/phenology/{observation_id}", response_model=PlacePhenologyObservation
+)
+async def update_place_phenology_observation(
+    observation_id: str, payload: PlacePhenologyObservationUpdate, request: Request
+) -> PlacePhenologyObservation:
+    current_user = current_user_or_401(request)
+    try:
+        observation = get_repository().update_place_phenology_observation(
+            observation_id, payload, acting_user=current_user
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    if observation is None:
+        raise _not_found("Phenology observation", observation_id)
+    return observation
+
+
+@app.delete("/api/place/phenology/{observation_id}", status_code=204)
+async def delete_place_phenology_observation(
+    observation_id: str, request: Request
+) -> Response:
+    current_user = current_user_or_401(request)
+    if not get_repository().remove_place_phenology_observation(
+        observation_id, acting_user=current_user
+    ):
+        raise _not_found("Phenology observation", observation_id)
+    return Response(status_code=204)
+
+
+@app.get("/api/place/habitat-context", response_model=PlaceHabitatContext)
+async def get_place_habitat_context_today() -> PlaceHabitatContext:
+    """The compact, efficient "what's relevant right now" bundle for a
+    Today-style surface -- see `PlaceHabitatContext`'s own docstring.
+    Deliberately separate from the full list endpoints above, mirroring
+    `GET /api/place/environmental-context/today`'s own separateness from
+    the environmental-context settings endpoints."""
+
+    return get_repository().get_place_habitat_context()
 
 
 def _storage_retention_http_error(error: ValueError) -> HTTPException:

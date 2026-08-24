@@ -185,6 +185,34 @@ export function formatTimeOfDay(value: string): string {
   }).format(new Date(value));
 }
 
+// Habitat & Phenology Foundation v1: `value` is a plain UTC calendar date
+// (`YYYY-MM-DD`, no time-of-day component -- see PlacePhenologyObservation's
+// own docstring) -- never route it through `new Date(value)`'s default local-
+// timezone formatting, which would risk rendering it as the *previous*
+// calendar day for any negative-UTC-offset viewer (the exact
+// `new Date("YYYY-MM-DD")` pitfall PlaceActivityReportPage.tsx's own
+// `parseLocalDateInput` already documents and avoids for input parsing).
+// Anchoring to UTC midnight and formatting with `timeZone: "UTC"` keeps the
+// displayed date identical to the stored value for every viewer.
+export function formatCalendarDate(value: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(`${value}T00:00:00Z`));
+}
+
+// Habitat & Phenology Foundation v1: shared by HabitatPhenologyCard (the
+// Today card) and PlaceActivityReportPage (the read-only history view) so
+// the two never drift into presenting the same interval differently.
+export function phenologyDateRange(startDate: string, endDate: string | null | undefined): string {
+  if (!endDate || endDate === startDate) {
+    return `Noted ${formatCalendarDate(startDate)}`;
+  }
+  return `${formatCalendarDate(startDate)} – ${formatCalendarDate(endDate)}`;
+}
+
 export function sortedEntries(record: Record<string, number>): Array<[string, number]> {
   return Object.entries(record).sort((a, b) => b[1] - a[1]);
 }

@@ -9707,3 +9707,93 @@ a.secondary-action {
   margin: 0;
   padding: 0;
 }
+
+/* Habitat & Phenology Foundation v1: mirrors
+   .environmental-context-location-fields' exact bordered-grid/label
+   treatment for HabitatPhenologyCard's two edit-mode fieldsets. */
+.habitat-phenology-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 10px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+}
+
+.habitat-phenology-fields legend {
+  padding: 0 4px;
+  color: #4f5f55;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.habitat-phenology-fields label {
+  display: grid;
+  gap: 4px;
+  color: #4f5f55;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.habitat-phenology-fields p.meta-text,
+.habitat-phenology-fields .tag-row,
+.habitat-phenology-fields .habitat-phenology-list {
+  grid-column: 1 / -1;
+  margin: 0 0 4px;
+}
+
+.habitat-phenology-fields .detail-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-start;
+}
+
+.habitat-phenology-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.habitat-phenology-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* A small "x" nested inside a .tag pill -- distinct from .visit-strip
+   button's own full-pill button treatment, since this one lives inside an
+   already-styled chip rather than being the chip itself. */
+.tag-remove-button {
+  border: 0;
+  background: none;
+  padding: 0 0 0 2px;
+  margin: 0;
+  color: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.tag-remove-button:hover {
+  color: #8a3220;
+}
+
+/* The chip's own label, made clickable (opens the inline note editor)
+   without looking like a generic button -- inherits the .tag's own text
+   styling exactly. */
+.tag-edit-button {
+  border: 0;
+  background: none;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  cursor: pointer;
+}
+
+.tag-edit-button:hover {
+  text-decoration: underline;
+}

@@ -93,6 +93,13 @@ import type {
   PlaceActivityReportRequest,
   PlaceActivityReportResponse,
   PlaceEnvironmentalContext,
+  PlaceHabitatContext,
+  PlaceHabitatFact,
+  PlaceHabitatFactCreate,
+  PlaceHabitatFactUpdate,
+  PlacePhenologyObservation,
+  PlacePhenologyObservationCreate,
+  PlacePhenologyObservationUpdate,
   ProductHealthStatus,
   SetupState,
   SetupStateUpdate,
@@ -1304,6 +1311,42 @@ export const apiClient = {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
+  // Habitat & Phenology Foundation v1 -- see docs/habitat-phenology-
+  // foundation-v1-contract.md. A separate domain/fetch from Environmental
+  // Context above.
+  getPlaceHabitatFacts: () => request<PlaceHabitatFact[]>("/api/place/habitat"),
+  createPlaceHabitatFact: (payload: PlaceHabitatFactCreate) =>
+    request<PlaceHabitatFact>("/api/place/habitat", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updatePlaceHabitatFact: (factId: string, payload: PlaceHabitatFactUpdate) =>
+    request<PlaceHabitatFact>(`/api/place/habitat/${encodeURIComponent(factId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  deletePlaceHabitatFact: (factId: string) =>
+    request<void>(`/api/place/habitat/${encodeURIComponent(factId)}`, { method: "DELETE" }),
+  getPlacePhenologyObservations: () =>
+    request<PlacePhenologyObservation[]>("/api/place/phenology"),
+  createPlacePhenologyObservation: (payload: PlacePhenologyObservationCreate) =>
+    request<PlacePhenologyObservation>("/api/place/phenology", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updatePlacePhenologyObservation: (
+    observationId: string,
+    payload: PlacePhenologyObservationUpdate,
+  ) =>
+    request<PlacePhenologyObservation>(
+      `/api/place/phenology/${encodeURIComponent(observationId)}`,
+      { method: "PATCH", body: JSON.stringify(payload) },
+    ),
+  deletePlacePhenologyObservation: (observationId: string) =>
+    request<void>(`/api/place/phenology/${encodeURIComponent(observationId)}`, {
+      method: "DELETE",
+    }),
+  getPlaceHabitatContext: () => request<PlaceHabitatContext>("/api/place/habitat-context"),
   getSoundscapeSummary: (payload: SoundscapeSummaryRequest) =>
     request<SoundscapeSummaryResponse>("/api/analytics/soundscape-summary", {
       method: "POST",

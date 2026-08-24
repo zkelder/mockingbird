@@ -665,6 +665,13 @@ from mockingbird.api.schemas import (
     InstallationSettings,
     InstallationSettingsUpdate,
     PlaceEnvironmentalContext,
+    PlaceHabitatContext,
+    PlaceHabitatFact,
+    PlaceHabitatFactCreate,
+    PlaceHabitatFactUpdate,
+    PlacePhenologyObservation,
+    PlacePhenologyObservationCreate,
+    PlacePhenologyObservationUpdate,
     SelfPasswordChangeRequest,
     SignInRequest,
     UserCreate,
@@ -675,6 +682,7 @@ from mockingbird.api.schemas import (
     VisitEnvironmentalContext,
 )
 from mockingbird.environment import solar_context
+from mockingbird.habitat import phenology as habitat_phenology
 from mockingbird.playback import local_camera_bridge, rtsp_bridge, windows_camera_bridge
 from mockingbird.monitoring.durable_supervisor import DurableMonitoringCandidate
 from mockingbird.monitoring.exposure_history import (
@@ -724,6 +732,8 @@ from mockingbird.storage.models import (
     InstallationSettingsModel,
     MediaAssetModel,
     MonitoringExposureIntervalModel,
+    PlaceHabitatFactModel,
+    PlacePhenologyObservationModel,
     ProductAlertModel,
     ResearchCollectionModel,
     ReviewIdentificationAssistantRunModel,
@@ -4375,6 +4385,258 @@ class ProductRepository:
                     visit_id=visit_id,
                     evaluated_at=evaluated_at,
                 )
+
+    # --- Habitat & Phenology Foundation v1 ---------------------------------
+    # See docs/habitat-phenology-foundation-v1-contract.md. A separate
+    # domain from Environmental Context above (durable/dated *user-recorded*
+    # facts, never a sensor/solar computation), reusing that milestone's
+    # session/audit conventions where the same shape genuinely applies.
+    # Neither table is ever joined against `visits`/`events`/`review_labels`
+    # -- this information never touches wildlife review truth.
+
+    @staticmethod
+    def _place_habitat_fact_from_model(model: PlaceHabitatFactModel) -> PlaceHabitatFact:
+        return PlaceHabitatFact(
+            id=model.id,
+            category=model.category,
+            label=model.label,
+            note=model.note,
+            information_class=model.information_class,
+            provenance=model.provenance,
+            created_at=_as_utc(model.created_at),
+            updated_at=_as_utc(model.updated_at),
+        )
+
+    @staticmethod
+    def _place_phenology_observation_from_model(
+        model: PlacePhenologyObservationModel, *, today: date
+    ) -> PlacePhenologyObservation:
+        classification = habitat_phenology.classify_phenology_status(
+            model.observed_start_date, model.observed_end_date, today=today
+        )
+        return PlacePhenologyObservation(
+            id=model.id,
+            subject_label=model.subject_label,
+            phenomenon=model.phenomenon,
+            information_class=model.information_class,
+            provenance=model.provenance,
+            observed_start_date=model.observed_start_date,
+            observed_end_date=model.observed_end_date,
+            note=model.note,
+            status=classification.status,
+            created_at=_as_utc(model.created_at),
+            updated_at=_as_utc(model.updated_at),
+        )
+
+    def list_place_habitat_facts(self) -> list[PlaceHabitatFact]:
+        """Every recorded habitat fact, Place-wide (`source_id IS NULL`,
+        v1's only populated case), grouped by category for stable display.
+        An empty list is a normal, honest "nothing recorded yet" outcome --
+        never treated as "this Place has no habitat features" by any
+        caller."""
+
+        with self.session_factory() as session:
+            models = session.scalars(
+                select(PlaceHabitatFactModel)
+                .where(PlaceHabitatFactModel.source_id.is_(None))
+                .order_by(PlaceHabitatFactModel.category, PlaceHabitatFactModel.created_at)
+            ).all()
+            return [self._place_habitat_fact_from_model(model) for model in models]
+
+    def add_place_habitat_fact(
+        self, payload: PlaceHabitatFactCreate, *, acting_user: CurrentUser
+    ) -> PlaceHabitatFact:
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                model = PlaceHabitatFactModel(
+                    id=f"habitat-{uuid.uuid4().hex[:16]}",
+                    source_id=None,
+                    category=payload.category,
+                    label=payload.label,
+                    note=payload.note,
+                    information_class=habitat_phenology.HABITAT_INFORMATION_CLASS,
+                    provenance=habitat_phenology.HABITAT_PROVENANCE_MANUAL_ENTRY,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(model)
+                session.flush()
+                self._record_audit_event_in_session(
+                    session, now=now, actor_user_id=acting_user.id, actor_display_name=acting_user.display_name,
+                    action="place_habitat.fact_added", target_type="place_habitat_fact",
+                    target_id=model.id, metadata={"category": payload.category, "label": payload.label},
+                )
+                return self._place_habitat_fact_from_model(model)
+
+    def update_place_habitat_fact(
+        self, fact_id: str, payload: PlaceHabitatFactUpdate, *, acting_user: CurrentUser
+    ) -> PlaceHabitatFact | None:
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(PlaceHabitatFactModel, fact_id)
+                if model is None:
+                    return None
+                if payload.category is not None:
+                    model.category = payload.category
+                if payload.label is not None:
+                    model.label = payload.label
+                if payload.note is not None:
+                    # "" explicitly clears the note; see PlaceHabitatFactUpdate's docstring.
+                    model.note = payload.note or None
+                model.updated_at = now
+                session.flush()
+                self._record_audit_event_in_session(
+                    session, now=now, actor_user_id=acting_user.id, actor_display_name=acting_user.display_name,
+                    action="place_habitat.fact_updated", target_type="place_habitat_fact",
+                    target_id=model.id, metadata=None,
+                )
+                return self._place_habitat_fact_from_model(model)
+
+    def remove_place_habitat_fact(self, fact_id: str, *, acting_user: CurrentUser) -> bool:
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(PlaceHabitatFactModel, fact_id)
+                if model is None:
+                    return False
+                self._record_audit_event_in_session(
+                    session, now=now, actor_user_id=acting_user.id, actor_display_name=acting_user.display_name,
+                    action="place_habitat.fact_removed", target_type="place_habitat_fact",
+                    target_id=model.id, metadata={"category": model.category, "label": model.label},
+                )
+                session.delete(model)
+                return True
+
+    def list_place_phenology_observations(self) -> list[PlacePhenologyObservation]:
+        """Every recorded phenology observation, Place-wide, newest-
+        observed-first (matches the existing "Recent Visits"/Stream-events
+        newest-first convention). Includes `"past"` entries -- this is the
+        full history list (used for editing and for the Place Report
+        page's period-scoped history view), distinct from
+        `get_place_habitat_context`'s deliberately narrower current/recent
+        bundle. An empty list is a normal, honest "nothing recorded yet"
+        outcome."""
+
+        today = datetime.now(UTC).date()
+        with self.session_factory() as session:
+            models = session.scalars(
+                select(PlacePhenologyObservationModel)
+                .where(PlacePhenologyObservationModel.source_id.is_(None))
+                .order_by(
+                    PlacePhenologyObservationModel.observed_start_date.desc(),
+                    PlacePhenologyObservationModel.created_at.desc(),
+                )
+            ).all()
+            return [
+                self._place_phenology_observation_from_model(model, today=today)
+                for model in models
+            ]
+
+    def add_place_phenology_observation(
+        self, payload: PlacePhenologyObservationCreate, *, acting_user: CurrentUser
+    ) -> PlacePhenologyObservation:
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                model = PlacePhenologyObservationModel(
+                    id=f"phenology-{uuid.uuid4().hex[:16]}",
+                    source_id=None,
+                    subject_label=payload.subject_label,
+                    phenomenon=payload.phenomenon,
+                    information_class=habitat_phenology.HABITAT_INFORMATION_CLASS,
+                    provenance=habitat_phenology.HABITAT_PROVENANCE_MANUAL_ENTRY,
+                    observed_start_date=payload.observed_start_date,
+                    observed_end_date=payload.observed_end_date,
+                    note=payload.note,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(model)
+                session.flush()
+                self._record_audit_event_in_session(
+                    session, now=now, actor_user_id=acting_user.id, actor_display_name=acting_user.display_name,
+                    action="place_phenology.observation_added", target_type="place_phenology_observation",
+                    target_id=model.id,
+                    metadata={"subject_label": payload.subject_label, "phenomenon": payload.phenomenon},
+                )
+                return self._place_phenology_observation_from_model(model, today=now.date())
+
+    def update_place_phenology_observation(
+        self,
+        observation_id: str,
+        payload: PlacePhenologyObservationUpdate,
+        *,
+        acting_user: CurrentUser,
+    ) -> PlacePhenologyObservation | None:
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(PlacePhenologyObservationModel, observation_id)
+                if model is None:
+                    return None
+                if payload.subject_label is not None:
+                    model.subject_label = payload.subject_label
+                if payload.phenomenon is not None:
+                    model.phenomenon = payload.phenomenon
+                if payload.observed_start_date is not None:
+                    model.observed_start_date = payload.observed_start_date
+                # Checked ahead of observed_end_date so a payload can never set
+                # both at once and have one silently win -- the schema-layer
+                # validator already forbids this combination; this is the
+                # authoritative, defense-in-depth enforcement point.
+                if payload.clear_observed_end_date:
+                    model.observed_end_date = None
+                elif payload.observed_end_date is not None:
+                    model.observed_end_date = payload.observed_end_date
+                if payload.note is not None:
+                    model.note = payload.note or None
+                effective_end = model.observed_end_date
+                if effective_end is not None and effective_end < model.observed_start_date:
+                    raise ValueError("observed_end_date must not be before observed_start_date")
+                model.updated_at = now
+                session.flush()
+                self._record_audit_event_in_session(
+                    session, now=now, actor_user_id=acting_user.id, actor_display_name=acting_user.display_name,
+                    action="place_phenology.observation_updated", target_type="place_phenology_observation",
+                    target_id=model.id, metadata=None,
+                )
+                return self._place_phenology_observation_from_model(model, today=now.date())
+
+    def remove_place_phenology_observation(
+        self, observation_id: str, *, acting_user: CurrentUser
+    ) -> bool:
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(PlacePhenologyObservationModel, observation_id)
+                if model is None:
+                    return False
+                self._record_audit_event_in_session(
+                    session, now=now, actor_user_id=acting_user.id, actor_display_name=acting_user.display_name,
+                    action="place_phenology.observation_removed", target_type="place_phenology_observation",
+                    target_id=model.id,
+                    metadata={"subject_label": model.subject_label, "phenomenon": model.phenomenon},
+                )
+                session.delete(model)
+                return True
+
+    def get_place_habitat_context(self) -> PlaceHabitatContext:
+        """The compact, efficient "what's relevant right now" bundle for a
+        Today-style surface -- see `PlaceHabitatContext`'s own docstring.
+        Habitat facts are durable/open-ended so the full list is returned
+        as-is; phenology is filtered to `current`/`recent` only (never
+        `past`) via one pass over `list_place_phenology_observations`, no
+        second query."""
+
+        habitat_facts = self.list_place_habitat_facts()
+        phenology = self.list_place_phenology_observations()
+        return PlaceHabitatContext(
+            habitat_facts=habitat_facts,
+            current_phenology=[entry for entry in phenology if entry.status == "current"],
+            recent_phenology=[entry for entry in phenology if entry.status == "recent"],
+        )
 
     def reset_demo_data(self) -> LocalDataStatus:
         # Reset only the sample walkthrough graph. Real cameras and their local

@@ -999,6 +999,72 @@ def test_schema_50_upgrades_to_current_with_environmental_context_foundation(
         migrated.close()
 
 
+def test_schema_51_upgrades_to_current_with_habitat_phenology_foundation(
+    tmp_path: Path,
+) -> None:
+    """Habitat & Phenology Foundation v1: a real database at the
+    previously-current schema (v51) upgrades cleanly through the two new
+    additive tables (`place_habitat_facts`, `place_phenology_observations`)
+    -- mirroring `test_schema_50_upgrades_to_current_with_environmental_
+    context_foundation`'s own "additive table(s), no seeded row" proof
+    pattern applied to this milestone's tables."""
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = repository_for(db_path)
+    existing_source_count = len(repository.list_sources())
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql("DROP TABLE place_phenology_observations")
+        connection.exec_driver_sql("DROP TABLE place_habitat_facts")
+        connection.exec_driver_sql("UPDATE mockingbird_schema SET version = 51 WHERE singleton_id = 1")
+    engine.dispose()
+
+    migrated = repository_for(db_path)
+    try:
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+        assert len(migrated.list_sources()) == existing_source_count
+
+        with migrated.engine.connect() as connection:
+            habitat_columns = {
+                row[1]
+                for row in connection.exec_driver_sql(
+                    "PRAGMA table_info(place_habitat_facts)"
+                ).fetchall()
+            }
+            assert {
+                "id", "source_id", "category", "label", "note",
+                "information_class", "provenance", "created_at", "updated_at",
+            } <= habitat_columns
+            phenology_columns = {
+                row[1]
+                for row in connection.exec_driver_sql(
+                    "PRAGMA table_info(place_phenology_observations)"
+                ).fetchall()
+            }
+            assert {
+                "id", "source_id", "subject_label", "phenomenon", "information_class",
+                "provenance", "observed_start_date", "observed_end_date", "note",
+                "created_at", "updated_at",
+            } <= phenology_columns
+            habitat_count = connection.exec_driver_sql(
+                "SELECT COUNT(*) FROM place_habitat_facts"
+            ).scalar()
+            phenology_count = connection.exec_driver_sql(
+                "SELECT COUNT(*) FROM place_phenology_observations"
+            ).scalar()
+            assert habitat_count == 0
+            assert phenology_count == 0
+
+        # Honest "nothing recorded yet," never fabricated -- same discipline
+        # as the environmental-context settings assertion above.
+        assert migrated.list_place_habitat_facts() == []
+        assert migrated.list_place_phenology_observations() == []
+    finally:
+        migrated.close()
+
+
 def test_a_mid_chain_migration_failure_rolls_back_every_step_not_only_its_own(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

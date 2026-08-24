@@ -1649,3 +1649,143 @@ class EnvironmentalContextRecordModel(Base):
     provenance_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     provenance_schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PlaceHabitatFactModel(Base):
+    """One durable, user-recorded Place habitat fact (Habitat & Phenology
+    Foundation v1, schema 52) -- see docs/habitat-phenology-foundation-v1-
+    contract.md "Data model". A flexible, open-vocabulary tag/fact model
+    (per the governing brief's "prefer a flexible controlled-vocabulary/
+    tag/fact model over dozens of schema columns"), not a growing set of
+    boolean columns: "does this Place have a water feature" is one row
+    with `category="feature"`, `label="Water feature"`, not a
+    `has_water_feature` column, so a future new habitat concept needs no
+    migration.
+
+    `category` is a genuinely closed, small set (`"setting"`,
+    `"vegetation"`, `"feature"` -- see `mockingbird.habitat.phenology.
+    HABITAT_FACT_CATEGORIES`) validated at the Pydantic/API layer as a
+    `Literal`, not a DB `CHECK` -- matching house style for other
+    string-vocabulary columns (`zone_type`, `information_class`).
+    `label` stays free text on purpose: the UI offers a curated suggestion
+    list per category, but a user is never blocked from recording
+    something the suggestion list did not anticipate (see "Free-text/
+    common-name subject labels are acceptable for v1" in the governing
+    brief, applied here to habitat labels as well as phenology subjects).
+
+    Absence of a row for some category/label is never itself evidence of
+    anything -- there is no "confirmed absent" state, only "not recorded."
+    Every reader (API and UI alike) must present a sparse/empty result as
+    "nothing recorded yet," never as "this Place lacks X" -- the governing
+    brief's "users must be able to record 'unknown/not specified'; absence
+    of a fact must not imply false," satisfied here by never manufacturing
+    a negative claim rather than by adding an explicit "not present" row
+    for every conceivable category.
+
+    `source_id` is nullable, `NULL` = Place-wide (no `PlaceModel` exists --
+    see "Spatial doctrine" in product-doctrine.md); the only case v1 ever
+    writes. Mirrors `EnvironmentalContextRecordModel.source_id` exactly,
+    reserved for a future per-camera habitat-scene association without a
+    schema change.
+
+    `information_class`/`provenance` mirror `EnvironmentalContextRecordModel.
+    information_class`/`provider_key`'s two-column split (what epistemic
+    tier vs. what specific method produced it), but with this domain's own
+    vocabulary: v1's only writer is a human directly describing their own
+    Place, so `information_class="user_reported"` (never "measured,"
+    "inferred," or "reviewed" -- none of those wildlife-truth words apply
+    to a person describing their own yard, and there is no model proposal
+    here for a human to review/correct) and
+    `provenance="user_manual_entry"`. Both are plain strings, not a
+    growing enum, reserving room for a future `information_class=
+    "inferred_model"` (automatic plant recognition) or `"external_provider"`
+    (an imported ecological dataset) without a schema change -- see
+    "Future compatibility" in docs/habitat-phenology-foundation-v1-
+    contract.md. No separate "review state" column: nothing here is a
+    machine proposal awaiting human confirmation, so `information_class`
+    alone already says precisely what this is without importing
+    `ReviewLabel`/`reviewed_by_user_id` machinery this feature does not
+    use.
+    """
+
+    __tablename__ = "place_habitat_facts"
+    __table_args__ = (
+        Index("ix_place_habitat_facts_lookup", "source_id", "category"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    source_id: Mapped[str | None] = mapped_column(
+        ForeignKey("camera_sources.id"), nullable=True
+    )
+    category: Mapped[str] = mapped_column(String, nullable=False)
+    label: Mapped[str] = mapped_column(String, nullable=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    information_class: Mapped[str] = mapped_column(String, nullable=False)
+    provenance: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PlacePhenologyObservationModel(Base):
+    """One dated/interval Place phenology observation (Habitat & Phenology
+    Foundation v1, schema 52) -- see docs/habitat-phenology-foundation-v1-
+    contract.md "Data model". Distinct from `PlaceHabitatFactModel`: a
+    habitat fact is durable/open-ended ("this Place has mature deciduous
+    trees"), a phenology observation is explicitly time-bounded ("azaleas
+    were flowering here"). Do not assume every row is a plant species
+    identification -- `subject_label` is free text (a common name, a
+    resource description like "sunflower feeder," or anything else a user
+    types), matching "Free-text/common-name subject labels are acceptable
+    for v1" in the governing brief.
+
+    `observed_start_date`/`observed_end_date` are plain `date` values, not
+    `datetime` instants -- a phenology entry is a human-entered,
+    day-granularity fact, and storing a fabricated time-of-day would
+    overclaim precision that was never observed (see "Be precise" in the
+    governing brief's "Temporal semantics"). `observed_end_date=NULL`
+    means a single-date observation, exactly equivalent to
+    `observed_end_date == observed_start_date` for every "is this
+    currently applicable" purpose -- it never means "ongoing
+    indefinitely." This is the specific, deliberate mechanism that keeps
+    an April observation from silently still reading as current in
+    August: without an explicit end date extending it, a single-date
+    entry's own "current" window is exactly the one day it was recorded
+    for. See `mockingbird.habitat.phenology.phenology_interval_covers`/
+    `classify_phenology_status` for the read-time classification logic --
+    "current"/"recent"/"past" is never persisted here, mirroring
+    `EnvironmentalContextRecordModel`'s own "day/night classification is
+    never persisted per-Visit, always re-derived at read time" discipline,
+    applied to phenology's own date-range shape instead of an instant
+    window.
+
+    `source_id`/`information_class`/`provenance` mirror
+    `PlaceHabitatFactModel`'s identical fields and reasoning exactly (see
+    that model's docstring) -- `source_id` nullable/Place-wide-only for
+    v1, `information_class="user_reported"`,
+    `provenance="user_manual_entry"`.
+    """
+
+    __tablename__ = "place_phenology_observations"
+    __table_args__ = (
+        CheckConstraint(
+            "observed_end_date IS NULL OR observed_end_date >= observed_start_date",
+            name="ck_place_phenology_observation_end_not_before_start",
+        ),
+        Index(
+            "ix_place_phenology_observations_lookup", "source_id", "observed_start_date"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    source_id: Mapped[str | None] = mapped_column(
+        ForeignKey("camera_sources.id"), nullable=True
+    )
+    subject_label: Mapped[str] = mapped_column(String, nullable=False)
+    phenomenon: Mapped[str] = mapped_column(String, nullable=False)
+    information_class: Mapped[str] = mapped_column(String, nullable=False)
+    provenance: Mapped[str] = mapped_column(String, nullable=False)
+    observed_start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    observed_end_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

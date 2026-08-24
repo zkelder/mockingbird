@@ -9,12 +9,14 @@ import type {
   PlaceActivityReportResponse,
   PlaceActivityReportTaxonEntry,
   PlaceActivityReportZoneActivity,
+  PlaceHabitatFact,
+  PlacePhenologyObservation,
 } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { changeStatusBadge, formatDateTime, historicalStatusBadge } from "../utils";
+import { changeStatusBadge, formatDateTime, historicalStatusBadge, phenologyDateRange } from "../utils";
 
 /**
  * Everyday Discovery / Product Experience v2 (Phase G): the secondary
@@ -444,6 +446,32 @@ export function PlaceActivityReportPage({ sources, onOpenVisit, onOpenBirdLog }:
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Habitat & Phenology Foundation v1: a read-only, deliberately period-
+  // independent fetch -- habitat facts are durable, and the *full*
+  // phenology history (not just this period's slice) is shown so history
+  // stays honestly historical rather than silently reappearing/
+  // disappearing as the period picker changes. See docs/habitat-phenology-
+  // foundation-v1-contract.md "Frontend surface". Editing lives on the
+  // Dashboard (Today) card; this page only displays.
+  const [habitatFacts, setHabitatFacts] = useState<PlaceHabitatFact[]>([]);
+  const [phenologyObservations, setPhenologyObservations] = useState<PlacePhenologyObservation[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    void Promise.all([
+      apiClient.getPlaceHabitatFacts().catch(() => []),
+      apiClient.getPlacePhenologyObservations().catch(() => []),
+    ]).then(([facts, observations]) => {
+      if (active) {
+        setHabitatFacts(facts);
+        setPhenologyObservations(observations);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   function toggleSourceId(sourceId: string) {
     setSelectedSourceIds((current) =>
       current.includes(sourceId)
@@ -741,6 +769,48 @@ export function PlaceActivityReportPage({ sources, onOpenVisit, onOpenBirdLog }:
             </section>
           )}
         </>
+      ) : null}
+
+      {/* Habitat & Phenology Foundation v1: deliberately outside the `report`
+          conditional above -- a genuinely independent, period-agnostic
+          fetch that must keep working (or stay quietly absent) regardless
+          of whether the wildlife report loaded. Read-only: editing lives on
+          the Dashboard (Today) card. */}
+      {habitatFacts.length > 0 || phenologyObservations.length > 0 ? (
+        <section aria-label="Habitat and season history" className="panel">
+          <div className="section-heading">
+            <div>
+              <h2>Habitat &amp; season</h2>
+              <span className="meta-text">
+                Durable details about this Place, and the full history of recorded season/phenology
+                notes -- not limited to the period above.
+              </span>
+            </div>
+          </div>
+          {habitatFacts.length > 0 ? (
+            <div className="tag-row">
+              {habitatFacts.map((fact) => (
+                <span className="tag" key={fact.id}>
+                  {fact.label}
+                </span>
+              ))}
+            </div>
+          ) : null}
+          {phenologyObservations.length > 0 ? (
+            <ul className="habitat-phenology-list">
+              {phenologyObservations.map((observation) => (
+                <li key={observation.id}>
+                  <strong>{observation.subject_label}</strong> &middot; {observation.phenomenon}
+                  {observation.status === "current" ? <StatusPill label="Current" tone="good" /> : null}
+                  {observation.status === "recent" ? <StatusPill label="Recently" tone="quiet" /> : null}
+                  <span className="meta-text">
+                    {phenologyDateRange(observation.observed_start_date, observation.observed_end_date)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </section>
       ) : null}
     </div>
   );

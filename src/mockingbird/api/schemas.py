@@ -7456,3 +7456,170 @@ class VisitEnvironmentalContext(SolarContext):
 
 class PlaceEnvironmentalContext(SolarContext):
     for_date: date
+
+
+# --- Habitat & Phenology Foundation v1 -------------------------------------
+# See docs/habitat-phenology-foundation-v1-contract.md. A separate domain
+# from Environmental Context Foundation above (durable/dated *user-recorded*
+# facts about a Place's habitat and biological season, never a sensor/solar
+# computation), but deliberately reusing that milestone's naming and
+# temporal-honesty conventions where the same shape genuinely applies.
+
+HabitatFactCategory = Literal["setting", "vegetation", "feature"]
+PhenologyStatus = Literal["current", "recent", "past"]
+
+
+class PlaceHabitatFact(BaseModel):
+    """A durable, user-recorded habitat fact -- see `PlaceHabitatFactModel`
+    for the full field-by-field rationale. `information_class` is
+    deliberately a single-value `Literal` here (unlike the DB column,
+    which stays a plain string for future `inferred_model`/
+    `external_provider` writers) because v1's only writer is a human
+    describing their own Place -- mirrors `SolarContext.information_class:
+    Literal["derived"]`'s identical "the response type reflects what can
+    actually be returned today" discipline."""
+
+    id: str
+    category: HabitatFactCategory
+    label: str
+    note: str | None = None
+    information_class: Literal["user_reported"]
+    provenance: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class PlaceHabitatFactCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    category: HabitatFactCategory
+    label: str = Field(min_length=1, max_length=120)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class PlaceHabitatFactUpdate(BaseModel):
+    """Partial update (PATCH semantics): an omitted/`None` field leaves the
+    stored value unchanged, mirroring `ZoneUpdate`. `note` is the one
+    exception, since it is the only optional field here and PATCH
+    semantics otherwise offer no way to clear one: an explicit empty
+    string (`""`) clears the stored note to `NULL`; `None`/omitted leaves
+    it unchanged. Documented here rather than silently relied upon."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    category: HabitatFactCategory | None = None
+    label: str | None = Field(default=None, min_length=1, max_length=120)
+    note: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def _require_change(self) -> "PlaceHabitatFactUpdate":
+        if not self.model_dump(exclude_none=True):
+            raise ValueError("Provide at least one field to update.")
+        return self
+
+
+class PlacePhenologyObservation(BaseModel):
+    """A dated/interval phenology observation -- see
+    `PlacePhenologyObservationModel` for the full field-by-field rationale.
+    `status` is computed at read time (never persisted -- mirrors
+    `PlaceEnvironmentalContext.daylight_state`'s identical "classification
+    is derived, not frozen at write time" discipline) via
+    `mockingbird.habitat.phenology.classify_phenology_status` against the
+    current UTC calendar date; a historical observation whose interval does
+    not cover today is honestly `"past"`, never silently still `"current"`.
+    """
+
+    id: str
+    subject_label: str
+    phenomenon: str
+    information_class: Literal["user_reported"]
+    provenance: str
+    observed_start_date: date
+    observed_end_date: date | None = None
+    note: str | None = None
+    status: PhenologyStatus
+    created_at: datetime
+    updated_at: datetime
+
+
+class PlacePhenologyObservationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    subject_label: str = Field(min_length=1, max_length=120)
+    phenomenon: str = Field(min_length=1, max_length=120)
+    observed_start_date: date
+    # `None` means a single-date observation -- see `PlacePhenologyObservationModel`
+    # "observed_end_date=NULL" -- never "ongoing indefinitely."
+    observed_end_date: date | None = None
+    note: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def _end_not_before_start(self) -> "PlacePhenologyObservationCreate":
+        if self.observed_end_date is not None and self.observed_end_date < self.observed_start_date:
+            raise ValueError("observed_end_date must not be before observed_start_date")
+        return self
+
+
+class PlacePhenologyObservationUpdate(BaseModel):
+    """Partial update (PATCH semantics), matching `PlaceHabitatFactUpdate`
+    exactly, including the same empty-string-clears-`note` convention. A
+    plain `date | None` field cannot itself distinguish "omit this field"
+    from "explicitly set it to null" under PATCH semantics, so clearing a
+    previously-set `observed_end_date` back to "single-date observation"
+    uses a separate explicit flag instead of overloading the date field: a
+    real date value sets it, `None`/omitted leaves it unchanged, and
+    `clear_observed_end_date=True` clears it -- checked ahead of
+    `observed_end_date` in the repository so a caller cannot set both at
+    once and have one silently win."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    subject_label: str | None = Field(default=None, min_length=1, max_length=120)
+    phenomenon: str | None = Field(default=None, min_length=1, max_length=120)
+    observed_start_date: date | None = None
+    observed_end_date: date | None = None
+    clear_observed_end_date: bool = False
+    note: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def _require_change(self) -> "PlacePhenologyObservationUpdate":
+        if not self.model_dump(exclude_none=True) and not self.clear_observed_end_date:
+            raise ValueError("Provide at least one field to update.")
+        return self
+
+    @model_validator(mode="after")
+    def _end_not_before_start(self) -> "PlacePhenologyObservationUpdate":
+        if (
+            self.observed_start_date is not None
+            and self.observed_end_date is not None
+            and self.observed_end_date < self.observed_start_date
+        ):
+            raise ValueError("observed_end_date must not be before observed_start_date")
+        return self
+
+    @model_validator(mode="after")
+    def _no_conflicting_end_date_instruction(self) -> "PlacePhenologyObservationUpdate":
+        if self.clear_observed_end_date and self.observed_end_date is not None:
+            raise ValueError(
+                "Provide either observed_end_date or clear_observed_end_date, not both."
+            )
+        return self
+
+
+class PlaceHabitatContext(BaseModel):
+    """The compact, efficient "what's relevant right now" bundle for a
+    Today-style surface -- deliberately separate from the full CRUD list
+    endpoints (`GET /api/place/habitat`, `GET /api/place/phenology`),
+    mirroring exactly how `GET /api/place/environmental-context/today` is
+    its own dedicated read rather than a field bolted onto a fuller report
+    (see "API surface" in docs/environmental-context-foundation-v1-
+    contract.md, the same reasoning applied here). Habitat facts are
+    durable/open-ended so the full list is always "current" by
+    definition; phenology is split into `current_phenology`
+    (`status == "current"`) and `recent_phenology`
+    (`status == "recent"`) so a caller never has to re-derive that
+    distinction -- and never receives `"past"` entries here at all."""
+
+    habitat_facts: list[PlaceHabitatFact]
+    current_phenology: list[PlacePhenologyObservation]
+    recent_phenology: list[PlacePhenologyObservation]

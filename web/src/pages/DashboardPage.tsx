@@ -7,11 +7,17 @@ import type {
   HealthStatus,
   PlaceActivityReportResponse,
   PlaceEnvironmentalContext,
+  PlaceHabitatContext,
+  PlaceHabitatFactCreate,
+  PlaceHabitatFactUpdate,
+  PlacePhenologyObservationCreate,
+  PlacePhenologyObservationUpdate,
   StorageSummary,
   StreamRuntimeStatus,
 } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { EnvironmentalContextCard } from "../components/EnvironmentalContextCard";
+import { HabitatPhenologyCard } from "../components/HabitatPhenologyCard";
 import { LiveCameraOverview } from "../components/LiveCameraOverview";
 import { ProductHealthPanel } from "../components/ProductHealthPanel";
 import { StatusPill } from "../components/StatusPill";
@@ -217,6 +223,10 @@ export function DashboardPage({
   const [environmentalContext, setEnvironmentalContext] = useState<PlaceEnvironmentalContext | null>(
     null,
   );
+  // Habitat & Phenology Foundation v1: a third, equally separate fetch --
+  // see docs/habitat-phenology-foundation-v1-contract.md "Frontend
+  // surface". Same absence-safety discipline as environmentalContext above.
+  const [habitatContext, setHabitatContext] = useState<PlaceHabitatContext | null>(null);
 
   const refreshDashboard = useCallback(async (initialLoad = false) => {
     if (initialLoad) {
@@ -225,18 +235,26 @@ export function DashboardPage({
       setIsRefreshing(true);
     }
     try {
-      const [nextSummary, monitoringStatuses, nextStorageSummary, nextReport, nextEnvironmentalContext] =
-        await Promise.all([
-          apiClient.getDashboardSummary(todayLocalDateString()),
-          apiClient.getStreamMonitoringStatuses().catch(() => null),
-          apiClient.getStorageRetentionSummary().catch(() => null),
-          apiClient.getPlaceActivityReport(todayLocalRange()).catch(() => null),
-          apiClient.getTodayEnvironmentalContext().catch(() => null),
-        ]);
+      const [
+        nextSummary,
+        monitoringStatuses,
+        nextStorageSummary,
+        nextReport,
+        nextEnvironmentalContext,
+        nextHabitatContext,
+      ] = await Promise.all([
+        apiClient.getDashboardSummary(todayLocalDateString()),
+        apiClient.getStreamMonitoringStatuses().catch(() => null),
+        apiClient.getStorageRetentionSummary().catch(() => null),
+        apiClient.getPlaceActivityReport(todayLocalRange()).catch(() => null),
+        apiClient.getTodayEnvironmentalContext().catch(() => null),
+        apiClient.getPlaceHabitatContext().catch(() => null),
+      ]);
       setSummary(nextSummary);
       setStorageSummary(nextStorageSummary);
       setReport(nextReport);
       setEnvironmentalContext(nextEnvironmentalContext);
+      setHabitatContext(nextHabitatContext);
       if (monitoringStatuses) {
         setDurableStatusByStream(
           Object.fromEntries(
@@ -275,6 +293,63 @@ export function DashboardPage({
       setEnvironmentalContext(nextEnvironmentalContext);
     },
     [],
+  );
+
+  // Habitat & Phenology Foundation v1: the only place these are edited --
+  // no new page, no new nav entry, mirroring the precedent above exactly.
+  // Each mutation re-fetches only the habitat/phenology bundle afterward,
+  // not the whole dashboard.
+  const refreshHabitatContext = useCallback(async () => {
+    const next = await apiClient.getPlaceHabitatContext().catch(() => null);
+    setHabitatContext(next);
+  }, []);
+
+  const addHabitatFact = useCallback(
+    async (payload: PlaceHabitatFactCreate) => {
+      await apiClient.createPlaceHabitatFact(payload);
+      await refreshHabitatContext();
+    },
+    [refreshHabitatContext],
+  );
+
+  const updateHabitatFact = useCallback(
+    async (factId: string, payload: PlaceHabitatFactUpdate) => {
+      await apiClient.updatePlaceHabitatFact(factId, payload);
+      await refreshHabitatContext();
+    },
+    [refreshHabitatContext],
+  );
+
+  const removeHabitatFact = useCallback(
+    async (factId: string) => {
+      await apiClient.deletePlaceHabitatFact(factId);
+      await refreshHabitatContext();
+    },
+    [refreshHabitatContext],
+  );
+
+  const addPhenologyObservation = useCallback(
+    async (payload: PlacePhenologyObservationCreate) => {
+      await apiClient.createPlacePhenologyObservation(payload);
+      await refreshHabitatContext();
+    },
+    [refreshHabitatContext],
+  );
+
+  const updatePhenologyObservation = useCallback(
+    async (observationId: string, payload: PlacePhenologyObservationUpdate) => {
+      await apiClient.updatePlacePhenologyObservation(observationId, payload);
+      await refreshHabitatContext();
+    },
+    [refreshHabitatContext],
+  );
+
+  const removePhenologyObservation = useCallback(
+    async (observationId: string) => {
+      await apiClient.deletePlacePhenologyObservation(observationId);
+      await refreshHabitatContext();
+    },
+    [refreshHabitatContext],
   );
 
   async function handleDurableMonitoringAction(
@@ -409,6 +484,19 @@ export function DashboardPage({
       <EnvironmentalContextCard
         context={environmentalContext}
         onSaveLocation={saveEnvironmentalContextLocation}
+      />
+      {/* Habitat & Phenology Foundation v1: a third sibling card, same
+          reasoning as EnvironmentalContextCard above -- see
+          docs/habitat-phenology-foundation-v1-contract.md "Frontend
+          surface". */}
+      <HabitatPhenologyCard
+        context={habitatContext}
+        onAddHabitatFact={addHabitatFact}
+        onAddPhenologyObservation={addPhenologyObservation}
+        onRemoveHabitatFact={removeHabitatFact}
+        onRemovePhenologyObservation={removePhenologyObservation}
+        onUpdateHabitatFact={updateHabitatFact}
+        onUpdatePhenologyObservation={updatePhenologyObservation}
       />
       {/* Everyday Discovery / Product Experience v2 (Phase G): Today's own
           report above only ever shows one busiest_zone winner and a single

@@ -5036,6 +5036,95 @@ export interface PlaceEnvironmentalContext extends SolarContext {
   for_date: string;
 }
 
+// Habitat & Phenology Foundation v1 -- see docs/habitat-phenology-
+// foundation-v1-contract.md. A separate domain from Environmental Context
+// above (durable/dated *user-recorded* facts about a Place, never a
+// sensor/solar computation). Mirrors api.schemas.PlaceHabitatFact* /
+// PlacePhenologyObservation* field-for-field.
+export type HabitatFactCategory = "setting" | "vegetation" | "feature";
+export type PhenologyStatus = "current" | "recent" | "past";
+
+export interface PlaceHabitatFact {
+  id: string;
+  category: HabitatFactCategory;
+  label: string;
+  note?: string | null;
+  information_class: "user_reported";
+  provenance: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlaceHabitatFactCreate {
+  category: HabitatFactCategory;
+  label: string;
+  note?: string | null;
+}
+
+// Partial update: an omitted/undefined field leaves the stored value
+// unchanged. `note: ""` explicitly clears a previously-set note --
+// `note: undefined`/omitted leaves it unchanged (see api.schemas.
+// PlaceHabitatFactUpdate's docstring).
+export interface PlaceHabitatFactUpdate {
+  category?: HabitatFactCategory;
+  label?: string;
+  note?: string;
+}
+
+// `status` is computed at read time against today's UTC calendar date --
+// never persisted. A historical observation whose interval does not cover
+// today is honestly "past", never silently still "current".
+export interface PlacePhenologyObservation {
+  id: string;
+  subject_label: string;
+  phenomenon: string;
+  information_class: "user_reported";
+  provenance: string;
+  observed_start_date: string;
+  observed_end_date?: string | null;
+  note?: string | null;
+  status: PhenologyStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlacePhenologyObservationCreate {
+  subject_label: string;
+  phenomenon: string;
+  observed_start_date: string;
+  // Omitted/null means a single-date observation -- never "ongoing
+  // indefinitely" (see PlacePhenologyObservationModel's own docstring).
+  observed_end_date?: string | null;
+  note?: string | null;
+}
+
+// Partial update, matching PlaceHabitatFactUpdate's conventions, plus one
+// more: `observed_end_date` cannot itself distinguish "leave unchanged"
+// from "clear it" using a plain optional string, so clearing a previously
+// -set end date back to "single-date observation" uses the explicit
+// `clear_observed_end_date` flag instead (mutually exclusive with setting
+// `observed_end_date` in the same request).
+export interface PlacePhenologyObservationUpdate {
+  subject_label?: string;
+  phenomenon?: string;
+  observed_start_date?: string;
+  observed_end_date?: string;
+  clear_observed_end_date?: boolean;
+  note?: string;
+}
+
+// The compact "what's relevant right now" bundle for a Today-style
+// surface -- deliberately separate from the full list endpoints, mirroring
+// PlaceEnvironmentalContext's own separateness from the settings endpoints.
+// Habitat facts are durable/open-ended so the full list is always
+// "current"; phenology is pre-filtered so this never contains a "past"
+// entry.
+export interface PlaceHabitatContext {
+  habitat_facts: PlaceHabitatFact[];
+  current_phenology: PlacePhenologyObservation[];
+  recent_phenology: PlacePhenologyObservation[];
+}
+
 export interface ProductHealthStatus {
   app_version: string;
   ready: boolean;

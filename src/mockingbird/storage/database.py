@@ -42,7 +42,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 51
+CURRENT_DATABASE_SCHEMA_VERSION = 52
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -1400,6 +1400,31 @@ def _migrate_to_environmental_context_foundation(connection: Connection) -> None
         Base.metadata.tables[table_name].create(bind=connection, checkfirst=True)
 
 
+def _migrate_to_habitat_phenology_foundation(connection: Connection) -> None:
+    """Habitat & Phenology Foundation v1: add the durable Place habitat
+    profile table and the dated/interval phenology observation table --
+    see docs/habitat-phenology-foundation-v1-contract.md.
+
+    Purely additive (two new tables, nothing backfilled): an upgraded
+    installation starts with zero habitat facts and zero phenology
+    observations, identical to a brand-new install -- this feature's own
+    "absence must not imply false, only 'not recorded'" contract applies
+    to itself, not only to installations created after it shipped. Neither
+    table touches `visits`, `events`, `review_labels`, or any other
+    wildlife-truth table.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Habitat & Phenology migration requires local SQLite storage."
+        )
+    for table_name in (
+        "place_habitat_facts",
+        "place_phenology_observations",
+    ):
+        Base.metadata.tables[table_name].create(bind=connection, checkfirst=True)
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -1451,6 +1476,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     49: _migrate_to_rejected_analysis_media_retention,
     50: _migrate_to_local_identity_multi_user_access,
     51: _migrate_to_environmental_context_foundation,
+    52: _migrate_to_habitat_phenology_foundation,
 }
 
 
