@@ -7386,3 +7386,73 @@ class InstallationSettingsUpdate(BaseModel):
     installation_name: str | None = Field(default=None, max_length=128)
     organization_name: str | None = Field(default=None, max_length=128)
     contact_display: str | None = Field(default=None, max_length=256)
+
+
+class EnvironmentalContextSettings(BaseModel):
+    """The one opt-in, local-only Place location setting (Environmental
+    Context Foundation v1) -- see docs/environmental-context-foundation-
+    v1-contract.md "Place coordinates: a deliberate, narrow exception...".
+    Always rounded to ~11 km before being persisted; `coarse_` in the
+    field names encodes that contract, not just a comment. Never read by,
+    or written from, `CamtrapDpExportRequest.latitude`/`.longitude` or
+    `RecordedAudioAnalysisRequest.latitude`/`.longitude`, which remain
+    explicit-per-call-only and untouched by this milestone."""
+
+    coarse_latitude: float | None = None
+    coarse_longitude: float | None = None
+    configured: bool
+    updated_at: datetime
+
+
+class EnvironmentalContextSettingsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+
+    @field_validator("latitude", "longitude")
+    @classmethod
+    def _round_to_coarse_precision(cls, value: float | None) -> float | None:
+        """Round here too (the repository setter is the authoritative,
+        defense-in-depth enforcement point) so a caller inspecting this
+        request's own validated value never sees a precision the stored
+        value will not actually have."""
+
+        return value if value is None else round(value, 1)
+
+    @model_validator(mode="after")
+    def _both_or_neither(self) -> "EnvironmentalContextSettingsUpdate":
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("latitude and longitude must both be set, or both omitted")
+        return self
+
+
+class SolarContext(BaseModel):
+    """Locally-derived solar/daylight context for one date at the
+    configured Place location. `information_class` is always `"derived"`
+    when present -- a distinct, third value from the wildlife Measured/
+    Inferred/Reviewed vocabulary in product-doctrine.md "Measured,
+    Inferred, and Reviewed" (see docs/environmental-context-foundation-v1-
+    contract.md "Information class / provenance" for why solar geometry is
+    neither of those two). `available=False` is a normal, expected outcome
+    (no location configured, or a genuine polar day/night date) -- never
+    an error; every other field is `None` in that case, never guessed."""
+
+    available: bool
+    reason: Literal["not_configured", "computed", "unavailable_for_date"] | None = None
+    sunrise_at: datetime | None = None
+    sunset_at: datetime | None = None
+    daylight_state: Literal["day", "night"] | None = None
+    provider_key: str | None = None
+    information_class: Literal["derived"] | None = None
+    basis_latitude: float | None = None
+    basis_longitude: float | None = None
+
+
+class VisitEnvironmentalContext(SolarContext):
+    visit_id: str
+    evaluated_at: datetime | None = None
+
+
+class PlaceEnvironmentalContext(SolarContext):
+    for_date: date

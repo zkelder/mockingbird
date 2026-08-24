@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -1512,3 +1513,139 @@ class InstallationSettingsModel(Base):
     organization_name: Mapped[str | None] = mapped_column(String, nullable=True)
     contact_display: Mapped[str | None] = mapped_column(String, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class EnvironmentalContextSettingsModel(Base):
+    """One durable, opt-in Place-level location setting (Environmental
+    Context Foundation v1, schema 51) -- the same `singleton_id`-primary-key
+    idiom as `InstallationSettingsModel`/`StorageRetentionSettingsModel`/
+    `AppSetupStateModel`: exactly one row, ever. Kept as its own table
+    rather than added to `InstallationSettingsModel`, whose own docstring
+    scopes it to "lightweight display metadata only" -- a geographic
+    setting used for local environmental computation is a different
+    concern.
+
+    `coarse_latitude`/`coarse_longitude` are a deliberate, narrow exception
+    to the "no persisted site/coordinate model" invariant in
+    docs/research-conservation-export-contract.md "Privacy" -- see
+    docs/environmental-context-foundation-v1-contract.md "Place
+    coordinates: a deliberate, narrow exception..." for the full
+    reasoning. Always rounded to one decimal degree (~11 km) before being
+    written -- the column names encode that contract permanently, not just
+    a comment, so a future reader cannot mistake this for a precise
+    location. Both are nullable and default absent: the entire
+    Environmental Context feature must remain optional and absence-safe.
+    Never read by, or written from, `CamtrapDpExportRequest.latitude`/
+    `.longitude` or `RecordedAudioAnalysisRequest.latitude`/`.longitude`,
+    which remain explicit-per-call-only and untouched by this milestone.
+    """
+
+    __tablename__ = "environmental_context_settings"
+
+    singleton_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    coarse_latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    coarse_longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class EnvironmentalContextRecordModel(Base):
+    """One durable environmental-context fact (Environmental Context
+    Foundation v1, schema 51) -- see docs/environmental-context-
+    foundation-v1-contract.md "Data model" for the full field-by-field
+    rationale. Provider-neutral: v1's only writer is the local solar
+    provider (`provider_key="solar_local"`, `information_class="derived"`,
+    `metric` in `("sunrise", "sunset")`), but every column is shaped to
+    support a future locally-attached sensor (`information_class=
+    "measured_local"`) or public weather API
+    (`information_class="external_provider"`) without a schema change.
+
+    `source_id` is nullable: `NULL` means "applies to the whole Place" (no
+    `PlaceModel` exists -- see "Spatial doctrine" in product-doctrine.md
+    and camera-source-multi-camera-maturity-v1-contract.md's "Place:
+    unchanged" note), the only case v1 ever writes. A non-null value scopes
+    a record to one Source, for a future per-camera sensor.
+
+    `value_numeric`/`value_text`/`unit` are all `NULL` for v1's
+    instant-valued metrics -- for `sunrise`/`sunset`, `observed_at` alone
+    carries the fact. They exist for a future numeric metric (e.g.
+    temperature would populate `value_numeric`/`unit`) or categorical one,
+    without a schema change.
+
+    `observed_at_end` is nullable and unused by v1 (sunrise/sunset are
+    instants, not intervals); its presence lets a future daily
+    min/max-style aggregate express an interval without a schema change.
+
+    `for_date` is the calendar date (at this record's own `basis_latitude`/
+    `basis_longitude`'s approximate local reckoning -- see
+    `mockingbird.environment.solar_context.approximate_local_date`) this
+    fact is anchored to; `NULL` for a future metric with no natural single
+    day. This exists because `observed_at` alone is not a safe lookup key
+    for "the day's sunrise/sunset": a naive UTC-calendar-day range query
+    over `observed_at` reproduces the exact date-boundary bug
+    `solar_context.compute_daily_solar_facts` documents and works around
+    (an instant can fall on the UTC-adjacent calendar date from the local
+    date it actually belongs to, depending on longitude). `for_date` is
+    computed once, at write time, using that same approximate-local-date
+    reckoning, so a lookup is a plain equality match, never a re-derivation
+    of it from `observed_at`.
+
+    `basis_latitude`/`basis_longitude` snapshot the coordinates actually
+    used to compute this one record, independent of the live
+    `EnvironmentalContextSettingsModel` value, so a record stays
+    self-describing even after the user edits their configured location.
+
+    `provenance_json` is one small, fixed-shape, bounded JSON object
+    (algorithm name/version, twilight definition used) -- never a raw
+    provider-response dump, extending `AuditLogEntryModel.metadata_json`'s
+    "never a raw request-body dump" discipline to "never a raw
+    provider-response dump" so a future external provider cannot leak an
+    API key or unbounded payload here by accident.
+    `provenance_schema_version` (matching `BioClipIdentificationAttemptModel`'s
+    identical column) lets that JSON shape evolve later without a table
+    migration.
+
+    Idempotency note: a DB `UNIQUE` constraint spanning nullable
+    `source_id` would not actually de-duplicate Place-level rows (SQLite,
+    like standard SQL, treats every `NULL` as distinct from every other
+    `NULL` in a unique index) -- so "one sunrise/sunset per calendar day"
+    is enforced at the repository layer (check-then-insert-or-reuse), not
+    here. Consumers should tolerate a rare duplicate row for the same day
+    and prefer the most recently created one.
+    """
+
+    __tablename__ = "environmental_context_records"
+    __table_args__ = (
+        CheckConstraint(
+            "provenance_schema_version >= 1",
+            name="ck_environmental_context_record_provenance_version",
+        ),
+        Index(
+            "ix_environmental_context_records_lookup",
+            "source_id",
+            "provider_key",
+            "metric",
+            "for_date",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    source_id: Mapped[str | None] = mapped_column(
+        ForeignKey("camera_sources.id"), nullable=True
+    )
+    provider_key: Mapped[str] = mapped_column(String, nullable=False)
+    information_class: Mapped[str] = mapped_column(String, nullable=False)
+    metric: Mapped[str] = mapped_column(String, nullable=False)
+    value_numeric: Mapped[float | None] = mapped_column(Float, nullable=True)
+    value_text: Mapped[str | None] = mapped_column(String, nullable=True)
+    unit: Mapped[str | None] = mapped_column(String, nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    observed_at_end: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    for_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    basis_latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    basis_longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    provenance_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provenance_schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

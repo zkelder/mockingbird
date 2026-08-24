@@ -937,6 +937,68 @@ def test_schema_48_upgrades_to_current_with_rejected_analysis_media_retention(
         migrated.close()
 
 
+def test_schema_50_upgrades_to_current_with_environmental_context_foundation(
+    tmp_path: Path,
+) -> None:
+    """Environmental Context Foundation v1: a real database at the
+    previously-current schema (v50) upgrades cleanly through the two new
+    additive tables (`environmental_context_settings`,
+    `environmental_context_records`) -- mirroring `test_schema_45_upgrades_
+    to_current_with_visit_multimodal_association`'s own "additive table(s),
+    no seeded row" proof pattern applied to this milestone's tables."""
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = repository_for(db_path)
+    existing_source_count = len(repository.list_sources())
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql("DROP TABLE environmental_context_records")
+        connection.exec_driver_sql("DROP TABLE environmental_context_settings")
+        connection.exec_driver_sql("UPDATE mockingbird_schema SET version = 50 WHERE singleton_id = 1")
+    engine.dispose()
+
+    migrated = repository_for(db_path)
+    try:
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+        assert len(migrated.list_sources()) == existing_source_count
+
+        with migrated.engine.connect() as connection:
+            settings_columns = {
+                row[1]
+                for row in connection.exec_driver_sql(
+                    "PRAGMA table_info(environmental_context_settings)"
+                ).fetchall()
+            }
+            assert {"singleton_id", "coarse_latitude", "coarse_longitude", "updated_at"} <= settings_columns
+            records_columns = {
+                row[1]
+                for row in connection.exec_driver_sql(
+                    "PRAGMA table_info(environmental_context_records)"
+                ).fetchall()
+            }
+            assert {
+                "id", "source_id", "provider_key", "information_class", "metric",
+                "value_numeric", "value_text", "unit", "observed_at", "observed_at_end",
+                "for_date", "retrieved_at", "basis_latitude", "basis_longitude",
+                "provenance_json", "provenance_schema_version", "created_at",
+            } <= records_columns
+            settings_count = connection.exec_driver_sql(
+                "SELECT COUNT(*) FROM environmental_context_settings"
+            ).scalar()
+            records_count = connection.exec_driver_sql(
+                "SELECT COUNT(*) FROM environmental_context_records"
+            ).scalar()
+            assert settings_count == 0
+            assert records_count == 0
+
+        settings = migrated.get_environmental_context_settings()
+        assert settings.configured is False  # honest "not configured," never fabricated
+    finally:
+        migrated.close()
+
+
 def test_a_mid_chain_migration_failure_rolls_back_every_step_not_only_its_own(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

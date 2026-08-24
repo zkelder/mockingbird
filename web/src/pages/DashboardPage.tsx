@@ -6,10 +6,12 @@ import type {
   CameraHealthSummary,
   HealthStatus,
   PlaceActivityReportResponse,
+  PlaceEnvironmentalContext,
   StorageSummary,
   StreamRuntimeStatus,
 } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
+import { EnvironmentalContextCard } from "../components/EnvironmentalContextCard";
 import { LiveCameraOverview } from "../components/LiveCameraOverview";
 import { ProductHealthPanel } from "../components/ProductHealthPanel";
 import { StatusPill } from "../components/StatusPill";
@@ -207,6 +209,14 @@ export function DashboardPage({
     Record<string, StreamRuntimeStatus>
   >({});
   const [storageSummary, setStorageSummary] = useState<StorageSummary | null>(null);
+  // Environmental Context Foundation v1: a deliberately separate fetch from
+  // the report above, not a field on it -- see docs/environmental-context-
+  // foundation-v1-contract.md "API surface". `.catch(() => null)` matches
+  // every other optional fact here: absence must never block the rest of
+  // the dashboard from rendering.
+  const [environmentalContext, setEnvironmentalContext] = useState<PlaceEnvironmentalContext | null>(
+    null,
+  );
 
   const refreshDashboard = useCallback(async (initialLoad = false) => {
     if (initialLoad) {
@@ -215,15 +225,18 @@ export function DashboardPage({
       setIsRefreshing(true);
     }
     try {
-      const [nextSummary, monitoringStatuses, nextStorageSummary, nextReport] = await Promise.all([
-        apiClient.getDashboardSummary(todayLocalDateString()),
-        apiClient.getStreamMonitoringStatuses().catch(() => null),
-        apiClient.getStorageRetentionSummary().catch(() => null),
-        apiClient.getPlaceActivityReport(todayLocalRange()).catch(() => null),
-      ]);
+      const [nextSummary, monitoringStatuses, nextStorageSummary, nextReport, nextEnvironmentalContext] =
+        await Promise.all([
+          apiClient.getDashboardSummary(todayLocalDateString()),
+          apiClient.getStreamMonitoringStatuses().catch(() => null),
+          apiClient.getStorageRetentionSummary().catch(() => null),
+          apiClient.getPlaceActivityReport(todayLocalRange()).catch(() => null),
+          apiClient.getTodayEnvironmentalContext().catch(() => null),
+        ]);
       setSummary(nextSummary);
       setStorageSummary(nextStorageSummary);
       setReport(nextReport);
+      setEnvironmentalContext(nextEnvironmentalContext);
       if (monitoringStatuses) {
         setDurableStatusByStream(
           Object.fromEntries(
@@ -249,6 +262,20 @@ export function DashboardPage({
     );
     return () => window.clearInterval(refreshTimer);
   }, [refreshDashboard]);
+
+  // Environmental Context Foundation v1: the only place a coordinate is
+  // ever entered (see docs/environmental-context-foundation-v1-contract.md
+  // "Frontend surface") -- no new page, no new nav entry. Re-fetches only
+  // the environmental context afterward, not the whole dashboard, so a
+  // location edit cannot appear to also refresh unrelated Visit/health data.
+  const saveEnvironmentalContextLocation = useCallback(
+    async (latitude: number | null, longitude: number | null) => {
+      await apiClient.updateEnvironmentalContextSettings({ latitude, longitude });
+      const nextEnvironmentalContext = await apiClient.getTodayEnvironmentalContext().catch(() => null);
+      setEnvironmentalContext(nextEnvironmentalContext);
+    },
+    [],
+  );
 
   async function handleDurableMonitoringAction(
     streamId: string,
@@ -374,6 +401,14 @@ export function DashboardPage({
         onOpenReview={() => onOpenReview()}
         onOpenStreams={onOpenStreams}
         report={report}
+      />
+      {/* Environmental Context Foundation v1: a sibling of the report panel
+          above, not nested inside it -- see docs/environmental-context-
+          foundation-v1-contract.md "Frontend surface" and this component's
+          own docstring for why. */}
+      <EnvironmentalContextCard
+        context={environmentalContext}
+        onSaveLocation={saveEnvironmentalContextLocation}
       />
       {/* Everyday Discovery / Product Experience v2 (Phase G): Today's own
           report above only ever shows one busiest_zone winner and a single

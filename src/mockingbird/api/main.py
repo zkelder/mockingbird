@@ -387,8 +387,12 @@ from mockingbird.api.schemas import (
     ZoneUpdate,
     AdministratorBootstrapRequest,
     CurrentUser,
+    EnvironmentalContextSettings,
+    EnvironmentalContextSettingsUpdate,
     InstallationSettings,
     InstallationSettingsUpdate,
+    PlaceEnvironmentalContext,
+    VisitEnvironmentalContext,
 )
 from mockingbird.motion import (
     MotionCandidate,
@@ -13079,6 +13083,23 @@ async def get_visit_detail(visit_id: str) -> VisitDetail:
     )
 
 
+@app.get(
+    "/api/visits/{visit_id}/environmental-context",
+    response_model=VisitEnvironmentalContext,
+)
+async def get_visit_environmental_context(visit_id: str) -> VisitEnvironmentalContext:
+    """Locally-derived sunrise/sunset/day-night context for this Visit's
+    canonical activity-start instant (see docs/environmental-context-
+    foundation-v1-contract.md "Temporal semantics"). Never evidence that an
+    animal appeared -- context only. `available=False` (never an error)
+    when no Place location is configured."""
+
+    result = get_repository().get_visit_environmental_context(visit_id)
+    if result is None:
+        raise _not_found("Visit", visit_id)
+    return result
+
+
 @app.post(
     "/api/visits/{visit_id}/evidence-curation",
     response_model=VisitEvidenceCurationResponse,
@@ -14528,6 +14549,22 @@ async def get_place_activity_report(
     return get_repository().place_activity_report(payload)
 
 
+@app.get(
+    "/api/place/environmental-context/today",
+    response_model=PlaceEnvironmentalContext,
+)
+async def get_place_environmental_context_today() -> PlaceEnvironmentalContext:
+    """Today's locally-derived sunrise/sunset/day-night context for the
+    Place, if a location is configured (see docs/environmental-context-
+    foundation-v1-contract.md). Deliberately a separate endpoint from
+    `place_activity_report`, whose own contract states it is "a pure
+    computation layer" over reviewed/provisional Visit truth -- this keeps
+    that boundary intact rather than bolting environmental data onto it.
+    `available=False` (never an error) when no location is configured."""
+
+    return get_repository().get_place_environmental_context_today()
+
+
 @app.post(
     "/api/analytics/soundscape-summary",
     response_model=SoundscapeSummaryResponse,
@@ -14710,6 +14747,37 @@ async def get_installation_settings() -> InstallationSettings:
     name. Never anything sensitive -- display metadata only."""
 
     return get_repository().get_installation_settings()
+
+
+@app.get(
+    "/api/settings/environmental-context",
+    response_model=EnvironmentalContextSettings,
+)
+async def get_environmental_context_settings() -> EnvironmentalContextSettings:
+    """The one opt-in, local-only Place location setting (Environmental
+    Context Foundation v1) -- see docs/environmental-context-foundation-
+    v1-contract.md. Never precise: `coarse_latitude`/`coarse_longitude` are
+    always rounded to ~11 km before being persisted."""
+
+    return get_repository().get_environmental_context_settings()
+
+
+@app.put(
+    "/api/settings/environmental-context",
+    response_model=EnvironmentalContextSettings,
+)
+async def update_environmental_context_settings(
+    payload: EnvironmentalContextSettingsUpdate,
+    request: Request,
+) -> EnvironmentalContextSettings:
+    """Set or clear the opt-in Place location. Omitting both fields (or
+    setting both to `null`) clears it and returns Environmental Context to
+    `configured=False` everywhere -- absence-safe, never an error."""
+
+    current_user = current_user_or_401(request)
+    return get_repository().update_environmental_context_settings(
+        payload, acting_user=current_user
+    )
 
 
 def _storage_retention_http_error(error: ValueError) -> HTTPException:

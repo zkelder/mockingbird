@@ -264,12 +264,19 @@ fabricated.
   reclassified to privacy/ignore, every Visit under it becomes
   `privacy_restricted` and is withheld from export from that point on --
   never a pixel redaction (unchanged non-goal), only export withholding.
-- **Coordinates are never fabricated or inferred.** MockingBird has no
-  persisted site/coordinate model (confirmed absent). `latitude`/
+- **Coordinates are never fabricated or inferred.** `latitude`/
   `longitude` are `None` in every export unless a caller explicitly
   supplies them at export time (`CamtrapDpExportRequest.latitude`/
-  `.longitude`/`.site_name`) -- never persisted, never inferred, applied
-  uniformly to the single-site product's one logical deployment.
+  `.longitude`/`.site_name`) -- never persisted here, never inferred,
+  applied uniformly to the single-site product's one logical deployment.
+  Environmental Context Foundation v1 (see
+  [environmental-context-foundation-v1-contract.md](environmental-context-foundation-v1-contract.md))
+  later added one narrow, opt-in, deliberately coarse (~11 km) Place
+  coordinate setting for local sunrise/sunset computation only -- this
+  export path does not read it, still requires its own explicit per-call
+  value, and still never infers one. "No persisted site/coordinate model"
+  is therefore no longer true of the codebase as a whole; it remains true
+  of this export/BirdNET-narrowing surface specifically.
 - **Metadata-only by default.** No export in this v1 copies media bytes;
   `include_media` is accepted for forward compatibility but has no
   additional effect yet (see "Generic research export," known limitation).

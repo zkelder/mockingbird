@@ -660,8 +660,11 @@ from mockingbird.api.schemas import (
     AdministratorBootstrapRequest,
     AuditLogEntry,
     CurrentUser,
+    EnvironmentalContextSettings,
+    EnvironmentalContextSettingsUpdate,
     InstallationSettings,
     InstallationSettingsUpdate,
+    PlaceEnvironmentalContext,
     SelfPasswordChangeRequest,
     SignInRequest,
     UserCreate,
@@ -669,7 +672,9 @@ from mockingbird.api.schemas import (
     UserRole,
     UserRoleUpdate,
     UserSummary,
+    VisitEnvironmentalContext,
 )
+from mockingbird.environment import solar_context
 from mockingbird.playback import local_camera_bridge, rtsp_bridge, windows_camera_bridge
 from mockingbird.monitoring.durable_supervisor import DurableMonitoringCandidate
 from mockingbird.monitoring.exposure_history import (
@@ -713,6 +718,8 @@ from mockingbird.storage.models import (
     DetectionModel,
     DetectionProposalModel,
     DetectionRunModel,
+    EnvironmentalContextRecordModel,
+    EnvironmentalContextSettingsModel,
     EventModel,
     InstallationSettingsModel,
     MediaAssetModel,
@@ -4104,6 +4111,221 @@ class ProductRepository:
                     organization_name=model.organization_name,
                     contact_display=model.contact_display,
                     updated_at=model.updated_at,
+                )
+
+    def get_environmental_context_settings(self) -> EnvironmentalContextSettings:
+        with self.session_factory() as session:
+            model = session.get(EnvironmentalContextSettingsModel, 1)
+            if model is None:
+                return EnvironmentalContextSettings(
+                    configured=False, updated_at=datetime.now(UTC)
+                )
+            return EnvironmentalContextSettings(
+                coarse_latitude=model.coarse_latitude,
+                coarse_longitude=model.coarse_longitude,
+                configured=model.coarse_latitude is not None
+                and model.coarse_longitude is not None,
+                updated_at=_as_utc(model.updated_at),
+            )
+
+    def update_environmental_context_settings(
+        self, payload: EnvironmentalContextSettingsUpdate, *, acting_user: CurrentUser
+    ) -> EnvironmentalContextSettings:
+        # Round here too -- the schema-layer validator already rounds, but
+        # this is the authoritative enforcement point (see
+        # docs/environmental-context-foundation-v1-contract.md "Place
+        # coordinates..."): a precise coordinate must never reach disk
+        # regardless of what validated a caller upstream.
+        rounded_latitude = None if payload.latitude is None else round(payload.latitude, 1)
+        rounded_longitude = None if payload.longitude is None else round(payload.longitude, 1)
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(EnvironmentalContextSettingsModel, 1)
+                if model is None:
+                    model = EnvironmentalContextSettingsModel(singleton_id=1, updated_at=now)
+                    session.add(model)
+                model.coarse_latitude = rounded_latitude
+                model.coarse_longitude = rounded_longitude
+                model.updated_at = now
+                self._record_audit_event_in_session(
+                    session, now=now, actor_user_id=acting_user.id, actor_display_name=acting_user.display_name,
+                    action="settings.environmental_context_updated", target_type="environmental_context_settings",
+                    target_id="1", metadata=None,
+                )
+                return EnvironmentalContextSettings(
+                    coarse_latitude=model.coarse_latitude,
+                    coarse_longitude=model.coarse_longitude,
+                    configured=model.coarse_latitude is not None
+                    and model.coarse_longitude is not None,
+                    updated_at=model.updated_at,
+                )
+
+    def _get_or_compute_daily_solar_facts_in_session(
+        self,
+        session: Session,
+        *,
+        now: datetime,
+        for_date: date,
+        latitude: float,
+        longitude: float,
+    ) -> tuple[datetime, datetime] | None:
+        """Returns `(sunrise_at, sunset_at)` in UTC for `for_date` at this
+        (already-rounded) coordinate, reusing existing rows if present,
+        else computing and persisting one pair. Returns `None` only for a
+        genuine polar day/night date (see `solar_context.
+        SolarContextUnavailableError`) -- never for a transient failure,
+        since this provider has none.
+
+        Idempotency: see `EnvironmentalContextRecordModel`'s own
+        docstring -- a rare duplicate pair is tolerated (the first row per
+        metric found is used), not prevented by a DB constraint.
+        """
+
+        existing = session.scalars(
+            select(EnvironmentalContextRecordModel).where(
+                EnvironmentalContextRecordModel.source_id.is_(None),
+                EnvironmentalContextRecordModel.provider_key == solar_context.SOLAR_PROVIDER_KEY,
+                EnvironmentalContextRecordModel.for_date == for_date,
+                EnvironmentalContextRecordModel.metric.in_(("sunrise", "sunset")),
+            )
+        ).all()
+        by_metric: dict[str, EnvironmentalContextRecordModel] = {}
+        for row in existing:
+            by_metric.setdefault(row.metric, row)
+        if "sunrise" in by_metric and "sunset" in by_metric:
+            return (
+                _as_utc(by_metric["sunrise"].observed_at),
+                _as_utc(by_metric["sunset"].observed_at),
+            )
+
+        try:
+            facts = solar_context.compute_daily_solar_facts(latitude, longitude, for_date)
+        except solar_context.SolarContextUnavailableError:
+            return None
+
+        provenance_json = json.dumps(
+            {
+                "algorithm": solar_context.SOLAR_ALGORITHM_ID,
+                "algorithm_version": solar_context.SOLAR_ALGORITHM_VERSION,
+            }
+        )
+        for metric, observed_at in (
+            ("sunrise", facts.sunrise_at),
+            ("sunset", facts.sunset_at),
+        ):
+            session.add(
+                EnvironmentalContextRecordModel(
+                    id=f"envctx-{uuid.uuid4().hex[:16]}",
+                    source_id=None,
+                    provider_key=solar_context.SOLAR_PROVIDER_KEY,
+                    information_class=solar_context.SOLAR_INFORMATION_CLASS,
+                    metric=metric,
+                    value_numeric=None,
+                    value_text=None,
+                    unit=None,
+                    observed_at=observed_at,
+                    observed_at_end=None,
+                    for_date=for_date,
+                    retrieved_at=now,
+                    basis_latitude=latitude,
+                    basis_longitude=longitude,
+                    provenance_json=provenance_json,
+                    provenance_schema_version=1,
+                    created_at=now,
+                )
+            )
+        return facts.sunrise_at, facts.sunset_at
+
+    def get_place_environmental_context_today(self) -> PlaceEnvironmentalContext:
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                settings = session.get(EnvironmentalContextSettingsModel, 1)
+                latitude = settings.coarse_latitude if settings is not None else None
+                longitude = settings.coarse_longitude if settings is not None else None
+                if latitude is None or longitude is None:
+                    return PlaceEnvironmentalContext(
+                        available=False, reason="not_configured", for_date=now.date()
+                    )
+                for_date = solar_context.approximate_local_date(now, longitude)
+                result = self._get_or_compute_daily_solar_facts_in_session(
+                    session, now=now, for_date=for_date, latitude=latitude, longitude=longitude,
+                )
+                if result is None:
+                    return PlaceEnvironmentalContext(
+                        available=False, reason="unavailable_for_date", for_date=for_date
+                    )
+                sunrise_at, sunset_at = result
+                return PlaceEnvironmentalContext(
+                    available=True,
+                    reason="computed",
+                    sunrise_at=sunrise_at,
+                    sunset_at=sunset_at,
+                    daylight_state=solar_context.classify_daylight_state(now, sunrise_at, sunset_at),
+                    provider_key=solar_context.SOLAR_PROVIDER_KEY,
+                    information_class="derived",
+                    basis_latitude=latitude,
+                    basis_longitude=longitude,
+                    for_date=for_date,
+                )
+
+    def get_visit_environmental_context(self, visit_id: str) -> VisitEnvironmentalContext | None:
+        """`None` means the Visit itself does not exist (the API layer
+        maps that to 404, mirroring `get_visit_detail`'s own
+        `get_visit`/`get_event`-return-`None` convention) -- distinct from
+        `available=False` on a real Visit, which means environmental
+        context is honestly unavailable (not configured, or a polar-night
+        date) for that real Visit."""
+
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                visit = session.get(VisitModel, visit_id)
+                if visit is None:
+                    return None
+                event = session.get(EventModel, visit.event_id)
+                if event is None:
+                    return None
+                summary = self._stream_visit_summary_from_models(session, visit, event)
+                evaluated_at = summary.activity_started_at
+
+                settings = session.get(EnvironmentalContextSettingsModel, 1)
+                latitude = settings.coarse_latitude if settings is not None else None
+                longitude = settings.coarse_longitude if settings is not None else None
+                if latitude is None or longitude is None:
+                    return VisitEnvironmentalContext(
+                        available=False,
+                        reason="not_configured",
+                        visit_id=visit_id,
+                        evaluated_at=evaluated_at,
+                    )
+                for_date = solar_context.approximate_local_date(evaluated_at, longitude)
+                result = self._get_or_compute_daily_solar_facts_in_session(
+                    session, now=now, for_date=for_date, latitude=latitude, longitude=longitude,
+                )
+                if result is None:
+                    return VisitEnvironmentalContext(
+                        available=False,
+                        reason="unavailable_for_date",
+                        visit_id=visit_id,
+                        evaluated_at=evaluated_at,
+                    )
+                sunrise_at, sunset_at = result
+                return VisitEnvironmentalContext(
+                    available=True,
+                    reason="computed",
+                    sunrise_at=sunrise_at,
+                    sunset_at=sunset_at,
+                    daylight_state=solar_context.classify_daylight_state(
+                        evaluated_at, sunrise_at, sunset_at
+                    ),
+                    provider_key=solar_context.SOLAR_PROVIDER_KEY,
+                    information_class="derived",
+                    basis_latitude=latitude,
+                    basis_longitude=longitude,
+                    visit_id=visit_id,
+                    evaluated_at=evaluated_at,
                 )
 
     def reset_demo_data(self) -> LocalDataStatus:

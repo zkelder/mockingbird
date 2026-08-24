@@ -56,6 +56,8 @@ import type {
   DetectionProposalDecisionResult,
   DetectionRun,
   DetectionRunCreate,
+  EnvironmentalContextSettings,
+  EnvironmentalContextSettingsUpdate,
   Event,
   EventDetail,
   ExternalUrlWorkerDryRunResponse,
@@ -90,6 +92,7 @@ import type {
   OnvifDiscoverProfilesResponse,
   PlaceActivityReportRequest,
   PlaceActivityReportResponse,
+  PlaceEnvironmentalContext,
   ProductHealthStatus,
   SetupState,
   SetupStateUpdate,
@@ -129,6 +132,7 @@ import type {
   MotionEvaluateSequenceResponse,
   ReviewCorrectionCreate,
   ReviewCorrectionResult,
+  VisitEnvironmentalContext,
   VisitEvidenceCurationRequest,
   VisitEvidenceCurationResponse,
   RefinedCropCreateRequest,
@@ -856,6 +860,8 @@ export const apiClient = {
   getEventVisits: (eventId: string) => request<Visit[]>(`/api/events/${eventId}/visits`),
   getEventDetail: (eventId: string) => request<EventDetail>(`/api/events/${eventId}/detail`),
   getVisitDetail: (visitId: string) => request<VisitDetail>(`/api/visits/${visitId}/detail`),
+  getVisitEnvironmentalContext: (visitId: string) =>
+    request<VisitEnvironmentalContext>(`/api/visits/${visitId}/environmental-context`),
   getVisitOrganization: (visitId: string) => request<VisitOrganizationState>(`/api/visits/${encodeURIComponent(visitId)}/organization`),
   updateVisitOrganization: (visitId: string, payload: VisitOrganizationUpdate) =>
     request<VisitOrganizationState>(`/api/visits/${encodeURIComponent(visitId)}/organization`, { method: "PUT", body: JSON.stringify(payload) }),
@@ -1284,6 +1290,18 @@ export const apiClient = {
   getPlaceActivityReport: (payload: PlaceActivityReportRequest) =>
     request<PlaceActivityReportResponse>("/api/analytics/place-activity-report", {
       method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  // Environmental Context Foundation v1: a deliberately separate fetch from
+  // the report above, not a field on it -- see docs/environmental-context-
+  // foundation-v1-contract.md "API surface".
+  getTodayEnvironmentalContext: () =>
+    request<PlaceEnvironmentalContext>("/api/place/environmental-context/today"),
+  getEnvironmentalContextSettings: () =>
+    request<EnvironmentalContextSettings>("/api/settings/environmental-context"),
+  updateEnvironmentalContextSettings: (payload: EnvironmentalContextSettingsUpdate) =>
+    request<EnvironmentalContextSettings>("/api/settings/environmental-context", {
+      method: "PUT",
       body: JSON.stringify(payload),
     }),
   getSoundscapeSummary: (payload: SoundscapeSummaryRequest) =>

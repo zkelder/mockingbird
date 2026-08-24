@@ -9381,6 +9381,38 @@ a.secondary-action {
   font-weight: 700;
 }
 
+/* Environmental Context Foundation v1: same bounded-coordinate-input shape
+   as .refined-crop-coordinates above, at 2 fields instead of 4. */
+.environmental-context-location-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(140px, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 10px;
+  border: 1px solid #dce3d8;
+  border-radius: 8px;
+}
+
+.environmental-context-location-fields legend {
+  padding: 0 4px;
+  color: #4f5f55;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.environmental-context-location-fields label {
+  display: grid;
+  gap: 4px;
+  color: #4f5f55;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.environmental-context-location-fields p.meta-text {
+  grid-column: 1 / -1;
+  margin: 0 0 4px;
+}
+
 .crop-history-list {
   border-top: 1px solid #dce3d8;
   padding-top: 10px;

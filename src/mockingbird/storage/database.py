@@ -42,7 +42,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 50
+CURRENT_DATABASE_SCHEMA_VERSION = 51
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -1377,6 +1377,29 @@ def _migrate_to_local_identity_multi_user_access(connection: Connection) -> None
             )
 
 
+def _migrate_to_environmental_context_foundation(connection: Connection) -> None:
+    """Environmental Context Foundation v1: add the opt-in Place location
+    setting and the provider-neutral environmental-context observation
+    table -- see docs/environmental-context-foundation-v1-contract.md.
+
+    Purely additive (two new tables, nothing backfilled): an upgraded
+    installation starts with no configured location and zero context
+    records, identical to a brand-new install -- this milestone's own
+    "local-first, absence-safe" contract applies to itself, not only to
+    installations created after it shipped.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Environmental context migration requires local SQLite storage."
+        )
+    for table_name in (
+        "environmental_context_settings",
+        "environmental_context_records",
+    ):
+        Base.metadata.tables[table_name].create(bind=connection, checkfirst=True)
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -1427,6 +1450,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     48: _migrate_to_camera_node_transport_ingestion,
     49: _migrate_to_rejected_analysis_media_retention,
     50: _migrate_to_local_identity_multi_user_access,
+    51: _migrate_to_environmental_context_foundation,
 }
 
 

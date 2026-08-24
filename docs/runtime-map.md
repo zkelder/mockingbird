@@ -390,6 +390,7 @@ likewise left exactly as found.
 | New species classifier | [species-suggestion-adapter-design.md](species-suggestion-adapter-design.md) | `species/`, evidence-only by contract |
 | Camera Node protocol | [camera-node-boundary-design.md](camera-node-boundary-design.md) | `source_providers/camera_node.py` (client, in the main app) and `src/mockingbird_node/` (the edge package itself) |
 | New reporting fact | [place-activity-report-contract.md](place-activity-report-contract.md) | `analytics/`, reuse `_stream_visit_summary_from_models` rather than a new truth-precedence path |
+| New environmental-context provider (sensor, weather API) | [environmental-context-foundation-v1-contract.md](environmental-context-foundation-v1-contract.md) | `environment/`, write to `environmental_context_records` with a new `provider_key`/`information_class` -- never a new table per provider |
 
 ## Where a contributor should start
 

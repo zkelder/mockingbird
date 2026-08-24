@@ -174,6 +174,17 @@ export function formatDateTime(value: string): string {
   }).format(new Date(value));
 }
 
+// Environmental Context Foundation v1: sunrise/sunset are already known to
+// be "today" (or the Visit's own day) from context, so showing the date
+// again would be redundant -- nearest-minute precision only, matching how
+// precisely this feature ever actually knows the moment (never seconds).
+export function formatTimeOfDay(value: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
 export function sortedEntries(record: Record<string, number>): Array<[string, number]> {
   return Object.entries(record).sort((a, b) => b[1] - a[1]);
 }

@@ -7,6 +7,7 @@ import type {
   SpeciesSuggestion,
   TaxonomyLabel,
   VisitDetail,
+  VisitEnvironmentalContext,
   VisitEvidenceFrame,
   VisitIdentificationAssistantResponse,
   VisitOrganizationState,
@@ -28,7 +29,7 @@ import { VisitEvidenceSequence } from "../components/VisitEvidenceSequence";
 import { RefinedCropEditor } from "../components/RefinedCropEditor";
 import { displayTaxonomyLabel, findTaxonomyLabel, isBirdReviewLabel } from "../components/taxonomy";
 import { explainMultimodalAssociation } from "../components/suggestionExplanation";
-import { formatDateTime, formatLabel } from "../utils";
+import { formatDateTime, formatLabel, formatTimeOfDay } from "../utils";
 
 interface VisitDetailPageProps {
   visitId: string;
@@ -84,6 +85,13 @@ export function VisitDetailPage({
   const [isLoadingSpeciesSuggestions, setIsLoadingSpeciesSuggestions] = useState(true);
   const [speciesSuggestionError, setSpeciesSuggestionError] = useState<string | null>(null);
   const [identificationAssistant, setIdentificationAssistant] = useState<VisitIdentificationAssistantResponse | null>(null);
+  // Environmental Context Foundation v1: absence-safe by construction --
+  // `null` covers "still loading," "unavailable," and "fetch failed" alike,
+  // and the render below simply shows nothing in every one of those cases
+  // (see docs/environmental-context-foundation-v1-contract.md "Frontend
+  // surface").
+  const [visitEnvironmentalContext, setVisitEnvironmentalContext] =
+    useState<VisitEnvironmentalContext | null>(null);
   const [identificationAssistantError, setIdentificationAssistantError] = useState<string | null>(null);
   const [isLoadingIdentificationAssistant, setIsLoadingIdentificationAssistant] = useState(false);
   const [isRunningIdentificationAssistant, setIsRunningIdentificationAssistant] = useState(false);
@@ -202,6 +210,13 @@ export function VisitDetailPage({
 
   useEffect(() => {
     void apiClient.getVisitOrganization(visitId).then(setOrganization).catch(() => setOrganizationMessage("Observation notes are unavailable right now."));
+  }, [visitId]);
+
+  useEffect(() => {
+    void apiClient
+      .getVisitEnvironmentalContext(visitId)
+      .then(setVisitEnvironmentalContext)
+      .catch(() => setVisitEnvironmentalContext(null));
   }, [visitId]);
 
   async function refreshCollections() {
@@ -1238,6 +1253,23 @@ export function VisitDetailPage({
                 : hasSavedPreviewMedia
                   ? "Saved preview media"
                   : "Local media reference"}
+            </span>
+          </div>
+        ) : null}
+        {/* Environmental Context Foundation v1: omitted entirely (not a
+            loading/error state) when unavailable -- see
+            docs/environmental-context-foundation-v1-contract.md "Frontend
+            surface". Context only, never a claim about why the Visit
+            happened. */}
+        {visitEnvironmentalContext?.available &&
+        visitEnvironmentalContext.sunrise_at &&
+        visitEnvironmentalContext.sunset_at ? (
+          <div className="panel case-summary-card">
+            <span className="meta-text">Conditions</span>
+            <strong>{visitEnvironmentalContext.daylight_state === "day" ? "Daylight" : "Night"}</strong>
+            <span className="meta-text">
+              Sunrise {formatTimeOfDay(visitEnvironmentalContext.sunrise_at)} · Sunset{" "}
+              {formatTimeOfDay(visitEnvironmentalContext.sunset_at)}
             </span>
           </div>
         ) : null}

@@ -2975,20 +2975,38 @@ make it one.
 ### 2. Environmental Context Foundation
 
 A generic, local-first environmental/ecological context substrate.
-Conceptually support: provider; Place/Source relation; observed/valid
-time; measurement/value/unit; spatial resolution/distance; quality flags;
-provenance; source version; cache/fetch time; and license/attribution.
-Initial/high-value context: sunrise/sunset, twilight, day length,
-solar/time-relative context, weather, and historical climate/anomalies.
-Architecture must support later providers -- local environmental sensors,
-eBird, BirdCast where sanctioned access exists, USA-NPN, GBIF/iNaturalist,
-land cover, soils, water, satellite vegetation -- without being built as a
-large integration platform now (see "External ecological context" in
-[product-doctrine.md](product-doctrine.md)). External data may
-contextualize, prioritize, explain, support interpretation, and support
-local associative/predictive analysis; it must **never** create
-observational truth, and loss of internet must never disable local
-observation.
+**v1 delivered** (see
+[environmental-context-foundation-v1-contract.md](environmental-context-foundation-v1-contract.md)):
+the provider-neutral `environmental_context_records` table (provider;
+Place/Source relation via a nullable `source_id`; observed/valid time
+including `observed_at_end` for a future interval/aggregate;
+measurement/value/unit; provenance/`information_class`
+measured_local/external_provider/derived; bounded provenance JSON; cache/
+retrieval time) plus one deterministic, no-secret built-in provider
+(`solar_local`): sunrise/sunset and day/night, derived from a new,
+deliberately coarse (~11 km) opt-in Place coordinate setting -- a narrow,
+documented exception to the "no persisted coordinate model" invariant in
+[research-conservation-export-contract.md](research-conservation-export-contract.md),
+which remains unpersisted/per-call-only for export and BirdNET
+specifically. Surfaced on the Today dashboard and Visit detail, absence-
+safe throughout. Explicitly deferred (not v1): civil/nautical/astronomical
+twilight, moon context, any external weather/environmental provider, local
+sensor ingestion, per-Source (as opposed to Place-wide) context, and any
+weather/environment-vs-activity analytics (that is Biodiversity & Place
+Intelligence, below, once this foundation has more history behind it).
+
+Still open beyond v1: **quality flags and spatial-resolution/distance**
+columns (deferred until a non-exact provider exists -- see the contract
+doc's "Explicitly deferred"), historical climate/anomalies, and the
+broader **later-provider** architecture question -- local environmental
+sensors, eBird, BirdCast where sanctioned access exists, USA-NPN,
+GBIF/iNaturalist, land cover, soils, water, satellite vegetation --
+without being built as a large integration platform now (see "External
+ecological context" in [product-doctrine.md](product-doctrine.md)).
+External data may contextualize, prioritize, explain, support
+interpretation, and support local associative/predictive analysis; it
+must **never** create observational truth, and loss of internet must
+never disable local observation.
 
 ### 3. Habitat & Phenology Foundation
 

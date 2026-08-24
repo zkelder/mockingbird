@@ -4994,6 +4994,48 @@ export interface InstallationSettingsUpdate {
   contact_display?: string | null;
 }
 
+// Mirrors api.schemas.EnvironmentalContextSettings/*Update field-for-field
+// (see docs/environmental-context-foundation-v1-contract.md). `coarse_`
+// in the field names is a permanent reminder that this is rounded to
+// ~11km, never a precise location -- never format it back out to more
+// decimal places than it actually has.
+export interface EnvironmentalContextSettings {
+  coarse_latitude?: number | null;
+  coarse_longitude?: number | null;
+  configured: boolean;
+  updated_at: string;
+}
+
+export interface EnvironmentalContextSettingsUpdate {
+  latitude?: number | null;
+  longitude?: number | null;
+}
+
+// Mirrors api.schemas.SolarContext/VisitEnvironmentalContext/
+// PlaceEnvironmentalContext. `available=false` is a normal, expected
+// outcome (no location configured, or a polar day/night date) -- render
+// it as an absence, never as an error or a loading state.
+export interface SolarContext {
+  available: boolean;
+  reason?: "not_configured" | "computed" | "unavailable_for_date" | null;
+  sunrise_at?: string | null;
+  sunset_at?: string | null;
+  daylight_state?: "day" | "night" | null;
+  provider_key?: string | null;
+  information_class?: "derived" | null;
+  basis_latitude?: number | null;
+  basis_longitude?: number | null;
+}
+
+export interface VisitEnvironmentalContext extends SolarContext {
+  visit_id: string;
+  evaluated_at?: string | null;
+}
+
+export interface PlaceEnvironmentalContext extends SolarContext {
+  for_date: string;
+}
+
 export interface ProductHealthStatus {
   app_version: string;
   ready: boolean;
