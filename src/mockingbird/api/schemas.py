@@ -7472,18 +7472,19 @@ PhenologyStatus = Literal["current", "recent", "past"]
 class PlaceHabitatFact(BaseModel):
     """A durable, user-recorded habitat fact -- see `PlaceHabitatFactModel`
     for the full field-by-field rationale. `information_class` is
-    deliberately a single-value `Literal` here (unlike the DB column,
-    which stays a plain string for future `inferred_model`/
-    `external_provider` writers) because v1's only writer is a human
-    describing their own Place -- mirrors `SolarContext.information_class:
-    Literal["derived"]`'s identical "the response type reflects what can
-    actually be returned today" discipline."""
+    deliberately a single-value `Literal["reviewed"]` here (unlike the DB
+    column, which stays a plain string so a future writer can honestly
+    report a different doctrine-legal value, e.g. `"inferred"` for an
+    automatic plant-recognition analyzer) because v1's only writer is a
+    human describing their own Place -- mirrors `SolarContext.
+    information_class: Literal["derived"]`'s identical "the response type
+    reflects what can actually be returned today" discipline."""
 
     id: str
     category: HabitatFactCategory
     label: str
     note: str | None = None
-    information_class: Literal["user_reported"]
+    information_class: Literal["reviewed"]
     provenance: str
     created_at: datetime
     updated_at: datetime
@@ -7532,7 +7533,7 @@ class PlacePhenologyObservation(BaseModel):
     id: str
     subject_label: str
     phenomenon: str
-    information_class: Literal["user_reported"]
+    information_class: Literal["reviewed"]
     provenance: str
     observed_start_date: date
     observed_end_date: date | None = None

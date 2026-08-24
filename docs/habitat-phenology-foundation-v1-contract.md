@@ -27,25 +27,29 @@ explicitly excludes all of that for v1 -- no automatic plant recognition,
 no scheduled camera sampling, no new ML models, no remote sensing. What
 ships here is the smaller, durable substrate underneath that eventual
 layer: user-recorded habitat facts and user-recorded phenology
-observations, with an `information_class` vocabulary that already reserves
-room for a future `inferred_model` writer (see "Future compatibility,"
-below) without redesigning either table. The `HabitatScene`/analyzer
-layer, when it comes, is future work building *on* this substrate, not a
-replacement for it.
+observations, already shaped for a future model-driven writer -- doctrine's
+own `"inferred"` tier has a ready-made home for that case (see "Future
+compatibility," below) without redesigning either table. The
+`HabitatScene`/analyzer layer, when it comes, is future work building *on*
+this substrate, not a replacement for it.
 
 ## Governing doctrine
 
 Same triad as everywhere else in this product (see "Measured, Inferred,
 and Reviewed" in [product-doctrine.md](product-doctrine.md)), applied
 honestly to a domain that, in v1, has exactly one writer: a human directly
-describing their own Place. Neither table's `information_class` reuses
-"measured" (no sensor), "inferred" (no model), or "reviewed" (no
-antecedent proposal for a human to correct) -- see "Information class /
-provenance," below, for the actual vocabulary and why. Human-reviewed
-wildlife identification remains the only dataset-grade truth; nothing in
-this milestone reads or writes `visits`, `events`, `review_labels`, or any
-other wildlife-truth table (directly proven by
-`test_habitat_phenology_never_touches_review_truth`).
+describing their own Place. That writer's output is exactly doctrine's
+`"reviewed"` tier -- "human-validated semantic truth" -- so
+`information_class="reviewed"` for every row v1 writes; see "Information
+class / provenance," below, for the exact vocabulary and the
+`provenance="user_manual_entry"` distinction that records *how* this
+reviewed truth was supplied. `information_class="reviewed"` here carries
+none of the wildlife `ReviewLabel`/`reviewed_by_user_id` machinery: it is
+the same epistemic tier as wildlife Reviewed truth, never the same table
+or authority. Human-reviewed wildlife identification remains the only
+dataset-grade wildlife truth; nothing in this milestone reads or writes
+`visits`, `events`, `review_labels`, or any other wildlife-truth table
+(directly proven by `test_habitat_phenology_never_touches_review_truth`).
 
 ## Design contract
 
@@ -65,34 +69,38 @@ compatibility," below) without a schema change.
 
 Every row in both tables carries two small string columns, mirroring
 `EnvironmentalContextRecordModel.information_class`/`.provider_key`'s
-two-column split (epistemic tier vs. specific method), but with this
-domain's own vocabulary:
+two-column split (epistemic tier vs. specific method):
 
 - `information_class` -- v1's only writer is a human directly describing
-  their own Place, so every row is `"user_reported"`. This is deliberately
-  a fourth value distinct from the wildlife Measured/Inferred/Reviewed
-  triad (the same reasoning `EnvironmentalContextRecordModel` used to add
-  `"derived"`): none of those three words honestly describe "a person
-  typed a fact about their own yard" -- there is no sensor (not
-  Measured), no model (not Inferred), and no antecedent proposal for a
-  human to correct (not Reviewed, which the product-doctrine ties
-  specifically to correcting a Detection Proposal). The column is a plain
-  string, not a closed enum, reserving room for a future
-  `"inferred_model"` (automatic plant recognition) or `"external_provider"`
-  (an imported ecological dataset) without a schema change -- see "Future
-  compatibility," below. No separate "review state" column exists: with
-  nothing here a machine proposal awaiting human confirmation,
-  `information_class` alone already says precisely what this is, without
-  importing `ReviewLabel`/`reviewed_by_user_id` machinery this feature
-  does not use.
-- `provenance` -- v1's only value is `"user_manual_entry"`, the specific
-  recording method (mirrors `provider_key`'s "plain string, not a growing
-  enum" idiom).
+  their own Place, so every row is `"reviewed"`: doctrine's own
+  "human-validated semantic truth" tier (see "Measured, Inferred, and
+  Reviewed" in product-doctrine.md), applied honestly here. This stays
+  the *same* three-value Measured/Inferred/Reviewed vocabulary used
+  everywhere else in this product -- `information_class` never grows a
+  fourth, domain-specific value for "who/what produced this fact."
+  Doctrine's "Reviewed" is human-validated semantic truth; it does not
+  require an antecedent machine proposal to correct, only a human
+  directly asserting the fact, which is exactly v1's only case. Using
+  `"reviewed"` here does not create or alter a wildlife `ReviewLabel`,
+  does not create reviewed wildlife species truth, and does not touch
+  Observation review authority -- it is the same epistemic tier as
+  wildlife Reviewed truth, never the same table, mechanism, or authority.
+  No separate "review state" column exists: with nothing here a machine
+  proposal awaiting human confirmation, `information_class="reviewed"`
+  plus `provenance="user_manual_entry"` already says precisely what this
+  is, without importing `ReviewLabel`/`reviewed_by_user_id` machinery
+  this feature does not use.
+- `provenance` -- v1's only value is `"user_manual_entry"`: the specific
+  authorship/recording method (mirrors `provider_key`'s "plain string,
+  not a growing enum" idiom). *Who or what* produced a fact belongs here,
+  never in `information_class` -- see "Future compatibility," below, for
+  how a future distinct writer extends this domain without ever growing
+  a fourth `information_class` value.
 
-Both are validated as a `Literal["user_reported"]` at the response-schema
-layer (matching `SolarContext.information_class: Literal["derived"]`'s
-"the response type reflects what can actually be returned today, not the
-full future vocabulary" discipline) while staying a plain string in the
+Both are validated as a `Literal["reviewed"]` at the response-schema layer
+(matching `SolarContext.information_class: Literal["derived"]`'s "the
+response type reflects what can actually be returned today, not the full
+future vocabulary" discipline) while staying a plain string in the
 database.
 
 ### 3. Habitat facts: a flexible tag/fact model, not dozens of columns
@@ -189,7 +197,7 @@ existing.
 - `category: str` (`"setting"` | `"vegetation"` | `"feature"`)
 - `label: str`
 - `note: str | None`
-- `information_class: str` (v1: always `"user_reported"`)
+- `information_class: str` (v1: always `"reviewed"`)
 - `provenance: str` (v1: always `"user_manual_entry"`)
 - `created_at: datetime`, `updated_at: datetime`
 
@@ -343,15 +351,20 @@ authentication`).
 
 ## Future compatibility
 
-Both tables' `source_id`/`information_class` columns are already shaped
-for, without requiring a schema change:
+Both tables' `source_id`/`information_class`/`provenance` columns are
+already shaped for, without requiring a schema change:
 
 - A future per-camera `HabitatScene` association (`source_id` becomes
   populated instead of always `NULL`).
-- A future automatic-plant-recognition analyzer
-  (`information_class="inferred_model"`).
-- A future external ecological dataset/import
-  (`information_class="external_provider"`).
+- A future automatic-plant-recognition analyzer: doctrine's own "possible
+  flowering onset" example already names this exact case as Inferred, so
+  it would write `information_class="inferred"` (an existing doctrine
+  value, never a new fourth one) with `provenance` naming the specific
+  analyzer, distinguishing it from today's `"reviewed"` rows.
+- A future external ecological dataset/import, similarly distinguished
+  from today's rows by a new `provenance` value -- which of Measured/
+  Inferred/Reviewed applies depends on what is actually imported, a
+  decision for that future work, not this one.
 - Structured plant taxonomy layered on top of today's free-text
   `label`/`subject_label` (a future taxonomy-linking column, additive).
 - Correlations with wildlife activity (a future read-only query joining

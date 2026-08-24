@@ -1690,20 +1690,30 @@ class PlaceHabitatFactModel(Base):
 
     `information_class`/`provenance` mirror `EnvironmentalContextRecordModel.
     information_class`/`provider_key`'s two-column split (what epistemic
-    tier vs. what specific method produced it), but with this domain's own
-    vocabulary: v1's only writer is a human directly describing their own
-    Place, so `information_class="user_reported"` (never "measured,"
-    "inferred," or "reviewed" -- none of those wildlife-truth words apply
-    to a person describing their own yard, and there is no model proposal
-    here for a human to review/correct) and
-    `provenance="user_manual_entry"`. Both are plain strings, not a
-    growing enum, reserving room for a future `information_class=
-    "inferred_model"` (automatic plant recognition) or `"external_provider"`
-    (an imported ecological dataset) without a schema change -- see
-    "Future compatibility" in docs/habitat-phenology-foundation-v1-
-    contract.md. No separate "review state" column: nothing here is a
-    machine proposal awaiting human confirmation, so `information_class`
-    alone already says precisely what this is without importing
+    tier vs. what specific method produced it): v1's only writer is a
+    human directly describing their own Place, which is exactly doctrine's
+    "reviewed" tier ("human-validated semantic truth" in "Measured,
+    Inferred, and Reviewed" in product-doctrine.md) -- so
+    `information_class="reviewed"` and `provenance="user_manual_entry"`.
+    `information_class` stays within that same closed three-value
+    doctrine vocabulary used everywhere else in this product; it never
+    grows a fourth, domain-specific value for "who/what produced this
+    fact" -- authorship/source belongs entirely to `provenance`, epistemic
+    tier to `information_class`. Both stay plain strings, not growing
+    enums: `provenance` reserves room for a future distinct writer (an
+    imported ecological dataset), and `information_class` already has a
+    legal home for a future automatic plant-recognition analyzer's output
+    (`"inferred"`, doctrine's own "possible flowering onset" example)
+    without inventing anything new -- see "Future compatibility" in
+    docs/habitat-phenology-foundation-v1-contract.md. Using `"reviewed"`
+    here does not create or alter a wildlife `ReviewLabel`, does not
+    create reviewed wildlife species truth, and does not touch Observation
+    review authority: it is the same epistemic tier as wildlife Reviewed
+    truth (a person deliberately supplied/reviewed this fact), never the
+    same table or mechanism. No separate "review state" column: nothing
+    here is a machine proposal awaiting human confirmation, so
+    `information_class="reviewed"` plus `provenance="user_manual_entry"`
+    already says precisely what this is without importing
     `ReviewLabel`/`reviewed_by_user_id` machinery this feature does not
     use.
     """
@@ -1761,7 +1771,7 @@ class PlacePhenologyObservationModel(Base):
     `source_id`/`information_class`/`provenance` mirror
     `PlaceHabitatFactModel`'s identical fields and reasoning exactly (see
     that model's docstring) -- `source_id` nullable/Place-wide-only for
-    v1, `information_class="user_reported"`,
+    v1, `information_class="reviewed"`,
     `provenance="user_manual_entry"`.
     """
 

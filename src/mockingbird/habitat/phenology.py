@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Literal
 
-HABITAT_INFORMATION_CLASS = "user_reported"
+HABITAT_INFORMATION_CLASS = "reviewed"
 HABITAT_PROVENANCE_MANUAL_ENTRY = "user_manual_entry"
 
 HabitatFactCategory = Literal["setting", "vegetation", "feature"]

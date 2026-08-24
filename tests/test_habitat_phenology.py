@@ -194,7 +194,7 @@ def test_add_and_list_habitat_facts(repository: ProductRepository) -> None:
     assert {f.label for f in facts} == {"Woodland edge", "Bird feeders"}
     feeders = next(f for f in facts if f.label == "Bird feeders")
     assert feeders.note == "Sunflower seed"
-    assert feeders.information_class == "user_reported"
+    assert feeders.information_class == "reviewed"
     assert feeders.provenance == "user_manual_entry"
 
 

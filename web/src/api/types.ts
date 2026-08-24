@@ -5049,7 +5049,7 @@ export interface PlaceHabitatFact {
   category: HabitatFactCategory;
   label: string;
   note?: string | null;
-  information_class: "user_reported";
+  information_class: "reviewed";
   provenance: string;
   created_at: string;
   updated_at: string;
@@ -5078,7 +5078,7 @@ export interface PlacePhenologyObservation {
   id: string;
   subject_label: string;
   phenomenon: string;
-  information_class: "user_reported";
+  information_class: "reviewed";
   provenance: string;
   observed_start_date: string;
   observed_end_date?: string | null;
