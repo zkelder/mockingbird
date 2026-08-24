@@ -42,7 +42,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 52
+CURRENT_DATABASE_SCHEMA_VERSION = 53
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -1425,6 +1425,58 @@ def _migrate_to_habitat_phenology_foundation(connection: Connection) -> None:
         Base.metadata.tables[table_name].create(bind=connection, checkfirst=True)
 
 
+def _migrate_to_scene_confusor_reviewed_evidence_learning(connection: Connection) -> None:
+    """Site-Specific Learning & Local Adaptation v1: two small, additive
+    columns closing a real gap found in the already-shipped scene-confusor
+    suspicion mechanism (schema 34) -- see docs/scene-confusor-suspicion-
+    contract.md, "Reviewed-negative-evidence suspicion" and "Reset /
+    disable."
+
+    `review_labels.scene_confusor_region_id` (nullable, no default):
+    records which region, if any, a specific reviewed correction actually
+    incremented, so a later revision or reopen of that exact correction can
+    retract exactly that contribution instead of leaving it stale forever.
+    Every row that already exists at migration time reads back `NULL` --
+    honest "this historical row predates the column," never a fabricated
+    retroactive link (mirrors `_migrate_to_media_asset_duration`'s identical
+    nullable-no-backfill discipline). A pre-existing region's own
+    `reviewed_real_count`/`reviewed_false_count` totals are themselves left
+    exactly as they already were: this migration does not, and cannot
+    honestly, reconstruct which historical label produced which increment.
+
+    `observation_authority_settings.scene_confusor_reviewed_evidence_enabled`
+    (`NOT NULL DEFAULT 1`): the new operator-facing enable/disable control.
+    Every Stream that already has a settings row starts enabled -- safe
+    because the mechanism's own minimum-evidence abstention gate already
+    makes it a no-op wherever a Stream has not yet earned it (see
+    `scene_confusor.DEFAULT_MIN_REVIEWED_FALSE_TO_SUSPECT`), so defaulting
+    to "on" changes no installation's observed behavior at migration time.
+
+    Purely additive: neither column touches `visits`, `events`, or any
+    other wildlife-truth table.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Scene confusor reviewed-evidence learning migration requires local SQLite storage."
+        )
+    if inspect(connection).has_table("review_labels"):
+        columns = {column["name"] for column in inspect(connection).get_columns("review_labels")}
+        if "scene_confusor_region_id" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE review_labels ADD COLUMN scene_confusor_region_id VARCHAR"
+            )
+    if inspect(connection).has_table("observation_authority_settings"):
+        columns = {
+            column["name"] for column in inspect(connection).get_columns("observation_authority_settings")
+        }
+        if "scene_confusor_reviewed_evidence_enabled" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE observation_authority_settings "
+                "ADD COLUMN scene_confusor_reviewed_evidence_enabled BOOLEAN NOT NULL DEFAULT 1"
+            )
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -1477,6 +1529,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     50: _migrate_to_local_identity_multi_user_access,
     51: _migrate_to_environmental_context_foundation,
     52: _migrate_to_habitat_phenology_foundation,
+    53: _migrate_to_scene_confusor_reviewed_evidence_learning,
 }
 
 

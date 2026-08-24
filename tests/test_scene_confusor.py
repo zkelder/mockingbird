@@ -17,6 +17,7 @@ import pytest
 from mockingbird.observation.scene_confusor import (
     DEFAULT_GEOMETRY_SPREAD_CEILING,
     DEFAULT_MIN_OCCURRENCES_TO_SUSPECT,
+    DEFAULT_MIN_REVIEWED_FALSE_TO_SUSPECT,
     DEFAULT_STRONGER_CONFIDENCE_DELTA,
     SceneConfusorConfig,
     SceneRegionSnapshot,
@@ -397,3 +398,148 @@ def test_config_rejects_out_of_bounds_thresholds() -> None:
         SceneConfusorConfig(min_occurrences_to_suspect=0)
     with pytest.raises(ValueError):
         SceneConfusorConfig(max_regions_per_stream=0)
+
+
+# --- Site-Specific Learning & Local Adaptation v1: reviewed-negative-------
+# evidence is a second, independent recurrence gate -------------------------
+#
+# `reviewed_false_count` existed on every region since schema 34 but was
+# write-only: it only ever named the disclosed reason once occurrence-count
+# alone had already reached suspicion (see `test_reviewed_false_history_is_
+# named_in_the_reason`, above), never independently driving the `outcome`.
+# These tests cover the new independent path this milestone adds -- see
+# "Reviewed-negative-evidence suspicion" in docs/scene-confusor-suspicion-
+# contract.md.
+
+
+def test_reviewed_false_evidence_past_its_own_threshold_is_suspected_below_occurrence_threshold() -> None:
+    """The core new capability: two authority-eligible `false_positive`
+    reviews at the same recurring geometry are enough to suspect a region
+    even though only two admission attempts have ever happened there at all
+    -- one occurrence short of the unreviewed `min_occurrences_to_suspect`
+    (3). Reviewed evidence is authoritative human truth, not raw pattern
+    noise, so a smaller bound is justified (see `DEFAULT_MIN_REVIEWED_
+    FALSE_TO_SUSPECT`'s own docstring)."""
+
+    region = _region(
+        occurrence_count=DEFAULT_MIN_OCCURRENCES_TO_SUSPECT - 1,
+        reviewed_false_count=DEFAULT_MIN_REVIEWED_FALSE_TO_SUSPECT,
+        max_confidence_observed=0.3,
+    )
+    decision = evaluate_scene_confusor_suspicion(
+        candidate_box=FEEDER_BOX, broad_class="animal", max_confidence=0.3, regions=(region,),
+    )
+    assert decision.outcome == "suspected_confusor"
+    assert decision.reason == "recurring_geometry_with_reviewed_false_history"
+
+
+def test_reviewed_false_evidence_below_its_own_threshold_never_alone_suspects() -> None:
+    """A single reviewed `false_positive` correction must never alone
+    create suspicion -- this milestone's own governing constraint, enforced
+    twice: structurally by `SceneConfusorConfig.__post_init__` (a threshold
+    below 2 cannot even be configured) and behaviorally here (one reviewed-
+    false example, with occurrence count also below its own threshold, is
+    not enough)."""
+
+    region = _region(
+        occurrence_count=DEFAULT_MIN_OCCURRENCES_TO_SUSPECT - 1,
+        reviewed_false_count=1,
+        max_confidence_observed=0.3,
+    )
+    decision = evaluate_scene_confusor_suspicion(
+        candidate_box=FEEDER_BOX, broad_class="animal", max_confidence=0.3, regions=(region,),
+    )
+    assert decision.outcome == "not_suspected"
+    assert decision.reason == "insufficient_recurrence_history"
+
+
+def test_reviewed_evidence_disabled_falls_back_to_pre_milestone_behavior() -> None:
+    """The per-Stream "Local adjustment disabled" control: with
+    `reviewed_evidence_enabled=False`, a region that would otherwise be
+    suspected purely from reviewed-false evidence must behave exactly as
+    this module did before this milestone -- occurrence-count recurrence
+    only."""
+
+    config = SceneConfusorConfig(reviewed_evidence_enabled=False)
+    region = _region(
+        occurrence_count=DEFAULT_MIN_OCCURRENCES_TO_SUSPECT - 1,
+        reviewed_false_count=10,
+        max_confidence_observed=0.3,
+    )
+    decision = evaluate_scene_confusor_suspicion(
+        candidate_box=FEEDER_BOX, broad_class="animal", max_confidence=0.3, regions=(region,), config=config,
+    )
+    assert decision.outcome == "not_suspected"
+    assert decision.reason == "insufficient_recurrence_history"
+
+
+def test_reviewed_real_protection_wins_even_when_reviewed_false_threshold_is_met() -> None:
+    """The core recall-safety guarantee (step 2) is checked before the new
+    independent path (step 3) can ever run -- a region a human has ever
+    confirmed holds a real animal is never suspected, no matter how much
+    reviewed-false evidence has also accumulated there. Conflicting
+    reviewed evidence must always resolve toward recall safety."""
+
+    region = _region(
+        occurrence_count=1,
+        reviewed_false_count=10,
+        reviewed_real_count=1,
+        max_confidence_observed=0.9,
+    )
+    decision = evaluate_scene_confusor_suspicion(
+        candidate_box=FEEDER_BOX, broad_class="animal", max_confidence=0.2, regions=(region,),
+    )
+    assert decision.outcome == "not_suspected"
+    assert decision.reason == "region_protected_by_reviewed_real_animal"
+
+
+def test_geometry_spread_escape_still_applies_via_the_reviewed_false_path() -> None:
+    """Reviewed-negative evidence satisfies only the recurrence gate (step
+    3) -- every escape past it still applies exactly as before. A region
+    whose own geometry has spread beyond a static artifact's shape must
+    stay protected even once the reviewed-false threshold alone would
+    otherwise have been enough to suspect it."""
+
+    region = _region(
+        occurrence_count=1,
+        reviewed_false_count=DEFAULT_MIN_REVIEWED_FALSE_TO_SUSPECT,
+        centroid_spread=0.06,
+        max_confidence_observed=0.8,
+    )
+    decision = evaluate_scene_confusor_suspicion(
+        candidate_box=FEEDER_BOX, broad_class="animal", max_confidence=0.2, regions=(region,),
+    )
+    assert decision.outcome == "not_suspected"
+    assert decision.reason == "region_geometry_too_varied_for_static_artifact"
+
+
+def test_independently_strong_detection_escapes_even_via_the_reviewed_false_path() -> None:
+    """A genuinely new, strong detection at a region reviewed-false
+    evidence would otherwise suspect must still escape -- this is exactly
+    the "new-to-Place species can still be discovered" guarantee at the
+    decision-logic level (see Journey 5 in the governing milestone brief)."""
+
+    # Equal to the region's own historical max (no *relative* escape --
+    # mirrors `test_independently_strong_detection_escapes_regardless_of_
+    # region_history`'s own isolation of the *absolute* escape alone) but
+    # past `strong_detection_threshold`.
+    region = _region(
+        occurrence_count=1,
+        reviewed_false_count=DEFAULT_MIN_REVIEWED_FALSE_TO_SUSPECT,
+        centroid_spread=0.001,
+        max_confidence_observed=0.855,
+    )
+    decision = evaluate_scene_confusor_suspicion(
+        candidate_box=FEEDER_BOX, broad_class="animal", max_confidence=0.855, regions=(region,),
+    )
+    assert decision.outcome == "not_suspected"
+    assert decision.reason == "independently_strong_detection"
+
+
+def test_config_rejects_reviewed_false_threshold_below_two() -> None:
+    with pytest.raises(ValueError):
+        SceneConfusorConfig(min_reviewed_false_to_suspect=1)
+    with pytest.raises(ValueError):
+        SceneConfusorConfig(min_reviewed_false_to_suspect=0)
+    # 2 is the smallest legal value -- must not itself raise.
+    SceneConfusorConfig(min_reviewed_false_to_suspect=2)

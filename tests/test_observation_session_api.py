@@ -202,3 +202,76 @@ def test_counterfactual_rejects_invalid_window_and_partial_roi(
         params={"start_offset_ms": 0, "end_offset_ms": 1000, "roi_left": 0.1, "roi_top": 0.1},
     )
     assert partial_roi.status_code == 400
+
+
+# --- Site-Specific Learning & Local Adaptation v1: HTTP route wiring for ----
+# the "Local adjustment active/disabled" and "Reset local learning" -------
+# operator controls (see docs/scene-confusor-suspicion-contract.md) --------
+
+
+def test_scene_confusor_learning_status_on_unknown_stream_returns_404(
+    client: LegacyAuthenticatedSyncTestClient,
+) -> None:
+    response = client.get("/api/streams/does-not-exist/observation/scene-confusor-learning")
+    assert response.status_code == 404
+
+
+def test_scene_confusor_learning_status_defaults_enabled_with_no_history(
+    client: LegacyAuthenticatedSyncTestClient,
+) -> None:
+    """Journey 1 of the governing milestone brief: a brand-new Place/Stream
+    reports honest, empty status -- enabled by default, but with zero
+    reviewed evidence to act on yet."""
+
+    response = client.get(f"/api/streams/{DEMO_STREAM_ID}/observation/scene-confusor-learning")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload == {
+        "stream_id": DEMO_STREAM_ID,
+        "reviewed_evidence_enabled": True,
+        "regions_with_reviewed_evidence": 0,
+        "regions_currently_adjusted": 0,
+    }
+
+
+def test_scene_confusor_learning_disable_and_reenable_round_trips_over_http(
+    client: LegacyAuthenticatedSyncTestClient,
+) -> None:
+    disabled = client.post(
+        f"/api/streams/{DEMO_STREAM_ID}/observation/scene-confusor-learning", json={"enabled": False},
+    )
+    assert disabled.status_code == 200
+    assert disabled.json()["reviewed_evidence_enabled"] is False
+
+    reenabled = client.post(
+        f"/api/streams/{DEMO_STREAM_ID}/observation/scene-confusor-learning", json={"enabled": True},
+    )
+    assert reenabled.status_code == 200
+    assert reenabled.json()["reviewed_evidence_enabled"] is True
+
+
+def test_scene_confusor_learning_update_on_unknown_stream_returns_404(
+    client: LegacyAuthenticatedSyncTestClient,
+) -> None:
+    response = client.post(
+        "/api/streams/does-not-exist/observation/scene-confusor-learning", json={"enabled": False},
+    )
+    assert response.status_code == 404
+
+
+def test_scene_confusor_learning_reset_on_unknown_stream_returns_404(
+    client: LegacyAuthenticatedSyncTestClient,
+) -> None:
+    response = client.post("/api/streams/does-not-exist/observation/scene-confusor-learning/reset")
+    assert response.status_code == 404
+
+
+def test_scene_confusor_learning_reset_is_idempotent_with_no_history(
+    client: LegacyAuthenticatedSyncTestClient,
+) -> None:
+    """Resetting a Stream with no accumulated learning yet must be a clean,
+    honest no-op -- never an error."""
+
+    response = client.post(f"/api/streams/{DEMO_STREAM_ID}/observation/scene-confusor-learning/reset")
+    assert response.status_code == 200
+    assert response.json()["regions_with_reviewed_evidence"] == 0

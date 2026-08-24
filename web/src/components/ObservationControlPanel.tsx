@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiClient } from "../api/client";
-import type { ObservationSessionStatus } from "../api/types";
+import type { ObservationSessionStatus, SceneConfusorLearningStatus } from "../api/types";
 import { StatusPill } from "./StatusPill";
 import { formatDateTime, formatLabel } from "../utils";
 
@@ -54,6 +54,18 @@ const SUPPRESSED_REASON_LABELS: Record<string, string> = {
   blocked_scene_confusor_suspected: "Repeated background pattern ignored",
 };
 
+// Site-Specific Learning & Local Adaptation v1: the smallest honest label a
+// non-technical user needs -- never "region", "occurrence count", or any
+// other model-internal term (see docs/scene-confusor-suspicion-contract.md,
+// "Operator surface").
+function learningStatusLabel(status: SceneConfusorLearningStatus | null): string {
+  if (!status) return "Reading…";
+  if (!status.reviewed_evidence_enabled) return "Local adjustment disabled";
+  if (status.regions_currently_adjusted > 0) return "Local adjustment active";
+  if (status.regions_with_reviewed_evidence > 0) return "Learning from reviewed activity on this camera";
+  return "Not enough reviewed history yet";
+}
+
 /**
  * The unified Observation panel (Unified Observation Experience v1):
  * Start/Stop for one Stream, plus compact camera and observation-capability
@@ -76,6 +88,13 @@ export function ObservationControlPanel({
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isToggling, setIsToggling] = useState(false);
+  const [learningStatus, setLearningStatus] = useState<SceneConfusorLearningStatus | null>(null);
+  const [isLearningBusy, setIsLearningBusy] = useState(false);
+  // Deliberately its own state, not the primary `error` above: that one
+  // replaces this whole panel's body (including the advanced-diagnostics
+  // section these two actions live in) when set -- a failed toggle/reset
+  // must never hide the very controls a user would retry from.
+  const [learningError, setLearningError] = useState<string | null>(null);
   const mountedRef = useRef(true);
 
   const refresh = useCallback(async () => {
@@ -107,6 +126,50 @@ export function ObservationControlPanel({
       window.clearInterval(interval);
     };
   }, [refresh]);
+
+  const refreshLearningStatus = useCallback(async () => {
+    try {
+      const next = await apiClient.getSceneConfusorLearningStatus(streamId);
+      if (mountedRef.current) setLearningStatus(next);
+    } catch {
+      // Advanced-diagnostics-only: a failed read here should never disturb
+      // the primary Start/Stop control above it.
+    }
+  }, [streamId]);
+
+  useEffect(() => {
+    // Read once per Stream, not on the 3s live-status poll -- this reflects
+    // reviewed activity, which changes on a review action, not every frame.
+    setLearningStatus(null);
+    void refreshLearningStatus();
+  }, [refreshLearningStatus]);
+
+  async function toggleLearningEnabled() {
+    if (!learningStatus) return;
+    setIsLearningBusy(true);
+    setLearningError(null);
+    try {
+      const next = await apiClient.setSceneConfusorLearningEnabled(streamId, !learningStatus.reviewed_evidence_enabled);
+      setLearningStatus(next);
+    } catch {
+      setLearningError("Could not update local adjustment. Try again in a moment.");
+    } finally {
+      setIsLearningBusy(false);
+    }
+  }
+
+  async function resetLearning() {
+    setIsLearningBusy(true);
+    setLearningError(null);
+    try {
+      const next = await apiClient.resetSceneConfusorLearning(streamId);
+      setLearningStatus(next);
+    } catch {
+      setLearningError("Could not reset local learning. Try again in a moment.");
+    } finally {
+      setIsLearningBusy(false);
+    }
+  }
 
   async function start() {
     setIsToggling(true);
@@ -285,6 +348,23 @@ export function ObservationControlPanel({
                 ))}
               </div>
             ) : null}
+            <div className="review-diagnostic-grid">
+              <span>Local learning: {learningStatusLabel(learningStatus)}</span>
+              {learningStatus && learningStatus.regions_with_reviewed_evidence > 0 ? (
+                <span>Reviewed examples supporting it: {learningStatus.regions_with_reviewed_evidence}</span>
+              ) : null}
+            </div>
+            {learningStatus ? (
+              <div className="button-row">
+                <button className="text-action" type="button" disabled={isLearningBusy} onClick={() => void toggleLearningEnabled()}>
+                  {learningStatus.reviewed_evidence_enabled ? "Disable local adjustment" : "Enable local adjustment"}
+                </button>
+                <button className="text-action" type="button" disabled={isLearningBusy} onClick={() => void resetLearning()}>
+                  Reset local learning
+                </button>
+              </div>
+            ) : null}
+            {learningError ? <span className="meta-text">{learningError}</span> : null}
           </details>
         </>
       ) : null}

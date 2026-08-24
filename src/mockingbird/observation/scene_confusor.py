@@ -152,6 +152,32 @@ DEFAULT_GEOMETRY_SPREAD_CEILING = 0.008
 # suspicion indefinitely. Revisit once more longitudinal field data exists.
 DEFAULT_REGION_TTL_DAYS = 45
 
+# Site-Specific Learning & Local Adaptation v1 (see docs/scene-confusor-
+# suspicion-contract.md, "Reviewed-negative-evidence suspicion"):
+# `reviewed_false_count` existed on every region since schema 34 but was
+# write-only -- it named the disclosed reason once occurrence-count alone
+# already reached suspicion, but never independently drove the `outcome`.
+# This constant is the one new recurrence gate the milestone actually
+# needed: a smaller bound than `DEFAULT_MIN_OCCURRENCES_TO_SUSPECT` (3) is
+# justified because each contributing example here already passed a much
+# higher bar than a raw unreviewed detector proposal -- an authority-
+# eligible human explicitly reviewed this exact recurring geometry and
+# labeled it `false_positive` (see `review_provenance.is_authority_eligible`
+# and "Reviewed-truth interaction," below). Deliberately never 1: this
+# milestone's own governing constraint is that a single correction must
+# never alone create a permanent suppression rule, so `SceneConfusorConfig.
+# __post_init__` enforces a floor of 2 structurally, not just by default.
+# Unlike `min_occurrences_to_suspect`/`geometry_spread_ceiling`, this value
+# was not derived from a real-cohort grid search -- this repository's own
+# live database has zero pre-existing `scene_confusor_regions` rows to
+# replay against (every one of its real `false_positive` reviews predates
+# or bypassed a live admission session that would have built recurrence
+# history). 2 is a disclosed, conservative starting point pending real
+# field evidence, exactly like every other "insufficient evidence yet"
+# posture this milestone's own doctrine treats as a legitimate, honest
+# state -- not a hypothetical hedge.
+DEFAULT_MIN_REVIEWED_FALSE_TO_SUSPECT = 2
+
 SceneConfusorOutcome = Literal["not_suspected", "suspected_confusor"]
 
 
@@ -169,6 +195,24 @@ class SceneConfusorConfig:
     geometry_spread_ceiling: float = DEFAULT_GEOMETRY_SPREAD_CEILING
     max_regions_per_stream: int = DEFAULT_MAX_REGIONS_PER_STREAM
     region_ttl_days: int = DEFAULT_REGION_TTL_DAYS
+    # Site-Specific Learning & Local Adaptation v1: the independent
+    # reviewed-negative-evidence recurrence gate (see
+    # `DEFAULT_MIN_REVIEWED_FALSE_TO_SUSPECT`'s own docstring). Structurally
+    # floored at 2 in `__post_init__`, not just defaulted -- this milestone's
+    # own governing constraint ("never turn a single correction into a
+    # permanent ignore rule") is enforced as an invariant of the config
+    # itself, not merely a convention a caller could accidentally override.
+    min_reviewed_false_to_suspect: int = DEFAULT_MIN_REVIEWED_FALSE_TO_SUSPECT
+    # Per-Stream operator control (see "Reset / disable" in the contract
+    # doc): `False` restores exactly this module's pre-milestone shipped
+    # behavior (occurrence-count recurrence only) without discarding any
+    # already-accumulated `reviewed_real_count`/`reviewed_false_count`
+    # bookkeeping -- disabling is instant and reversible, distinct from
+    # resetting (deleting) region history entirely. Defaults `True`: the
+    # abstention gate above already makes this a no-op wherever real
+    # evidence has not yet accumulated, so enabling it has no observable
+    # effect on any Source until genuine reviewed history earns it.
+    reviewed_evidence_enabled: bool = True
 
     def __post_init__(self) -> None:
         if not (0.0 <= self.geometry_iou_threshold <= 1.0):
@@ -189,6 +233,12 @@ class SceneConfusorConfig:
             raise ValueError("max_regions_per_stream must be at least 1")
         if self.region_ttl_days < 1:
             raise ValueError("region_ttl_days must be at least 1")
+        if self.min_reviewed_false_to_suspect < 2:
+            raise ValueError(
+                "min_reviewed_false_to_suspect must be at least 2 -- a single "
+                "reviewed correction must never alone create a permanent "
+                "suppression rule"
+            )
 
 
 @dataclass(frozen=True)
@@ -323,12 +373,23 @@ def evaluate_scene_confusor_suspicion(
     2. The matched region has ever been confirmed to hold a real animal by
        authority-eligible reviewed truth -> `not_suspected`,
        unconditionally, regardless of how much unreviewed recurrence
-       history has also accumulated there. See "Reviewed-truth
-       interaction" in docs/scene-confusor-suspicion-contract.md -- this is
-       the mechanism's core recall-safety guarantee.
+       history -- or reviewed-false history -- has also accumulated there.
+       See "Reviewed-truth interaction" in docs/scene-confusor-suspicion-
+       contract.md -- this is the mechanism's core recall-safety guarantee,
+       and it is checked before either recurrence gate below, so it can
+       never be raced or outvoted by them.
     3. The matched region has not yet recurred `min_occurrences_to_suspect`
-       times -> `not_suspected` (a single visit, however long or still,
-       cannot alone build suspicion; see this module's own docstring).
+       times, AND has not separately accumulated `min_reviewed_false_to_
+       suspect` authority-eligible `false_positive` reviews (only when
+       `reviewed_evidence_enabled`) -> `not_suspected` (a single visit,
+       however long or still, cannot alone build suspicion; see this
+       module's own docstring). Reviewed-negative evidence is a second,
+       independent path to satisfy this same gate -- not a bypass of
+       anything past it: every escape below (geometry spread, both
+       confidence escapes) still applies exactly the same regardless of
+       which path got a candidate this far, so a genuinely different or
+       stronger real detection at this geometry is exactly as protected
+       either way.
     4. The matched region's own accumulated geometry across its recurrences
        is more varied than `geometry_spread_ceiling` -> `not_suspected` (an
        escape: real, repeated animal activity at a popular real location
@@ -368,7 +429,11 @@ def evaluate_scene_confusor_suspicion(
             "reviewed_real_protection",
         )
 
-    if region.occurrence_count < config.min_occurrences_to_suspect:
+    reviewed_false_eligible = (
+        config.reviewed_evidence_enabled
+        and region.reviewed_false_count >= config.min_reviewed_false_to_suspect
+    )
+    if region.occurrence_count < config.min_occurrences_to_suspect and not reviewed_false_eligible:
         return SceneConfusorDecision(
             "not_suspected", "insufficient_recurrence_history", region.region_id, None,
         )

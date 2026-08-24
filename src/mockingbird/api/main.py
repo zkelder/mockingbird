@@ -233,6 +233,8 @@ from mockingbird.api.schemas import (
     ReviewQueueItem,
     ReviewQueueSpeciesSuggestionBatchPrepareRequest,
     ReviewQueueSpeciesSuggestionBatchPrepareResponse,
+    SceneConfusorLearningEnabledUpdate,
+    SceneConfusorLearningStatusResponse,
     SetupState,
     SetupStateUpdate,
     SavedMediaBulkMotionEvidenceRequest,
@@ -491,6 +493,7 @@ from mockingbird.repository.product_repository import (
     CameraNodePendingSetup,
     FastReviewConflictError,
     MonitoringOperationConflictError,
+    ObservationAuthorityStatus,
     ProductRepository,
     ReviewProvenanceConflictError,
     ReviewRevisionConflictError,
@@ -11666,6 +11669,84 @@ async def get_stream_observation_counterfactual(
         )
     attribution = classify_rejection_attribution(window)
     return _counterfactual_window_response(window, attribution)
+
+
+def _scene_confusor_learning_status_response(
+    status: ObservationAuthorityStatus,
+) -> SceneConfusorLearningStatusResponse:
+    return SceneConfusorLearningStatusResponse(
+        stream_id=status.stream_id,
+        reviewed_evidence_enabled=status.scene_confusor_reviewed_evidence_enabled,
+        regions_with_reviewed_evidence=status.scene_confusor_regions_with_reviewed_false_evidence,
+        regions_currently_adjusted=status.scene_confusor_regions_eligible_from_reviewed_evidence,
+    )
+
+
+@app.get(
+    "/api/streams/{stream_id}/observation/scene-confusor-learning",
+    response_model=SceneConfusorLearningStatusResponse,
+)
+async def get_stream_scene_confusor_learning_status(stream_id: str) -> SceneConfusorLearningStatusResponse:
+    """Site-Specific Learning & Local Adaptation v1 (see docs/scene-
+    confusor-suspicion-contract.md, "Operator surface"): the smallest
+    honest status backing "Learning from reviewed activity on this camera"
+    / "Not enough reviewed history yet" / "Local adjustment active" /
+    "Local adjustment disabled." Side-effect-free, matching `/observation/
+    counterfactual`'s own read-only convention -- never creates a settings
+    row merely by being read."""
+
+    _stream_live_playback_config_or_404(stream_id)
+    repository = get_repository()
+    status = repository.get_observation_authority_state(stream_id=stream_id)
+    return _scene_confusor_learning_status_response(status)
+
+
+@app.post(
+    "/api/streams/{stream_id}/observation/scene-confusor-learning",
+    response_model=SceneConfusorLearningStatusResponse,
+)
+async def update_stream_scene_confusor_learning_enabled(
+    stream_id: str,
+    payload: SceneConfusorLearningEnabledUpdate,
+    request: Request,
+) -> SceneConfusorLearningStatusResponse:
+    """The "Local adjustment active" / "Local adjustment disabled" operator
+    control. Scoped to only the new reviewed-negative-evidence suspicion
+    path -- never touches this Stream's pre-existing, already-shipped
+    occurrence-count scene-confusor behavior, and never deletes any
+    already-accumulated review-evidence bookkeeping (see `.../scene-
+    confusor-learning/reset` for the separate, more destructive action)."""
+
+    current_user_or_401(request)
+    _stream_live_playback_config_or_404(stream_id)
+    repository = get_repository()
+    status = repository.set_scene_confusor_reviewed_evidence_enabled(
+        stream_id=stream_id, enabled=payload.enabled,
+    )
+    return _scene_confusor_learning_status_response(status)
+
+
+@app.post(
+    "/api/streams/{stream_id}/observation/scene-confusor-learning/reset",
+    response_model=SceneConfusorLearningStatusResponse,
+)
+async def reset_stream_scene_confusor_learning(stream_id: str, request: Request) -> SceneConfusorLearningStatusResponse:
+    """"Reset local learning": permanently deletes every durable scene-
+    confusor region this Stream has ever accumulated -- both the pre-
+    existing occurrence-count history and the new reviewed-evidence counts
+    -- and nothing else. The Observations, reviews, and evidence that
+    produced that history are completely untouched; only this derived,
+    reconstructible local-adaptation state resets (see docs/scene-confusor-
+    suspicion-contract.md, "Reset / disable")."""
+
+    current_user_or_401(request)
+    _stream_live_playback_config_or_404(stream_id)
+    repository = get_repository()
+    with repository.session_factory() as session:
+        with session.begin():
+            repository.purge_scene_confusor_regions_for_stream(session, stream_id)
+    status = repository.get_observation_authority_state(stream_id=stream_id)
+    return _scene_confusor_learning_status_response(status)
 
 
 @app.get("/api/streams/{stream_id}/live-session/current-frame")

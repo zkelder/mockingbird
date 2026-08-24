@@ -1204,6 +1204,17 @@ export interface ObservationSessionStatus {
   advanced: Record<string, unknown>;
 }
 
+/** Site-Specific Learning & Local Adaptation v1: the smallest honest status
+ * behind "Learning from reviewed activity on this camera" / "Not enough
+ * reviewed history yet" / "Local adjustment active" / "Local adjustment
+ * disabled." No region ids, geometry, or other model-internal detail. */
+export interface SceneConfusorLearningStatus {
+  stream_id: string;
+  reviewed_evidence_enabled: boolean;
+  regions_with_reviewed_evidence: number;
+  regions_currently_adjusted: number;
+}
+
 export interface LivePreviewLeaseRequest {
   owner_id: string;
 }

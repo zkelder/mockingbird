@@ -126,7 +126,7 @@ def test_current_schema_creates_only_empty_collection_records(tmp_path: Path) ->
         db_url=f"sqlite:///{tmp_path / 'migration.sqlite3'}",
         media_root=tmp_path / "media",
     )
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 52
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 53
     table_names = set(inspect(repository.engine).get_table_names())
     assert {"visit_collections", "visit_collection_memberships"}.issubset(table_names)
     with repository.session_factory() as session:

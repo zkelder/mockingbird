@@ -1187,6 +1187,27 @@ class ReviewLabelModel(Base):
     reviewed_by_user_id: Mapped[str | None] = mapped_column(
         ForeignKey("users.id"), nullable=True
     )
+    # Site-Specific Learning & Local Adaptation v1 (schema 53, see
+    # docs/scene-confusor-suspicion-contract.md, "Reviewed-negative-evidence
+    # suspicion"): the `SceneConfusorRegionModel.id` this specific label
+    # actually incremented (`reviewed_real_count` or `reviewed_false_count`),
+    # stamped only when this row was authority-eligible AND its target
+    # Visit's evidence geometry matched an existing region at write time.
+    # `NULL` for every row that never touched a region (most reviews) and
+    # for every row created before this column existed. A deliberate soft
+    # reference, not a `ForeignKey` -- a region can be purged (TTL, LRU,
+    # reconfiguration invalidation) independently of this audit trail, and a
+    # stale id on an old, immutable history row is harmless. Recorded so a
+    # later revision/reopen of *this exact* label can retract *exactly* the
+    # contribution it made -- deriving the match again from the Visit's own
+    # geometry at retraction time was considered and rejected: a region's
+    # own `representative_box` drifts (incremental running mean) as more
+    # occurrences touch it, so a later re-match could land on a different
+    # region than the one originally incremented, corrupting an unrelated
+    # region's bookkeeping. Never read to decide any *new* admission
+    # decision -- only ever consulted to reverse this row's own, already-
+    # made contribution.
+    scene_confusor_region_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class DatasetExportModel(Base):

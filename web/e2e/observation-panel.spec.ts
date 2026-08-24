@@ -97,3 +97,43 @@ test("unified Start/Stop routes an external_url Stream to the existing Snapshot 
   await expect(details).toHaveAttribute("open", "");
   await expect(details.getByText(/Runtime: Snapshot Monitor/i)).toBeVisible();
 });
+
+test("Site-Specific Learning & Local Adaptation: advanced diagnostics shows restrained local-learning status and controls", async ({
+  page,
+}) => {
+  const configurationResponse = await page.request.patch(
+    `/api/sources/${sourceId}/provider-configuration`,
+    { data: { provider_key: "manual_media", config: {} } },
+  );
+  expect(configurationResponse.ok()).toBeTruthy();
+
+  await page.goto(`/streams/${streamId}`);
+  const panel = page.locator("section.observation-control-panel");
+  await expect(panel).toBeVisible();
+
+  const details = panel.locator("details.review-diagnostic-details");
+  await details.locator("summary").click();
+  await expect(details).toHaveAttribute("open", "");
+
+  // A brand-new Stream, honestly: enabled by default, nothing to act on yet.
+  await expect(details.getByText("Local learning: Not enough reviewed history yet")).toBeVisible();
+
+  const visibleText = await panel.innerText();
+  for (const forbidden of FORBIDDEN_BASIC_VOCABULARY) {
+    expect(visibleText).not.toContain(forbidden);
+  }
+  // Never model-training/ML-engineering jargon (see the governing milestone
+  // brief's Phase 6) -- even inside the advanced/support view.
+  for (const jargon of ["tensor", "embedding", "optimizer", "gradient", "epoch", "region_id", "occurrence_count"]) {
+    expect(visibleText.toLowerCase()).not.toContain(jargon);
+  }
+
+  await details.getByRole("button", { name: "Disable local adjustment" }).click();
+  await expect(details.getByText("Local learning: Local adjustment disabled")).toBeVisible();
+  await expect(details.getByRole("button", { name: "Enable local adjustment" })).toBeVisible();
+
+  await details.getByRole("button", { name: "Reset local learning" }).click();
+  // Reset is a clean no-op with no accumulated history yet -- the enabled
+  // toggle it does not touch stays exactly where the operator left it.
+  await expect(details.getByText("Local learning: Local adjustment disabled")).toBeVisible();
+});

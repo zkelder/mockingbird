@@ -536,3 +536,126 @@ Known limitations disclosed, not hidden:
   (still capped per class, never unbounded) scope choice, not revisited
   this milestone since every real candidate observed to date is
   `broad_class="animal"`.
+
+## Reviewed-negative-evidence suspicion (Site-Specific Learning & Local Adaptation v1, schema 53)
+
+The limitation disclosed immediately above -- "reviewed truth as a
+strengthening/protective bonus, not a requirement" -- named a real gap this
+milestone closes, not a permanent design boundary: `reviewed_false_count`
+existed on every region since schema 34, but `evaluate_scene_confusor_
+suspicion` only ever used it to pick the disclosed `reason` string once
+`occurrence_count` had *already* reached suspicion on its own (see "Decision
+order," above) -- it never independently drove the `outcome`. Reviewed-
+negative evidence -- an authority-eligible human explicitly reviewing this
+exact recurring geometry and labeling it `false_positive`, more than once --
+is authoritative human truth, categorically stronger per-example than raw
+unreviewed pattern recurrence, and this milestone's own governing doctrine
+(see the milestone brief) requires that reviewed truth be able to teach the
+system faster than silent pattern-matching alone.
+
+**The new gate.** `SceneConfusorConfig.min_reviewed_false_to_suspect`
+(default **2** -- see the constant's own docstring for why not lower, and
+why not empirically re-derived the way `min_occurrences_to_suspect`/
+`geometry_spread_ceiling` were: this repository's own real local database
+has zero pre-existing `scene_confusor_regions` rows to grid-search against,
+so this default is a disclosed, conservative starting point, not a field-
+validated one). Step 3 of "Decision order" becomes an **OR**: a region is
+recurrence-eligible once `occurrence_count >= min_occurrences_to_suspect`
+**or** `reviewed_false_count >= min_reviewed_false_to_suspect` (when
+`reviewed_evidence_enabled`, below). Every later step -- geometry-spread
+ceiling, both confidence escapes, and reviewed-real protection (checked
+*first*, unconditionally, before either recurrence gate) -- applies exactly
+as before, regardless of which path satisfied step 3. Reviewed-negative
+evidence only ever grants a *faster path to the same recurrence question*;
+it never bypasses a single existing safety check.
+
+**Reset / disable.** Two distinct, independently-actionable operator
+controls (see "Operator surface," below), because they answer different
+questions:
+
+- **Disable** (`observation_authority_settings.scene_confusor_reviewed_
+  evidence_enabled`, per-Stream, default `True`): "stop consulting reviewed
+  evidence for suspicion." Restores this Stream's exact pre-milestone
+  shipped behavior (occurrence-count recurrence only). Already-accumulated
+  `reviewed_real_count`/`reviewed_false_count` bookkeeping is preserved,
+  not deleted -- re-enabling resumes immediately from the same history.
+  Never touches the pre-existing, already-accepted occurrence-count
+  mechanism at all.
+- **Reset** (`purge_scene_confusor_regions_for_stream`, already existed for
+  reconfiguration invalidation, now also operator-triggerable): "delete
+  every accumulated region for this Stream," both the pre-existing
+  occurrence history and the new reviewed-evidence counts. The
+  Observations/reviews/evidence that produced that history are completely
+  untouched -- only this derived, reconstructible local-adaptation state
+  resets.
+
+**Reversibility (the second half of this milestone's work).** A real gap
+was found and fixed alongside the new gate, in the *already-shipped*
+reviewed-truth interaction, not just the new one: `_update_scene_confusor_
+region_from_review` only ever incremented a region's counts and had no
+corresponding decrement, so revising an already-reviewed Visit's label (a
+real `house_finch` correction later revised to `false_positive`, or the
+reverse) left the *superseded* label's own contribution stale forever
+alongside the new one, and reopening a review (which deliberately returns a
+Visit to `needs_review` -- no longer authoritative reviewed truth at all)
+never retracted anything either. Both are now fixed:
+
+- `review_labels.scene_confusor_region_id` (nullable, schema 53) records
+  exactly which region, if any, one specific `ReviewLabelModel` row actually
+  incremented, stamped at write time. Never re-derived by geometry re-match
+  at retraction time -- a region's own `representative_box` drifts (running
+  mean) as more occurrences touch it, so a later re-match could land on a
+  *different* region than the one originally incremented and corrupt its
+  bookkeeping instead.
+- `_retract_scene_confusor_region_contribution` reverses exactly one
+  label's own prior contribution (using its own stamped id, `label`
+  polarity, and counters clamped at zero as cheap insurance), called (a)
+  from the ordinary review choke point whenever an already-`reviewed` Visit
+  is about to be re-labeled -- covering both the explicit "revision" action
+  and, defensively, any other path that might re-label an already-reviewed
+  Visit -- retracting the old label's contribution before the new label's
+  own is applied, and (b) from `reopen_visit_review`, which only ever
+  retracts (reopening creates no new reviewed truth to increment).
+
+**Source scope.** Unchanged: regions remain keyed by `stream_id` alone (see
+"Mechanism," above) -- a reviewed correction on one Stream can never
+increment, protect, or suspect a region on a different Stream. Verified
+directly (`test_reviewed_false_evidence_on_one_stream_does_not_leak_to_
+another`).
+
+**Operator surface.** Two new small, restrained HTTP endpoints under
+`/api/streams/{stream_id}/observation/scene-confusor-learning` (`GET` for
+status, `POST` for enable/disable, `POST .../reset`), and one bounded,
+on-demand, indexed status aggregate (`ProductRepository._scene_confusor_
+reviewed_evidence_summary` -- two `COUNT` queries over an already-capped
+region set, never a hot or per-frame path) surfaced in the existing
+collapsed "Advanced diagnostics" `<details>` on the Observation panel (`web/
+src/components/ObservationControlPanel.tsx`), exactly where scene-confusor
+diagnostics already lived. Four possible plain-language states only --
+"Not enough reviewed history yet," "Learning from reviewed activity on this
+camera," "Local adjustment active," "Local adjustment disabled" -- with a
+count of reviewed examples supporting the adaptation as the one advanced
+detail. No region ids, geometry, occurrence counts, or other model-internal
+vocabulary is ever exposed.
+
+**Counterfactual evaluation.** `scripts/scene_confusor_reviewed_evidence_
+counterfactual.py` -- a constructed (not organically replayed; see the
+milestone's own closure report for why) baseline-vs-adapted comparison over
+six disclosed scenarios, run twice through the real, unmodified admission
+pipeline against two independent isolated databases. Result: adapted
+differs from baseline in exactly the one case designed to exercise the new
+capability (a genuine confusor, two reviewed-false corrections, one
+occurrence short of the pre-existing threshold -- correctly suppressed only
+in adapted), zero recall-affecting regressions across every other case
+(popular real perch, protected reviewed-real bird, insufficient single-
+example evidence, and a genuinely new strong detection arriving after the
+reviewed-false threshold is met all resolve identically in both).
+
+**Tests.** `tests/test_scene_confusor.py` (pure decision logic: the new
+independent gate, its own disable path, downstream escapes still applying,
+`reviewed_real` protection still winning, the structural floor of 2) and
+`tests/test_scene_confusor_repository.py` (end-to-end: the new gate firing
+below the occurrence threshold, revision retracting stale protection,
+reopen retracting a contribution, Source isolation, disable/reset,
+non-authoritative reviews never feeding the new path, suppression never
+writing review truth, and a conflicting-evidence recovery scenario).

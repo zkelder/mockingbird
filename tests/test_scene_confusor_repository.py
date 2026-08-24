@@ -28,10 +28,15 @@ from mockingbird.api.schemas import (
     CameraSetupCompleteRequest,
     Point,
     ReviewCorrectionCreate,
+    VisitReviewReopenCreate,
+    VisitReviewRevisionCreate,
 )
 from mockingbird.observation.candidate_visit_authority import ObservationAuthorityMode
 from mockingbird.observation.counterfactual_lineage import ADMISSION_REJECTED_OUTCOMES
-from mockingbird.observation.scene_confusor import DEFAULT_MAX_REGIONS_PER_STREAM
+from mockingbird.observation.scene_confusor import (
+    DEFAULT_MAX_REGIONS_PER_STREAM,
+    DEFAULT_MIN_REVIEWED_FALSE_TO_SUSPECT,
+)
 from mockingbird.repository.product_repository import (
     CandidateEvidenceItem,
     CandidateVisitProposalFacts,
@@ -39,9 +44,11 @@ from mockingbird.repository.product_repository import (
     EventModel,
     MediaAssetModel,
     ProductRepository,
+    ReviewLabelModel,
     SceneConfusorRegionModel,
     VisitModel,
 )
+from mockingbird.storage.backup import LocalBackupManager
 
 STREAM_ID = "stream-backyard-feeder"
 FEEDER_ZONE_ID = None
@@ -414,6 +421,508 @@ def test_scene_confusor_outcome_is_recognized_by_counterfactual_lineage() -> Non
 
 
 # --- 7. Bounded per-Stream history lookup ------------------------------------
+
+
+def _single_region(repository: ProductRepository, *, stream_id: str = STREAM_ID) -> SceneConfusorRegionModel:
+    with repository.session_factory() as session:
+        region = session.scalar(
+            select(SceneConfusorRegionModel).where(SceneConfusorRegionModel.stream_id == stream_id)
+        )
+        assert region is not None, "expected exactly one scene-confusor region for this Stream"
+        session.expunge(region)
+        return region
+
+
+# --- 8. Site-Specific Learning & Local Adaptation v1: reviewed-negative -----
+# evidence is a genuine, independent, reversible learning signal ------------
+
+
+def test_reviewed_false_evidence_alone_suspects_a_region_below_occurrence_threshold(
+    repository: ProductRepository,
+) -> None:
+    """The core new capability (Journey 2 of the governing milestone
+    brief): two authority-eligible `false_positive` reviews at the same
+    recurring geometry are enough to block a third attempt there, even
+    though only two admission attempts have ever happened at all -- one
+    short of the pre-existing, unreviewed `min_occurrences_to_suspect`
+    (3)."""
+
+    _activate(repository)
+    created_ids = []
+    for index, box in enumerate(CONFUSOR_JITTER[:2]):
+        outcome = _attempt(
+            repository, box, proposal_id=f"visit-episode:revfalse-alone-{index}", at=NOW + timedelta(minutes=index),
+        )
+        assert outcome.outcome == "created"
+        created_ids.append(outcome.visit_id)
+
+    for offset, visit_id in enumerate(created_ids):
+        repository.create_review_label(
+            ReviewCorrectionCreate(
+                target_type="visit", target_id=visit_id, label="false_positive",
+                review_origin="human", reviewer_identity="test-reviewer",
+            ),
+            created_at=NOW + timedelta(minutes=10 + offset),
+        )
+
+    region = _single_region(repository)
+    assert region.occurrence_count == 2
+    assert region.reviewed_false_count == DEFAULT_MIN_REVIEWED_FALSE_TO_SUSPECT
+
+    outcome = _attempt(
+        repository, CONFUSOR_JITTER[2], proposal_id="visit-episode:revfalse-alone-followup", at=NOW + timedelta(hours=1),
+    )
+    assert outcome.outcome == "blocked_scene_confusor_suspected"
+    assert outcome.reason == "recurring_geometry_with_reviewed_false_history"
+
+
+def test_single_reviewed_false_positive_never_alone_suspects(repository: ProductRepository) -> None:
+    """This milestone's own governing constraint, proven end-to-end: one
+    reviewed correction must never alone create a permanent suppression
+    rule. Only one occurrence has ever happened, and only one of it is
+    reviewed -- both below their respective thresholds -- so baseline
+    behavior (admit) must be preserved (Journey 1's "insufficient evidence"
+    posture)."""
+
+    _activate(repository)
+    outcome = _attempt(repository, CONFUSOR_JITTER[0], proposal_id="visit-episode:single-revfalse-0", at=NOW)
+    assert outcome.outcome == "created"
+
+    repository.create_review_label(
+        ReviewCorrectionCreate(
+            target_type="visit", target_id=outcome.visit_id, label="false_positive",
+            review_origin="human", reviewer_identity="test-reviewer",
+        ),
+        created_at=NOW + timedelta(minutes=5),
+    )
+
+    followup = _attempt(
+        repository, CONFUSOR_JITTER[1], proposal_id="visit-episode:single-revfalse-followup", at=NOW + timedelta(hours=1),
+    )
+    assert followup.outcome == "created"
+
+
+def test_revision_from_real_to_false_retracts_stale_real_protection(repository: ProductRepository) -> None:
+    """Phase 8 requirement #3 of the governing milestone brief, proven
+    end-to-end: a Visit reviewed as a real animal protects its region
+    (`reviewed_real_count > 0`, permanent, unconditional). If that same
+    review is later revised to `false_positive`, the stale protection must
+    be retracted -- not merely accreted alongside the new contribution --
+    so the region can become suspectable again from the same, unchanged
+    recurrence history a reviewer's own correction now says was never
+    real."""
+
+    _activate(repository)
+    created_visit_id = None
+    for index, box in enumerate(CONFUSOR_JITTER[:3]):
+        outcome = _attempt(repository, box, proposal_id=f"visit-episode:retract-real-{index}", at=NOW + timedelta(minutes=index))
+        if outcome.outcome == "created":
+            created_visit_id = outcome.visit_id
+    assert created_visit_id is not None
+
+    repository.create_review_label(
+        ReviewCorrectionCreate(
+            target_type="visit", target_id=created_visit_id, label="house_finch",
+            review_origin="human", reviewer_identity="test-reviewer",
+        ),
+        created_at=NOW + timedelta(minutes=10),
+    )
+    # Protected while the review says "real" -- matches the pre-existing
+    # `test_human_reviewed_real_animal_protects_region_from_future_
+    # suspicion` exactly, re-established here as this test's own baseline.
+    protected_outcome = _attempt(
+        repository, CONFUSOR_JITTER[3], proposal_id="visit-episode:retract-real-protected", at=NOW + timedelta(hours=1),
+    )
+    assert protected_outcome.outcome == "created"
+
+    region_before = _single_region(repository)
+    assert region_before.reviewed_real_count == 1
+    assert region_before.reviewed_false_count == 0
+
+    history = repository.visit_review_history(created_visit_id)
+    assert history is not None
+    repository.revise_visit_review(
+        created_visit_id,
+        VisitReviewRevisionCreate(
+            label="false_positive",
+            expected_state_token=history.review_state_token,
+            idempotency_key="retract-real-revision-001",
+            review_origin="human",
+            reviewer_identity="test-reviewer",
+        ),
+    )
+
+    region_after = _single_region(repository)
+    assert region_after.reviewed_real_count == 0
+    assert region_after.reviewed_false_count == 1
+
+    # Same geometry the revision just stopped protecting must now be
+    # suspectable again. Occurrence count alone (4, from the 3 setup
+    # attempts plus the one protected attempt above) already clears the
+    # pre-existing unreviewed threshold -- so this is a clean, dispositive
+    # before/after: nothing about the recurrence history changed, only the
+    # revision did, and the outcome flips.
+    reattempt = _attempt(
+        repository, CONFUSOR_JITTER[4], proposal_id="visit-episode:retract-real-reattempt", at=NOW + timedelta(hours=2),
+    )
+    assert reattempt.outcome == "blocked_scene_confusor_suspected"
+
+
+def test_reopen_retracts_reviewed_false_contribution(repository: ProductRepository) -> None:
+    """Phase 8 requirement #4 of the governing milestone brief, proven
+    end-to-end: reopening a review deliberately returns a Visit to
+    `needs_review` -- it no longer carries authoritative reviewed truth, so
+    whatever it had contributed to a scene-confusor region's counts must be
+    retracted, not left stale indefinitely."""
+
+    _activate(repository)
+    outcome = _attempt(repository, CONFUSOR_JITTER[0], proposal_id="visit-episode:reopen-retract-0", at=NOW)
+    assert outcome.outcome == "created"
+    visit_id = outcome.visit_id
+
+    repository.create_review_label(
+        ReviewCorrectionCreate(
+            target_type="visit", target_id=visit_id, label="false_positive",
+            review_origin="human", reviewer_identity="test-reviewer",
+        ),
+        created_at=NOW + timedelta(minutes=5),
+    )
+    region_before = _single_region(repository)
+    assert region_before.reviewed_false_count == 1
+
+    history = repository.visit_review_history(visit_id)
+    assert history is not None
+    repository.reopen_visit_review(
+        visit_id,
+        VisitReviewReopenCreate(
+            expected_state_token=history.review_state_token,
+            idempotency_key="reopen-retract-001",
+            review_origin="human",
+            reviewer_identity="test-reviewer",
+        ),
+    )
+
+    region_after = _single_region(repository)
+    assert region_after.reviewed_false_count == 0
+
+    history_after = repository.visit_review_history(visit_id)
+    assert history_after is not None
+    assert history_after.review_status.value == "needs_review"
+
+
+def test_reviewed_false_evidence_on_one_stream_does_not_leak_to_another(repository: ProductRepository) -> None:
+    """Journey 3 of the governing milestone brief: a failure pattern
+    reviewed away on one Source must never silently modify another Source's
+    own scene-confusor state -- regions are keyed by `stream_id`, and this
+    proves it end-to-end for the new reviewed-evidence path specifically,
+    not just the pre-existing occurrence-count path other tests already
+    cover."""
+
+    _activate(repository)
+    completed = _complete_setup(repository)
+    other_stream_id = completed.stream.id
+    _activate(repository, stream_id=other_stream_id)
+    assert other_stream_id != STREAM_ID
+
+    created_ids = []
+    for index, box in enumerate(CONFUSOR_JITTER[:2]):
+        outcome = _attempt(
+            repository, box, proposal_id=f"visit-episode:isolation-a-{index}", at=NOW + timedelta(minutes=index),
+            stream_id=STREAM_ID,
+        )
+        assert outcome.outcome == "created"
+        created_ids.append(outcome.visit_id)
+    for offset, visit_id in enumerate(created_ids):
+        repository.create_review_label(
+            ReviewCorrectionCreate(
+                target_type="visit", target_id=visit_id, label="false_positive",
+                review_origin="human", reviewer_identity="test-reviewer",
+            ),
+            created_at=NOW + timedelta(minutes=10 + offset),
+        )
+
+    # This Stream's own reviewed-false evidence now suspects it, below the
+    # unreviewed occurrence threshold -- matches the standalone proof above.
+    outcome_a = _attempt(
+        repository, CONFUSOR_JITTER[2], proposal_id="visit-episode:isolation-a-followup",
+        at=NOW + timedelta(hours=1), stream_id=STREAM_ID,
+    )
+    assert outcome_a.outcome == "blocked_scene_confusor_suspected"
+
+    # A different Stream has never seen this geometry reviewed at all --
+    # its own first-ever attempt at the identical box must be unaffected.
+    outcome_b = _attempt(
+        repository, CONFUSOR_JITTER[0], proposal_id="visit-episode:isolation-b-first",
+        at=NOW + timedelta(hours=1), stream_id=other_stream_id,
+    )
+    assert outcome_b.outcome == "created"
+
+
+def test_disabling_reviewed_evidence_falls_back_to_pre_milestone_behavior(repository: ProductRepository) -> None:
+    """The "Local adjustment disabled" operator control, end-to-end: with
+    it off, a region that reviewed-false evidence alone would otherwise
+    suspect must behave exactly as this Stream's scene-confusor mechanism
+    did before this milestone -- occurrence-count recurrence only. Already-
+    accumulated review counts are preserved, not deleted, so re-enabling
+    would resume immediately (distinct from "Reset local learning")."""
+
+    _activate(repository)
+    created_ids = []
+    for index, box in enumerate(CONFUSOR_JITTER[:2]):
+        outcome = _attempt(repository, box, proposal_id=f"visit-episode:disable-{index}", at=NOW + timedelta(minutes=index))
+        assert outcome.outcome == "created"
+        created_ids.append(outcome.visit_id)
+    for offset, visit_id in enumerate(created_ids):
+        repository.create_review_label(
+            ReviewCorrectionCreate(
+                target_type="visit", target_id=visit_id, label="false_positive",
+                review_origin="human", reviewer_identity="test-reviewer",
+            ),
+            created_at=NOW + timedelta(minutes=10 + offset),
+        )
+
+    status = repository.set_scene_confusor_reviewed_evidence_enabled(
+        stream_id=STREAM_ID, enabled=False, now=NOW + timedelta(minutes=20),
+    )
+    assert status.scene_confusor_reviewed_evidence_enabled is False
+
+    outcome = _attempt(
+        repository, CONFUSOR_JITTER[2], proposal_id="visit-episode:disable-followup", at=NOW + timedelta(hours=1),
+    )
+    assert outcome.outcome == "created"
+
+    # Already-accumulated review evidence survives being disabled --
+    # confirmed still present, just not currently consulted.
+    region = _single_region(repository)
+    assert region.reviewed_false_count == DEFAULT_MIN_REVIEWED_FALSE_TO_SUSPECT
+
+    # Re-enabling resumes immediately, using the exact same preserved
+    # history -- no need to rebuild it.
+    repository.set_scene_confusor_reviewed_evidence_enabled(stream_id=STREAM_ID, enabled=True, now=NOW + timedelta(minutes=30))
+    reenabled_outcome = _attempt(
+        repository, CONFUSOR_JITTER[2], proposal_id="visit-episode:disable-reenabled", at=NOW + timedelta(hours=2),
+    )
+    assert reenabled_outcome.outcome == "blocked_scene_confusor_suspected"
+
+
+def test_reset_purges_reviewed_evidence_but_leaves_review_truth_untouched(repository: ProductRepository) -> None:
+    """"Reset local learning" (Phase 8 requirement #9): purging a Stream's
+    scene-confusor regions must remove every accumulated
+    `reviewed_real_count`/`reviewed_false_count` -- both the pre-existing
+    and the new reviewed-evidence bookkeeping -- while leaving the
+    Observations/reviews that produced it completely untouched. The
+    reviewer's own correction remains true; only the derived local-
+    adaptation state resets."""
+
+    _activate(repository)
+    outcome = _attempt(repository, CONFUSOR_JITTER[0], proposal_id="visit-episode:reset-0", at=NOW)
+    assert outcome.outcome == "created"
+    visit_id = outcome.visit_id
+    repository.create_review_label(
+        ReviewCorrectionCreate(
+            target_type="visit", target_id=visit_id, label="false_positive",
+            review_origin="human", reviewer_identity="test-reviewer",
+        ),
+        created_at=NOW + timedelta(minutes=5),
+    )
+    assert _region_count(repository) > 0
+
+    with repository.session_factory() as session:
+        with session.begin():
+            purged = repository.purge_scene_confusor_regions_for_stream(session, STREAM_ID)
+    assert purged > 0
+    assert _region_count(repository) == 0
+
+    # The reviewed correction itself -- Observation truth -- is untouched.
+    visit = repository.get_visit(visit_id)
+    assert visit is not None
+    assert visit.reviewed_label == "false_positive"
+    history = repository.visit_review_history(visit_id)
+    assert history is not None
+    assert history.review_status.value == "reviewed"
+    assert len(history.entries) == 1
+
+
+def test_non_authoritative_review_cannot_feed_the_new_reviewed_false_path(repository: ProductRepository) -> None:
+    """Phase 8 requirement #2 of the governing milestone brief, proven for
+    the new path specifically (the pre-existing protection side is already
+    covered by `test_non_authoritative_review_does_not_protect_a_region`):
+    an `agent_diagnostic` review is durably recorded but never authority-
+    eligible, so it must never increment `reviewed_false_count` -- a
+    provisional/automated assessment can never accelerate suppression, only
+    a genuine human correction can."""
+
+    _activate(repository)
+    created_ids = []
+    for index, box in enumerate(CONFUSOR_JITTER[:2]):
+        outcome = _attempt(repository, box, proposal_id=f"visit-episode:nonauth-revfalse-{index}", at=NOW + timedelta(minutes=index))
+        assert outcome.outcome == "created"
+        created_ids.append(outcome.visit_id)
+
+    for offset, visit_id in enumerate(created_ids):
+        repository.create_review_label(
+            ReviewCorrectionCreate(
+                target_type="visit", target_id=visit_id, label="false_positive",
+                review_origin="agent_diagnostic", reviewer_identity="claude-test-session",
+            ),
+            created_at=NOW + timedelta(minutes=10 + offset),
+        )
+
+    region = _single_region(repository)
+    assert region.reviewed_false_count == 0
+
+    outcome = _attempt(
+        repository, CONFUSOR_JITTER[2], proposal_id="visit-episode:nonauth-revfalse-followup", at=NOW + timedelta(hours=1),
+    )
+    assert outcome.outcome == "created"
+
+
+def test_scene_confusor_suppression_never_writes_review_truth(repository: ProductRepository) -> None:
+    """Phase 8 requirement #8: local adaptation must never silently promote
+    provisional inference to reviewed truth. Blocking a candidate as a
+    suspected confusor must never itself create a `ReviewLabelModel` row or
+    mark anything `reviewed` -- it can only ever withhold a Visit from
+    being created at all, exactly like `blocked_privacy_zone`/`blocked_
+    missing_evidence` already do."""
+
+    with repository.session_factory() as session:
+        # A fresh repository already seeds demo review history unrelated to
+        # this test -- compare before/after this scenario's own actions,
+        # not an absolute count.
+        review_label_count_before = session.scalar(select(func.count(ReviewLabelModel.id)))
+
+    _activate(repository)
+    for index, box in enumerate(CONFUSOR_JITTER):
+        _attempt(repository, box, proposal_id=f"visit-episode:no-truth-{index}", at=NOW + timedelta(minutes=index))
+    outcome = _attempt(
+        repository, CONFUSOR_JITTER[0], proposal_id="visit-episode:no-truth-blocked", at=NOW + timedelta(hours=1),
+    )
+    assert outcome.outcome == "blocked_scene_confusor_suspected"
+
+    with repository.session_factory() as session:
+        review_label_count_after = session.scalar(select(func.count(ReviewLabelModel.id)))
+    assert review_label_count_after == review_label_count_before
+
+
+def test_conflicting_evidence_a_later_reviewed_real_animal_reprotects_the_region(
+    repository: ProductRepository,
+) -> None:
+    """Phase 9 real-world failure mode: reviewed-negative evidence crosses
+    its own threshold first (the region becomes suspectable), but a later
+    reviewer confirms a genuinely different real animal at the same
+    geometry. Reviewed-real protection must win from that point forward,
+    regardless of which evidence accumulated first -- conflicting reviewed
+    signals must always resolve toward recall safety, not suppression."""
+
+    _activate(repository)
+    created_ids = []
+    for index, box in enumerate(CONFUSOR_JITTER[:2]):
+        outcome = _attempt(repository, box, proposal_id=f"visit-episode:conflict-{index}", at=NOW + timedelta(minutes=index))
+        assert outcome.outcome == "created"
+        created_ids.append(outcome.visit_id)
+    for offset, visit_id in enumerate(created_ids):
+        repository.create_review_label(
+            ReviewCorrectionCreate(
+                target_type="visit", target_id=visit_id, label="false_positive",
+                review_origin="human", reviewer_identity="test-reviewer",
+            ),
+            created_at=NOW + timedelta(minutes=10 + offset),
+        )
+
+    # Reviewed-false threshold met -- now suspectable purely from reviewed
+    # evidence, below the unreviewed occurrence threshold.
+    suspected = _attempt(
+        repository, CONFUSOR_JITTER[2], proposal_id="visit-episode:conflict-suspected", at=NOW + timedelta(hours=1),
+    )
+    assert suspected.outcome == "blocked_scene_confusor_suspected"
+
+    # A later, independently strong detection at the same geometry escapes
+    # (this is the same real-animal-can-still-be-discovered guarantee, not
+    # yet a review) and gets created for review.
+    escaped = _attempt(
+        repository, CONFUSOR_JITTER[2], proposal_id="visit-episode:conflict-escaped",
+        at=NOW + timedelta(hours=2), confidence=0.95,
+    )
+    assert escaped.outcome == "created"
+    repository.create_review_label(
+        ReviewCorrectionCreate(
+            target_type="visit", target_id=escaped.visit_id, label="house_finch",
+            review_origin="human", reviewer_identity="test-reviewer",
+        ),
+        created_at=NOW + timedelta(hours=2, minutes=5),
+    )
+
+    region = _single_region(repository)
+    assert region.reviewed_real_count == 1
+    assert region.reviewed_false_count == 2
+
+    # From here on, protection wins unconditionally, regardless of the
+    # still-present reviewed-false history.
+    reattempt = _attempt(
+        repository, CONFUSOR_JITTER[2], proposal_id="visit-episode:conflict-reattempt", at=NOW + timedelta(hours=3),
+    )
+    assert reattempt.outcome == "created"
+
+
+def test_backup_and_restore_preserve_reviewed_evidence_learning_state(
+    repository: ProductRepository, tmp_path: Path,
+) -> None:
+    """Journey 7 of the governing milestone brief: durable local-adaptation
+    state must survive backup/restore -- both the new `scene_confusor_
+    region_id` review-label provenance and the new per-Stream enablement
+    setting, not just the pre-existing region counts. Fully schema-driven
+    (whole-file SQLite `.backup()`), so this is really a regression guard
+    against ever *breaking* that, not new backup-wiring code of its own."""
+
+    _activate(repository)
+    outcome = _attempt(repository, CONFUSOR_JITTER[0], proposal_id="visit-episode:backup-0", at=NOW)
+    assert outcome.outcome == "created"
+    repository.create_review_label(
+        ReviewCorrectionCreate(
+            target_type="visit", target_id=outcome.visit_id, label="false_positive",
+            review_origin="human", reviewer_identity="test-reviewer",
+        ),
+        created_at=NOW + timedelta(minutes=5),
+    )
+    repository.set_scene_confusor_reviewed_evidence_enabled(stream_id=STREAM_ID, enabled=False, now=NOW + timedelta(minutes=6))
+
+    region_before = _single_region(repository)
+    assert region_before.reviewed_false_count == 1
+    status_before = repository.get_observation_authority_state(stream_id=STREAM_ID)
+    assert status_before.scene_confusor_reviewed_evidence_enabled is False
+
+    manager = LocalBackupManager(
+        db_url=repository.db_url, media_root=repository.media_root, backup_root=tmp_path / "backups",
+    )
+    backup = manager.create_backup()
+
+    # Mutate state after the backup, so restore has something real to prove.
+    repository.set_scene_confusor_reviewed_evidence_enabled(stream_id=STREAM_ID, enabled=True, now=NOW + timedelta(minutes=7))
+    with repository.session_factory() as session:
+        with session.begin():
+            repository.purge_scene_confusor_regions_for_stream(session, STREAM_ID)
+    assert _region_count(repository) == 0
+    repository.close()
+
+    transaction = manager.replace_live_files(manager.verify_backup(backup.backup.id))
+    try:
+        restored = ProductRepository(db_url=repository.db_url, media_root=repository.media_root)
+        try:
+            restored_region = _single_region(restored)
+            assert restored_region.reviewed_false_count == 1
+            restored_status = restored.get_observation_authority_state(stream_id=STREAM_ID)
+            assert restored_status.scene_confusor_reviewed_evidence_enabled is False
+            # And the reviewed correction itself -- upstream authority --
+            # restored intact too.
+            history = restored.visit_review_history(outcome.visit_id)
+            assert history is not None
+            assert history.review_status.value == "reviewed"
+        finally:
+            restored.close()
+        transaction.commit()
+    except Exception:
+        transaction.rollback()
+        raise
 
 
 def test_region_history_is_bounded_per_stream(repository: ProductRepository) -> None:

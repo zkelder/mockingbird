@@ -189,6 +189,7 @@ from mockingbird.observation.cross_camera_association import (
 )
 from mockingbird.observation.temporal_evidence import event_evidence_interval
 from mockingbird.observation.scene_confusor import (
+    DEFAULT_MIN_REVIEWED_FALSE_TO_SUSPECT,
     SceneConfusorConfig,
     SceneRegionSnapshot,
     evaluate_scene_confusor_suspicion,
@@ -2528,6 +2529,31 @@ class ObservationAuthoritySettingsModel(Base):
     last_candidate_visit_id: Mapped[str | None] = mapped_column(String, nullable=True)
     last_proposal_id: Mapped[str | None] = mapped_column(String, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Site-Specific Learning & Local Adaptation v1 (schema 53, see
+    # docs/scene-confusor-suspicion-contract.md, "Reset / disable"): the
+    # operator-facing "Local adjustment disabled" control, scoped to only
+    # the new reviewed-negative-evidence suspicion path -- `False` restores
+    # exactly this Stream's pre-milestone shipped scene-confusor behavior
+    # (unreviewed occurrence-count recurrence only), while every already-
+    # accumulated `reviewed_real_count`/`reviewed_false_count` on this
+    # Stream's own regions is preserved untouched, ready to resume the
+    # instant this is re-enabled. Distinct from "Reset local learning"
+    # (`purge_scene_confusor_regions_for_stream`), which deletes region
+    # history outright. Defaults `True`: the module's own minimum-evidence
+    # abstention gate already makes this a no-op on any Stream that has not
+    # yet earned it, so enabling by default has no observable effect until
+    # genuine reviewed history accumulates. Unlike this file's usual
+    # "nullable, no backfill, honest absence" convention (there is no
+    # honest "unknown" state for an on/off control -- it must always read
+    # as one or the other): `server_default` in addition to the ORM-level
+    # `default` so a freshly created table (`Base.metadata.create_all`) and
+    # a migrated one (this column's own `ALTER TABLE ... DEFAULT 1`) carry
+    # an identical real schema-level default, not just an ORM-level one --
+    # correct for any raw-SQL insert that omits this column too, not only
+    # ordinary `session.add(...)` construction.
+    scene_confusor_reviewed_evidence_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("1"),
+    )
 
 
 class ObservationCandidateVisitModel(Base):
@@ -3190,6 +3216,17 @@ class ObservationAuthorityStatus:
     last_failure_at: datetime | None
     last_candidate_visit_id: str | None
     last_proposal_id: str | None
+    # Site-Specific Learning & Local Adaptation v1 (see docs/scene-confusor-
+    # suspicion-contract.md, "Operator surface"): the smallest honest status
+    # a "Learning from reviewed activity on this camera" / "Not enough
+    # reviewed history yet" / "Local adjustment active" / "Local adjustment
+    # disabled" UI needs, without exposing region ids, geometry, or model
+    # jargon. Both counts are bounded, indexed, on-demand aggregates over
+    # this Stream's own already-capped (`max_regions_per_stream`) region
+    # set -- never a per-frame or hot-path computation.
+    scene_confusor_reviewed_evidence_enabled: bool
+    scene_confusor_regions_with_reviewed_false_evidence: int
+    scene_confusor_regions_eligible_from_reviewed_evidence: int
 
 
 _DEFAULT_MAX_CANDIDATES_PER_SESSION = 50
@@ -5012,6 +5049,14 @@ class ProductRepository:
                     last_failure_at=None,
                     last_candidate_visit_id=None,
                     last_proposal_id=None,
+                    # A Stream with no settings row has never completed a
+                    # Stage 7 admission attempt, so it structurally cannot
+                    # have any scene-confusor region history either --
+                    # honest zeros, not an extra query for a set that must
+                    # already be empty.
+                    scene_confusor_reviewed_evidence_enabled=True,
+                    scene_confusor_regions_with_reviewed_false_evidence=0,
+                    scene_confusor_regions_eligible_from_reviewed_evidence=0,
                 )
             return self._observation_authority_status(session, settings, now=datetime.now(UTC))
 
@@ -5083,6 +5128,30 @@ class ProductRepository:
                     settings.max_evidence_items_per_candidate = max_evidence_items_per_candidate
                 if max_evidence_bytes_per_candidate is not None:
                     settings.max_evidence_bytes_per_candidate = max_evidence_bytes_per_candidate
+                settings.updated_at = moment
+                session.flush()
+                return self._observation_authority_status(session, settings, now=moment)
+
+    def set_scene_confusor_reviewed_evidence_enabled(
+        self, *, stream_id: str, enabled: bool, now: datetime | None = None,
+    ) -> ObservationAuthorityStatus:
+        """The "Local adjustment active" / "Local adjustment disabled"
+        operator control (see docs/scene-confusor-suspicion-contract.md,
+        "Reset / disable"). Immediate, restart-free, and Stream-isolated --
+        identical propagation shape to `set_observation_authority_mode`'s
+        own kill switch, but scoped to only the new reviewed-negative-
+        evidence suspicion path: disabling this never touches the pre-
+        milestone shipped occurrence-count mechanism, and never deletes any
+        already-accumulated `reviewed_real_count`/`reviewed_false_count`
+        bookkeeping -- re-enabling resumes exactly where it left off. See
+        `purge_scene_confusor_regions_for_stream` for the separate, more
+        destructive "Reset local learning" action."""
+
+        moment = now or datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                settings = self._get_or_create_authority_settings(session, stream_id=stream_id, now=moment)
+                settings.scene_confusor_reviewed_evidence_enabled = enabled
                 settings.updated_at = moment
                 session.flush()
                 return self._observation_authority_status(session, settings, now=moment)
@@ -5159,6 +5228,7 @@ class ProductRepository:
                     outcome = self._create_candidate_visit_locked(
                         session, proposal=proposal, evidence_items=request.evidence_items,
                         limits=limits, observed_at=request.observed_at,
+                        scene_confusor_reviewed_evidence_enabled=settings.scene_confusor_reviewed_evidence_enabled,
                     )
                     if outcome.outcome == "created":
                         settings.candidates_created_count += 1
@@ -5182,9 +5252,17 @@ class ProductRepository:
         evidence_items: tuple[CandidateEvidenceItem, ...],
         limits: AuthorityLimits,
         observed_at: datetime,
+        scene_confusor_reviewed_evidence_enabled: bool = True,
     ) -> CandidateVisitCreationOutcome:
         """Called only from inside `create_candidate_visit_from_proposal`'s
-        own transaction, only after the gate already returned `create`."""
+        own transaction, only after the gate already returned `create`.
+
+        `scene_confusor_reviewed_evidence_enabled` is this Stream's own
+        already-fetched `ObservationAuthoritySettingsModel.scene_confusor_
+        reviewed_evidence_enabled` -- threaded through rather than re-
+        queried, so the operator disable control costs zero additional
+        database reads on this already-hot admission path (the settings row
+        is already loaded by the caller for the authority-mode check)."""
 
         stream_model = session.get(StreamModel, proposal.stream_id)
         if stream_model is None:
@@ -5252,6 +5330,9 @@ class ProductRepository:
                 broad_class=proposal.broad_class,
                 max_confidence=confidence,
                 regions=regions,
+                config=SceneConfusorConfig(
+                    reviewed_evidence_enabled=scene_confusor_reviewed_evidence_enabled,
+                ),
             )
             self._touch_scene_confusor_region(
                 session,
@@ -7848,7 +7929,13 @@ class ProductRepository:
         return (float(box[0]), float(box[1]), float(box[2]), float(box[3]))
 
     def _update_scene_confusor_region_from_review(
-        self, session: Session, visit_model: "VisitModel", normalized_label: str, *, now: datetime,
+        self,
+        session: Session,
+        visit_model: "VisitModel",
+        normalized_label: str,
+        *,
+        now: datetime,
+        label_model: "ReviewLabelModel | None" = None,
     ) -> None:
         """Reviewed-truth interaction (see "Reviewed-truth interaction" in
         docs/scene-confusor-suspicion-contract.md), called only from the
@@ -7860,7 +7947,20 @@ class ProductRepository:
         Only ever *updates* an existing region (never creates one): a
         single reviewed Visit is not itself "recurring," so a review with
         no prior recurring history at this geometry has nothing to
-        protect or strengthen yet."""
+        protect or strengthen yet.
+
+        `label_model` is the specific `ReviewLabelModel` row this
+        contribution belongs to (already `session.add`-ed by the caller,
+        not yet flushed) -- Site-Specific Learning & Local Adaptation v1
+        stamps `label_model.scene_confusor_region_id` with exactly the
+        region actually touched, so a later revision or reopen of *this
+        exact* label can retract *exactly* this contribution (see
+        `_retract_scene_confusor_region_contribution`) rather than either
+        leaving it stale forever or re-deriving a possibly-different match
+        against a region whose own representative geometry has since
+        drifted. `None` is accepted (and simply skips the stamp) only for
+        backward-compatible direct test callers that construct their own
+        `ReviewLabelModel` outside the normal choke point."""
 
         # `ObservationCandidateVisitModel`'s primary key is `proposal_id`,
         # not `visit_id` (a merely unique-constrained column) -- an
@@ -7899,6 +7999,43 @@ class ProductRepository:
         else:
             row.reviewed_real_count += 1
         row.updated_at = now
+        if label_model is not None:
+            label_model.scene_confusor_region_id = row.id
+        session.flush()
+
+    def _retract_scene_confusor_region_contribution(
+        self, session: Session, prior_label_model: "ReviewLabelModel | None", *, now: datetime,
+    ) -> None:
+        """Reversibility for the reviewed-truth interaction above (Site-
+        Specific Learning & Local Adaptation v1 -- see "Reset / disable" and
+        "Reversibility" in docs/scene-confusor-suspicion-contract.md).
+        Exactly undoes whatever `_update_scene_confusor_region_from_review`
+        did for `prior_label_model`, using the id it stamped at the time --
+        never a fresh geometry re-match, which could land on a different
+        region than the one originally incremented if that region's own
+        `representative_box` has since drifted. A safe, defensive no-op
+        whenever there is nothing to retract: no prior label, no stamped
+        region (most reviews never matched one), or a region that has since
+        been purged/evicted/expired (its own stale count no longer exists
+        either, so there is nothing left to correct). Counters are clamped
+        at zero rather than trusted to already be internally consistent --
+        cheap insurance against ever recording a negative count, never
+        expected to actually trigger in ordinary operation."""
+
+        if prior_label_model is None or prior_label_model.scene_confusor_region_id is None:
+            return
+        row = session.get(SceneConfusorRegionModel, prior_label_model.scene_confusor_region_id)
+        if row is None:
+            return
+        if prior_label_model.label == "false_positive":
+            row.reviewed_false_count = max(0, row.reviewed_false_count - 1)
+        else:
+            row.reviewed_real_count = max(0, row.reviewed_real_count - 1)
+        row.updated_at = now
+        # This exact label's own contribution has now been reversed; never
+        # leave the stale pointer behind for a hypothetical second retraction
+        # (a Visit can be revised more than once) to double-decrement.
+        prior_label_model.scene_confusor_region_id = None
         session.flush()
 
     def purge_scene_confusor_regions_for_stream(self, session: Session, stream_id: str) -> int:
@@ -7932,6 +8069,7 @@ class ProductRepository:
             max_candidates_per_hour=_DEFAULT_MAX_CANDIDATES_PER_HOUR,
             max_evidence_items_per_candidate=_DEFAULT_MAX_EVIDENCE_ITEMS_PER_CANDIDATE,
             max_evidence_bytes_per_candidate=_DEFAULT_MAX_EVIDENCE_BYTES_PER_CANDIDATE,
+            scene_confusor_reviewed_evidence_enabled=True,
             updated_at=moment,
         )
         session.add(settings)
@@ -7980,6 +8118,9 @@ class ProductRepository:
         self, session: Session, settings: ObservationAuthoritySettingsModel, *, now: datetime,
     ) -> ObservationAuthorityStatus:
         state = self._authority_state(session, settings, observed_at=now)
+        with_evidence, eligible = self._scene_confusor_reviewed_evidence_summary(
+            session, stream_id=settings.stream_id,
+        )
         return ObservationAuthorityStatus(
             stream_id=settings.stream_id,
             mode=settings.mode,
@@ -8000,7 +8141,41 @@ class ProductRepository:
             last_failure_at=normalize_optional_utc(settings.last_failure_at),
             last_candidate_visit_id=settings.last_candidate_visit_id,
             last_proposal_id=settings.last_proposal_id,
+            scene_confusor_reviewed_evidence_enabled=settings.scene_confusor_reviewed_evidence_enabled,
+            scene_confusor_regions_with_reviewed_false_evidence=with_evidence,
+            scene_confusor_regions_eligible_from_reviewed_evidence=eligible,
         )
+
+    def _scene_confusor_reviewed_evidence_summary(
+        self, session: Session, *, stream_id: str,
+    ) -> tuple[int, int]:
+        """Bounded, indexed, on-demand status aggregate -- never a hot-path
+        or per-frame computation (see Phase 10 of the governing milestone
+        brief). Scoped by the same `ix_scene_confusor_regions_stream_updated`
+        index every other scene-confusor read already uses, over a set
+        already capped at `max_regions_per_stream` (default 64) -- at most a
+        few dozen rows, not an unbounded scan. Returns
+        `(regions_with_any_reviewed_false_evidence, regions_currently_
+        eligible_from_reviewed_evidence_alone)`; the second is always `<=`
+        the first, and only counts a region once (`reviewed_real_count ==
+        0`) -- a region a human has ever confirmed real is never "eligible,"
+        matching `evaluate_scene_confusor_suspicion`'s own unconditional
+        protection ordering exactly."""
+
+        with_evidence = session.scalar(
+            select(func.count(SceneConfusorRegionModel.id)).where(
+                SceneConfusorRegionModel.stream_id == stream_id,
+                SceneConfusorRegionModel.reviewed_false_count > 0,
+            )
+        ) or 0
+        eligible = session.scalar(
+            select(func.count(SceneConfusorRegionModel.id)).where(
+                SceneConfusorRegionModel.stream_id == stream_id,
+                SceneConfusorRegionModel.reviewed_real_count == 0,
+                SceneConfusorRegionModel.reviewed_false_count >= DEFAULT_MIN_REVIEWED_FALSE_TO_SUSPECT,
+            )
+        ) or 0
+        return with_evidence, eligible
 
     def record_observation_authority_failure(
         self, *, stream_id: str, failure_code: str, now: datetime | None = None,
@@ -23797,6 +23972,19 @@ class ProductRepository:
                 visit.review_status = ReviewStatus.needs_review.value
                 event.review_status = ReviewStatus.needs_review.value
                 now = datetime.now(UTC)
+                # Site-Specific Learning & Local Adaptation v1
+                # (reversibility -- see "Reversibility" in docs/scene-
+                # confusor-suspicion-contract.md and Phase 8 requirement #4
+                # of the governing milestone brief): reopening deliberately
+                # returns this Visit to `needs_review` -- it no longer
+                # carries authoritative reviewed truth, so whatever
+                # `current` (the label being reopened) had previously
+                # contributed to a scene-confusor region's counts must be
+                # retracted now, not left stale indefinitely. This is the
+                # one path in this whole interaction that only ever
+                # retracts -- reopening creates no new reviewed truth, so
+                # there is nothing to increment afterward.
+                self._retract_scene_confusor_region_contribution(session, current, now=now)
                 self._sync_review_alert(session, visit, now)
                 # Everyday Discovery / Product Experience v2 (Phase L): this
                 # Visit no longer carries `prior_reviewed_label` -- resolve
@@ -32146,9 +32334,30 @@ class ProductRepository:
             # the Visit's new label, never the one it is leaving.
             prior_reviewed_label = visit_model.reviewed_label
 
+            # Site-Specific Learning & Local Adaptation v1 (reversibility --
+            # see "Reversibility" in docs/scene-confusor-suspicion-
+            # contract.md): this Visit already carried authoritative
+            # reviewed truth *before* this write, so the label about to be
+            # superseded (via `revise_visit_review`, or any other path that
+            # re-labels an already-reviewed Visit) may itself have
+            # contributed to a scene-confusor region's counts. Captured
+            # before `label_model` is added below, so this query cannot see
+            # the new row and mistake it for the thing being superseded.
+            was_already_reviewed = visit_model.review_status == ReviewStatus.reviewed.value
+            prior_effective_label = (
+                self._current_effective_review_label_model_for_visit(session, visit_model.id)
+                if was_already_reviewed
+                else None
+            )
+
             session.add(label_model)
             visit_model.reviewed_label = normalized_label
             visit_model.review_status = ReviewStatus.reviewed.value
+            review_moment = created_at or datetime.now(UTC)
+            if prior_effective_label is not None:
+                self._retract_scene_confusor_region_contribution(
+                    session, prior_effective_label, now=review_moment,
+                )
             # Scene confusor reviewed-truth interaction (see docs/scene-
             # confusor-suspicion-contract.md): reached only for an
             # authority-eligible review (this branch already required
@@ -32157,7 +32366,7 @@ class ProductRepository:
             # protect or strengthen a region either). A no-op for any
             # non-Stage-7 Visit or one with no recurring history yet.
             self._update_scene_confusor_region_from_review(
-                session, visit_model, normalized_label, now=created_at or datetime.now(UTC),
+                session, visit_model, normalized_label, now=review_moment, label_model=label_model,
             )
 
             if event_model is not None:

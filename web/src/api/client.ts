@@ -81,6 +81,7 @@ import type {
   LocalCameraFrameCaptureResponse,
   LiveCameraSessionStatus,
   ObservationSessionStatus,
+  SceneConfusorLearningStatus,
   LivePreviewLeaseRequest,
   LivePreviewLeaseResponse,
   LivePreviewReleaseResponse,
@@ -762,6 +763,20 @@ export const apiClient = {
   getStreamObservationStatus: (streamId: string) =>
     request<ObservationSessionStatus>(
       `/api/streams/${encodeURIComponent(streamId)}/observation/status`,
+    ),
+  getSceneConfusorLearningStatus: (streamId: string) =>
+    request<SceneConfusorLearningStatus>(
+      `/api/streams/${encodeURIComponent(streamId)}/observation/scene-confusor-learning`,
+    ),
+  setSceneConfusorLearningEnabled: (streamId: string, enabled: boolean) =>
+    request<SceneConfusorLearningStatus>(
+      `/api/streams/${encodeURIComponent(streamId)}/observation/scene-confusor-learning`,
+      { method: "POST", body: JSON.stringify({ enabled }) },
+    ),
+  resetSceneConfusorLearning: (streamId: string) =>
+    request<SceneConfusorLearningStatus>(
+      `/api/streams/${encodeURIComponent(streamId)}/observation/scene-confusor-learning/reset`,
+      { method: "POST" },
     ),
   liveCameraCurrentFrameUrl: (streamId: string) =>
     `${API_BASE_URL}/api/streams/${encodeURIComponent(streamId)}/live-session/current-frame`,

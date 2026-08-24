@@ -1677,6 +1677,30 @@ class CounterfactualWindowResponse(BaseModel):
     attribution_reason: str
 
 
+class SceneConfusorLearningStatusResponse(BaseModel):
+    """Site-Specific Learning & Local Adaptation v1 (see docs/scene-
+    confusor-suspicion-contract.md, "Operator surface"): the smallest
+    honest status the "Learning from reviewed activity on this camera" /
+    "Not enough reviewed history yet" / "Local adjustment active" / "Local
+    adjustment disabled" product surface needs. Deliberately does not
+    expose region ids, geometry, occurrence counts, or any other model-
+    internal detail -- see the governing milestone brief's Phase 6."""
+
+    stream_id: str
+    reviewed_evidence_enabled: bool
+    regions_with_reviewed_evidence: int
+    regions_currently_adjusted: int
+
+
+class SceneConfusorLearningEnabledUpdate(BaseModel):
+    """Body for enabling/disabling this Stream's own reviewed-evidence
+    suspicion path -- see `SceneConfusorLearningStatusResponse`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+
+
 class SourceMonitorStatusResponse(BaseModel):
     # Monitor state is in-memory and evidence-only; correction remains truth.
     observation_provider_id: str = "snapshot"
