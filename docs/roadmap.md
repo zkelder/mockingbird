@@ -1531,6 +1531,32 @@ domain-stratified sweep above (night/IR, motion blur, geography,
 non-bird-wildlife breadth) and a proper BioCLIP 2.5 calibration study before
 any real promotion decision.
 
+**2026-08-24 closure:** Species Classification Re-evaluation & Promotion v2
+([report](species-classification-reevaluation-promotion-v2-report.md)) ran
+the broader domain-stratified sweep and BioCLIP 2.5 calibration study named
+above as still-open, on a real 36-case cohort (32 scored) -- 3x the prior
+session's evidence, mostly new real reviewed Visits and false-positive
+hard negatives from the live product database, individually visually
+verified before scoring. Decision: **retain baseline, promote nothing.**
+BioCLIP 2.5's calibration concern is now resolved, not merely unresolved --
+confidently wrong on 14/19 (73.7%) of real hard negatives, vs. the
+incumbent's 1/19 (5.3%), which disqualifies it under this section's own
+"sufficiently low confidently-wrong rate" requirement regardless of its
+real top-1 accuracy gain (61.5% vs. 38.5%) on genuine birds. SpeciesNet
+remains unsuitable as primary bird identifier (0/13 real specific-species
+accuracy, unchanged verdict) but a new, real, external-domain-only finding
+(not evaluated in 2026-08-22): it correctly names "domestic cat" and
+"virginia opossum" at 0.93-0.96 confidence on clear third-party camera-trap
+photos, with hard-negative safety matching the incumbent (18/19 correct
+abstention) on MockingBird's own real evidence -- recorded as a genuine,
+unpromoted lead for a future, explicitly-scoped broader-wildlife
+integration milestone, gated on first collecting real MockingBird-domain
+mammal evidence (still genuinely zero anywhere in this repository or
+environment) rather than on model capability. One real P0 fixed: the
+eligibility/abstention policy was silently bypassable via suggestion-reuse
+for pre-2026-08-21 suggestions, closed with a policy-version check plus a
+regression test.
+
 #### Resolution-aware species inference (preserved, partially tested doctrine)
 
 Lineage doctrine already exists and is unchanged ("Source-resolution

@@ -1385,6 +1385,83 @@ async def test_review_identification_bioclip_reuses_completed_exact_input(
     assert await truth_snapshot(client) == before_truth
 
 
+async def test_review_identification_does_not_reuse_suggestion_from_a_stale_eligibility_policy_version(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    isolated_repository: ProductRepository,
+) -> None:
+    """A pending suggestion recorded under an older (or, for a genuinely
+    legacy pre-2026-08-21 row, entirely absent) eligibility/abstention
+    policy version must never be silently served back by the reuse/
+    idempotency paths -- the CURRENT policy must always be the one that
+    actually decides whether an answer is confident enough to keep.
+
+    Regression for a real gap found during Species Classification
+    Re-evaluation & Promotion v2 archaeology: the reuse paths matched on
+    exact model/input/candidate-pack identity but never checked policy
+    version, so a suggestion computed before this policy existed (or under
+    an older version of it) could be served back forever by an ordinary,
+    expected UI action ("Identify again"), silently bypassing every
+    abstention improvement made since -- including for images the current
+    policy would now correctly abstain on.
+    """
+    import json
+
+    from mockingbird.repository.product_repository import SpeciesSuggestionModel
+
+    imported = await import_review_image(client, title="Stale eligibility policy reuse image")
+    visit_id, _evidence_id = await create_activity_review_item(
+        client,
+        media_asset_id=imported["media_asset"]["id"],
+    )
+    mark_bioclip_available(monkeypatch, tmp_path)
+    prediction = bioclip_prediction(
+        ("northern cardinal (Cardinalis cardinalis)", None, None, 0.90),
+        ("blue jay (Cyanocitta cristata)", None, None, 0.22),
+    )
+    monkeypatch.setattr(
+        product_repository,
+        "prepare_bioclip_run",
+        lambda _config: bioclip_prepared_run(prediction),
+    )
+    mock_bioclip_run(monkeypatch, prediction)
+
+    first = await client.post(f"/api/review-queue/visit/{visit_id}/identify", json={})
+    assert first.status_code == 200
+    assert first.json()["identification"]["status"] == "suggestion_created"
+    first_suggestion_id = first.json()["species_suggestion"]["id"]
+
+    # Simulate a suggestion recorded before this policy existed (or under an
+    # older version): strip the identification_policy block entirely, which
+    # is exactly what a genuine pre-2026-08-21 historical row looks like.
+    # This state can only arise from real history, never from a freshly
+    # created suggestion, so direct-session mutation is the only way to
+    # construct it in a test.
+    with isolated_repository.session_factory() as session:
+        suggestion_row = session.get(SpeciesSuggestionModel, first_suggestion_id)
+        assert suggestion_row is not None
+        evidence_region = json.loads(suggestion_row.evidence_region_json)
+        assert "identification_policy" in evidence_region  # sanity: policy was actually stamped
+        del evidence_region["identification_policy"]
+        suggestion_row.evidence_region_json = json.dumps(evidence_region)
+        session.commit()
+
+    second = await client.post(f"/api/review-queue/visit/{visit_id}/identify", json={})
+
+    assert second.status_code == 200
+    assert second.json()["identification"]["status"] == "suggestion_created"
+    assert second.json()["created_suggestion_ids"] != []
+    assert second.json()["species_suggestion"]["id"] != first_suggestion_id
+    assert "reused the completed result" not in (second.json()["identification"].get("message") or "")
+
+    attempts = isolated_repository.list_bioclip_identification_attempts(
+        target_type="visit",
+        target_id=visit_id,
+    )
+    assert len(attempts) == 2  # fresh inference genuinely ran a second time, not a cache hit
+
+
 async def test_assistant_reuses_completed_bioclip_evidence_without_a_prior_assistant_run(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,

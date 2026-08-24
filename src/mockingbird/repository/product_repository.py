@@ -25727,6 +25727,7 @@ class ProductRepository:
                             _species_suggestion_from_model(suggestion),
                             _safe_json_object(attempt.crop_provenance_json),
                             _safe_json_object(attempt.model_provenance_json),
+                            _safe_json_object(suggestion.evidence_region_json),
                         )
                     )
         if not candidates:
@@ -25767,7 +25768,13 @@ class ProductRepository:
             )
         except BioClipConfigurationError:
             return None
-        for suggestion, crop_provenance, model_provenance in candidates:
+        for suggestion, crop_provenance, model_provenance, evidence_region in candidates:
+            identification_policy = evidence_region.get("identification_policy")
+            reused_policy_version = (
+                identification_policy.get("policy_version")
+                if isinstance(identification_policy, dict)
+                else None
+            )
             if (
                 crop_provenance.get("input_sha256") == input_sha256
                 and _bioclip_provenance_matches_prepared_run(
@@ -25775,6 +25782,13 @@ class ProductRepository:
                     prepared_run,
                     candidate_pack_sha256=run_context.candidate_pack.content_sha256,
                 )
+                # A pending suggestion recorded under an older (or absent, i.e.
+                # pre-2026-08-21) eligibility/abstention policy version must never
+                # be silently reused as-is: today's policy may abstain where the
+                # old one did not. Force fresh inference so the CURRENT policy is
+                # the one that actually decides, instead of serving a stale
+                # confident answer the current abstention gate never evaluated.
+                and reused_policy_version == IDENTIFICATION_ELIGIBILITY_POLICY_VERSION
             ):
                 return suggestion
         return None
@@ -25844,6 +25858,12 @@ class ProductRepository:
         for candidate in candidates:
             evidence_region = _safe_json_object(candidate.evidence_region_json)
             provenance = evidence_region.get("model_provenance")
+            identification_policy = evidence_region.get("identification_policy")
+            reused_policy_version = (
+                identification_policy.get("policy_version")
+                if isinstance(identification_policy, dict)
+                else None
+            )
             if (
                 evidence_region.get("input_sha256") == input_sha256
                 and isinstance(provenance, dict)
@@ -25853,6 +25873,11 @@ class ProductRepository:
                 == _candidate_bank_sha256(
                     _species_candidate_pack_prompt_labels(run_context.candidate_pack)
                 )
+                # Same reasoning as _reusable_bioclip_suggestion above: never reuse
+                # a suggestion recorded under a stale/absent eligibility policy
+                # version -- a legacy pre-policy suggestion (no "identification_policy"
+                # block at all) must always fall through to fresh inference.
+                and reused_policy_version == IDENTIFICATION_ELIGIBILITY_POLICY_VERSION
             ):
                 return _species_suggestion_from_model(candidate)
         return None
