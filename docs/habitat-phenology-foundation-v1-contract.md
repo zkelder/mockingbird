@@ -98,7 +98,7 @@ two-column split (epistemic tier vs. specific method):
   a fourth `information_class` value.
 
 Both are validated as a `Literal["reviewed"]` at the response-schema layer
-(matching `SolarContext.information_class: Literal["derived"]`'s "the
+(matching `SolarContext.information_class: Literal["inferred"]`'s "the
 response type reflects what can actually be returned today, not the full
 future vocabulary" discipline) while staying a plain string in the
 database.

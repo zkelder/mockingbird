@@ -3056,6 +3056,29 @@ monitoring effort differs. Relationship language stays to "associated
 with," "coincided with," "historically higher/lower under," and "changed
 during the same period" unless causal evidence genuinely exists.
 
+**2026-08-24 update (Biodiversity & Place Intelligence v1):** the first
+bounded slice combining all three foundations -- see
+[biodiversity-place-intelligence-v1-contract.md](biodiversity-place-intelligence-v1-contract.md).
+New `GET /api/place/biodiversity-summary`: a Place-wide, all-time,
+"as of right now" roster (authoritative taxa, new/regular/recently-observed
+subsets, provisional taxa kept structurally separate, the same coverage-
+aware `historical_baseline` every other Place Intelligence surface already
+depends on, and the Place's current habitat/environmental snapshot
+embedded alongside it) built almost entirely by composing existing
+`historical_baseline`/`wildlife_journal`/habitat/environmental primitives,
+not new truth computation. Bird Log's per-taxon history gained one new
+`place_context` field: the habitat/phenology state and day/night context
+associated with that taxon's single most recent reviewed observation --
+descriptive association only, never a cause. Surfaced as a new calm
+Dashboard/Place Report card and a Bird Log history section. Deliberately
+not attempted here (still open for a future slice): seasonality,
+phenological-pattern trends, vegetation/habitat change tracking,
+pollinator/flowering relationships, and weather/environment-associated
+activity beyond day/night -- all still need more accumulated real history
+than this product has, and several are non-goals until a stronger
+change-detection foundation exists. No diversity index, population
+estimate, or causal claim was added anywhere.
+
 ### 5. Land Management / Agriculture
 
 An application of Place Intelligence, not a separate product architecture

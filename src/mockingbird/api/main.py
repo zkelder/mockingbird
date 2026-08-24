@@ -391,6 +391,7 @@ from mockingbird.api.schemas import (
     EnvironmentalContextSettingsUpdate,
     InstallationSettings,
     InstallationSettingsUpdate,
+    PlaceBiodiversitySummaryResponse,
     PlaceEnvironmentalContext,
     PlaceHabitatContext,
     PlaceHabitatFact,
@@ -14894,6 +14895,18 @@ async def get_place_habitat_context_today() -> PlaceHabitatContext:
     the environmental-context settings endpoints."""
 
     return get_repository().get_place_habitat_context()
+
+
+@app.get("/api/place/biodiversity-summary", response_model=PlaceBiodiversitySummaryResponse)
+async def get_place_biodiversity_summary() -> PlaceBiodiversitySummaryResponse:
+    """A Place-wide, "as of right now" biodiversity summary -- see
+    docs/biodiversity-place-intelligence-v1-contract.md. A live view (like
+    Bird Log, not a fixed report period): reused reviewed truth, historical
+    baseline maturity, new/regular/recent taxa, provisional taxa kept
+    structurally separate, and the Place's current habitat/environmental
+    context, in one read. Creates no review/Observation/product state."""
+
+    return get_repository().place_biodiversity_summary()
 
 
 def _storage_retention_http_error(error: ValueError) -> HTTPException:

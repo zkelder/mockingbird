@@ -34,6 +34,7 @@ from mockingbird.analytics.historical_baseline import (
     HistoricalPlaceBaseline,
     SpeciesHistoricalStatus,
 )
+from mockingbird.analytics.place_biodiversity_summary import PlaceBiodiversitySummary
 from mockingbird.analytics.place_activity_report import (
     CoverageSummary,
     HourActivityEntry,
@@ -54,6 +55,7 @@ from mockingbird.analytics.place_change_summary import (
     TaxonChangeStatus,
 )
 from mockingbird.api.schemas import (
+    DashboardTodaySpecies,
     LabelCategory,
     PlaceActivityReportChangeWindows,
     PlaceActivityReportCoverage,
@@ -73,6 +75,10 @@ from mockingbird.api.schemas import (
     PlaceActivityReportTaxonHourActivity,
     PlaceActivityReportTaxonZoneActivity,
     PlaceActivityReportZoneActivity,
+    PlaceBiodiversitySummaryResponse,
+    PlaceBiodiversityTaxonEntry,
+    PlaceEnvironmentalContext,
+    PlaceHabitatContext,
     RepresentativeEvidence,
     ReviewStatus,
     StreamVisitSummary,
@@ -556,4 +562,48 @@ def place_activity_report_response(
         overall_change_status=_overall_change_status_response(change_summary.overall),
         warnings=warnings,
         digest=digest_response,
+    )
+
+
+def _place_biodiversity_taxon_entry_response(
+    status: SpeciesHistoricalStatus,
+) -> PlaceBiodiversityTaxonEntry:
+    return PlaceBiodiversityTaxonEntry(
+        label=status.taxon.label,
+        display_name=status.taxon.display_name,
+        category=status.taxon.category,
+        is_species=status.taxon.is_species,
+        historical_status=_species_historical_status_response(status),
+    )
+
+
+def place_biodiversity_summary_response(
+    summary: PlaceBiodiversitySummary,
+    *,
+    provisional_taxa: list[DashboardTodaySpecies],
+    habitat_context: PlaceHabitatContext,
+    environmental_context: PlaceEnvironmentalContext,
+) -> PlaceBiodiversitySummaryResponse:
+    """See docs/biodiversity-place-intelligence-v1-contract.md. `summary`
+    carries every authoritative taxon fact already; `provisional_taxa`/
+    `habitat_context`/`environmental_context` are threaded in separately
+    because they come from three other already-existing repository reads
+    (`list_likely_species_overview`/`get_place_habitat_context`/
+    `get_place_environmental_context_today`) this module has no reason to
+    know how to produce itself."""
+
+    return PlaceBiodiversitySummaryResponse(
+        generated_at=summary.generated_at,
+        historical_baseline=_historical_baseline_response(summary.historical_baseline),
+        distinct_species_count=summary.distinct_species_count,
+        taxa=[_place_biodiversity_taxon_entry_response(status) for status in summary.taxa],
+        new_taxa=[_place_biodiversity_taxon_entry_response(status) for status in summary.new_taxa],
+        regular_taxa=[_place_biodiversity_taxon_entry_response(status) for status in summary.regular_taxa],
+        recently_observed_taxa=[
+            _place_biodiversity_taxon_entry_response(status) for status in summary.recently_observed_taxa
+        ],
+        provisional_taxa=provisional_taxa,
+        habitat_context=habitat_context,
+        environmental_context=environmental_context,
+        warnings=list(summary.warnings),
     )

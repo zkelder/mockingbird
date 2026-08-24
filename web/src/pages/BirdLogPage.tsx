@@ -862,6 +862,36 @@ export function BirdLogPage({
                 <div className="panel"><h2>First recorded</h2>{activeHistory.first_observation ? <button className="journal-observation-link" onClick={() => onOpenVisit(activeHistory.first_observation!.visit_id)} type="button">{formatDateTime(activeHistory.first_observation.observed_at)} · {activeHistory.first_observation.stream_name}</button> : null}</div>
                 <div className="panel"><h2>Most recent</h2>{activeHistory.latest_observation ? <button className="journal-observation-link" onClick={() => onOpenVisit(activeHistory.latest_observation!.visit_id)} type="button">{formatDateTime(activeHistory.latest_observation.observed_at)} · {activeHistory.latest_observation.stream_name}</button> : null}</div>
               </section>
+              {activeHistory.place_context ? (
+                // Biodiversity & Place Intelligence v1: context tied to the
+                // single most recent reviewed observation only -- never a
+                // per-Visit or statistical summary, and never phrased as a
+                // cause. See docs/biodiversity-place-intelligence-v1-contract.md.
+                <section className="journal-history-grid">
+                  <div className="panel">
+                    <h2>Habitat &amp; environment</h2>
+                    <span className="meta-text">
+                      Recorded alongside the most recent sighting, {formatDateTime(activeHistory.place_context.observed_at)} — association only, never a cause.
+                    </span>
+                    {activeHistory.place_context.environmental_context.available ? (
+                      <p className="meta-text">
+                        {activeHistory.place_context.environmental_context.daylight_state === "day"
+                          ? "Recorded during daylight"
+                          : "Recorded at night"}
+                      </p>
+                    ) : null}
+                    {activeHistory.place_context.phenology_context.length > 0 ? (
+                      <ul className="habitat-phenology-list">
+                        {activeHistory.place_context.phenology_context.map((observation) => (
+                          <li key={observation.id}>
+                            <strong>{observation.subject_label}</strong> &middot; {observation.phenomenon}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+                </section>
+              ) : null}
               <section className="journal-history-grid">
                 <div className="panel"><h2>Stream activity</h2><BreakdownList items={activeHistory.stream_breakdown} title="Streams" /></div>
                 <div className="panel"><h2>Zone activity</h2><BreakdownList items={activeHistory.zone_breakdown} title="Zones" /></div>

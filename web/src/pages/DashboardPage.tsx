@@ -6,6 +6,7 @@ import type {
   CameraHealthSummary,
   HealthStatus,
   PlaceActivityReportResponse,
+  PlaceBiodiversitySummaryResponse,
   PlaceEnvironmentalContext,
   PlaceHabitatContext,
   PlaceHabitatFactCreate,
@@ -15,6 +16,7 @@ import type {
   StorageSummary,
   StreamRuntimeStatus,
 } from "../api/types";
+import { BiodiversitySummaryCard } from "../components/BiodiversitySummaryCard";
 import { EmptyState } from "../components/EmptyState";
 import { EnvironmentalContextCard } from "../components/EnvironmentalContextCard";
 import { HabitatPhenologyCard } from "../components/HabitatPhenologyCard";
@@ -227,6 +229,12 @@ export function DashboardPage({
   // see docs/habitat-phenology-foundation-v1-contract.md "Frontend
   // surface". Same absence-safety discipline as environmentalContext above.
   const [habitatContext, setHabitatContext] = useState<PlaceHabitatContext | null>(null);
+  // Biodiversity & Place Intelligence v1: a fourth, equally separate fetch
+  // -- see docs/biodiversity-place-intelligence-v1-contract.md. Same
+  // absence-safety discipline as the two context fetches above.
+  const [biodiversitySummary, setBiodiversitySummary] = useState<PlaceBiodiversitySummaryResponse | null>(
+    null,
+  );
 
   const refreshDashboard = useCallback(async (initialLoad = false) => {
     if (initialLoad) {
@@ -242,6 +250,7 @@ export function DashboardPage({
         nextReport,
         nextEnvironmentalContext,
         nextHabitatContext,
+        nextBiodiversitySummary,
       ] = await Promise.all([
         apiClient.getDashboardSummary(todayLocalDateString()),
         apiClient.getStreamMonitoringStatuses().catch(() => null),
@@ -249,12 +258,14 @@ export function DashboardPage({
         apiClient.getPlaceActivityReport(todayLocalRange()).catch(() => null),
         apiClient.getTodayEnvironmentalContext().catch(() => null),
         apiClient.getPlaceHabitatContext().catch(() => null),
+        apiClient.getPlaceBiodiversitySummary().catch(() => null),
       ]);
       setSummary(nextSummary);
       setStorageSummary(nextStorageSummary);
       setReport(nextReport);
       setEnvironmentalContext(nextEnvironmentalContext);
       setHabitatContext(nextHabitatContext);
+      setBiodiversitySummary(nextBiodiversitySummary);
       if (monitoringStatuses) {
         setDurableStatusByStream(
           Object.fromEntries(
@@ -498,6 +509,10 @@ export function DashboardPage({
         onUpdateHabitatFact={updateHabitatFact}
         onUpdatePhenologyObservation={updatePhenologyObservation}
       />
+      {/* Biodiversity & Place Intelligence v1: a fourth sibling card, same
+          reasoning as EnvironmentalContextCard/HabitatPhenologyCard above --
+          see docs/biodiversity-place-intelligence-v1-contract.md. */}
+      <BiodiversitySummaryCard onOpenBirdLog={onOpenBirdLog} summary={biodiversitySummary} />
       {/* Everyday Discovery / Product Experience v2 (Phase G): Today's own
           report above only ever shows one busiest_zone winner and a single
           change sentence -- this links to the fuller exploration surface

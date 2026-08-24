@@ -4764,6 +4764,11 @@ export interface WildlifeJournalHistoryResponse {
   // Gate C -- Meaningful Change Detection / Baseline Comparison v1 -- see
   // docs/meaningful-change-detection-contract.md.
   change_status?: PlaceActivityReportTaxonChangeStatus | null;
+  // Biodiversity & Place Intelligence v1 -- habitat/environmental context
+  // associated with this taxon's single most recent reviewed observation
+  // only. `null` when there is no confirmed observation at all. See
+  // docs/biodiversity-place-intelligence-v1-contract.md.
+  place_context?: TaxonPlaceContext | null;
   activity_library_drilldown: WildlifeJournalDrilldown;
   gallery: WildlifeJournalGallery;
 }
@@ -5123,6 +5128,48 @@ export interface PlaceHabitatContext {
   habitat_facts: PlaceHabitatFact[];
   current_phenology: PlacePhenologyObservation[];
   recent_phenology: PlacePhenologyObservation[];
+}
+
+// Biodiversity & Place Intelligence v1 -- see
+// docs/biodiversity-place-intelligence-v1-contract.md. Restrained,
+// non-causal habitat/environmental context tied to one taxon's single
+// most recent reviewed observation. `environmental_context` is never
+// null -- it mirrors `SolarContext`'s own "always-present object, honest
+// absence via `available`" convention.
+export interface TaxonPlaceContext {
+  observed_at: string;
+  environmental_context: SolarContext;
+  phenology_context: PlacePhenologyObservation[];
+}
+
+// One all-time-confirmed taxon's identity plus its canonical historical
+// status -- reuses `PlaceActivityReportTaxonHistoricalStatus` verbatim, so
+// this can never disagree with what Today or Bird Log show for the same
+// taxon at the same moment.
+export interface PlaceBiodiversityTaxonEntry {
+  label: string;
+  display_name: string;
+  category: LabelCategory;
+  is_species: boolean;
+  historical_status: PlaceActivityReportTaxonHistoricalStatus;
+}
+
+// A Place-wide, "as of right now" biodiversity summary -- a live view, not
+// a fixed report period. `new_taxa`/`regular_taxa`/`recently_observed_taxa`
+// are convenience subsets of `taxa`, not a partition. `provisional_taxa`
+// is structurally separate and can never inflate the authoritative counts.
+export interface PlaceBiodiversitySummaryResponse {
+  generated_at: string;
+  historical_baseline: PlaceActivityReportHistoricalBaseline;
+  distinct_species_count: number;
+  taxa: PlaceBiodiversityTaxonEntry[];
+  new_taxa: PlaceBiodiversityTaxonEntry[];
+  regular_taxa: PlaceBiodiversityTaxonEntry[];
+  recently_observed_taxa: PlaceBiodiversityTaxonEntry[];
+  provisional_taxa: DashboardTodaySpecies[];
+  habitat_context: PlaceHabitatContext;
+  environmental_context: PlaceEnvironmentalContext;
+  warnings: string[];
 }
 
 export interface ProductHealthStatus {

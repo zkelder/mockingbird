@@ -9,9 +9,11 @@ import type {
   PlaceActivityReportResponse,
   PlaceActivityReportTaxonEntry,
   PlaceActivityReportZoneActivity,
+  PlaceBiodiversitySummaryResponse,
   PlaceHabitatFact,
   PlacePhenologyObservation,
 } from "../api/types";
+import { BiodiversitySummaryCard } from "../components/BiodiversitySummaryCard";
 import { EmptyState } from "../components/EmptyState";
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
@@ -472,6 +474,27 @@ export function PlaceActivityReportPage({ sources, onOpenVisit, onOpenBirdLog }:
     };
   }, []);
 
+  // Biodiversity & Place Intelligence v1: another read-only, period-
+  // independent fetch, same reasoning as habitat/phenology above -- an
+  // all-time Place roster, not scoped to whatever period is selected
+  // above. See docs/biodiversity-place-intelligence-v1-contract.md.
+  const [biodiversitySummary, setBiodiversitySummary] = useState<PlaceBiodiversitySummaryResponse | null>(
+    null,
+  );
+
+  useEffect(() => {
+    let active = true;
+    void apiClient
+      .getPlaceBiodiversitySummary()
+      .catch(() => null)
+      .then((next) => {
+        if (active) setBiodiversitySummary(next);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   function toggleSourceId(sourceId: string) {
     setSelectedSourceIds((current) =>
       current.includes(sourceId)
@@ -770,6 +793,12 @@ export function PlaceActivityReportPage({ sources, onOpenVisit, onOpenBirdLog }:
           )}
         </>
       ) : null}
+
+      {/* Biodiversity & Place Intelligence v1: deliberately outside the
+          `report` conditional above -- an all-time Place roster, not
+          scoped to the period picker. Same component the Dashboard's own
+          sibling card uses, so the two can never disagree. */}
+      <BiodiversitySummaryCard onOpenBirdLog={onOpenBirdLog} summary={biodiversitySummary} />
 
       {/* Habitat & Phenology Foundation v1: deliberately outside the `report`
           conditional above -- a genuinely independent, period-agnostic

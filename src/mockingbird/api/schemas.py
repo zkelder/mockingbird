@@ -5869,6 +5869,13 @@ class WildlifeJournalHistoryResponse(BaseModel):
     # `WildlifeJournalLabelSummary.change_status` and
     # docs/meaningful-change-detection-contract.md.
     change_status: PlaceActivityReportTaxonChangeStatus | None = None
+    # Biodiversity & Place Intelligence v1 -- habitat/environmental context
+    # associated with this taxon's single most recent reviewed observation
+    # only, never a per-Visit or statistical summary. `None` when there is
+    # no confirmed observation at all (defensive; every real label reaching
+    # this response has at least one). See docs/biodiversity-place-
+    # intelligence-v1-contract.md "Taxon Place History."
+    place_context: TaxonPlaceContext | None = None
     activity_library_drilldown: WildlifeJournalDrilldown
     gallery: WildlifeJournalGallery
 
@@ -7487,7 +7494,7 @@ class PlaceHabitatFact(BaseModel):
     report a different doctrine-legal value, e.g. `"inferred"` for an
     automatic plant-recognition analyzer) because v1's only writer is a
     human describing their own Place -- mirrors `SolarContext.
-    information_class: Literal["derived"]`'s identical "the response type
+    information_class: Literal["inferred"]`'s identical "the response type
     reflects what can actually be returned today" discipline."""
 
     id: str
@@ -7634,3 +7641,69 @@ class PlaceHabitatContext(BaseModel):
     habitat_facts: list[PlaceHabitatFact]
     current_phenology: list[PlacePhenologyObservation]
     recent_phenology: list[PlacePhenologyObservation]
+
+
+class TaxonPlaceContext(BaseModel):
+    """Restrained, non-causal habitat/environmental context associated with
+    one taxon's single most recent reviewed observation at this Place --
+    see "Habitat + Environment Connection" in docs/biodiversity-place-
+    intelligence-v1-contract.md. Descriptive association only ("recorded
+    near sunrise", "recorded while a phenomenon was current"), never a
+    claim that context caused the observation. `environmental_context` is
+    never `None` -- it mirrors `SolarContext`'s own established convention
+    of an always-present object whose `available` flag carries honest
+    absence (not configured / unavailable for that date), matching
+    `PlaceEnvironmentalContext`/`VisitEnvironmentalContext` exactly.
+    `phenology_context` is independently honest-absent as `[]` when no
+    phenomenon was current as of that observation -- neither field ever
+    blocks or degrades the other."""
+
+    observed_at: datetime
+    environmental_context: SolarContext
+    phenology_context: list[PlacePhenologyObservation] = Field(default_factory=list)
+
+
+class PlaceBiodiversityTaxonEntry(BaseModel):
+    """One all-time-confirmed taxon's identity plus its canonical
+    historical status -- reuses `PlaceActivityReportTaxonHistoricalStatus`
+    verbatim (the exact same nested shape Today's report already returns)
+    so a taxon's status here can never silently disagree with what Today
+    or Bird Log show for the same taxon at the same moment. See
+    docs/canonical-new-regular-species-contract.md."""
+
+    label: str
+    display_name: str
+    category: LabelCategory
+    is_species: bool
+    historical_status: PlaceActivityReportTaxonHistoricalStatus
+
+
+class PlaceBiodiversitySummaryResponse(BaseModel):
+    """A Place-wide, "as of right now" biodiversity summary -- see
+    docs/biodiversity-place-intelligence-v1-contract.md. A live view, not a
+    fixed report period, unlike `PlaceActivityReportResponse`: re-requesting
+    later can honestly change the answer as new reviewed observations and
+    monitoring history accumulate.
+
+    `taxa`/`new_taxa`/`regular_taxa`/`recently_observed_taxa` are built
+    exclusively from authoritative reviewed truth. `provisional_taxa`
+    (unreviewed AI suggestions, the same `DashboardTodaySpecies` shape
+    Bird Log's "Likely sightings" panel already renders) is a structurally
+    separate list that can never inflate any of the authoritative counts
+    above it. `new_taxa`/`regular_taxa`/`recently_observed_taxa` are
+    convenience subsets of `taxa`, not a partition: a taxon may appear in
+    more than one, in none of the three, or -- for `regular_taxa` without
+    `recently_observed_taxa` -- be a regular visitor simply not seen in the
+    last two weeks, which this response never states as "absent"."""
+
+    generated_at: datetime
+    historical_baseline: PlaceActivityReportHistoricalBaseline
+    distinct_species_count: int = Field(ge=0)
+    taxa: list[PlaceBiodiversityTaxonEntry] = Field(default_factory=list)
+    new_taxa: list[PlaceBiodiversityTaxonEntry] = Field(default_factory=list)
+    regular_taxa: list[PlaceBiodiversityTaxonEntry] = Field(default_factory=list)
+    recently_observed_taxa: list[PlaceBiodiversityTaxonEntry] = Field(default_factory=list)
+    provisional_taxa: list[DashboardTodaySpecies] = Field(default_factory=list, max_length=20)
+    habitat_context: PlaceHabitatContext
+    environmental_context: PlaceEnvironmentalContext
+    warnings: list[str] = Field(default_factory=list)

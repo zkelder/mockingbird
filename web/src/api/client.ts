@@ -92,6 +92,7 @@ import type {
   OnvifDiscoverProfilesResponse,
   PlaceActivityReportRequest,
   PlaceActivityReportResponse,
+  PlaceBiodiversitySummaryResponse,
   PlaceEnvironmentalContext,
   PlaceHabitatContext,
   PlaceHabitatFact,
@@ -1347,6 +1348,8 @@ export const apiClient = {
       method: "DELETE",
     }),
   getPlaceHabitatContext: () => request<PlaceHabitatContext>("/api/place/habitat-context"),
+  getPlaceBiodiversitySummary: () =>
+    request<PlaceBiodiversitySummaryResponse>("/api/place/biodiversity-summary"),
   getSoundscapeSummary: (payload: SoundscapeSummaryRequest) =>
     request<SoundscapeSummaryResponse>("/api/analytics/soundscape-summary", {
       method: "POST",

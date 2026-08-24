@@ -68,10 +68,12 @@ from mockingbird.analytics.place_activity_report import (
 )
 from mockingbird.analytics.place_activity_report_adapter import (
     place_activity_report_response,
+    place_biodiversity_summary_response,
     taxon_change_status_response,
     taxon_fact_from_taxonomy_label,
     visit_fact_from_stream_visit_summary,
 )
+from mockingbird.analytics.place_biodiversity_summary import compute_place_biodiversity_summary
 from mockingbird.analytics.place_change_summary import PlaceChangeSummary, compute_place_change_summary
 from mockingbird.analytics.soundscape import (
     SoundscapeSummary,
@@ -664,6 +666,7 @@ from mockingbird.api.schemas import (
     EnvironmentalContextSettingsUpdate,
     InstallationSettings,
     InstallationSettingsUpdate,
+    PlaceBiodiversitySummaryResponse,
     PlaceEnvironmentalContext,
     PlaceHabitatContext,
     PlaceHabitatFact,
@@ -674,6 +677,8 @@ from mockingbird.api.schemas import (
     PlacePhenologyObservationUpdate,
     SelfPasswordChangeRequest,
     SignInRequest,
+    SolarContext,
+    TaxonPlaceContext,
     UserCreate,
     UserEnabledUpdate,
     UserRole,
@@ -4509,7 +4514,9 @@ class ProductRepository:
                 session.delete(model)
                 return True
 
-    def list_place_phenology_observations(self) -> list[PlacePhenologyObservation]:
+    def list_place_phenology_observations(
+        self, *, as_of: date | None = None
+    ) -> list[PlacePhenologyObservation]:
         """Every recorded phenology observation, Place-wide, newest-
         observed-first (matches the existing "Recent Visits"/Stream-events
         newest-first convention). Includes `"past"` entries -- this is the
@@ -4517,9 +4524,18 @@ class ProductRepository:
         page's period-scoped history view), distinct from
         `get_place_habitat_context`'s deliberately narrower current/recent
         bundle. An empty list is a normal, honest "nothing recorded yet"
-        outcome."""
+        outcome.
 
-        today = datetime.now(UTC).date()
+        `as_of` classifies `status` against an arbitrary historical date
+        instead of today -- added for Biodiversity & Place Intelligence v1
+        (see "Taxon Place History" in docs/biodiversity-place-intelligence-
+        v1-contract.md) so a taxon's most recent observation can honestly
+        show which phenomena were current on *that* date. `classify_
+        phenology_status` was already generic; only this parameter is new.
+        Defaults to today, preserving every pre-existing caller's exact
+        behavior unchanged."""
+
+        today = as_of or datetime.now(UTC).date()
         with self.session_factory() as session:
             models = session.scalars(
                 select(PlacePhenologyObservationModel)
@@ -29861,6 +29877,16 @@ class ProductRepository:
             first_record = ordered[0] if ordered else None
             latest_record = ordered[-1] if ordered else None
             first_all_record = all_ordered[0] if all_ordered else None
+            # Biodiversity & Place Intelligence v1: the taxon's true
+            # all-time latest observation, deliberately distinct from
+            # `latest_record` above (which can be `None`, or an older
+            # observation, whenever the caller's own date-range/Stream/
+            # Zone filter excludes the most recent real sighting) -- see
+            # "Taxon Place History" in docs/biodiversity-place-
+            # intelligence-v1-contract.md. Composed into `place_context`
+            # after this session closes (below); plain data captured here,
+            # no live ORM object.
+            latest_all_record = all_ordered[-1] if all_ordered else None
             is_new_label_in_range = bool(
                 first_all_record is not None
                 and start_date is not None
@@ -29869,7 +29895,7 @@ class ProductRepository:
                 <= first_all_record["observed_at"].astimezone(local_timezone).date()
                 <= end_date
             )
-            return WildlifeJournalHistoryResponse(
+            response = WildlifeJournalHistoryResponse(
                 label=canonical_label,
                 display_name=display_name,
                 scope=WildlifeJournalScope(
@@ -29928,6 +29954,114 @@ class ProductRepository:
                 ),
                 gallery=gallery,
             )
+
+        # Biodiversity & Place Intelligence v1: intentionally outside the
+        # session above -- `_taxon_place_context` makes its own independent,
+        # already-existing repository calls (`get_visit_environmental_
+        # context`/`list_place_phenology_observations`), never nested
+        # inside this method's own open session.
+        if latest_all_record is not None:
+            response = response.model_copy(
+                update={
+                    "place_context": self._taxon_place_context(
+                        visit_id=latest_all_record["summary"].id,
+                        observed_at=latest_all_record["observed_at"],
+                    )
+                }
+            )
+        return response
+
+    def _taxon_place_context(self, *, visit_id: str, observed_at: datetime) -> TaxonPlaceContext:
+        """One taxon's single most recent reviewed observation's habitat/
+        environmental context -- see "Taxon Place History" in
+        docs/biodiversity-place-intelligence-v1-contract.md. Two already-
+        existing, independently-sessioned reads, never a new query shape;
+        O(1) per taxon-history request (a single-taxon view), never
+        O(gallery size)."""
+
+        visit_context = self.get_visit_environmental_context(visit_id)
+        # `visit_context is None` only means the Visit itself no longer
+        # exists (see `get_visit_environmental_context`'s own docstring) --
+        # not expected here since `visit_id` was just read from a real
+        # confirmed record, but handled defensively rather than raising.
+        environmental_context = (
+            SolarContext(
+                available=visit_context.available,
+                reason=visit_context.reason,
+                sunrise_at=visit_context.sunrise_at,
+                sunset_at=visit_context.sunset_at,
+                daylight_state=visit_context.daylight_state,
+                provider_key=visit_context.provider_key,
+                information_class=visit_context.information_class,
+                basis_latitude=visit_context.basis_latitude,
+                basis_longitude=visit_context.basis_longitude,
+            )
+            if visit_context is not None
+            else SolarContext(available=False, reason=None)
+        )
+        phenology_context = [
+            entry
+            for entry in self.list_place_phenology_observations(as_of=observed_at.astimezone(UTC).date())
+            if entry.status == "current"
+        ]
+        return TaxonPlaceContext(
+            observed_at=observed_at,
+            environmental_context=environmental_context,
+            phenology_context=phenology_context,
+        )
+
+    def place_biodiversity_summary(
+        self, *, now: datetime | None = None
+    ) -> PlaceBiodiversitySummaryResponse:
+        """A Place-wide, "as of right now" biodiversity summary -- see
+        docs/biodiversity-place-intelligence-v1-contract.md. Mirrors
+        `wildlife_journal_overview`'s exact session/anchoring convention (a
+        live view, not a fixed report period, "regular"/"new" anchored to
+        "now" and today's local midnight respectively) so a taxon's status
+        here can never disagree with what Bird Log shows for it at the same
+        moment. The three composed reads beyond the canonical call
+        (`list_likely_species_overview`/`get_place_habitat_context`/
+        `get_place_environmental_context_today`) run after this session
+        closes -- each already independently sessioned, never nested."""
+
+        local_now = (now or datetime.now().astimezone()).astimezone()
+        local_timezone = local_now.tzinfo
+        with self.session_factory() as session:
+            stream_ids = list(
+                session.scalars(
+                    select(StreamModel.id)
+                    .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+                    .where(CameraSourceModel.status != SourceStatus.archived.value)
+                ).all()
+            )
+            window_end_at = _as_utc(local_now)
+            local_day_start_at = _as_utc(
+                datetime.combine(local_now.date(), datetime.min.time(), local_timezone)
+            )
+            taxonomy_index = self._taxonomy_label_index(session)
+            historical_baseline, species_historical_statuses, _change_summary, _taxon_place_patterns = (
+                self._historical_place_baseline_and_species_statuses(
+                    session,
+                    stream_ids=stream_ids,
+                    taxonomy_index=taxonomy_index,
+                    window_end_at=window_end_at,
+                    local_timezone=local_timezone,
+                    period_start_at=local_day_start_at,
+                    period_end_at=window_end_at,
+                )
+            )
+
+        summary = compute_place_biodiversity_summary(
+            species_historical_statuses.values(),
+            historical_baseline=historical_baseline,
+            generated_at=window_end_at,
+        )
+        return place_biodiversity_summary_response(
+            summary,
+            provisional_taxa=self.list_likely_species_overview(limit=20).species,
+            habitat_context=self.get_place_habitat_context(),
+            environmental_context=self.get_place_environmental_context_today(),
+        )
 
     @staticmethod
     def _wildlife_journal_date_range(
