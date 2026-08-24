@@ -37,7 +37,7 @@ from astral import Observer
 from astral.sun import sun
 
 SOLAR_PROVIDER_KEY = "solar_local"
-SOLAR_INFORMATION_CLASS = "derived"
+SOLAR_INFORMATION_CLASS = "inferred"
 SOLAR_ALGORITHM_ID = "astral.sun.sun"
 SOLAR_ALGORITHM_VERSION = "3.2"
 

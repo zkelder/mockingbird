@@ -2980,8 +2980,9 @@ A generic, local-first environmental/ecological context substrate.
 the provider-neutral `environmental_context_records` table (provider;
 Place/Source relation via a nullable `source_id`; observed/valid time
 including `observed_at_end` for a future interval/aggregate;
-measurement/value/unit; provenance/`information_class`
-measured_local/external_provider/derived; bounded provenance JSON; cache/
+measurement/value/unit; provenance/`information_class` -- the canonical
+measured/inferred/reviewed vocabulary, never a domain-specific value;
+v1's solar provider always writes `inferred`; bounded provenance JSON; cache/
 retrieval time) plus one deterministic, no-secret built-in provider
 (`solar_local`): sunrise/sunset and day/night, derived from a new,
 deliberately coarse (~11 km) opt-in Place coordinate setting -- a narrow,

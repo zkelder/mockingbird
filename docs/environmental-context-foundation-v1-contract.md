@@ -83,30 +83,65 @@ to a new, narrower, single-purpose settings table rather than widened into
 
 ### 2. Information class / provenance
 
-Every environmental-context record carries `information_class`, one of:
+Every environmental-context record carries `information_class`, drawn
+from the one closed vocabulary that governs every domain in this product
+-- [product-doctrine.md](product-doctrine.md) "Measured, Inferred, and
+Reviewed": `measured`, `inferred`, `reviewed`. There is no fourth,
+domain-specific value for environmental context, and none of the
+following ever grows one -- doctrine already states plainly that "a
+future habitat, phenology, or environmental-sensor capability inherits
+one contract instead of re-deriving a second one."
 
-- `measured_local` -- a locally attached sensor read a real physical
-  quantity (not implemented yet; the column exists so a future sensor
-  provider needs no schema change).
-- `external_provider` -- retrieved from a public weather/environmental API
-  (not implemented yet, same reasoning).
-- `derived` -- computed deterministically from other durable inputs
-  (Place coordinates + a timestamp, via a documented algorithm). This is
-  what v1's solar provider always writes. `derived` is deliberately a
-  third, distinct value from the wildlife Measured/Inferred/Reviewed
-  triad in [product-doctrine.md](product-doctrine.md) "Measured, Inferred,
-  and Reviewed" -- solar geometry has no confidence/uncertainty the way a
-  species guess does, so reusing "Inferred" would overclaim a kind of
-  doubt that does not apply, and reusing "Measured" would overclaim direct
-  physical sensing that did not happen. `derived` says exactly what it is:
-  an exact computation from known inputs.
+v1's solar provider always writes **`inferred`**. Sunrise/sunset/day-night
+are computed deterministically from durable inputs (Place coordinates + a
+UTC instant) via a documented algorithm (`astral`) -- that is model/
+algorithm-derived intelligence about the world, doctrine's "Inferred"
+tier, precisely the same tier as "possible flowering onset" in doctrine's
+own Inferred examples. It is not `measured`: no physical sensor took a
+reading here, and repeatability/determinism is not the same property as
+direct physical sensing -- a deterministic computation is still a
+computation, not a measurement, no matter how exactly reproducible it is.
+It is not `reviewed`: no human validates a sunrise time before it is
+shown. `inferred` here carries none of the wildlife-suggestion UX
+vocabulary (Likely/Possible/confidence scores) that usually accompanies
+Inferred output -- solar geometry has no uncertainty to express -- but the
+epistemic *tier* is the same one doctrine assigns to every other
+non-measured, non-human-validated fact in this product, and this contract
+does not invent a variant reading of "Inferred" to avoid using it.
 
-This is a distinct vocabulary from wildlife review truth, on purpose, and
-is validated as a `Literal` at the Pydantic layer (matching this
-codebase's existing "keep provenance tiers as explicit sibling values with
-a documented invariant" idiom, e.g. `PlaceActivityReportDigestSpeciesHighlight.
-reason`) -- not a DB `CHECK` constraint, matching how `zone_type`/
-`event_type`/`review_status` are validated (API layer, not schema layer).
+*Who or what* produced a record is a completely separate question,
+answered by `provider_key` (see "Source / provider," below), never by
+`information_class`. This two-column split -- epistemic tier in
+`information_class`, mechanism identity in `provider_key` -- is what lets
+this vocabulary extend to future providers without ever growing a new
+`information_class` value:
+
+- A future locally-attached sensor that reads a real physical quantity
+  (temperature, soil moisture) would write `information_class="measured"`,
+  with the specific sensor identified via `provider_key`/`provenance_json`
+  -- never a dedicated `"measured_local"` value.
+- A future external weather/environmental API is not automatically one
+  fixed tier: it may report a direct physical measurement it took
+  (`"measured"`) or a model output it computed (a forecast, an estimate --
+  `"inferred"`), depending on what that specific provider actually
+  represents. Which one applies is a per-provider judgment made when that
+  provider is built, not a property of "being external." Either way, the
+  provider's identity belongs in `provider_key`/`provenance_json`, never
+  in a dedicated `"external_provider"` `information_class` value -- an
+  external source is not its own epistemic tier.
+- `reviewed` remains available, unused by any v1 writer, for a future
+  workflow where a human explicitly validates an environmental-context
+  fact (e.g. correcting an automatically-detected value) -- v1 does not
+  build that workflow.
+
+This is a distinct vocabulary from *wildlife* review truth (no
+`ReviewLabel`, no `reviewed_by_user_id`, no Observation authority is
+touched by any value here), on purpose, and is validated as a `Literal`
+at the Pydantic layer (matching this codebase's existing "keep provenance
+tiers as explicit sibling values with a documented invariant" idiom, e.g.
+`PlaceActivityReportDigestSpeciesHighlight.reason`) -- not a DB `CHECK`
+constraint, matching how `zone_type`/`event_type`/`review_status` are
+validated (API layer, not schema layer).
 
 ### 3. Source / provider
 
@@ -319,7 +354,9 @@ schema 51):
 - `source_id: str | None` (FK `camera_sources.id`, nullable; `NULL` =
   Place-wide, v1's only populated case)
 - `provider_key: str` (v1: always `"solar_local"`)
-- `information_class: str` (v1: always `"derived"`)
+- `information_class: str` (v1: always `"inferred"` -- the canonical
+  Measured/Inferred/Reviewed vocabulary, see "Information class /
+  provenance," above)
 - `metric: str` (v1: `"sunrise"` | `"sunset"`)
 - `value_numeric: float | None`, `value_text: str | None`, `unit: str | None`
   (all `NULL` for v1's instant-valued metrics -- `observed_at` alone
@@ -476,10 +513,13 @@ auto-fill from the new setting; any species-activity-vs-weather analytics
 
 ## Testing
 
-Tier 1: model/provenance round-trip; `derived`/`measured_local`/
-`external_provider` stay distinct; `compute_daily_solar_facts`'s exact UTC-
-calendar-date contract (including that its own sunrise/sunset pair is not
-always self-ordered, verified directly for both west- and east-of-
+Tier 1: model/provenance round-trip; `information_class="inferred"` for
+every solar/daylight record, both the Place-today and Visit-association
+paths (the canonical Measured/Inferred/Reviewed vocabulary -- see
+"Information class / provenance," above -- never a domain-specific fourth
+value); `compute_daily_solar_facts`'s exact UTC-calendar-date contract
+(including that its own sunrise/sunset pair is not always self-ordered,
+verified directly for both west- and east-of-
 Greenwich coordinates); `find_daylight_window`/`candidate_dates_for_window`
 against western-longitude (sunset crosses UTC midnight) and eastern-
 longitude counterparts, exact sunrise/sunset boundary instants, and an

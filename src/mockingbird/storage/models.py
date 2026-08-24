@@ -1553,11 +1553,23 @@ class EnvironmentalContextRecordModel(Base):
     Foundation v1, schema 51) -- see docs/environmental-context-
     foundation-v1-contract.md "Data model" for the full field-by-field
     rationale. Provider-neutral: v1's only writer is the local solar
-    provider (`provider_key="solar_local"`, `information_class="derived"`,
-    `metric` in `("sunrise", "sunset")`), but every column is shaped to
-    support a future locally-attached sensor (`information_class=
-    "measured_local"`) or public weather API
-    (`information_class="external_provider"`) without a schema change.
+    provider (`provider_key="solar_local"`, `information_class="inferred"`,
+    `metric` in `("sunrise", "sunset")`) -- solar geometry is computed
+    deterministically from Place coordinates and a UTC instant via a
+    documented algorithm, not read from a physical sensor, so it is
+    doctrine's "Inferred" tier, not "Measured," despite being repeatable
+    (see "Measured, Inferred, and Reviewed" in product-doctrine.md).
+    `information_class` stays within that same closed three-value
+    doctrine vocabulary used everywhere else in this product: every column
+    is shaped to support a future locally-attached sensor reading a real
+    physical quantity (`information_class="measured"`) or a future public
+    weather/environmental API (`information_class="measured"` or
+    `"inferred"`, depending on what that provider actually represents)
+    without a schema change -- but *which* provider produced a record is
+    `provider_key`'s job, never a new `information_class` value; identity
+    and epistemic tier are deliberately two separate columns (see
+    docs/environmental-context-foundation-v1-contract.md "Information
+    class / provenance").
 
     `source_id` is nullable: `NULL` means "applies to the whole Place" (no
     `PlaceModel` exists -- see "Spatial doctrine" in product-doctrine.md

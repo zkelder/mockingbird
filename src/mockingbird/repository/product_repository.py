@@ -4318,7 +4318,7 @@ class ProductRepository:
                     sunset_at=sunset_at,
                     daylight_state=solar_context.classify_daylight_state(now, sunrise_at, sunset_at),
                     provider_key=solar_context.SOLAR_PROVIDER_KEY,
-                    information_class="derived",
+                    information_class=solar_context.SOLAR_INFORMATION_CLASS,
                     basis_latitude=latitude,
                     basis_longitude=longitude,
                     # The UTC calendar date `now` falls on -- not a claim
@@ -4379,7 +4379,7 @@ class ProductRepository:
                         evaluated_at, sunrise_at, sunset_at
                     ),
                     provider_key=solar_context.SOLAR_PROVIDER_KEY,
-                    information_class="derived",
+                    information_class=solar_context.SOLAR_INFORMATION_CLASS,
                     basis_latitude=latitude,
                     basis_longitude=longitude,
                     visit_id=visit_id,

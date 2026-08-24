@@ -5022,7 +5022,7 @@ export interface SolarContext {
   sunset_at?: string | null;
   daylight_state?: "day" | "night" | null;
   provider_key?: string | null;
-  information_class?: "derived" | null;
+  information_class?: "inferred" | null;
   basis_latitude?: number | null;
   basis_longitude?: number | null;
 }

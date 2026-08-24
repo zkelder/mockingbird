@@ -7429,14 +7429,24 @@ class EnvironmentalContextSettingsUpdate(BaseModel):
 
 class SolarContext(BaseModel):
     """Locally-derived solar/daylight context for one date at the
-    configured Place location. `information_class` is always `"derived"`
-    when present -- a distinct, third value from the wildlife Measured/
-    Inferred/Reviewed vocabulary in product-doctrine.md "Measured,
-    Inferred, and Reviewed" (see docs/environmental-context-foundation-v1-
-    contract.md "Information class / provenance" for why solar geometry is
-    neither of those two). `available=False` is a normal, expected outcome
-    (no location configured, or a genuine polar day/night date) -- never
-    an error; every other field is `None` in that case, never guessed."""
+    configured Place location. `information_class` is always `"inferred"`
+    when present -- the same closed Measured/Inferred/Reviewed vocabulary
+    in product-doctrine.md "Measured, Inferred, and Reviewed" that governs
+    every other domain in this product, not a fourth, domain-specific
+    value. Solar geometry is computed deterministically from Place
+    coordinates and a UTC instant via a documented algorithm (`astral`),
+    never read from a physical sensor, so it is not "Measured"; no human
+    reviews or confirms it, so it is not "Reviewed"; that leaves
+    "Inferred" -- model/algorithm-derived intelligence -- which is correct
+    here even though the computation is deterministic and repeatable:
+    repeatability is not the same property as direct physical measurement
+    (see docs/environmental-context-foundation-v1-contract.md "Information
+    class / provenance" for the full reasoning). `provider_key` carries
+    *which* mechanism produced this record (`"solar_local"` for v1); that
+    identity belongs there, never in `information_class`.
+    `available=False` is a normal, expected outcome (no location
+    configured, or a genuine polar day/night date) -- never an error;
+    every other field is `None` in that case, never guessed."""
 
     available: bool
     reason: Literal["not_configured", "computed", "unavailable_for_date"] | None = None
@@ -7444,7 +7454,7 @@ class SolarContext(BaseModel):
     sunset_at: datetime | None = None
     daylight_state: Literal["day", "night"] | None = None
     provider_key: str | None = None
-    information_class: Literal["derived"] | None = None
+    information_class: Literal["inferred"] | None = None
     basis_latitude: float | None = None
     basis_longitude: float | None = None
 

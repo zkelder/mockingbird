@@ -459,7 +459,7 @@ def test_place_environmental_context_today_available_once_configured(
     assert today.reason == "computed"
     assert today.sunset_at > today.sunrise_at
     assert today.daylight_state in ("day", "night")
-    assert today.information_class == "derived"
+    assert today.information_class == "inferred"
     assert today.provider_key == "solar_local"
     assert today.basis_latitude == 40.7
     assert today.basis_longitude == -74.0
@@ -486,7 +486,7 @@ def test_daily_solar_context_is_cached_not_recomputed(repository: ProductReposit
         assert len({row.for_date for row in rows}) == 3  # exactly 3 distinct bracketing dates
         assert {row.metric for row in rows} == {"sunrise", "sunset"}
         for row in rows:
-            assert row.information_class == "derived"
+            assert row.information_class == "inferred"
             assert row.provider_key == "solar_local"
             assert row.source_id is None  # Place-wide, not Source-scoped
             assert row.provenance_schema_version == 1
@@ -542,6 +542,7 @@ def test_visit_environmental_context_uses_activity_started_at_and_classifies_cor
     assert noon_context is not None
     assert noon_context.available is True
     assert noon_context.daylight_state == "day"
+    assert noon_context.information_class == "inferred"  # canonical doctrine tier, not "derived"
     assert noon_context.evaluated_at == datetime(2026, 6, 21, 16, 0, tzinfo=UTC)
 
     # ~2am EDT (06:00 UTC the following day) is unambiguously nighttime --
