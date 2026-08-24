@@ -165,6 +165,38 @@ test("provisional taxa are shown separately, never folded into the confirmed spe
   await expect(card.getByText("1", { exact: true })).toBeVisible();
 });
 
+test("a confirmed kind-level mammal counts in the headline, not just by name below it", async ({
+  page,
+}) => {
+  // Broader Wildlife Maturity v1 (see docs/broader-wildlife-maturity-v1-
+  // contract.md P1): distinct_species_count only counts species-level
+  // truth. A confirmed squirrel is kind-level (is_species: false), so
+  // before this fix the headline read "Species known here: 0" while
+  // "Regular visitors: Squirrel" named it directly below -- a visible,
+  // self-contradicting undercount on the same card.
+  await completeSetup(page);
+  const squirrel = taxonEntry("squirrel", "Squirrel", "regular");
+  squirrel.category = "mammal";
+  squirrel.is_species = false;
+  await mockBiodiversitySummary(page, {
+    historical_baseline: { ...EMPTY_HISTORICAL_BASELINE, maturity: "established", distinct_taxa_count: 1 },
+    distinct_species_count: 0,
+    taxa: [squirrel],
+    regular_taxa: [squirrel],
+    recently_observed_taxa: [squirrel],
+  });
+
+  await page.goto("/");
+  const card = page.locator(".biodiversity-summary-card");
+  await expect(card).toBeVisible();
+  await expect(card.getByText("Kinds of wildlife known here")).toBeVisible();
+  await expect(card.getByText("Species known here")).toHaveCount(0);
+  const headline = card.locator(".today-report-fact", { hasText: "Kinds of wildlife known here" });
+  await expect(headline.locator("strong")).toHaveText("1");
+  const regularLine = card.locator("p", { hasText: "Regular visitors:" });
+  await expect(regularLine).toContainText("Squirrel");
+});
+
 test("the Place Report page shows the same biodiversity card", async ({ page }) => {
   await completeSetup(page);
   const cardinal = taxonEntry("northern_cardinal", "Northern Cardinal", "new");

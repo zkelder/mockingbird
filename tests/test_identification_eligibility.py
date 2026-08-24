@@ -203,6 +203,71 @@ class TestMandatoryHardNegatives:
         assert decision.reason_code == "ambiguous_top_candidates"
 
 
+class TestBroaderWildlifeAbstentionIsTaxonBlindByConstruction:
+    """Broader Wildlife Maturity v1 (see docs/broader-wildlife-maturity-v1-
+    contract.md "Identification maturity"). BioCLIP's candidate pack is
+    validated, tested, and intentionally closed to bird species only
+    (`product_repository._validated_species_candidate_pack_members`) -- this
+    milestone does not remove that boundary, and does not add a new
+    heuristic "is this a bird" gate, because no real non-bird-mammal
+    evaluation imagery or live model runtime is available to validate one
+    against (checked directly; see the contract doc). What *can* be proven,
+    honestly, without fabricating a mammal score that was never actually
+    measured: this module's decision functions take only a label string and
+    a score, never a taxon/category -- so a squirrel/deer/raccoon/opossum/
+    fox/rabbit crop is evaluated by the exact same real, cited floors as
+    every bird case above, not a weaker or different one, and the one real
+    non-bird-*animal* photo in this policy's own validation history (Visits
+    139/140 above -- a real dog, not a blank/background) already correctly
+    abstains. These tests document that connection explicitly; they do not
+    claim new field validation against the milestone's mammal cohort.
+    """
+
+    def test_decision_functions_accept_no_taxon_or_category_parameter(self) -> None:
+        """A structural guarantee, not a statistical one: nothing about
+        `evaluate_classification_abstention`'s real signature lets a caller
+        (or a future edit) special-case "but it might be a bird" -- the
+        exact same score/margin floor applies regardless of what the
+        candidate labels actually name."""
+
+        import inspect
+
+        parameters = inspect.signature(evaluate_classification_abstention).parameters
+        assert set(parameters) == {"candidates", "tier"}
+        source = inspect.getsource(evaluate_classification_abstention)
+        for forbidden in ("taxon", "category", "is_bird", "mammal", "species_scope"):
+            assert forbidden not in source.lower()
+
+    def test_the_one_real_non_bird_animal_hard_negative_already_on_record_abstains(self) -> None:
+        """Visit 140 (see TestMandatoryHardNegatives above) is a real photo
+        containing a real dog -- the closest existing real evidence this
+        repository has for "a real non-bird animal, scored by the real
+        production candidate pack." Restated here under this milestone's
+        own name so it is not read as birds-only coverage; the score
+        (0.5986) is the identical already-cited real number, not a new or
+        fabricated one."""
+
+        decision = evaluate_classification_abstention(
+            (_c("red_bellied_woodpecker", 0.5986),), tier="subject_focused",
+        )
+        assert decision.abstained is True
+
+    def test_a_score_at_the_worst_known_real_wrong_full_frame_value_still_abstains(self) -> None:
+        """The full-frame floor (0.85) was deliberately set just above the
+        worst real wrong full-frame score this policy has ever measured
+        (0.817, TestNuthatchDifficultCases above -- itself a bird case).
+        This proves the floor's own arithmetic: *any* full-frame result
+        landing at or below that same real ceiling abstains regardless of
+        what species name it carries, which is the property a mammal
+        scoring in that same range would also get -- not a claim that a
+        real mammal has ever actually scored exactly there."""
+
+        decision = evaluate_classification_abstention(
+            (_c("house_finch", 0.817), _c("carolina_wren", 0.05)), tier="full_frame",
+        )
+        assert decision.abstained is True
+
+
 class TestBackgroundEmptyEvidence:
     def test_a_real_background_visit_score_is_abstained(self) -> None:
         """Item 4: empty/background evidence -> no forced species name.

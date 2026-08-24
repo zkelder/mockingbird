@@ -109,6 +109,19 @@ _HARD_REJECTIONS = {
     "burst_subject_unverified", "subject_edge_clipped", "subject_absent",
 }
 
+# Broader Wildlife Maturity v1: a structural floor, not a tuned cutoff (no
+# real MockingBird-camera mammal imagery exists to fit one against -- see
+# docs/broader-wildlife-maturity-v1-contract.md). A large-bodied subject at
+# ordinary camera-trap range (deer, raccoon, fox) routinely fills or exceeds
+# the frame; edge contact there is the normal framing reality of a big,
+# close, well-resolved subject, not a sign of a poor/partial detection the
+# way it is for a typical small-bird sliver. 0.04 (4% of frame area) sits
+# well above a typical bird crop's real measured range (roughly 0.3%-1.1% of
+# frame area per docs/identification-eligibility-abstention-v1-report.md's
+# bbox-coverage data), so ordinary bird-scale clipped detections keep today's
+# unchanged hard-rejection behavior.
+LARGE_SUBJECT_AREA_RATIO_FLOOR = 0.04
+
 
 def score_proposal_evidence(
     proposal: VisitProposal,
@@ -248,10 +261,19 @@ def _score(
         area_ratio = round(max(0.0, geometry[2] - geometry[0]) * max(0.0, geometry[3] - geometry[1]), 8)
         pixel_area = round(area_ratio * width * height) if isinstance(width, int) and isinstance(height, int) else None
         clipped = min(geometry) <= 0.01 or geometry[2] >= 0.99 or geometry[3] >= 0.99
+        large_subject = area_ratio >= LARGE_SUBJECT_AREA_RATIO_FLOOR
         containment = "contained" if not clipped else "clipped"
         clipping = "edge_clipped" if clipped else "not_clipped"
-        reasons.add("subject_edge_clipped" if clipped else "subject_contained")
-        components["containment"] = -30 if clipped else 20
+        if clipped:
+            # A large subject's edge contact is graded down, not excluded --
+            # see LARGE_SUBJECT_AREA_RATIO_FLOOR above. Only a small,
+            # edge-clipped box (the usual signature of a poor partial view)
+            # remains a hard rejection, unchanged from before.
+            reasons.add("subject_edge_clipped_large_subject" if large_subject else "subject_edge_clipped")
+            components["containment"] = -10 if large_subject else -30
+        else:
+            reasons.add("subject_contained")
+            components["containment"] = 20
         if area_ratio < 0.001 or (pixel_area is not None and pixel_area < 256):
             reasons.add("subject_too_small")
             components["subject_detail"] = -15

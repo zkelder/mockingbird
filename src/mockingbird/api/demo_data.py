@@ -255,6 +255,66 @@ TAXONOMY_LABELS: list[TaxonomyLabel] = [
         is_reviewable=True,
         sort_order=40,
     ),
+    # Broader Wildlife Maturity v1: kind-level (is_species=False), matching
+    # squirrel's own precedent -- honest given no identification path can
+    # validate a specific species for these (BioCLIP is bird-species-only;
+    # see docs/broader-wildlife-maturity-v1-contract.md). A human reviewer
+    # can still record a more specific species as free text; these rows
+    # exist so the common kind has a real taxonomy row to resolve against
+    # (autocomplete, and -- concretely -- so a reviewed correction is
+    # protected by wildlife evidence retention instead of falling through
+    # to the untaxonomized fallback; see
+    # ProductRepository._storage_visit_is_wildlife).
+    TaxonomyLabel(
+        id="deer",
+        label="deer",
+        display_name="Deer",
+        category=LabelCategory.mammal,
+        aliases=["white-tailed deer", "white tailed deer"],
+        is_species=False,
+        is_reviewable=True,
+        sort_order=41,
+    ),
+    TaxonomyLabel(
+        id="raccoon",
+        label="raccoon",
+        display_name="Raccoon",
+        category=LabelCategory.mammal,
+        aliases=[],
+        is_species=False,
+        is_reviewable=True,
+        sort_order=42,
+    ),
+    TaxonomyLabel(
+        id="opossum",
+        label="opossum",
+        display_name="Opossum",
+        category=LabelCategory.mammal,
+        aliases=["possum", "virginia opossum"],
+        is_species=False,
+        is_reviewable=True,
+        sort_order=43,
+    ),
+    TaxonomyLabel(
+        id="fox",
+        label="fox",
+        display_name="Fox",
+        category=LabelCategory.mammal,
+        aliases=["red fox", "gray fox"],
+        is_species=False,
+        is_reviewable=True,
+        sort_order=44,
+    ),
+    TaxonomyLabel(
+        id="rabbit",
+        label="rabbit",
+        display_name="Rabbit",
+        category=LabelCategory.mammal,
+        aliases=["cottontail", "eastern cottontail"],
+        is_species=False,
+        is_reviewable=True,
+        sort_order=45,
+    ),
     TaxonomyLabel(
         id="cat",
         label="cat",

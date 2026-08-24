@@ -30,6 +30,9 @@ _INELIGIBLE_PROVISIONAL = evaluate_research_export_eligibility(
 )
 
 
+_UNSET = object()  # see taxon_display_name/taxon_category/is_species below
+
+
 def _observation(
     observation_id: str,
     *,
@@ -37,7 +40,10 @@ def _observation(
     captured_at: datetime = datetime(2026, 8, 1, 7, tzinfo=UTC),
     event_id: str = "event-1",
     taxon_label: str | None = "northern_cardinal",
+    taxon_display_name: object = _UNSET,
     taxon_scientific_name: str | None = "Cardinalis cardinalis",
+    taxon_category: object = _UNSET,
+    is_species: object = _UNSET,
     classification: str = "confirmed_taxon",
     evidence: tuple[ResearchEvidenceRecord, ...] = (),
     suggested_taxon_label: str | None = None,
@@ -46,6 +52,21 @@ def _observation(
     suggested_confidence: float | None = None,
     reviewed_by: str | None = "jane researcher",
 ) -> ResearchObservation:
+    # Broader Wildlife Maturity v1 (see docs/broader-wildlife-maturity-v1-
+    # contract.md): taxon_display_name/taxon_category/is_species used to be
+    # *derived* from whether taxon_label was non-None, hardcoded to bird
+    # values ("Northern Cardinal"/"bird"/True) -- a caller could not
+    # construct an internally-consistent reviewed-mammal fixture (e.g.
+    # taxon_label="raccoon" still got display_name="Northern Cardinal",
+    # category="bird") without first patching this helper. Every existing
+    # call site relies on that exact bird-shaped default (none pass these
+    # three params), so the _UNSET sentinel preserves it unchanged while
+    # letting a new caller override all three consistently.
+    resolved_display_name = (
+        ("Northern Cardinal" if taxon_label else None) if taxon_display_name is _UNSET else taxon_display_name
+    )
+    resolved_category = ("bird" if taxon_label else None) if taxon_category is _UNSET else taxon_category
+    resolved_is_species = (True if taxon_label else None) if is_species is _UNSET else is_species
     return ResearchObservation(
         observation_id=observation_id,
         event_id=event_id,
@@ -64,10 +85,10 @@ def _observation(
         reviewed_by=reviewed_by,
         classification=classification,
         taxon_label=taxon_label,
-        taxon_display_name="Northern Cardinal" if taxon_label else None,
+        taxon_display_name=resolved_display_name,
         taxon_scientific_name=taxon_scientific_name,
-        taxon_category="bird" if taxon_label else None,
-        is_species=True if taxon_label else None,
+        taxon_category=resolved_category,
+        is_species=resolved_is_species,
         zone_id="zone-1",
         zone_name="Feeder Zone",
         zone_type="feeder",
@@ -118,6 +139,56 @@ def test_confirmed_unidentified_wildlife_is_honest_no_fabricated_species_name():
     assert len(package.observations) == 1
     assert package.observations[0].scientific_name is None
     assert package.observations[0].observation_type == "animal"
+
+
+# --- Broader Wildlife Maturity v1: a reviewed mammal, not a second bird ----
+#
+# See docs/broader-wildlife-maturity-v1-contract.md. `_observation`'s bug
+# above (category/display-name/is_species silently hardcoded to bird
+# values) meant no test here could previously construct an internally-
+# consistent reviewed-mammal fixture at all -- these are genuinely new
+# coverage, not a copy of an existing bird test with different names.
+
+
+def test_reviewed_mammal_without_a_scientific_name_exports_honestly_no_fabricated_name():
+    """The seeded "raccoon" taxonomy row (Broader Wildlife Maturity v1) has
+    no scientific_name on file -- Camtrap DP's real spec has no common-name
+    field at the observation level (see the contract doc's export section),
+    so this correctly omits scientificName rather than fabricating one or
+    silently dropping the whole observation."""
+
+    obs = _observation(
+        "visit-raccoon-1", eligibility=_ELIGIBLE_UNIDENTIFIED,
+        taxon_label="raccoon", taxon_display_name="Raccoon", taxon_scientific_name=None,
+        taxon_category="mammal", is_species=False, evidence=(_evidence(),),
+    )
+    package = build_camtrap_dp_package([obs])
+    assert len(package.observations) == 1
+    human = package.observations[0]
+    assert human.classification_method == "human"
+    assert human.scientific_name is None
+    assert human.observation_type == "animal"
+
+
+def test_reviewed_mammal_with_a_scientific_name_maps_correctly_not_coerced_to_bird_semantics():
+    """A taxonomy enriched with a real scientific name (an operator/
+    researcher can supply one even though the stock seed does not -- see
+    the contract doc) maps identically to the bird path: the same
+    `scientificName` field, the same `classification_method == "human"`,
+    no separate "mammal observation" shape anywhere in the schema."""
+
+    obs = _observation(
+        "visit-raccoon-2", eligibility=_ELIGIBLE_NAMED,
+        taxon_label="raccoon", taxon_display_name="Raccoon", taxon_scientific_name="Procyon lotor",
+        taxon_category="mammal", is_species=True, evidence=(_evidence(),),
+    )
+    package = build_camtrap_dp_package([obs])
+    assert len(package.observations) == 1
+    human = package.observations[0]
+    assert human.classification_method == "human"
+    assert human.scientific_name == "Procyon lotor"
+    assert human.observation_type == "animal"
+    assert human.classification_probability is None
 
 
 def test_machine_suggestion_is_a_separate_row_never_blended_into_human_truth():

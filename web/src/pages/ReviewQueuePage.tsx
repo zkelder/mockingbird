@@ -2474,8 +2474,20 @@ export function ReviewQueuePage({
         targetId: result.review_label.target_id,
         targetType: result.review_label.target_type,
       });
+      // Broader Wildlife Maturity v1: this used to say "Added to Bird Log"
+      // unconditionally, including for a squirrel correction or a
+      // false_positive mark -- see docs/broader-wildlife-maturity-v1-
+      // contract.md. Mirrors the bulk-correction toast just above, which
+      // was already taxon-neutral ("N corrections saved as local dataset
+      // truth.").
+      const savedLabel = result.review_label.label;
+      const correctionAnnouncement = isFalsePositiveLabel(savedLabel, taxonomyLabels)
+        ? "Marked as false positive."
+        : isBirdReviewLabel(savedLabel, taxonomyLabels)
+          ? "Added to Bird Log."
+          : "Correction saved.";
       setMessage(
-        `Added to Bird Log. Correction saved as local dataset truth. ${result.review_queue_count} item${
+        `${correctionAnnouncement} Correction saved as local dataset truth. ${result.review_queue_count} item${
           result.review_queue_count === 1 ? "" : "s"
         } still need review.${suggestionStatusWarning}`,
       );
@@ -4291,6 +4303,9 @@ function FastReviewPanel({
       } else if (event.key.toLowerCase() === "k") {
         event.preventDefault();
         void saveAndNext("unknown_bird", "Marked unknown bird in Fast Review.");
+      } else if (event.key.toLowerCase() === "a") {
+        event.preventDefault();
+        void saveAndNext("unknown_animal", "Marked unknown animal in Fast Review.");
       } else if (event.key.toLowerCase() === "b") {
         event.preventDefault();
         void saveAndNext("blank", "Marked blank or no activity in Fast Review.");
@@ -4537,6 +4552,14 @@ function FastReviewPanel({
             <button
               className="secondary-action"
               disabled={isSaving}
+              onClick={() => void saveAndNext("unknown_animal", "Marked unknown animal in Fast Review.")}
+              type="button"
+            >
+              Unknown animal
+            </button>
+            <button
+              className="secondary-action"
+              disabled={isSaving}
               onClick={() => void saveAndNext("blank", "Marked blank or no activity in Fast Review.")}
               type="button"
             >
@@ -4579,7 +4602,7 @@ function FastReviewPanel({
             <summary>Keyboard shortcuts</summary>
             <span>Left / Right: evidence frame · Space: play/pause · Ctrl/Cmd+Enter: save & next</span>
             <span>N / P: next / previous Visit · C: generic bird (no species) · K: unknown bird</span>
-            <span>B: blank · X: non-bird · U: ambiguous · Z: undo</span>
+            <span>A: unknown animal · B: blank · X: non-bird · U: ambiguous · Z: undo</span>
             <span>Shortcuts are paused while typing in a search or notes field.</span>
           </details>
         </div>

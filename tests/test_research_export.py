@@ -33,6 +33,16 @@ def _observation(
     evidence: tuple[ResearchEvidenceRecord, ...] = (),
     source_id: str = "source-1",
     stream_id: str = "stream-1",
+    # Broader Wildlife Maturity v1: every taxon field below defaults to the
+    # original hardcoded bird values (no existing call site overrides any
+    # of them), but a new test can now build an internally-consistent
+    # reviewed-mammal fixture directly -- see docs/broader-wildlife-
+    # maturity-v1-contract.md's export section.
+    taxon_label: str | None = "northern_cardinal",
+    taxon_display_name: str | None = "Northern Cardinal",
+    taxon_scientific_name: str | None = "Cardinalis cardinalis",
+    taxon_category: str | None = "bird",
+    is_species: bool | None = True,
 ) -> ResearchObservation:
     return ResearchObservation(
         observation_id=observation_id,
@@ -51,11 +61,11 @@ def _observation(
         reviewed_at=captured_at,
         reviewed_by="jane researcher",
         classification="confirmed_taxon",
-        taxon_label="northern_cardinal",
-        taxon_display_name="Northern Cardinal",
-        taxon_scientific_name="Cardinalis cardinalis",
-        taxon_category="bird",
-        is_species=True,
+        taxon_label=taxon_label,
+        taxon_display_name=taxon_display_name,
+        taxon_scientific_name=taxon_scientific_name,
+        taxon_category=taxon_category,
+        is_species=is_species,
         zone_id="zone-1",
         zone_name="Feeder Zone",
         zone_type="feeder",
@@ -91,6 +101,31 @@ def test_observation_to_csv_row_matches_declared_fieldnames_exactly():
     row = observation_to_csv_row(obs)
     assert set(row.keys()) == set(OBSERVATION_CSV_FIELDNAMES)
     assert row["evidence_ids"] == ""
+
+
+def test_a_reviewed_mammal_exports_its_real_taxon_identity_not_bird_semantics():
+    """Broader Wildlife Maturity v1 (see docs/broader-wildlife-maturity-v1-
+    contract.md). A reviewed raccoon (this milestone's newly-seeded
+    kind-level taxonomy row) must export its own real category/identity --
+    the same generic JSON/CSV shape a bird uses, no coercion into bird
+    fields and no dropped observation."""
+
+    obs = _observation(
+        "visit-raccoon-1", captured_at=datetime(2026, 8, 1, tzinfo=UTC),
+        taxon_label="raccoon", taxon_display_name="Raccoon", taxon_scientific_name=None,
+        taxon_category="mammal", is_species=False,
+    )
+    payload = observation_to_json(obs)
+    assert payload["taxon_label"] == "raccoon"
+    assert payload["taxon_display_name"] == "Raccoon"
+    assert payload["taxon_category"] == "mammal"
+    assert payload["taxon_scientific_name"] is None
+    assert payload["is_species"] is False
+
+    row = observation_to_csv_row(obs)
+    assert set(row.keys()) == set(OBSERVATION_CSV_FIELDNAMES)
+    assert row["taxon_label"] == "raccoon"
+    assert row["taxon_category"] == "mammal"
 
 
 def test_media_records_are_deduplicated_and_never_carry_a_local_path():

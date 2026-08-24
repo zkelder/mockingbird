@@ -227,7 +227,9 @@ def test_blurred_candidate_is_represented_honestly() -> None:
 
 def test_clipped_candidate_is_represented_honestly() -> None:
     tracked = _candidate("clear", "tracked_best")
-    clipped = _candidate("clip", "alternate", subject_geometry=(0.0, 0.2, 0.4, 0.8), reviewed_clipped=True)
+    # Bird-scale (1.5% of frame) -- see evidence_scoring.LARGE_SUBJECT_AREA_
+    # RATIO_FLOOR; a large clipped subject is graded, not excluded.
+    clipped = _candidate("clip", "alternate", subject_geometry=(0.0, 0.4, 0.1, 0.55), reviewed_clipped=True)
     report = evaluate_evidence_benchmark(
         _manifest(tracked, clipped), media={"clear": _png(), "clip": _png()},
     )
@@ -413,7 +415,9 @@ def test_no_useful_evidence_state() -> None:
 
 
 def test_rejection_reason_distribution() -> None:
-    clipped = _candidate("clip", "alternate", subject_geometry=(0.0, 0.2, 0.4, 0.8))
+    # Bird-scale (1.5% of frame) -- see evidence_scoring.LARGE_SUBJECT_AREA_
+    # RATIO_FLOOR; a large clipped subject is graded, not excluded.
+    clipped = _candidate("clip", "alternate", subject_geometry=(0.0, 0.4, 0.1, 0.55))
     report = evaluate_evidence_benchmark(_manifest(clipped), media={"clip": _png()})
     distribution = report.metrics["rejection_reason_distribution"]
     assert distribution["state"] == "evaluated"

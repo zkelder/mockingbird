@@ -477,6 +477,40 @@ def test_today_summary_new_today_is_wildlife_inclusive_not_bird_only(
     assert new_labels.get("eastern_gray_squirrel") in ("new", "first_record")
 
 
+def test_today_summary_counts_a_confirmed_kind_level_mammal_as_real_activity(
+    repository: ProductRepository,
+) -> None:
+    """Broader Wildlife Maturity v1 (see docs/broader-wildlife-maturity-v1-
+    contract.md "Findings investigated and closed without a code change").
+    Unlike the test above (a synthetic species-level row standing in for a
+    gap that does not exist yet), this uses the real, now-seeded kind-level
+    "squirrel" taxonomy row directly. Proves both halves of the reasoned,
+    deliberately-not-"fixed" boundary: (1) a confirmed kind-level mammal is
+    real, counted Today activity, not silently dropped; (2) it correctly
+    does *not* earn a "New Today" badge -- that badge is specifically
+    species-level truth (a kind-level "bird" correction is held to the
+    identical bar, proven side by side here), which is honest per doctrine
+    ("a detector recognizing 'mammal' is not automatically evidence for a
+    species"), not a bird-vs-mammal double standard. If this ever needs to
+    change, it should be a deliberate product decision, not a silent
+    regression -- this test exists so that decision has to be conscious.
+    """
+
+    noon = datetime(2026, 7, 29, 12, tzinfo=LOCAL_TIMEZONE)
+    _add_visit(repository, visit_id="squirrel-kind-today", observed_at=_utc(noon), reviewed_label="squirrel")
+    _add_visit(
+        repository, visit_id="generic-bird-kind-today",
+        observed_at=_utc(noon + timedelta(minutes=5)), reviewed_label="bird",
+    )
+
+    summary = repository.dashboard_summary(now=LOCAL_NOW, local_date=SELECTED_DAY)
+
+    assert summary.today.detector_qualified_animal_visit_count == 2
+    new_today_labels = {species.label for species in summary.today.new_today}
+    assert "squirrel" not in new_today_labels
+    assert "bird" not in new_today_labels  # identical kind-level bar, not mammal-specific
+
+
 def test_today_summary_bounds_moments_and_help_with_honest_deterministic_media(
     repository: ProductRepository,
 ) -> None:

@@ -1021,3 +1021,117 @@ def test_storage_visit_is_wildlife_matches_the_shared_wildlife_taxonomy_predicat
         visit = session.get(VisitModel, "untaxonomized-visit")
         assert visit is not None
         assert repository._storage_visit_is_wildlife(session, visit) is True
+
+
+def test_newly_seeded_mammal_taxonomy_labels_are_wildlife_retention_protected(
+    repository: ProductRepository,
+) -> None:
+    """Broader Wildlife Maturity v1: before the new taxonomy rows were
+    seeded (docs/broader-wildlife-maturity-v1-contract.md P0 #2), a
+    reviewed "deer"/"raccoon"/"opossum"/"fox"/"rabbit" correction had no
+    matching `TaxonomyLabelModel` row and fell through to `_storage_visit_
+    is_wildlife`'s untaxonomized fallback (`{"bird", "unknown_bird",
+    "wildlife"}`), which does not include them -- so that evidence was not
+    protected by "keep reviewed wildlife evidence" retention the way a
+    confirmed bird or squirrel already was. This proves the real, seeded
+    rows (not synthetic ones) now resolve through the taxonomy-matched
+    branch and are protected, using the same demo taxonomy every
+    repository actually seeds (`seed_if_empty` -> `_seed_taxonomy_labels`),
+    not a hand-inserted row.
+    """
+
+    now = datetime.now(UTC)
+    with repository.session_factory() as session:
+        stream = session.scalar(select(StreamModel).order_by(StreamModel.id))
+        assert stream is not None
+        stream_id = stream.id
+
+    newly_seeded_labels = ("deer", "raccoon", "opossum", "fox", "rabbit")
+    with repository.session_factory() as session:
+        with session.begin():
+            for label in newly_seeded_labels:
+                # No hand-inserted TaxonomyLabelModel row here -- this
+                # relies entirely on seed_if_empty() having already run.
+                session.add(
+                    EventModel(
+                        id=f"{label}-cohort-event",
+                        stream_id=stream_id,
+                        title="broader wildlife maturity retention check",
+                        event_type="activity",
+                        started_at=now,
+                        ended_at=now,
+                        primary_zone_id=None,
+                        review_status="reviewed",
+                    )
+                )
+                session.add(
+                    VisitModel(
+                        id=f"{label}-cohort-visit",
+                        event_id=f"{label}-cohort-event",
+                        subject_label="animal",
+                        species_guess=None,
+                        confidence=None,
+                        reviewed_label=label,
+                        review_status="reviewed",
+                        representative_media_path=None,
+                        zone_id=None,
+                        is_superseded=False,
+                    )
+                )
+
+    with repository.session_factory() as session:
+        taxonomy_labels = {
+            row.label: row
+            for row in session.scalars(
+                select(TaxonomyLabelModel).where(TaxonomyLabelModel.label.in_(newly_seeded_labels))
+            ).all()
+        }
+        for label in newly_seeded_labels:
+            taxonomy = taxonomy_labels.get(label)
+            assert taxonomy is not None, f"{label} must already be a seeded taxonomy row"
+            assert taxonomy.category == LabelCategory.mammal.value
+            assert taxonomy.is_species is False
+            visit = session.get(VisitModel, f"{label}-cohort-visit")
+            assert visit is not None
+            assert repository._storage_visit_is_wildlife(session, visit) is True, (
+                f"{label} must be wildlife-retention-protected via its real seeded taxonomy row"
+            )
+
+    # Honest boundary check: a real mammal with genuinely no taxonomy row
+    # (not one of the newly-seeded five, and not one of the untaxonomized
+    # fallback's three literal strings) still is not retention-protected --
+    # this milestone closes the specific cohort gap, not every conceivable
+    # mammal a reviewer might type freeform. See the milestone's capability
+    # matrix for the documented remaining gap.
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                EventModel(
+                    id="bobcat-unseeded-event",
+                    stream_id=stream_id,
+                    title="unseeded mammal boundary check",
+                    event_type="activity",
+                    started_at=now,
+                    ended_at=now,
+                    primary_zone_id=None,
+                    review_status="reviewed",
+                )
+            )
+            session.add(
+                VisitModel(
+                    id="bobcat-unseeded-visit",
+                    event_id="bobcat-unseeded-event",
+                    subject_label="animal",
+                    species_guess=None,
+                    confidence=None,
+                    reviewed_label="bobcat",
+                    review_status="reviewed",
+                    representative_media_path=None,
+                    zone_id=None,
+                    is_superseded=False,
+                )
+            )
+    with repository.session_factory() as session:
+        visit = session.get(VisitModel, "bobcat-unseeded-visit")
+        assert visit is not None
+        assert repository._storage_visit_is_wildlife(session, visit) is False

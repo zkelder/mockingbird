@@ -55,7 +55,9 @@ export function ManualImportPage({
   const [file, setFile] = useState<File | null>(null);
   const [fileInputKey, setFileInputKey] = useState(0);
   const [title, setTitle] = useState("Imported outdoor observation");
-  const [subjectLabel, setSubjectLabel] = useState("unknown_bird");
+  // Broader Wildlife Maturity v1: honest default for arbitrary imported
+  // media (a trail-cam photo could be anything) -- was "unknown_bird".
+  const [subjectLabel, setSubjectLabel] = useState("unknown_animal");
   const [speciesGuess, setSpeciesGuess] = useState("");
   const [notes, setNotes] = useState("");
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
@@ -92,12 +94,12 @@ export function ManualImportPage({
     lastImportContext?.subjectLabel ||
     result?.visit?.subject_label ||
     subjectLabel.trim() ||
-    "unknown_bird";
+    "unknown_animal";
   const demoSpeciesGuess =
     lastImportContext?.speciesGuess ||
     result?.visit?.species_guess ||
     speciesGuess.trim() ||
-    "unknown_bird";
+    "unknown_animal";
   const demoEventTitle =
     lastImportContext?.title ||
     result?.event.title ||
@@ -225,7 +227,7 @@ export function ManualImportPage({
     if (title.trim()) {
       payload.append("title", title.trim());
     }
-    payload.append("subject_label", subjectLabel.trim() || "unknown_bird");
+    payload.append("subject_label", subjectLabel.trim() || "unknown_animal");
     if (speciesGuess.trim()) {
       payload.append("species_guess", speciesGuess.trim());
     }
@@ -235,8 +237,8 @@ export function ManualImportPage({
 
     const nextImportContext = {
       title: title.trim() || `Local smoke import: ${file.name}`,
-      subjectLabel: subjectLabel.trim() || "unknown_bird",
-      speciesGuess: speciesGuess.trim() || "unknown_bird",
+      subjectLabel: subjectLabel.trim() || "unknown_animal",
+      speciesGuess: speciesGuess.trim() || "unknown_animal",
       zoneId: selectedZoneId || null,
     };
 

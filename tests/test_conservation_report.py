@@ -26,6 +26,10 @@ from mockingbird.research.conservation_report import (
 
 CARDINAL = TaxonFact(label="northern_cardinal", display_name="Northern Cardinal", category="bird", is_species=True)
 UNKNOWN_BIRD = TaxonFact(label="unknown_bird", display_name="Unknown Bird", category="unknown", is_species=False)
+# Broader Wildlife Maturity v1 (see docs/broader-wildlife-maturity-v1-
+# contract.md): this milestone's newly-seeded kind-level (is_species=False)
+# mammal taxon, matching the real product taxonomy content exactly.
+RACCOON = TaxonFact(label="raccoon", display_name="Raccoon", category="mammal", is_species=False)
 
 PERIOD_START = datetime(2026, 8, 1, tzinfo=UTC)
 PERIOD_END = datetime(2026, 8, 8, tzinfo=UTC)
@@ -98,6 +102,34 @@ def test_scientific_name_is_included_when_available_and_null_when_not():
         live_monitoring_usable_day_count=1, confirmed_wildlife_visits_with_evidence_count=1,
     )
     assert without_name.confirmed_species[0].scientific_name is None
+
+
+def test_a_confirmed_kind_level_mammal_is_reported_alongside_a_bird_honestly():
+    """Broader Wildlife Maturity v1 (see docs/broader-wildlife-maturity-v1-
+    contract.md). A confirmed raccoon (real, kind-level wildlife -- not
+    unresolved the way UNKNOWN_BIRD is) must appear in the conservation
+    report's taxon roster next to a confirmed bird, carrying its own honest
+    `is_species=False` and no fabricated scientific name -- never folded
+    into "confirmed_unidentified_wildlife" (that bucket is for genuinely
+    unresolved taxon, not every non-bird)."""
+
+    visits = [
+        _visit(1, 7, CARDINAL, visit_id="v1"),
+        _visit(2, 8, RACCOON, visit_id="v2"),
+    ]
+    report = compute_place_activity_report(visits, period_start_at=PERIOD_START, period_end_at=PERIOD_END)
+    conservation = compute_conservation_report(
+        report, visits=visits, offline_acquisition=_empty_offline_effort(),
+        live_monitoring_usable_day_count=2, confirmed_wildlife_visits_with_evidence_count=2,
+        scientific_names_by_label={"northern_cardinal": "Cardinalis cardinalis"},
+    )
+    labels = {record.label: record for record in conservation.confirmed_species}
+    assert set(labels) == {"northern_cardinal", "raccoon"}
+    assert labels["raccoon"].is_species is False
+    assert labels["raccoon"].scientific_name is None
+    assert labels["northern_cardinal"].scientific_name == "Cardinalis cardinalis"
+    assert conservation.confirmed_unidentified_wildlife_visit_count == 0
+    assert conservation.reviewed_wildlife_visit_count == 2
 
 
 def test_offline_acquisition_effort_reported_separately_from_live_coverage():

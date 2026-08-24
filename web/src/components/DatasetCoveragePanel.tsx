@@ -76,6 +76,15 @@ export function DatasetCoveragePanel({
           <span className="meta-text">Unknown birds needing review</span>
           <strong>{coverage.unknown_bird_count}</strong>
         </div>
+        {/* Broader Wildlife Maturity v1: the panel already received this
+            field and already distinguishes the two reasons in its gap list
+            (gapReasonLabel above) -- it just never surfaced this sibling
+            metric, unlike AnalyticsPage's matching "Unknown animals" card.
+            See docs/broader-wildlife-maturity-v1-contract.md. */}
+        <div>
+          <span className="meta-text">Unknown animals needing review</span>
+          <strong>{coverage.unknown_animal_count}</strong>
+        </div>
         <div>
           <span className="meta-text">Missing target species</span>
           <strong>{coverage.missing_target_species_count}</strong>
@@ -105,7 +114,7 @@ export function DatasetCoveragePanel({
               ) : (
                 <EmptyState
                   title="No reviewed species yet"
-                  description="Resolve bird visits to start reviewed species coverage."
+                  description="Resolve visits to start reviewed species coverage."
                   action={
                     <button className="secondary-action" onClick={onOpenReview}>
                       Resolve species

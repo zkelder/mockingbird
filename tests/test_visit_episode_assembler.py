@@ -358,6 +358,84 @@ def test_crossing_animals_do_not_collapse() -> None:
     assert second.concurrent_sibling_proposal_ids == (first.proposal_id,)
 
 
+# --- Broader Wildlife Maturity v1: large-subject geometry --------------------
+#
+# Every check above already uses ratio/relative geometry math, not absolute
+# pixel/area cutoffs (confirmed directly in this module's own source, not
+# just asserted) -- so it should generalize to a deer/raccoon/fox-scale
+# subject without a code change. These tests prove that generalization
+# rather than assuming it: same mechanics as the bird-scale tests above, at
+# roughly 13% of frame area (well above evidence_scoring.LARGE_SUBJECT_
+# AREA_RATIO_FLOOR) instead of the ~1-2% the small, fixed `_tracklet`
+# default and the committed multi-subject fixtures both use. See
+# docs/broader-wildlife-maturity-v1-contract.md.
+
+
+def test_two_simultaneous_large_mammal_scale_subjects_remain_separate() -> None:
+    """Deer-scale analog of test_two_simultaneous_animals_remain_separate:
+    two large, non-overlapping boxes, overlapping in time, at opposite
+    sides of frame -- must stay two proposals and recognize each other as
+    concurrent siblings, exactly like the bird-scale fixture."""
+    left = _tracklet(
+        "deer-left", 1_000, 6_000,
+        start_bounding_box=(0.02, 0.30, 0.34, 0.70), end_bounding_box=(0.03, 0.30, 0.35, 0.70),
+    )
+    right = _tracklet(
+        "deer-right", 2_000, 7_000,
+        start_bounding_box=(0.60, 0.30, 0.92, 0.70), end_bounding_box=(0.61, 0.30, 0.93, 0.70),
+    )
+    decision = classify_boundary(left, right)
+    assert decision.decision == "incompatible"
+    assert decision.reason == "temporal_overlap"
+
+    result = assemble_visit_episodes((left, right))
+    assert result.assembled_proposal_count == 2
+    assert result.incompatible_decisions == 1
+    first, second = result.proposals
+    assert first.concurrent_sibling_proposal_ids == (second.proposal_id,)
+    assert second.concurrent_sibling_proposal_ids == (first.proposal_id,)
+
+
+def test_size_heterogeneous_simultaneous_subjects_remain_separate() -> None:
+    """A small (squirrel-scale) subject and a large (deer-scale) subject in
+    frame at the same time, at different positions -- proves mismatched
+    subject sizes do not confuse the simultaneous-siblings decision (still
+    `temporal_overlap`, not spuriously read as a size-incompatible
+    sequential case, which is a structurally different decision path)."""
+    small = _tracklet(
+        "squirrel-scale", 1_000, 4_000,
+        start_bounding_box=(0.05, 0.05, 0.10, 0.10), end_bounding_box=(0.06, 0.05, 0.11, 0.10),
+    )
+    large = _tracklet(
+        "deer-scale", 2_000, 7_000,
+        start_bounding_box=(0.55, 0.30, 0.90, 0.72), end_bounding_box=(0.56, 0.30, 0.91, 0.72),
+    )
+    decision = classify_boundary(small, large)
+    assert decision.decision == "incompatible"
+    assert decision.reason == "temporal_overlap"
+    result = assemble_visit_episodes((small, large))
+    assert result.assembled_proposal_count == 2
+    first, second = result.proposals
+    assert first.concurrent_sibling_proposal_ids == (second.proposal_id,)
+    assert second.concurrent_sibling_proposal_ids == (first.proposal_id,)
+
+
+def test_large_mammal_scale_subject_survives_a_short_occlusion_gap() -> None:
+    """A deer-scale subject briefly occluded (8s, within merge_gap_ms's
+    15s default) and reacquired at essentially the same position/size must
+    still merge into one Visit -- proves the occlusion-tolerance geometry
+    math (docs/broader-wildlife-maturity-v1-contract.md's P1 finding: real
+    field-validated only at bird scale) is not silently size-dependent."""
+    before = _tracklet("deer-a", 0, 5_000, end_bounding_box=(0.30, 0.30, 0.62, 0.70))
+    after = _tracklet("deer-b", 13_000, 18_000, start_bounding_box=(0.31, 0.31, 0.63, 0.71))
+    decision = classify_boundary(before, after)
+    assert decision.decision == "merge_same_visit"
+
+    result = assemble_visit_episodes((before, after))
+    assert result.assembled_proposal_count == 1
+    assert result.episode_merges == 1
+
+
 def test_single_subject_has_no_concurrent_siblings() -> None:
     """Case 1: one ordinary bird proposal has no sibling relationship at
     all -- the common case, and the field must default to genuinely empty,

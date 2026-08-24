@@ -525,3 +525,166 @@ def test_human_correction_updates_place_biodiversity_intelligence_correctly(
     journal_b = client.get("/api/bird-log/journal/house_finch").json()
     assert journal_b["observation_count"] == 1
     assert journal_b["historical_status"] == "new"
+
+
+# 8. Broader Wildlife Maturity v1 -------------------------------------------
+#
+# Same mandatory correction property as section 7, and the same Journey 8
+# "Place memory" acceptance, proven for the milestone's representative
+# non-bird cohort rather than a second bird pair -- see
+# docs/broader-wildlife-maturity-v1-contract.md. Reuses the identical real
+# write paths (`create_review_label`/`revise_visit_review`); no separate
+# "mammal" code path exists to test.
+
+
+def test_human_correction_updates_place_biodiversity_intelligence_correctly_for_a_non_bird_taxon(
+    repository: ProductRepository,
+) -> None:
+    """Journey 4: a provisional mammal identity, corrected to a different
+    taxon, updates every downstream authoritative surface -- the identical
+    property already proven for two bird species above, proven again for
+    two of this milestone's newly-seeded mammal taxa (docs/broader-
+    wildlife-maturity-v1-contract.md P0 #2)."""
+
+    _establish_baseline(repository)
+    corrected_at = NOW - timedelta(hours=1)
+    _add_visit(repository, visit_id="mammal-mystery-1", at=corrected_at)
+    _confirm(repository, visit_id="mammal-mystery-1", label="squirrel")
+
+    before = repository.place_biodiversity_summary(now=NOW)
+    assert "squirrel" in _taxa_labels(before)
+
+    # A human reviews the correction: it was actually a raccoon, not a squirrel.
+    _revise(repository, visit_id="mammal-mystery-1", label="raccoon")
+
+    after = repository.place_biodiversity_summary(now=NOW)
+    assert _taxa_labels(after) == {"raccoon"}
+    assert after.historical_baseline.distinct_taxa_count == 1
+    assert {e.label for e in after.new_taxa} == {"raccoon"}
+
+    # Old taxon identity no longer treats itself as authoritative -- no
+    # stale aggregate survives the correction.
+    stale_history = repository.wildlife_journal_history(
+        "squirrel", WildlifeJournalHistoryRequest(), now=NOW
+    )
+    assert stale_history is not None
+    assert stale_history.observation_count == 0
+
+    corrected_history = repository.wildlife_journal_history(
+        "raccoon", WildlifeJournalHistoryRequest(), now=NOW
+    )
+    assert corrected_history is not None
+    assert corrected_history.observation_count == 1
+    assert corrected_history.historical_status == "new"
+
+    # Same proof again through the real HTTP surface.
+    client = LegacyAuthenticatedSyncTestClient(app)
+    api_body = client.get("/api/place/biodiversity-summary").json()
+    assert [entry["label"] for entry in api_body["taxa"]] == ["raccoon"]
+
+
+def test_representative_wildlife_cohort_is_remembered_and_a_pet_is_honestly_excluded(
+    repository: ProductRepository,
+) -> None:
+    """Journey 8 (Place memory) across this milestone's representative
+    cohort in one Place: squirrel, deer, raccoon, opossum, fox, and rabbit
+    (all newly-seeded kind-level mammal taxa) are all remembered correctly
+    alongside a bird (regression control) -- and a confirmed cat is
+    honestly, deliberately excluded from wildlife biodiversity, not a bug
+    (`LabelCategory.pet` is not wildlife by product design -- see the
+    contract doc's "Cat is a deliberate case, not a defect")."""
+
+    _establish_baseline(repository)
+    cohort = ("squirrel", "deer", "raccoon", "opossum", "fox", "rabbit", "northern_cardinal")
+    for label in cohort:
+        visit_id = f"cohort-{label}"
+        _add_visit(repository, visit_id=visit_id, at=NOW - timedelta(hours=1))
+        _confirm(repository, visit_id=visit_id, label=label)
+    _add_visit(repository, visit_id="cohort-cat", at=NOW - timedelta(hours=1))
+    _confirm(repository, visit_id="cohort-cat", label="cat")
+
+    summary = repository.place_biodiversity_summary(now=NOW)
+
+    assert _taxa_labels(summary) == set(cohort)
+    assert "cat" not in _taxa_labels(summary)
+    assert summary.historical_baseline.distinct_taxa_count == len(cohort)
+    # distinct_species_count is species-level only (see the contract doc's
+    # identification-maturity section) -- every cohort mammal here is
+    # kind-level (is_species=False), so only the bird raises it.
+    assert summary.distinct_species_count == 1
+    for label in cohort:
+        entry = next(e for e in summary.taxa if e.label == label)
+        assert entry.historical_status.status in ("new", "first_record")
+
+    # Same proof again through the real HTTP surface -- and confirms a
+    # confirmed cat Visit is real, queryable product data (just not
+    # wildlife), not silently dropped or erroring anywhere in the pipeline.
+    client = LegacyAuthenticatedSyncTestClient(app)
+    api_labels = {entry["label"] for entry in client.get("/api/place/biodiversity-summary").json()["taxa"]}
+    assert api_labels == set(cohort)
+    cat_visit = client.get("/api/visits/cohort-cat").json()
+    assert cat_visit["reviewed_label"] == "cat"
+
+
+def test_human_overrides_a_wrong_machine_species_suggestion_with_a_correct_mammal(
+    repository: ProductRepository,
+) -> None:
+    """Phase 8 mandatory journey 2 ("classifier proposes squirrel, human
+    corrects rabbit"), made honest: BioCLIP cannot actually propose
+    "squirrel" -- its candidate pack is closed to bird species only (see
+    docs/broader-wildlife-maturity-v1-contract.md "Identification
+    maturity") -- so the real, achievable version of this journey is a
+    provisional *bird* suggestion (what BioCLIP would actually produce on
+    any admitted animal Visit today) corrected by a human to the true,
+    non-bird taxon. Proves the correction is fully authoritative: the
+    machine's suggestion never contaminates biodiversity truth, whether it
+    arrived before or was never even looked at."""
+
+    _establish_baseline(repository)
+    _add_visit(repository, visit_id="wrongly-suggested-1", at=NOW - timedelta(hours=1))
+    _suggest(repository, visit_id="wrongly-suggested-1", label="house_finch")
+
+    before = repository.place_biodiversity_summary(now=NOW)
+    assert before.taxa == []
+    assert {e.label for e in before.provisional_taxa} == {"house_finch"}
+
+    _confirm(repository, visit_id="wrongly-suggested-1", label="rabbit")
+
+    after = repository.place_biodiversity_summary(now=NOW)
+    assert _taxa_labels(after) == {"rabbit"}
+    assert "house_finch" not in _taxa_labels(after)
+    house_finch_history = repository.wildlife_journal_history(
+        "house_finch", WildlifeJournalHistoryRequest(), now=NOW
+    )
+    assert house_finch_history is not None
+    assert house_finch_history.observation_count == 0
+
+
+def test_human_selects_unknown_animal_over_a_wrong_machine_species_suggestion(
+    repository: ProductRepository,
+) -> None:
+    """Phase 8 mandatory journey 3 ("classifier proposes a species but
+    reviewer selects unknown mammal/broader taxon"): a reviewer is not
+    forced to pick a specific taxon just because the machine suggested
+    one -- "unknown_animal" is a fully legitimate, authoritative correction
+    (see the contract doc's TAXON TRUTH section), counted honestly as real
+    wildlife activity without fabricating a species (mirrors
+    tests/test_place_activity_report_repository.py::
+    test_confirmed_animal_with_unresolved_species_counts_without_
+    fabricating_a_taxon, proven here through the Biodiversity surface and
+    starting from a real wrong machine suggestion instead of no suggestion
+    at all)."""
+
+    _establish_baseline(repository)
+    _add_visit(repository, visit_id="wrongly-suggested-2", at=NOW - timedelta(hours=1))
+    _suggest(repository, visit_id="wrongly-suggested-2", label="house_finch")
+
+    _confirm(repository, visit_id="wrongly-suggested-2", label="unknown_animal")
+
+    after = repository.place_biodiversity_summary(now=NOW)
+    # unknown_animal is confirmed-but-species-unresolved, not a taxon in its
+    # own right -- correctly absent from the taxa roster (see
+    # wildlife_taxonomy.py's own documented boundary), and never silently
+    # replaced by the machine's wrong house_finch guess.
+    assert after.taxa == []
+    assert "house_finch" not in {e.label for e in after.provisional_taxa}

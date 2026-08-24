@@ -79,7 +79,11 @@ def test_sharp_contained_supported_burst_can_outrank_analysis_frame() -> None:
 
 def test_clipped_or_blurred_high_resolution_candidate_loses_but_is_retained() -> None:
     tracked = _candidate("tracked", "tracked_best", facts=(("track_supported", True),))
-    clipped = _candidate("clipped", "high_resolution_burst", box=(0.0, 0.2, 0.4, 0.8), facts=(
+    # A small, bird-scale sliver (1.5% of frame) touching the edge -- the
+    # ordinary "poor partial view" case that stays a hard rejection. See
+    # test_large_edge_clipped_subject_is_graded_not_excluded below for the
+    # large-subject (deer/raccoon-scale) case, which is graded instead.
+    clipped = _candidate("clipped", "high_resolution_burst", box=(0.0, 0.4, 0.1, 0.55), facts=(
         ("track_supported", True), ("temporal_alignment", "aligned"),
     ))
     blurred = _candidate("blurred", "high_resolution_burst", width=1200, height=900, facts=(
@@ -92,7 +96,28 @@ def test_clipped_or_blurred_high_resolution_candidate_loses_but_is_retained() ->
     assert result.identification_candidate_id == "tracked"
     assert {score.candidate_id for score in result.candidate_scores} == {"tracked", "clipped", "blurred"}
     assert "subject_edge_clipped" in result.score_for("clipped").reason_codes
+    assert not result.score_for("clipped").eligible
     assert "image_blurred" in result.score_for("blurred").reason_codes
+
+
+def test_large_edge_clipped_subject_is_graded_not_excluded() -> None:
+    """Broader Wildlife Maturity v1: a deer/raccoon-scale subject that fills
+    most of the frame and touches an edge is normal camera-trap framing, not
+    a bad detection -- it must remain eligible, unlike the small bird-scale
+    sliver above."""
+
+    large_clipped = _candidate(
+        "large-clipped", "tracked_best", box=(0.0, 0.1, 0.55, 0.95), facts=(("track_supported", True),),
+    )
+    result = score_proposal_evidence(
+        _proposal("large-clipped"), (large_clipped,), media={"large-clipped": _png()},
+    )
+    score = result.score_for("large-clipped")
+    assert score.eligible
+    assert "subject_edge_clipped_large_subject" in score.reason_codes
+    assert "subject_edge_clipped" not in score.reason_codes
+    assert result.identification_candidate_id == "large-clipped"
+    assert result.no_useful_evidence is False
 
 
 def test_identification_and_context_are_selected_separately_and_deterministically() -> None:
@@ -139,6 +164,35 @@ def test_privacy_masked_unavailable_and_too_small_candidates_are_not_selected() 
     assert "candidate_unavailable" in result.score_for("missing").reason_codes
     assert "subject_too_small" in result.score_for("tiny").reason_codes
     assert "privacy_masked" in result.score_for("masked").reason_codes
+
+
+def test_underexposed_night_candidate_is_graded_not_excluded() -> None:
+    """Broader Wildlife Maturity v1: a raccoon/opossum-scale night encounter
+    is real, honest evidence, not a defect -- underexposed/noisy evidence
+    must be graded down (identical treatment to a blurred frame), never
+    hard-rejected the way subject_edge_clipped or subject_too_small are.
+    Confirms existing, unmodified behavior (`_HARD_REJECTIONS` has never
+    included exposure) rather than assuming it."""
+
+    tracked = _candidate("tracked", "tracked_best", facts=(("track_supported", True),))
+    night = _candidate(
+        "night", "alternate",
+        facts=(("track_supported", True), ("temporal_alignment", "aligned"), ("underexposed", True)),
+    )
+    result = score_proposal_evidence(
+        _proposal("tracked", "night"), (tracked, night), media={"tracked": _png(), "night": _png(dark=True)},
+    )
+    night_score = result.score_for("night")
+    assert night_score.eligible
+    assert "image_underexposed" in night_score.reason_codes
+    assert "subject_edge_clipped" not in night_score.reason_codes
+    assert result.no_useful_evidence is False
+    # A well-lit, otherwise-identical candidate still outranks it -- graded
+    # down, not treated as equally good -- but the night frame remains real,
+    # selectable evidence when it is genuinely the best/only option.
+    assert result.identification_candidate_id == "tracked"
+    only_night = score_proposal_evidence(_proposal("night"), (night,), media={"night": _png(dark=True)})
+    assert only_night.identification_candidate_id == "night"
 
 
 def test_scoring_uses_no_species_or_model_inference_contract() -> None:

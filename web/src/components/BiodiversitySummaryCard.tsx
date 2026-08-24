@@ -44,6 +44,20 @@ export function BiodiversitySummaryCard({ summary, onOpenBirdLog }: Biodiversity
 
   const hasAnyConfirmed = summary.taxa.length > 0;
   const hasProvisional = summary.provisional_taxa.length > 0;
+  // Broader Wildlife Maturity v1: mirrors TodayReportPanel's own species/
+  // kinds-of-wildlife fallback (see docs/broader-wildlife-maturity-v1-
+  // contract.md). distinct_species_count only counts species-level truth
+  // (bird-only today in practice -- see the contract's identification
+  // section), so a Place with only confirmed kind-level wildlife (a
+  // reviewed squirrel, deer, ...) previously headlined "0" here while
+  // naming them by name in "Regular visitors"/"New here" just below --
+  // a visible, self-contradicting undercount on the same card.
+  const usingTaxaFallback =
+    summary.distinct_species_count === 0 && summary.historical_baseline.distinct_taxa_count > 0;
+  const speciesHeadlineCount = usingTaxaFallback
+    ? summary.historical_baseline.distinct_taxa_count
+    : summary.distinct_species_count;
+  const speciesHeadlineLabel = usingTaxaFallback ? "Kinds of wildlife known here" : "Species known here";
 
   return (
     <section aria-label="Biodiversity at this Place" className="panel biodiversity-summary-card">
@@ -64,8 +78,8 @@ export function BiodiversitySummaryCard({ summary, onOpenBirdLog }: Biodiversity
         <>
           <div className="today-report-facts">
             <div className="today-report-fact">
-              <span>Species known here</span>
-              <strong>{summary.distinct_species_count}</strong>
+              <span>{speciesHeadlineLabel}</span>
+              <strong>{speciesHeadlineCount}</strong>
             </div>
             {hasProvisional ? (
               <div className="today-report-fact">

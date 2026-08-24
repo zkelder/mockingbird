@@ -56,6 +56,10 @@ export function ExportsPage({
   const speciesRecordCount = manifest?.records.filter((record) => record.is_species).length ?? 0;
   const unknownBirdRecordCount =
     manifest?.records.filter((record) => record.label === "unknown_bird").length ?? 0;
+  // Broader Wildlife Maturity v1: mirrors unknownBirdRecordCount above --
+  // see docs/broader-wildlife-maturity-v1-contract.md.
+  const unknownAnimalRecordCount =
+    manifest?.records.filter((record) => record.label === "unknown_animal").length ?? 0;
   const skippedNeedsReviewCount = manifest?.skipped_reasons.needs_review ?? 0;
   const skippedReasonEntries = manifest ? sortedEntries(manifest.skipped_reasons) : [];
 
@@ -325,6 +329,10 @@ export function ExportsPage({
                 <strong>{unknownBirdRecordCount}</strong>
               </div>
               <div>
+                <span className="meta-text">Unknown animal records</span>
+                <strong>{unknownAnimalRecordCount}</strong>
+              </div>
+              <div>
                 <span className="meta-text">Skipped needs review</span>
                 <strong>{skippedNeedsReviewCount}</strong>
               </div>
@@ -381,6 +389,9 @@ export function ExportsPage({
                       ) : null}
                       {record.label === "unknown_bird" ? (
                         <EvidenceBadge label="Unknown bird record" tone="review" />
+                      ) : null}
+                      {record.label === "unknown_animal" ? (
+                        <EvidenceBadge label="Unknown animal record" tone="review" />
                       ) : null}
                       {record.label_category ? (
                         <EvidenceBadge

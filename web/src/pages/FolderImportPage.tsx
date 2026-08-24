@@ -53,7 +53,9 @@ export function FolderImportPage({
   const [selectedStreamId, setSelectedStreamId] = useState(streams[0]?.id ?? "");
   const [zones, setZones] = useState<Zone[]>([]);
   const [selectedZoneId, setSelectedZoneId] = useState("");
-  const [subjectLabel, setSubjectLabel] = useState("unknown_bird");
+  // Broader Wildlife Maturity v1: honest default for arbitrary imported
+  // media (a trail-cam photo could be anything) -- was "unknown_bird".
+  const [subjectLabel, setSubjectLabel] = useState("unknown_animal");
   const [speciesGuess, setSpeciesGuess] = useState("");
   const [notes, setNotes] = useState("");
   const [limit, setLimit] = useState("");
@@ -169,7 +171,7 @@ export function FolderImportPage({
         folder_path: trimmedPath,
         stream_id: selectedStreamId,
         zone_id: selectedZoneId || undefined,
-        subject_label: subjectLabel.trim() || "unknown_bird",
+        subject_label: subjectLabel.trim() || "unknown_animal",
         species_guess: speciesGuess.trim() || undefined,
         notes: notes.trim() || undefined,
         limit: parsedLimit,
