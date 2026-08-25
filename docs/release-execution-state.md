@@ -13,10 +13,10 @@ not authorize future work.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `cb49575`
+- **Accepted HEAD:** `f609c89`
 - **Schema:** `v53`
-- **Latest accepted milestone:** Release Engineering Foundation --
-  Native-Windows Clean Install, Upgrade & Recovery Closure v1
+- **Latest accepted milestone:** Camera / Source Experience & First-Hour
+  Setup Closure v1
 - **Push state:** Local accepted state. Do not push without explicit
   authorization.
 - **Production detector:** MDv5a ONNX
@@ -95,12 +95,13 @@ preserved here, not relaxed.
 
 **NONE.**
 
-Release Engineering Foundation -- Native-Windows Clean Install, Upgrade &
-Recovery Closure v1 (directly authorized outside this file, reconciled
-here at its own closure -- see §16) is now accepted and closed. No new
-implementation milestone is currently authorized. The next milestone will
-be selected only after the governing external process verifies this
-execution state against the complete remaining-v0.1 queue.
+Camera / Source Experience & First-Hour Setup Closure v1 (directly
+authorized outside this file, reconciled here at its own closure -- see
+§16) is now accepted and closed at classification **C** (usable, bounded
+further closure remains -- see Lane G, §6). No new implementation
+milestone is currently authorized. The next milestone will be selected
+only after the governing external process verifies this execution state
+against the complete remaining-v0.1 queue.
 
 Do NOT automatically authorize:
 
@@ -182,7 +183,9 @@ concurrency; backup/restore.
 
 **Camera / Acquisition Foundations.** Substantial accepted work: native
 Camera Node path; ONVIF; RTSP/RTSPS; offline/recorded ingest; camera-trap
-ingest; provider-neutral Source/Stream architecture.
+ingest; provider-neutral Source/Stream architecture. First-hour product
+experience materially closed (Add Camera preview, credential honesty) --
+see Lane G.
 
 **Diagnostics / Storage / Recovery Foundations.** Substantial accepted
 work: health/diagnostics; Doctor/support concepts; storage health;
@@ -261,11 +264,35 @@ scope.
 
 ### G. Camera / Source Experience
 
-**Status:** PARTIAL -- v0.1 CRITICAL.
+**Status:** PARTIAL, MATERIALLY CLOSED -- v0.1 CRITICAL. Camera / Source
+Experience & First-Hour Setup Closure v1 (2026-08-25) fixed two real P0
+first-hour gaps and two P1s; see
+[camera-source-experience-v1-report.md](camera-source-experience-v1-report.md)
+for the full archaeology, gap table, and evidence. Release
+classification: **C** (usable, bounded further closure remains).
 
-Need final confidence in: Add Camera; preview; discovery/connection;
-validation; credentials; capability reporting; provider-specific failure;
-reconnect/recovery; user-facing health.
+Closed by this milestone: manual RTSP setup's separate "Auth username"/
+"Auth password" fields were collected but silently discarded on every
+write and never reached a real connection attempt -- now stored for real
+and merged into the effective connection URL everywhere it's actually
+used. Only Camera Node had a real "Check the picture" setup preview --
+now RTSP/ONVIF/local/Windows-USB have the same bounded, non-persisting
+preview capability, and `CameraSetupValidationResponse.preview_available`
+is computed honestly instead of hardcoded `False`. A healthy camera's own
+detail page had no persistent way back to reconfigure it; a dead,
+unreachable duplicate Add-Camera form was removed.
+
+Remaining, not closed by this pass: ongoing-monitoring failure-code
+collapse for non-Camera-Node providers (once a Stream is armed and
+running, a dead RTSP/local/Windows process's specific cause -- auth/
+network/codec/decode -- is discarded in favor of a generic code; setup-
+time validation is unaffected and stays fully distinguishing). No real,
+reachable camera/RTSP/ONVIF/local-USB hardware or Camera Node was
+available to prove actual video decode/preview end-to-end this session
+(native-Windows evidence proves the real subprocess/HTTP/taxonomy/
+credential-merge mechanics genuinely work against a real unreachable
+host, not that a specific real camera's picture renders). Full
+integrated multi-camera/whole-product acceptance remains Lane R.
 
 ### H. Site-Specific Learning
 
@@ -582,7 +609,15 @@ each session that touches this repository.
 
 ## 14. Validation baselines
 
-**Latest accepted Core checkpoint (Release Engineering Foundation v1):**
+**Latest accepted Core checkpoint (Camera / Source Experience &
+First-Hour Setup Closure v1):** 4648 passed / 2 failed / 2 skipped / 11
+xfailed. The 2 failures
+(`test_place_biodiversity_summary_repository.py`, an unrelated
+historical-status timing case) reproduced identically against the clean
+`74c192a` baseline via `git stash` bisection -- confirmed pre-existing
+flakiness, not a regression.
+
+**Prior accepted Core checkpoint (Release Engineering Foundation v1):**
 4633 passed / 0 failed / 0 errors. (A first full run showed 2 teardown
 errors in an unrelated file; root-caused via clean-baseline bisection to
 a pytest fixture-teardown-ordering interaction this milestone's own
@@ -618,21 +653,32 @@ authorization field.
 
 ## 16. Transition checkpoint
 
-- **Accepted HEAD:** `cb49575`
+- **Accepted HEAD:** `f609c89`
 - **Schema:** v53
-- **Latest accepted milestone:** Release Engineering Foundation --
-  Native-Windows Clean Install, Upgrade & Recovery Closure v1
-- **Native-Windows acceptance:** Decision A -- real deployment, a real
-  packaging defect found and fixed, a real organic 18-schema-version
-  migration with verified automatic backup, confirmed via real HTTP. See
+- **Latest accepted milestone:** Camera / Source Experience & First-Hour
+  Setup Closure v1
+- **Camera / Source Experience release classification:** C -- usable,
+  bounded further closure remains (ongoing-monitoring failure-code
+  collapse; no real reachable camera/RTSP/ONVIF/local-USB/Camera-Node
+  hardware exercised this session). See
+  [camera-source-experience-v1-report.md](camera-source-experience-v1-report.md).
+- **Native-Windows acceptance (this milestone):** real deployment of the
+  exact commit (confirmed via `/api/product/instance`), plus a second,
+  genuinely fresh isolated instance exercised end-to-end (real
+  administrator creation, real sign-in, real ffmpeg 8.1.2 subprocess
+  against an intentionally unreachable RTSP host, honest
+  `preview_available`, correct credential masking, no leak) -- not a
+  full physical-camera acceptance; see the report's Section 6/9.
+- **Prior Native-Windows acceptance (Release Engineering Foundation v1):**
+  Decision A -- real deployment, a real packaging defect found and fixed,
+  a real organic 18-schema-version migration with verified automatic
+  backup, confirmed via real HTTP. See
   [release-engineering-foundation-v1-report.md](release-engineering-foundation-v1-report.md).
 - **Acoustic release posture:** Release-ready optional
 - **Production detector:** MDv5a ONNX @ 0.1
 - **Production visual species system:** BioCLIP-2 + Eligibility/Abstention
 - **Current authorized implementation milestone:** NONE
-- **State:** Milestone-closure checkpoint (superseded the prior New-
-  ChatGPT-Project transition checkpoint's stale `02af3f4` bookkeeping;
-  no accepted-decision content changed by that reconciliation)
+- **State:** Milestone-closure checkpoint
 - **Final release hardening:** not authorized
 - **Remote LTE/solar:** not a v0.1 blocker
 - **Mobile/PWA:** not authorized

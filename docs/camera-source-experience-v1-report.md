@@ -164,10 +164,10 @@ path actually touches.
 
 | Source type | Support | Discovery | Validation | Preview | Monitoring | Recovery | Notable limitations | Real-hardware validation |
 |---|---|---|---|---|---|---|---|---|
-| MockingBird Camera Node | Certified (golden path) | Manual LAN address entry (deliberately no network scan) | Rich, dedicated failure vocabulary | Yes (pre-existing, unchanged) | Observation Engine | Bounded reconnect; boot/self-test/watchdog inferred by Doctor from a durable DB side-channel, not a live poll | Host never reads the Node's own live `/node/v1/health` self-test/watchdog fields | Not exercised this session -- LAN reference Node unreachable this session (documented as fragile/session-dependent); real hardware confirmed reachable in numerous prior sessions |
-| ONVIF | Compatible | Manual host/port + "Discover this camera" profile enumeration; WS-Discovery UDP exists in code but is unwired/unverified against real hardware, and honestly not offered | Same rich RTSP probe (converges to `external_url`) | **New**: real "Check the picture" via the shared RTSP preview | Durable Monitoring Supervisor (shared with RTSP) | Bounded backoff retry | Credentials are embedded client-side before submission (unchanged, already correct) | Not exercised -- no real ONVIF camera reachable this session |
-| Direct RTSP/RTSPS | Compatible | Manual URL entry only | Rich, 7+ distinguishable failure modes | **New**: real "Check the picture" during setup | Durable Monitoring Supervisor | Bounded backoff retry; **ongoing**-monitoring failures still collapse to a generic code (disclosed, deferred -- see gap table) | RTSPS honestly refused (unchanged, 3 layers); separate Auth username/password fields **now actually work** (P0 fix) | Not exercised against a real camera this session -- fixture/unit-level only (real ffmpeg subprocess exercised via the real-local-ffmpeg test in `test_rtsp_probe.py`) |
-| Local/Windows USB | Compatible | Linux: none (must already know `/dev/videoN`); Windows: real DirectShow device-listing endpoint | Previously static-only; **now** the preview capture doubles as a genuine live-openness signal | **New**: real "Check the picture" during setup | Durable Monitoring Supervisor | Bounded backoff retry; same ongoing-monitoring collapse gap as RTSP | No secret-marked fields; nothing to redact | Not exercised -- no local/USB camera device present in this sandbox |
+| MockingBird Camera Node | Certified (golden path) | Manual LAN address entry (deliberately no network scan) | Rich, dedicated failure vocabulary | Yes (pre-existing, unchanged) | Observation Engine | Bounded reconnect; boot/self-test/watchdog inferred by Doctor from a durable DB side-channel, not a live poll | Host never reads the Node's own live `/node/v1/health` self-test/watchdog fields | Not exercised this session -- the LAN reference Camera Node (192.168.1.112:8787) timed out (TCP unreachable) when checked this session (documented elsewhere as fragile/session-dependent); real hardware confirmed reachable in numerous prior sessions; not re-exercised here since Camera Node code was not touched |
+| ONVIF | Compatible | Manual host/port + "Discover this camera" profile enumeration; WS-Discovery UDP exists in code but is unwired/unverified against real hardware, and honestly not offered | Same rich RTSP probe (converges to `external_url`) | **New**: real "Check the picture" via the shared RTSP preview | Durable Monitoring Supervisor (shared with RTSP) | Bounded backoff retry | Credentials are embedded client-side before submission (unchanged, already correct) | Not exercised -- no real ONVIF camera reachable this session. Converges into the RTSP code path below once a profile resolves, so that path's native-Windows evidence applies transitively |
+| Direct RTSP/RTSPS | Compatible | Manual URL entry only | Rich, 7+ distinguishable failure modes | **New**: real "Check the picture" during setup | Durable Monitoring Supervisor | Bounded backoff retry; **ongoing**-monitoring failures still collapse to a generic code (disclosed, deferred -- see gap table) | RTSPS honestly refused (unchanged, 3 layers); separate Auth username/password fields **now actually work** (P0 fix) | **Real native-Windows evidence, no real camera**: on a genuinely fresh Windows install (new `instance_id`, `setup.state.completed=false`) at commit `f609c89` (confirmed via `/api/product/instance`), with real ffmpeg 8.1.2 present, a real administrator account created, signed in, then `POST /api/camera-setup/validate` and `POST /api/camera-setup/preview-frame` were called with a manually-entered RTSP URL plus separate `auth_username`/`auth_password` against `rtsp://192.0.2.55:554/...` (a TEST-NET-3 address guaranteed unreachable). `validate` returned `preview_available:true` (the honest capability signal now working) with both credential fields correctly masked (`"configured"`) in `safe_config_preview`. `preview-frame` returned a real HTTP 502 with body `"Could not reach this camera's RTSP stream. Check the URL, network, and that the camera is powered on."` -- a real ffmpeg subprocess was spawned, attempted the connection, timed out, and was classified through the real (unmocked) taxonomy path. An unmistakable canary credential value never appeared in either response. No real reachable RTSP camera was available this session to prove actual video decode/preview beyond what the existing real-local-ffmpeg synthetic-pattern test already proves |
+| Local/Windows USB | Compatible | Linux: none (must already know `/dev/videoN`); Windows: real DirectShow device-listing endpoint | Previously static-only; **now** the preview capture doubles as a genuine live-openness signal | **New**: real "Check the picture" during setup | Durable Monitoring Supervisor | Bounded backoff retry; same ongoing-monitoring collapse gap as RTSP | No secret-marked fields; nothing to redact | Not exercised -- no local/USB camera device present in this sandbox or the connected Windows host |
 | Offline/recorded import | Import-only (deliberately, permanently non-live) | N/A -- explicit file/folder selection | Dry-run preview + explicit import; separate real per-frame `analyze-recorded` action | Distinct concept from live-camera preview; already existed | N/A | N/A | Still-image batches and opt-in video decode already closed by a prior milestone; unchanged this pass | Not directly re-exercised this session; verified via the existing, still-green test suite only |
 
 ## 7. Deferred: ongoing-monitoring failure-code collapse (bounded proposed fix)
@@ -231,20 +231,50 @@ left for its own bounded follow-up rather than rushed in here.
   `test_folder_import_preview`, `test_recorded_video_source`.
 - **Frontend**: `tsc --noEmit` clean; `npm run build` (typecheck + vite
   build) clean; `git diff --check` clean. No frontend unit-test
-  framework exists in this repo (Playwright e2e only); the existing
-  `camera-setup-onvif.spec.ts`/`camera-setup-monitoring-control.spec.ts`/
-  `onboarding.spec.ts` specs were read, not re-run headlessly this
-  session (see Remaining bounded gaps).
-- **Core**: see closure report.
+  framework exists in this repo (Playwright e2e only). 17/17 relevant
+  Playwright specs green: `camera-setup-onvif.spec.ts`,
+  `camera-setup-monitoring-control.spec.ts`, `onboarding.spec.ts`,
+  `camera-controls.spec.ts`, `dashboard-live-camera-ownership.spec.ts`,
+  `live-camera-overview-monitoring-toggle.spec.ts`,
+  `live-preview-ownership.spec.ts` -- every spec whose name suggested
+  camera/source/onboarding relevance across the repo's 21 e2e specs.
+- **Core**: `scripts/verify_core.py` -- 4648 passed, 2 failed, 2 skipped,
+  11 xfailed. The 2 failures
+  (`test_place_biodiversity_summary_repository.py::test_api_route_returns
+  _the_summary` and `::test_human_correction_updates_place_biodiversity_
+  intelligence_correctly`, an unrelated historical-status timing case in
+  biodiversity/place reporting) reproduced identically against the clean
+  `74c192a` baseline (`git stash push -u`, re-run, `git stash pop`),
+  confirming pre-existing flakiness rather than a regression from this
+  change.
+- **Native Windows**: real, not simulated. Deployed commit `f609c89` via
+  `scripts/deploy_windows_dev.py` to the existing dev host, confirmed via
+  `/api/product/instance`'s `git_commit`. Then deployed a *second*,
+  genuinely fresh, isolated instance (empty DB, `setup.state.completed:
+  false`) to prove first-hour behavior from true zero state: created a
+  real administrator account, signed in, and exercised
+  `POST /api/camera-setup/validate` and the new
+  `POST /api/camera-setup/preview-frame` with a manually-entered RTSP URL
+  plus separate credential fields against a real, intentionally
+  unreachable host, through real native-Windows ffmpeg 8.1.2 -- see
+  Section 6's RTSP row for the exact evidence (honest
+  `preview_available:true`, correct credential masking, a real 502 from
+  a real timed-out ffmpeg subprocess, no credential leak). The original
+  dev-root deployment was restored afterward (same `instance_id`, same
+  accumulated release history) so session continuity is preserved.
 
 ## 10. Remaining bounded gaps
 
 - Ongoing-monitoring failure-code collapse for non-Camera-Node providers
   (Section 7).
-- No Playwright e2e re-run this session for the changed setup surfaces
-  (typecheck/build clean, and the changes are additive to already
-  e2e-covered flows, but the new "Check the picture" button itself has
-  no new e2e spec).
+- No real, reachable camera/RTSP/ONVIF/local-USB hardware or Camera Node
+  was available this session to prove actual video decode/preview
+  end-to-end -- native-Windows evidence (Section 6) proves the real
+  subprocess/HTTP/taxonomy/credential-merge mechanics genuinely work, not
+  that a specific real camera's picture renders correctly.
+- The new "Check the picture" button itself has no dedicated new e2e
+  spec (covered by the backend integration tests and the manual
+  native-Windows exercise above, not by a browser-level test).
 - No real camera/RTSP/ONVIF/local-USB hardware was reachable this
   session to exercise the new preview end-to-end against genuine video;
   the RTSP preview path's real-ffmpeg-subprocess mechanics are proven
