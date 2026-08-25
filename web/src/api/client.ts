@@ -110,6 +110,8 @@ import type {
   PlacePhenologyObservation,
   PlacePhenologyObservationCreate,
   PlacePhenologyObservationUpdate,
+  PlaceStoryRequest,
+  PlaceStoryResponse,
   ProductHealthStatus,
   SetupState,
   SetupStateUpdate,
@@ -1415,6 +1417,18 @@ export const apiClient = {
     }),
   getPlaceBiodiversitySummary: () =>
     request<PlaceBiodiversitySummaryResponse>("/api/place/biodiversity-summary"),
+  getPlaceStory: (params: PlaceStoryRequest = {}) => {
+    const searchParams = new URLSearchParams();
+    if (params.start_at) searchParams.set("start_at", params.start_at);
+    if (params.end_at) searchParams.set("end_at", params.end_at);
+    for (const kind of params.kind ?? []) searchParams.append("kind", kind);
+    if (params.taxon) searchParams.set("taxon", params.taxon);
+    if (params.feature_id) searchParams.set("feature_id", params.feature_id);
+    if (params.page_size) searchParams.set("page_size", String(params.page_size));
+    if (params.offset) searchParams.set("offset", String(params.offset));
+    const query = searchParams.toString();
+    return request<PlaceStoryResponse>(`/api/place/story${query ? `?${query}` : ""}`);
+  },
   getSoundscapeSummary: (payload: SoundscapeSummaryRequest) =>
     request<SoundscapeSummaryResponse>("/api/analytics/soundscape-summary", {
       method: "POST",

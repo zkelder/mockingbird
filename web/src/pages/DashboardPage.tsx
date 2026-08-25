@@ -60,6 +60,7 @@ interface DashboardPageProps {
   onOpenInsights: () => void;
   onOpenVisit: (visitId: string) => void;
   onOpenPlaceActivityReport: () => void;
+  onOpenPlaceStory: () => void;
 }
 
 const DASHBOARD_REFRESH_INTERVAL_MS = 30_000;
@@ -214,6 +215,7 @@ export function DashboardPage({
   onOpenInsights,
   onOpenVisit,
   onOpenPlaceActivityReport,
+  onOpenPlaceStory,
 }: DashboardPageProps) {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [report, setReport] = useState<PlaceActivityReportResponse | null>(null);
@@ -623,6 +625,14 @@ export function DashboardPage({
       <div className="place-report-entry-link">
         <button className="text-action" onClick={onOpenPlaceActivityReport} type="button">
           See the full place report
+        </button>
+        {/* Place Story & Seasonal Timeline v1: the longitudinal "what
+            happened here, over time" sibling to the full place report --
+            deliberately a separate link, not folded into the one above
+            (Bird Log = granular history, Place Report = the current
+            picture, Place Story = meaningful history over time). */}
+        <button className="text-action" onClick={onOpenPlaceStory} type="button">
+          See the Place Story
         </button>
       </div>
 

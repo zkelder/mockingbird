@@ -39,6 +39,7 @@ import { ModelAdaptersPage } from "./pages/ModelAdaptersPage";
 import { MotionEvidenceDetailPage } from "./pages/MotionEvidenceDetailPage";
 import { MotionEvidencePage } from "./pages/MotionEvidencePage";
 import { PlaceActivityReportPage } from "./pages/PlaceActivityReportPage";
+import { PlaceStoryPage } from "./pages/PlaceStoryPage";
 import {
   ReviewQueuePage,
   type ReviewQueueInitialContext,
@@ -104,6 +105,7 @@ const productNavItems: Array<{ page: Page; label: string; minRole?: UserRole }> 
   { page: "review", label: "Review", minRole: "reviewer" },
   { page: "bird-log", label: "Bird Log" },
   { page: "place-activity-report", label: "Place Report" },
+  { page: "place-story", label: "Place Story" },
   { page: "activity-library", label: "Activity" },
   { page: "analytics", label: "Insights" },
   { page: "settings", label: "Settings" },
@@ -590,6 +592,7 @@ export default function App() {
           onOpenInsights={() => setPage("analytics")}
           onOpenVisit={openVisit}
           onOpenPlaceActivityReport={() => setPage("place-activity-report")}
+          onOpenPlaceStory={() => setPage("place-story")}
         />
       );
     }
@@ -891,6 +894,16 @@ export default function App() {
         <PlaceActivityReportPage
           sources={data.sources}
           onOpenBirdLog={openBirdLogLabel}
+          onOpenVisit={openVisit}
+        />
+      );
+    }
+
+    if (page === "place-story") {
+      return (
+        <PlaceStoryPage
+          onOpenBirdLog={openBirdLogLabel}
+          onOpenPlaceActivityReport={() => setPage("place-activity-report")}
           onOpenVisit={openVisit}
         />
       );

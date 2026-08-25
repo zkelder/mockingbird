@@ -9808,3 +9808,87 @@ a.secondary-action {
 .tag-edit-button:hover {
   text-decoration: underline;
 }
+
+/* Place Story & Seasonal Timeline v1: a calm, restrained timeline -- month
+   headings, restrained cards, no dense grid/dashboard chrome (this is a
+   longitudinal memory surface, not another analytics page). Reuses
+   .journal-filter-panel/.panel/.status-pill/.text-action/.empty-state
+   unmodified for the filter row, card chrome, type indicator, and
+   evidence/drill-down actions. */
+.place-story-count {
+  margin: 4px 0 18px;
+  color: #627168;
+  font-size: 0.9rem;
+}
+
+.place-story-month {
+  margin-bottom: 28px;
+}
+
+.place-story-month h2 {
+  margin: 0 0 12px;
+  font-size: 1.05rem;
+  color: #3a463d;
+}
+
+.place-story-entries {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.place-story-card {
+  display: grid;
+  gap: 8px;
+  padding: 16px 18px;
+  border: 1px solid #d6ddd1;
+  border-radius: 8px;
+  background: #fbfcf8;
+  box-shadow: 0 1px 2px rgb(31 51 41 / 0.08);
+}
+
+.place-story-card h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.place-story-card p {
+  margin: 0;
+  color: #3a463d;
+}
+
+.place-story-card-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.place-story-card-date {
+  color: #627168;
+  font-size: 0.85rem;
+}
+
+.place-story-card-basis {
+  border-radius: 999px;
+  padding: 3px 9px;
+  background: #eef2ec;
+  color: #536258;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.place-story-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.place-story-card-actions .text-action {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 0.85rem;
+}

@@ -8203,3 +8203,81 @@ class PlaceBiodiversitySummaryResponse(BaseModel):
     habitat_context: PlaceHabitatContext
     environmental_context: PlaceEnvironmentalContext
     warnings: list[str] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Place Story & Seasonal Timeline v1 -- see
+# docs/place-story-seasonal-timeline-v1-report.md. A derived read-model over
+# already-authoritative facts (Reviewed wildlife history, Reviewed Place
+# Feature changes, Reviewed phenology observations) -- no new durable table,
+# no schema change. Mirrors `mockingbird.analytics.place_story`'s own
+# vocabulary field-for-field, the same "response type mirrors the pure
+# module, never a second definition" discipline every other Place surface
+# in this file already follows (see `PlaceFeatureChangeEventType`, above).
+# ---------------------------------------------------------------------------
+
+PlaceStoryEventGroup = Literal["wildlife", "place", "context", "summary"]
+PlaceStoryEventKind = Literal[
+    "first_seen",
+    "return",
+    "regularity_change",
+    "noteworthy_activity",
+    "diversity_milestone",
+    "feature_change",
+    "phenology",
+    "comparison_insight",
+    "period_summary",
+]
+PlaceStoryImportance = Literal["major", "notable"]
+
+
+class PlaceStoryEntry(BaseModel):
+    """One Place Story timeline entry -- see `mockingbird.analytics.place_
+    story.PlaceStoryEvent` for the full field-by-field rationale. `kind` is
+    a stable, machine-readable tag for filtering; `title`/`summary` already
+    carry the plain-language, reader-facing text -- the UI must never
+    render `kind`/`group` directly as user-facing copy (Phase 3 of the
+    governing brief: "do not expose internal enum names directly")."""
+
+    id: str
+    kind: PlaceStoryEventKind
+    group: PlaceStoryEventGroup
+    event_date: date
+    event_end_date: date | None = None
+    title: str
+    summary: str
+    information_class: Literal["measured", "inferred", "reviewed"]
+    importance: PlaceStoryImportance
+    taxon_label: str | None = None
+    taxon_display_name: str | None = None
+    feature_id: str | None = None
+    feature_name: str | None = None
+    visit_id: str | None = None
+    zone_id: str | None = None
+    zone_name: str | None = None
+    source_id: str | None = None
+    detail_refs: dict[str, str] = Field(default_factory=dict)
+
+
+class PlaceStoryResponse(BaseModel):
+    """`GET /api/place-story` -- a bounded, filtered, paginated page over
+    the merged Place Story. `entries` newest-first (see `build_place_story`'s
+    own ordering contract). Always computed fresh from current rows on every
+    call, never cached (Phase 15: "no stale narrative truth") -- mirrors
+    every other Place read-model's identical live-query-always discipline
+    (`PlaceActivityReportResponse`, `PlaceFeatureDetail`, ...)."""
+
+    generated_at: datetime
+    period_start_at: datetime
+    period_end_at: datetime
+    entries: list[PlaceStoryEntry] = Field(default_factory=list, max_length=100)
+    has_more: bool
+    next_offset: int | None = Field(default=None, ge=0)
+    total_matched: int = Field(ge=0)
+    # Honest early-experience signal (Phase 23): `True` only when this
+    # Place has essentially no accumulated history at all yet -- mirrors
+    # `HistoricalPlaceBaseline.maturity == "insufficient"` -- so the
+    # frontend can show a calm "your Place Story is just beginning" state
+    # instead of a bare empty list indistinguishable from a filter that
+    # simply matched nothing.
+    is_early_experience: bool

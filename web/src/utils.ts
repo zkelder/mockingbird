@@ -204,6 +204,24 @@ export function seasonalPatternNote(
   return pattern.current_month_is_typical ? "Typical for this time of year" : null;
 }
 
+/** Plain calendar-date formatting (`YYYY-MM-DD` inputs -- Place Story event
+ * dates, phenology intervals, feature-change effective dates -- never a
+ * datetime with a time-of-day component to show). */
+export function formatDate(value: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(`${value}T00:00:00Z`));
+}
+
+export function formatMonthYear(value: string): string {
+  return new Intl.DateTimeFormat(undefined, { year: "numeric", month: "long", timeZone: "UTC" }).format(
+    new Date(`${value}T00:00:00Z`),
+  );
+}
+
 export function formatDateTime(value: string): string {
   return new Intl.DateTimeFormat(undefined, {
     month: "short",

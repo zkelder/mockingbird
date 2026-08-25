@@ -411,6 +411,7 @@ from mockingbird.api.schemas import (
     PlacePhenologyObservation,
     PlacePhenologyObservationCreate,
     PlacePhenologyObservationUpdate,
+    PlaceStoryResponse,
     VisitEnvironmentalContext,
 )
 from mockingbird.motion import (
@@ -15154,6 +15155,32 @@ async def get_place_biodiversity_summary() -> PlaceBiodiversitySummaryResponse:
     context, in one read. Creates no review/Observation/product state."""
 
     return get_repository().place_biodiversity_summary()
+
+
+@app.get("/api/place/story", response_model=PlaceStoryResponse)
+async def get_place_story(
+    start_at: datetime | None = Query(default=None),
+    end_at: datetime | None = Query(default=None),
+    kind: list[str] | None = Query(default=None),
+    taxon: str | None = Query(default=None),
+    feature_id: str | None = Query(default=None),
+    page_size: int = Query(default=30, ge=1, le=100),
+    offset: int = Query(default=0, ge=0, le=10_000),
+) -> PlaceStoryResponse:
+    """A bounded, filtered, paginated page of the Place Story -- meaningful
+    longitudinal moments (firsts, regularity changes, returns after a quiet
+    period, Reviewed Place Feature/habitat changes, phenology, mature
+    before/after insights) composed from already-authoritative facts. See
+    docs/place-story-seasonal-timeline-v1-report.md. `start_at`/`end_at`
+    default to the last ~5 years ending now when omitted -- a defensive
+    cap, not a meaningful product limit (this product's real history is far
+    younger). Creates no review/Observation/product state; always computed
+    fresh, never cached."""
+
+    return get_repository().place_story(
+        start_at=start_at, end_at=end_at, kinds=kind, taxon=taxon, feature_id=feature_id,
+        page_size=page_size, offset=offset,
+    )
 
 
 def _storage_retention_http_error(error: ValueError) -> HTTPException:

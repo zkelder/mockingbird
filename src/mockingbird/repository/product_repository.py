@@ -105,6 +105,17 @@ from mockingbird.analytics.feature_change_comparison import (
     compute_feature_change_comparison,
 )
 from mockingbird.analytics.feature_yield import compute_feature_yield
+from mockingbird.analytics.place_story import (
+    PlaceStoryEvent,
+    build_place_story,
+    comparison_insight_event,
+    compute_diversity_milestone_events,
+    compute_first_seen_events,
+    detect_overall_activity_events,
+    detect_regularity_transition_events,
+    feature_change_event_to_story_event,
+    phenology_observation_to_story_event,
+)
 from mockingbird.analytics.weather_association import (
     TaxonWeatherAssociation,
     compute_weather_associations,
@@ -735,6 +746,8 @@ from mockingbird.api.schemas import (
     PlacePhenologyObservation,
     PlacePhenologyObservationCreate,
     PlacePhenologyObservationUpdate,
+    PlaceStoryEntry,
+    PlaceStoryResponse,
     SelfPasswordChangeRequest,
     SignInRequest,
     SolarContext,
@@ -3718,6 +3731,43 @@ def _soundscape_summary_response(summary: SoundscapeSummary) -> SoundscapeSummar
             for entry in summary.hourly_acoustic_activity
         ],
     )
+
+
+def _place_story_entry(event: PlaceStoryEvent) -> PlaceStoryEntry:
+    """Reshape the pure `analytics.place_story.PlaceStoryEvent` dataclass
+    into its API response shape -- field-for-field, no new logic (mirrors
+    `_soundscape_summary_response`'s identical role, just above)."""
+
+    return PlaceStoryEntry(
+        id=event.id,
+        kind=event.kind,
+        group=event.group,
+        event_date=event.event_date,
+        event_end_date=event.event_end_date,
+        title=event.title,
+        summary=event.summary,
+        information_class=event.information_class,
+        importance=event.importance,
+        taxon_label=event.taxon_label,
+        taxon_display_name=event.taxon_display_name,
+        feature_id=event.feature_id,
+        feature_name=event.feature_name,
+        visit_id=event.visit_id,
+        zone_id=event.zone_id,
+        zone_name=event.zone_name,
+        source_id=event.source_id,
+        detail_refs=dict(event.detail_refs),
+    )
+
+
+# Place Story & Seasonal Timeline v1: a defensive cap only, not a meaningful
+# product limit -- applied solely when a caller omits `start_at` entirely,
+# so a truly unbounded "give me everything" request against a very old
+# installation someday cannot scan without limit (Phase 24 of the governing
+# brief: "avoid N+1 queries... do not load the entire lifetime... at
+# once"). This product's real history today is weeks old, far short of
+# this cap.
+PLACE_STORY_DEFAULT_LOOKBACK_DAYS = 1825  # ~5 years
 
 
 class ProductRepository:
@@ -31323,6 +31373,11 @@ class ProductRepository:
             temporal_patterns=temporal_patterns,
             habitat_associations=habitat_associations,
             weather_associations=weather_associations,
+            taxa=taxa,
+            all_time_first_confirmed_at=all_time_first_confirmed_at,
+            all_time_last_confirmed_at=all_time_last_confirmed_at,
+            usable_dates=usable_dates,
+            window_visits=window_visits,
         )
 
     def list_likely_species_overview(self, *, limit: int = 20) -> LikelySpeciesOverviewResponse:
@@ -32097,6 +32152,244 @@ class ProductRepository:
             habitat_context=self.get_place_habitat_context(),
             environmental_context=self.get_place_environmental_context_today(),
         )
+
+    def place_story(
+        self,
+        *,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+        kinds: list[str] | None = None,
+        taxon: str | None = None,
+        feature_id: str | None = None,
+        page_size: int = 30,
+        offset: int = 0,
+        now: datetime | None = None,
+        local_timezone: tzinfo | None = None,
+    ) -> PlaceStoryResponse:
+        """Build one Place Story page -- a derived, read-only composition
+        over already-authoritative facts (see docs/place-story-seasonal-
+        timeline-v1-report.md). Every fact source below is read fresh from
+        current rows on every call, exactly like `place_activity_report`/
+        `get_place_feature_detail`; nothing here is cached or persisted, so
+        a reviewed correction to any underlying fact is reflected on the
+        very next call with no invalidation step (Phase 15 of the governing
+        brief).
+
+        Wildlife-derived events (`first_seen`/`return`/`regularity_change`/
+        `noteworthy_activity`/`diversity_milestone`) are bounded to the same
+        trailing `HISTORICAL_BASELINE_WINDOW_DAYS` (366-day) window every
+        other regularity/baseline feature in this codebase already uses --
+        a request spanning further back than that will still see every
+        Reviewed Place Feature/phenology fact in range, but wildlife
+        milestones older than that window are a recorded, bounded v1 gap
+        (see the report's "Remaining major PRODUCT opportunities"), not a
+        silent omission.
+        """
+
+        generation_moment = now or datetime.now(UTC)
+        resolved_local_timezone = local_timezone or resolve_host_local_timezone(generation_moment)
+        period_end_at = _as_utc(end_at) if end_at is not None else generation_moment
+        period_start_at = (
+            _as_utc(start_at)
+            if start_at is not None
+            else period_end_at - timedelta(days=PLACE_STORY_DEFAULT_LOOKBACK_DAYS)
+        )
+        wildlife_period_start_at = max(
+            period_start_at, period_end_at - timedelta(days=HISTORICAL_BASELINE_WINDOW_DAYS)
+        )
+
+        with self.session_factory() as session:
+            stream_ids = list(
+                session.scalars(
+                    select(StreamModel.id)
+                    .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+                    .where(CameraSourceModel.status != SourceStatus.archived.value)
+                ).all()
+            )
+            taxonomy_index = self._taxonomy_label_index(session)
+            intelligence = self._historical_place_baseline_and_species_statuses(
+                session,
+                stream_ids=stream_ids,
+                taxonomy_index=taxonomy_index,
+                window_end_at=period_end_at,
+                local_timezone=resolved_local_timezone,
+                period_start_at=wildlife_period_start_at,
+                period_end_at=period_end_at,
+            )
+
+            wildlife_sources: list[list[PlaceStoryEvent]] = [
+                compute_first_seen_events(
+                    list(intelligence.species_historical_statuses.values()),
+                    period_start_at=wildlife_period_start_at,
+                    period_end_at=period_end_at,
+                    local_timezone=resolved_local_timezone,
+                ),
+                compute_diversity_milestone_events(
+                    intelligence.all_time_first_confirmed_at, intelligence.taxa,
+                    local_timezone=resolved_local_timezone,
+                ),
+                detect_regularity_transition_events(
+                    intelligence.window_visits,
+                    taxa=intelligence.taxa,
+                    all_time_first_confirmed_at=intelligence.all_time_first_confirmed_at,
+                    all_time_last_confirmed_at=intelligence.all_time_last_confirmed_at,
+                    usable_dates=intelligence.usable_dates,
+                    local_timezone=resolved_local_timezone,
+                    period_start_at=wildlife_period_start_at,
+                    period_end_at=period_end_at,
+                    baseline_window_days=HISTORICAL_BASELINE_WINDOW_DAYS,
+                ),
+                detect_overall_activity_events(
+                    intelligence.window_visits,
+                    usable_dates=intelligence.usable_dates,
+                    local_timezone=resolved_local_timezone,
+                    period_start_at=wildlife_period_start_at,
+                    period_end_at=period_end_at,
+                    baseline_window_days=HISTORICAL_BASELINE_WINDOW_DAYS,
+                ),
+            ]
+
+            feature_events, comparison_events = self._place_story_feature_events(
+                session,
+                now=generation_moment,
+                local_timezone=resolved_local_timezone,
+                taxonomy_index=taxonomy_index,
+            )
+            phenology_events = self._place_story_phenology_events(session)
+
+        kinds_set = set(kinds) if kinds else None
+        period_start_date = period_start_at.astimezone(resolved_local_timezone).date()
+        period_end_date = period_end_at.astimezone(resolved_local_timezone).date()
+        page = build_place_story(
+            [*wildlife_sources, feature_events, comparison_events, phenology_events],
+            event_date_start=period_start_date,
+            event_date_end=period_end_date,
+            kinds=kinds_set,  # type: ignore[arg-type]
+            taxon_label=taxon,
+            feature_id=feature_id,
+            offset=offset,
+            page_size=page_size,
+        )
+
+        return PlaceStoryResponse(
+            generated_at=generation_moment,
+            period_start_at=period_start_at,
+            period_end_at=period_end_at,
+            entries=[_place_story_entry(event) for event in page.events],
+            has_more=page.has_more,
+            next_offset=page.next_offset,
+            total_matched=page.total_matched,
+            is_early_experience=intelligence.baseline.maturity == "insufficient",
+        )
+
+    def _place_story_feature_events(
+        self,
+        session: Session,
+        *,
+        now: datetime,
+        local_timezone: tzinfo,
+        taxonomy_index: dict[str, TaxonomyLabelModel],
+    ) -> tuple[list[PlaceStoryEvent], list[PlaceStoryEvent]]:
+        """Every Reviewed Place Feature change event, projected directly
+        (Phase 7), plus a `comparison_insight` for every one whose
+        before/after comparison has matured (Phase 8) -- reusing
+        `_compute_feature_change_event_comparison` completely unmodified
+        (the exact method `get_place_feature_detail` already uses), never a
+        second before/after computation path. Every change event is
+        fetched regardless of its own `effective_date` -- a mature
+        comparison's own `comparison_insight` event can be dated *later*
+        than its parent change event (see `comparison_insight_event`'s
+        docstring), so pre-filtering by date here could silently drop a
+        still-relevant insight; the final `build_place_story` call is what
+        actually scopes both resulting event streams to the caller's
+        requested period, independently, by each event's own `event_date`.
+        """
+
+        feature_models = {model.id: model for model in session.scalars(select(PlaceFeatureModel)).all()}
+        event_models = session.scalars(
+            select(PlaceFeatureChangeEventModel).order_by(PlaceFeatureChangeEventModel.effective_date.desc())
+        ).all()
+
+        feature_events: list[PlaceStoryEvent] = []
+        comparison_events: list[PlaceStoryEvent] = []
+        stream_ids_by_feature: dict[str, list[str]] = {}
+        for event_model in event_models:
+            feature_model = feature_models.get(event_model.feature_id) if event_model.feature_id else None
+            feature_name = feature_model.name if feature_model is not None else "This Place"
+            feature_events.append(
+                feature_change_event_to_story_event(
+                    change_event_id=event_model.id,
+                    feature_id=event_model.feature_id,
+                    feature_name=feature_name,
+                    event_type=event_model.event_type,
+                    effective_date=event_model.effective_date,
+                    note=event_model.note,
+                    prior_value=event_model.prior_value,
+                    new_value=event_model.new_value,
+                    zone_id=feature_model.zone_id if feature_model is not None else None,
+                    source_id=feature_model.source_id if feature_model is not None else None,
+                )
+            )
+
+            if feature_model is None:
+                continue  # a Place-level change event has no Feature monitoring scope to compare against
+            if feature_model.id not in stream_ids_by_feature:
+                stream_ids_by_feature[feature_model.id] = self._feature_monitoring_stream_ids(
+                    session, feature_model
+                )
+            stream_ids = stream_ids_by_feature[feature_model.id]
+            if not stream_ids:
+                continue
+            comparison = self._compute_feature_change_event_comparison(
+                session, feature_model, stream_ids, event_model,
+                now=now, local_timezone=local_timezone, taxonomy_index=taxonomy_index,
+            )
+            if comparison.maturity not in ("early_signal", "comparable"):
+                continue
+            association = comparison.association
+            if association is None or association.status not in (
+                "more_common_under_condition", "less_common_under_condition",
+            ):
+                continue
+            assert comparison.window_days is not None and comparison.post_end is not None
+            comparison_events.append(
+                comparison_insight_event(
+                    change_event_id=event_model.id,
+                    feature_id=feature_model.id,
+                    feature_name=feature_model.name,
+                    event_type=event_model.event_type,
+                    maturity=comparison.maturity,
+                    window_days=comparison.window_days,
+                    post_end=comparison.post_end,
+                    association_status=association.status,
+                    # Environmental-context caveat composition onto this
+                    # comparison is a deliberately bounded v1 gap -- see
+                    # the report's "Remaining major PRODUCT opportunities."
+                    # Never fabricated; simply omitted when not computed.
+                    weather_caveat=None,
+                )
+            )
+        return feature_events, comparison_events
+
+    def _place_story_phenology_events(self, session: Session) -> list[PlaceStoryEvent]:
+        """Every Reviewed, Place-wide phenology observation, projected
+        directly (Phase 10) -- mirrors `list_place_phenology_observations`'s
+        own `source_id.is_(None)` Place-wide scope."""
+
+        models = session.scalars(
+            select(PlacePhenologyObservationModel).where(PlacePhenologyObservationModel.source_id.is_(None))
+        ).all()
+        return [
+            phenology_observation_to_story_event(
+                observation_id=model.id,
+                subject_label=model.subject_label,
+                phenomenon=model.phenomenon,
+                observed_start_date=model.observed_start_date,
+                observed_end_date=model.observed_end_date,
+                note=model.note,
+            )
+            for model in models
+        ]
 
     @staticmethod
     def _wildlife_journal_date_range(

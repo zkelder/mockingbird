@@ -20,6 +20,7 @@ testable unit, matching this milestone's architecture goals.
 
 from __future__ import annotations
 
+from datetime import date, datetime
 from typing import Mapping, NamedTuple, Sequence
 
 from mockingbird.analytics.daily_digest import (
@@ -123,6 +124,18 @@ class HistoricalPlaceIntelligence(NamedTuple):
     temporal_patterns: dict[str, TaxonTemporalPattern]
     habitat_associations: dict[str, list[TaxonHabitatAssociation]]
     weather_associations: dict[str, list[TaxonWeatherAssociation]]
+    # Place Story & Seasonal Timeline v1: the raw ingredients this method
+    # already assembles internally to compute everything above, additively
+    # exposed so `place_story`'s own checkpoint scan (which needs the raw
+    # per-Visit/per-taxon facts, not this method's own single-`window_end_
+    # at`-snapshot outputs) can reuse this one call's already-issued
+    # queries instead of a second, duplicate fetch. Every existing caller
+    # of this NamedTuple is unaffected -- purely additive fields.
+    taxa: dict[str, TaxonFact]
+    all_time_first_confirmed_at: dict[str, datetime]
+    all_time_last_confirmed_at: dict[str, datetime]
+    usable_dates: frozenset[date]
+    window_visits: list[VisitFact]
 
 _RESOLUTION_BY_REVIEW_STATUS: dict[ReviewStatus, VisitResolution] = {
     ReviewStatus.needs_review: "needs_review",

@@ -5609,3 +5609,62 @@ export interface SampleDataRemovalResponse {
   status: LocalDataStatus;
   message: string;
 }
+
+// --- Place Story & Seasonal Timeline v1 -------------------------------------
+
+export type PlaceStoryEventGroup = "wildlife" | "place" | "context" | "summary";
+
+export type PlaceStoryEventKind =
+  | "first_seen"
+  | "return"
+  | "regularity_change"
+  | "noteworthy_activity"
+  | "diversity_milestone"
+  | "feature_change"
+  | "phenology"
+  | "comparison_insight"
+  | "period_summary";
+
+export type PlaceStoryImportance = "major" | "notable";
+
+export interface PlaceStoryEntry {
+  id: string;
+  kind: PlaceStoryEventKind;
+  group: PlaceStoryEventGroup;
+  event_date: string;
+  event_end_date?: string | null;
+  title: string;
+  summary: string;
+  information_class: "measured" | "inferred" | "reviewed";
+  importance: PlaceStoryImportance;
+  taxon_label?: string | null;
+  taxon_display_name?: string | null;
+  feature_id?: string | null;
+  feature_name?: string | null;
+  visit_id?: string | null;
+  zone_id?: string | null;
+  zone_name?: string | null;
+  source_id?: string | null;
+  detail_refs: Record<string, string>;
+}
+
+export interface PlaceStoryResponse {
+  generated_at: string;
+  period_start_at: string;
+  period_end_at: string;
+  entries: PlaceStoryEntry[];
+  has_more: boolean;
+  next_offset?: number | null;
+  total_matched: number;
+  is_early_experience: boolean;
+}
+
+export interface PlaceStoryRequest {
+  start_at?: string;
+  end_at?: string;
+  kind?: PlaceStoryEventKind[];
+  taxon?: string;
+  feature_id?: string;
+  page_size?: number;
+  offset?: number;
+}

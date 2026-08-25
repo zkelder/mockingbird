@@ -22,6 +22,7 @@ export type Page =
   | "review"
   | "bird-log"
   | "place-activity-report"
+  | "place-story"
   | "alerts-inbox"
   | "analytics"
   | "exports"
@@ -58,6 +59,7 @@ const pagePaths: Partial<Record<Page, string>> = {
   review: "/review",
   "bird-log": "/bird-log",
   "place-activity-report": "/place-report",
+  "place-story": "/place-story",
   "alerts-inbox": "/alerts",
   analytics: "/analytics",
   exports: "/exports",
