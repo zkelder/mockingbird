@@ -3133,6 +3133,48 @@ than this product has, and several are non-goals until a stronger
 change-detection foundation exists. No diversity index, population
 estimate, or causal claim was added anywhere.
 
+**2026-08-25 update (Place / Yard Intelligence v2 -- Changes, Trends &
+Actionable Understanding):** closes several of the "still open" gaps the
+entry above named, plus new work the milestone brief scoped further (per-
+Source activity/quality, a weekly digest) -- see
+[place-yard-intelligence-v2-contract.md](place-yard-intelligence-v2-contract.md)
+and
+[place-yard-intelligence-v2-report.md](place-yard-intelligence-v2-report.md).
+Six new pure `mockingbird.analytics` modules, composed onto the existing
+foundation, zero schema migration: `regularity_narrative` (synthesizes
+historical/change status into "becoming a regular visitor"/"quieter
+lately"/"back after a quiet stretch"); `seasonal_pattern` (month-of-year
+presence bucketing over the existing 366-day trailing window, gated by a
+Place-wide "at least 9 of 12 months well-monitored" floor -- deliberately
+single-year, not year-over-year); `conditional_association` +
+`habitat_association` (a generic presence-rate-inside-a-date-set
+primitive applied to recorded phenology intervals -- the honest ceiling
+here, since no discrete before/after habitat *change-event* model exists
+anywhere in this codebase, confirmed by exhaustive grep; building one is
+recorded as a future data-model dependency, not attempted); `temporal_
+pattern` (hour-band + day/night distribution, absence-safe when Place
+coordinates aren't configured); and `source_activity` (a coverage-
+normalized cross-Source activity comparison reusing Zone Insights' own
+`>=2`-healthy-hour floor, plus a bounded admission-yield quality signal
+from `ObservationAuthoritySettingsModel`'s durable lifetime counters --
+deliberately not the live counterfactual ledger, confirmed in-memory/
+session-scoped and unable to answer a durable cross-session question).
+`daily_digest` gained three new highlight tiers and a `period_label`
+parameter (default-preserving) that lets its unmodified ranking logic
+also produce a correct weekly digest over the 7-usable-day recent window
+-- no second ranking module. Wired additively into
+`PlaceActivityReportResponse` (new `activity_by_source`/
+`source_quality_signals`/`weekly_digest` fields; taxa gain `regularity_
+narrative`/`seasonal_pattern`/`temporal_pattern`/`habitat_associations`)
+and `WildlifeJournalHistoryResponse` (the same four taxon fields); a new
+`WeeklySummaryCard` on the Dashboard and a "Camera activity" section on
+the Place Report page. 173 new tests (zero bugs found in any new module);
+Core (4791 passed) and 46/46 targeted e2e passed, after fixing one real
+regression found live (a pre-existing e2e mock fixture predating a new
+additive field). Explicitly not built, recorded as future dependencies:
+weather/temperature association (no provider exists), a structured
+Feeder/water-feature entity, and true year-over-year seasonality.
+
 ### 5. Land Management / Agriculture
 
 An application of Place Intelligence, not a separate product architecture

@@ -9,14 +9,28 @@ work is presently authorized.
 Claude's "next natural milestone" suggestions are advisory only. They do
 not authorize future work.
 
+## CURRENT PHASE: SUBSTANTIAL PRODUCT DEVELOPMENT
+
+MockingBird is still in substantial product development. Representative
+Field Acceptance, External Beta, and Final Release Hardening (Lanes R/S,
+below) are downstream gates and must **not** become the default next
+milestone while substantial product-roadmap capability remains
+intentionally unfinished -- see §6, "Global remaining execution queue,"
+for the complete remaining-capability picture this phase label is
+protecting.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `f609c89`
+- **Accepted HEAD:** `1ba76b0`
 - **Schema:** `v53`
-- **Latest accepted milestone:** Camera / Source Experience & First-Hour
-  Setup Closure v1
+- **Latest accepted milestone:** Place / Yard Intelligence v2 -- Changes,
+  Trends & Actionable Understanding (see
+  [place-yard-intelligence-v2-report.md](place-yard-intelligence-v2-report.md)).
+  Classification **B** -- major useful capability, bounded maturity gaps
+  (real accumulated history too young to validate new thresholds against;
+  see the report's "Major remaining PRODUCT opportunities").
 - **Push state:** Local accepted state. Do not push without explicit
   authorization.
 - **Production detector:** MDv5a ONNX
@@ -93,15 +107,23 @@ preserved here, not relaxed.
 
 ## 3. Current authorized milestone
 
-**NONE.**
+**NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
-Camera / Source Experience & First-Hour Setup Closure v1 (directly
-authorized outside this file, reconciled here at its own closure -- see
-§16) is now accepted and closed at classification **C** (usable, bounded
-further closure remains -- see Lane G, §6). No new implementation
-milestone is currently authorized. The next milestone will be selected
-only after the governing external process verifies this execution state
-against the complete remaining-v0.1 queue.
+Place / Yard Intelligence v2 (directly authorized outside this file,
+reconciled here at its own closure -- see §16) is now accepted at
+classification **B** (major useful capability, bounded maturity gaps --
+see
+[place-yard-intelligence-v2-report.md](place-yard-intelligence-v2-report.md)).
+Camera / Source Experience & First-Hour Setup Closure v1 remains accepted
+and closed at classification **C** (usable, bounded further closure
+remains -- see Lane G, §6). No new implementation milestone is currently
+authorized. The next milestone will be selected only after the governing
+external process verifies this execution state against the complete
+remaining-v0.1 queue **and** the remaining Place/Yard Intelligence product
+opportunities (seasonality maturation against real history, weather/
+habitat-change data-model decisions, a `source_quality_signals` UI
+surface -- see the v2 report). Do not choose the next milestone by
+adjacency to this one.
 
 Do NOT automatically authorize:
 
@@ -179,7 +201,15 @@ concurrency; backup/restore.
 
 **Habitat & Phenology.** Accepted/frozen.
 
-**Biodiversity & Place Intelligence.** Accepted/frozen.
+**Biodiversity & Place Intelligence.** Accepted; extended, not frozen --
+Place / Yard Intelligence v2 (2026-08-25) added regularity narrative,
+seasonal pattern, temporal pattern, per-Source activity/quality, and a
+weekly digest on top of the already-accepted foundation. Substantial
+product-roadmap opportunity remains (weather association, habitat
+before/after change comparison, year-over-year seasonality -- see
+[place-yard-intelligence-v2-report.md](place-yard-intelligence-v2-report.md)
+"Major remaining PRODUCT opportunities"); do not treat this lane as
+closed.
 
 **Camera / Acquisition Foundations.** Substantial accepted work: native
 Camera Node path; ONVIF; RTSP/RTSPS; offline/recorded ingest; camera-trap
@@ -635,7 +665,18 @@ each session that touches this repository.
 
 ## 14. Validation baselines
 
-**Latest accepted Core checkpoint (Camera / Source Experience &
+**Latest accepted Core checkpoint (Place / Yard Intelligence v2):** 4791
+passed / 2 failed / 2 skipped / 23 deselected (slow-marked) / 11 xfailed
+(28m23s). The 2 failures are the identical, already-documented
+`test_place_biodiversity_summary_repository.py` pair immediately below --
+re-confirmed via a fresh `git stash` bisection against the clean `731ee30`
+baseline this same session. 173 new pure-module tests added (all passing,
+zero bugs found in the modules under test); 46/46 targeted Playwright e2e
+tests passed after fixing one real regression found live (a pre-existing
+mock fixture predating a new additive response field -- see the milestone
+report).
+
+**Prior accepted Core checkpoint (Camera / Source Experience &
 First-Hour Setup Closure v1):** 4648 passed / 2 failed / 2 skipped / 11
 xfailed. The 2 failures
 (`test_place_biodiversity_summary_repository.py`, an unrelated
@@ -679,10 +720,25 @@ authorization field.
 
 ## 16. Transition checkpoint
 
-- **Accepted HEAD:** `f609c89`
-- **Schema:** v53
-- **Latest accepted milestone:** Camera / Source Experience & First-Hour
-  Setup Closure v1
+- **Accepted HEAD:** `1ba76b0`
+- **Schema:** v53 (unchanged)
+- **Latest accepted milestone:** Place / Yard Intelligence v2 -- Changes,
+  Trends & Actionable Understanding
+- **Place / Yard Intelligence v2 classification:** B -- major useful
+  capability, bounded maturity gaps. Six new pure analytics modules
+  (regularity narrative, seasonal pattern, conditional/habitat
+  association, temporal pattern, source activity/quality) composed onto
+  the existing Gate C / Biodiversity foundation; a weekly digest reusing
+  the existing daily-digest ranking unmodified. Zero schema migration.
+  173 new tests, zero bugs found in any new module; Core 4791 passed / 2
+  failed (both the pre-existing, re-confirmed
+  `test_place_biodiversity_summary_repository.py` pair below) / 2 skipped
+  / 11 xfailed; 46/46 targeted e2e passed. See
+  [place-yard-intelligence-v2-report.md](place-yard-intelligence-v2-report.md)
+  for the full record, including recorded future dependencies (weather
+  association, habitat before/after change comparison, a structured
+  Feeder entity, true year-over-year seasonality) deliberately not built
+  by adjacency.
 - **Camera / Source Experience release classification:** C -- usable,
   bounded further closure remains (ongoing-monitoring failure-code
   collapse; no real reachable camera/RTSP/ONVIF/local-USB/Camera-Node
@@ -703,7 +759,8 @@ authorization field.
 - **Acoustic release posture:** Release-ready optional
 - **Production detector:** MDv5a ONNX @ 0.1
 - **Production visual species system:** BioCLIP-2 + Eligibility/Abstention
-- **Current authorized implementation milestone:** NONE
+- **Current authorized implementation milestone:** NONE -- GLOBAL
+  PRODUCT-ROADMAP RECONCILIATION REQUIRED
 - **State:** Milestone-closure checkpoint
 - **Final release hardening:** not authorized
 - **Remote LTE/solar:** not a v0.1 blocker
