@@ -23,9 +23,20 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `47b7cc9`
+- **Accepted HEAD:** `055bd4a`
 - **Schema:** `v55`
-- **Latest accepted milestone:** Place Features & Habitat Change v2 --
+- **Latest accepted milestone:** Place Story & Seasonal Timeline v1 -- A
+  Living History of the Place (see
+  [place-story-seasonal-timeline-v1-report.md](place-story-seasonal-timeline-v1-report.md)).
+  Classification **B** -- major useful capability, bounded history/story
+  gaps (period summaries not built, pending a measured performance cost;
+  environmental-context/weather caveats not yet composed onto a
+  before/after insight; no dedicated taxon/Feature story page; no
+  representative imagery on Story cards -- see the report's "Remaining
+  major PRODUCT opportunities"). Schema unchanged (v55 -> v55): a pure
+  derived read-model (`mockingbird.analytics.place_story.PlaceStoryEvent`)
+  composed entirely from already-authoritative facts, no new table.
+- **Prior accepted milestone:** Place Features & Habitat Change v2 --
   Feeders, Water, Nest Boxes & Before/After Understanding (see
   [place-features-habitat-change-v2-report.md](place-features-habitat-change-v2-report.md)).
   Classification **B** -- major useful capability, bounded feature/data-
@@ -37,15 +48,6 @@ protecting.
   `PlaceFeatureChangeEventModel` -- the first discrete before/after
   change-event model in this codebase, closing a gap two prior milestones
   both explicitly recorded as their own honest ceiling.
-- **Prior accepted milestone:** Environmental Context v2 -- Weather,
-  Climate & Place Conditions (see
-  [environmental-context-v2-report.md](environmental-context-v2-report.md)).
-  Classification **B** -- major useful capability, bounded provider/
-  statistical/UI limitations (a deliberately bounded 92-day historical
-  window; only temperature and wet/dry precipitation run through the
-  statistical association machinery; weather-association UI is a single
-  compact line, not a dedicated surface -- see that report's "Remaining
-  major PRODUCT opportunities").
 - **Push state:** Local accepted state. Do not push without explicit
   authorization.
 - **Production detector:** MDv5a ONNX
@@ -124,10 +126,14 @@ preserved here, not relaxed.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
-Place Features & Habitat Change v2 (directly authorized outside this
+Place Story & Seasonal Timeline v1 (directly authorized outside this
 file, reconciled here at its own closure -- see §16) is now accepted at
-classification **B** (major useful capability, bounded feature/data-model
-maturity gaps -- see
+classification **B** (major useful capability, bounded history/story
+gaps -- see
+[place-story-seasonal-timeline-v1-report.md](place-story-seasonal-timeline-v1-report.md)).
+Place Features & Habitat Change v2 remains accepted at classification
+**B** (major useful capability, bounded feature/data-model maturity
+gaps -- see
 [place-features-habitat-change-v2-report.md](place-features-habitat-change-v2-report.md)).
 Environmental Context v2 remains accepted at classification **B** (major
 useful capability, bounded provider/statistical/UI limitations -- see
@@ -140,14 +146,20 @@ and closed at classification **C** (usable, bounded further closure
 remains -- see Lane G, §6). No new implementation milestone is currently
 authorized. The next milestone will be selected only after the governing
 external process verifies this execution state against the complete
-remaining-v0.1 queue, the remaining Place Features & Habitat Change
+remaining-v0.1 queue, the remaining Place Story product opportunities
+(period summaries -- deferred on a measured performance cost, not simply
+unattempted; environmental-context/weather caveats on a before/after
+insight; a dedicated taxon/Feature story page; representative imagery on
+Story cards; a recommended future fix to `place_change_summary.py`'s own
+`_presence_status` threshold gap -- see the Place Story & Seasonal
+Timeline v1 report), the remaining Place Features & Habitat Change
 product opportunities (composing environmental-context/weather caveats
 onto a before/after result, multi-camera Feature linking, representative
 evidence in Feature detail, a ranked feature-comparison view -- see the
 Place Features & Habitat Change v2 report), the remaining Place/Yard
 Intelligence product opportunities (seasonality maturation against real
 history, a `source_quality_signals` UI surface -- the habitat before/
-after change-event data model itself is now closed by this milestone),
+after change-event data model itself is now closed by that milestone),
 **and** the remaining Environmental Context product opportunities
 (deeper historical backfill via Open-Meteo's archive/ERA5 endpoint, wind/
 cloud-cover statistical associations, a dedicated diagnostics/Explore-page
@@ -165,6 +177,9 @@ Do NOT automatically authorize:
 - a second weather provider or user-facing provider choice;
 - Open-Meteo archive/ERA5 deep historical backfill;
 - a Feature/Zone multi-camera join table;
+- Place Story period summaries, weather-caveat composition, dedicated
+  taxon/Feature story pages, or a `place_change_summary.py` threshold-
+  policy rewrite, as a standalone follow-on campaign;
 - Land Management / Agriculture as a separate campaign;
 - final Release Hardening.
 
@@ -257,14 +272,25 @@ Place Feature entity, a Reviewed change-event timeline, and a before/after
 comparison engine built on pure reuse of the existing `conditional_
 association` primitive -- see
 [place-features-habitat-change-v2-report.md](place-features-habitat-change-v2-report.md).
-Substantial product-roadmap opportunity still remains (year-over-year
-seasonality; environmental-context/weather caveats not yet composed onto
-a before/after result; multi-camera Feature linking; a ranked feature-
-comparison view -- see that report's "Remaining major PRODUCT
-opportunities" and
-[place-yard-intelligence-v2-report.md](place-yard-intelligence-v2-report.md)
-"Major remaining PRODUCT opportunities"); do not treat this lane as
-closed.
+Place Story & Seasonal Timeline v1 (2026-08-25, same day) composes all of
+the above -- plus Reviewed phenology observations and Reviewed Feature
+change events -- into one Place-wide, dated, filterable, correction-safe
+timeline (`GET /api/place/story`), no new schema; see
+[place-story-seasonal-timeline-v1-report.md](place-story-seasonal-timeline-v1-report.md)
+for the full record, including a genuine previously-undiscovered gap
+found in `place_change_summary.py`'s own already-accepted threshold logic
+(worked around locally, not patched at its source -- see that report's
+"Truth / provenance"). Substantial product-roadmap opportunity still
+remains (year-over-year seasonality; environmental-context/weather
+caveats not yet composed onto a before/after result or a Story insight;
+multi-camera Feature linking; a ranked feature-comparison view; Place
+Story period summaries; a dedicated taxon/Feature story page;
+representative imagery on Story cards -- see that report's and
+[place-features-habitat-change-v2-report.md](place-features-habitat-change-v2-report.md)'s
+and
+[place-yard-intelligence-v2-report.md](place-yard-intelligence-v2-report.md)'s
+respective "Remaining major PRODUCT opportunities"); do not treat this
+lane as closed.
 
 **Camera / Acquisition Foundations.** Substantial accepted work: native
 Camera Node path; ONVIF; RTSP/RTSPS; offline/recorded ingest; camera-trap
@@ -720,7 +746,23 @@ each session that touches this repository.
 
 ## 14. Validation baselines
 
-**Latest accepted Core checkpoint (Place Features & Habitat Change v2):**
+**Latest accepted Core checkpoint (Place Story & Seasonal Timeline v1):**
+4958 passed / 2 failed / 3 skipped / 23 deselected (slow-marked) / 11
+xfailed (22m29s). Both failures are the identical, already-documented
+`test_place_biodiversity_summary_repository.py` pair immediately below --
+directly re-confirmed this session via a fresh `git stash push -u`
+bisection against the clean `950d5c2` baseline (byte-identical failure,
+same `'seen_before' == 'new'` assertion mismatch, with zero of this
+milestone's changes applied; `git worktree` gives invalid baselines in
+this actively-shared worktree, so `git stash push -u`/`pop` was used
+instead, then dropped after a diff-against-stash confirmed zero content
+loss). No schema change, so no guard-rail assertions needed touching. 32
+new tests (24 pure `tests/test_place_story.py` + 8 repository/HTTP
+`tests/test_place_story_repository.py`); `tsc --noEmit`/`vite build`
+clean; 44/44 targeted e2e passed (6 new `place-story.spec.ts` + 38
+directly-adjacent re-run clean).
+
+**Prior accepted Core checkpoint (Place Features & Habitat Change v2):**
 4926 passed / 2 failed / 3 skipped / 23 deselected (slow-marked) / 11
 xfailed (23m27s). Both failures are the identical, already-documented
 `test_place_biodiversity_summary_repository.py` pair immediately below --
@@ -820,11 +862,50 @@ authorization field.
 
 ## 16. Transition checkpoint
 
-- **Accepted HEAD:** `47b7cc9`
-- **Schema:** v54 -> v55 (two additive tables, `place_features` and
-  `place_feature_change_events` -- see the Place Features & Habitat
-  Change v2 report's "Data model")
-- **Latest accepted milestone:** Place Features & Habitat Change v2 --
+- **Accepted HEAD:** `055bd4a`
+- **Schema:** v55 -> v55, unchanged. `mockingbird.analytics.place_story.
+  PlaceStoryEvent` is a pure, frozen read-model dataclass, not a
+  persisted materialization -- see the Place Story & Seasonal Timeline v1
+  report's "Story event model" for why a new table was deliberately not
+  added.
+- **Latest accepted milestone:** Place Story & Seasonal Timeline v1 -- A
+  Living History of the Place
+- **Place Story & Seasonal Timeline v1 classification:** B -- major
+  useful capability, bounded history/story gaps. New `GET /api/place/
+  story` composes a small, deliberately bounded event taxonomy --
+  wildlife (`first_seen`/`return`/`regularity_change`/
+  `noteworthy_activity`/`diversity_milestone`), place
+  (`feature_change`/`phenology`), context (`comparison_insight`) --
+  entirely from already-accepted primitives (`historical_baseline`,
+  `place_change_summary`, `regularity_narrative`,
+  `PlaceFeatureChangeEventModel`, `PlacePhenologyObservationModel`,
+  `feature_change_comparison`); regularity/activity-change detection
+  re-applies those unmodified functions at every usable-date checkpoint
+  so a transition is announced once, not once per recomputation. Found
+  and worked around without modifying the frozen module: `place_change_
+  summary._presence_status` has made the existing `"returned_after_
+  absence"` wording unreachable in production on Today/Bird Log since
+  Place / Yard Intelligence v2 shipped -- `place_story._effective_
+  regularity_state` applies a narrow local supplemental check using that
+  module's own already-correct fields; a dedicated fix to `place_change_
+  summary.py` itself is recorded as future work, not applied here. New
+  `PlaceStoryPage.tsx`: a calm, newest-first, month-grouped timeline with
+  Period/Category filters and evidence drill-down. 24 pure-module tests
+  (including regression tests for the gap above and a second, separately
+  found and fixed checkpoint-seeding bug), 8 repository/HTTP integration
+  tests against real seeded data (including three independent
+  correction-safety proofs), all passing; Core 4958 passed / 2 failed
+  (both pre-existing, re-confirmed via fresh `git stash push -u`
+  bisection -- see §14) / 3 skipped / 11 xfailed; 44/44 targeted e2e
+  passed (6 new + 38 directly-adjacent re-run). See
+  [place-story-seasonal-timeline-v1-report.md](place-story-seasonal-timeline-v1-report.md)
+  for the full record, including recorded future opportunities (period
+  summaries -- deferred on a measured performance cost, the single
+  largest deferred piece --, environmental-context/weather caveats on a
+  Story insight, a dedicated taxon/Feature story page, representative
+  imagery on Story cards, and the `place_change_summary.py` fix itself)
+  deliberately not built by adjacency.
+- **Prior accepted milestone:** Place Features & Habitat Change v2 --
   Feeders, Water, Nest Boxes & Before/After Understanding
 - **Place Features & Habitat Change v2 classification:** B -- major
   useful capability, bounded feature/data-model maturity gaps. A durable
@@ -884,14 +965,18 @@ authorization field.
   collapse; no real reachable camera/RTSP/ONVIF/local-USB/Camera-Node
   hardware exercised this session). See
   [camera-source-experience-v1-report.md](camera-source-experience-v1-report.md).
-- **Native-Windows acceptance (this milestone):** none -- Place Features &
-  Habitat Change v2 was validated via targeted Playwright e2e against the
-  real running app (Linux/WSL dev stack) and full Core; it does not touch
-  platform-specific code and is not expected to behave differently on
-  native Windows, but that is an expectation, not fresh Windows evidence.
-  The most recent real native-Windows acceptance remains the one below
-  (Place / Yard Intelligence v2), unaffected by this milestone's
-  additive-only schema change.
+- **Native-Windows acceptance (this milestone):** none -- Place Story &
+  Seasonal Timeline v1 was validated via targeted Playwright e2e against
+  the real running app (Linux/WSL dev stack) and full Core; it is a pure
+  read-model over already-cross-platform data with no platform-specific
+  code and is not expected to behave differently on native Windows, but
+  that is an expectation, not fresh Windows evidence. The most recent
+  real native-Windows acceptance remains the one below (Place / Yard
+  Intelligence v2), unaffected by this milestone's schema-unchanged,
+  additive-only change.
+- **Native-Windows acceptance (Place Features & Habitat Change v2):**
+  none -- validated the same way (targeted Playwright e2e + full Core on
+  Linux/WSL), for the identical reason (no platform-specific code).
 - **Native-Windows acceptance (Place / Yard Intelligence v2):** real
   deployment of the exact commit (confirmed via `/api/product/instance`),
   plus a second, genuinely fresh isolated instance exercised end-to-end
@@ -937,7 +1022,10 @@ authorization field.
   session during Place Features & Habitat Change v2 (an ordinary,
   never-gitignored side effect of `uv run` tool invocations in this
   actively-shared worktree, not a milestone artifact) -- removed again,
-  same reasoning; the working tree was confirmed to hold exactly the
-  seven preserved files at this milestone's own start, and exactly those
-  seven plus this milestone's own additions at its close.
+  same reasoning. It recurred a third time mid-session during Place Story
+  & Seasonal Timeline v1, for the identical reason (a `git stash push -u`
+  bisection re-created it) -- removed again; the working tree was
+  confirmed to hold exactly the seven preserved files, untouched, at this
+  milestone's own start and close, alongside this milestone's own
+  committed additions.
 - **Push:** explicit authorization required

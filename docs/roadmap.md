@@ -3250,6 +3250,40 @@ deferred piece), multi-camera Feature linking, representative evidence in
 Feature detail, a ranked feature-comparison view, and deeper Today/
 `daily_digest` integration.
 
+**2026-08-25 update (Place Story & Seasonal Timeline v1):** a Place-wide,
+cross-domain chronological timeline composing every existing dated,
+reviewed fact this layer already produces -- see
+[place-story-seasonal-timeline-v1-report.md](place-story-seasonal-timeline-v1-report.md).
+Schema unchanged (v55 -> v55): `mockingbird.analytics.place_story.
+PlaceStoryEvent` is a pure, frozen read-model dataclass, not a persisted
+materialization. New `GET /api/place/story` composes a small, deliberately
+bounded event taxonomy -- wildlife (`first_seen`, `return`,
+`regularity_change`, `noteworthy_activity`, `diversity_milestone`), place
+(`feature_change`, `phenology`), and context (`comparison_insight`) --
+entirely from already-accepted primitives (`historical_baseline`,
+`place_change_summary`, `regularity_narrative`,
+`PlaceFeatureChangeEventModel`, `PlacePhenologyObservationModel`,
+`feature_change_comparison`), no new truth computation. Regularity/
+activity-change detection re-applies those unmodified functions at every
+usable-date checkpoint so each transition is announced once, not once per
+recomputation ("became a regular presence" fires at most once ever per
+taxon). Found and worked around without modifying the frozen module:
+`place_change_summary._presence_status` has made the existing
+`"returned_after_absence"` wording unreachable in production on
+Today/Bird Log since Place / Yard Intelligence v2 shipped;
+`place_story._effective_regularity_state` applies a narrow local
+supplemental check using that module's own already-correct fields, and a
+dedicated fix to `place_change_summary.py` itself is recorded as future
+work. New `PlaceStoryPage.tsx`: a calm, newest-first, month-grouped
+timeline with Period/Category filters and evidence drill-down, reachable
+from nav and a new link on Today. 24 pure-module tests, 8 repository/API
+tests, 6 Playwright e2e tests. Explicitly not built, recorded as future
+dependencies: period summaries (the single largest deferred piece,
+deferred on a measured performance cost), environmental-context (weather)
+caveats on `comparison_insight`, a dedicated taxon/Feature story page (the
+API already supports the filters), representative imagery on Story cards,
+and the `place_change_summary.py` threshold-policy fix itself.
+
 ### 5. Land Management / Agriculture
 
 An application of Place Intelligence, not a separate product architecture
