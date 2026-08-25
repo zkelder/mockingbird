@@ -4,13 +4,17 @@
 
 - **Starting HEAD:** `7a3bbfb` (verified exactly matching the milestone's
   expected starting state before any edit)
-- **Ending implementation/docs HEAD:** local, uncommitted at report-writing
-  time -- see "Exact `git status --short`," below, for the complete diff
-  surface. Committed only after this report is accepted.
+- **Ending implementation HEAD:** `751d061` -- "Environmental Context v2:
+  Weather, Climate & Place Conditions" (all code, tests, the locked
+  contract, and this report)
+- **Final docs HEAD:** the following reconciliation commit -- "Reconcile
+  release-execution-state.md: accept Environmental Context v2" (updates
+  only [release-execution-state.md](release-execution-state.md); no
+  further code/report changes)
 - **Schema:** v53 -> **v54** (one additive column,
   `environmental_context_settings.weather_enabled`; see "Data model")
-- **Commits:** none yet (working-tree changes only, per the milestone's
-  "Push state: nothing pushed" starting condition)
+- **Commits:** 2 (implementation, then execution-state reconciliation --
+  mirroring this repository's own established two-commit closure pattern)
 - **Push state:** not pushed; explicit authorization required, unchanged
   from the standing repository policy
 
@@ -618,6 +622,25 @@ milestone's work (matches exactly the seven files
 
 ## 22. Exact `git status --short`
 
-See the end of this session's record for the final, exact
-`git status --short` output at closure (captured immediately before
-commit).
+Immediately after the implementation commit (`751d061`), before the
+reconciliation commit:
+
+```
+ M docs/environmental-context-v2-report.md
+ M docs/release-execution-state.md
+?? docs/wildlife-detector-training-contract.md.orig
+?? scripts/evaluate_small_bird_detector.py
+?? scripts/materialize_wildlife_stage2.py.orig
+?? scripts/train_wildlife_stage2_rfdetr.py.orig
+?? src/mockingbird/detectors/small_bird_benchmark.py
+?? src/mockingbird/training/wildlife.py.orig
+?? tests/test_small_bird_benchmark.py
+```
+
+The two modified files above are this report's own final hash/status
+fill-in and `release-execution-state.md`'s reconciliation -- both land in
+the second (reconciliation) commit. The seven `??` entries are exactly,
+and only, the seven preserved detector files this milestone was required
+to leave untouched -- confirmed identical to the milestone's own starting
+worktree state. After the reconciliation commit, the working tree returns
+to exactly those same seven untracked files and nothing else.

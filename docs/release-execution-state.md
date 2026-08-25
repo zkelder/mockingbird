@@ -23,14 +23,23 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `1ba76b0`
-- **Schema:** `v53`
-- **Latest accepted milestone:** Place / Yard Intelligence v2 -- Changes,
+- **Accepted HEAD:** `751d061`
+- **Schema:** `v54`
+- **Latest accepted milestone:** Environmental Context v2 -- Weather,
+  Climate & Place Conditions (see
+  [environmental-context-v2-report.md](environmental-context-v2-report.md)).
+  Classification **B** -- major useful capability, bounded provider/
+  statistical/UI limitations (a deliberately bounded 92-day historical
+  window; only temperature and wet/dry precipitation run through the
+  statistical association machinery; weather-association UI is a single
+  compact line, not a dedicated surface -- see the report's "Remaining
+  major PRODUCT opportunities").
+- **Prior accepted milestone:** Place / Yard Intelligence v2 -- Changes,
   Trends & Actionable Understanding (see
   [place-yard-intelligence-v2-report.md](place-yard-intelligence-v2-report.md)).
   Classification **B** -- major useful capability, bounded maturity gaps
   (real accumulated history too young to validate new thresholds against;
-  see the report's "Major remaining PRODUCT opportunities").
+  see that report's "Major remaining PRODUCT opportunities").
 - **Push state:** Local accepted state. Do not push without explicit
   authorization.
 - **Production detector:** MDv5a ONNX
@@ -109,21 +118,28 @@ preserved here, not relaxed.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
-Place / Yard Intelligence v2 (directly authorized outside this file,
+Environmental Context v2 (directly authorized outside this file,
 reconciled here at its own closure -- see §16) is now accepted at
-classification **B** (major useful capability, bounded maturity gaps --
-see
+classification **B** (major useful capability, bounded provider/
+statistical/UI limitations -- see
+[environmental-context-v2-report.md](environmental-context-v2-report.md)).
+Place / Yard Intelligence v2 remains accepted at classification **B**
+(major useful capability, bounded maturity gaps -- see
 [place-yard-intelligence-v2-report.md](place-yard-intelligence-v2-report.md)).
 Camera / Source Experience & First-Hour Setup Closure v1 remains accepted
 and closed at classification **C** (usable, bounded further closure
 remains -- see Lane G, §6). No new implementation milestone is currently
 authorized. The next milestone will be selected only after the governing
 external process verifies this execution state against the complete
-remaining-v0.1 queue **and** the remaining Place/Yard Intelligence product
-opportunities (seasonality maturation against real history, weather/
-habitat-change data-model decisions, a `source_quality_signals` UI
-surface -- see the v2 report). Do not choose the next milestone by
-adjacency to this one.
+remaining-v0.1 queue, the remaining Place/Yard Intelligence product
+opportunities (seasonality maturation against real history, a habitat
+before/after change-event data model, a `source_quality_signals` UI
+surface), **and** the remaining Environmental Context product
+opportunities (deeper historical backfill via Open-Meteo's archive/ERA5
+endpoint, wind/cloud-cover statistical associations, a dedicated
+diagnostics/Explore-page surface for weather -- see the Environmental
+Context v2 report). Do not choose the next milestone by adjacency to
+this one.
 
 Do NOT automatically authorize:
 
@@ -133,6 +149,8 @@ Do NOT automatically authorize:
 - Local Species/Taxon Prior;
 - another classifier benchmark;
 - Provider Integrations;
+- a second weather provider or user-facing provider choice;
+- Open-Meteo archive/ERA5 deep historical backfill;
 - final Release Hardening.
 
 ## 4. Product/release guardrails
@@ -197,7 +215,20 @@ limited.
 server-side sessions; authorization; actor attribution; audit; review
 concurrency; backup/restore.
 
-**Environmental Context.** Accepted/frozen.
+**Environmental Context.** Accepted; extended, not frozen -- Environmental
+Context v2 (2026-08-25) added the first general weather provider
+(Open-Meteo) on top of the accepted solar/daylight foundation: eight
+provider-neutral metrics, always `information_class="inferred"`; a
+second, independent `weather_enabled` opt-in (schema v53 -> v54) gating
+every outbound network call separately from the existing coordinate
+setting; bounded lazy caching; Place-relative temperature and wet/dry
+precipitation associations composed onto the existing `conditional_
+association` primitive alongside `habitat_associations`. See
+[environmental-context-v2-report.md](environmental-context-v2-report.md).
+Substantial product-roadmap opportunity remains (deeper historical
+backfill via the archive/ERA5 endpoint, wind/cloud-cover statistical
+associations, a dedicated diagnostics/Explore-page surface); do not treat
+this lane as closed.
 
 **Habitat & Phenology.** Accepted/frozen.
 
@@ -665,7 +696,28 @@ each session that touches this repository.
 
 ## 14. Validation baselines
 
-**Latest accepted Core checkpoint (Place / Yard Intelligence v2):** 4791
+**Latest accepted Core checkpoint (Environmental Context v2):** 4874
+passed / 3 failed / 3 skipped / 23 deselected (slow-marked) / 11 xfailed
+(26m13s). Two of the three failures are the identical, already-documented
+`test_place_biodiversity_summary_repository.py` pair immediately below.
+The third (`test_transport_worker.py::test_retryable_failure_returns_
+item_to_failed_retryable_and_eventually_succeeds`) is unrelated to this
+milestone (a different subsystem entirely, no shared code), reproduced
+only under confirmed heavy concurrent system load, and passed cleanly
+both in isolation and as part of its own file when re-run -- a transient,
+load-induced flake, not a regression; see the milestone report's "Tests /
+validation" for the full isolation evidence. 85 new tests across three new
+pure modules plus repository/schema extensions (zero bugs found in the
+three new pure modules themselves; three real bugs found and fixed in the
+new repository-layer integration code during this milestone's own
+test-writing); 42/42 targeted Playwright e2e tests passed. A first full
+run also surfaced 10 additional failures, root-caused immediately to 14
+hard-coded `CURRENT_DATABASE_SCHEMA_VERSION == 53` guard-rail assertions
+across 7 files unrelated to this milestone that its own correct v53->v54
+schema bump was always going to trip -- fixed by updating all 14 to `54`
+(not a defect in this milestone's own migration; see the report).
+
+**Prior accepted Core checkpoint (Place / Yard Intelligence v2):** 4791
 passed / 2 failed / 2 skipped / 23 deselected (slow-marked) / 11 xfailed
 (28m23s). The 2 failures are the identical, already-documented
 `test_place_biodiversity_summary_repository.py` pair immediately below --
@@ -720,9 +772,37 @@ authorization field.
 
 ## 16. Transition checkpoint
 
-- **Accepted HEAD:** `1ba76b0`
-- **Schema:** v53 (unchanged)
-- **Latest accepted milestone:** Place / Yard Intelligence v2 -- Changes,
+- **Accepted HEAD:** `751d061`
+- **Schema:** v53 -> v54 (one additive column,
+  `environmental_context_settings.weather_enabled`; `environmental_
+  context_records` needed no change -- see the Environmental Context v2
+  report's "Data model")
+- **Latest accepted milestone:** Environmental Context v2 -- Weather,
+  Climate & Place Conditions
+- **Environmental Context v2 classification:** B -- major useful
+  capability, bounded provider/statistical/UI limitations. First general
+  weather provider (Open-Meteo -- free, non-commercial, no API key,
+  global coverage, CC BY 4.0 attributed) composed onto the existing
+  `conditional_association` primitive alongside `habitat_associations`;
+  two independent privacy opt-ins (coordinates for solar, a separate
+  `weather_enabled` for any outbound network call); a bounded 92-day
+  historical window (exceeds this product's entire real history today);
+  six honest degraded-mode states, zero crashes, zero blocking of core
+  product function. 85 new tests (zero bugs in the three new pure
+  modules; three real bugs found and fixed in new repository-layer code
+  by this milestone's own test-writing -- a Phase-15 basis-preservation
+  bug, a baseline-anchored-at-"now"-instead-of-the-event bug, and an
+  out-of-range check that would have retroactively blocked already-cached
+  historical data); Core 4874 passed / 3 failed (2 pre-existing, 1
+  confirmed transient load-induced flake in an unrelated subsystem -- see
+  §14) / 3 skipped / 11 xfailed; 42/42 targeted e2e passed. See
+  [environmental-context-v2-report.md](environmental-context-v2-report.md)
+  for the full record, including the Open-Meteo terms/license research
+  and recorded future opportunities (deeper historical backfill via the
+  archive/ERA5 endpoint, wind/cloud-cover statistical associations, a
+  dedicated diagnostics/Explore-page surface) deliberately not built by
+  adjacency.
+- **Prior accepted milestone:** Place / Yard Intelligence v2 -- Changes,
   Trends & Actionable Understanding
 - **Place / Yard Intelligence v2 classification:** B -- major useful
   capability, bounded maturity gaps. Six new pure analytics modules
@@ -744,18 +824,35 @@ authorization field.
   collapse; no real reachable camera/RTSP/ONVIF/local-USB/Camera-Node
   hardware exercised this session). See
   [camera-source-experience-v1-report.md](camera-source-experience-v1-report.md).
-- **Native-Windows acceptance (this milestone):** real deployment of the
-  exact commit (confirmed via `/api/product/instance`), plus a second,
-  genuinely fresh isolated instance exercised end-to-end (real
-  administrator creation, real sign-in, real ffmpeg 8.1.2 subprocess
+- **Native-Windows acceptance (this milestone):** none -- Environmental
+  Context v2 was validated via targeted Playwright e2e against the real
+  running app (Linux/WSL dev stack) plus real, unauthenticated HTTPS calls
+  to the live Open-Meteo API; it does not touch platform-specific code and
+  is not expected to behave differently on native Windows, but that is an
+  expectation, not fresh Windows evidence. The most recent real
+  native-Windows acceptance remains the one below (Place / Yard
+  Intelligence v2), unaffected by this milestone's additive-only schema
+  change.
+- **Native-Windows acceptance (Place / Yard Intelligence v2):** real
+  deployment of the exact commit (confirmed via `/api/product/instance`),
+  plus a second, genuinely fresh isolated instance exercised end-to-end
+  (real administrator creation, real sign-in, real ffmpeg 8.1.2 subprocess
   against an intentionally unreachable RTSP host, honest
   `preview_available`, correct credential masking, no leak) -- not a
-  full physical-camera acceptance; see the report's Section 6/9.
+  full physical-camera acceptance; see that report's Section 6/9.
 - **Prior Native-Windows acceptance (Release Engineering Foundation v1):**
   Decision A -- real deployment, a real packaging defect found and fixed,
   a real organic 18-schema-version migration with verified automatic
   backup, confirmed via real HTTP. See
   [release-engineering-foundation-v1-report.md](release-engineering-foundation-v1-report.md).
+- **Weather provider decision:** Open-Meteo (`api.open-meteo.com`), free/
+  non-commercial/no-API-key, CC BY 4.0 attributed, bounded to its own
+  confirmed 92-day recent-history window. Off by default
+  (`weather_enabled=False`); a second, independent opt-in from the
+  existing coarse-coordinate setting. See the Environmental Context v2
+  report's "Provider decision" for the full terms/license research and
+  the preserved, unresolved commercial-adjacent-use caveat (mirroring the
+  standing BirdNET caveat in §2, above).
 - **Acoustic release posture:** Release-ready optional
 - **Production detector:** MDv5a ONNX @ 0.1
 - **Production visual species system:** BioCLIP-2 + Eligibility/Abstention
@@ -768,15 +865,14 @@ authorization field.
 - **Local Species Prior:** not authorized
 - **Another classifier campaign:** not authorized
 - **LICENSE:** still genuinely absent -- open business/legal decision, not
-  resolved by this milestone (see Lane P, above)
+  resolved by this or any prior milestone (see Lane P, above)
 - **Representative Field Acceptance (attempted 2026-08-25):** Gate C --
   OPEN, insufficient representative evidence; deferred by explicit user
   decision before any live session started (real-authentication/consent
   boundary, not a product defect). See Lane R and
   [representative-field-acceptance-release-budget-v1-report.md](representative-field-acceptance-release-budget-v1-report.md).
-  Untracked root `uv.lock` investigated (no git history on any branch, no
-  `.gitignore`/`pyproject.toml`/CI/CONTRIBUTING convention, absent from all
-  sibling worktrees -- clearly incidental) and removed per this milestone's
+  Untracked root `uv.lock` investigated and removed per that milestone's
   own Decision A; working tree returned to exactly the seven preserved
-  files.
+  files then, and confirmed still exactly those seven, untouched, at this
+  milestone's own start and close.
 - **Push:** explicit authorization required
