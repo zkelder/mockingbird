@@ -443,6 +443,32 @@ model unavailable; backup/restore; upgrade; clean installation; actual
 user operation. Remote LTE field acceptance remains separately scoped when
 Remote Field is not part of v0.1.
 
+**Representative Field Acceptance & Release-Budget Closure v1 (2026-08-25)
+attempted, returned Gate C -- OPEN, insufficient representative evidence.**
+Not a product defect: the attempt was stopped before any Observation
+session started because the native-Windows dev instance now enforces real
+sign-in on every endpoint the session needed (streams, observation start/
+stop, Visits, counterfactual ledger -- the pytest auth bypass was removed
+as part of the accepted Local Identity / Multi-User work, 2026-08-23),
+no credentials exist anywhere in this repository, and the user explicitly
+declined to share real admin credentials, create a temporary account, or
+participate live right now. Nothing about the frozen perception/admission/
+Visit/evidence/classification stack was exercised or judged. Real,
+positive, non-live evidence preserved from this attempt: the reference
+Camera Node (`192.168.1.112:8787`) is reachable at the network level; the
+native-Windows Host dev deployment is healthy at the accepted commit
+(schema v53); the full accepted acceptance-tooling chain (recorder,
+motion-screen/contact-sheet review, independent encounter table,
+counterfactual ledger, `run_encounter_accounting.py`) is confirmed present
+and ready to reuse. See
+[representative-field-acceptance-release-budget-v1-report.md](representative-field-acceptance-release-budget-v1-report.md)
+for the full record, including the standing decision for future sessions:
+do not ask the user again for real credentials or live participation
+unless a future milestone specifically requires human acceptance and they
+explicitly agree first; ordinary auth-requiring development/validation
+work should instead use a fresh, isolated dev instance with a disposable
+bootstrapped local Administrator account.
+
 ### S. Actual Final Release Hardening
 
 **Status:** LAST.
@@ -686,4 +712,14 @@ authorization field.
 - **Another classifier campaign:** not authorized
 - **LICENSE:** still genuinely absent -- open business/legal decision, not
   resolved by this milestone (see Lane P, above)
+- **Representative Field Acceptance (attempted 2026-08-25):** Gate C --
+  OPEN, insufficient representative evidence; deferred by explicit user
+  decision before any live session started (real-authentication/consent
+  boundary, not a product defect). See Lane R and
+  [representative-field-acceptance-release-budget-v1-report.md](representative-field-acceptance-release-budget-v1-report.md).
+  Untracked root `uv.lock` investigated (no git history on any branch, no
+  `.gitignore`/`pyproject.toml`/CI/CONTRIBUTING convention, absent from all
+  sibling worktrees -- clearly incidental) and removed per this milestone's
+  own Decision A; working tree returned to exactly the seven preserved
+  files.
 - **Push:** explicit authorization required
