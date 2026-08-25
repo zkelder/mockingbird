@@ -211,6 +211,19 @@ WINDOWS_RUNTIME_REQUIREMENTS: tuple[str, ...] = (
     "SQLAlchemy>=2.0,<3.0",
     "opencv-python-headless>=4.10,<5.0",
     "uvicorn>=0.30,<1.0",
+    # Release Engineering Foundation v1: a real, confirmed defect this
+    # milestone's own native-Windows deployment hit directly --
+    # `pyproject.toml`'s `dependencies` gained this entry (Environmental
+    # Context Foundation v1) without this mirrored list being updated to
+    # match, so a real packaged build crashed on first launch with
+    # `ModuleNotFoundError: No module named 'astral'` the moment
+    # `product_repository.py`'s own unconditional `from mockingbird.
+    # environment import solar_context` import ran -- before the app ever
+    # bound a port. See `tests/test_local_product_packaging.py::
+    # test_windows_runtime_requirements_matches_every_pyproject_core_
+    # dependency` for the regression guard this exact class of drift now
+    # has.
+    "astral>=3.2,<4.0",
     # Not a direct MockingBird dependency -- pulled in transitively by
     # `anyio`'s own unconditional, unbounded `idna>=2.8` requirement (real,
     # installed metadata: `anyio 3.7.1 requires: idna (>=2.8), ...`). This

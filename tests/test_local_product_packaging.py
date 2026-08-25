@@ -48,8 +48,10 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import runpy
 import subprocess
+import tomllib
 import zipfile
 
 import pytest
@@ -98,6 +100,7 @@ BIOCLIP_MODEL_WEIGHTS_FILENAME = _MODULE["BIOCLIP_MODEL_WEIGHTS_FILENAME"]
 BIOCLIP_LABELS_FILENAME = _MODULE["BIOCLIP_LABELS_FILENAME"]
 BIOCLIP_EMBEDDING_CACHE_FILENAME = _MODULE["BIOCLIP_EMBEDDING_CACHE_FILENAME"]
 DEFAULT_MODEL_BUNDLE_SOURCE = _MODULE["DEFAULT_MODEL_BUNDLE_SOURCE"]
+WINDOWS_RUNTIME_REQUIREMENTS = _MODULE["WINDOWS_RUNTIME_REQUIREMENTS"]
 DEFAULT_BIOCLIP_BUNDLE_SOURCE = _MODULE["DEFAULT_BIOCLIP_BUNDLE_SOURCE"]
 DEFAULT_WHEEL_CACHE_DIR = _MODULE["DEFAULT_WHEEL_CACHE_DIR"]
 DEFAULT_BIOCLIP_WHEEL_CACHE_DIR = _MODULE["DEFAULT_BIOCLIP_WHEEL_CACHE_DIR"]
@@ -249,6 +252,57 @@ def _fake_web_dist(directory: Path) -> Path:
     (dist / "index.html").write_text("<!doctype html><title>MockingBird</title>", encoding="utf-8")
     (dist / "assets" / "app.js").write_text("console.log('ok');", encoding="utf-8")
     return dist
+
+
+# --- Dependency-closure drift (Release Engineering Foundation v1) --------
+
+
+def _pyproject_core_dependency_names() -> set[str]:
+    with (ROOT / "pyproject.toml").open("rb") as handle:
+        data = tomllib.load(handle)
+    names = set()
+    for requirement in data["project"]["dependencies"]:
+        # Strip any `[extra]` marker (e.g. "uvicorn[standard]") and any
+        # version/environment-marker suffix, then PEP 503-normalize so
+        # "opencv-python-headless" and a hypothetical "opencv_python_headless"
+        # compare equal.
+        name = re.split(r"[\[<>=!~; ]", requirement, maxsplit=1)[0]
+        names.add(re.sub(r"[-_.]+", "-", name).lower())
+    return names
+
+
+def _windows_runtime_requirement_names() -> set[str]:
+    names = set()
+    for requirement in WINDOWS_RUNTIME_REQUIREMENTS:
+        name = re.split(r"[\[<>=!~; ]", requirement, maxsplit=1)[0]
+        names.add(re.sub(r"[-_.]+", "-", name).lower())
+    return names
+
+
+def test_windows_runtime_requirements_matches_every_pyproject_core_dependency() -> None:
+    """Real, confirmed defect this milestone's own native-Windows deployment
+    hit directly: `pyproject.toml` gained `astral` as a plain core
+    dependency (Environmental Context Foundation v1) with no corresponding
+    update to this mirrored, hand-maintained tuple, so a real packaged
+    build crashed on first launch -- `ModuleNotFoundError: No module named
+    'astral'` -- the moment `product_repository.py`'s own unconditional
+    `from mockingbird.environment import solar_context` import ran, before
+    the app ever bound a port. `idna==3.18` is `WINDOWS_RUNTIME_
+    REQUIREMENTS`'s one deliberate, documented exception (a transitive-
+    dependency pin with no `pyproject.toml` counterpart at all -- see that
+    tuple's own comment) and is correctly excluded from this check in the
+    harmless direction: extra pins in the Windows list are fine, only a
+    pyproject.toml core dependency *missing* from the Windows list is the
+    real defect class this guards against."""
+
+    missing = _pyproject_core_dependency_names() - _windows_runtime_requirement_names()
+
+    assert missing == set(), (
+        f"pyproject.toml core dependencies {missing} have no matching entry in "
+        "WINDOWS_RUNTIME_REQUIREMENTS -- a packaged Windows build would fail to "
+        "import the app at startup. Add each to WINDOWS_RUNTIME_REQUIREMENTS in "
+        "scripts/build_local_product.py."
+    )
 
 
 def test_sync_packaged_web_dist_copies_the_built_frontend_to_a_target(tmp_path: Path) -> None:
