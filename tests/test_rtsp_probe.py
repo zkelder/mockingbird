@@ -21,6 +21,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import time
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -332,3 +333,126 @@ def test_real_ffmpeg_mjpeg_output_decodes_through_the_same_frame_parser() -> Non
                 process.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 process.kill()
+
+
+# ---------------------------------------------------------------------------
+# Camera / Source Experience & First-Hour Setup Closure v1: manual RTSP
+# setup's separate "Auth username"/"Auth password" fields previously
+# collapsed to the literal "configured" on write and were never merged into
+# any connection attempt -- only a URL with credentials the user had
+# hand-embedded themselves ever actually worked. `embed_rtsp_credentials`
+# closes that gap the same way `onvif_client.embed_credentials_in_uri`
+# already does for an ONVIF-resolved URI.
+# ---------------------------------------------------------------------------
+
+
+def test_embed_rtsp_credentials_adds_userinfo_when_absent() -> None:
+    embedded = rtsp_bridge.embed_rtsp_credentials(
+        "rtsp://camera.local:554/stream", username="feeder-cam", password="Sw0rdfish!",
+    )
+    assert embedded == "rtsp://feeder-cam:Sw0rdfish%21@camera.local:554/stream"
+
+
+def test_embed_rtsp_credentials_url_encodes_special_characters() -> None:
+    embedded = rtsp_bridge.embed_rtsp_credentials(
+        "rtsp://camera.local:554/stream", username="user@site", password="p@ss:word/1",
+    )
+    parsed = urlsplit(embedded)
+    assert parsed.netloc == "user%40site:p%40ss%3Aword%2F1@camera.local:554"
+
+
+def test_embed_rtsp_credentials_never_double_embeds_an_already_credentialed_url() -> None:
+    already_credentialed = "rtsp://existing:secret@camera.local:554/stream"
+    embedded = rtsp_bridge.embed_rtsp_credentials(
+        already_credentialed, username="ignored", password="ignored-too",
+    )
+    assert embedded == already_credentialed
+    assert "ignored" not in embedded
+
+
+def test_embed_rtsp_credentials_is_a_safe_noop_with_no_credentials() -> None:
+    url = "rtsp://camera.local:554/stream"
+    assert rtsp_bridge.embed_rtsp_credentials(url, username=None, password=None) == url
+    assert rtsp_bridge.embed_rtsp_credentials(url, username="", password="") == url
+
+
+def test_embed_rtsp_credentials_is_a_safe_noop_for_an_unparseable_url() -> None:
+    # urlsplit only raises ValueError for a malformed bracketed IPv6 host;
+    # this must not raise up into a caller that never validated first.
+    malformed = "rtsp://[::1/stream"
+    assert rtsp_bridge.embed_rtsp_credentials(malformed, username="u", password="p") == malformed
+
+
+# ---------------------------------------------------------------------------
+# `capture_rtsp_preview_frame` -- the "check the picture" sibling of
+# `probe_rtsp_stream` above. Reuses the identical fixtures/process shape;
+# the only new behavior is returning real frame bytes on success instead of
+# deliberately withholding them (see `RtspProbeResult`'s own docstring).
+# ---------------------------------------------------------------------------
+
+
+def test_capture_preview_frame_succeeds_and_returns_the_real_decoded_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(rtsp_bridge, "is_ffmpeg_available", lambda *a, **k: True)
+    process = _FakeProbeProcess(stdout_chunks=[_ONE_JPEG_FRAME])
+    popen_factory, calls = _factory(process)
+
+    result = rtsp_bridge.capture_rtsp_preview_frame(_VALID_URL, popen_factory=popen_factory)
+
+    assert result.ok is True
+    assert result.code == "ready"
+    assert result.frame_jpeg == _ONE_JPEG_FRAME
+    assert len(calls) == 1
+
+
+def test_capture_preview_frame_never_downgrades_or_starts_a_process_for_rtsps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(rtsp_bridge, "is_ffmpeg_available", lambda *a, **k: True)
+    process = _FakeProbeProcess(stdout_chunks=[_ONE_JPEG_FRAME])
+    popen_factory, calls = _factory(process)
+
+    result = rtsp_bridge.capture_rtsp_preview_frame(
+        "rtsps://camera.local:322/stream", popen_factory=popen_factory,
+    )
+
+    assert result.ok is False
+    assert result.code == "camera_setup_rtsps_unsupported"
+    assert result.frame_jpeg is None
+    assert calls == []
+
+
+def test_capture_preview_frame_reports_unreachable_when_nothing_ever_responds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(rtsp_bridge, "is_ffmpeg_available", lambda *a, **k: True)
+    process = _FakeProbeProcess(stdout_chunks=[], stdout_delay_seconds=0.3)
+    popen_factory, _calls = _factory(process)
+
+    result = rtsp_bridge.capture_rtsp_preview_frame(
+        _VALID_URL, popen_factory=popen_factory, connect_timeout_seconds=0.05, total_timeout_seconds=0.2,
+    )
+
+    assert result.ok is False
+    assert result.code == "camera_setup_rtsp_unreachable"
+    assert result.frame_jpeg is None
+
+
+def test_capture_preview_frame_never_leaks_image_bytes_or_credentials_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(rtsp_bridge, "is_ffmpeg_available", lambda *a, **k: True)
+    password = "UnmistakablePreviewSecret55"
+    process = _FakeProbeProcess(
+        stdout_chunks=[b"x"],
+        stderr_text=f"rtsp://user:{password}@camera.local:554/stream: 401 Unauthorized".encode(),
+    )
+    popen_factory, _calls = _factory(process)
+
+    result = rtsp_bridge.capture_rtsp_preview_frame(_VALID_URL, popen_factory=popen_factory)
+
+    assert result.ok is False
+    assert result.code == "camera_setup_rtsp_authentication_failed"
+    assert result.frame_jpeg is None
+    assert password not in result.code

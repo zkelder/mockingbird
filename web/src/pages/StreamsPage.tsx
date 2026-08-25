@@ -1710,10 +1710,6 @@ export function StreamsPage({
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [setupError, setSetupError] = useState<string | null>(null);
   const [setupMessage, setSetupMessage] = useState<string | null>(null);
-  const [isAddCameraOpen, setIsAddCameraOpen] = useState(false);
-  const [newCameraName, setNewCameraName] = useState("");
-  const [isCreatingCamera, setIsCreatingCamera] = useState(false);
-  const [createCameraError, setCreateCameraError] = useState<string | null>(null);
   const [pendingSelectedSourceId, setPendingSelectedSourceId] = useState<string | null>(null);
   const [isCameraOptionsOpen, setIsCameraOptionsOpen] = useState(false);
   const [cameraNameDraft, setCameraNameDraft] = useState("");
@@ -2030,32 +2026,6 @@ export function StreamsPage({
     setRemoveSampleConfirmed(false);
     setIsCameraOptionsOpen(false);
   }, [selectedSource?.id]);
-
-  async function handleCreateCamera(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const name = newCameraName.trim();
-    if (!name) {
-      setCreateCameraError("Enter a name for this camera.");
-      return;
-    }
-
-    setIsCreatingCamera(true);
-    setCreateCameraError(null);
-    try {
-      const result = await apiClient.createCameraSource({ name });
-      setPendingSelectedSourceId(result.source.id);
-      await onSourcesChanged();
-      setNewCameraName("");
-      setIsAddCameraOpen(false);
-      setSetupMessage("Camera added. Connect it below, then open the Stream.");
-    } catch (caught) {
-      setCreateCameraError(
-        caught instanceof Error ? caught.message : "Could not add the camera.",
-      );
-    } finally {
-      setIsCreatingCamera(false);
-    }
-  }
 
   async function handleRenameCamera(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -4338,7 +4308,7 @@ export function StreamsPage({
       {selectedSource ? (
         <details
           className="panel source-setup-panel source-workflow-panel"
-          open={isCameraSetupOpen || isAddCameraOpen}
+          open={isCameraSetupOpen}
           onToggle={(event) => setIsCameraSetupOpen(event.currentTarget.open)}
         >
           <summary className="source-setup-summary">
@@ -4408,24 +4378,6 @@ export function StreamsPage({
               <span>{selectedSetupReview?.summary ?? selectedSource.description}</span>
             </div>
           </div>
-          {isAddCameraOpen ? (
-            <form className="add-camera-form" onSubmit={handleCreateCamera}>
-              <label>
-                Camera name
-                <input
-                  autoFocus
-                  maxLength={120}
-                  onChange={(event) => setNewCameraName(event.target.value)}
-                  placeholder="Backyard feeder camera"
-                  value={newCameraName}
-                />
-              </label>
-              <button className="primary-action" disabled={isCreatingCamera} type="submit">
-                {isCreatingCamera ? "Adding..." : "Add camera"}
-              </button>
-              {createCameraError ? <span className="zone-error">{createCameraError}</span> : null}
-            </form>
-          ) : null}
           {selectedSource.kind !== "demo" ? (
             <details
               className="source-review-panel compact-diagnostic-details camera-options-details"

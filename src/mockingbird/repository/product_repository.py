@@ -1350,16 +1350,24 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
                 label="Auth username",
                 required=False,
                 secret=True,
-                description="Stored locally and shown only as configured or not configured.",
-                placeholder="Not used for preview fetch yet",
+                description=(
+                    "Stored locally and shown only as configured or not configured. Used to "
+                    "connect to the RTSP stream above when its URL does not already include a "
+                    "username/password."
+                ),
+                placeholder="Leave blank if the URL already includes it",
             ),
             SourceProviderField(
                 key="auth_password",
                 label="Auth password",
                 required=False,
                 secret=True,
-                description="Stored locally and shown only as configured or not configured.",
-                placeholder="Not used for preview fetch yet",
+                description=(
+                    "Stored locally and shown only as configured or not configured. Used to "
+                    "connect to the RTSP stream above when its URL does not already include a "
+                    "username/password."
+                ),
+                placeholder="Leave blank if the URL already includes it",
             ),
             SourceProviderField(
                 key="refresh_hint_seconds",
@@ -3407,7 +3415,40 @@ def _rtsp_setup_probe_if_applicable(config: dict[str, str]) -> rtsp_bridge.RtspP
     live_stream_url = (config.get("live_stream_url") or "").strip()
     if live_stream_type != "rtsp" or not live_stream_url:
         return None
-    return rtsp_bridge.probe_rtsp_stream(live_stream_url)
+    effective_url = rtsp_bridge.embed_rtsp_credentials(
+        live_stream_url,
+        username=config.get("auth_username"),
+        password=config.get("auth_password"),
+    )
+    return rtsp_bridge.probe_rtsp_stream(effective_url)
+
+
+def _camera_setup_preview_available(provider_key: str, config: dict[str, str]) -> bool:
+    """Camera / Source Experience & First-Hour Setup Closure v1: whether
+    Add Camera's transient "check the picture" preview
+    (`ProductRepository.capture_camera_setup_preview_frame`) can be
+    attempted for this provider/config shape. Deliberately syntax/
+    capability-only, never a network probe -- mirrors every other
+    capability computation in this module (see
+    `_external_url_supports_browser_live_playback`,
+    `_local_usb_supports_live_playback`). Only the two provider shapes a
+    real capture function exists for report `True`; every other provider
+    (including `camera_node`, which has its own independent, already-
+    accepted preview flow keyed off a pairing token rather than this
+    validation response) honestly reports `False` here rather than
+    implying a capability this function cannot actually perform."""
+
+    if provider_key == "external_url":
+        live_url = (config.get("live_stream_url") or "").strip()
+        live_type = _normalize_live_stream_type(config.get("live_stream_type"), live_url)
+        if live_type != "rtsp" or not live_url:
+            return False
+        if rtsp_bridge.is_rtsps_url(live_url) and not rtsp_bridge.RTSPS_TRANSPORT_SUPPORTED:
+            return False
+        return rtsp_bridge.validate_rtsp_url(live_url) and rtsp_bridge.is_ffmpeg_available()
+    if provider_key == "local_usb":
+        return _local_usb_supports_live_playback(config)
+    return False
 
 
 @dataclass(frozen=True)
@@ -9345,8 +9386,77 @@ class ProductRepository:
             safe_config_preview=configuration.safe_config_preview,
             supports_live_playback=configuration.supports_live_playback,
             can_continue=can_continue,
-            preview_available=False,
+            # Camera / Source Experience & First-Hour Setup Closure v1: this
+            # was hardcoded `False` for every provider -- including ones
+            # `capture_camera_setup_preview_frame` can genuinely serve --
+            # so the frontend never had an honest signal to offer "Check the
+            # picture" for anything but Camera Node's own independent flow.
+            preview_available=_camera_setup_preview_available(definition.provider_key, sanitized),
         )
+
+    def capture_camera_setup_preview_frame(
+        self,
+        payload: CameraSetupValidationRequest,
+    ) -> bytes:
+        """Camera / Source Experience & First-Hour Setup Closure v1: one
+        explicit, transient "check the picture" JPEG frame for Add Camera --
+        never persisted, never Visit/Evidence/Observation truth, mirroring
+        the already-accepted Camera Node preview's own no-persistence
+        contract exactly (see `preview_camera_node` in api/main.py). Reuses
+        this module's existing bridge capture primitives verbatim -- never a
+        second decoder per provider. Raises `ValueError` with a stable code
+        on any failure; the API layer maps codes to a safe response, never
+        the raw exception text."""
+
+        definition = _source_provider_definition(payload.provider_key)
+        if definition is None or definition.provider_key == "demo":
+            raise ValueError("camera_setup_provider_unsupported")
+        allowed_fields = {field.key for field in definition.fields}
+        unsupported = sorted(set(payload.config) - allowed_fields)
+        if unsupported:
+            raise ValueError("camera_setup_unsupported_fields")
+
+        sanitized = _sanitize_source_provider_config(definition, payload.config)
+        if not _camera_setup_preview_available(definition.provider_key, sanitized):
+            raise ValueError("camera_setup_preview_unavailable")
+
+        if definition.provider_key == "external_url":
+            effective_url = rtsp_bridge.embed_rtsp_credentials(
+                (sanitized.get("live_stream_url") or "").strip(),
+                username=sanitized.get("auth_username"),
+                password=sanitized.get("auth_password"),
+            )
+            capture = rtsp_bridge.capture_rtsp_preview_frame(effective_url)
+            if not capture.ok or capture.frame_jpeg is None:
+                log_error_event(
+                    "acquisition_provider",
+                    "rtsp_setup_preview_failed",
+                    code=capture.code,
+                )
+                raise ValueError(capture.code)
+            return capture.frame_jpeg
+
+        # definition.provider_key == "local_usb" -- the only other shape
+        # `_camera_setup_preview_available` ever reports `True` for.
+        live_type = _normalize_live_stream_type(sanitized.get("live_stream_type"), "")
+        try:
+            if live_type == windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE:
+                return windows_camera_bridge.capture_windows_dshow_frame(
+                    sanitized.get("windows_camera_name") or "",
+                    ffmpeg_binary_path=sanitized.get("ffmpeg_binary_path"),
+                    input_format=sanitized.get("input_format"),
+                    video_size=sanitized.get("capture_video_size") or sanitized.get("video_size"),
+                    framerate=sanitized.get("framerate"),
+                )
+            return local_camera_bridge.capture_local_camera_frame(
+                sanitized.get("local_camera_device") or "",
+                camera_format=sanitized.get("local_camera_format"),
+                input_format=sanitized.get("input_format"),
+                video_size=sanitized.get("capture_video_size") or sanitized.get("video_size"),
+                input_frame_rate=sanitized.get("framerate"),
+            )
+        except (OSError, ValueError) as error:
+            raise ValueError("camera_setup_preview_capture_failed") from error
 
     def complete_camera_setup(
         self,
@@ -14033,6 +14143,18 @@ class ProductRepository:
             )
             if provider_key == "camera_node":
                 live_type = "camera_node"
+            if live_type == "rtsp" and live_url:
+                # Camera / Source Experience & First-Hour Setup Closure v1:
+                # the same merge `_rtsp_setup_probe_if_applicable` applies at
+                # setup-validation time must also apply here, or a manually
+                # entered username/password would validate successfully but
+                # then fail identically, unexplainedly, every time live
+                # playback/monitoring actually connects.
+                live_url = rtsp_bridge.embed_rtsp_credentials(
+                    live_url,
+                    username=config.get("auth_username"),
+                    password=config.get("auth_password"),
+                )
             video_size = (config.get("video_size") or "").strip() or None
             preview_video_size = (config.get("preview_video_size") or "").strip() or None
             capture_video_size = (config.get("capture_video_size") or "").strip() or None
@@ -35891,6 +36013,26 @@ def _sanitize_source_provider_config(
             # still renders only configured/not-configured markers for every one.
             sanitized[key] = normalized
         elif definition.provider_key == "folder_import_future" and key == "folder_path":
+            sanitized[key] = normalized
+        elif definition.provider_key == "external_url" and key in {"auth_username", "auth_password"}:
+            # Camera / Source Experience & First-Hour Setup Closure v1: these
+            # two fields used to collapse to the literal "configured" like any
+            # other secret -- discarding the real value forever, so manual RTSP
+            # setup's separate username/password boxes never actually reached
+            # a connection attempt (only a URL with credentials the user had
+            # hand-embedded themselves ever worked). Stored for real now,
+            # exactly like the `camera_node` fields above, so
+            # `rtsp_bridge.embed_rtsp_credentials` can merge them into the
+            # effective connection URL at each real RTSP usage site (setup
+            # probe, preview, live playback/monitoring). Still masked the
+            # same way as every other secret on every read path
+            # (`safe_config_preview` still shows only configured/not_configured
+            # for these two keys -- see `_source_provider_configuration_from_
+            # config`, unchanged). Note this does not extend to the separate
+            # still-image snapshot fetch (`url` field) -- see
+            # `_external_url_preview_warnings` in api/main.py, unaffected by
+            # this change and still honestly disclosing that gap where it
+            # actually applies.
             sanitized[key] = normalized
         else:
             sanitized[key] = "configured" if field.secret else normalized

@@ -10,7 +10,7 @@ import subprocess
 import threading
 import time
 from typing import BinaryIO
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 MJPEG_BOUNDARY = "frame"
 
@@ -47,6 +47,40 @@ def redact_credentials_in_text(text: str) -> str:
     scrubs every match it does find, not just the first."""
 
     return _CREDENTIALED_URL_PATTERN.sub(r"\1***:***@", text)
+
+
+def embed_rtsp_credentials(url: str, *, username: str | None, password: str | None) -> str:
+    """Embed a separately-entered username/password as URL userinfo
+    (`rtsp://host/path` -> `rtsp://user:pass@host/path`) so manual RTSP
+    setup's own "Auth username"/"Auth password" fields actually take
+    effect, instead of a user typing credentials that are silently
+    ignored -- ffmpeg parses URL userinfo for RTSP Basic/Digest auth
+    natively, so no MockingBird-side auth handling is needed beyond this.
+
+    Camera / Source Experience & First-Hour Setup Closure v1: prior to
+    this, `auth_username`/`auth_password` were collected in the Add
+    Camera UI (their own field descriptions honestly disclosed "Not used
+    for preview fetch yet") but never reached any connection attempt --
+    only a URL with credentials already hand-embedded by the user ever
+    worked. This closes that gap the same way `onvif_client.
+    embed_credentials_in_uri` already closes it for an ONVIF-resolved
+    stream URI, so manually-typed RTSP gets the identical, already-proven
+    mechanism rather than a second one.
+
+    A URL that already carries embedded credentials is left unmodified
+    (the URL wins, never double-embedded). A safe no-op when the URL
+    isn't parseable or neither credential is set."""
+
+    if not username and not password:
+        return url
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return url
+    if "@" in parts.netloc:
+        return url
+    userinfo = f"{quote(username or '', safe='')}:{quote(password or '', safe='')}@"
+    return urlunsplit((parts.scheme, f"{userinfo}{parts.netloc}", parts.path, parts.query, parts.fragment))
 
 
 def validate_rtsp_url(url: str) -> bool:
@@ -379,6 +413,106 @@ def probe_rtsp_stream(
     detail = _redacted_stderr(process)
     code = _classify_probe_failure(detail, any_bytes_received=first_byte_event.is_set())
     return RtspProbeResult(False, code, detail, _elapsed())
+
+
+# ---------------------------------------------------------------------------
+# Camera / Source Experience & First-Hour Setup Closure v1: a bounded,
+# transient "check the picture" preview -- an explicit user action during
+# Add Camera, distinct from `probe_rtsp_stream` above (whose own
+# `RtspProbeResult` docstring deliberately never carries image bytes).
+# Mirrors the already-accepted Camera Node preview's contract exactly: one
+# real frame, never persisted, never Visit/Evidence/Observation truth. This
+# duplicates `probe_rtsp_stream`'s connect/negotiate/decode-one-frame
+# orchestration rather than reshaping that function's tested, documented
+# no-image-bytes contract -- the two are kept deliberately separate.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RtspPreviewCapture:
+    """One bounded, transient RTSP setup-preview outcome. `ok=True` means
+    `frame_jpeg` holds one real decoded JPEG frame; otherwise `code` is a
+    stable code from the same vocabulary `probe_rtsp_stream` uses and
+    `frame_jpeg` is `None`. Never persisted by any caller."""
+
+    ok: bool
+    code: str
+    frame_jpeg: bytes | None
+
+
+def capture_rtsp_preview_frame(
+    url: str,
+    *,
+    connect_timeout_seconds: float = RTSP_PROBE_CONNECT_TIMEOUT_SECONDS,
+    total_timeout_seconds: float = RTSP_PROBE_TOTAL_TIMEOUT_SECONDS,
+    ffmpeg_binary: str = "ffmpeg",
+    popen_factory: PopenFactory = subprocess.Popen,
+) -> RtspPreviewCapture:
+    """Bounded, one-shot preview-frame capture for Add Camera. Reuses the
+    exact same primitives `probe_rtsp_stream` does (`start_rtsp_mjpeg_
+    process`/`iter_multipart_mjpeg`) -- never a second RTSP decoder --
+    connects, lets RTSP negotiate, decodes one real frame, and always
+    tears the ffmpeg process down before returning. Never downgrades
+    `rtsps://` to `rtsp://` (see `RTSPS_TRANSPORT_SUPPORTED`)."""
+
+    started = time.monotonic()
+
+    def _elapsed() -> float:
+        return time.monotonic() - started
+
+    if not validate_rtsp_url(url):
+        return RtspPreviewCapture(False, "camera_setup_invalid_url", None)
+    if is_rtsps_url(url) and not RTSPS_TRANSPORT_SUPPORTED:
+        return RtspPreviewCapture(False, "camera_setup_rtsps_unsupported", None)
+    if not is_ffmpeg_available(ffmpeg_binary):
+        return RtspPreviewCapture(False, "camera_setup_rtsp_ffmpeg_unavailable", None)
+
+    try:
+        process = start_rtsp_mjpeg_process(url, popen_factory=popen_factory, capture_stderr=True)
+    except OSError:
+        # Same TOCTOU race `probe_rtsp_stream` guards against.
+        return RtspPreviewCapture(False, "camera_setup_rtsp_ffmpeg_unavailable", None)
+
+    first_byte_event = threading.Event()
+    frame_box: list[bytes] = []
+
+    def _capture(payload: bytes) -> None:
+        if not frame_box:
+            frame_box.append(payload)
+
+    def _drain() -> None:
+        generator = iter_multipart_mjpeg(process, on_frame=_capture, on_chunk=first_byte_event.set)
+        try:
+            for _ in generator:
+                if frame_box:
+                    break
+        finally:
+            generator.close()
+
+    reader = threading.Thread(target=_drain, daemon=True)
+    reader.start()
+
+    responded = _wait_until(
+        lambda: first_byte_event.is_set() or not reader.is_alive(),
+        timeout_seconds=connect_timeout_seconds,
+    )
+    if not responded:
+        _stop_process(process)
+        reader.join(timeout=2)
+        return RtspPreviewCapture(False, "camera_setup_rtsp_unreachable", None)
+
+    reader.join(timeout=max(0.0, total_timeout_seconds - _elapsed()))
+    if reader.is_alive():
+        _stop_process(process)
+        reader.join(timeout=2)
+        return RtspPreviewCapture(False, "camera_setup_rtsp_validation_timed_out", None)
+
+    if frame_box:
+        return RtspPreviewCapture(True, "ready", frame_box[0])
+
+    detail = _redacted_stderr(process)
+    code = _classify_probe_failure(detail, any_bytes_received=first_byte_event.is_set())
+    return RtspPreviewCapture(False, code, None)
 
 
 def _wait_until(condition: Callable[[], bool], *, timeout_seconds: float) -> bool:

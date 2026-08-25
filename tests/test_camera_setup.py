@@ -641,3 +641,250 @@ async def test_rtsp_setup_validation_never_leaks_credentials_in_response_or_logs
 
     assert len(logged) == 1
     assert unmistakable_password not in str(logged[0])
+
+
+# ---------------------------------------------------------------------------
+# Camera / Source Experience & First-Hour Setup Closure v1
+#
+# (1) manual RTSP setup's separate "Auth username"/"Auth password" fields
+#     must actually reach the connection attempt, at setup-validation time
+#     *and* at real live-playback/monitoring time -- not just round-trip a
+#     "configured" placeholder while silently doing nothing.
+# (2) `preview_available` must honestly reflect whether the new "check the
+#     picture" preview-frame endpoint can actually serve this provider/
+#     config shape, instead of the prior hardcoded `False` for everyone.
+# (3) `/api/camera-setup/preview-frame` itself: success, honest failure,
+#     unsupported-provider, and credential non-leak.
+# ---------------------------------------------------------------------------
+
+
+def test_separately_entered_rtsp_credentials_actually_reach_live_playback(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The core end-to-end proof: a user who fills in "Auth username"/
+    "Auth password" next to a bare (uncredentialed) Live stream URL must
+    get a Source whose *real* live-playback connection actually carries
+    those credentials -- not merely a config that echoes "configured" back
+    while every real connection attempt still uses the bare, unauthenticated
+    URL and fails identically forever."""
+
+    _stub_probe(monkeypatch, (True, "ready"))
+    repository = _repository(tmp_path)
+    try:
+        result = repository.complete_camera_setup(
+            CameraSetupCompleteRequest(
+                camera_name="Backyard RTSP camera",
+                stream_name="Backyard view",
+                provider_key="external_url",
+                config={
+                    "url": "https://camera.local/still.jpg",
+                    "live_stream_url": "rtsp://camera.local:554/stream",
+                    "live_stream_type": "rtsp",
+                    "auth_username": "feeder-cam",
+                    "auth_password": "UnmistakableRealPassword9",
+                },
+                zones=[
+                    {
+                        "name": "Feeder",
+                        "zone_type": "feeder",
+                        "polygon": [
+                            Point(x=0.2, y=0.2), Point(x=0.8, y=0.2),
+                            Point(x=0.8, y=0.8), Point(x=0.2, y=0.8),
+                        ],
+                        "monitoring_policy": {"activity_sensitivity": "normal"},
+                    }
+                ],
+                idempotency_key="rtsp-credentials-reach-playback",
+            )
+        )
+
+        # The saved config still only ever discloses configured/not_configured
+        # for these two fields -- storing the real value for real use must
+        # never change what the generic configuration surface displays.
+        saved_configuration = repository.get_source_provider_configuration(result.source.id)
+        assert saved_configuration is not None
+        assert saved_configuration.safe_config_preview["auth_username"] == "configured"
+        assert saved_configuration.safe_config_preview["auth_password"] == "configured"
+
+        playback_config = repository.get_stream_live_playback_config(result.stream.id)
+        assert playback_config is not None
+        assert playback_config.live_stream_url == (
+            "rtsp://feeder-cam:UnmistakableRealPassword9@camera.local:554/stream"
+        )
+    finally:
+        repository.close()
+
+
+def test_rtsp_credentials_already_embedded_in_the_url_are_never_overridden(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An ONVIF-resolved URL (or a manually pasted one) that already
+    carries its own credentials must win outright -- separate username/
+    password fields, if also present, must never silently replace it."""
+
+    _stub_probe(monkeypatch, (True, "ready"))
+    repository = _repository(tmp_path)
+    try:
+        result = repository.complete_camera_setup(
+            CameraSetupCompleteRequest(
+                camera_name="ONVIF-shaped camera",
+                stream_name="ONVIF view",
+                provider_key="external_url",
+                config={
+                    "url": "https://camera.local/still.jpg",
+                    "live_stream_url": "rtsp://onvif-user:OnvifSecret1@camera.local:554/profile1",
+                    "live_stream_type": "rtsp",
+                    "auth_username": "should-be-ignored",
+                    "auth_password": "should-also-be-ignored",
+                },
+                zones=[
+                    {
+                        "name": "Feeder",
+                        "zone_type": "feeder",
+                        "polygon": [
+                            Point(x=0.2, y=0.2), Point(x=0.8, y=0.2),
+                            Point(x=0.8, y=0.8), Point(x=0.2, y=0.8),
+                        ],
+                        "monitoring_policy": {"activity_sensitivity": "normal"},
+                    }
+                ],
+                idempotency_key="rtsp-url-credentials-win",
+            )
+        )
+
+        playback_config = repository.get_stream_live_playback_config(result.stream.id)
+        assert playback_config is not None
+        assert playback_config.live_stream_url == "rtsp://onvif-user:OnvifSecret1@camera.local:554/profile1"
+    finally:
+        repository.close()
+
+
+@pytest.mark.anyio
+async def test_preview_available_is_now_honest_instead_of_always_false(
+    client: httpx.AsyncClient,
+) -> None:
+    """A configured RTSP live stream URL must report `preview_available`
+    truthfully (the new preview-frame endpoint can genuinely serve it);
+    a still-image-only config correctly keeps reporting `False` -- see
+    `test_camera_setup_is_secret_safe_and_validation_creates_no_product_
+    records` above for that unchanged negative case."""
+
+    response = await client.post(
+        "/api/camera-setup/validate",
+        json={"provider_key": "external_url", "config": _RTSP_CONFIG},
+    )
+    assert response.status_code == 200
+    assert response.json()["preview_available"] is True
+
+
+@pytest.mark.anyio
+async def test_preview_frame_endpoint_returns_a_real_image_and_uses_merged_credentials(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_urls: list[str] = []
+
+    def _fake_capture(url: str, **kwargs: object):
+        from mockingbird.playback.rtsp_bridge import RtspPreviewCapture
+
+        captured_urls.append(url)
+        return RtspPreviewCapture(True, "ready", b"fixture-jpeg-bytes")
+
+    monkeypatch.setattr(
+        "mockingbird.repository.product_repository.rtsp_bridge.capture_rtsp_preview_frame",
+        _fake_capture,
+    )
+
+    response = await client.post(
+        "/api/camera-setup/preview-frame",
+        json={
+            "provider_key": "external_url",
+            "config": {
+                "live_stream_url": "rtsp://camera.local:554/stream",
+                "live_stream_type": "rtsp",
+                "auth_username": "feeder-cam",
+                "auth_password": "PreviewPassword3",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/jpeg"
+    assert response.headers["cache-control"] == "no-store"
+    assert response.content == b"fixture-jpeg-bytes"
+    # The endpoint must probe the *effective*, credential-merged URL -- the
+    # same one live playback/monitoring will actually use -- not the bare
+    # one the user typed into the URL box alone.
+    assert captured_urls == ["rtsp://feeder-cam:PreviewPassword3@camera.local:554/stream"]
+
+
+@pytest.mark.anyio
+async def test_preview_frame_endpoint_reports_an_honest_failure_without_leaking_credentials(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _fake_capture(url: str, **kwargs: object):
+        from mockingbird.playback.rtsp_bridge import RtspPreviewCapture
+
+        return RtspPreviewCapture(False, "camera_setup_rtsp_unreachable", None)
+
+    monkeypatch.setattr(
+        "mockingbird.repository.product_repository.rtsp_bridge.capture_rtsp_preview_frame",
+        _fake_capture,
+    )
+
+    unmistakable_password = "UnmistakablePreviewEndpointSecret7"
+    response = await client.post(
+        "/api/camera-setup/preview-frame",
+        json={
+            "provider_key": "external_url",
+            "config": {
+                "live_stream_url": f"rtsp://setup-user:{unmistakable_password}@camera.local:554/stream",
+                "live_stream_type": "rtsp",
+            },
+        },
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"]
+    assert unmistakable_password not in response.text
+
+
+@pytest.mark.anyio
+async def test_preview_frame_endpoint_honestly_refuses_unsupported_providers(
+    client: httpx.AsyncClient,
+) -> None:
+    """A provider this milestone did not build a real capture function for
+    (still-image-only `external_url`, no `live_stream_url` at all) must get
+    an honest "not available yet" -- never a fabricated picture, never a
+    500."""
+
+    response = await client.post(
+        "/api/camera-setup/preview-frame",
+        json={"provider_key": "external_url", "config": {"url": "https://camera.local/still.jpg"}},
+    )
+    assert response.status_code == 400
+    assert "isn't available" in response.json()["detail"]
+
+
+@pytest.mark.anyio
+async def test_preview_frame_endpoint_serves_local_usb_cameras_too(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "mockingbird.repository.product_repository.local_camera_bridge.is_ffmpeg_available",
+        lambda *a, **k: True,
+    )
+    monkeypatch.setattr(
+        "mockingbird.repository.product_repository.local_camera_bridge.capture_local_camera_frame",
+        lambda device, **kwargs: b"local-usb-fixture-bytes",
+    )
+
+    response = await client.post(
+        "/api/camera-setup/preview-frame",
+        json={
+            "provider_key": "local_usb",
+            "config": {"local_camera_device": "/dev/video0", "live_stream_type": "local_usb"},
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.content == b"local-usb-fixture-bytes"

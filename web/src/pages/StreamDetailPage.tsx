@@ -2482,6 +2482,15 @@ export function StreamDetailPage({
           </p>
         </div>
         <div className="detail-actions">
+          {/* Camera / Source Experience & First-Hour Setup Closure v1: this
+              was previously only reachable when the camera already needed
+              attention (see ObservationControlPanel's own conditional link
+              below) -- a healthy camera's own detail page had no visible way
+              back to rename/reconfigure/credential-update at all; the user
+              had to return to Cameras/Dashboard first. */}
+          <button className="secondary-action" onClick={onOpenCameraSetup}>
+            Edit camera setup
+          </button>
           {streamReviewCount > 0 ? (
             <button className="secondary-action" onClick={() => onOpenReview()}>
               Review Queue {streamReviewCount}

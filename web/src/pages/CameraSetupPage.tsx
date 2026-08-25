@@ -36,6 +36,7 @@ const OPTIONS_LOAD_TIMEOUT_MS = 8_000;
 const NODE_RESUME_CHECK_TIMEOUT_MS = 6_000;
 const NODE_PAIR_TIMEOUT_MS = 12_000;
 const NODE_PREVIEW_TIMEOUT_MS = 15_000;
+const SETUP_PREVIEW_TIMEOUT_MS = 15_000;
 const NODE_DRAFT_SAVE_TIMEOUT_MS = 6_000;
 const NODE_FORGET_TIMEOUT_MS = 10_000;
 const VALIDATE_TIMEOUT_MS = 10_000;
@@ -132,6 +133,13 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
   const [selectedNodeCameraId, setSelectedNodeCameraId] = useState("");
   const [nodePreviewUrl, setNodePreviewUrl] = useState<string | null>(null);
   const [isLoadingNodePreview, setIsLoadingNodePreview] = useState(false);
+  // Camera / Source Experience & First-Hour Setup Closure v1: the same
+  // transient "check the picture" confirmation Camera Node already has,
+  // now also for manually-entered RTSP/ONVIF-resolved and local/Windows
+  // USB cameras -- previously only Camera Node ever showed an actual
+  // picture during setup.
+  const [setupPreviewUrl, setSetupPreviewUrl] = useState<string | null>(null);
+  const [isLoadingSetupPreview, setIsLoadingSetupPreview] = useState(false);
   const [isPairingNode, setIsPairingNode] = useState(false);
   const [isForgettingNode, setIsForgettingNode] = useState(false);
   const [draftSaveStatus, setDraftSaveStatus] = useState<"idle" | "saving" | "failed">("idle");
@@ -249,6 +257,10 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
     if (nodePreviewUrl) URL.revokeObjectURL(nodePreviewUrl);
   }, [nodePreviewUrl]);
 
+  useEffect(() => () => {
+    if (setupPreviewUrl) URL.revokeObjectURL(setupPreviewUrl);
+  }, [setupPreviewUrl]);
+
   function applyCameraNameDefault(candidate: string | undefined) {
     if (!candidate) return;
     if (cameraNameIsDefault.current || !cameraName.trim()) {
@@ -328,6 +340,49 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
       if (selected.provider_key === "camera_node") refreshNodeSetupAfterRejection();
     } finally {
       setIsValidating(false);
+    }
+  }
+
+  // Client-side visibility only -- a lightweight mirror of the backend's
+  // own `_camera_setup_preview_available` capability check (including its
+  // "an rtsp:// URL counts even with Live stream type left blank"
+  // inference), never the authority on whether a picture check will
+  // actually succeed. Clicking it early (an incomplete config) gets the
+  // same honest, specific failure "Check camera settings" already gives
+  // for the same underlying reason -- this only avoids showing a button
+  // that provably cannot work for a still-image-only or import-only
+  // provider.
+  const setupPreviewSupported = (() => {
+    if (effectiveProviderKey === "external_url") {
+      const url = (config.live_stream_url ?? "").trim();
+      const type = (config.live_stream_type ?? "").trim().toLowerCase();
+      const lowerUrl = url.toLowerCase();
+      const isRtsp = lowerUrl.startsWith("rtsp://") || lowerUrl.startsWith("rtsps://") || type === "rtsp";
+      return isRtsp && Boolean(url);
+    }
+    if (effectiveProviderKey === "local_usb") {
+      return Boolean(config.local_camera_device?.trim() || config.windows_camera_name?.trim());
+    }
+    return false;
+  })();
+
+  async function previewSetupFrame() {
+    if (!selected || !effectiveProviderKey) return;
+    setIsLoadingSetupPreview(true);
+    setError(null);
+    try {
+      const image = await withTimeout(
+        apiClient.previewCameraSetupFrame({ provider_key: effectiveProviderKey, config }),
+        SETUP_PREVIEW_TIMEOUT_MS,
+        "Loading the camera picture",
+      );
+      const nextUrl = URL.createObjectURL(image);
+      if (setupPreviewUrl) URL.revokeObjectURL(setupPreviewUrl);
+      setSetupPreviewUrl(nextUrl);
+    } catch (caught) {
+      setError(errorMessage(caught, "The camera picture could not be loaded."));
+    } finally {
+      setIsLoadingSetupPreview(false);
     }
   }
 
@@ -563,7 +618,7 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
       </section>
       <section className="panel page-stack">
         <h2>1. Add your camera</h2>
-        <label>Camera type<select value={providerKey} onChange={(event) => { setProviderKey(event.target.value); setConfig({}); setValidation(null); setSelectedNodeCameraId(""); setOnvifDiscovery(null); setOnvifSelectedProfileToken(""); if (nodePreviewUrl) URL.revokeObjectURL(nodePreviewUrl); setNodePreviewUrl(null); }}>
+        <label>Camera type<select value={providerKey} onChange={(event) => { setProviderKey(event.target.value); setConfig({}); setValidation(null); setSelectedNodeCameraId(""); setOnvifDiscovery(null); setOnvifSelectedProfileToken(""); if (nodePreviewUrl) URL.revokeObjectURL(nodePreviewUrl); setNodePreviewUrl(null); if (setupPreviewUrl) URL.revokeObjectURL(setupPreviewUrl); setSetupPreviewUrl(null); }}>
           {options.map((option) => <option key={option.provider_key} disabled={option.availability !== "available_now"} value={option.provider_key}>{option.display_name}{option.availability === "available_now" ? ` — ${option.compatibility_label}` : " — unavailable"}</option>)}
         </select></label>
         {selected ? <><p className="meta-text">{selected.message}</p>
@@ -630,6 +685,11 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
         <label>Name this view<input onChange={(event) => { setStreamName(event.target.value); streamNameIsDefault.current = false; }} onBlur={() => saveNodeDraft({ stream_name: streamName })} placeholder={streamNameIsDefault.current ? `${cameraName} view` : ""} value={streamName} /></label>
         <button className="secondary-action" disabled={!selected || isValidating} onClick={() => void validateSetup()} type="button">{isValidating ? "Checking…" : "Check camera settings"}</button>
         {validation ? <div className="notice-panel"><strong>{validation.status.replace(/_/g, " ")}</strong><span>{validation.message}</span></div> : null}
+        {setupPreviewSupported ? <>
+          <button className="secondary-action" disabled={isLoadingSetupPreview} onClick={() => void previewSetupFrame()} type="button">{isLoadingSetupPreview ? "Loading picture…" : "Check the picture"}</button>
+          <span className="meta-text">This picture is one explicit, transient check. It is not saved, does not create activity, and monitoring stays off until you choose otherwise.</span>
+          {setupPreviewUrl ? <img alt="Camera picture" className="camera-node-preview" src={setupPreviewUrl} /> : null}
+        </> : null}
       </section>
       <section className="panel page-stack">
         <h2>2. Choose the area to watch</h2><p>Draw the part of this camera’s view that matters. Privacy and Ignore areas won’t trigger monitoring on their own, but can still appear in a photo saved because of activity elsewhere in view.</p>

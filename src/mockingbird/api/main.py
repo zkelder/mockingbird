@@ -46,6 +46,7 @@ from mockingbird.diagnostics.error_taxonomy import (
     ErrorCorrelation,
     bounded_exception_detail,
     build_structured_error,
+    resolve_error,
 )
 from mockingbird.diagnostics.structured_log import log_error_event
 from mockingbird.research.camtrap_dp import CAMTRAP_DP_PROFILE_VERSION
@@ -9495,6 +9496,39 @@ async def validate_camera_setup(
             "node_unavailable": "Camera Node is unavailable. Check the local Node before completing setup.",
         }
         raise HTTPException(status_code=400, detail=messages.get(str(error), "Camera setup could not be validated.")) from None
+
+
+@app.post("/api/camera-setup/preview-frame")
+async def preview_camera_setup_frame(payload: CameraSetupValidationRequest) -> Response:
+    """Camera / Source Experience & First-Hour Setup Closure v1: fetch one
+    transient preview frame for a not-yet-saved manual RTSP or local/
+    Windows USB camera configuration -- never creates media, evidence, or
+    truth, mirroring `preview_camera_node` above exactly. Camera Node has
+    its own separate, already-accepted preview flow (pairing-token-based,
+    not this request shape) and is not reachable through this endpoint."""
+
+    try:
+        frame = get_repository().capture_camera_setup_preview_frame(payload)
+    except ValueError as error:
+        messages = {
+            "camera_setup_provider_unsupported": "Choose a supported camera provider.",
+            "camera_setup_unsupported_fields": "This provider configuration included unsupported settings.",
+            "camera_setup_preview_unavailable": "A picture check isn't available for this camera type yet.",
+            "camera_setup_preview_capture_failed": (
+                "Camera is busy or did not return a picture. Close other camera apps, or try again."
+            ),
+        }
+        code = str(error)
+        status = 400 if code in {"camera_setup_provider_unsupported", "camera_setup_unsupported_fields", "camera_setup_preview_unavailable"} else 502
+        raise HTTPException(
+            status_code=status,
+            detail=messages.get(code, resolve_error(code).message),
+        ) from None
+    return Response(
+        content=frame,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 @app.post("/api/camera-setup/complete", response_model=CameraSetupCompletionResponse)

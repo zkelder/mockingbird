@@ -374,7 +374,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-async function requestImage(path: string, payload: CameraNodePreviewRequest): Promise<Blob> {
+async function requestImage(path: string, payload: unknown): Promise<Blob> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -390,7 +390,7 @@ async function requestImage(path: string, payload: CameraNodePreviewRequest): Pr
     throw new ApiError(detail, response.status);
   }
   if (!response.headers.get("content-type")?.startsWith("image/jpeg")) {
-    throw new ApiError("Camera Node did not provide a JPEG preview.", 502);
+    throw new ApiError("The camera did not provide a picture to preview.", 502);
   }
   return response.blob();
 }
@@ -529,6 +529,8 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  previewCameraSetupFrame: (payload: CameraSetupValidationRequest) =>
+    requestImage("/api/camera-setup/preview-frame", payload),
   completeCameraSetup: (payload: CameraSetupCompleteRequest) =>
     request<CameraSetupCompletionResponse>("/api/camera-setup/complete", {
       method: "POST",
