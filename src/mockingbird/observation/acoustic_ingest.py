@@ -93,6 +93,7 @@ from mockingbird.species.birdnet_adapter import (
     BirdNetAdapterConfig,
     BirdNetConfigurationError,
     BirdNetDetection,
+    resolve_birdnet_config,
     run_birdnet_on_clip,
 )
 
@@ -449,8 +450,17 @@ def run_acoustic_analysis(
     try:
         config = BirdNetAdapterConfig(
             min_confidence=(
+                # Acoustic Productization, Licensing & Field Acceptance v1:
+                # an explicit per-call override always wins (unchanged);
+                # the fallback now actually honors
+                # MOCKINGBIRD_BIRDNET_MIN_CONFIDENCE via
+                # `resolve_birdnet_config` instead of silently ignoring it
+                # for the hardcoded dataclass default -- the documented
+                # configuration path was dead code in production before
+                # this fix (confirmed: no prior call site here ever invoked
+                # `resolve_birdnet_config`).
                 min_confidence if min_confidence is not None
-                else BirdNetAdapterConfig().min_confidence
+                else resolve_birdnet_config().min_confidence
             ),
             latitude=latitude,
             longitude=longitude,

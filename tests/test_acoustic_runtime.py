@@ -792,3 +792,38 @@ class TestDiagnostics:
         later = T0 + timedelta(minutes=7)
         diagnostics = repository.acoustic_analysis_queue_diagnostics(later)
         assert diagnostics.oldest_queued_age_seconds == pytest.approx(420.0, abs=1.0)
+
+
+class TestMinConfidenceResolution:
+    """Acoustic Productization, Licensing & Field Acceptance v1:
+    `MOCKINGBIRD_BIRDNET_MIN_CONFIDENCE` was documented but dead code in
+    production -- no prior call site (here or in `acoustic_ingest.py`)
+    ever invoked `resolve_birdnet_config()`, always falling back to the
+    hardcoded dataclass default instead."""
+
+    def test_falls_back_to_the_env_var_when_constructed_with_no_explicit_override(
+        self, repository: ProductRepository, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("MOCKINGBIRD_BIRDNET_MIN_CONFIDENCE", "0.81")
+        source = ScriptedSegmentSource(STREAM_ID, [])
+        svc = ar.AcousticRuntimeService(repository=repository, segment_source=source)
+
+        assert svc._resolved_min_confidence() == pytest.approx(0.81)
+
+    def test_explicit_construction_argument_still_wins_over_the_env_var(
+        self, repository: ProductRepository, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("MOCKINGBIRD_BIRDNET_MIN_CONFIDENCE", "0.81")
+        source = ScriptedSegmentSource(STREAM_ID, [])
+        svc = ar.AcousticRuntimeService(repository=repository, segment_source=source, min_confidence=0.4)
+
+        assert svc._resolved_min_confidence() == pytest.approx(0.4)
+
+    def test_falls_back_to_the_hardcoded_default_when_env_var_unset(
+        self, repository: ProductRepository, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("MOCKINGBIRD_BIRDNET_MIN_CONFIDENCE", raising=False)
+        source = ScriptedSegmentSource(STREAM_ID, [])
+        svc = ar.AcousticRuntimeService(repository=repository, segment_source=source)
+
+        assert svc._resolved_min_confidence() == pytest.approx(0.5)

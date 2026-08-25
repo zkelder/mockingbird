@@ -132,6 +132,23 @@ available is not a failure -- the produced artifact still boots and
 honestly reports species suggestions as unavailable/setup-required until an
 operator supplies a bundle and rebuilds (`--skip-bioclip-runtime`/
 `--bioclip-bundle-source`).
+
+## Acoustic / BirdNET runtime is deliberately excluded
+
+Unlike the Observation Engine and BioCLIP runtimes above, this build has no
+`install_windows_birdnet_runtime_dependencies`-style step, and must not gain
+one without a fresh licensing decision. `birdnetlib` (the optional
+`classifier-birdnet` extra) bundles the actual BirdNET-Analyzer model weights
+as real package data inside its own wheel, and those weights are licensed
+**CC BY-NC-SA 4.0 (NonCommercial)** -- a materially different situation from
+BioCLIP 2 (MIT) or the MDv5 ONNX bundle above. See
+docs/acoustic-productization-licensing-field-acceptance-v1-contract.md for
+the full evidence and reasoning; the accepted architecture (Decision B,
+"Optional external model") is that a user who wants acoustic/BirdNET support
+installs it themselves (`pip install mockingbird[classifier-birdnet]`) under
+upstream's own terms -- this packaged installer never bundles or
+redistributes it. `verify_no_nc_licensed_acoustic_model_redistribution`
+actively fails the build if this is ever silently reversed.
 """
 
 from __future__ import annotations
@@ -1532,6 +1549,62 @@ def verify_no_duplicate_site_packages_metadata(*, site_packages: Path) -> None:
         )
 
 
+def verify_no_nc_licensed_acoustic_model_redistribution(*, site_packages: Path) -> None:
+    """Fail the build outright if the packaged Windows artifact would ever
+    redistribute the BirdNET-Analyzer model weights.
+
+    Acoustic Productization, Licensing & Field Acceptance v1 (see docs/
+    acoustic-productization-licensing-field-acceptance-v1-contract.md,
+    "Phase 2 -- Authoritative licensing decision"): `birdnetlib` (Apache-2.0,
+    fine to redistribute) bundles the actual BirdNET-Analyzer
+    `GLOBAL_6K_V2.4` model weights as real package data inside its own wheel
+    -- and those weights are licensed **CC BY-NC-SA 4.0 (NonCommercial)** by
+    Cornell's K. Lisa Yang Center for Conservation Bioacoustics, confirmed
+    directly from the license file shipped at
+    `birdnetlib/models/analyzer/LICENSE`, not assumed. This product's
+    accepted release architecture (Decision B, "Optional external model") is
+    that MockingBird's own packaged installer never bundles this model --
+    `classifier-birdnet` stays a separate, explicit, user-installed extra
+    (`pip install mockingbird[classifier-birdnet]`), obtained directly from
+    PyPI under upstream's own terms, never through MockingBird's own
+    redistribution. Bundling it into *this* script's output would make
+    MockingBird itself the redistributor of an NC-licensed artifact inside a
+    distribution channel that may, in the future, be commercially-adjacent
+    (paid support, a preassembled appliance, a hosted service) -- exactly
+    the case CC BY-NC-SA restricts. See the contract doc for the full
+    licensing analysis; this function is the durable, active guard against
+    ever silently reversing that decision by adding `classifier-birdnet` to
+    `WINDOWS_RUNTIME_REQUIREMENTS`-style unconditional packaging the way
+    BioCLIP or the GPU/ONNX stack were deliberately added.
+
+    A pure, cheap directory-listing check -- no import, no network. Looks
+    for the package directory itself (`birdnetlib/`) and its dist-info,
+    since a future contributor could add the dependency without adding a
+    matching, obviously-named install step this check would otherwise miss.
+    """
+
+    hits = sorted(
+        path.name
+        for path in site_packages.iterdir()
+        if path.name == "birdnetlib" or path.name.lower().startswith("birdnetlib-")
+    )
+    if hits:
+        raise LocalProductBuildError(
+            "Windows packaging must never bundle 'birdnetlib' (found: "
+            f"{', '.join(hits)}) -- it ships the CC BY-NC-SA 4.0 (NonCommercial) "
+            "BirdNET-Analyzer model weights as real package data inside its own "
+            "wheel. MockingBird's accepted acoustic release architecture is "
+            "Decision B ('Optional external model', see docs/acoustic-"
+            "productization-licensing-field-acceptance-v1-contract.md): a user "
+            "installs the optional classifier-birdnet extra themselves, under "
+            "upstream's own terms -- MockingBird's own packaged installer must "
+            "never redistribute it. If this fired because acoustic support is "
+            "being intentionally added to the packaged product, that requires a "
+            "new licensing decision (legal review of the commercial-use "
+            "question), not just removing this check."
+        )
+
+
 def _patch_pth_file(python_dir: Path) -> None:
     """Point the embeddable interpreter at `site-packages` -- no venv, no pip.
 
@@ -1620,6 +1693,10 @@ def assemble_windows_bundle(
     # -installing step above (core, GPU, BioCLIP) so it catches this defect
     # regardless of which pair of calls produced it.
     verify_no_duplicate_site_packages_metadata(site_packages=site_packages)
+    # Acoustic Productization, Licensing & Field Acceptance v1: the packaged
+    # product must never redistribute the NC-licensed BirdNET model -- see
+    # this function's own docstring for the full licensing rationale.
+    verify_no_nc_licensed_acoustic_model_redistribution(site_packages=site_packages)
 
     _run(
         [

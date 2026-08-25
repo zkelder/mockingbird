@@ -122,6 +122,22 @@ class TestBuildMicrophoneCaptureCommand:
         assert command[dshow_index + 1] == "-i"
         assert command[dshow_index + 2] == "audio=Microphone (Realtek)"
 
+    def test_macos_raises_unsupported_platform_instead_of_silently_reusing_pulse(
+        self, tmp_path: Path,
+    ) -> None:
+        """Acoustic Productization, Licensing & Field Acceptance v1: this
+        used to silently fall through to the Linux `-f pulse` branch for
+        *any* non-Windows platform, including macOS -- a command that does
+        not match macOS's real audio stack (ffmpeg on macOS uses `-f
+        avfoundation`; PulseAudio is not a native macOS service). Honest
+        failure now, per product-doctrine.md's "Capability-aware UX."
+        """
+
+        with pytest.raises(audio_capture.AudioDecodeError, match="unsupported_platform"):
+            audio_capture.build_microphone_capture_command(
+                "default", tmp_path, platform_name="darwin",
+            )
+
     def test_uses_canonical_format_and_bounded_segmenting(self, tmp_path: Path) -> None:
         command = audio_capture.build_microphone_capture_command(
             "default", tmp_path, segment_seconds=30, platform_name="linux",
@@ -218,6 +234,41 @@ class TestMicrophoneCaptureSession:
 
         # A second poll with no new segments returns nothing -- already seen.
         assert session.poll_new_finalized_segments() == []
+
+    def test_known_segments_bookkeeping_is_pruned_once_a_segment_is_deleted(
+        self, tmp_path: Path,
+    ) -> None:
+        """Acoustic Productization, Licensing & Field Acceptance v1:
+        `_known_segments` previously only ever grew for the life of a
+        capture session -- one `Path` per segment forever, even long after
+        the acoustic runtime imported and deleted the underlying file
+        (`_delete_raw_segment_file`). Prune to whatever is still actually
+        on disk on every poll, so a genuinely long-running session does not
+        leak memory one entry per ~15s segment for its entire lifetime."""
+
+        output_dir = tmp_path / "capture"
+        output_dir.mkdir()
+        (output_dir / "segment-00000000.wav").write_bytes(b"finalized-1")
+        (output_dir / "segment-00000001.wav").write_bytes(b"still-being-written")
+
+        session = audio_capture.MicrophoneCaptureSession(device="default", output_directory=output_dir)
+        session._process = _FakeCaptureProcess()
+
+        session.poll_new_finalized_segments()
+        assert len(session._known_segments) == 1  # only the finalized one, not the in-progress one
+
+        # The runtime imports segment-00000000.wav then deletes it -- exactly
+        # what `AcousticRuntimeService._delete_raw_segment_file` does once a
+        # segment has been durably copied into the managed media root.
+        (output_dir / "segment-00000000.wav").unlink()
+        (output_dir / "segment-00000001.wav").write_bytes(b"now-finalized")
+        (output_dir / "segment-00000002.wav").write_bytes(b"still-being-written")
+
+        finalized = session.poll_new_finalized_segments()
+        assert [path.name for path in finalized] == ["segment-00000001.wav"]
+        # The deleted segment's bookkeeping entry is gone, not retained forever.
+        assert len(session._known_segments) == 1
+        assert all(path.name == "segment-00000001.wav" for path in session._known_segments)
 
     def test_poll_after_process_exit_returns_the_final_segment_too(self, tmp_path: Path) -> None:
         output_dir = tmp_path / "capture"

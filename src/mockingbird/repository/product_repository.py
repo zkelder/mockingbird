@@ -1965,7 +1965,12 @@ SOURCE_PROVIDER_DEFINITIONS: tuple[SourceProviderDefinition, ...] = (
                 description=(
                     "Must be explicitly set to \"true\" before this installation will "
                     "ever start a microphone capture session for this Source -- never "
-                    "inherited from video monitoring being armed."
+                    "inherited from video monitoring being armed. Note: Privacy/Ignore "
+                    "Zones are drawn on a camera's video frame and have no audio "
+                    "equivalent -- once granted, this microphone's captured audio is "
+                    "not subject to any Zone-based exclusion, even one covering the "
+                    "same physical space (see docs/privacy-ignore-zone-contract.md, "
+                    "\"No audio analog exists\")."
                 ),
                 placeholder="false",
             ),
@@ -6527,6 +6532,28 @@ class ProductRepository:
                     continue
                 exclude.add(max(visit_id, pair.visit_id))
         return exclude
+
+    def _deduplicated_observation_count(
+        self, session: Session, records: Sequence[dict[str, Any]],
+    ) -> int:
+        """Acoustic Productization, Licensing & Field Acceptance v1: Bird
+        Log's displayed `observation_count` must never disagree with the
+        already-collapsed gallery/best-moments rows the same response shows
+        for the identical confidently-associated encounter (Phase 6 of the
+        milestone brief -- "must not blindly count this as two animals").
+        Reuses `_associated_visit_ids_to_exclude_from_counting`'s existing
+        counting-context rule (already applied to Place Activity Report)
+        rather than a second dedup policy. Counting only: never reorders or
+        filters `records` itself, so callers' own breakdown/representative/
+        gallery logic built from the same list is completely unaffected --
+        only the number reported alongside it changes.
+        """
+
+        visit_ids = [record["summary"].id for record in records]
+        excluded = self._associated_visit_ids_to_exclude_from_counting(session, visit_ids)
+        if not excluded:
+            return len(records)
+        return sum(1 for record in records if record["summary"].id not in excluded)
 
     def soundscape_summary(self, *, start_at: datetime, end_at: datetime) -> SoundscapeSummaryResponse:
         """Multimodal Observation & Soundscape v1, Phase K (see docs/
@@ -16505,8 +16532,6 @@ class ProductRepository:
         qualified: list[DashboardVisitSummary] = []
         confirmed_species: dict[str, list[DashboardVisitSummary]] = {}
         likely_species: dict[str, list[DashboardVisitSummary]] = {}
-        zone_counts: Counter[tuple[str | None, str]] = Counter()
-        hour_counts: Counter[int] = Counter()
         unresolved: list[DashboardVisitSummary] = []
         for visit, event, _stream, _source in rows[:500]:
             if not self._dashboard_today_is_nature_event(event.event_type):
@@ -16538,8 +16563,6 @@ class ProductRepository:
             if not self._dashboard_today_is_nature_visit(summary):
                 continue
             qualified.append(summary)
-            zone_counts[(summary.zone_id, summary.zone_name or "No Zone")] += 1
-            hour_counts[summary.activity_started_at.astimezone(local_timezone).hour] += 1
             if summary.review_status == ReviewStatus.needs_review:
                 unresolved.append(summary)
             if self._dashboard_today_is_confirmed_species(session, summary):
@@ -16552,6 +16575,30 @@ class ProductRepository:
                 likely_species.setdefault(
                     self._normalize_label_from_session(session, summary.suggested_label), []
                 ).append(summary)
+
+        # Acoustic Productization, Licensing & Field Acceptance v1: a
+        # confidently-associated visual+acoustic (or cross-camera) pair is
+        # one real encounter, not two -- collapse once here and reuse this
+        # single collapsed view for every "how many/where/when" count below
+        # (zone/hour activity, confirmed-bird total), instead of computing
+        # each from the raw pre-collapse `qualified` list independently.
+        # `best_moments` below already collapsed `qualified` itself (Everyday
+        # Discovery / Product Experience v2); this is that exact same
+        # collapse, computed once and shared, not a second policy.
+        # `unresolved`/`needs_help` and `detector_qualified_animal_visit_
+        # count` deliberately keep using the raw, uncollapsed view -- those
+        # represent outstanding review work / raw detector qualification,
+        # not "how many animals were seen," so per-Visit independence is the
+        # honest count there (a human may still need to separately correct
+        # each side of a pair), not a defect to fix.
+        collapsed_qualified = self._collapse_associated_cross_camera_pairs(
+            session, self._collapse_associated_multimodal_pairs(session, qualified),
+        )
+        zone_counts: Counter[tuple[str | None, str]] = Counter()
+        hour_counts: Counter[int] = Counter()
+        for summary in collapsed_qualified:
+            zone_counts[(summary.zone_id, summary.zone_name or "No Zone")] += 1
+            hour_counts[summary.activity_started_at.astimezone(local_timezone).hour] += 1
 
         detector_qualified_animal_visit_count = 0
         detector_count_rows = session.execute(
@@ -16707,9 +16754,7 @@ class ProductRepository:
         # species cannot crowd out a rarer single encounter.
         best_moments = self._best_moments_diversity_capped(
             sorted(
-                self._collapse_associated_cross_camera_pairs(
-                    session, self._collapse_associated_multimodal_pairs(session, qualified),
-                ),
+                collapsed_qualified,
                 key=lambda item: (
                     item.review_status == ReviewStatus.reviewed and item.primary_evidence is not None,
                     item.evidence_modality == "seen_and_heard",
@@ -16732,7 +16777,7 @@ class ProductRepository:
         return DashboardTodaySummary(
             detector_qualified_animal_visit_count=detector_qualified_animal_visit_count,
             confirmed_bird_visit_count=sum(
-                item.review_outcome == VisitReviewOutcome.confirmed_bird for item in qualified
+                item.review_outcome == VisitReviewOutcome.confirmed_bird for item in collapsed_qualified
             ),
             confirmed_species_count=len(confirmed_species),
             unresolved_animal_visit_count=len(unresolved),
@@ -29539,6 +29584,26 @@ class ProductRepository:
                     )
                 )
 
+        # Acoustic Productization, Licensing & Field Acceptance v1: this
+        # method's own `window_visits` feeds `total_confirmed_count` (Bird
+        # Log/Today's per-taxon historical status) and Gate C's per-zone/
+        # per-hour `reviewed_visit_count` (`compute_taxon_place_patterns`)
+        # -- every one of this method's 6 call sites shares this single
+        # fix. Mirrors `place_activity_report`'s own, separately-applied
+        # `_associated_visit_ids_to_exclude_from_counting` call for its
+        # `visit_facts` (a different list, computed earlier in that
+        # caller) -- that existing call does not reach into this method's
+        # own independent `window_visits` query, which is why the same
+        # exclusion is needed here too, not redundant with it.
+        if len(window_visits) >= 2:
+            excluded_visit_ids = self._associated_visit_ids_to_exclude_from_counting(
+                session, [fact.visit_id for fact in window_visits],
+            )
+            if excluded_visit_ids:
+                window_visits = [
+                    fact for fact in window_visits if fact.visit_id not in excluded_visit_ids
+                ]
+
         statuses = compute_species_historical_statuses(
             window_visits,
             taxa=taxa,
@@ -29750,7 +29815,7 @@ class ProductRepository:
                     WildlifeJournalLabelSummary(
                         label=label,
                         display_name=ordered[0]["display_name"],
-                        observation_count=len(ordered),
+                        observation_count=self._deduplicated_observation_count(session, ordered),
                         first_observed_at=ordered[0]["observed_at"],
                         latest_observed_at=ordered[-1]["observed_at"],
                         stream_count=len({record["summary"].stream_id for record in ordered}),
@@ -30166,7 +30231,7 @@ class ProductRepository:
                     tag_id=payload.tag_id,
                     timezone_name=local_now.tzname() or "local time",
                 ),
-                observation_count=len(ordered),
+                observation_count=self._deduplicated_observation_count(session, ordered),
                 first_observation=(
                     self._wildlife_journal_representative(session, [first_record])
                     if first_record is not None

@@ -519,11 +519,16 @@ class AcousticRuntimeService:
         return True
 
     def _resolved_min_confidence(self) -> float:
-        from mockingbird.species.birdnet_adapter import BirdNetAdapterConfig
+        # Acoustic Productization, Licensing & Field Acceptance v1: honor
+        # MOCKINGBIRD_BIRDNET_MIN_CONFIDENCE via `resolve_birdnet_config`
+        # when this service was constructed with no explicit override --
+        # previously fell back to the hardcoded dataclass default, making
+        # the documented env var dead code for the automatic runtime.
+        from mockingbird.species.birdnet_adapter import resolve_birdnet_config
 
         return (
             self._min_confidence if self._min_confidence is not None
-            else BirdNetAdapterConfig().min_confidence
+            else resolve_birdnet_config().min_confidence
         )
 
     def _delete_raw_segment_file(self, segment: CapturedSegment) -> None:

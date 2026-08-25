@@ -2496,7 +2496,12 @@ canonical roadmap must retain -- eventually, not now -- includes:
 
 - code/license decision for the MockingBird codebase itself;
 - exact dependency/model/dataset/media license inventory;
-- BirdNET licensing disposition;
+- ~~BirdNET licensing disposition~~ -- resolved by Acoustic Productization,
+  Licensing & Field Acceptance v1 (2026-08-24): model weights are CC
+  BY-NC-SA 4.0, Decision B (optional external model, never redistributed by
+  MockingBird's own packaged product, durably guarded at build time). The
+  broader "exact dependency/model/dataset/media license inventory" item
+  above remains open for every *other* artifact in the product, unaffected;
 - custom-model training-data provenance;
 - privacy/data-ownership policy;
 - contribution/IP policy;
@@ -2660,6 +2665,29 @@ Log list-level deduplication of a confidently-associated pair (a real,
 disclosed, bounded gap -- see the contract doc's "Known limitations") or
 real hardware timing validation (no colocated camera+microphone exists yet
 to measure actual clock alignment).
+
+**Update (Everyday Discovery / Product Experience v2, 2026-08-23):** the
+Today/Bird Log list-level dedup this paragraph named as not-yet-implemented
+was closed the same week -- see the multimodal contract doc's own update
+note.
+
+**Update (Acoustic Productization, Licensing & Field Acceptance v1,
+2026-08-24):** closed the *count*-field half of that same dedup gap (the
+row-level fix above never touched the adjacent `observation_count`/
+`confirmed_bird_visit_count`/zone-hour-activity fields in the same
+responses, which still independently double-counted -- see
+[acoustic-productization-licensing-field-acceptance-v1-contract.md](acoustic-productization-licensing-field-acceptance-v1-contract.md)).
+Also ran real hardware timing/capture validation for the first time (a
+real colocated USB camera+microphone on a real Windows machine) -- proved
+the capture/concurrency mechanism genuinely works on real hardware, but did
+not naturally observe a real simultaneous visual+acoustic bird encounter,
+so `STRICT_WINDOW_MS`/`POSSIBLE_WINDOW_MS` remain an open field-calibration
+target. Most importantly, that same milestone resolved "BirdNET licensing
+disposition" (see "Public release readiness," above) with an authoritative
+per-artifact license analysis: the model weights are CC BY-NC-SA 4.0
+(NonCommercial), the packaged product does not and must not redistribute
+them (Decision B, a durable build-time guard added), and the wrapper
+code/dependencies are all separately, permissively licensed.
 
 **Ecological export & sharing interoperability.** Research / Conservation /
 Export Interoperability v1 (2026-08-22, see "Completed foundations" below

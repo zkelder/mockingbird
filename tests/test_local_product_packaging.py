@@ -69,6 +69,9 @@ sync_packaged_web_dist = _MODULE["sync_packaged_web_dist"]
 verify_clean_tracked_source = _MODULE["verify_clean_tracked_source"]
 verify_windows_gpu_runtime_dll_closure = _MODULE["verify_windows_gpu_runtime_dll_closure"]
 verify_no_duplicate_site_packages_metadata = _MODULE["verify_no_duplicate_site_packages_metadata"]
+verify_no_nc_licensed_acoustic_model_redistribution = _MODULE[
+    "verify_no_nc_licensed_acoustic_model_redistribution"
+]
 write_build_identity = _MODULE["write_build_identity"]
 write_deterministic_zip = _MODULE["write_deterministic_zip"]
 write_manifest = _MODULE["write_manifest"]
@@ -1335,6 +1338,43 @@ def test_verify_no_duplicate_site_packages_metadata_normalizes_dashes_and_unders
 
     with pytest.raises(LocalProductBuildError, match="open-clip-torch"):
         verify_no_duplicate_site_packages_metadata(site_packages=site_packages)
+
+
+# Acoustic Productization, Licensing & Field Acceptance v1: the packaged
+# Windows product must never redistribute the CC BY-NC-SA-licensed BirdNET
+# model that ships as real package data inside the `birdnetlib` wheel -- see
+# docs/acoustic-productization-licensing-field-acceptance-v1-contract.md.
+
+
+def test_verify_no_nc_licensed_acoustic_model_redistribution_passes_when_absent(
+    tmp_path: Path,
+) -> None:
+    site_packages = tmp_path / "site-packages"
+    for name in ("pillow-11.3.0.dist-info", "numpy-2.5.2.dist-info"):
+        (site_packages / name).mkdir(parents=True)
+    (site_packages / "PIL").mkdir()
+
+    verify_no_nc_licensed_acoustic_model_redistribution(site_packages=site_packages)  # must not raise
+
+
+def test_verify_no_nc_licensed_acoustic_model_redistribution_fails_on_the_package_directory(
+    tmp_path: Path,
+) -> None:
+    site_packages = tmp_path / "site-packages"
+    (site_packages / "birdnetlib").mkdir(parents=True)
+
+    with pytest.raises(LocalProductBuildError, match="birdnetlib"):
+        verify_no_nc_licensed_acoustic_model_redistribution(site_packages=site_packages)
+
+
+def test_verify_no_nc_licensed_acoustic_model_redistribution_fails_on_the_dist_info(
+    tmp_path: Path,
+) -> None:
+    site_packages = tmp_path / "site-packages"
+    (site_packages / "birdnetlib-0.18.1.dist-info").mkdir(parents=True)
+
+    with pytest.raises(LocalProductBuildError, match="birdnetlib"):
+        verify_no_nc_licensed_acoustic_model_redistribution(site_packages=site_packages)
 
 
 def test_assemble_windows_bundle_fails_the_whole_build_on_a_duplicate_dependency(

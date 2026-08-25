@@ -130,6 +130,31 @@ class TestRunAcousticAnalysis:
         assert suggestions[0].model_provenance is not None
         assert suggestions[0].model_provenance["model_version"] == "BirdNET_GLOBAL_6K_V2.4"
 
+    def test_min_confidence_env_var_is_honored_when_no_explicit_override_given(
+        self, repository: ProductRepository, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Acoustic Productization, Licensing & Field Acceptance v1:
+        `MOCKINGBIRD_BIRDNET_MIN_CONFIDENCE` is documented (docs/acoustic-
+        birdnet-observation-foundation-v1-contract.md) as the way to
+        configure the floor, but no production call site actually invoked
+        `resolve_birdnet_config()` before this fix -- the env var was dead
+        code. An explicit per-call `min_confidence` must still win over the
+        environment (unchanged, tested by every other test in this class
+        that doesn't set the env var at all)."""
+
+        monkeypatch.setenv("MOCKINGBIRD_BIRDNET_MIN_CONFIDENCE", "0.73")
+        audio_path = tmp_path / "clip.wav"
+        _generate_tone(audio_path)
+        _seed_audio_media_asset(repository, media_asset_id="media-audio-env", audio_path=audio_path)
+
+        result = acoustic_ingest.run_acoustic_analysis(
+            repository, media_asset_id="media-audio-env",
+            recording=FakeRecording(detections=[], duration=6.0),
+        )
+        assert result.status == "completed"
+        runs = repository.list_acoustic_analysis_runs_for_media_asset("media-audio-env")
+        assert runs[0].min_confidence == pytest.approx(0.73)
+
     def test_no_detection_creates_no_visit_but_records_an_honest_run(
         self, repository: ProductRepository, tmp_path: Path,
     ) -> None:

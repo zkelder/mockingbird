@@ -12,6 +12,7 @@ from mockingbird.repository.product_repository import (
     MotionEvidenceModel,
     ProductRepository,
     SpeciesSuggestionModel,
+    VisitAssociationModel,
 )
 from mockingbird.storage.models import (
     CameraSourceModel,
@@ -743,3 +744,57 @@ def test_today_summary_moves_from_likely_to_confirmed_without_duplication(
         if species.latest_visit.id == "finch-then-confirmed"
     ]
     assert all_entries_for_visit == ["northern_cardinal"]
+
+
+def test_confident_multimodal_association_does_not_double_count_today_totals(
+    repository: ProductRepository,
+) -> None:
+    """Acoustic Productization, Licensing & Field Acceptance v1: a
+    confidently-associated visual+acoustic pair is one real encounter, not
+    two. Unlike `test_multimodal_observation_acceptance.py`'s scenarios
+    (which use the pre-seeded demo Source, structurally excluded from every
+    `today.*` count -- see `_review_queue_product_context`'s `is_demo_
+    source` gate), this file's fixture uses a real, non-demo Source, so it
+    is the correct place to prove the fix at the actual counting layer
+    Today's own totals go through. The association row is inserted
+    directly (the association *engine* itself is already proven correct
+    elsewhere); this test proves the *counting* consumer of an existing
+    "associated" row."""
+
+    local_start = datetime.combine(SELECTED_DAY, datetime.min.time(), LOCAL_TIMEZONE)
+    visual_at = _utc(local_start + timedelta(hours=9))
+    acoustic_at = _utc(local_start + timedelta(hours=9, seconds=2))
+    _add_visit(
+        repository, visit_id="cardinal-seen", observed_at=visual_at, reviewed_label="northern_cardinal",
+    )
+    _add_visit(
+        repository, visit_id="cardinal-heard", observed_at=acoustic_at, reviewed_label="northern_cardinal",
+        event_type="acoustic_observation_candidate", with_media=False,
+    )
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                VisitAssociationModel(
+                    id="assoc-cardinal-seen-heard",
+                    visual_visit_id="cardinal-seen",
+                    acoustic_visit_id="cardinal-heard",
+                    tier="associated",
+                    overlap_ms=0,
+                    gap_ms=2000,
+                    engine_version="multimodal-association-v1",
+                    created_at=visual_at,
+                    updated_at=visual_at,
+                )
+            )
+
+    summary = repository.dashboard_summary(now=LOCAL_NOW, local_date=SELECTED_DAY)
+    # Before this fix: 2 (raw per-Visit sum/Counter increments), disagreeing
+    # with `recent_activity`'s own already-correct 1-row collapse for this
+    # identical pair.
+    assert summary.today.confirmed_bird_visit_count == 1
+    assert sum(entry.animal_visit_count for entry in summary.today.activity_by_zone) == 1
+    assert sum(entry.animal_visit_count for entry in summary.today.activity_by_hour) == 1
+    # Both Visits remain fully real/independently reachable -- counting is
+    # presentation-adjacent, never a deletion/supersession.
+    assert repository.get_visit("cardinal-seen") is not None
+    assert repository.get_visit("cardinal-heard") is not None

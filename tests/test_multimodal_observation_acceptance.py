@@ -42,7 +42,11 @@ from mockingbird.repository.product_repository import (
     ProductRepository,
     VisitModel,
 )
-from mockingbird.api.schemas import ReviewCorrectionCreate, WildlifeJournalHistoryRequest
+from mockingbird.api.schemas import (
+    ReviewCorrectionCreate,
+    WildlifeJournalHistoryRequest,
+    WildlifeJournalOverviewRequest,
+)
 
 STREAM_ID = "stream-backyard-feeder"
 FEEDER_ZONE_ID = "zone-feeder"
@@ -621,3 +625,90 @@ def test_scenario_10c_confident_association_collapses_in_bird_log_gallery_too(
     assert collapsed.multimodal_partner is not None
     assert collapsed.multimodal_partner.visit_id == acoustic_outcome.visit_id
     assert collapsed.multimodal_partner.taxon_agreement == "agrees"
+
+
+# --- Scenario 10d-f: Acoustic Productization, Licensing & Field Acceptance
+# v1 -- the counting (not just row-collapse) side of Phase 6. Scenario 10/10c
+# above already proved the *displayed rows* collapse to one; these prove the
+# adjacent *count* fields in the same responses now agree with those rows,
+# rather than independently, silently double-counting the raw pre-collapse
+# Visit pair the way `observation_count`/`confirmed_bird_visit_count` did
+# before this milestone's fix.
+
+
+def test_scenario_10d_confident_association_does_not_double_count_bird_log_history_observation_count(
+    repository: ProductRepository,
+) -> None:
+    _activate(repository)
+    visual_outcome = _create_visual_visit(repository, proposal_id="p-scenario-10d", observed_at=NOW)
+    _seed_audio_media_asset(repository, media_asset_id="media-scenario-10d", captured_at=NOW)
+    acoustic_outcome = _create_acoustic_visit(
+        repository, media_asset_id="media-scenario-10d", common_name="Northern Cardinal",
+        scientific_name="Cardinalis cardinalis", observed_at=NOW + timedelta(seconds=2),
+    )
+    associations = repository.multimodal_associations_for_visit(visual_outcome.visit_id)
+    assert associations and associations[0].tier == "associated"  # sanity
+    _confirm(repository, visual_outcome.visit_id, "northern_cardinal")
+    _confirm(repository, acoustic_outcome.visit_id, "northern_cardinal")
+
+    history = repository.wildlife_journal_history("northern_cardinal", WildlifeJournalHistoryRequest(), now=NOW)
+    assert history is not None
+    # Before this fix: 2 (raw `len(ordered)`), even though the gallery
+    # above already shows exactly 1 row for this identical encounter -- the
+    # same API response literally disagreeing with itself.
+    assert history.observation_count == 1
+
+
+def test_scenario_10e_confident_association_does_not_double_count_bird_log_overview_observation_count(
+    repository: ProductRepository,
+) -> None:
+    _activate(repository)
+    visual_outcome = _create_visual_visit(repository, proposal_id="p-scenario-10e", observed_at=NOW)
+    _seed_audio_media_asset(repository, media_asset_id="media-scenario-10e", captured_at=NOW)
+    acoustic_outcome = _create_acoustic_visit(
+        repository, media_asset_id="media-scenario-10e", common_name="Northern Cardinal",
+        scientific_name="Cardinalis cardinalis", observed_at=NOW + timedelta(seconds=2),
+    )
+    associations = repository.multimodal_associations_for_visit(visual_outcome.visit_id)
+    assert associations and associations[0].tier == "associated"  # sanity
+    _confirm(repository, visual_outcome.visit_id, "northern_cardinal")
+    _confirm(repository, acoustic_outcome.visit_id, "northern_cardinal")
+
+    overview = repository.wildlife_journal_overview(WildlifeJournalOverviewRequest(), now=NOW)
+    summary = next(item for item in overview.labels if item.label == "northern_cardinal")
+    assert summary.observation_count == 1
+
+
+# Scenario 10f (Today-dashboard `confirmed_bird_visit_count`/zone/hour
+# totals) is covered in tests/test_dashboard_today.py instead of here: this
+# file's shared fixture (`_activate`/`_create_visual_visit`) creates Visits
+# on the pre-seeded demo Source, which `_review_queue_product_context`'s
+# `is_demo_source` gate deliberately excludes from every `today.*` count
+# (proven separately from list-presentation surfaces like `best_moments`/
+# `recent_activity`, which are NOT demo-gated) -- so this file cannot
+# exercise that counting path meaningfully. See
+# `test_confident_multimodal_association_does_not_double_count_today_totals`
+# in test_dashboard_today.py, whose fixture uses a real, non-demo Source.
+
+
+def test_scenario_10g_unassociated_confirmed_pair_still_counts_as_two(
+    repository: ProductRepository,
+) -> None:
+    """Negative control for 10d/10e: two genuinely separate, unrelated
+    confirmed encounters of the same species (far enough apart to never
+    tier "associated") must still count as 2 -- proves the fix excludes
+    only a confident association's smaller-id side, not merely "same
+    species same day"."""
+
+    _activate(repository)
+    first = _create_visual_visit(repository, proposal_id="p-scenario-10g-a", observed_at=NOW)
+    second = _create_visual_visit(
+        repository, proposal_id="p-scenario-10g-b", observed_at=NOW + timedelta(hours=3),
+    )
+    _confirm(repository, first.visit_id, "northern_cardinal")
+    _confirm(repository, second.visit_id, "northern_cardinal")
+    assert not repository.multimodal_associations_for_visit(first.visit_id)  # sanity: no pairing at all
+
+    overview = repository.wildlife_journal_overview(WildlifeJournalOverviewRequest(), now=NOW)
+    summary = next(item for item in overview.labels if item.label == "northern_cardinal")
+    assert summary.observation_count == 2

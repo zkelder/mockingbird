@@ -279,8 +279,22 @@ def build_microphone_capture_command(
     host_platform = platform_name or sys.platform
     if host_platform.startswith("win"):
         input_args = ["-f", "dshow", "-i", f"audio={device}"]
-    else:
+    elif host_platform.startswith("linux"):
         input_args = ["-f", "pulse", "-i", device]
+    else:
+        # Acoustic Productization, Licensing & Field Acceptance v1: this
+        # used to fall through to the Linux `-f pulse` branch for *any*
+        # non-Windows platform, including macOS -- silently attempting a
+        # command that does not match macOS's real audio stack (ffmpeg on
+        # macOS captures via `-f avfoundation`; PulseAudio is not a native
+        # macOS service) rather than honestly reporting no support. Per
+        # product-doctrine.md's "Capability-aware UX" ("Unsupported
+        # features are hidden or plainly explained rather than shown as if
+        # they might work") and this milestone's platform-matrix
+        # requirement not to claim support from theoretical library
+        # compatibility: fail clearly here instead of guessing a command
+        # that would only confusingly fail inside ffmpeg itself.
+        raise AudioDecodeError("unsupported_platform")
     output_pattern = str(output_directory / "segment-%08d.wav")
     return [
         ffmpeg_binary,
@@ -450,6 +464,19 @@ class MicrophoneCaptureSession:
             # ffmpeg is actively writing -- never return it as finalized
             # while the process is still running.
             all_segments = all_segments[:-1]
+        # Acoustic Productization, Licensing & Field Acceptance v1: prune
+        # entries for segments no longer present on disk (already imported
+        # and deleted by `acoustic_runtime`'s own cleanup) before checking
+        # for newly-finalized ones -- `_known_segments` previously only
+        # ever grew for the life of this session, one `Path` per capture
+        # segment forever (a slow, unbounded-growth memory-hygiene issue on
+        # a genuinely long-running unattended session, though never a
+        # privacy concern: paths only, never audio bytes). Intersecting
+        # with the current on-disk listing is safe: a path missing from
+        # `all_segments` because its file no longer exists can never be
+        # re-globbed as "newly finalized" again either, so dropping it here
+        # loses no real bookkeeping.
+        self._known_segments &= set(all_segments)
         newly_finalized = [path for path in all_segments if path not in self._known_segments]
         self._known_segments.update(newly_finalized)
         session_started_at = self._session_started_at or self._clock()

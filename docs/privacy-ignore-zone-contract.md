@@ -104,6 +104,40 @@ so a future redaction feature would be a bounded, additive change if the
 product ever decides to build it -- but that is a future decision, not this
 one.
 
+## No audio analog exists (disclosed, Acoustic Productization, Licensing & Field Acceptance v1)
+
+This entire contract is expressed in terms of camera geometry: a Privacy or
+Ignore Zone is a 2D polygon in one Stream's image space, and the mechanism
+(`_normalized_box_intersects_zone_polygon`) can only ever suppress activity
+whose evidence carries a bounding box. A `microphone` Source's captured audio
+has no geometry at all -- an acoustic candidate Visit's `zone_id` is always
+`None`, by honest design (see docs/acoustic-birdnet-observation-foundation-v1-contract.md:
+"every geometry-shaped field on an audio-original Visit/MediaAsset stays
+genuinely `None`, never fabricated"), not merely unset. There is consequently
+**no way to draw a Privacy or Ignore Zone that also excludes a microphone's
+captured audio** -- every finalized capture segment from an armed/consented
+microphone Source is imported and analyzed regardless of any Zone drawn on
+any camera's Stream, including one that happens to observe the same physical
+space.
+
+This was not previously disclosed anywhere. A user who draws a Privacy Zone
+over part of a camera's view reasonably expects that physical area's
+activity to be excluded from evidence capture; a co-located microphone gives
+them no equivalent control, because there is no image-space region to draw
+one onto. This is a real product-level privacy gap, not a code defect --
+`create_acoustic_candidate_visit` behaves exactly as its own docstring says.
+Closing it with new audio-zone geometry (e.g. a schedule/location-scoped
+"quiet hours" or "do not analyze" toggle for a microphone Source) is
+explicitly not attempted here -- it would be the kind of generalized new
+mechanism this milestone's own brief says not to build merely because the
+gap exists. The bounded fix taken instead: disclose the limitation here, and
+surface it directly to the user at the one point they grant microphone
+capture consent (the `microphone` Source provider's `capture_consent`
+field/UI), so the absence of Zone-based privacy for audio is a known,
+accepted tradeoff rather than a silent one. See docs/acoustic-
+productization-licensing-field-acceptance-v1-contract.md for the full
+Phase 11 privacy audit this finding came from.
+
 ## Diagnostic metadata exposure (disclosed, Appliance / Storage / Privacy / Recovery v1)
 
 The counterfactual/rejected-evidence ledger (`GET /api/streams/{stream_id}
