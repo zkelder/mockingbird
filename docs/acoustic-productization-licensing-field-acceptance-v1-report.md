@@ -1,9 +1,8 @@
 # Acoustic Productization, Licensing & Field Acceptance v1 — Closure Report
 
-Starting HEAD `63f0a57` (schema v53). Ending HEAD recorded in the follow-up
-commit per this project's established convention. Schema **unchanged at
-v53** — no migration in this milestone (no durable state was genuinely
-missing; every fix operates on already-persisted facts).
+Starting HEAD `63f0a57` (schema v53). Ending HEAD `8c3c5fc`. Schema
+**unchanged at v53** — no migration in this milestone (no durable state was
+genuinely missing; every fix operates on already-persisted facts).
 
 This was explicitly not a from-scratch acoustic milestone. Substantial
 capability already existed: Acoustic/BirdNET Observation Foundation v1,
