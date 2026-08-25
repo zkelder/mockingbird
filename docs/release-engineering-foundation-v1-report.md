@@ -113,6 +113,26 @@ design.md`, `docs/single-app-runtime-recovery-design.md`, and
    check a field. `scripts/build_camera_node_artifact.py`'s manifest
    already carries an explicit `source_clean` boolean.
 8. **No release-artifact smoke test, in CI or otherwise.**
+9. **A real, currently-live packaging-dependency-closure defect** --
+   found only once this milestone's own validation reached genuine
+   native-Windows acceptance (not during initial repository investigation,
+   which cannot see a missing runtime dependency from source alone): the
+   packaged Windows bundle could not start at all. `pyproject.toml`'s core
+   `dependencies` had gained `astral` (Environmental Context Foundation
+   v1), but `scripts/build_local_product.py`'s separately-maintained
+   `WINDOWS_RUNTIME_REQUIREMENTS` mirror was never updated to match --
+   `ModuleNotFoundError: No module named 'astral'`, raised from
+   `product_repository.py`'s own unconditional import chain, before the
+   app ever bound a port. This was a real, currently-shipping defect in
+   the accepted codebase, not something this milestone's own feature work
+   introduced -- exactly the "prerequisite correctness defect" case the
+   governing task's own instructions anticipated, root-caused and fixed
+   (commit `248853a`) because it directly blocked this milestone's own
+   acceptance goal. See "Native-Windows acceptance," below, for how it was
+   found, and its own regression test
+   (`test_windows_runtime_requirements_matches_every_pyproject_core_
+   dependency`) for durable, general protection against this exact class
+   of drift recurring with any future dependency.
 
 **Investigated, found not to need a code change:**
 
@@ -269,44 +289,59 @@ expectation-setting note).
 
 ## Files changed
 
+Two commits: `a56081a` (the milestone's own implementation) and `248853a`
+(the real packaging-drift defect found by this milestone's own native-
+Windows validation, fixed and regression-tested separately -- see gap 9
+and "Native-Windows acceptance"). Combined diff, `64f787c..HEAD`:
+
 ```
- docs/appliance-storage-privacy-recovery-v1-contract.md |  13 +
- docs/using-mockingbird.md                              |  39 ++
- scripts/build_local_product.py                         |  18 +-
- scripts/verify_release_artifact.py                     | new
- src/mockingbird/__init__.py                             |  28 +-
- src/mockingbird/api/main.py                             |   3 +-
- src/mockingbird/api/schemas.py                          |   9 +
- src/mockingbird/diagnostics/doctor.py                   |   5 +-
- src/mockingbird/repository/product_repository.py        |  31 +-
- src/mockingbird/runtime.py                              |  16 +
- src/mockingbird/storage/backup.py                       |   4 +-
- src/mockingbird/storage/database.py                     |  90 +-
- tests/conftest.py                                       |  31 +-
- tests/test_local_product_packaging.py                   |  17 +-
- tests/test_persistence.py                               | 218 ++
- tests/test_single_app_runtime.py                        |  41 +
- tests/test_verify_release_artifact.py                   | new
- tests/test_version_provenance.py                        | new
- web/src/api/types.ts                                    |   5 +-
- web/src/components/ProductHealthPanel.tsx                |   9 +
- web/src/pages/LocalDataPage.tsx                          |   6 +-
- .github/workflows/ci.yml                                | new
- SECURITY.md                                              | new
+ .github/workflows/ci.yml                                | 115 ++ (new)
+ SECURITY.md                                              |  70 ++ (new)
+ docs/appliance-storage-privacy-recovery-v1-contract.md   |  14 +
+ docs/using-mockingbird.md                                |  39 ++
+ scripts/build_local_product.py                           |  31 +-
+ scripts/verify_release_artifact.py                       | 186 ++ (new)
+ src/mockingbird/__init__.py                               |  28 +-
+ src/mockingbird/api/main.py                               |   3 +-
+ src/mockingbird/api/schemas.py                            |   9 +
+ src/mockingbird/diagnostics/doctor.py                     |   5 +-
+ src/mockingbird/repository/product_repository.py          |  31 +-
+ src/mockingbird/runtime.py                                |  16 +
+ src/mockingbird/storage/backup.py                         |   4 +-
+ src/mockingbird/storage/database.py                       |  90 +-
+ tests/conftest.py                                         |  51 +
+ tests/test_local_product_packaging.py                     |  71 +-
+ tests/test_persistence.py                                 | 235 ++
+ tests/test_single_app_runtime.py                          |  41 +
+ tests/test_verify_release_artifact.py                     | 231 ++ (new)
+ tests/test_version_provenance.py                          |  58 ++ (new)
+ web/src/api/types.ts                                      |   5 +-
+ web/src/components/ProductHealthPanel.tsx                  |   9 +
+ web/src/pages/LocalDataPage.tsx                            |   6 +-
+ docs/release-engineering-foundation-v1-report.md          | this report
+ 24 files changed (excluding this report), 1327 insertions(+), 21 deletions(-)
 ```
 
 The seven pre-existing, deliberately-preserved untracked superseded-
 detector files were verified present and untouched before starting and
-remain so (still untracked, byte-identical, per `git status`).
+remain so (still untracked, byte-identical, per `git status`, re-verified
+after both commits).
 
 ## Clean-install behavior
 
-Unaffected by this milestone -- `initialize_database`'s brand-new-database
-branch (`recorded_version is None`) never calls `pre_migration_hook`
-(nothing to preserve yet), verified by a new dedicated test. The existing
-"unpack -> double-click `Start MockingBird.vbs` -> guided first-run setup"
-flow, `AppSetupStateModel` seeding, and the Windows bundle's own dependency/
-model closure are all unchanged.
+`initialize_database`'s brand-new-database branch (`recorded_version is
+None`) never calls `pre_migration_hook` (nothing to preserve yet), verified
+by a new dedicated test -- unaffected by this milestone's own feature work.
+The existing "unpack -> double-click `Start MockingBird.vbs` -> guided
+first-run setup" flow, `AppSetupStateModel` seeding, and the Windows
+bundle's own dependency/model closure are otherwise unchanged, **except**
+that the dependency closure was actively broken (see gap 9, above, and
+"Native-Windows acceptance," below) for *every* launch -- clean-install
+included, not only upgrade, since the missing `astral` import happens
+during `product_repository.py`'s own module-level import chain regardless
+of whether a database already exists. Fixed in the same commit
+(`248853a`); a genuinely clean install would have failed identically to
+the upgrade failure this milestone's own real deployment first surfaced.
 
 ## Upgrade behavior
 
@@ -362,14 +397,17 @@ guarantee it."
 
 ## Model/dependency/license packaging behavior
 
-Unchanged and re-confirmed, not reopened: MDv5 ONNX and BioCLIP-2 model
-bundles are SHA-256-verified against accepted hashes, never downloaded or
-committed; the BirdNET non-commercial-license redistribution guard still
-runs at build time (exercised structurally by the new CI packaging-smoke
-job on every change, where it previously ran only on a manual local
-build). FFmpeg's non-bundling is now honestly documented rather than
+MDv5 ONNX and BioCLIP-2 model bundles are still SHA-256-verified against
+accepted hashes, never downloaded or committed; the BirdNET non-commercial-
+license redistribution guard still runs at build time (exercised
+structurally by the new CI packaging-smoke job on every change, where it
+previously ran only on a manual local build) -- unchanged, re-confirmed,
+not reopened. FFmpeg's non-bundling is now honestly documented rather than
 silently discovered (see "Investigated, found not to need a code change,"
-above).
+above). **Actively fixed**: the core Python dependency closure itself was
+incomplete (`astral` missing -- gap 9, above); every core dependency is now
+covered and a regression test prevents silent recurrence for any future
+one.
 
 ## Host ↔ Camera Node compatibility behavior
 
@@ -381,29 +419,73 @@ failure mode exists in evidence for this pre-1.0 product.
 
 ## Native-Windows acceptance
 
-**Directly validated on native Windows** (this session's own sandbox has
-real, working WSL→Windows interop -- `powershell.exe` reaching a real
-Windows-side Python and a real passed-through NVIDIA GPU -- re-smoke-
-tested live this session before relying on it):
+**Directly validated on native Windows**, via this sandbox's real
+WSL→Windows interop (`powershell.exe` reaching a real Windows-side Python
+and a real passed-through NVIDIA GPU -- live-reconfirmed this session
+before relying on it) and `scripts/deploy_windows_dev.py` (this project's
+own established, previously-proven real-deployment mechanism -- reused
+unmodified, not built by this milestone):
 
-- [Filled in below once the deployment below completes -- see "Validation
-  commands/results."]
+- **A real end-to-end deploy of this milestone's own committed HEAD**
+  (`248853a`) to the shared Windows dev instance: real `npm ci`/frontend
+  build, real win_amd64/cp312 dependency resolution (core + full GPU/CUDA
+  + full BioCLIP tiers, not skipped), real embeddable-Python assembly, a
+  real launch, and real post-launch verification -- **passed**, process
+  healthy, BioCLIP reporting `available`.
+- **A real, first-attempt-genuine defect found and fixed by this exact
+  process**: the first deploy attempt crashed on launch --
+  `ModuleNotFoundError: No module named 'astral'` -- a real packaging-
+  dependency-closure gap unrelated to this milestone's own feature work
+  (see "Repository findings" and the `248853a` commit). Root-caused, fixed,
+  regression-tested, and the redeploy confirmed the fix for real. This is
+  itself direct evidence the release path is now more trustworthy than
+  before this milestone started, not merely unchanged.
+- **The pre-migration safety backup + migration mechanism, proven by a
+  completely organic real-world scenario stronger than any synthetic test
+  this milestone could have constructed**: the shared dev instance's own
+  real, pre-existing database happened to still be at schema **v35** (18
+  versions behind current). This deploy's launch -- the exact same
+  "replace the app, relaunch" path a real user's upgrade takes -- triggered
+  a real, automatic, verified `kind="pre_migration"` backup (confirmed
+  directly by reading that real `.mbbackup` archive's own `manifest.json`:
+  `"kind": "pre_migration"`, `"database": {"schema_version": 35, ...}`,
+  831,659,474 real bytes including real accumulated media), then migrated
+  the live database to v53, then passed its own new post-migration
+  integrity re-check, then started serving. Confirmed via real HTTP
+  (`Invoke-WebRequest` through the same interop):
+  `GET /api/product/health` returned `"ready": true`,
+  `"database_schema_version": 53`, `"database_migrated_from_version": 35`,
+  and `"backup": {"has_backup": true, "last_backup_verified": true, ...}`
+  with a timestamp matching the archive exactly.
+- **Version-provenance fix confirmed for real**: `GET /api/product/instance`
+  returned `"git_commit": "248853a0f06f01b4f8b18943c278fc1b8e7aec9f"`
+  (exactly this milestone's own real commit) and `"app_version": "0.1.0"`,
+  resolved via `mockingbird.__version__`'s new `importlib.metadata` path
+  against the real installed package inside the real deployed bundle --
+  not merely unit-tested.
+- Given the strength and organic realism of the migration evidence above,
+  the smaller synthetic isolated-directory check originally planned
+  (rewind-by-one-version against a throwaway database) was not additionally
+  run -- it would have proven strictly less than what the real shared
+  instance's own genuine 18-version gap already did.
 
-**Structurally validated, hardware/OS-unverified in this pass** (proven by
-a real, non-trivial cross-platform build on this Linux host, not merely
-reasoned about): the release-build pipeline itself (`build_local_product.py
---skip-gpu-runtime --skip-bioclip-runtime`) -- real `npm ci`/`npm run
-build`, real win_amd64/cp312 dependency resolution and installation, real
-embeddable-Python assembly, real deterministic zip/manifest/checksum
-generation, and independent post-build verification via `scripts/verify_
-release_artifact.py` -- all executed for real on this build host and
-confirmed correct; this proxy proves the packaging mechanism, not GPU
-execution or the double-click launch experience itself.
+**Structurally validated, hardware/OS-unverified in this pass**: the
+`build_local_product.py --skip-gpu-runtime --skip-bioclip-runtime`
+structural path `.github/workflows/ci.yml` actually runs (a real,
+non-trivial cross-platform build executed directly on this Linux host,
+followed by independent verification via `scripts/verify_release_
+artifact.py`) -- this proves the packaging mechanism stays correct without
+GPU/BioCLIP hardware available, which the real deployment above already
+separately proved *with* them; between the two, both configurations are
+now covered.
 
-**Unsupported / deferred:** real physical mid-session ffmpeg-dependent
-camera-type acceptance (RTSP/USB/DirectShow) was not exercised this
-milestone -- out of scope (this milestone is about the release/upgrade
-path, not camera acquisition, which is a separately-accepted lane).
+**Unsupported / deferred:** the literal double-click `Start MockingBird.vbs`
+experience (as opposed to `deploy_windows_dev.py`'s own equivalent
+programmatic launch of the same real packaged entry point) and real
+physical mid-session ffmpeg-dependent camera-type acceptance (RTSP/USB/
+DirectShow) were not additionally exercised this milestone -- the latter is
+out of scope (this milestone is about the release/upgrade path, not camera
+acquisition, a separately-accepted lane).
 
 ## Validation commands/results
 
@@ -503,10 +585,50 @@ Tier 3 (Core gate -- this change touches `storage/database.py` and
   staging** for its dev-loop release directories (found by a prior
   investigation agent, confirmed dev-tooling-only, explicitly out of
   Phase 4/this milestone's scope per `docs/roadmap.md`) -- not touched.
+  Encountered directly, not merely theoretically, during this milestone's
+  own native-Windows validation: an interop-layer failure (the documented,
+  pre-existing `UtilAcceptVsock: accept4 failed 110` WSL↔Windows
+  flakiness, unrelated to MockingBird) interrupted one deploy attempt
+  after materialization but before its ledger entry was written. The
+  tool's own existing refuse-on-mismatch check correctly declined to
+  reuse or silently overwrite the resulting orphaned directory on retry
+  ("already exists but does not match a ledger entry... refusing to
+  overwrite"), requiring one manual `Remove-Item` before a clean retry
+  succeeded -- exactly the manual-recovery experience this limitation
+  already predicted, now confirmed real rather than only reasoned about.
 - **CI cannot itself prove real-GPU/real-model/real-double-click
   behavior** on a Linux runner -- by design, honestly scoped, not a
   discovered gap to close later within this same lane.
 
 ## Decision
 
-[Filled in once Tier 3 and native-Windows evidence are complete.]
+**A.**
+
+An ordinary supported native-Windows user can, as of commit `248853a`:
+obtain the artifact (`build_local_product.py`, structurally proven in CI
+and directly in this milestone's own validation); reach a healthy Local
+Only product from a clean state (clean-install path unaffected by this
+milestone's own changes, and the one real defect that would have broken
+*every* launch -- clean or upgrade -- is now fixed and regression-guarded);
+preserve userdata through a supported upgrade (proven organically, for
+real, across an 18-schema-version gap, with a verified automatic safety
+backup); recover safely from an interrupted/failed upgrade (backup-failure
+and post-migration-integrity-failure paths both fail closed, regression-
+tested; the pre-existing transactional-DDL guarantee re-verified green);
+and verify resulting health/version compatibility (real HTTP confirmation
+of `app_version`/`git_commit`/`database_schema_version`/
+`database_migrated_from_version` against the real deployed instance) --
+without a developer checkout, WSL, manual migrations, or shell surgery
+beyond the two ordinary product actions ("unpack and run" / "replace the
+folder and relaunch").
+
+This rests on more than structural/unit-test confidence: a real end-to-end
+native-Windows deployment of this exact commit, a real defect found and
+fixed by that same real deployment (not by static reading), and a real,
+organically-occurring 18-version migration with a verified automatic
+backup and passing post-migration health check -- confirmed via real HTTP
+against the real running instance. The remaining gaps (LICENSE, full
+ffmpeg bundling, the literal double-click launcher path as distinct from
+`deploy_windows_dev.py`'s equivalent real launch, a literal SIGKILL
+migration test) are explicitly recorded as open, bounded, and correctly
+out of this milestone's authority or scope -- not silently absent.
