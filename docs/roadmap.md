@@ -3213,6 +3213,43 @@ weather/temperature association (no provider existed yet -- closed the
 same day by Environmental Context v2, item 2 above), a structured
 Feeder/water-feature entity, and true year-over-year seasonality.
 
+**2026-08-25 update (Place Features & Habitat Change v2):** closes the
+structured-Feeder/water-feature-entity and before/after-change-event-model
+gaps both named above and in
+[place-yard-intelligence-v2-contract.md](place-yard-intelligence-v2-contract.md)
+section 6 -- see
+[place-features-habitat-change-v2-contract.md](place-features-habitat-change-v2-contract.md)
+and
+[place-features-habitat-change-v2-report.md](place-features-habitat-change-v2-report.md).
+Two new tables (schema 54 -> 55): `PlaceFeatureModel` (a durable, typed,
+optionally camera/Zone-linked Feature -- feeder/water/nest_box/vegetation_
+patch/structure/habitat_area/other) and `PlaceFeatureChangeEventModel` (a
+dated, typed Reviewed change event -- added/removed/moved/modified/
+replenished/food_changed/vegetation_changed/other), a deliberate dual-
+write (not event-sourced) relationship between the two. A new before/after
+comparison module, `mockingbird.analytics.feature_change_comparison`,
+composes onto `conditional_association.compute_conditional_association`
+completely unmodified -- confirmed byte-identical output to calling that
+primitive directly -- with a new bounded 7/14/30-day symmetric window
+escalation and a four-state honest maturity vocabulary (too_soon/
+insufficient_coverage/early_signal/comparable); a new per-Feature yield
+module mirrors `source_activity.py` one level finer. Both new tables are
+PATCH-corrected in place (not `ReviewLabel`-style append-only-superseding)
+because every derived comparison is computed fresh at read time, never
+cached -- a correction is reflected on the very next read with no
+invalidation step. New Dashboard card (`PlaceFeaturesCard`, mirroring
+`HabitatPhenologyCard`'s calm-view/inline-edit shape) and a "Features &
+changes" section on the Place Report page (mirroring the existing Habitat
+& Season section). 50 new backend tests, 7 new Playwright e2e tests, all
+passing; Core re-run after the schema bump (see
+[release-execution-state.md](release-execution-state.md) for the actual
+count). Explicitly not built, recorded as future dependencies:
+environmental-context (weather) caveats composed onto a before/after
+result (Phase 17 of that milestone's own brief -- the single largest
+deferred piece), multi-camera Feature linking, representative evidence in
+Feature detail, a ranked feature-comparison view, and deeper Today/
+`daily_digest` integration.
+
 ### 5. Land Management / Agriculture
 
 An application of Place Intelligence, not a separate product architecture

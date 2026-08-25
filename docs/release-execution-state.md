@@ -23,23 +23,29 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `751d061`
-- **Schema:** `v54`
-- **Latest accepted milestone:** Environmental Context v2 -- Weather,
+- **Accepted HEAD:** `47b7cc9`
+- **Schema:** `v55`
+- **Latest accepted milestone:** Place Features & Habitat Change v2 --
+  Feeders, Water, Nest Boxes & Before/After Understanding (see
+  [place-features-habitat-change-v2-report.md](place-features-habitat-change-v2-report.md)).
+  Classification **B** -- major useful capability, bounded feature/data-
+  model maturity gaps (environmental-context/weather caveats not yet
+  composed onto a before/after result; a Feature can only link to one
+  camera/Zone; no representative evidence or ranked comparison view yet --
+  see the report's "Remaining major PRODUCT opportunities"). Two new
+  additive tables (schema 54 -> 55): `PlaceFeatureModel` and
+  `PlaceFeatureChangeEventModel` -- the first discrete before/after
+  change-event model in this codebase, closing a gap two prior milestones
+  both explicitly recorded as their own honest ceiling.
+- **Prior accepted milestone:** Environmental Context v2 -- Weather,
   Climate & Place Conditions (see
   [environmental-context-v2-report.md](environmental-context-v2-report.md)).
   Classification **B** -- major useful capability, bounded provider/
   statistical/UI limitations (a deliberately bounded 92-day historical
   window; only temperature and wet/dry precipitation run through the
   statistical association machinery; weather-association UI is a single
-  compact line, not a dedicated surface -- see the report's "Remaining
+  compact line, not a dedicated surface -- see that report's "Remaining
   major PRODUCT opportunities").
-- **Prior accepted milestone:** Place / Yard Intelligence v2 -- Changes,
-  Trends & Actionable Understanding (see
-  [place-yard-intelligence-v2-report.md](place-yard-intelligence-v2-report.md)).
-  Classification **B** -- major useful capability, bounded maturity gaps
-  (real accumulated history too young to validate new thresholds against;
-  see that report's "Major remaining PRODUCT opportunities").
 - **Push state:** Local accepted state. Do not push without explicit
   authorization.
 - **Production detector:** MDv5a ONNX
@@ -118,10 +124,13 @@ preserved here, not relaxed.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
-Environmental Context v2 (directly authorized outside this file,
-reconciled here at its own closure -- see §16) is now accepted at
-classification **B** (major useful capability, bounded provider/
-statistical/UI limitations -- see
+Place Features & Habitat Change v2 (directly authorized outside this
+file, reconciled here at its own closure -- see §16) is now accepted at
+classification **B** (major useful capability, bounded feature/data-model
+maturity gaps -- see
+[place-features-habitat-change-v2-report.md](place-features-habitat-change-v2-report.md)).
+Environmental Context v2 remains accepted at classification **B** (major
+useful capability, bounded provider/statistical/UI limitations -- see
 [environmental-context-v2-report.md](environmental-context-v2-report.md)).
 Place / Yard Intelligence v2 remains accepted at classification **B**
 (major useful capability, bounded maturity gaps -- see
@@ -131,15 +140,19 @@ and closed at classification **C** (usable, bounded further closure
 remains -- see Lane G, §6). No new implementation milestone is currently
 authorized. The next milestone will be selected only after the governing
 external process verifies this execution state against the complete
-remaining-v0.1 queue, the remaining Place/Yard Intelligence product
-opportunities (seasonality maturation against real history, a habitat
-before/after change-event data model, a `source_quality_signals` UI
-surface), **and** the remaining Environmental Context product
-opportunities (deeper historical backfill via Open-Meteo's archive/ERA5
-endpoint, wind/cloud-cover statistical associations, a dedicated
-diagnostics/Explore-page surface for weather -- see the Environmental
-Context v2 report). Do not choose the next milestone by adjacency to
-this one.
+remaining-v0.1 queue, the remaining Place Features & Habitat Change
+product opportunities (composing environmental-context/weather caveats
+onto a before/after result, multi-camera Feature linking, representative
+evidence in Feature detail, a ranked feature-comparison view -- see the
+Place Features & Habitat Change v2 report), the remaining Place/Yard
+Intelligence product opportunities (seasonality maturation against real
+history, a `source_quality_signals` UI surface -- the habitat before/
+after change-event data model itself is now closed by this milestone),
+**and** the remaining Environmental Context product opportunities
+(deeper historical backfill via Open-Meteo's archive/ERA5 endpoint, wind/
+cloud-cover statistical associations, a dedicated diagnostics/Explore-page
+surface for weather -- see the Environmental Context v2 report). Do not
+choose the next milestone by adjacency to this one.
 
 Do NOT automatically authorize:
 
@@ -151,6 +164,8 @@ Do NOT automatically authorize:
 - Provider Integrations;
 - a second weather provider or user-facing provider choice;
 - Open-Meteo archive/ERA5 deep historical backfill;
+- a Feature/Zone multi-camera join table;
+- Land Management / Agriculture as a separate campaign;
 - final Release Hardening.
 
 ## 4. Product/release guardrails
@@ -235,9 +250,18 @@ this lane as closed.
 **Biodiversity & Place Intelligence.** Accepted; extended, not frozen --
 Place / Yard Intelligence v2 (2026-08-25) added regularity narrative,
 seasonal pattern, temporal pattern, per-Source activity/quality, and a
-weekly digest on top of the already-accepted foundation. Substantial
-product-roadmap opportunity remains (weather association, habitat
-before/after change comparison, year-over-year seasonality -- see
+weekly digest on top of the already-accepted foundation. Place Features &
+Habitat Change v2 (2026-08-25, same day) closed that milestone's own
+recorded "habitat before/after change-event data model" gap: a durable
+Place Feature entity, a Reviewed change-event timeline, and a before/after
+comparison engine built on pure reuse of the existing `conditional_
+association` primitive -- see
+[place-features-habitat-change-v2-report.md](place-features-habitat-change-v2-report.md).
+Substantial product-roadmap opportunity still remains (year-over-year
+seasonality; environmental-context/weather caveats not yet composed onto
+a before/after result; multi-camera Feature linking; a ranked feature-
+comparison view -- see that report's "Remaining major PRODUCT
+opportunities" and
 [place-yard-intelligence-v2-report.md](place-yard-intelligence-v2-report.md)
 "Major remaining PRODUCT opportunities"); do not treat this lane as
 closed.
@@ -696,7 +720,31 @@ each session that touches this repository.
 
 ## 14. Validation baselines
 
-**Latest accepted Core checkpoint (Environmental Context v2):** 4874
+**Latest accepted Core checkpoint (Place Features & Habitat Change v2):**
+4926 passed / 2 failed / 3 skipped / 23 deselected (slow-marked) / 11
+xfailed (23m27s). Both failures are the identical, already-documented
+`test_place_biodiversity_summary_repository.py` pair immediately below --
+directly re-confirmed this session via a fresh `git stash` bisection
+against the clean `b0bd312` baseline (byte-identical failures with zero
+of this milestone's changes applied). 50 new tests in
+`tests/test_place_feature.py`
+(pure window-selection/maturity logic, repository CRUD, dual-write
+reconciliation, real seeded before/after scenarios, real HTTP surface),
+plus a new `test_persistence.py` schema-55 migration test and 14
+hard-coded `CURRENT_DATABASE_SCHEMA_VERSION == 54` guard-rail assertions
+across 8 unrelated files bumped to `55` (the same class of drift the
+prior two schema bumps also tripped -- see the milestone report). 30
+directly-adjacent existing tests re-run clean
+(`test_habitat_phenology.py`/`test_habitat_association.py`/
+`test_place_activity_report.py`/
+`test_place_activity_report_repository.py`/`test_source_activity.py`
+actually total 174; the 30 figure is the re-run e2e count, see below).
+Frontend `tsc --noEmit` and `vite build` clean; a new 7-test Playwright
+spec (`e2e/place-features.spec.ts`) plus 30 directly-adjacent existing
+e2e tests (`today-report`/`place-activity-report`/`biodiversity-summary`)
+re-run clean.
+
+**Prior accepted Core checkpoint (Environmental Context v2):** 4874
 passed / 3 failed / 3 skipped / 23 deselected (slow-marked) / 11 xfailed
 (26m13s). Two of the three failures are the identical, already-documented
 `test_place_biodiversity_summary_repository.py` pair immediately below.
@@ -772,12 +820,46 @@ authorization field.
 
 ## 16. Transition checkpoint
 
-- **Accepted HEAD:** `751d061`
-- **Schema:** v53 -> v54 (one additive column,
-  `environmental_context_settings.weather_enabled`; `environmental_
-  context_records` needed no change -- see the Environmental Context v2
-  report's "Data model")
-- **Latest accepted milestone:** Environmental Context v2 -- Weather,
+- **Accepted HEAD:** `47b7cc9`
+- **Schema:** v54 -> v55 (two additive tables, `place_features` and
+  `place_feature_change_events` -- see the Place Features & Habitat
+  Change v2 report's "Data model")
+- **Latest accepted milestone:** Place Features & Habitat Change v2 --
+  Feeders, Water, Nest Boxes & Before/After Understanding
+- **Place Features & Habitat Change v2 classification:** B -- major
+  useful capability, bounded feature/data-model maturity gaps. A durable
+  `PlaceFeatureModel` (feeder/water/nest_box/vegetation_patch/structure/
+  habitat_area/other, optionally camera/Zone-linked) and a Reviewed
+  `PlaceFeatureChangeEventModel` timeline (added/removed/moved/modified/
+  replenished/food_changed/vegetation_changed/other), a deliberate
+  dual-write (not event-sourced) relationship between the two -- the
+  first discrete before/after change-event model in this codebase,
+  closing a gap `habitat_association.py`'s own docstring and the Place /
+  Yard Intelligence v2 report both explicitly recorded as their own
+  honest ceiling. A new before/after comparison module composes onto
+  `conditional_association.compute_conditional_association` completely
+  unmodified (proven byte-identical output to calling that primitive
+  directly), adding only a bounded 7/14/30-day symmetric window
+  escalation and a four-state maturity vocabulary (too_soon/insufficient_
+  coverage/early_signal/comparable); a per-Feature yield module mirrors
+  `source_activity.py` one level finer. Both new tables are PATCH-
+  corrected in place because every derived comparison is computed fresh
+  at read time, never cached -- proven, not just asserted, by a direct
+  test that a correction changes the very next read. New Dashboard card
+  and Place Report section, both mirroring existing Habitat & Phenology
+  UI patterns exactly. 50 new backend tests, 7 new Playwright e2e tests,
+  all passing; Core 4926 passed / 2 failed (both pre-existing, re-
+  confirmed via fresh `git stash` bisection -- see §14) / 3 skipped / 11
+  xfailed; 37/37 targeted e2e passed (7 new + 30 directly-adjacent
+  re-run). See
+  [place-features-habitat-change-v2-report.md](place-features-habitat-change-v2-report.md)
+  for the full record, including recorded future opportunities
+  (environmental-context/weather caveats on a before/after result --
+  the single largest deliberately-deferred piece --, multi-camera
+  Feature linking, representative evidence in Feature detail, a ranked
+  feature-comparison view, deeper Today/`daily_digest` integration)
+  deliberately not built by adjacency.
+- **Prior accepted milestone:** Environmental Context v2 -- Weather,
   Climate & Place Conditions
 - **Environmental Context v2 classification:** B -- major useful
   capability, bounded provider/statistical/UI limitations. First general
@@ -788,51 +870,28 @@ authorization field.
   `weather_enabled` for any outbound network call); a bounded 92-day
   historical window (exceeds this product's entire real history today);
   six honest degraded-mode states, zero crashes, zero blocking of core
-  product function. 85 new tests (zero bugs in the three new pure
-  modules; three real bugs found and fixed in new repository-layer code
-  by this milestone's own test-writing -- a Phase-15 basis-preservation
-  bug, a baseline-anchored-at-"now"-instead-of-the-event bug, and an
-  out-of-range check that would have retroactively blocked already-cached
-  historical data); Core 4874 passed / 3 failed (2 pre-existing, 1
-  confirmed transient load-induced flake in an unrelated subsystem -- see
-  §14) / 3 skipped / 11 xfailed; 42/42 targeted e2e passed. See
+  product function. 85 new tests; Core 4874 passed / 3 failed (2
+  pre-existing, 1 confirmed transient load-induced flake in an unrelated
+  subsystem) / 3 skipped / 11 xfailed; 42/42 targeted e2e passed. See
   [environmental-context-v2-report.md](environmental-context-v2-report.md)
   for the full record, including the Open-Meteo terms/license research
   and recorded future opportunities (deeper historical backfill via the
   archive/ERA5 endpoint, wind/cloud-cover statistical associations, a
   dedicated diagnostics/Explore-page surface) deliberately not built by
   adjacency.
-- **Prior accepted milestone:** Place / Yard Intelligence v2 -- Changes,
-  Trends & Actionable Understanding
-- **Place / Yard Intelligence v2 classification:** B -- major useful
-  capability, bounded maturity gaps. Six new pure analytics modules
-  (regularity narrative, seasonal pattern, conditional/habitat
-  association, temporal pattern, source activity/quality) composed onto
-  the existing Gate C / Biodiversity foundation; a weekly digest reusing
-  the existing daily-digest ranking unmodified. Zero schema migration.
-  173 new tests, zero bugs found in any new module; Core 4791 passed / 2
-  failed (both the pre-existing, re-confirmed
-  `test_place_biodiversity_summary_repository.py` pair below) / 2 skipped
-  / 11 xfailed; 46/46 targeted e2e passed. See
-  [place-yard-intelligence-v2-report.md](place-yard-intelligence-v2-report.md)
-  for the full record, including recorded future dependencies (weather
-  association, habitat before/after change comparison, a structured
-  Feeder entity, true year-over-year seasonality) deliberately not built
-  by adjacency.
 - **Camera / Source Experience release classification:** C -- usable,
   bounded further closure remains (ongoing-monitoring failure-code
   collapse; no real reachable camera/RTSP/ONVIF/local-USB/Camera-Node
   hardware exercised this session). See
   [camera-source-experience-v1-report.md](camera-source-experience-v1-report.md).
-- **Native-Windows acceptance (this milestone):** none -- Environmental
-  Context v2 was validated via targeted Playwright e2e against the real
-  running app (Linux/WSL dev stack) plus real, unauthenticated HTTPS calls
-  to the live Open-Meteo API; it does not touch platform-specific code and
-  is not expected to behave differently on native Windows, but that is an
-  expectation, not fresh Windows evidence. The most recent real
-  native-Windows acceptance remains the one below (Place / Yard
-  Intelligence v2), unaffected by this milestone's additive-only schema
-  change.
+- **Native-Windows acceptance (this milestone):** none -- Place Features &
+  Habitat Change v2 was validated via targeted Playwright e2e against the
+  real running app (Linux/WSL dev stack) and full Core; it does not touch
+  platform-specific code and is not expected to behave differently on
+  native Windows, but that is an expectation, not fresh Windows evidence.
+  The most recent real native-Windows acceptance remains the one below
+  (Place / Yard Intelligence v2), unaffected by this milestone's
+  additive-only schema change.
 - **Native-Windows acceptance (Place / Yard Intelligence v2):** real
   deployment of the exact commit (confirmed via `/api/product/instance`),
   plus a second, genuinely fresh isolated instance exercised end-to-end
@@ -874,5 +933,11 @@ authorization field.
   Untracked root `uv.lock` investigated and removed per that milestone's
   own Decision A; working tree returned to exactly the seven preserved
   files then, and confirmed still exactly those seven, untouched, at this
-  milestone's own start and close.
+  milestone's own start and close. An untracked `uv.lock` recurred mid-
+  session during Place Features & Habitat Change v2 (an ordinary,
+  never-gitignored side effect of `uv run` tool invocations in this
+  actively-shared worktree, not a milestone artifact) -- removed again,
+  same reasoning; the working tree was confirmed to hold exactly the
+  seven preserved files at this milestone's own start, and exactly those
+  seven plus this milestone's own additions at its close.
 - **Push:** explicit authorization required
