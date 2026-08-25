@@ -13,10 +13,10 @@ not authorize future work.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `02af3f4`
+- **Accepted HEAD:** `cb49575`
 - **Schema:** `v53`
-- **Latest accepted milestone:** Acoustic Productization, Licensing & Field
-  Acceptance v1
+- **Latest accepted milestone:** Release Engineering Foundation --
+  Native-Windows Clean Install, Upgrade & Recovery Closure v1
 - **Push state:** Local accepted state. Do not push without explicit
   authorization.
 - **Production detector:** MDv5a ONNX
@@ -93,11 +93,14 @@ preserved here, not relaxed.
 
 ## 3. Current authorized milestone
 
-**NONE -- NEW PROJECT TRANSITION CHECKPOINT.**
+**NONE.**
 
-No new implementation milestone is currently authorized. The next
-milestone will be selected only after the new ChatGPT Project verifies
-this execution state against the complete remaining-v0.1 queue.
+Release Engineering Foundation -- Native-Windows Clean Install, Upgrade &
+Recovery Closure v1 (directly authorized outside this file, reconciled
+here at its own closure -- see §16) is now accepted and closed. No new
+implementation milestone is currently authorized. The next milestone will
+be selected only after the governing external process verifies this
+execution state against the complete remaining-v0.1 queue.
 
 Do NOT automatically authorize:
 
@@ -297,11 +300,28 @@ standards-based acquisition remain the golden path.
 
 ### L. Appliance / Update / Recovery
 
-**Status:** PARTIAL -- v0.1 CRITICAL.
+**Status:** PARTIAL -- v0.1 CRITICAL. Host side substantially closed by
+Release Engineering Foundation v1 (2026-08-25); Camera Node side remains
+open.
 
-Remaining: Host upgrade workflow; Camera Node upgrade workflow; version
-compatibility; rollback; interrupted update recovery; reinstall;
-replacement; migration behavior; operator-facing update/recovery UX.
+Closed for the **Host**: an automatic, verified pre-migration safety
+backup now runs before any in-place schema upgrade; a genuine post-
+migration health check gates readiness; the upgrade fact is honestly
+surfaced (console + Dashboard); restoring that automatic backup is the
+documented rollback path; interrupted-upgrade behavior (backup failure,
+mid-migration failure, post-migration integrity failure) all fail closed
+and are regression-tested; real native-Windows evidence includes an
+organically-occurring 18-schema-version migration on real pre-existing
+data. Host↔Camera Node **wire-protocol** version compatibility
+(`api_version`, `transport_protocol_version`) confirmed already
+hard-gated; the Node's own `service_version` remains display-only by
+deliberate choice (see the milestone report).
+
+Remaining: a Camera Node **upgrade** workflow specifically (as distinct
+from the already-accepted Camera Node install/reboot/reprovision
+hardening); reinstall/replacement beyond what reprovisioning already
+covers; broader operator-facing update/recovery UX. See
+[release-engineering-foundation-v1-report.md](release-engineering-foundation-v1-report.md).
 
 ### M. Storage / Retention UX
 
@@ -341,13 +361,34 @@ supports it.
 
 ### P. Release Engineering Foundation / Distribution
 
-**Status:** NOT FULLY CLOSED -- v0.1 CRITICAL.
+**Status:** SUBSTANTIALLY CLOSED, two items deliberately left open --
+v0.1 CRITICAL. Release Engineering Foundation v1 (2026-08-25) closed:
+upgrade procedure (see Lane L); a real, currently-live dependency-closure
+defect found and fixed via genuine native-Windows deployment (`astral`
+missing from the packaged bundle -- would have broken *every* launch,
+clean-install included) plus a regression test against the whole class of
+drift; version single-source-of-truth; artifact provenance/checksum
+parity with the Camera Node build script (`source_clean`); an independent
+post-build artifact verifier (`scripts/verify_release_artifact.py`); this
+repository's first CI automation (`.github/workflows/ci.yml` -- Core
+gate, frontend build, a real structural packaging-smoke build);
+`SECURITY.md`; release-artifact smoke testing; Host ↔ Camera Node
+compatibility (investigated and confirmed adequate, not a gap). See
+[release-engineering-foundation-v1-report.md](release-engineering-foundation-v1-report.md)
+for the complete record, including real native-Windows acceptance
+evidence (Decision A).
 
-Remaining: clean-machine installation; normal native-Windows user path;
-frontend packaging; dependency closure; model acquisition; checksums;
-versioning; CI; OSS licensing/notices; SECURITY documentation; upgrade
-procedure; Host ↔ Camera Node compatibility; public-repo hygiene;
-release-artifact smoke testing.
+Deliberately still open, not silently dropped: **`LICENSE`** (a
+business/legal decision -- which license, and its interaction with the
+still-unresolved BirdNET commercial-adjacent-distribution question in
+§2, above -- outside a bounded engineering milestone's authority to
+resolve unilaterally); **full ffmpeg bundling** (needs its own licensing
+research, shaped like the already-completed BirdNET work -- today it is
+honestly documented as a separate install step rather than silently
+missing, and the recommended Camera Node golden path does not need it).
+Public-repo hygiene beyond `SECURITY.md`/`CONTRIBUTING.md` (README/site
+polish, brand/trademark review) remains open per "Public release
+readiness" in [roadmap.md](roadmap.md), not v0.1-CRITICAL blocking.
 
 Release Engineering Foundation may occur before all product development is
 finished. Release Engineering Foundation is not the same as final Release
@@ -541,10 +582,17 @@ each session that touches this repository.
 
 ## 14. Validation baselines
 
-**Latest accepted Core checkpoint (Acoustic milestone):** 4608 passed / 0
+**Latest accepted Core checkpoint (Release Engineering Foundation v1):**
+4633 passed / 0 failed / 0 errors. (A first full run showed 2 teardown
+errors in an unrelated file; root-caused via clean-baseline bisection to
+a pytest fixture-teardown-ordering interaction this milestone's own
+`tests/conftest.py` change triggered, fixed at the source -- see the
+milestone report's "Validation commands/results.")
+
+**Prior accepted Core checkpoint (Acoustic milestone):** 4608 passed / 0
 failed.
 
-**Latest accepted Full checkpoint:** 4629 passed / 2 failed. Both failures
+**Prior accepted Full checkpoint:** 4629 passed / 2 failed. Both failures
 were in unrelated Camera Node real-subprocess tests and reproduced
 identically on the clean baseline.
 
@@ -570,18 +618,26 @@ authorization field.
 
 ## 16. Transition checkpoint
 
-- **Accepted HEAD:** `02af3f4`
+- **Accepted HEAD:** `cb49575`
 - **Schema:** v53
-- **Latest accepted milestone:** Acoustic Productization, Licensing &
-  Field Acceptance v1
+- **Latest accepted milestone:** Release Engineering Foundation --
+  Native-Windows Clean Install, Upgrade & Recovery Closure v1
+- **Native-Windows acceptance:** Decision A -- real deployment, a real
+  packaging defect found and fixed, a real organic 18-schema-version
+  migration with verified automatic backup, confirmed via real HTTP. See
+  [release-engineering-foundation-v1-report.md](release-engineering-foundation-v1-report.md).
 - **Acoustic release posture:** Release-ready optional
 - **Production detector:** MDv5a ONNX @ 0.1
 - **Production visual species system:** BioCLIP-2 + Eligibility/Abstention
 - **Current authorized implementation milestone:** NONE
-- **State:** New ChatGPT Project transition checkpoint
+- **State:** Milestone-closure checkpoint (superseded the prior New-
+  ChatGPT-Project transition checkpoint's stale `02af3f4` bookkeeping;
+  no accepted-decision content changed by that reconciliation)
 - **Final release hardening:** not authorized
 - **Remote LTE/solar:** not a v0.1 blocker
 - **Mobile/PWA:** not authorized
 - **Local Species Prior:** not authorized
 - **Another classifier campaign:** not authorized
+- **LICENSE:** still genuinely absent -- open business/legal decision, not
+  resolved by this milestone (see Lane P, above)
 - **Push:** explicit authorization required
