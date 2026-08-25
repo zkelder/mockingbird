@@ -1845,3 +1845,173 @@ class PlacePhenologyObservationModel(Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PlaceFeatureModel(Base):
+    """One durable, user-recorded Place Feature (Place Features & Habitat
+    Change v2, schema 55) -- see docs/place-features-habitat-change-v2-
+    contract.md "Data model". Distinct from `PlaceHabitatFactModel`: a
+    Feature has its own durable identity and lifecycle -- "the sunflower
+    feeder" can be referred to, associated with a camera, and have activity
+    computed for it as one thing over time, rather than being re-described
+    as a fresh, untracked tag fact on every mention. `mockingbird.habitat.
+    place_feature` owns the closed `feature_type` vocabulary
+    (`PLACE_FEATURE_TYPES`), validated as a `Literal` at the API layer, not
+    a DB `CHECK` -- matching house style for every other string-vocabulary
+    column in this product (`zone_type`, `category`).
+
+    This row holds *current* state only -- the durable, append-only
+    timeline of what happened to this Feature over time lives entirely in
+    `PlaceFeatureChangeEventModel` rows referencing this `id`; this is a
+    deliberate dual-write, not event sourcing (see that model's docstring,
+    "Feature state vs change history" in the contract doc, and Phase 5 of
+    the governing brief). `is_active`/`removed_date` may be set two ways:
+    directly, via an ordinary edit (a lightweight, reversible toggle -- "I
+    temporarily marked this inactive"); or as a side effect, in the same
+    transaction, of recording a `event_type="removed"` change event (the
+    dated, historically-significant "this was actually decommissioned on
+    date X" fact). Recording (or later deleting) a `food_changed` event
+    similarly keeps `feeder_food_type` current -- see
+    `mockingbird.habitat.place_feature.DERIVED_STATE_EVENT_TYPES`.
+
+    `source_id`/`zone_id` are both nullable and independent of each other:
+    `NULL`/`NULL` means "Place knowledge only, no camera association" (a
+    Feature may exist without ever being watched by a camera -- Phase 6 of
+    the governing brief). `zone_id` is the finer-grained, preferred
+    association when a Zone already exists for this Feature (mirrors
+    `VisitModel.zone_id`/`DetectionModel.zone_id`'s identical nullable-FK
+    idiom); `source_id` is coarser ("which camera," with no specific Zone
+    drawn yet) and, when `zone_id` is also set, is kept consistent with
+    that Zone's own Stream's Source by the repository layer rather than
+    trusted independently from a client payload. A Feature currently
+    associates with at most one Zone/Source (Phase 28's documented v2
+    limitation: a Feature visible from two cameras can only be linked to
+    one for now; its yield/before-after figures are scoped to that one
+    linked view).
+
+    `feeder_food_type` is a small, bounded, feeder-specific field (Phase 8
+    of the governing brief) -- meaningless but harmless for a non-feeder
+    `feature_type`; no DB constraint ties the two together, matching this
+    codebase's "flexible tag, not dozens of enforced columns" house style.
+    This is deliberately not an inventory system: no purchase receipts, no
+    exact food weight, no SKUs, no supply forecasting.
+
+    `information_class`/`provenance` mirror `PlaceHabitatFactModel`'s
+    identical two-column split and v1-only values (`"reviewed"`/
+    `"user_manual_entry"`) exactly -- a human directly describing their own
+    Place is doctrine's own "human-validated semantic truth" tier. Unlike
+    that precedent, this model *also* carries `actor_user_id` directly on
+    the row (not only in the generic audit log): the governing brief
+    explicitly requires durable, on-row "reviewed actor provenance" for
+    both this model and `PlaceFeatureChangeEventModel`, so this deliberately
+    goes one step further than the Habitat & Phenology v1 precedent,
+    reusing `ReviewLabelModel.reviewed_by_user_id`'s exact nullable-FK
+    idiom instead: populated only by the authenticated HTTP handler from
+    the signed-in session, never trusted from a client-supplied payload
+    field, and `NULL` for any row created by a future non-interactive
+    pathway that has no signed-in user.
+    """
+
+    __tablename__ = "place_features"
+    __table_args__ = (
+        Index("ix_place_features_source_active", "source_id", "is_active"),
+        Index("ix_place_features_zone", "zone_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    feature_type: Mapped[str] = mapped_column(String, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    installed_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    removed_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    source_id: Mapped[str | None] = mapped_column(
+        ForeignKey("camera_sources.id"), nullable=True
+    )
+    zone_id: Mapped[str | None] = mapped_column(ForeignKey("zones.id"), nullable=True)
+    feeder_food_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    information_class: Mapped[str] = mapped_column(String, nullable=False)
+    provenance: Mapped[str] = mapped_column(String, nullable=False)
+    actor_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PlaceFeatureChangeEventModel(Base):
+    """One durable, user-recorded, dated fact about something that changed
+    around the Place (Place Features & Habitat Change v2, schema 55) -- see
+    docs/place-features-habitat-change-v2-contract.md "Data model". This is
+    the discrete before/after *change-event* concept confirmed absent
+    everywhere else in this codebase before this milestone (see
+    `mockingbird.analytics.habitat_association`'s own docstring, which
+    names this exact gap) -- distinct from `PlacePhenologyObservationModel`,
+    which describes a *recurring biological phenomenon* with a start/end
+    interval ("azaleas flowering"), not a discrete one-time change ("planted
+    the azaleas").
+
+    `feature_id` is nullable on purpose: most events describe something
+    that happened to one tracked `PlaceFeatureModel`, but a Place-level
+    habitat change with no specific tracked Feature ("changed mowing
+    practice") can still be recorded as a Reviewed fact without inventing a
+    Feature row it does not really need. `mockingbird.habitat.place_feature`
+    owns the closed `event_type` vocabulary
+    (`PLACE_FEATURE_CHANGE_EVENT_TYPES`), validated as a `Literal` at the
+    API layer.
+
+    `effective_date` is a plain `date`, never `datetime` -- mirrors
+    `PlacePhenologyObservationModel.observed_start_date`'s identical
+    "human-entered, day-granularity fact; a fabricated time-of-day would
+    overclaim precision that was never observed" discipline ("I added it
+    around March 15," not a claimed instant).
+
+    `prior_value`/`new_value` are a small, bounded, free-text pair -- not a
+    polymorphic JSON blob -- satisfying the governing brief's "prior/new
+    state metadata only if current architecture supports it cleanly"
+    without over-building. For `event_type="food_changed"`, `new_value` is
+    also what the repository copies into the referenced Feature's own
+    `feeder_food_type` (see `PlaceFeatureModel`'s docstring); for every
+    other event type both columns are purely descriptive and never read by
+    any dual-write.
+
+    Correction model: this row is PATCH-corrected in place (mirroring
+    `PlacePhenologyObservationModel`'s identical precedent), not append-
+    only-superseding the way wildlife `ReviewLabel` truth is. This is a
+    deliberate, considered choice, not an oversight: `PlaceHabitatFactModel`
+    /`PlacePhenologyObservationModel` already establish that this whole
+    domain family avoids `ReviewLabel`/`reviewed_by_user_id`-style
+    append-only machinery, and every derived comparison this milestone
+    builds (`mockingbird.analytics.feature_change_comparison`) is computed
+    fresh at read time from current rows, never cached -- so a correction
+    here is automatically reflected on the very next read, with no
+    invalidation step to get wrong, and no separate "correction history" UI
+    is needed for a fact at this epistemic weight (see "Information class"
+    in the contract doc). Deleting a row here is likewise an ordinary,
+    always-available correction (Phase 22 of the governing brief), not a
+    restricted operation the way hard-deleting a `PlaceFeatureModel` with
+    existing history is.
+
+    `information_class`/`provenance`/`actor_user_id` mirror
+    `PlaceFeatureModel`'s identical fields and reasoning exactly.
+    """
+
+    __tablename__ = "place_feature_change_events"
+    __table_args__ = (
+        Index(
+            "ix_place_feature_change_events_feature_date", "feature_id", "effective_date"
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    feature_id: Mapped[str | None] = mapped_column(
+        ForeignKey("place_features.id"), nullable=True
+    )
+    event_type: Mapped[str] = mapped_column(String, nullable=False)
+    effective_date: Mapped[date] = mapped_column(Date, nullable=False)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    prior_value: Mapped[str | None] = mapped_column(String, nullable=True)
+    new_value: Mapped[str | None] = mapped_column(String, nullable=True)
+    information_class: Mapped[str] = mapped_column(String, nullable=False)
+    provenance: Mapped[str] = mapped_column(String, nullable=False)
+    actor_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

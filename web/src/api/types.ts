@@ -5301,6 +5301,173 @@ export interface PlaceHabitatContext {
   recent_phenology: PlacePhenologyObservation[];
 }
 
+// Place Features & Habitat Change v2 -- see docs/place-features-habitat-
+// change-v2-contract.md. Mirrors api.schemas.PlaceFeature*/PlaceFeature
+// ChangeEvent* field-for-field.
+export type PlaceFeatureType =
+  | "feeder"
+  | "water"
+  | "nest_box"
+  | "vegetation_patch"
+  | "structure"
+  | "habitat_area"
+  | "other";
+
+export type PlaceFeatureChangeEventType =
+  | "added"
+  | "removed"
+  | "moved"
+  | "modified"
+  | "replenished"
+  | "food_changed"
+  | "vegetation_changed"
+  | "other";
+
+export type FeatureAssociationStatus =
+  | "no_clear_association"
+  | "more_common_under_condition"
+  | "less_common_under_condition";
+
+export type FeatureComparisonMaturity =
+  | "too_soon"
+  | "insufficient_coverage"
+  | "early_signal"
+  | "comparable";
+
+export interface PlaceFeature {
+  id: string;
+  feature_type: PlaceFeatureType;
+  name: string;
+  note?: string | null;
+  is_active: boolean;
+  installed_date?: string | null;
+  removed_date?: string | null;
+  source_id?: string | null;
+  zone_id?: string | null;
+  feeder_food_type?: string | null;
+  information_class: "reviewed";
+  provenance: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlaceFeatureCreate {
+  feature_type: PlaceFeatureType;
+  name: string;
+  note?: string | null;
+  is_active?: boolean;
+  installed_date?: string | null;
+  source_id?: string | null;
+  zone_id?: string | null;
+  feeder_food_type?: string | null;
+}
+
+// Partial update (PATCH semantics), matching PlaceHabitatFactUpdate's
+// conventions: an omitted/undefined field leaves the stored value
+// unchanged. `""` explicitly clears `note`/`feeder_food_type`/`source_id`/
+// `zone_id` to null (clearing `source_id` also clears `zone_id` -- a Zone
+// always implies a Source). `installed_date` cannot itself distinguish
+// "leave unchanged" from "clear it", so clearing uses the explicit
+// `clear_installed_date` flag instead (mutually exclusive with setting
+// `installed_date` in the same request). `removed_date` is deliberately
+// not present here at all -- it is only ever set by recording an
+// `event_type: "removed"` change event.
+export interface PlaceFeatureUpdate {
+  feature_type?: PlaceFeatureType;
+  name?: string;
+  note?: string;
+  is_active?: boolean;
+  installed_date?: string;
+  clear_installed_date?: boolean;
+  source_id?: string;
+  zone_id?: string;
+  feeder_food_type?: string;
+}
+
+export interface PlaceFeatureChangeEvent {
+  id: string;
+  feature_id?: string | null;
+  event_type: PlaceFeatureChangeEventType;
+  effective_date: string;
+  note?: string | null;
+  prior_value?: string | null;
+  new_value?: string | null;
+  information_class: "reviewed";
+  provenance: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlaceFeatureChangeEventCreate {
+  feature_id?: string | null;
+  event_type: PlaceFeatureChangeEventType;
+  effective_date: string;
+  note?: string | null;
+  prior_value?: string | null;
+  new_value?: string | null;
+}
+
+export interface PlaceFeatureChangeEventUpdate {
+  event_type?: PlaceFeatureChangeEventType;
+  effective_date?: string;
+  note?: string;
+  prior_value?: string;
+  new_value?: string;
+}
+
+// One change event's before/after comparison -- association language only,
+// never causal. Every field beyond `maturity` is null/undefined exactly
+// when `maturity` is "too_soon" or "insufficient_coverage" -- no
+// comparable window exists yet.
+export interface PlaceFeatureAssociation {
+  maturity: FeatureComparisonMaturity;
+  window_days?: number | null;
+  pre_start?: string | null;
+  post_end?: string | null;
+  status?: FeatureAssociationStatus | null;
+  presence_days_in_condition?: number | null;
+  usable_days_in_condition?: number | null;
+  presence_days_out_of_condition?: number | null;
+  usable_days_out_of_condition?: number | null;
+}
+
+export interface PlaceFeatureChangeEventWithComparison {
+  event: PlaceFeatureChangeEvent;
+  // null only when the event's Feature has no camera/Zone association to
+  // compare against -- distinct from a maturity of "too_soon"/
+  // "insufficient_coverage", which means an association *was* attempted.
+  comparison?: PlaceFeatureAssociation | null;
+}
+
+export interface PlaceFeatureYieldSummary {
+  confirmed_wildlife_visit_count: number;
+  distinct_taxon_count: number;
+  monitored_seconds?: number | null;
+  visits_per_monitored_hour?: number | null;
+  data_sufficient: boolean;
+  window_days: number;
+}
+
+// The full detail bundle for one Feature -- current state, its complete
+// change-event timeline (each with its own before/after comparison), and a
+// recent-window activity snapshot.
+export interface PlaceFeatureDetail {
+  feature: PlaceFeature;
+  changes: PlaceFeatureChangeEventWithComparison[];
+  // null when the Feature has no camera/Zone association at all -- yield
+  // cannot honestly be computed without one.
+  recent_yield?: PlaceFeatureYieldSummary | null;
+}
+
+// A compact, Dashboard-safe bundle: how many active Features exist, how
+// many changes were recorded recently, and at most one restrained,
+// backend-composed highlight sentence -- never a raw ranking table.
+export interface PlaceFeaturesSummary {
+  active_feature_count: number;
+  recent_change_count: number;
+  highlight?: string | null;
+}
+
 // Biodiversity & Place Intelligence v1 -- see
 // docs/biodiversity-place-intelligence-v1-contract.md. Restrained,
 // non-causal habitat/environmental context tied to one taxon's single

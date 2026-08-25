@@ -396,6 +396,14 @@ from mockingbird.api.schemas import (
     InstallationSettingsUpdate,
     PlaceBiodiversitySummaryResponse,
     PlaceEnvironmentalContext,
+    PlaceFeature,
+    PlaceFeatureChangeEvent,
+    PlaceFeatureChangeEventCreate,
+    PlaceFeatureChangeEventUpdate,
+    PlaceFeatureCreate,
+    PlaceFeatureDetail,
+    PlaceFeatureUpdate,
+    PlaceFeaturesSummary,
     PlaceHabitatContext,
     PlaceHabitatFact,
     PlaceHabitatFactCreate,
@@ -495,6 +503,7 @@ from mockingbird.repository.product_repository import (
     FastReviewConflictError,
     MonitoringOperationConflictError,
     ObservationAuthorityStatus,
+    PlaceFeatureHasHistoryError,
     ProductRepository,
     ReviewProvenanceConflictError,
     ReviewRevisionConflictError,
@@ -15019,6 +15028,120 @@ async def get_place_habitat_context_today() -> PlaceHabitatContext:
     the environmental-context settings endpoints."""
 
     return get_repository().get_place_habitat_context()
+
+
+# Place Features & Habitat Change v2 -- see docs/place-features-habitat-
+# change-v2-contract.md. Route shape mirrors the habitat/phenology
+# endpoints directly above: auth-required mutations, plain reads, a
+# dedicated compact bundle separate from the full CRUD list endpoints.
+
+
+@app.get("/api/place/features", response_model=list[PlaceFeature])
+async def list_place_features() -> list[PlaceFeature]:
+    """Every recorded Place Feature. An empty list is a normal, honest
+    "nothing recorded yet" outcome."""
+
+    return get_repository().list_place_features()
+
+
+@app.post("/api/place/features", response_model=PlaceFeature, status_code=201)
+async def create_place_feature(payload: PlaceFeatureCreate, request: Request) -> PlaceFeature:
+    current_user = current_user_or_401(request)
+    try:
+        return get_repository().add_place_feature(payload, acting_user=current_user)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.patch("/api/place/features/{feature_id}", response_model=PlaceFeature)
+async def update_place_feature(
+    feature_id: str, payload: PlaceFeatureUpdate, request: Request
+) -> PlaceFeature:
+    current_user = current_user_or_401(request)
+    try:
+        feature = get_repository().update_place_feature(feature_id, payload, acting_user=current_user)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    if feature is None:
+        raise _not_found("Place Feature", feature_id)
+    return feature
+
+
+@app.delete("/api/place/features/{feature_id}", status_code=204)
+async def delete_place_feature(feature_id: str, request: Request) -> Response:
+    current_user = current_user_or_401(request)
+    try:
+        removed = get_repository().remove_place_feature(feature_id, acting_user=current_user)
+    except PlaceFeatureHasHistoryError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
+    if not removed:
+        raise _not_found("Place Feature", feature_id)
+    return Response(status_code=204)
+
+
+@app.get("/api/place/features/{feature_id}/detail", response_model=PlaceFeatureDetail)
+async def get_place_feature_detail(feature_id: str) -> PlaceFeatureDetail:
+    """The full detail bundle for one Feature -- current state, its
+    complete change-event timeline (each with its own read-time before/
+    after comparison), and a recent-window activity snapshot. See
+    `PlaceFeatureDetail`'s own docstring."""
+
+    detail = get_repository().get_place_feature_detail(feature_id)
+    if detail is None:
+        raise _not_found("Place Feature", feature_id)
+    return detail
+
+
+@app.get("/api/place/features-summary", response_model=PlaceFeaturesSummary)
+async def get_place_features_summary() -> PlaceFeaturesSummary:
+    """A compact, Dashboard-safe bundle -- active Feature count, recent
+    change count, and at most one restrained highlight sentence. See
+    `PlaceFeaturesSummary`'s own docstring."""
+
+    return get_repository().get_place_features_summary()
+
+
+@app.get("/api/place/feature-changes", response_model=list[PlaceFeatureChangeEvent])
+async def list_place_feature_change_events(
+    feature_id: str | None = Query(default=None),
+) -> list[PlaceFeatureChangeEvent]:
+    """Every recorded change event, optionally filtered to one Feature.
+    Omitting `feature_id` returns every event across every Feature,
+    including Place-level events with no tracked Feature."""
+
+    return get_repository().list_place_feature_change_events(feature_id=feature_id)
+
+
+@app.post("/api/place/feature-changes", response_model=PlaceFeatureChangeEvent, status_code=201)
+async def create_place_feature_change_event(
+    payload: PlaceFeatureChangeEventCreate, request: Request
+) -> PlaceFeatureChangeEvent:
+    current_user = current_user_or_401(request)
+    try:
+        return get_repository().add_place_feature_change_event(payload, acting_user=current_user)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.patch("/api/place/feature-changes/{event_id}", response_model=PlaceFeatureChangeEvent)
+async def update_place_feature_change_event(
+    event_id: str, payload: PlaceFeatureChangeEventUpdate, request: Request
+) -> PlaceFeatureChangeEvent:
+    current_user = current_user_or_401(request)
+    event = get_repository().update_place_feature_change_event(
+        event_id, payload, acting_user=current_user
+    )
+    if event is None:
+        raise _not_found("Place Feature change event", event_id)
+    return event
+
+
+@app.delete("/api/place/feature-changes/{event_id}", status_code=204)
+async def delete_place_feature_change_event(event_id: str, request: Request) -> Response:
+    current_user = current_user_or_401(request)
+    if not get_repository().remove_place_feature_change_event(event_id, acting_user=current_user):
+        raise _not_found("Place Feature change event", event_id)
+    return Response(status_code=204)
 
 
 @app.get("/api/place/biodiversity-summary", response_model=PlaceBiodiversitySummaryResponse)

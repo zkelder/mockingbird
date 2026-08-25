@@ -95,6 +95,14 @@ import type {
   PlaceActivityReportResponse,
   PlaceBiodiversitySummaryResponse,
   PlaceEnvironmentalContext,
+  PlaceFeature,
+  PlaceFeatureChangeEvent,
+  PlaceFeatureChangeEventCreate,
+  PlaceFeatureChangeEventUpdate,
+  PlaceFeatureCreate,
+  PlaceFeatureDetail,
+  PlaceFeatureUpdate,
+  PlaceFeaturesSummary,
   PlaceHabitatContext,
   PlaceHabitatFact,
   PlaceHabitatFactCreate,
@@ -1365,6 +1373,46 @@ export const apiClient = {
       method: "DELETE",
     }),
   getPlaceHabitatContext: () => request<PlaceHabitatContext>("/api/place/habitat-context"),
+  // Place Features & Habitat Change v2 -- see docs/place-features-habitat-
+  // change-v2-contract.md.
+  getPlaceFeatures: () => request<PlaceFeature[]>("/api/place/features"),
+  createPlaceFeature: (payload: PlaceFeatureCreate) =>
+    request<PlaceFeature>("/api/place/features", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updatePlaceFeature: (featureId: string, payload: PlaceFeatureUpdate) =>
+    request<PlaceFeature>(`/api/place/features/${encodeURIComponent(featureId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  deletePlaceFeature: (featureId: string) =>
+    request<void>(`/api/place/features/${encodeURIComponent(featureId)}`, { method: "DELETE" }),
+  getPlaceFeatureDetail: (featureId: string) =>
+    request<PlaceFeatureDetail>(`/api/place/features/${encodeURIComponent(featureId)}/detail`),
+  getPlaceFeaturesSummary: () => request<PlaceFeaturesSummary>("/api/place/features-summary"),
+  getPlaceFeatureChangeEvents: (featureId?: string) => {
+    const searchParams = new URLSearchParams();
+    if (featureId) searchParams.set("feature_id", featureId);
+    const query = searchParams.toString();
+    return request<PlaceFeatureChangeEvent[]>(
+      `/api/place/feature-changes${query ? `?${query}` : ""}`,
+    );
+  },
+  createPlaceFeatureChangeEvent: (payload: PlaceFeatureChangeEventCreate) =>
+    request<PlaceFeatureChangeEvent>("/api/place/feature-changes", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updatePlaceFeatureChangeEvent: (eventId: string, payload: PlaceFeatureChangeEventUpdate) =>
+    request<PlaceFeatureChangeEvent>(`/api/place/feature-changes/${encodeURIComponent(eventId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  deletePlaceFeatureChangeEvent: (eventId: string) =>
+    request<void>(`/api/place/feature-changes/${encodeURIComponent(eventId)}`, {
+      method: "DELETE",
+    }),
   getPlaceBiodiversitySummary: () =>
     request<PlaceBiodiversitySummaryResponse>("/api/place/biodiversity-summary"),
   getSoundscapeSummary: (payload: SoundscapeSummaryRequest) =>

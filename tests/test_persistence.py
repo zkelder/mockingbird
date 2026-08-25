@@ -1622,3 +1622,65 @@ def test_schema_53_upgrades_to_current_with_environmental_context_weather(
         assert "weather_enabled" in columns
     finally:
         migrated.close()
+
+
+def test_schema_54_upgrades_to_current_with_place_features_habitat_change(
+    tmp_path: Path,
+) -> None:
+    """Place Features & Habitat Change v2: a real database at the
+    previously-current schema (v54) upgrades cleanly through the two new
+    additive tables (`place_features`, `place_feature_change_events`) --
+    mirroring `test_schema_51_upgrades_to_current_with_habitat_phenology_
+    foundation`'s own "additive table(s), no seeded row" proof pattern
+    applied to this milestone's tables."""
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = repository_for(db_path)
+    existing_source_count = len(repository.list_sources())
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql("DROP TABLE place_feature_change_events")
+        connection.exec_driver_sql("DROP TABLE place_features")
+        connection.exec_driver_sql("UPDATE mockingbird_schema SET version = 54 WHERE singleton_id = 1")
+    engine.dispose()
+
+    migrated = repository_for(db_path)
+    try:
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+        assert len(migrated.list_sources()) == existing_source_count
+
+        with migrated.engine.connect() as connection:
+            feature_columns = {
+                row[1]
+                for row in connection.exec_driver_sql("PRAGMA table_info(place_features)").fetchall()
+            }
+            assert {
+                "id", "feature_type", "name", "note", "is_active", "installed_date",
+                "removed_date", "source_id", "zone_id", "feeder_food_type",
+                "information_class", "provenance", "actor_user_id", "created_at", "updated_at",
+            } <= feature_columns
+            event_columns = {
+                row[1]
+                for row in connection.exec_driver_sql(
+                    "PRAGMA table_info(place_feature_change_events)"
+                ).fetchall()
+            }
+            assert {
+                "id", "feature_id", "event_type", "effective_date", "note", "prior_value",
+                "new_value", "information_class", "provenance", "actor_user_id",
+                "created_at", "updated_at",
+            } <= event_columns
+            feature_count = connection.exec_driver_sql(
+                "SELECT COUNT(*) FROM place_features"
+            ).scalar()
+            event_count = connection.exec_driver_sql(
+                "SELECT COUNT(*) FROM place_feature_change_events"
+            ).scalar()
+            assert feature_count == 0
+            assert event_count == 0
+
+        assert migrated.list_place_features() == []
+    finally:
+        migrated.close()

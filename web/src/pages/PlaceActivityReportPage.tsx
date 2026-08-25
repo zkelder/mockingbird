@@ -11,6 +11,9 @@ import type {
   PlaceActivityReportTaxonEntry,
   PlaceActivityReportZoneActivity,
   PlaceBiodiversitySummaryResponse,
+  PlaceFeature,
+  PlaceFeatureChangeEvent,
+  PlaceFeatureDetail,
   PlaceHabitatFact,
   PlacePhenologyObservation,
 } from "../api/types";
@@ -508,6 +511,52 @@ function TaxonCard({
   );
 }
 
+const FEATURE_TYPE_DISPLAY_NAMES: Record<string, string> = {
+  feeder: "Feeder",
+  water: "Water",
+  nest_box: "Nest box",
+  vegetation_patch: "Vegetation patch",
+  structure: "Structure",
+  habitat_area: "Habitat area",
+  other: "Feature",
+};
+
+const CHANGE_EVENT_TYPE_DISPLAY_NAMES: Record<string, string> = {
+  added: "Added",
+  removed: "Removed",
+  moved: "Moved",
+  modified: "Modified",
+  replenished: "Replenished",
+  food_changed: "Food changed",
+  vegetation_changed: "Vegetation changed",
+  other: "Changed",
+};
+
+/** Plain-language, association-only wording for one change event's
+ * before/after comparison -- never a causal claim, and never a raw
+ * percentage from a small count (see docs/place-features-habitat-change-
+ * v2-contract.md "Before/after analysis"). */
+function featureAssociationSentence(association: {
+  maturity: string;
+  status?: string | null;
+  window_days?: number | null;
+}): string {
+  if (association.maturity === "too_soon") {
+    return "Too soon to tell -- not enough time has passed since this change yet.";
+  }
+  if (association.maturity === "insufficient_coverage") {
+    return "Not enough comparable monitoring yet to evaluate this change.";
+  }
+  const windowText = association.window_days ? `the ${association.window_days}-day windows` : "the monitored windows";
+  if (association.status === "more_common_under_condition") {
+    return `Confirmed wildlife activity was higher in ${windowText} after this change than before.`;
+  }
+  if (association.status === "less_common_under_condition") {
+    return `Confirmed wildlife activity was lower in ${windowText} after this change than before.`;
+  }
+  return `Activity looked similar in ${windowText} before and after this change.`;
+}
+
 export function PlaceActivityReportPage({ sources, onOpenVisit, onOpenBirdLog }: PlaceActivityReportPageProps) {
   const [preset, setPreset] = useState<PlaceReportPreset>("last_30_days");
   const [customStartDate, setCustomStartDate] = useState(localDateInputValue(localMidnight(new Date(), -29)));
@@ -546,6 +595,53 @@ export function PlaceActivityReportPage({ sources, onOpenVisit, onOpenBirdLog }:
       active = false;
     };
   }, []);
+
+  // Place Features & Habitat Change v2: another read-only, period-
+  // independent fetch, same reasoning as habitat/phenology above -- see
+  // docs/place-features-habitat-change-v2-contract.md "Product surfaces".
+  // Editing lives on the Dashboard (Today) card; this page only displays,
+  // plus lets a reviewer expand one Feature at a time to lazily load its
+  // own before/after insight (a heavier per-Feature computation, never
+  // fetched for every Feature up front).
+  const [placeFeatures, setPlaceFeatures] = useState<PlaceFeature[]>([]);
+  const [featureChangeEvents, setFeatureChangeEvents] = useState<PlaceFeatureChangeEvent[]>([]);
+  const [expandedFeatureId, setExpandedFeatureId] = useState<string | null>(null);
+  const [expandedFeatureDetail, setExpandedFeatureDetail] = useState<PlaceFeatureDetail | null>(null);
+  const [isLoadingFeatureDetail, setIsLoadingFeatureDetail] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void Promise.all([
+      apiClient.getPlaceFeatures().catch(() => []),
+      apiClient.getPlaceFeatureChangeEvents().catch(() => []),
+    ]).then(([features, events]) => {
+      if (active) {
+        setPlaceFeatures(features);
+        setFeatureChangeEvents(events);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const toggleFeatureDetail = (featureId: string) => {
+    if (expandedFeatureId === featureId) {
+      setExpandedFeatureId(null);
+      setExpandedFeatureDetail(null);
+      return;
+    }
+    setExpandedFeatureId(featureId);
+    setExpandedFeatureDetail(null);
+    setIsLoadingFeatureDetail(true);
+    void apiClient
+      .getPlaceFeatureDetail(featureId)
+      .catch(() => null)
+      .then((detail) => {
+        setExpandedFeatureDetail(detail);
+        setIsLoadingFeatureDetail(false);
+      });
+  };
 
   // Biodiversity & Place Intelligence v1: another read-only, period-
   // independent fetch, same reasoning as habitat/phenology above -- an
@@ -925,6 +1021,87 @@ export function PlaceActivityReportPage({ sources, onOpenVisit, onOpenBirdLog }:
                   </span>
                 </li>
               ))}
+            </ul>
+          ) : null}
+        </section>
+      ) : null}
+
+      {/* Place Features & Habitat Change v2: deliberately outside the
+          `report` conditional above, same reasoning as Habitat & Season
+          just above -- a genuinely independent, period-agnostic fetch.
+          Read-only: editing lives on the Dashboard (Today) card. Each
+          Feature's own before/after insight is lazily loaded only when
+          expanded, never computed for every Feature up front. */}
+      {placeFeatures.length > 0 || featureChangeEvents.length > 0 ? (
+        <section aria-label="Place features and changes" className="panel">
+          <div className="section-heading">
+            <div>
+              <h2>Features &amp; changes</h2>
+              <span className="meta-text">
+                Feeders, water features, and other things around this Place, and the full history of
+                recorded changes -- not limited to the period above.
+              </span>
+            </div>
+          </div>
+          {placeFeatures.length > 0 ? (
+            <ul className="habitat-phenology-list">
+              {placeFeatures.map((feature) => (
+                <li key={feature.id}>
+                  <strong>{feature.name}</strong> &middot; {FEATURE_TYPE_DISPLAY_NAMES[feature.feature_type]}
+                  {!feature.is_active ? <StatusPill label="Inactive" tone="quiet" /> : null}
+                  <button
+                    className="text-action"
+                    onClick={() => toggleFeatureDetail(feature.id)}
+                    type="button"
+                  >
+                    {expandedFeatureId === feature.id ? "Hide activity insight" : "See activity insight"}
+                  </button>
+                  {expandedFeatureId === feature.id ? (
+                    <div className="detail-actions">
+                      {isLoadingFeatureDetail ? (
+                        <span className="meta-text">Loading…</span>
+                      ) : expandedFeatureDetail ? (
+                        expandedFeatureDetail.changes.length > 0 ? (
+                          <ul className="habitat-phenology-list">
+                            {expandedFeatureDetail.changes.map((change) => (
+                              <li key={change.event.id}>
+                                <span className="meta-text">
+                                  {CHANGE_EVENT_TYPE_DISPLAY_NAMES[change.event.event_type]} &middot;{" "}
+                                  {change.event.effective_date}
+                                </span>
+                                <p className="meta-text">
+                                  {change.comparison
+                                    ? featureAssociationSentence(change.comparison)
+                                    : "No camera or Zone is linked to this feature yet, so activity can't be compared."}
+                                </p>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <span className="meta-text">No changes recorded for this feature yet.</span>
+                        )
+                      ) : (
+                        <span className="meta-text">Could not load this feature's activity insight.</span>
+                      )}
+                    </div>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {featureChangeEvents.filter((event) => !event.feature_id).length > 0 ? (
+            <ul className="habitat-phenology-list">
+              {featureChangeEvents
+                .filter((event) => !event.feature_id)
+                .map((event) => (
+                  <li key={event.id}>
+                    {CHANGE_EVENT_TYPE_DISPLAY_NAMES[event.event_type]}
+                    <span className="meta-text">
+                      {event.effective_date}
+                      {event.note ? ` · ${event.note}` : ""}
+                    </span>
+                  </li>
+                ))}
             </ul>
           ) : null}
         </section>

@@ -42,7 +42,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 54
+CURRENT_DATABASE_SCHEMA_VERSION = 55
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -1534,6 +1534,29 @@ def _migrate_to_environmental_context_weather(connection: Connection) -> None:
             )
 
 
+def _migrate_to_place_features_habitat_change(connection: Connection) -> None:
+    """Place Features & Habitat Change v2: add the durable Place Feature
+    table and the Place Feature Change Event table -- see
+    docs/place-features-habitat-change-v2-contract.md.
+
+    Purely additive (two new tables, nothing backfilled), mirroring
+    `_migrate_to_habitat_phenology_foundation` exactly: an upgraded
+    installation starts with zero Features and zero change events,
+    identical to a brand-new install. Neither table touches `visits`,
+    `events`, `review_labels`, or any other wildlife-truth table.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Place Features & Habitat Change migration requires local SQLite storage."
+        )
+    for table_name in (
+        "place_features",
+        "place_feature_change_events",
+    ):
+        Base.metadata.tables[table_name].create(bind=connection, checkfirst=True)
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -1588,6 +1611,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     52: _migrate_to_habitat_phenology_foundation,
     53: _migrate_to_scene_confusor_reviewed_evidence_learning,
     54: _migrate_to_environmental_context_weather,
+    55: _migrate_to_place_features_habitat_change,
 }
 
 

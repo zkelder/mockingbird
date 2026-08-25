@@ -7914,6 +7914,231 @@ class PlaceHabitatContext(BaseModel):
     recent_phenology: list[PlacePhenologyObservation]
 
 
+# Place Features & Habitat Change v2 -- see docs/place-features-habitat-
+# change-v2-contract.md. Re-declared locally rather than imported from
+# `mockingbird.habitat.place_feature`, matching this file's existing
+# no-cross-package-import convention for closed vocabularies (see
+# `HabitatFactCategory`/`PhenologyStatus`, just above).
+PlaceFeatureType = Literal[
+    "feeder", "water", "nest_box", "vegetation_patch", "structure", "habitat_area", "other"
+]
+PlaceFeatureChangeEventType = Literal[
+    "added",
+    "removed",
+    "moved",
+    "modified",
+    "replenished",
+    "food_changed",
+    "vegetation_changed",
+    "other",
+]
+# Narrower than `conditional_association.AssociationStatus`: `"insufficient_
+# data"` is never present here because a `PlaceFeatureAssociation` with no
+# trustworthy verdict is represented by `maturity`/`status=None` instead --
+# mirrors `PlaceActivityReportHabitatAssociation`'s identical 3-value
+# narrowing.
+FeatureAssociationStatus = Literal[
+    "no_clear_association", "more_common_under_condition", "less_common_under_condition"
+]
+FeatureComparisonMaturity = Literal[
+    "too_soon", "insufficient_coverage", "early_signal", "comparable"
+]
+
+
+class PlaceFeature(BaseModel):
+    """A durable, user-recorded Place Feature -- see `PlaceFeatureModel`
+    for the full field-by-field rationale. `information_class` is a single-
+    value `Literal["reviewed"]` here (the DB column stays a plain string),
+    mirroring `PlaceHabitatFact.information_class`'s identical "the
+    response type reflects what can actually be returned today" discipline."""
+
+    id: str
+    feature_type: PlaceFeatureType
+    name: str
+    note: str | None = None
+    is_active: bool
+    installed_date: date | None = None
+    removed_date: date | None = None
+    source_id: str | None = None
+    zone_id: str | None = None
+    feeder_food_type: str | None = None
+    information_class: Literal["reviewed"]
+    provenance: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class PlaceFeatureCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    feature_type: PlaceFeatureType
+    name: str = Field(min_length=1, max_length=120)
+    note: str | None = Field(default=None, max_length=500)
+    is_active: bool = True
+    installed_date: date | None = None
+    source_id: str | None = None
+    zone_id: str | None = None
+    feeder_food_type: str | None = Field(default=None, max_length=120)
+
+
+class PlaceFeatureUpdate(BaseModel):
+    """Partial update (PATCH semantics), mirroring `PlaceHabitatFactUpdate`:
+    an omitted/`None` field leaves the stored value unchanged; an explicit
+    empty string (`""`) clears `note`/`feeder_food_type`/`source_id`/
+    `zone_id` to `NULL`. Clearing `source_id` also clears `zone_id` (a Zone
+    always implies a Source -- see `PlaceFeatureModel`'s association
+    reasoning); clearing only `zone_id` leaves `source_id` as-is ("still
+    this camera, no specific Zone drawn"). `removed_date` is deliberately
+    not present here at all -- it is only ever set by recording a
+    `event_type="removed"` change event (see `PlaceFeatureModel`'s
+    docstring)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    feature_type: PlaceFeatureType | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    note: str | None = Field(default=None, max_length=500)
+    is_active: bool | None = None
+    installed_date: date | None = None
+    clear_installed_date: bool = False
+    source_id: str | None = None
+    zone_id: str | None = None
+    feeder_food_type: str | None = Field(default=None, max_length=120)
+
+    @model_validator(mode="after")
+    def _require_change(self) -> "PlaceFeatureUpdate":
+        if not self.model_dump(exclude_none=True) and not self.clear_installed_date:
+            raise ValueError("Provide at least one field to update.")
+        return self
+
+    @model_validator(mode="after")
+    def _no_conflicting_installed_date_instruction(self) -> "PlaceFeatureUpdate":
+        if self.clear_installed_date and self.installed_date is not None:
+            raise ValueError("Provide either installed_date or clear_installed_date, not both.")
+        return self
+
+
+class PlaceFeatureChangeEvent(BaseModel):
+    """A durable, user-recorded, dated fact about something that changed
+    around the Place -- see `PlaceFeatureChangeEventModel` for the full
+    field-by-field rationale."""
+
+    id: str
+    feature_id: str | None = None
+    event_type: PlaceFeatureChangeEventType
+    effective_date: date
+    note: str | None = None
+    prior_value: str | None = None
+    new_value: str | None = None
+    information_class: Literal["reviewed"]
+    provenance: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class PlaceFeatureChangeEventCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    feature_id: str | None = None
+    event_type: PlaceFeatureChangeEventType
+    effective_date: date
+    note: str | None = Field(default=None, max_length=500)
+    prior_value: str | None = Field(default=None, max_length=200)
+    new_value: str | None = Field(default=None, max_length=200)
+
+
+class PlaceFeatureChangeEventUpdate(BaseModel):
+    """Partial update (PATCH semantics), matching `PlaceFeatureUpdate`'s
+    identical empty-string-clears convention for `note`/`prior_value`/
+    `new_value`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    event_type: PlaceFeatureChangeEventType | None = None
+    effective_date: date | None = None
+    note: str | None = Field(default=None, max_length=500)
+    prior_value: str | None = Field(default=None, max_length=200)
+    new_value: str | None = Field(default=None, max_length=200)
+
+    @model_validator(mode="after")
+    def _require_change(self) -> "PlaceFeatureChangeEventUpdate":
+        if not self.model_dump(exclude_none=True):
+            raise ValueError("Provide at least one field to update.")
+        return self
+
+
+class PlaceFeatureAssociation(BaseModel):
+    """One change event's before/after comparison outcome -- association
+    language only, never causal (see `mockingbird.analytics.feature_change_
+    comparison`). Every field beyond `maturity` is `None` exactly when
+    `maturity` is `"too_soon"` or `"insufficient_coverage"` -- no
+    comparable window exists yet, so there is nothing honest to show beyond
+    that maturity state itself."""
+
+    maturity: FeatureComparisonMaturity
+    window_days: int | None = None
+    pre_start: date | None = None
+    post_end: date | None = None
+    status: FeatureAssociationStatus | None = None
+    presence_days_in_condition: int | None = None
+    usable_days_in_condition: int | None = None
+    presence_days_out_of_condition: int | None = None
+    usable_days_out_of_condition: int | None = None
+
+
+class PlaceFeatureChangeEventWithComparison(BaseModel):
+    """One change event plus its own before/after comparison, computed
+    fresh at read time -- never persisted (see `PlaceFeatureChangeEventModel`
+    "Correction model"), so a correction to the event is reflected on the
+    very next read with no invalidation step required."""
+
+    event: PlaceFeatureChangeEvent
+    comparison: PlaceFeatureAssociation | None = None
+    """`None` only when the event's Feature has no camera/Zone association
+    to compare against (`feature_id=None`, or a Feature with neither
+    `source_id` nor `zone_id` set) -- distinct from a `maturity` of
+    `"too_soon"`/`"insufficient_coverage"`, which means an association *was*
+    attempted but is not yet trustworthy."""
+
+
+class PlaceFeatureYieldSummary(BaseModel):
+    """A recent-window activity snapshot for one Feature's own associated
+    monitoring scope -- see `mockingbird.analytics.feature_yield`."""
+
+    confirmed_wildlife_visit_count: int
+    distinct_taxon_count: int
+    monitored_seconds: float | None = None
+    visits_per_monitored_hour: float | None = None
+    data_sufficient: bool
+    window_days: int
+
+
+class PlaceFeatureDetail(BaseModel):
+    """The full detail bundle for one Feature: current state, its complete
+    change-event timeline (each with its own before/after comparison), and
+    a recent-window activity snapshot. Deliberately separate from the plain
+    CRUD list endpoint, mirroring `GET /api/place/habitat-context`'s
+    identical "dedicated bundle, not a field bolted onto a fuller report"
+    precedent."""
+
+    feature: PlaceFeature
+    changes: list[PlaceFeatureChangeEventWithComparison]
+    recent_yield: PlaceFeatureYieldSummary | None = None
+    """`None` when the Feature has no camera/Zone association at all --
+    yield cannot honestly be computed without one."""
+
+
+class PlaceFeaturesSummary(BaseModel):
+    """A compact, Dashboard-safe bundle: how many active Features exist,
+    how many changes were recorded recently, and at most one restrained,
+    backend-composed highlight sentence -- never a raw ranking table (Phase
+    20 of the governing brief: "Do not flood Today")."""
+
+    active_feature_count: int
+    recent_change_count: int
+    highlight: str | None = None
+
+
 class TaxonPlaceContext(BaseModel):
     """Restrained, non-causal habitat/environmental context associated with
     one taxon's single most recent reviewed observation at this Place --

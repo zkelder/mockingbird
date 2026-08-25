@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { apiClient } from "../api/client";
+import { ApiError, apiClient } from "../api/client";
 import type {
   DashboardSummary,
   DashboardVisitSummary,
@@ -8,6 +8,11 @@ import type {
   PlaceActivityReportResponse,
   PlaceBiodiversitySummaryResponse,
   PlaceEnvironmentalContext,
+  PlaceFeature,
+  PlaceFeatureChangeEventCreate,
+  PlaceFeatureCreate,
+  PlaceFeatureUpdate,
+  PlaceFeaturesSummary,
   PlaceHabitatContext,
   PlaceHabitatFactCreate,
   PlaceHabitatFactUpdate,
@@ -15,12 +20,14 @@ import type {
   PlacePhenologyObservationUpdate,
   StorageSummary,
   StreamRuntimeStatus,
+  Zone,
 } from "../api/types";
 import { BiodiversitySummaryCard } from "../components/BiodiversitySummaryCard";
 import { EmptyState } from "../components/EmptyState";
 import { EnvironmentalContextCard } from "../components/EnvironmentalContextCard";
 import { HabitatPhenologyCard } from "../components/HabitatPhenologyCard";
 import { LiveCameraOverview } from "../components/LiveCameraOverview";
+import { PlaceFeaturesCard } from "../components/PlaceFeaturesCard";
 import { ProductHealthPanel } from "../components/ProductHealthPanel";
 import { StatusPill } from "../components/StatusPill";
 import { TodayReportPanel } from "../components/TodayReportPanel";
@@ -236,6 +243,15 @@ export function DashboardPage({
   const [biodiversitySummary, setBiodiversitySummary] = useState<PlaceBiodiversitySummaryResponse | null>(
     null,
   );
+  // Place Features & Habitat Change v2: a fifth, equally separate fetch --
+  // see docs/place-features-habitat-change-v2-contract.md "Product
+  // surfaces". Same absence-safety discipline as the other context
+  // fetches above. `zones` is fetched here (not a new separate top-level
+  // fetch) purely to populate PlaceFeaturesCard's optional camera-link
+  // picker with real names -- it is not otherwise used by this page.
+  const [placeFeatures, setPlaceFeatures] = useState<PlaceFeature[] | null>(null);
+  const [placeFeaturesSummary, setPlaceFeaturesSummary] = useState<PlaceFeaturesSummary | null>(null);
+  const [zones, setZones] = useState<Zone[] | null>(null);
 
   const refreshDashboard = useCallback(async (initialLoad = false) => {
     if (initialLoad) {
@@ -252,6 +268,9 @@ export function DashboardPage({
         nextEnvironmentalContext,
         nextHabitatContext,
         nextBiodiversitySummary,
+        nextPlaceFeatures,
+        nextPlaceFeaturesSummary,
+        nextZones,
       ] = await Promise.all([
         apiClient.getDashboardSummary(todayLocalDateString()),
         apiClient.getStreamMonitoringStatuses().catch(() => null),
@@ -260,6 +279,9 @@ export function DashboardPage({
         apiClient.getTodayEnvironmentalContext().catch(() => null),
         apiClient.getPlaceHabitatContext().catch(() => null),
         apiClient.getPlaceBiodiversitySummary().catch(() => null),
+        apiClient.getPlaceFeatures().catch(() => null),
+        apiClient.getPlaceFeaturesSummary().catch(() => null),
+        apiClient.getZones().catch(() => null),
       ]);
       setSummary(nextSummary);
       setStorageSummary(nextStorageSummary);
@@ -267,6 +289,9 @@ export function DashboardPage({
       setEnvironmentalContext(nextEnvironmentalContext);
       setHabitatContext(nextHabitatContext);
       setBiodiversitySummary(nextBiodiversitySummary);
+      setPlaceFeatures(nextPlaceFeatures);
+      setPlaceFeaturesSummary(nextPlaceFeaturesSummary);
+      setZones(nextZones);
       if (monitoringStatuses) {
         setDurableStatusByStream(
           Object.fromEntries(
@@ -362,6 +387,63 @@ export function DashboardPage({
       await refreshHabitatContext();
     },
     [refreshHabitatContext],
+  );
+
+  // Place Features & Habitat Change v2: the only place these are edited --
+  // no new page, no new nav entry, mirroring the Habitat & Phenology
+  // precedent above exactly. Each mutation re-fetches only the Feature
+  // bundle afterward, not the whole dashboard.
+  const refreshPlaceFeatures = useCallback(async () => {
+    const [nextFeatures, nextSummary] = await Promise.all([
+      apiClient.getPlaceFeatures().catch(() => null),
+      apiClient.getPlaceFeaturesSummary().catch(() => null),
+    ]);
+    setPlaceFeatures(nextFeatures);
+    setPlaceFeaturesSummary(nextSummary);
+  }, []);
+
+  const addPlaceFeature = useCallback(
+    async (payload: PlaceFeatureCreate) => {
+      await apiClient.createPlaceFeature(payload);
+      await refreshPlaceFeatures();
+    },
+    [refreshPlaceFeatures],
+  );
+
+  const updatePlaceFeature = useCallback(
+    async (featureId: string, payload: PlaceFeatureUpdate) => {
+      await apiClient.updatePlaceFeature(featureId, payload);
+      await refreshPlaceFeatures();
+    },
+    [refreshPlaceFeatures],
+  );
+
+  // Returns a user-safe explanation instead of throwing when the deletion
+  // is blocked (409 -- the Feature has recorded change history; see
+  // ProductRepository.remove_place_feature), so the card can explain
+  // "deactivate it instead" rather than failing silently.
+  const removePlaceFeature = useCallback(
+    async (featureId: string): Promise<string | null> => {
+      try {
+        await apiClient.deletePlaceFeature(featureId);
+        await refreshPlaceFeatures();
+        return null;
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 409) {
+          return error.message;
+        }
+        return "Could not remove that feature. Try again.";
+      }
+    },
+    [refreshPlaceFeatures],
+  );
+
+  const addPlaceFeatureChangeEvent = useCallback(
+    async (payload: PlaceFeatureChangeEventCreate) => {
+      await apiClient.createPlaceFeatureChangeEvent(payload);
+      await refreshPlaceFeatures();
+    },
+    [refreshPlaceFeatures],
   );
 
   async function handleDurableMonitoringAction(
@@ -513,6 +595,19 @@ export function DashboardPage({
         onRemovePhenologyObservation={removePhenologyObservation}
         onUpdateHabitatFact={updateHabitatFact}
         onUpdatePhenologyObservation={updatePhenologyObservation}
+      />
+      {/* Place Features & Habitat Change v2: a fifth sibling card, same
+          reasoning as EnvironmentalContextCard/HabitatPhenologyCard above --
+          see docs/place-features-habitat-change-v2-contract.md "Product
+          surfaces". */}
+      <PlaceFeaturesCard
+        features={placeFeatures}
+        onAddChangeEvent={addPlaceFeatureChangeEvent}
+        onAddFeature={addPlaceFeature}
+        onRemoveFeature={removePlaceFeature}
+        onUpdateFeature={updatePlaceFeature}
+        summary={placeFeaturesSummary}
+        zones={zones}
       />
       {/* Biodiversity & Place Intelligence v1: a fourth sibling card, same
           reasoning as EnvironmentalContextCard/HabitatPhenologyCard above --

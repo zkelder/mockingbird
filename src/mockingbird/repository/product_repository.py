@@ -99,6 +99,12 @@ from mockingbird.analytics.habitat_association import (
     TaxonHabitatAssociation,
     compute_habitat_associations,
 )
+from mockingbird.analytics.feature_change_comparison import (
+    CANDIDATE_WINDOW_DAYS,
+    FeatureChangeComparison,
+    compute_feature_change_comparison,
+)
+from mockingbird.analytics.feature_yield import compute_feature_yield
 from mockingbird.analytics.weather_association import (
     TaxonWeatherAssociation,
     compute_weather_associations,
@@ -711,6 +717,17 @@ from mockingbird.api.schemas import (
     InstallationSettingsUpdate,
     PlaceBiodiversitySummaryResponse,
     PlaceEnvironmentalContext,
+    PlaceFeature,
+    PlaceFeatureAssociation,
+    PlaceFeatureChangeEvent,
+    PlaceFeatureChangeEventCreate,
+    PlaceFeatureChangeEventUpdate,
+    PlaceFeatureChangeEventWithComparison,
+    PlaceFeatureCreate,
+    PlaceFeatureDetail,
+    PlaceFeatureUpdate,
+    PlaceFeatureYieldSummary,
+    PlaceFeaturesSummary,
     PlaceHabitatContext,
     PlaceHabitatFact,
     PlaceHabitatFactCreate,
@@ -732,6 +749,7 @@ from mockingbird.api.schemas import (
 )
 from mockingbird.environment import condition_bands, solar_context, weather_provider
 from mockingbird.habitat import phenology as habitat_phenology
+from mockingbird.habitat import place_feature as place_feature_vocab
 from mockingbird.playback import local_camera_bridge, rtsp_bridge, windows_camera_bridge
 from mockingbird.monitoring.durable_supervisor import DurableMonitoringCandidate
 from mockingbird.monitoring.exposure_history import (
@@ -782,6 +800,8 @@ from mockingbird.storage.models import (
     InstallationSettingsModel,
     MediaAssetModel,
     MonitoringExposureIntervalModel,
+    PlaceFeatureChangeEventModel,
+    PlaceFeatureModel,
     PlaceHabitatFactModel,
     PlacePhenologyObservationModel,
     ProductAlertModel,
@@ -959,6 +979,11 @@ class MonitoringOperationConflictError(ValueError):
 
 class CameraConfigurationConflictError(ValueError):
     """A camera edit preview no longer matches the saved configuration state."""
+
+
+class PlaceFeatureHasHistoryError(ValueError):
+    """A Place Feature has recorded change-event history and cannot be
+    hard-deleted -- see `ProductRepository.remove_place_feature`."""
 
 
 _ZONE_MONITORING_POLICY_FIELDS = (
@@ -5159,6 +5184,732 @@ class ProductRepository:
             current_phenology=[entry for entry in phenology if entry.status == "current"],
             recent_phenology=[entry for entry in phenology if entry.status == "recent"],
         )
+
+    # ------------------------------------------------------------------
+    # Place Features & Habitat Change v2 -- see docs/place-features-
+    # habitat-change-v2-contract.md.
+    # ------------------------------------------------------------------
+
+    FEATURE_YIELD_WINDOW_DAYS = 7
+    FEATURE_RECENT_CHANGE_WINDOW_DAYS = 7
+
+    @staticmethod
+    def _place_feature_from_model(model: PlaceFeatureModel) -> PlaceFeature:
+        return PlaceFeature(
+            id=model.id,
+            feature_type=model.feature_type,
+            name=model.name,
+            note=model.note,
+            is_active=model.is_active,
+            installed_date=model.installed_date,
+            removed_date=model.removed_date,
+            source_id=model.source_id,
+            zone_id=model.zone_id,
+            feeder_food_type=model.feeder_food_type,
+            information_class=model.information_class,
+            provenance=model.provenance,
+            created_at=_as_utc(model.created_at),
+            updated_at=_as_utc(model.updated_at),
+        )
+
+    @staticmethod
+    def _place_feature_change_event_from_model(
+        model: PlaceFeatureChangeEventModel,
+    ) -> PlaceFeatureChangeEvent:
+        return PlaceFeatureChangeEvent(
+            id=model.id,
+            feature_id=model.feature_id,
+            event_type=model.event_type,
+            effective_date=model.effective_date,
+            note=model.note,
+            prior_value=model.prior_value,
+            new_value=model.new_value,
+            information_class=model.information_class,
+            provenance=model.provenance,
+            created_at=_as_utc(model.created_at),
+            updated_at=_as_utc(model.updated_at),
+        )
+
+    def list_place_features(self) -> list[PlaceFeature]:
+        """Every recorded Place Feature, newest-created-first. An empty
+        list is a normal, honest "nothing recorded yet" outcome."""
+
+        with self.session_factory() as session:
+            models = session.scalars(
+                select(PlaceFeatureModel).order_by(PlaceFeatureModel.created_at.desc())
+            ).all()
+            return [self._place_feature_from_model(model) for model in models]
+
+    def _resolve_feature_association(
+        self, session: Session, *, source_id: str | None, zone_id: str | None
+    ) -> tuple[str | None, str | None]:
+        """Validate and normalize a Feature's optional camera/Zone
+        association. `zone_id`, when given, is authoritative: its own
+        Stream's Source always wins over an independently supplied
+        `source_id` rather than trusting the two as separately-correct
+        client-supplied facts that could silently disagree -- see
+        `PlaceFeatureModel`'s association reasoning."""
+
+        if zone_id is not None:
+            zone = session.get(ZoneModel, zone_id)
+            if zone is None:
+                raise ValueError(f"Zone '{zone_id}' does not exist.")
+            stream = session.get(StreamModel, zone.stream_id)
+            if stream is None:
+                raise ValueError(f"Zone '{zone_id}' has no valid Stream.")
+            resolved_source_id = stream.source_id
+            if source_id is not None and source_id != resolved_source_id:
+                raise ValueError("The given zone_id does not belong to the given source_id.")
+            return resolved_source_id, zone_id
+        if source_id is not None:
+            source = session.get(CameraSourceModel, source_id)
+            if source is None:
+                raise ValueError(f"Source '{source_id}' does not exist.")
+            return source_id, None
+        return None, None
+
+    def add_place_feature(
+        self, payload: PlaceFeatureCreate, *, acting_user: CurrentUser
+    ) -> PlaceFeature:
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                source_id, zone_id = self._resolve_feature_association(
+                    session, source_id=payload.source_id, zone_id=payload.zone_id,
+                )
+                model = PlaceFeatureModel(
+                    id=f"feature-{uuid.uuid4().hex[:16]}",
+                    feature_type=payload.feature_type,
+                    name=payload.name,
+                    note=payload.note,
+                    is_active=payload.is_active,
+                    installed_date=payload.installed_date,
+                    removed_date=None,
+                    source_id=source_id,
+                    zone_id=zone_id,
+                    feeder_food_type=payload.feeder_food_type,
+                    information_class=place_feature_vocab.FEATURE_INFORMATION_CLASS,
+                    provenance=place_feature_vocab.FEATURE_PROVENANCE_MANUAL_ENTRY,
+                    actor_user_id=acting_user.id,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(model)
+                session.flush()
+                self._record_audit_event_in_session(
+                    session, now=now, actor_user_id=acting_user.id, actor_display_name=acting_user.display_name,
+                    action="place_feature.feature_added", target_type="place_feature",
+                    target_id=model.id, metadata={"feature_type": payload.feature_type, "name": payload.name},
+                )
+                # Seed the timeline: a Feature created with a known start
+                # date always begins with one coherent "added" event,
+                # without requiring a second user action -- see
+                # `PlaceFeatureModel`'s docstring, "Feature state vs change
+                # history."
+                if payload.installed_date is not None:
+                    event = PlaceFeatureChangeEventModel(
+                        id=f"feature-change-{uuid.uuid4().hex[:16]}",
+                        feature_id=model.id,
+                        event_type="added",
+                        effective_date=payload.installed_date,
+                        note=None,
+                        prior_value=None,
+                        new_value=None,
+                        information_class=place_feature_vocab.FEATURE_INFORMATION_CLASS,
+                        provenance=place_feature_vocab.FEATURE_PROVENANCE_MANUAL_ENTRY,
+                        actor_user_id=acting_user.id,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                    session.add(event)
+                    session.flush()
+                    self._record_audit_event_in_session(
+                        session, now=now, actor_user_id=acting_user.id, actor_display_name=acting_user.display_name,
+                        action="place_feature.change_added", target_type="place_feature_change_event",
+                        target_id=event.id, metadata={"feature_id": model.id, "event_type": "added"},
+                    )
+                return self._place_feature_from_model(model)
+
+    def update_place_feature(
+        self, feature_id: str, payload: PlaceFeatureUpdate, *, acting_user: CurrentUser
+    ) -> PlaceFeature | None:
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(PlaceFeatureModel, feature_id)
+                if model is None:
+                    return None
+                if payload.feature_type is not None:
+                    model.feature_type = payload.feature_type
+                if payload.name is not None:
+                    model.name = payload.name
+                if payload.note is not None:
+                    model.note = payload.note or None
+                if payload.is_active is not None:
+                    model.is_active = payload.is_active
+                if payload.clear_installed_date:
+                    model.installed_date = None
+                elif payload.installed_date is not None:
+                    model.installed_date = payload.installed_date
+                if payload.feeder_food_type is not None:
+                    model.feeder_food_type = payload.feeder_food_type or None
+                # Association updates: `zone_id` (non-empty) always wins and
+                # re-derives `source_id` fresh from that Zone, ignoring any
+                # prior association entirely; a bare non-empty `source_id`
+                # (no `zone_id` in the same request) sets the Source and
+                # clears any existing Zone link, so this row can never hold
+                # an inconsistent (source_id, zone_id) pair; `""` explicitly
+                # clears -- see `PlaceFeatureUpdate`'s own docstring.
+                if payload.zone_id:
+                    new_source_id, new_zone_id = self._resolve_feature_association(
+                        session, source_id=None, zone_id=payload.zone_id,
+                    )
+                    model.source_id = new_source_id
+                    model.zone_id = new_zone_id
+                elif payload.source_id:
+                    new_source_id, new_zone_id = self._resolve_feature_association(
+                        session, source_id=payload.source_id, zone_id=None,
+                    )
+                    model.source_id = new_source_id
+                    model.zone_id = new_zone_id
+                elif payload.source_id == "":
+                    model.source_id = None
+                    model.zone_id = None
+                elif payload.zone_id == "":
+                    model.zone_id = None
+                model.updated_at = now
+                session.flush()
+                self._record_audit_event_in_session(
+                    session, now=now, actor_user_id=acting_user.id, actor_display_name=acting_user.display_name,
+                    action="place_feature.feature_updated", target_type="place_feature",
+                    target_id=model.id, metadata=None,
+                )
+                return self._place_feature_from_model(model)
+
+    def remove_place_feature(self, feature_id: str, *, acting_user: CurrentUser) -> bool:
+        """Hard-deletes a Feature only when it has no recorded change-event
+        history (Phase 7 of the governing brief: "constrain [hard deletion]
+        to safe cases with no historical references"). Raises
+        `PlaceFeatureHasHistoryError` when history exists -- deactivate
+        (`is_active=False`) instead, which preserves the Feature and every
+        change event referencing it."""
+
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(PlaceFeatureModel, feature_id)
+                if model is None:
+                    return False
+                has_history = session.scalar(
+                    select(func.count())
+                    .select_from(PlaceFeatureChangeEventModel)
+                    .where(PlaceFeatureChangeEventModel.feature_id == feature_id)
+                ) or 0
+                if has_history:
+                    raise PlaceFeatureHasHistoryError(
+                        "This Feature has recorded change history and cannot be deleted. Deactivate it instead."
+                    )
+                self._record_audit_event_in_session(
+                    session, now=now, actor_user_id=acting_user.id, actor_display_name=acting_user.display_name,
+                    action="place_feature.feature_removed", target_type="place_feature",
+                    target_id=model.id, metadata={"feature_type": model.feature_type, "name": model.name},
+                )
+                session.delete(model)
+                return True
+
+    def _recompute_feature_derived_state(
+        self, session: Session, feature_id: str | None, *, now: datetime
+    ) -> None:
+        """Reconcile a Feature's current-state columns from its own
+        change-event timeline, after any write that added, edited, or
+        removed a `"removed"` or `"food_changed"` event -- see
+        `PlaceFeatureModel`'s docstring, "Feature state vs change history."
+        A no-op when `feature_id` is `None` (a Place-level event with no
+        tracked Feature) or when the Feature no longer exists.
+
+        Deliberately one-directional for `"removed"`: the presence of any
+        `"removed"` event pushes `is_active` to `False` with that event's
+        own (latest, if more than one) `effective_date`; the *absence* of
+        one -- including immediately after the only such event was just
+        deleted or retyped away -- never automatically pushes `is_active`
+        back to `True`. Silently reactivating a Feature as a side effect of
+        an unrelated correction would be a more surprising outcome than
+        leaving the previously-set state alone; a user who really did
+        reactivate the Feature says so directly via an ordinary edit.
+        `feeder_food_type` has no such asymmetry: it always reflects
+        whichever `"food_changed"` event is currently latest, or the
+        Feature's own last directly-edited value if none remain.
+        """
+
+        if feature_id is None:
+            return
+        model = session.get(PlaceFeatureModel, feature_id)
+        if model is None:
+            return
+
+        latest_removed = session.scalars(
+            select(PlaceFeatureChangeEventModel)
+            .where(
+                PlaceFeatureChangeEventModel.feature_id == feature_id,
+                PlaceFeatureChangeEventModel.event_type == "removed",
+            )
+            .order_by(
+                PlaceFeatureChangeEventModel.effective_date.desc(),
+                PlaceFeatureChangeEventModel.created_at.desc(),
+            )
+            .limit(1)
+        ).first()
+        if latest_removed is not None:
+            model.is_active = False
+            model.removed_date = latest_removed.effective_date
+
+        latest_food_changed = session.scalars(
+            select(PlaceFeatureChangeEventModel)
+            .where(
+                PlaceFeatureChangeEventModel.feature_id == feature_id,
+                PlaceFeatureChangeEventModel.event_type == "food_changed",
+                PlaceFeatureChangeEventModel.new_value.is_not(None),
+            )
+            .order_by(
+                PlaceFeatureChangeEventModel.effective_date.desc(),
+                PlaceFeatureChangeEventModel.created_at.desc(),
+            )
+            .limit(1)
+        ).first()
+        if latest_food_changed is not None:
+            model.feeder_food_type = latest_food_changed.new_value
+
+        model.updated_at = now
+
+    def list_place_feature_change_events(
+        self, *, feature_id: str | None = None
+    ) -> list[PlaceFeatureChangeEvent]:
+        """Every recorded change event, newest-effective-date-first.
+        `feature_id=None` (the default) returns every event across every
+        Feature, including Place-level events with no tracked Feature --
+        matching `list_place_habitat_facts`'s identical "an empty list is a
+        normal, honest 'nothing recorded yet' outcome" contract."""
+
+        with self.session_factory() as session:
+            query = select(PlaceFeatureChangeEventModel)
+            if feature_id is not None:
+                query = query.where(PlaceFeatureChangeEventModel.feature_id == feature_id)
+            models = session.scalars(
+                query.order_by(
+                    PlaceFeatureChangeEventModel.effective_date.desc(),
+                    PlaceFeatureChangeEventModel.created_at.desc(),
+                )
+            ).all()
+            return [self._place_feature_change_event_from_model(model) for model in models]
+
+    def add_place_feature_change_event(
+        self, payload: PlaceFeatureChangeEventCreate, *, acting_user: CurrentUser
+    ) -> PlaceFeatureChangeEvent:
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                if (
+                    payload.feature_id is not None
+                    and session.get(PlaceFeatureModel, payload.feature_id) is None
+                ):
+                    raise ValueError(f"Feature '{payload.feature_id}' does not exist.")
+                model = PlaceFeatureChangeEventModel(
+                    id=f"feature-change-{uuid.uuid4().hex[:16]}",
+                    feature_id=payload.feature_id,
+                    event_type=payload.event_type,
+                    effective_date=payload.effective_date,
+                    note=payload.note,
+                    prior_value=payload.prior_value,
+                    new_value=payload.new_value,
+                    information_class=place_feature_vocab.FEATURE_INFORMATION_CLASS,
+                    provenance=place_feature_vocab.FEATURE_PROVENANCE_MANUAL_ENTRY,
+                    actor_user_id=acting_user.id,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(model)
+                session.flush()
+                if payload.event_type in place_feature_vocab.DERIVED_STATE_EVENT_TYPES:
+                    self._recompute_feature_derived_state(session, payload.feature_id, now=now)
+                self._record_audit_event_in_session(
+                    session, now=now, actor_user_id=acting_user.id, actor_display_name=acting_user.display_name,
+                    action="place_feature.change_added", target_type="place_feature_change_event",
+                    target_id=model.id,
+                    metadata={"feature_id": payload.feature_id, "event_type": payload.event_type},
+                )
+                return self._place_feature_change_event_from_model(model)
+
+    def update_place_feature_change_event(
+        self, event_id: str, payload: PlaceFeatureChangeEventUpdate, *, acting_user: CurrentUser
+    ) -> PlaceFeatureChangeEvent | None:
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(PlaceFeatureChangeEventModel, event_id)
+                if model is None:
+                    return None
+                previous_event_type = model.event_type
+                if payload.event_type is not None:
+                    model.event_type = payload.event_type
+                if payload.effective_date is not None:
+                    model.effective_date = payload.effective_date
+                if payload.note is not None:
+                    model.note = payload.note or None
+                if payload.prior_value is not None:
+                    model.prior_value = payload.prior_value or None
+                if payload.new_value is not None:
+                    model.new_value = payload.new_value or None
+                model.updated_at = now
+                session.flush()
+                if (
+                    previous_event_type in place_feature_vocab.DERIVED_STATE_EVENT_TYPES
+                    or model.event_type in place_feature_vocab.DERIVED_STATE_EVENT_TYPES
+                ):
+                    self._recompute_feature_derived_state(session, model.feature_id, now=now)
+                self._record_audit_event_in_session(
+                    session, now=now, actor_user_id=acting_user.id, actor_display_name=acting_user.display_name,
+                    action="place_feature.change_updated", target_type="place_feature_change_event",
+                    target_id=model.id, metadata=None,
+                )
+                return self._place_feature_change_event_from_model(model)
+
+    def remove_place_feature_change_event(self, event_id: str, *, acting_user: CurrentUser) -> bool:
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(PlaceFeatureChangeEventModel, event_id)
+                if model is None:
+                    return False
+                feature_id = model.feature_id
+                event_type = model.event_type
+                self._record_audit_event_in_session(
+                    session, now=now, actor_user_id=acting_user.id, actor_display_name=acting_user.display_name,
+                    action="place_feature.change_removed", target_type="place_feature_change_event",
+                    target_id=model.id, metadata={"feature_id": feature_id, "event_type": event_type},
+                )
+                session.delete(model)
+                session.flush()
+                if event_type in place_feature_vocab.DERIVED_STATE_EVENT_TYPES:
+                    self._recompute_feature_derived_state(session, feature_id, now=now)
+                return True
+
+    def _feature_monitoring_stream_ids(
+        self, session: Session, feature: PlaceFeatureModel
+    ) -> list[str]:
+        """Every Stream this Feature's association resolves to: the single
+        Stream owning its linked Zone, or every non-archived Stream
+        belonging to its linked Source, or an empty list when the Feature
+        has no camera/Zone association at all."""
+
+        if feature.zone_id is not None:
+            zone = session.get(ZoneModel, feature.zone_id)
+            return [zone.stream_id] if zone is not None else []
+        if feature.source_id is not None:
+            rows = session.execute(
+                select(StreamModel.id)
+                .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+                .where(
+                    StreamModel.source_id == feature.source_id,
+                    CameraSourceModel.status != SourceStatus.archived.value,
+                )
+            ).all()
+            return [row[0] for row in rows]
+        return []
+
+    def _feature_scoped_visit_facts(
+        self,
+        session: Session,
+        feature: PlaceFeatureModel,
+        stream_ids: list[str],
+        *,
+        start_at: datetime,
+        end_at: datetime,
+        taxonomy_index: dict[str, TaxonomyLabelModel],
+    ) -> list[VisitFact]:
+        """Visit facts within `[start_at, end_at)` for exactly this
+        Feature's own scope -- its linked Zone only, when set, else every
+        Visit across its linked Source's Streams.
+
+        Deliberately does not apply `_associated_visit_ids_to_exclude_
+        from_counting`'s cross-camera-duplicate exclusion, unlike
+        `place_activity_report` -- a documented, bounded simplification for
+        this single-Feature scope; see "Performance" in
+        docs/place-features-habitat-change-v2-report.md."""
+
+        if not stream_ids:
+            return []
+        query = (
+            select(VisitModel, EventModel)
+            .join(EventModel, VisitModel.event_id == EventModel.id)
+            .where(
+                VisitModel.is_superseded.is_(False),
+                EventModel.stream_id.in_(stream_ids),
+                EventModel.started_at >= start_at,
+                EventModel.started_at < end_at,
+            )
+        )
+        if feature.zone_id is not None:
+            query = query.where(VisitModel.zone_id == feature.zone_id)
+        rows = session.execute(
+            query.order_by(EventModel.started_at, EventModel.id, VisitModel.id)
+        ).all()
+
+        def resolve_taxon(label: str | None) -> TaxonFact | None:
+            if not label:
+                return None
+            taxonomy = taxonomy_index.get(_taxonomy_key(label))
+            if taxonomy is None:
+                return None
+            return taxon_fact_from_taxonomy_label(_taxonomy_label_from_model(taxonomy))
+
+        facts: list[VisitFact] = []
+        for visit, event in rows:
+            summary = self._stream_visit_summary_from_models(
+                session, visit, event, taxonomy_index=taxonomy_index
+            )
+            facts.append(
+                visit_fact_from_stream_visit_summary(
+                    summary,
+                    confirmed_taxon=resolve_taxon(summary.reviewed_label),
+                    provisional_taxon=resolve_taxon(summary.suggested_label),
+                )
+            )
+        return facts
+
+    def _feature_scoped_monitored_seconds(
+        self, session: Session, stream_ids: list[str], *, start_at: datetime, end_at: datetime,
+    ) -> float | None:
+        """Summed healthy-monitored-seconds across every Stream in
+        `stream_ids` for `[start_at, end_at)`, reusing `_zone_insights_
+        exposure`'s exact per-Stream clipping/merge logic unmodified --
+        never a second coverage computation. `None` only when *no*
+        in-scope Stream has ever recorded any durable exposure history at
+        all (mirrors `_place_activity_coverage_summary`'s own "union, not
+        all-or-nothing" policy)."""
+
+        if not stream_ids:
+            return None
+        total = 0.0
+        any_history = False
+        for stream_id in stream_ids:
+            exposure = self._zone_insights_exposure(
+                session, stream_id=stream_id, start_at=start_at, end_at=end_at
+            )
+            if exposure.history_available_from is not None:
+                any_history = True
+            if exposure.healthy_seconds is not None:
+                total += exposure.healthy_seconds
+        return total if any_history else None
+
+    def _feature_yield_summary(
+        self,
+        session: Session,
+        feature: PlaceFeatureModel,
+        *,
+        now: datetime,
+        taxonomy_index: dict[str, TaxonomyLabelModel],
+    ) -> PlaceFeatureYieldSummary | None:
+        """`None` when the Feature has no camera/Zone association at all --
+        yield cannot honestly be computed without one (see
+        `PlaceFeatureDetail.recent_yield`'s own docstring)."""
+
+        stream_ids = self._feature_monitoring_stream_ids(session, feature)
+        if not stream_ids:
+            return None
+        window_days = self.FEATURE_YIELD_WINDOW_DAYS
+        start_at = now - timedelta(days=window_days)
+        visit_facts = self._feature_scoped_visit_facts(
+            session, feature, stream_ids, start_at=start_at, end_at=now, taxonomy_index=taxonomy_index,
+        )
+        monitored_seconds = self._feature_scoped_monitored_seconds(
+            session, stream_ids, start_at=start_at, end_at=now
+        )
+        result = compute_feature_yield(visit_facts, monitored_seconds=monitored_seconds)
+        return PlaceFeatureYieldSummary(
+            confirmed_wildlife_visit_count=result.confirmed_wildlife_visit_count,
+            distinct_taxon_count=result.distinct_taxon_count,
+            monitored_seconds=result.monitored_seconds,
+            visits_per_monitored_hour=result.visits_per_monitored_hour,
+            data_sufficient=result.data_sufficient,
+            window_days=window_days,
+        )
+
+    def _compute_feature_change_event_comparison(
+        self,
+        session: Session,
+        feature: PlaceFeatureModel,
+        stream_ids: list[str],
+        event: PlaceFeatureChangeEventModel,
+        *,
+        now: datetime,
+        local_timezone: tzinfo,
+        taxonomy_index: dict[str, TaxonomyLabelModel],
+    ) -> FeatureChangeComparison:
+        """One change event's before/after comparison, scoped to its own
+        Feature's monitoring scope. `usable_dates` is anchored 366 days
+        back from `now` (reusing `_historical_usable_dates` exactly as
+        every other caller does), not from this event's own post-window end
+        -- always the freshest available coverage data, and only an honest,
+        conservative under-count for an event whose own pre-window would
+        reach more than ~336 days into the past (this product's real
+        history is far younger than that today -- see docs/place-features-
+        habitat-change-v2-report.md "Performance")."""
+
+        today = now.astimezone(local_timezone).date()
+        usable_dates, _has_history, _total_seconds = self._historical_usable_dates(
+            session, stream_ids=stream_ids, window_end_at=now, local_timezone=local_timezone,
+        )
+        largest_window = CANDIDATE_WINDOW_DAYS[-1]
+        largest_pre_start = event.effective_date - timedelta(days=largest_window)
+        largest_post_end = event.effective_date + timedelta(days=largest_window)
+        # A coarse UTC pre-filter only -- padded by a day on each side so no
+        # local calendar day near the boundary is ever excluded regardless
+        # of the host's own UTC offset. Precise local-day bucketing happens
+        # below, per Visit.
+        start_at = datetime(largest_pre_start.year, largest_pre_start.month, largest_pre_start.day, tzinfo=UTC) - timedelta(days=1)
+        end_at = min(
+            now,
+            datetime(largest_post_end.year, largest_post_end.month, largest_post_end.day, tzinfo=UTC)
+            + timedelta(days=2),
+        )
+        visit_facts = self._feature_scoped_visit_facts(
+            session, feature, stream_ids, start_at=start_at, end_at=end_at, taxonomy_index=taxonomy_index,
+        )
+        presence_dates = {
+            visit.activity_started_at.astimezone(local_timezone).date()
+            for visit in visit_facts
+            if visit.confirmed_taxon is not None
+        }
+        return compute_feature_change_comparison(
+            presence_dates, usable_dates=usable_dates, effective_date=event.effective_date, today=today,
+        )
+
+    @staticmethod
+    def _feature_association_response(comparison: FeatureChangeComparison) -> PlaceFeatureAssociation:
+        association = comparison.association
+        return PlaceFeatureAssociation(
+            maturity=comparison.maturity,
+            window_days=comparison.window_days,
+            pre_start=comparison.pre_start,
+            post_end=comparison.post_end,
+            status=association.status if association is not None else None,
+            presence_days_in_condition=(
+                association.presence_days_in_condition if association is not None else None
+            ),
+            usable_days_in_condition=(
+                association.usable_days_in_condition if association is not None else None
+            ),
+            presence_days_out_of_condition=(
+                association.presence_days_out_of_condition if association is not None else None
+            ),
+            usable_days_out_of_condition=(
+                association.usable_days_out_of_condition if association is not None else None
+            ),
+        )
+
+    def get_place_feature_detail(
+        self, feature_id: str, *, now: datetime | None = None, local_timezone: tzinfo | None = None,
+    ) -> PlaceFeatureDetail | None:
+        """The full detail bundle for one Feature: current state, its
+        complete change-event timeline (each with its own before/after
+        comparison), and a recent-window activity snapshot. `None` when the
+        Feature does not exist.
+
+        Every derived figure here is computed fresh from current rows on
+        every call, never persisted -- see `PlaceFeatureChangeEventModel`'s
+        "Correction model" -- so a correction to any underlying fact (the
+        Feature's own association, or any change event) is reflected on the
+        very next call with no separate invalidation step."""
+
+        generation_moment = now or datetime.now(UTC)
+        resolved_local_timezone = local_timezone or resolve_host_local_timezone(generation_moment)
+        with self.session_factory() as session:
+            model = session.get(PlaceFeatureModel, feature_id)
+            if model is None:
+                return None
+            taxonomy_index = self._taxonomy_label_index(session)
+            stream_ids = self._feature_monitoring_stream_ids(session, model)
+            event_models = session.scalars(
+                select(PlaceFeatureChangeEventModel)
+                .where(PlaceFeatureChangeEventModel.feature_id == feature_id)
+                .order_by(
+                    PlaceFeatureChangeEventModel.effective_date.desc(),
+                    PlaceFeatureChangeEventModel.created_at.desc(),
+                )
+            ).all()
+            changes: list[PlaceFeatureChangeEventWithComparison] = []
+            for event_model in event_models:
+                comparison_response = None
+                if stream_ids:
+                    comparison = self._compute_feature_change_event_comparison(
+                        session, model, stream_ids, event_model,
+                        now=generation_moment, local_timezone=resolved_local_timezone,
+                        taxonomy_index=taxonomy_index,
+                    )
+                    comparison_response = self._feature_association_response(comparison)
+                changes.append(
+                    PlaceFeatureChangeEventWithComparison(
+                        event=self._place_feature_change_event_from_model(event_model),
+                        comparison=comparison_response,
+                    )
+                )
+            recent_yield = self._feature_yield_summary(
+                session, model, now=generation_moment, taxonomy_index=taxonomy_index,
+            )
+            return PlaceFeatureDetail(
+                feature=self._place_feature_from_model(model),
+                changes=changes,
+                recent_yield=recent_yield,
+            )
+
+    def get_place_features_summary(
+        self, *, now: datetime | None = None, local_timezone: tzinfo | None = None,
+    ) -> PlaceFeaturesSummary:
+        """A compact, Dashboard-safe bundle -- see `PlaceFeaturesSummary`.
+        Computes recent yield for every active, camera/Zone-associated
+        Feature to find at most one restrained highlight; this is
+        intentionally more work than `list_place_features`, and is why the
+        two are separate endpoints -- mirrors `get_place_habitat_context`
+        being separate from the full list endpoints."""
+
+        generation_moment = now or datetime.now(UTC)
+        window_start = generation_moment - timedelta(days=self.FEATURE_RECENT_CHANGE_WINDOW_DAYS)
+        with self.session_factory() as session:
+            features = session.scalars(select(PlaceFeatureModel)).all()
+            active_count = sum(1 for feature in features if feature.is_active)
+            recent_change_count = session.scalar(
+                select(func.count())
+                .select_from(PlaceFeatureChangeEventModel)
+                .where(PlaceFeatureChangeEventModel.created_at >= window_start)
+            ) or 0
+
+            taxonomy_index = self._taxonomy_label_index(session)
+            best_name: str | None = None
+            best_rate = 0.0
+            for feature in features:
+                if not feature.is_active:
+                    continue
+                yield_summary = self._feature_yield_summary(
+                    session, feature, now=generation_moment, taxonomy_index=taxonomy_index,
+                )
+                if (
+                    yield_summary is not None
+                    and yield_summary.data_sufficient
+                    and yield_summary.visits_per_monitored_hour is not None
+                    and yield_summary.confirmed_wildlife_visit_count > 0
+                    and yield_summary.visits_per_monitored_hour > best_rate
+                ):
+                    best_rate = yield_summary.visits_per_monitored_hour
+                    best_name = feature.name
+
+            highlight = (
+                f"{best_name} has been especially active this week." if best_name is not None else None
+            )
+            return PlaceFeaturesSummary(
+                active_feature_count=active_count,
+                recent_change_count=recent_change_count,
+                highlight=highlight,
+            )
 
     def reset_demo_data(self) -> LocalDataStatus:
         # Reset only the sample walkthrough graph. Real cameras and their local
