@@ -23,7 +23,7 @@ import shutil
 import struct
 import threading
 import time
-from typing import Any, Iterable, Literal, Sequence
+from typing import Any, Iterable, Literal, NamedTuple, Sequence
 from urllib.parse import urlsplit, urlunsplit
 import uuid
 
@@ -59,6 +59,7 @@ from mockingbird.analytics.place_activity_report import (
     MIN_REVIEWED_VISITS_FOR_MOST_ACTIVE_PATTERN,
     NO_ZONE_LABEL,
     CoverageSummary,
+    PlaceActivityReport,
     TaxonFact,
     TaxonPlacePattern,
     VisitFact,
@@ -67,6 +68,11 @@ from mockingbird.analytics.place_activity_report import (
     compute_taxon_place_patterns,
 )
 from mockingbird.analytics.place_activity_report_adapter import (
+    HistoricalPlaceIntelligence,
+    _habitat_association_response,
+    _regularity_narrative_response,
+    _seasonal_pattern_response,
+    _temporal_pattern_response,
     place_activity_report_response,
     place_biodiversity_summary_response,
     taxon_change_status_response,
@@ -74,7 +80,38 @@ from mockingbird.analytics.place_activity_report_adapter import (
     visit_fact_from_stream_visit_summary,
 )
 from mockingbird.analytics.place_biodiversity_summary import compute_place_biodiversity_summary
-from mockingbird.analytics.place_change_summary import PlaceChangeSummary, compute_place_change_summary
+from mockingbird.analytics.place_change_summary import (
+    PlaceChangeSummary,
+    TaxonChangeStatus,
+    compute_place_change_summary,
+)
+from mockingbird.analytics.regularity_narrative import (
+    RegularityNarrative,
+    compute_regularity_narrative,
+)
+from mockingbird.analytics.seasonal_pattern import (
+    SeasonalPattern,
+    compute_seasonal_patterns,
+)
+from mockingbird.analytics.habitat_association import (
+    PhenologyIntervalFact,
+    TaxonHabitatAssociation,
+    compute_habitat_associations,
+)
+from mockingbird.analytics.temporal_pattern import (
+    DaylightBucket,
+    TaxonTemporalPattern,
+    compare_visit_timing,
+    compute_taxon_temporal_patterns,
+)
+from mockingbird.analytics.source_activity import (
+    SourceActivityEntry,
+    SourceAuthorityCounters,
+    SourceCoverageFact,
+    SourceQualitySignal,
+    compute_source_activity,
+    compute_source_quality_signals,
+)
 from mockingbird.analytics.soundscape import (
     SoundscapeSummary,
     SoundscapeVisitFact,
@@ -16842,17 +16879,15 @@ class ProductRepository:
         # with an unbounded `GROUP BY` aggregate -- strictly cheaper, and
         # immune to the truncation-driven false "new" the old cap allowed.
         taxonomy_index = self._taxonomy_label_index(session)
-        _historical_baseline, species_historical_statuses, _change_summary, _taxon_place_patterns = (
-            self._historical_place_baseline_and_species_statuses(
-                session,
-                stream_ids=stream_ids,
-                taxonomy_index=taxonomy_index,
-                window_end_at=day_end,
-                local_timezone=local_timezone,
-                period_start_at=day_start,
-                period_end_at=day_end,
-            )
-        )
+        species_historical_statuses = self._historical_place_baseline_and_species_statuses(
+            session,
+            stream_ids=stream_ids,
+            taxonomy_index=taxonomy_index,
+            window_end_at=day_end,
+            local_timezone=local_timezone,
+            period_start_at=day_start,
+            period_end_at=day_end,
+        ).species_historical_statuses
         new_today = [
             self._dashboard_today_species(
                 session, label, summaries, distinct_days=1, historical_status=status.status,
@@ -29088,7 +29123,7 @@ class ProductRepository:
 
         with self.session_factory() as session:
             stream_id_query = (
-                select(StreamModel.id)
+                select(StreamModel.id, CameraSourceModel.id, CameraSourceModel.name)
                 .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
                 .where(CameraSourceModel.status != SourceStatus.archived.value)
             )
@@ -29102,7 +29137,17 @@ class ProductRepository:
                 stream_id_query = stream_id_query.where(
                     CameraSourceModel.id.in_(payload.source_ids)
                 )
-            stream_ids = list(session.scalars(stream_id_query).all())
+            # Place / Yard Intelligence v2, Phase 7: `stream_source_index`
+            # is built from the exact same query this method already ran
+            # for `stream_ids` -- zero additional queries -- so `source_
+            # activity.py`'s per-Source comparison can resolve each Visit's
+            # Source without joining CameraSourceModel a second time into
+            # the much larger per-Visit query below.
+            stream_source_index: dict[str, tuple[str, str]] = {}
+            stream_ids: list[str] = []
+            for stream_id, source_id, source_name in session.execute(stream_id_query).all():
+                stream_ids.append(stream_id)
+                stream_source_index[stream_id] = (source_id, source_name)
 
             # Always preloaded now (previously only when stream_ids was
             # non-empty): Historical Baseline Maturity + New/Regular Species
@@ -29125,15 +29170,22 @@ class ProductRepository:
             # deliberately scoped to this report's own period only -- see
             # "Time scope" in that contract doc.
             confirmed_summaries_by_label: dict[str, list[StreamVisitSummary]] = {}
-            if stream_ids:
 
-                def resolve_taxon(label: str | None) -> TaxonFact | None:
-                    if not label:
-                        return None
-                    taxonomy = taxonomy_index.get(_taxonomy_key(label))
-                    if taxonomy is None:
-                        return None
-                    return taxon_fact_from_taxonomy_label(_taxonomy_label_from_model(taxonomy))
+            # Hoisted above `if stream_ids:` below (Place / Yard
+            # Intelligence v2) so the weekly-window Visit gathering further
+            # down -- its own separate, later `if` block, not nested inside
+            # this one -- can reuse it too, without relying on Python's
+            # def-executes-once-then-persists-in-the-enclosing-function
+            # closure behavior across two sibling `if` blocks.
+            def resolve_taxon(label: str | None) -> TaxonFact | None:
+                if not label:
+                    return None
+                taxonomy = taxonomy_index.get(_taxonomy_key(label))
+                if taxonomy is None:
+                    return None
+                return taxon_fact_from_taxonomy_label(_taxonomy_label_from_model(taxonomy))
+
+            if stream_ids:
 
                 visit_rows = session.execute(
                     select(VisitModel, EventModel)
@@ -29167,11 +29219,14 @@ class ProductRepository:
                         session, visit, event, taxonomy_index=taxonomy_index
                     )
                     confirmed_taxon = resolve_taxon(summary.reviewed_label)
+                    source_id, source_name = stream_source_index.get(event.stream_id, (None, None))
                     visit_facts.append(
                         visit_fact_from_stream_visit_summary(
                             summary,
                             confirmed_taxon=confirmed_taxon,
                             provisional_taxon=resolve_taxon(summary.suggested_label),
+                            source_id=source_id,
+                            source_name=source_name,
                         )
                     )
                     if (
@@ -29224,17 +29279,157 @@ class ProductRepository:
             # is deliberately this report's own period_end_at, not "now" --
             # see `_historical_place_baseline_and_species_statuses`'s
             # docstring for why a past-period report must stay reproducible.
-            historical_baseline, species_historical_statuses, change_summary, taxon_place_patterns = (
-                self._historical_place_baseline_and_species_statuses(
-                    session,
-                    stream_ids=stream_ids,
-                    taxonomy_index=taxonomy_index,
-                    window_end_at=period_end_at,
-                    local_timezone=resolved_local_timezone,
+            historical_place_intelligence = self._historical_place_baseline_and_species_statuses(
+                session,
+                stream_ids=stream_ids,
+                taxonomy_index=taxonomy_index,
+                window_end_at=period_end_at,
+                local_timezone=resolved_local_timezone,
+                period_start_at=period_start_at,
+                period_end_at=period_end_at,
+            )
+
+            # Place / Yard Intelligence v2, Phase 6: at most one "was this
+            # Visit's own timing unusual" check per taxon (stops at the
+            # first unusual Visit found -- the digest only needs a bool),
+            # reusing `temporal_patterns` this call already computed above
+            # and this report's own already-gathered `visit_facts` -- zero
+            # additional queries.
+            unusual_timing_by_label: dict[str, bool] = {}
+            for fact in visit_facts:
+                if fact.confirmed_taxon is None or unusual_timing_by_label.get(fact.confirmed_taxon.label):
+                    continue
+                pattern = historical_place_intelligence.temporal_patterns.get(fact.confirmed_taxon.label)
+                if pattern is None:
+                    continue
+                local_hour = fact.activity_started_at.astimezone(resolved_local_timezone).hour
+                if compare_visit_timing(local_hour, pattern) == "unusual":
+                    unusual_timing_by_label[fact.confirmed_taxon.label] = True
+
+            # Phase 7/8: per-Source coverage-normalized activity + a bounded
+            # admission-yield comparison, both grouped from the same
+            # `stream_source_index` this call already built -- a Source
+            # with more than one Stream (not the norm today) has its
+            # Streams' own coverage/counters summed, never double-counted.
+            source_stream_ids: dict[str, list[str]] = {}
+            source_names: dict[str, str] = {}
+            for stream_id, (source_id, source_name) in stream_source_index.items():
+                source_stream_ids.setdefault(source_id, []).append(stream_id)
+                source_names[source_id] = source_name
+
+            source_coverage_facts: dict[str, SourceCoverageFact] = {}
+            for source_id, streams_for_source in source_stream_ids.items():
+                source_monitored_intervals, source_history_available_from, _ = (
+                    self._monitoring_exposure_intervals_and_history(
+                        session,
+                        stream_ids=streams_for_source,
+                        period_start_at=period_start_at,
+                        period_end_at=period_end_at,
+                    )
+                )
+                source_coverage = compute_coverage_summary(
                     period_start_at=period_start_at,
                     period_end_at=period_end_at,
+                    monitored_intervals=source_monitored_intervals,
+                    history_available_from=source_history_available_from,
                 )
+                source_coverage_facts[source_id] = SourceCoverageFact(
+                    source_id=source_id,
+                    source_name=source_names[source_id],
+                    monitored_seconds=source_coverage.monitored_seconds,
+                )
+            activity_by_source = compute_source_activity(
+                visit_facts, coverage_by_source=source_coverage_facts,
             )
+
+            authority_counters_by_source: dict[str, list[int]] = {}
+            if stream_ids:
+                for row_stream_id, attempted, created, suppressed in session.execute(
+                    select(
+                        ObservationAuthoritySettingsModel.stream_id,
+                        ObservationAuthoritySettingsModel.candidates_attempted_count,
+                        ObservationAuthoritySettingsModel.candidates_created_count,
+                        ObservationAuthoritySettingsModel.suppressed_count,
+                    ).where(ObservationAuthoritySettingsModel.stream_id.in_(stream_ids))
+                ).all():
+                    row_source_id = stream_source_index.get(row_stream_id, (None, None))[0]
+                    if row_source_id is None:
+                        continue
+                    totals = authority_counters_by_source.setdefault(row_source_id, [0, 0, 0])
+                    totals[0] += attempted
+                    totals[1] += created
+                    totals[2] += suppressed
+            source_quality_signals = compute_source_quality_signals(
+                [
+                    SourceAuthorityCounters(
+                        source_id=source_id,
+                        source_name=source_names[source_id],
+                        candidates_attempted_count=totals[0],
+                        candidates_created_count=totals[1],
+                        suppressed_count=totals[2],
+                    )
+                    for source_id, totals in authority_counters_by_source.items()
+                ]
+            )
+
+            # Phase 13: the identical report shape as `report` below, over
+            # the 7-usable-day recent window `change_summary.windows`
+            # already establishes -- `None` (no weekly digest at all) when
+            # that window is not valid yet, mirroring every other consumer
+            # of `is_valid`. Representative evidence is deliberately not
+            # re-gathered for this window (a bounded scope decision, see
+            # docs/place-yard-intelligence-v2-contract.md); a weekly
+            # highlight's `representative_evidence` is `None` unless the
+            # same taxon also had confirmed evidence within *today's* own
+            # period -- an honest "no image" outcome, never a wrong one.
+            weekly_report: PlaceActivityReport | None = None
+            weekly_windows = historical_place_intelligence.change_summary.windows
+            if weekly_windows.is_valid and stream_ids:
+                assert weekly_windows.recent_window_start_at is not None
+                weekly_start_at = weekly_windows.recent_window_start_at
+                weekly_end_at = weekly_windows.recent_window_end_at
+                weekly_visit_rows = session.execute(
+                    select(VisitModel, EventModel)
+                    .join(EventModel, VisitModel.event_id == EventModel.id)
+                    .where(
+                        VisitModel.is_superseded.is_(False),
+                        EventModel.stream_id.in_(stream_ids),
+                        EventModel.started_at >= weekly_start_at,
+                        EventModel.started_at < weekly_end_at,
+                    )
+                    .order_by(EventModel.started_at, EventModel.id, VisitModel.id)
+                ).all()
+                weekly_visit_facts: list[VisitFact] = []
+                for visit, event in weekly_visit_rows:
+                    weekly_summary = self._stream_visit_summary_from_models(
+                        session, visit, event, taxonomy_index=taxonomy_index
+                    )
+                    weekly_visit_facts.append(
+                        visit_fact_from_stream_visit_summary(
+                            weekly_summary,
+                            confirmed_taxon=resolve_taxon(weekly_summary.reviewed_label),
+                            provisional_taxon=resolve_taxon(weekly_summary.suggested_label),
+                        )
+                    )
+                if len(weekly_visit_facts) >= 2:
+                    weekly_excluded_ids = self._associated_visit_ids_to_exclude_from_counting(
+                        session, [fact.visit_id for fact in weekly_visit_facts],
+                    )
+                    if weekly_excluded_ids:
+                        weekly_visit_facts = [
+                            fact for fact in weekly_visit_facts if fact.visit_id not in weekly_excluded_ids
+                        ]
+                weekly_coverage, _ = self._place_activity_coverage_summary(
+                    session, stream_ids=stream_ids, period_start_at=weekly_start_at, period_end_at=weekly_end_at,
+                )
+                weekly_report = compute_place_activity_report(
+                    weekly_visit_facts,
+                    period_start_at=weekly_start_at,
+                    period_end_at=weekly_end_at,
+                    local_timezone=resolved_local_timezone,
+                    coverage=weekly_coverage,
+                    generated_at=generated_at,
+                )
 
         report = compute_place_activity_report(
             visit_facts,
@@ -29276,11 +29471,12 @@ class ProductRepository:
             report,
             timezone_name=timezone_name,
             warnings=warnings,
-            historical_baseline=historical_baseline,
-            species_historical_statuses=species_historical_statuses,
-            change_summary=change_summary,
-            taxon_place_patterns=taxon_place_patterns,
+            historical_place_intelligence=historical_place_intelligence,
             representative_evidence=representative_evidence_by_label,
+            unusual_timing_by_label=unusual_timing_by_label,
+            activity_by_source=activity_by_source,
+            source_quality_signals=source_quality_signals,
+            weekly_report=weekly_report,
         )
 
     def _taxonomy_label_index(self, session: Session) -> dict[str, TaxonomyLabelModel]:
@@ -29533,6 +29729,60 @@ class ProductRepository:
         total_monitored_seconds = sum(daily_monitored_seconds.values())
         return usable_dates, history_available_from is not None, total_monitored_seconds
 
+    def _daylight_bucket_by_visit_id(
+        self, session: Session, visits: list[VisitFact], *, local_timezone: tzinfo, now: datetime,
+    ) -> dict[str, DaylightBucket]:
+        """Place / Yard Intelligence v2: a bounded, absence-safe day/night
+        classification for `temporal_pattern.compute_taxon_temporal_
+        patterns`'s daylight dimension, reusing the exact same solar
+        primitives `get_place_environmental_context_today`/`get_visit_
+        environmental_context` already rely on -- never a second solar
+        computation.
+
+        Returns `{}` immediately, at zero cost, when the Place's coordinate
+        setting is not configured -- solar/daylight is opt-in (see
+        docs/environmental-context-foundation-v1-contract.md), and missing
+        environmental data must never break core Place intelligence.
+
+        Bounded to at most one `_get_daylight_window_in_session` resolution
+        per *distinct local calendar date* in `visits` (never per-Visit):
+        every Visit sharing a local date reuses that date's own resolved
+        [sunrise, sunset) window. This is a deliberate, disclosed
+        simplification -- a Visit very close to midnight UTC could in
+        principle want a window resolved from an adjacent UTC date -- of
+        the same honest-approximation character as this product's existing
+        "no civil timezone from longitude" and "~11 km coarse location"
+        disclosures, not a silent inaccuracy.
+        """
+
+        settings = session.get(EnvironmentalContextSettingsModel, 1)
+        latitude = settings.coarse_latitude if settings is not None else None
+        longitude = settings.coarse_longitude if settings is not None else None
+        if latitude is None or longitude is None:
+            return {}
+
+        visits_by_local_date: dict[date, list[VisitFact]] = {}
+        for visit in visits:
+            if visit.confirmed_taxon is None:
+                continue
+            local_date = visit.activity_started_at.astimezone(local_timezone).date()
+            visits_by_local_date.setdefault(local_date, []).append(visit)
+
+        result: dict[str, DaylightBucket] = {}
+        for visits_on_date in visits_by_local_date.values():
+            representative_instant = visits_on_date[0].activity_started_at
+            window = self._get_daylight_window_in_session(
+                session, now=now, instant=representative_instant, latitude=latitude, longitude=longitude,
+            )
+            if window is None:
+                continue
+            sunrise_at, sunset_at = window
+            for visit in visits_on_date:
+                result[visit.visit_id] = solar_context.classify_daylight_state(
+                    visit.activity_started_at, sunrise_at, sunset_at
+                )
+        return result
+
     def _historical_place_baseline_and_species_statuses(
         self,
         session: Session,
@@ -29543,23 +29793,33 @@ class ProductRepository:
         local_timezone: tzinfo,
         period_start_at: datetime,
         period_end_at: datetime,
-    ) -> tuple[
-        HistoricalPlaceBaseline,
-        dict[str, SpeciesHistoricalStatus],
-        PlaceChangeSummary,
-        dict[str, TaxonPlacePattern],
-    ]:
+    ) -> HistoricalPlaceIntelligence:
         """Compute the Place-wide `HistoricalPlaceBaseline`, every
         all-time-confirmed taxon's `SpeciesHistoricalStatus`, the Gate C --
         Meaningful Change Detection v1 `PlaceChangeSummary` (see
-        docs/meaningful-change-detection-contract.md), and Gate C --
+        docs/meaningful-change-detection-contract.md), Gate C --
         Per-Species Zone + Time Pattern Intelligence v1's per-taxon
         `TaxonPlacePattern` (see "Per-species Zone and time patterns" in
-        docs/place-activity-report-contract.md), for `ProductRepository.
+        docs/place-activity-report-contract.md), and -- Place / Yard
+        Intelligence v2 -- each taxon's `RegularityNarrative`,
+        `SeasonalPattern`, `TaxonTemporalPattern`, and
+        `TaxonHabitatAssociation` list (see
+        docs/place-yard-intelligence-v2-contract.md), for `ProductRepository.
         place_activity_report`'s own Today integration and (independently
         anchored) `wildlife_journal_overview`/`wildlife_journal_history`'s
         Bird Log integration. Read-only, like every other method in this
         file's reporting family.
+
+        The Place / Yard Intelligence v2 facts are computed from the exact
+        same `usable_dates`/`window_visits`/`taxa`/`statuses`/
+        `change_summary` this method already assembles below -- zero
+        additional queries for regularity/seasonal, one additional bounded
+        `list_place_phenology_observations()` query for habitat
+        association (skipped entirely when no phenology has ever been
+        recorded), and the bounded, absence-safe solar resolution described
+        in `_daylight_bucket_by_visit_id` above for the temporal pattern's
+        daylight dimension only (its hour-band dimension costs nothing
+        extra).
 
         The change summary and taxon place patterns are both computed from
         the exact same `usable_dates`/`window_visits`/`taxa` this method
@@ -29776,11 +30036,90 @@ class ProductRepository:
         taxon_place_patterns = compute_taxon_place_patterns(
             window_visits, local_timezone=local_timezone
         )
-        return (
-            baseline,
-            {status.taxon.label: status for status in statuses},
-            change_summary,
-            taxon_place_patterns,
+
+        species_historical_statuses = {status.taxon.label: status for status in statuses}
+        change_status_by_label = {status.taxon.label: status for status in change_summary.taxa}
+
+        # Place / Yard Intelligence v2, Phase 4: pure synthesis, zero
+        # additional queries -- see regularity_narrative.py's own docstring.
+        regularity_narratives: dict[str, RegularityNarrative] = {}
+        for label, historical_status in species_historical_statuses.items():
+            change_status = change_status_by_label.get(label)
+            regularity_narratives[label] = compute_regularity_narrative(
+                historical_status.status,
+                change_status.status if change_status is not None else None,
+                reference_presence_days=(
+                    change_status.reference_presence_days if change_status is not None else None
+                ),
+            )
+
+        # Phase 5: reuses the exact same window_visits/usable_dates/taxa
+        # already fetched above -- zero additional queries.
+        seasonal_patterns = compute_seasonal_patterns(
+            window_visits,
+            taxa=taxa,
+            usable_dates=usable_dates,
+            local_timezone=local_timezone,
+            reference_month=window_end_at.astimezone(local_timezone).month,
+        )
+
+        # Phase 6 + the day/night slice of Phase 10: the hour-band dimension
+        # is free (reuses window_visits); the daylight dimension costs the
+        # bounded, absence-safe solar resolution in `_daylight_bucket_by_
+        # visit_id` above.
+        daylight_by_visit_id = self._daylight_bucket_by_visit_id(
+            session, window_visits, local_timezone=local_timezone, now=datetime.now(UTC),
+        )
+        temporal_patterns = compute_taxon_temporal_patterns(
+            window_visits, daylight_by_visit_id=daylight_by_visit_id, local_timezone=local_timezone,
+        )
+
+        # Phase 11: one additional bounded query (Place-wide phenology
+        # facts are always few) reusing the already-open session -- see
+        # habitat_association.py's own docstring for why this is the
+        # honest ceiling of what this milestone can build (no reviewed
+        # before/after change-event model exists). Never touches a
+        # per-Source phenology row (source_id is not None) -- this method's
+        # own scope is Place-wide, matching `list_place_phenology_
+        # observations`'s own default filter.
+        phenology_rows = session.execute(
+            select(
+                PlacePhenologyObservationModel.subject_label,
+                PlacePhenologyObservationModel.phenomenon,
+                PlacePhenologyObservationModel.observed_start_date,
+                PlacePhenologyObservationModel.observed_end_date,
+            ).where(PlacePhenologyObservationModel.source_id.is_(None))
+        ).all()
+        phenology_observations = [
+            PhenologyIntervalFact(
+                subject_label=subject_label,
+                phenomenon=phenomenon,
+                observed_start_date=observed_start_date,
+                observed_end_date=observed_end_date,
+            )
+            for subject_label, phenomenon, observed_start_date, observed_end_date in phenology_rows
+        ]
+        habitat_associations: dict[str, list[TaxonHabitatAssociation]] = {}
+        if phenology_observations:
+            for association in compute_habitat_associations(
+                window_visits,
+                taxa=taxa,
+                usable_dates=usable_dates,
+                local_timezone=local_timezone,
+                phenology_observations=phenology_observations,
+                window_end_at=window_end_at,
+            ):
+                habitat_associations.setdefault(association.taxon.label, []).append(association)
+
+        return HistoricalPlaceIntelligence(
+            baseline=baseline,
+            species_historical_statuses=species_historical_statuses,
+            change_summary=change_summary,
+            taxon_place_patterns=taxon_place_patterns,
+            regularity_narratives=regularity_narratives,
+            seasonal_patterns=seasonal_patterns,
+            temporal_patterns=temporal_patterns,
+            habitat_associations=habitat_associations,
         )
 
     def list_likely_species_overview(self, *, limit: int = 20) -> LikelySpeciesOverviewResponse:
@@ -29905,18 +30244,18 @@ class ProductRepository:
                 datetime.combine(local_now.date(), datetime.min.time(), local_timezone)
             )
             taxonomy_index = self._taxonomy_label_index(session)
-            historical_baseline, species_historical_statuses, change_summary, _taxon_place_patterns = (
-                self._historical_place_baseline_and_species_statuses(
-                    session,
-                    stream_ids=stream_ids,
-                    taxonomy_index=taxonomy_index,
-                    window_end_at=window_end_at,
-                    local_timezone=local_timezone,
-                    period_start_at=local_day_start_at,
-                    period_end_at=window_end_at,
-                )
+            _historical_place_intelligence = self._historical_place_baseline_and_species_statuses(
+                session,
+                stream_ids=stream_ids,
+                taxonomy_index=taxonomy_index,
+                window_end_at=window_end_at,
+                local_timezone=local_timezone,
+                period_start_at=local_day_start_at,
+                period_end_at=window_end_at,
             )
-            baseline_maturity = historical_baseline.maturity
+            species_historical_statuses = _historical_place_intelligence.species_historical_statuses
+            change_summary = _historical_place_intelligence.change_summary
+            baseline_maturity = _historical_place_intelligence.baseline.maturity
             change_status_by_label = {status.taxon.label: status for status in change_summary.taxa}
 
             records = self._wildlife_journal_confirmed_records(session)
@@ -30103,18 +30442,18 @@ class ProductRepository:
                 datetime.combine(local_now.date(), datetime.min.time(), local_timezone)
             )
             taxonomy_index = self._taxonomy_label_index(session)
-            historical_baseline, species_historical_statuses, change_summary, _taxon_place_patterns = (
-                self._historical_place_baseline_and_species_statuses(
-                    session,
-                    stream_ids=stream_ids,
-                    taxonomy_index=taxonomy_index,
-                    window_end_at=history_window_end_at,
-                    local_timezone=local_timezone,
-                    period_start_at=local_day_start_at,
-                    period_end_at=history_window_end_at,
-                )
+            historical_place_intelligence = self._historical_place_baseline_and_species_statuses(
+                session,
+                stream_ids=stream_ids,
+                taxonomy_index=taxonomy_index,
+                window_end_at=history_window_end_at,
+                local_timezone=local_timezone,
+                period_start_at=local_day_start_at,
+                period_end_at=history_window_end_at,
             )
-            baseline_maturity = historical_baseline.maturity
+            species_historical_statuses = historical_place_intelligence.species_historical_statuses
+            change_summary = historical_place_intelligence.change_summary
+            baseline_maturity = historical_place_intelligence.baseline.maturity
             canonical_status = species_historical_statuses.get(canonical_label)
             if canonical_status is not None:
                 distinct_confirmed_usable_days = canonical_status.distinct_confirmed_usable_days
@@ -30419,6 +30758,21 @@ class ProductRepository:
                 baseline_maturity=baseline_maturity,
                 historical_status=historical_status,
                 change_status=taxon_change_status_response(change_status),
+                regularity_narrative=_regularity_narrative_response(
+                    historical_place_intelligence.regularity_narratives.get(canonical_label)
+                ),
+                seasonal_pattern=_seasonal_pattern_response(
+                    historical_place_intelligence.seasonal_patterns.get(canonical_label)
+                ),
+                temporal_pattern=_temporal_pattern_response(
+                    historical_place_intelligence.temporal_patterns.get(canonical_label)
+                ),
+                habitat_associations=[
+                    _habitat_association_response(association)
+                    for association in historical_place_intelligence.habitat_associations.get(
+                        canonical_label, []
+                    )
+                ],
                 activity_library_drilldown=WildlifeJournalDrilldown(
                     confirmed_label=canonical_label,
                     start_date=start_date,
@@ -30513,21 +30867,19 @@ class ProductRepository:
                 datetime.combine(local_now.date(), datetime.min.time(), local_timezone)
             )
             taxonomy_index = self._taxonomy_label_index(session)
-            historical_baseline, species_historical_statuses, _change_summary, _taxon_place_patterns = (
-                self._historical_place_baseline_and_species_statuses(
-                    session,
-                    stream_ids=stream_ids,
-                    taxonomy_index=taxonomy_index,
-                    window_end_at=window_end_at,
-                    local_timezone=local_timezone,
-                    period_start_at=local_day_start_at,
-                    period_end_at=window_end_at,
-                )
+            historical_place_intelligence = self._historical_place_baseline_and_species_statuses(
+                session,
+                stream_ids=stream_ids,
+                taxonomy_index=taxonomy_index,
+                window_end_at=window_end_at,
+                local_timezone=local_timezone,
+                period_start_at=local_day_start_at,
+                period_end_at=window_end_at,
             )
 
         summary = compute_place_biodiversity_summary(
-            species_historical_statuses.values(),
-            historical_baseline=historical_baseline,
+            historical_place_intelligence.species_historical_statuses.values(),
+            historical_baseline=historical_place_intelligence.baseline,
             generated_at=window_end_at,
         )
         return place_biodiversity_summary_response(

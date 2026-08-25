@@ -24,6 +24,7 @@ import { LiveCameraOverview } from "../components/LiveCameraOverview";
 import { ProductHealthPanel } from "../components/ProductHealthPanel";
 import { StatusPill } from "../components/StatusPill";
 import { TodayReportPanel } from "../components/TodayReportPanel";
+import { WeeklySummaryCard } from "../components/WeeklySummaryCard";
 import {
   cameraHealthLabel,
   cameraHealthTone,
@@ -488,6 +489,10 @@ export function DashboardPage({
         onOpenStreams={onOpenStreams}
         report={report}
       />
+      {/* Place / Yard Intelligence v2, Phase 13: a sibling of the report
+          panel above, same reasoning as the other sibling cards below --
+          see docs/place-yard-intelligence-v2-contract.md section 3.7. */}
+      <WeeklySummaryCard weeklyDigest={report?.weekly_digest} />
       {/* Environmental Context Foundation v1: a sibling of the report panel
           above, not nested inside it -- see docs/environmental-context-
           foundation-v1-contract.md "Frontend surface" and this component's

@@ -4374,6 +4374,86 @@ export interface PlaceActivityReportTaxonHourActivity {
   reviewed_visit_count: number;
 }
 
+// Place / Yard Intelligence v2 -- see docs/place-yard-intelligence-v2-contract.md.
+export interface PlaceActivityReportRegularityNarrative {
+  state:
+    | "first_record"
+    | "new"
+    | "occasional"
+    | "becoming_regular"
+    | "regular"
+    | "quieter_lately"
+    | "returned_after_absence";
+  basis: "historical_status_only" | "historical_and_change";
+}
+
+export interface PlaceActivityReportMonthPresence {
+  month: number;
+  usable_day_count: number;
+  presence_day_count: number;
+}
+
+// "insufficient_history" is the expected, honest status for a young
+// installation -- `months` always carries all 12 entries regardless of status.
+export interface PlaceActivityReportSeasonalPattern {
+  status: "insufficient_history" | "no_pattern_detected" | "developing_pattern" | "established_pattern";
+  months: PlaceActivityReportMonthPresence[];
+  typical_months: number[];
+  current_month_is_typical?: boolean | null;
+}
+
+export interface PlaceActivityReportTemporalPattern {
+  reviewed_visit_count: number;
+  day_count: number;
+  night_count: number;
+  unknown_daylight_count: number;
+  daylight_association: "insufficient_data" | "mostly_daytime" | "mostly_nighttime" | "spans_day_and_night";
+  dominant_band?:
+    | "early_morning"
+    | "morning"
+    | "midday"
+    | "afternoon"
+    | "evening"
+    | "night"
+    | null;
+  most_active_hour?: number | null;
+}
+
+// Association language only, never causal -- see
+// habitat_association.py's own docstring for why a true before/after
+// habitat-change comparison is not built.
+export interface PlaceActivityReportHabitatAssociation {
+  subject_label: string;
+  phenomenon: string;
+  status: "no_clear_association" | "more_common_under_condition" | "less_common_under_condition";
+  presence_days_in_condition: number;
+  usable_days_in_condition: number;
+  presence_days_out_of_condition: number;
+  usable_days_out_of_condition: number;
+}
+
+export interface PlaceActivityReportSourceActivity {
+  source_id: string;
+  source_name: string;
+  confirmed_wildlife_visit_count: number;
+  monitored_seconds?: number | null;
+  visits_per_monitored_hour?: number | null;
+  data_sufficient: boolean;
+}
+
+// Lifetime-cumulative-since-activation, never scoped to a report's own
+// period -- see source_activity.py's own docstring.
+export interface PlaceActivityReportSourceQualitySignal {
+  source_id: string;
+  source_name: string;
+  candidates_attempted_count: number;
+  candidates_created_count: number;
+  suppressed_count: number;
+  admission_yield_ratio?: number | null;
+  place_average_yield_ratio?: number | null;
+  signal: "insufficient_data" | "typical_yield" | "lower_yield_than_place_average";
+}
+
 export interface PlaceActivityReportTaxonEntry {
   label: string;
   display_name: string;
@@ -4401,6 +4481,12 @@ export interface PlaceActivityReportTaxonEntry {
   // is a completely normal, valid state -- omit the image, never show an
   // error.
   representative_evidence?: RepresentativeEvidence | null;
+  // Place / Yard Intelligence v2: `null`/`[]` under the identical
+  // truth-contract condition as historical_status above.
+  regularity_narrative?: PlaceActivityReportRegularityNarrative | null;
+  seasonal_pattern?: PlaceActivityReportSeasonalPattern | null;
+  temporal_pattern?: PlaceActivityReportTemporalPattern | null;
+  habitat_associations: PlaceActivityReportHabitatAssociation[];
 }
 
 // Place-wide historical baseline facts, bounded to a trailing window ending
@@ -4489,13 +4575,18 @@ export interface PlaceActivityReportDigestSpeciesHighlight {
   last_activity_at: string;
   reason:
     | "first_confirmed_record"
+    | "returned_after_absence"
     | "meaningful_change"
+    | "unusual_timing"
+    | "seasonal_pattern_typical"
     | "strong_representative_evidence"
     | "regular_activity"
     | "confirmed_activity";
   historical_note?: string | null;
   change_note?: string | null;
   pattern_note?: string | null;
+  regularity_note?: string | null;
+  seasonal_note?: string | null;
   representative_evidence?: RepresentativeEvidence | null;
 }
 
@@ -4590,6 +4681,17 @@ export interface PlaceActivityReportResponse {
   // Gate C -- Calm Daily Digest v1: a bounded, ranked, presentation-ready
   // composition of the facts above.
   digest: PlaceActivityReportDigest;
+  // Place / Yard Intelligence v2, Phase 13: the identical digest shape
+  // above, computed over the 7-usable-day recent window instead of this
+  // report's own requested period -- `null` when that window is not valid
+  // yet.
+  weekly_digest?: PlaceActivityReportDigest | null;
+  // Phase 7: coverage-normalized cross-Source (camera) activity comparison
+  // for this report's own period.
+  activity_by_source: PlaceActivityReportSourceActivity[];
+  // Phase 8: a bounded, lifetime-cumulative admission-yield comparison
+  // across Sources. Never a physical-placement instruction.
+  source_quality_signals: PlaceActivityReportSourceQualitySignal[];
 }
 
 export type WildlifeJournalOrder =
@@ -4780,6 +4882,14 @@ export interface WildlifeJournalHistoryResponse {
   // only. `null` when there is no confirmed observation at all. See
   // docs/biodiversity-place-intelligence-v1-contract.md.
   place_context?: TaxonPlaceContext | null;
+  // Place / Yard Intelligence v2 -- the identical per-taxon shapes
+  // PlaceActivityReportTaxonEntry carries, reused rather than re-derived.
+  // `null`/`[]` under the identical truth-contract condition as
+  // historical_status above. See docs/place-yard-intelligence-v2-contract.md.
+  regularity_narrative?: PlaceActivityReportRegularityNarrative | null;
+  seasonal_pattern?: PlaceActivityReportSeasonalPattern | null;
+  temporal_pattern?: PlaceActivityReportTemporalPattern | null;
+  habitat_associations: PlaceActivityReportHabitatAssociation[];
   activity_library_drilldown: WildlifeJournalDrilldown;
   gallery: WildlifeJournalGallery;
 }

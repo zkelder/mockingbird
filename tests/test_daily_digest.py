@@ -35,6 +35,13 @@ def _taxon(
     most_active_hour: int | None = None,
     has_representative_evidence: bool = False,
     has_strong_representative_evidence: bool = False,
+    # Place / Yard Intelligence v2 additions -- default to the exact same
+    # "not present" values as `DigestTaxonFact` itself, so every pre-existing
+    # call site of this builder keeps producing an identical fact.
+    regularity_state: str | None = None,
+    unusual_timing_in_period: bool = False,
+    seasonal_status: str | None = None,
+    is_in_typical_season: bool | None = None,
 ) -> DigestTaxonFact:
     return DigestTaxonFact(
         label=label,
@@ -51,6 +58,10 @@ def _taxon(
         most_active_hour=most_active_hour,
         has_representative_evidence=has_representative_evidence,
         has_strong_representative_evidence=has_strong_representative_evidence,
+        regularity_state=regularity_state,
+        unusual_timing_in_period=unusual_timing_in_period,
+        seasonal_status=seasonal_status,
+        is_in_typical_season=is_in_typical_season,
     )
 
 
@@ -419,3 +430,240 @@ def test_confirmed_wildlife_state_has_empty_message() -> None:
     digest = _digest([taxon])
     assert digest.coverage.state == "confirmed_wildlife"
     assert digest.coverage.message == ""
+
+
+# =============================================================================
+# Place / Yard Intelligence v2 -- three new highlight tiers
+# (`returned_after_absence`, `unusual_timing`, `seasonal_pattern_typical`),
+# their calm wording (`regularity_note`/`seasonal_note`), and the
+# `period_label` parameter that lets `compute_daily_digest` serve a weekly
+# digest without a second ranking module. See `_TIER_ORDER`/
+# `_highlight_reason`/`_REGULARITY_NOTES`/`_SEASONAL_TYPICAL_NOTE`/
+# `_classify_coverage` in daily_digest.py.
+# =============================================================================
+
+
+class TestPlaceYardIntelligenceV2:
+    # -- new tier: returned_after_absence ------------------------------------
+
+    def test_returned_after_absence_reason_and_note(self) -> None:
+        taxon = _taxon("house_finch", "House Finch", regularity_state="returned_after_absence")
+        digest = _digest([taxon])
+        highlight = digest.primary_highlights[0]
+        assert highlight.reason == "returned_after_absence"
+        assert highlight.regularity_note == "Back after a quiet stretch"
+
+    def test_returned_after_absence_outranks_meaningful_change(self) -> None:
+        # One taxon carries both signals at once -- `_highlight_reason` must
+        # pick `returned_after_absence` because it is checked (and ordered
+        # in `_TIER_ORDER`) ahead of `meaningful_change`, not because
+        # `meaningful_change` is absent. A second, plain-change taxon proves
+        # the ranking holds across taxa too, mirroring this file's existing
+        # two-taxon ranking style (see test_first_confirmed_record_outranks_
+        # high_count_regular above).
+        both_signals = _taxon(
+            "house_finch",
+            "House Finch",
+            regularity_state="returned_after_absence",
+            change_status="higher_recent_presence",
+        )
+        plain_change = _taxon("mourning_dove", "Mourning Dove", change_status="lower_recent_presence")
+        digest = _digest([both_signals, plain_change])
+        assert digest.primary_highlights[0].label == "house_finch"
+        assert digest.primary_highlights[0].reason == "returned_after_absence"
+        assert digest.primary_highlights[1].reason == "meaningful_change"
+
+    # -- new tier: unusual_timing ---------------------------------------------
+
+    def test_unusual_timing_alone_yields_unusual_timing_reason(self) -> None:
+        taxon = _taxon("house_finch", "House Finch", unusual_timing_in_period=True)
+        digest = _digest([taxon])
+        assert digest.primary_highlights[0].reason == "unusual_timing"
+
+    def test_meaningful_change_outranks_unusual_timing(self) -> None:
+        # Correct tier order: unusual_timing sits *below* meaningful_change
+        # in `_TIER_ORDER`, so a taxon with both signals must still resolve
+        # to meaningful_change.
+        taxon = _taxon(
+            "house_finch",
+            "House Finch",
+            unusual_timing_in_period=True,
+            change_status="higher_recent_presence",
+        )
+        digest = _digest([taxon])
+        assert digest.primary_highlights[0].reason == "meaningful_change"
+
+    # -- new tier: seasonal_pattern_typical -------------------------------------
+
+    def test_seasonal_pattern_typical_reason_and_note(self) -> None:
+        taxon = _taxon(
+            "house_finch",
+            "House Finch",
+            seasonal_status="established_pattern",
+            is_in_typical_season=True,
+        )
+        digest = _digest([taxon])
+        highlight = digest.primary_highlights[0]
+        assert highlight.reason == "seasonal_pattern_typical"
+        assert highlight.seasonal_note == "Typical for this time of year"
+
+    def test_seasonal_pattern_not_typical_season_does_not_trigger_tier(self) -> None:
+        # `established_pattern` alone is not enough -- `is_in_typical_season`
+        # must also hold. With neither signal true, this falls all the way
+        # through to the ordinary confirmed_activity tier.
+        taxon = _taxon(
+            "house_finch",
+            "House Finch",
+            seasonal_status="established_pattern",
+            is_in_typical_season=False,
+        )
+        digest = _digest([taxon])
+        highlight = digest.primary_highlights[0]
+        assert highlight.reason == "confirmed_activity"
+        assert highlight.seasonal_note is None
+
+    def test_non_established_seasonal_status_never_triggers_seasonal_tier(self) -> None:
+        # Paired with is_in_typical_season=True to prove it is genuinely
+        # `seasonal_status == "established_pattern"` gating this, not
+        # `is_in_typical_season` alone.
+        for status in ("insufficient_history", "no_pattern_detected", "developing_pattern"):
+            taxon = _taxon(
+                "house_finch",
+                "House Finch",
+                seasonal_status=status,
+                is_in_typical_season=True,
+            )
+            digest = _digest([taxon])
+            highlight = digest.primary_highlights[0]
+            assert highlight.reason != "seasonal_pattern_typical"
+            assert highlight.seasonal_note is None
+
+    # -- regularity wording coverage --------------------------------------------
+
+    def test_regularity_states_without_wording_produce_no_note(self) -> None:
+        # "occasional"/"regular"/"new"/"first_record" are deliberately absent
+        # from `_REGULARITY_NOTES` -- silence is correct for these, matching
+        # every other "ordinary case gets no badge" choice in this module.
+        for state in ("occasional", "regular", "new", "first_record"):
+            taxon = _taxon("house_finch", "House Finch", regularity_state=state)
+            digest = _digest([taxon])
+            assert digest.primary_highlights[0].regularity_note is None
+
+    # -- backward compatibility ---------------------------------------------------
+
+    def test_backward_compatible_defaults_match_pre_v2_behavior(self) -> None:
+        # Mirrors test_regular_species_gets_regular_here_wording above
+        # exactly, with all four new fields left at their defaults --
+        # proving they are fully inert when absent.
+        taxon = _taxon("house_finch", "House Finch", historical_status="regular")
+        digest = _digest([taxon])
+        highlight = digest.primary_highlights[0]
+        assert highlight.historical_note == "Regular here"
+        assert highlight.reason == "regular_activity"
+        assert highlight.regularity_note is None
+        assert highlight.seasonal_note is None
+
+    # -- weekly digest: period_label ----------------------------------------------
+
+    def test_period_label_this_week_no_data_message(self) -> None:
+        digest = _digest(
+            [],
+            maturity="no_data",
+            confirmed_wildlife_visit_count=0,
+            provisional_wildlife_visit_count=0,
+            unresolved_visit_count=0,
+            first_activity_at=None,
+            last_activity_at=None,
+            period_label="this week",
+        )
+        assert digest.coverage.message == "MockingBird hasn't started monitoring here yet this week."
+
+    def test_period_label_this_week_sparse_message(self) -> None:
+        taxon = _taxon("blue_jay", "Blue Jay", confirmed_visit_count=2)
+        digest = _digest(
+            [taxon],
+            maturity="sparse",
+            confirmed_wildlife_visit_count=2,
+            period_label="this week",
+        )
+        assert digest.coverage.message == "Monitoring coverage is still limited this week."
+
+    def test_period_label_this_week_unresolved_activity_message(self) -> None:
+        digest = _digest(
+            [],
+            confirmed_wildlife_visit_count=0,
+            provisional_wildlife_visit_count=0,
+            unresolved_visit_count=3,
+            period_label="this week",
+        )
+        assert digest.coverage.message == "Wildlife activity was recorded this week, but nothing has been reviewed yet."
+
+    def test_period_label_this_week_no_confirmed_activity_message(self) -> None:
+        digest = _digest(
+            [],
+            maturity="usable",
+            confirmed_wildlife_visit_count=0,
+            provisional_wildlife_visit_count=0,
+            unresolved_visit_count=0,
+            first_activity_at=None,
+            last_activity_at=None,
+            period_label="this week",
+        )
+        assert digest.coverage.message == "No reviewed wildlife records yet this week."
+
+    # -- period_label omitted: exact original "today" wording is unchanged -----
+
+    def test_default_period_label_still_says_today_no_data(self) -> None:
+        digest = _digest(
+            [],
+            maturity="no_data",
+            confirmed_wildlife_visit_count=0,
+            provisional_wildlife_visit_count=0,
+            unresolved_visit_count=0,
+            first_activity_at=None,
+            last_activity_at=None,
+        )
+        assert digest.coverage.message == "MockingBird hasn't started monitoring here yet today."
+
+    def test_default_period_label_still_says_today_sparse(self) -> None:
+        taxon = _taxon("blue_jay", "Blue Jay", confirmed_visit_count=2)
+        digest = _digest([taxon], maturity="sparse", confirmed_wildlife_visit_count=2)
+        assert digest.coverage.message == "Monitoring coverage is still limited today."
+
+    def test_default_period_label_still_says_today_unresolved_activity(self) -> None:
+        digest = _digest(
+            [],
+            confirmed_wildlife_visit_count=0,
+            provisional_wildlife_visit_count=0,
+            unresolved_visit_count=3,
+        )
+        assert digest.coverage.message == "Wildlife activity was recorded today, but nothing has been reviewed yet."
+
+    def test_default_period_label_still_says_today_no_confirmed_activity(self) -> None:
+        digest = _digest(
+            [],
+            maturity="usable",
+            confirmed_wildlife_visit_count=0,
+            provisional_wildlife_visit_count=0,
+            unresolved_visit_count=0,
+            first_activity_at=None,
+            last_activity_at=None,
+        )
+        assert digest.coverage.message == "No reviewed wildlife records yet today."
+
+    # -- determinism ----------------------------------------------------------
+
+    def test_new_fields_combination_is_deterministic_across_calls(self) -> None:
+        taxon = _taxon(
+            "house_finch",
+            "House Finch",
+            regularity_state="quieter_lately",
+            unusual_timing_in_period=True,
+            seasonal_status="established_pattern",
+            is_in_typical_season=True,
+        )
+        first = _digest([taxon])
+        second = _digest([taxon])
+        assert first.primary_highlights == second.primary_highlights
+        assert first.primary_highlights[0].regularity_note == "Quieter than usual lately"
+        assert first.primary_highlights[0].seasonal_note == "Typical for this time of year"

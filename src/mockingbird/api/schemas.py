@@ -5264,6 +5264,118 @@ class PlaceActivityReportTaxonHourActivity(BaseModel):
     reviewed_visit_count: int = Field(ge=0)
 
 
+class PlaceActivityReportRegularityNarrative(BaseModel):
+    """Place / Yard Intelligence v2, Phase 4: a synthesis of `historical_
+    status`/`change_status` into one small, richer state -- see
+    docs/place-yard-intelligence-v2-contract.md section 3.1. `basis`
+    discloses honestly whether a change signal was actually available;
+    never rendered as jargon in normal UI."""
+
+    state: Literal[
+        "first_record", "new", "occasional", "becoming_regular",
+        "regular", "quieter_lately", "returned_after_absence",
+    ]
+    basis: Literal["historical_status_only", "historical_and_change"]
+
+
+class PlaceActivityReportMonthPresence(BaseModel):
+    month: int = Field(ge=1, le=12)
+    usable_day_count: int = Field(ge=0)
+    presence_day_count: int = Field(ge=0)
+
+
+class PlaceActivityReportSeasonalPattern(BaseModel):
+    """Place / Yard Intelligence v2, Phase 5: a restrained, single-trailing-
+    year seasonality signal -- see docs/place-yard-intelligence-v2-contract.md
+    section 3.2. `"insufficient_history"` is the expected, honest status for
+    a young installation; `months` always carries all 12 entries so a
+    drill-down view can show the whole year's shape regardless of status."""
+
+    status: Literal[
+        "insufficient_history", "no_pattern_detected", "developing_pattern", "established_pattern"
+    ]
+    months: list[PlaceActivityReportMonthPresence] = Field(min_length=12, max_length=12)
+    typical_months: list[int] = Field(default_factory=list)
+    current_month_is_typical: bool | None = None
+
+
+class PlaceActivityReportTemporalPattern(BaseModel):
+    """Place / Yard Intelligence v2, Phase 6 + the day/night slice of Phase
+    10 -- see docs/place-yard-intelligence-v2-contract.md section 3.5.
+    `daylight_association`/`dominant_band` read `"insufficient_data"`/`None`
+    honestly when there is not enough evidence or solar is not configured;
+    never a fabricated guess."""
+
+    reviewed_visit_count: int = Field(ge=0)
+    day_count: int = Field(ge=0)
+    night_count: int = Field(ge=0)
+    unknown_daylight_count: int = Field(ge=0)
+    daylight_association: Literal[
+        "insufficient_data", "mostly_daytime", "mostly_nighttime", "spans_day_and_night"
+    ]
+    dominant_band: Literal[
+        "early_morning", "morning", "midday", "afternoon", "evening", "night"
+    ] | None = None
+    most_active_hour: int | None = Field(default=None, ge=0, le=23)
+
+
+class PlaceActivityReportHabitatAssociation(BaseModel):
+    """Place / Yard Intelligence v2, Phase 11: association language only,
+    never causal -- see docs/place-yard-intelligence-v2-contract.md section
+    3.4/3.6. Only entries clearing `conditional_association`'s own
+    minimum-sample floor on both sides are ever produced; see
+    `habitat_association.py`'s own docstring for why a true before/after
+    habitat-change comparison is not built here."""
+
+    subject_label: str
+    phenomenon: str
+    status: Literal[
+        "no_clear_association", "more_common_under_condition", "less_common_under_condition"
+    ]
+    presence_days_in_condition: int = Field(ge=0)
+    usable_days_in_condition: int = Field(ge=0)
+    presence_days_out_of_condition: int = Field(ge=0)
+    usable_days_out_of_condition: int = Field(ge=0)
+
+
+class PlaceActivityReportSourceActivity(BaseModel):
+    """Place / Yard Intelligence v2, Phase 7: one Source's (camera's)
+    coverage-normalized confirmed-wildlife activity for this report's own
+    period -- see docs/place-yard-intelligence-v2-contract.md section 3.6.
+    `visits_per_monitored_hour`/`data_sufficient` mirror Zone Insights' own
+    `>=2` healthy-hour floor exactly, reused rather than reinvented.
+    `monitored_seconds=None` is an honest "no durable exposure history yet"
+    signal, never a fabricated zero."""
+
+    source_id: str
+    source_name: str
+    confirmed_wildlife_visit_count: int = Field(ge=0)
+    monitored_seconds: float | None = Field(default=None, ge=0)
+    visits_per_monitored_hour: float | None = Field(default=None, ge=0)
+    data_sufficient: bool
+
+
+class PlaceActivityReportSourceQualitySignal(BaseModel):
+    """Place / Yard Intelligence v2, Phase 8: a bounded, cross-Source
+    admission-yield comparison -- see
+    docs/place-yard-intelligence-v2-contract.md section 3.6.
+    `candidates_attempted_count`/`candidates_created_count`/
+    `suppressed_count` are durable, lifetime-cumulative-since-activation
+    counters (never scoped to this report's own period -- see
+    `source_activity.py`'s own docstring for why the alternative, the live
+    counterfactual ledger, cannot answer this question durably at all).
+    Never a physical-placement instruction."""
+
+    source_id: str
+    source_name: str
+    candidates_attempted_count: int = Field(ge=0)
+    candidates_created_count: int = Field(ge=0)
+    suppressed_count: int = Field(ge=0)
+    admission_yield_ratio: float | None = Field(default=None, ge=0, le=1)
+    place_average_yield_ratio: float | None = Field(default=None, ge=0, le=1)
+    signal: Literal["insufficient_data", "typical_yield", "lower_yield_than_place_average"]
+
+
 class PlaceActivityReportTaxonEntry(BaseModel):
     """One represented taxon and its Visit-count backing. `confirmed_visit_
     count`/`provisional_visit_count` are always kept separate -- see "Report
@@ -5314,6 +5426,16 @@ class PlaceActivityReportTaxonEntry(BaseModel):
     # Today can never present old evidence as though captured today; see
     # "Time scope" in the contract doc.
     representative_evidence: RepresentativeEvidence | None = None
+    # Place / Yard Intelligence v2: all four `None`/`[]` under the identical
+    # truth-contract condition as `historical_status` above (never populated
+    # from a provisional SpeciesSuggestion alone), computed over the same
+    # bounded trailing historical window as `historical_status`/
+    # `change_status`/`zone_activity`/`hour_activity` -- not just today's
+    # period. See docs/place-yard-intelligence-v2-contract.md.
+    regularity_narrative: PlaceActivityReportRegularityNarrative | None = None
+    seasonal_pattern: PlaceActivityReportSeasonalPattern | None = None
+    temporal_pattern: PlaceActivityReportTemporalPattern | None = None
+    habitat_associations: list[PlaceActivityReportHabitatAssociation] = Field(default_factory=list)
 
 
 class PlaceActivityReportZoneActivity(BaseModel):
@@ -5439,7 +5561,10 @@ class PlaceActivityReportDigestSpeciesHighlight(BaseModel):
     last_activity_at: datetime
     reason: Literal[
         "first_confirmed_record",
+        "returned_after_absence",
         "meaningful_change",
+        "unusual_timing",
+        "seasonal_pattern_typical",
         "strong_representative_evidence",
         "regular_activity",
         "confirmed_activity",
@@ -5447,6 +5572,11 @@ class PlaceActivityReportDigestSpeciesHighlight(BaseModel):
     historical_note: str | None = None
     change_note: str | None = None
     pattern_note: str | None = None
+    # Place / Yard Intelligence v2: same wording-only-when-earned discipline
+    # as the three notes above -- see `daily_digest._REGULARITY_NOTES`/
+    # `_SEASONAL_TYPICAL_NOTE`.
+    regularity_note: str | None = None
+    seasonal_note: str | None = None
     # Reused unmodified from `PlaceActivityReportTaxonEntry.representative_
     # evidence` for this same taxon -- the digest never selects or ranks
     # evidence itself (Representative Species Evidence v1 remains the only
@@ -5634,6 +5764,23 @@ class PlaceActivityReportResponse(BaseModel):
     # Gate C -- Calm Daily Digest v1: a bounded, ranked, presentation-ready
     # composition of the facts above -- see `PlaceActivityReportDigest`.
     digest: PlaceActivityReportDigest
+    # Place / Yard Intelligence v2, Phase 13: the identical `digest` shape
+    # above, computed over the 7-usable-day recent window `change_windows`
+    # already establishes instead of this report's own requested period --
+    # so a caller can show "this week" alongside "today" regardless of what
+    # period was actually requested. See
+    # docs/place-yard-intelligence-v2-contract.md section 3.7.
+    weekly_digest: PlaceActivityReportDigest | None = None
+    # Phase 7: coverage-normalized cross-Source (camera) activity
+    # comparison, scoped to this report's own requested period -- never a
+    # persisted "Area" (see product-doctrine.md "Spatial doctrine"). Empty
+    # when no Source has enough monitored coverage to compare, or when
+    # fewer than two Sources are configured.
+    activity_by_source: list[PlaceActivityReportSourceActivity] = Field(default_factory=list)
+    # Phase 8: a bounded, lifetime-cumulative (never period-scoped --
+    # see `source_activity.py`'s own docstring) admission-yield comparison
+    # across Sources. Never a physical-placement instruction.
+    source_quality_signals: list[PlaceActivityReportSourceQualitySignal] = Field(default_factory=list)
 
 
 class WildlifeJournalOrder(str, Enum):
@@ -5900,6 +6047,16 @@ class WildlifeJournalHistoryResponse(BaseModel):
     # this response has at least one). See docs/biodiversity-place-
     # intelligence-v1-contract.md "Taxon Place History."
     place_context: TaxonPlaceContext | None = None
+    # Place / Yard Intelligence v2 -- the identical per-taxon shapes
+    # `PlaceActivityReportTaxonEntry` carries, reused rather than
+    # re-derived, so this label's own history page can never disagree with
+    # Today/the Place Report about its regularity/seasonal/temporal/habitat
+    # facts. `None`/`[]` under the identical truth-contract condition as
+    # `historical_status` above. See docs/place-yard-intelligence-v2-contract.md.
+    regularity_narrative: PlaceActivityReportRegularityNarrative | None = None
+    seasonal_pattern: PlaceActivityReportSeasonalPattern | None = None
+    temporal_pattern: PlaceActivityReportTemporalPattern | None = None
+    habitat_associations: list[PlaceActivityReportHabitatAssociation] = Field(default_factory=list)
     activity_library_drilldown: WildlifeJournalDrilldown
     gallery: WildlifeJournalGallery
 

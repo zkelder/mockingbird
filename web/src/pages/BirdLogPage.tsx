@@ -24,7 +24,14 @@ import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { changeStatusBadge, formatDateTime, historicalStatusBadge, modalityBadge } from "../utils";
+import {
+  changeStatusBadge,
+  formatDateTime,
+  historicalStatusBadge,
+  modalityBadge,
+  regularityNarrativeBadge,
+  seasonalPatternNote,
+} from "../utils";
 
 interface BirdLogPageProps {
   sources: CameraSource[];
@@ -816,15 +823,20 @@ export function BirdLogPage({
                   historicalStatusBadge(activeHistory.historical_status) ??
                   (activeHistory.is_regular ? { label: "Regular here", tone: "good" as const } : null);
                 if (!badge) return null;
+                const regularityBadge = regularityNarrativeBadge(activeHistory.regularity_narrative);
                 return (
                   <div className="section-heading">
                     <span className="meta-text">
                       Confirmed on {activeHistory.distinct_confirmed_usable_days} well-monitored days in this Place's recent history
                     </span>
                     <StatusPill label={badge.label} tone={badge.tone} />
+                    {regularityBadge ? <StatusPill label={regularityBadge.label} tone={regularityBadge.tone} /> : null}
                   </div>
                 );
               })()}
+              {seasonalPatternNote(activeHistory.seasonal_pattern) ? (
+                <p className="meta-text">{seasonalPatternNote(activeHistory.seasonal_pattern)}</p>
+              ) : null}
               {activeHistory.change_status ? (
                 <div className="section-heading">
                   <span className="meta-text">
@@ -889,6 +901,19 @@ export function BirdLogPage({
                         ))}
                       </ul>
                     ) : null}
+                    {/* Place / Yard Intelligence v2, Phase 11: distinct from
+                        the single-most-recent-sighting snapshot above -- a
+                        pattern across this taxon's whole reviewed history.
+                        Association language only, never a cause. */}
+                    {(activeHistory.habitat_associations ?? [])
+                      .filter((association) => association.status !== "no_clear_association")
+                      .map((association) => (
+                        <p className="meta-text" key={`${association.subject_label}-${association.phenomenon}`}>
+                          {association.status === "more_common_under_condition" ? "Observed more often" : "Observed less often"}
+                          {" while "}
+                          {association.phenomenon} was current ({association.subject_label})
+                        </p>
+                      ))}
                   </div>
                 </section>
               ) : null}

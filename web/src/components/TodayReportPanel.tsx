@@ -328,6 +328,14 @@ export function TodayReportPanel({
                           {highlight.change_note ? (
                             <StatusPill label={highlight.change_note} tone="quiet" />
                           ) : null}
+                          {/* Place / Yard Intelligence v2: same "only when earned" discipline
+                              as the two pills above -- most highlights show neither. */}
+                          {highlight.regularity_note ? (
+                            <StatusPill label={highlight.regularity_note} tone="quiet" />
+                          ) : null}
+                          {highlight.seasonal_note ? (
+                            <StatusPill label={highlight.seasonal_note} tone="quiet" />
+                          ) : null}
                         </div>
                         <div className="today-report-species-count">
                           <strong>{plural(highlight.confirmed_visit_count, "visit")}</strong>

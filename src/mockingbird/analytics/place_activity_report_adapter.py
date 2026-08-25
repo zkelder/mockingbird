@@ -20,9 +20,10 @@ testable unit, matching this milestone's architecture goals.
 
 from __future__ import annotations
 
-from typing import Mapping
+from typing import Mapping, NamedTuple, Sequence
 
 from mockingbird.analytics.daily_digest import (
+    DailyDigest,
     DigestCoverageSummary,
     DigestOtherActivity,
     DigestOtherSpecies,
@@ -54,6 +55,11 @@ from mockingbird.analytics.place_change_summary import (
     PlaceOverallChangeStatus,
     TaxonChangeStatus,
 )
+from mockingbird.analytics.regularity_narrative import RegularityNarrative
+from mockingbird.analytics.seasonal_pattern import MonthPresence, SeasonalPattern
+from mockingbird.analytics.temporal_pattern import TaxonTemporalPattern
+from mockingbird.analytics.habitat_association import TaxonHabitatAssociation
+from mockingbird.analytics.source_activity import SourceActivityEntry, SourceQualitySignal
 from mockingbird.api.schemas import (
     DashboardTodaySpecies,
     LabelCategory,
@@ -65,15 +71,22 @@ from mockingbird.api.schemas import (
     PlaceActivityReportDigestOtherActivity,
     PlaceActivityReportDigestOtherSpecies,
     PlaceActivityReportDigestSpeciesHighlight,
+    PlaceActivityReportHabitatAssociation,
     PlaceActivityReportHistoricalBaseline,
     PlaceActivityReportHourActivity,
+    PlaceActivityReportMonthPresence,
     PlaceActivityReportOverallChangeStatus,
+    PlaceActivityReportRegularityNarrative,
     PlaceActivityReportResponse,
+    PlaceActivityReportSeasonalPattern,
+    PlaceActivityReportSourceActivity,
+    PlaceActivityReportSourceQualitySignal,
     PlaceActivityReportTaxonChangeStatus,
     PlaceActivityReportTaxonEntry,
     PlaceActivityReportTaxonHistoricalStatus,
     PlaceActivityReportTaxonHourActivity,
     PlaceActivityReportTaxonZoneActivity,
+    PlaceActivityReportTemporalPattern,
     PlaceActivityReportZoneActivity,
     PlaceBiodiversitySummaryResponse,
     PlaceBiodiversityTaxonEntry,
@@ -84,6 +97,29 @@ from mockingbird.api.schemas import (
     StreamVisitSummary,
     TaxonomyLabel,
 )
+
+
+class HistoricalPlaceIntelligence(NamedTuple):
+    """Place / Yard Intelligence v2: the bundled return of
+    `ProductRepository._historical_place_baseline_and_species_statuses`,
+    defined here (not in `product_repository.py`) so this adapter module
+    can accept and reshape it without a circular import -- the repository
+    already imports this module, never the reverse.
+
+    A `NamedTuple` (not a bare tuple) deliberately: this method's several
+    call sites access fields by name, not position -- a bare tuple that
+    grew from 4 to 8 elements while every call site was being touched
+    anyway was judged too easy to silently mis-order.
+    """
+
+    baseline: HistoricalPlaceBaseline
+    species_historical_statuses: dict[str, SpeciesHistoricalStatus]
+    change_summary: PlaceChangeSummary
+    taxon_place_patterns: dict[str, TaxonPlacePattern]
+    regularity_narratives: dict[str, RegularityNarrative]
+    seasonal_patterns: dict[str, SeasonalPattern]
+    temporal_patterns: dict[str, TaxonTemporalPattern]
+    habitat_associations: dict[str, list[TaxonHabitatAssociation]]
 
 _RESOLUTION_BY_REVIEW_STATUS: dict[ReviewStatus, VisitResolution] = {
     ReviewStatus.needs_review: "needs_review",
@@ -111,6 +147,8 @@ def visit_fact_from_stream_visit_summary(
     *,
     confirmed_taxon: TaxonFact | None,
     provisional_taxon: TaxonFact | None,
+    source_id: str | None = None,
+    source_name: str | None = None,
 ) -> VisitFact:
     """Adapt one already-resolved `StreamVisitSummary` -- the same canonical
     per-Visit resolver output `ProductRepository.zone_insights` and
@@ -126,6 +164,13 @@ def visit_fact_from_stream_visit_summary(
     __post_init__` enforces this invariant, so a caller bug elsewhere raises
     loudly instead of silently fabricating confirmed truth for an
     unreviewed Visit.
+
+    `source_id`/`source_name` (Place / Yard Intelligence v2): `StreamVisit
+    Summary` itself carries no Source identity, so a caller that wants
+    `source_activity.py`'s per-Source comparison must resolve and pass these
+    itself (see `ProductRepository.place_activity_report`'s own
+    `stream_source_index`) -- both default to `None`, so every pre-existing
+    caller that has no reason to know a Visit's Source is unaffected.
     """
 
     resolution = _RESOLUTION_BY_REVIEW_STATUS[summary.review_status]
@@ -137,6 +182,8 @@ def visit_fact_from_stream_visit_summary(
         resolution=resolution,
         confirmed_taxon=confirmed_taxon if resolution == "reviewed" else None,
         provisional_taxon=provisional_taxon,
+        source_id=source_id,
+        source_name=source_name,
     )
 
 
@@ -217,6 +264,65 @@ def _taxon_hour_activity_response(
     )
 
 
+def _regularity_narrative_response(
+    narrative: RegularityNarrative | None,
+) -> PlaceActivityReportRegularityNarrative | None:
+    if narrative is None:
+        return None
+    return PlaceActivityReportRegularityNarrative(state=narrative.state, basis=narrative.basis)
+
+
+def _month_presence_response(month: MonthPresence) -> PlaceActivityReportMonthPresence:
+    return PlaceActivityReportMonthPresence(
+        month=month.month,
+        usable_day_count=month.usable_day_count,
+        presence_day_count=month.presence_day_count,
+    )
+
+
+def _seasonal_pattern_response(
+    pattern: SeasonalPattern | None,
+) -> PlaceActivityReportSeasonalPattern | None:
+    if pattern is None:
+        return None
+    return PlaceActivityReportSeasonalPattern(
+        status=pattern.status,
+        months=[_month_presence_response(month) for month in pattern.months],
+        typical_months=list(pattern.typical_months),
+        current_month_is_typical=pattern.current_month_is_typical,
+    )
+
+
+def _temporal_pattern_response(
+    pattern: TaxonTemporalPattern | None,
+) -> PlaceActivityReportTemporalPattern | None:
+    if pattern is None:
+        return None
+    return PlaceActivityReportTemporalPattern(
+        reviewed_visit_count=pattern.reviewed_visit_count,
+        day_count=pattern.day_count,
+        night_count=pattern.night_count,
+        unknown_daylight_count=pattern.unknown_daylight_count,
+        daylight_association=pattern.daylight_association,
+        dominant_band=pattern.dominant_band,
+        most_active_hour=pattern.most_active_hour,
+    )
+
+
+def _habitat_association_response(
+    association: TaxonHabitatAssociation,
+) -> PlaceActivityReportHabitatAssociation:
+    return PlaceActivityReportHabitatAssociation(
+        subject_label=association.subject_label,
+        phenomenon=association.phenomenon,
+        status=association.association.status,
+        presence_days_in_condition=association.association.presence_days_in_condition,
+        usable_days_in_condition=association.association.usable_days_in_condition,
+        presence_days_out_of_condition=association.association.presence_days_out_of_condition,
+        usable_days_out_of_condition=association.association.usable_days_out_of_condition,
+    )
+
+
 def _taxon_entry_response(
     entry: TaxonReportEntry,
     *,
@@ -224,6 +330,10 @@ def _taxon_entry_response(
     change_status: TaxonChangeStatus | None,
     place_pattern: TaxonPlacePattern | None,
     representative_evidence: RepresentativeEvidence | None,
+    regularity_narrative: RegularityNarrative | None = None,
+    seasonal_pattern: SeasonalPattern | None = None,
+    temporal_pattern: TaxonTemporalPattern | None = None,
+    habitat_associations: list[TaxonHabitatAssociation] | None = None,
 ) -> PlaceActivityReportTaxonEntry:
     return PlaceActivityReportTaxonEntry(
         label=entry.label,
@@ -267,6 +377,16 @@ def _taxon_entry_response(
             else None
         ),
         representative_evidence=representative_evidence,
+        # Place / Yard Intelligence v2: all four `None`/`[]` under the
+        # identical truth-contract condition as `historical_status` above.
+        regularity_narrative=_regularity_narrative_response(regularity_narrative),
+        seasonal_pattern=_seasonal_pattern_response(seasonal_pattern),
+        temporal_pattern=_temporal_pattern_response(temporal_pattern),
+        habitat_associations=(
+            [_habitat_association_response(association) for association in habitat_associations]
+            if habitat_associations is not None
+            else []
+        ),
     )
 
 
@@ -277,6 +397,9 @@ def _digest_taxon_fact(
     change_status: TaxonChangeStatus | None,
     place_pattern: TaxonPlacePattern | None,
     representative_evidence: RepresentativeEvidence | None,
+    regularity_narrative: RegularityNarrative | None = None,
+    seasonal_pattern: SeasonalPattern | None = None,
+    unusual_timing_in_period: bool = False,
 ) -> DigestTaxonFact:
     """Gate C -- Calm Daily Digest v1: build one `DigestTaxonFact` from the
     exact same per-taxon facts `_taxon_entry_response` above already
@@ -313,6 +436,14 @@ def _digest_taxon_fact(
         has_strong_representative_evidence=(
             representative_evidence is not None
             and representative_evidence.evidence.resolution_provenance == "synchronized"
+        ),
+        # Place / Yard Intelligence v2: same truth-contract condition as
+        # `historical_status`/`change_status` above.
+        regularity_state=regularity_narrative.state if regularity_narrative is not None else None,
+        unusual_timing_in_period=unusual_timing_in_period,
+        seasonal_status=seasonal_pattern.status if seasonal_pattern is not None else None,
+        is_in_typical_season=(
+            seasonal_pattern.current_month_is_typical if seasonal_pattern is not None else None
         ),
     )
 
@@ -423,16 +554,43 @@ def _historical_baseline_response(
     )
 
 
+def _source_activity_response(entry: SourceActivityEntry) -> PlaceActivityReportSourceActivity:
+    return PlaceActivityReportSourceActivity(
+        source_id=entry.source_id,
+        source_name=entry.source_name,
+        confirmed_wildlife_visit_count=entry.confirmed_wildlife_visit_count,
+        monitored_seconds=entry.monitored_seconds,
+        visits_per_monitored_hour=entry.visits_per_monitored_hour,
+        data_sufficient=entry.data_sufficient,
+    )
+
+
+def _source_quality_signal_response(
+    signal: SourceQualitySignal,
+) -> PlaceActivityReportSourceQualitySignal:
+    return PlaceActivityReportSourceQualitySignal(
+        source_id=signal.source_id,
+        source_name=signal.source_name,
+        candidates_attempted_count=signal.candidates_attempted_count,
+        candidates_created_count=signal.candidates_created_count,
+        suppressed_count=signal.suppressed_count,
+        admission_yield_ratio=signal.admission_yield_ratio,
+        place_average_yield_ratio=signal.place_average_yield_ratio,
+        signal=signal.signal,
+    )
+
+
 def place_activity_report_response(
     report: PlaceActivityReport,
     *,
     timezone_name: str,
     warnings: list[str],
-    historical_baseline: HistoricalPlaceBaseline,
-    species_historical_statuses: Mapping[str, SpeciesHistoricalStatus],
-    change_summary: PlaceChangeSummary,
-    taxon_place_patterns: Mapping[str, TaxonPlacePattern],
+    historical_place_intelligence: HistoricalPlaceIntelligence,
     representative_evidence: Mapping[str, RepresentativeEvidence],
+    unusual_timing_by_label: Mapping[str, bool] = {},
+    activity_by_source: Sequence[SourceActivityEntry] = (),
+    source_quality_signals: Sequence[SourceQualitySignal] = (),
+    weekly_report: PlaceActivityReport | None = None,
 ) -> PlaceActivityReportResponse:
     """Adapt one pure `PlaceActivityReport` into its typed API response.
     Field-for-field only -- see the module docstring. `report.coverage` is
@@ -442,34 +600,40 @@ def place_activity_report_response(
     honest fact from the caller omitting coverage entirely -- see
     `CoverageSummary`'s docstring).
 
-    `historical_baseline`/`species_historical_statuses` are required for the
-    same reason: `ProductRepository.place_activity_report` always computes
-    them (Historical Baseline Maturity + New/Regular Species v1; see
-    docs/historical-baseline-maturity-contract.md). `species_historical_
-    statuses` is keyed by taxon label; a `report.taxa` entry with no match
-    (a purely-provisional taxon, never authoritatively confirmed) correctly
-    gets `historical_status=None` -- see `_taxon_entry_response`.
-
-    `change_summary` is required for the identical reason (Gate C --
-    Meaningful Change Detection / Baseline Comparison v1; see
-    docs/meaningful-change-detection-contract.md); `change_summary.taxa` is
-    matched to `report.taxa` by taxon label the same way `species_
-    historical_statuses` already is.
-
-    `taxon_place_patterns` is required for the identical reason again (Gate
-    C -- Per-Species Zone + Time Pattern Intelligence v1; see "Per-species
-    Zone and time patterns" in docs/place-activity-report-contract.md),
-    keyed by taxon label the same way; a `report.taxa` entry with no match
-    (never authoritatively confirmed anywhere in the historical window)
-    correctly gets an empty/absent pattern -- see `_taxon_entry_response`.
+    `historical_place_intelligence` bundles everything `ProductRepository.
+    _historical_place_baseline_and_species_statuses` always computes
+    (Historical Baseline Maturity + New/Regular Species v1; Gate C --
+    Meaningful Change Detection v1; Gate C -- Per-Species Zone + Time
+    Pattern Intelligence v1; and, Place / Yard Intelligence v2, per-taxon
+    regularity/seasonal/temporal/habitat facts -- see
+    docs/place-yard-intelligence-v2-contract.md), every field keyed by
+    taxon label. A `report.taxa` entry with no match in any of these
+    mappings (a purely-provisional taxon, never authoritatively confirmed)
+    correctly gets `None`/`[]` for that fact -- see `_taxon_entry_response`.
 
     `representative_evidence` (Gate C -- Representative Species Evidence v1;
     see docs/representative-species-evidence-contract.md) is keyed by taxon
-    label the same way as the three mappings above; a `report.taxa` entry
-    with no match (no confirmed Visit this period had safe, present
-    evidence -- including every purely-provisional taxon) correctly gets
-    `representative_evidence=None`, never an error and never a dropped
-    taxon.
+    label the same way; a `report.taxa` entry with no match (no confirmed
+    Visit this period had safe, present evidence -- including every
+    purely-provisional taxon) correctly gets `representative_evidence=None`,
+    never an error and never a dropped taxon.
+
+    `unusual_timing_by_label`/`activity_by_source`/`source_quality_signals`
+    (Place / Yard Intelligence v2, Phases 6/7/8) are all optional and
+    default to "nothing computed" -- a caller that does not compute them
+    (there is none today; `ProductRepository.place_activity_report` always
+    does) gets a completely valid, honest response with those facts simply
+    absent, never an error.
+
+    `weekly_report` (Phase 13): an already-computed `PlaceActivityReport`
+    for the 7-usable-day recent window (built the identical way `report`
+    itself was, just over different period bounds -- see
+    `ProductRepository.place_activity_report`'s own weekly-window query),
+    or `None` when that window is not valid yet (mirrors `change_summary.
+    windows.is_valid`). Reuses the *same* per-taxon historical/change/
+    pattern/regularity/seasonal facts and `compute_daily_digest` -- no
+    second ranking module -- with `period_label="this week"` so a week's
+    worth of activity is never worded as "today."
     """
 
     if report.coverage is None:
@@ -478,49 +642,70 @@ def place_activity_report_response(
             "ProductRepository.place_activity_report must always compute one."
         )
 
+    species_historical_statuses = historical_place_intelligence.species_historical_statuses
+    change_summary = historical_place_intelligence.change_summary
+    taxon_place_patterns = historical_place_intelligence.taxon_place_patterns
+    regularity_narratives = historical_place_intelligence.regularity_narratives
+    seasonal_patterns = historical_place_intelligence.seasonal_patterns
+    temporal_patterns = historical_place_intelligence.temporal_patterns
+    habitat_associations = historical_place_intelligence.habitat_associations
     change_status_by_label = {status.taxon.label: status for status in change_summary.taxa}
     assert change_summary.overall is not None
 
-    # Gate C -- Calm Daily Digest v1: composed from the exact same per-taxon
-    # facts gathered for `taxa` above, plus this report's own honest
-    # report-level accounting -- never a second query, never a second truth
-    # resolution. See mockingbird.analytics.daily_digest's module docstring.
-    digest = compute_daily_digest(
-        [
-            _digest_taxon_fact(
-                entry,
-                historical_status=species_historical_statuses.get(entry.label),
-                change_status=change_status_by_label.get(entry.label),
-                place_pattern=taxon_place_patterns.get(entry.label),
-                representative_evidence=representative_evidence.get(entry.label),
-            )
-            for entry in report.taxa
-        ],
-        period_start_at=report.period_start_at,
-        period_end_at=report.period_end_at,
-        generated_at=report.generated_at,
-        maturity=report.maturity,
-        confirmed_wildlife_visit_count=report.confirmed_wildlife_visit_count,
-        provisional_wildlife_visit_count=report.provisional_wildlife_visit_count,
-        unresolved_visit_count=report.unresolved_visit_count,
-        first_activity_at=report.first_activity_at,
-        last_activity_at=report.last_activity_at,
-        place_change_status=change_summary.overall.status,
-    )
-    digest_response = PlaceActivityReportDigest(
-        coverage=_digest_coverage_response(digest.coverage),
-        primary_highlights=[
-            _digest_highlight_response(
-                highlight, representative_evidence=representative_evidence.get(highlight.label)
-            )
-            for highlight in digest.primary_highlights
-        ],
-        other_species=[_digest_other_species_response(entry) for entry in digest.other_species],
-        other_activity=_digest_other_activity_response(digest.other_activity),
-        place_change_note=digest.place_change_note,
-        first_activity_at=digest.first_activity_at,
-        last_activity_at=digest.last_activity_at,
-        confirmed_wildlife_visit_count=digest.confirmed_wildlife_visit_count,
+    # Gate C -- Calm Daily Digest v1 / Place / Yard Intelligence v2, Phase
+    # 13: one shared builder so "today" and "this week" can never diverge
+    # in how a taxon's historical/change/pattern/regularity/seasonal facts
+    # are looked up -- only which report's own taxa/counts/period feed it.
+    def build_digest(source_report: PlaceActivityReport, *, period_label: str) -> DailyDigest:
+        return compute_daily_digest(
+            [
+                _digest_taxon_fact(
+                    entry,
+                    historical_status=species_historical_statuses.get(entry.label),
+                    change_status=change_status_by_label.get(entry.label),
+                    place_pattern=taxon_place_patterns.get(entry.label),
+                    representative_evidence=representative_evidence.get(entry.label),
+                    regularity_narrative=regularity_narratives.get(entry.label),
+                    seasonal_pattern=seasonal_patterns.get(entry.label),
+                    unusual_timing_in_period=unusual_timing_by_label.get(entry.label, False),
+                )
+                for entry in source_report.taxa
+            ],
+            period_start_at=source_report.period_start_at,
+            period_end_at=source_report.period_end_at,
+            generated_at=source_report.generated_at,
+            maturity=source_report.maturity,
+            confirmed_wildlife_visit_count=source_report.confirmed_wildlife_visit_count,
+            provisional_wildlife_visit_count=source_report.provisional_wildlife_visit_count,
+            unresolved_visit_count=source_report.unresolved_visit_count,
+            first_activity_at=source_report.first_activity_at,
+            last_activity_at=source_report.last_activity_at,
+            place_change_status=change_summary.overall.status,
+            period_label=period_label,
+        )
+
+    def digest_response(digest: DailyDigest) -> PlaceActivityReportDigest:
+        return PlaceActivityReportDigest(
+            coverage=_digest_coverage_response(digest.coverage),
+            primary_highlights=[
+                _digest_highlight_response(
+                    highlight, representative_evidence=representative_evidence.get(highlight.label)
+                )
+                for highlight in digest.primary_highlights
+            ],
+            other_species=[_digest_other_species_response(entry) for entry in digest.other_species],
+            other_activity=_digest_other_activity_response(digest.other_activity),
+            place_change_note=digest.place_change_note,
+            first_activity_at=digest.first_activity_at,
+            last_activity_at=digest.last_activity_at,
+            confirmed_wildlife_visit_count=digest.confirmed_wildlife_visit_count,
+        )
+
+    digest = build_digest(report, period_label="today")
+    weekly_digest_response = (
+        digest_response(build_digest(weekly_report, period_label="this week"))
+        if weekly_report is not None
+        else None
     )
 
     return PlaceActivityReportResponse(
@@ -545,6 +730,10 @@ def place_activity_report_response(
                 change_status=change_status_by_label.get(entry.label),
                 place_pattern=taxon_place_patterns.get(entry.label),
                 representative_evidence=representative_evidence.get(entry.label),
+                regularity_narrative=regularity_narratives.get(entry.label),
+                seasonal_pattern=seasonal_patterns.get(entry.label),
+                temporal_pattern=temporal_patterns.get(entry.label),
+                habitat_associations=habitat_associations.get(entry.label),
             )
             for entry in report.taxa
         ],
@@ -557,11 +746,16 @@ def place_activity_report_response(
         activity_by_hour=[_hour_entry_response(entry) for entry in report.activity_by_hour],
         coverage=_coverage_response(report.coverage),
         maturity=report.maturity,
-        historical_baseline=_historical_baseline_response(historical_baseline),
+        historical_baseline=_historical_baseline_response(historical_place_intelligence.baseline),
         change_windows=_change_windows_response(change_summary.windows),
         overall_change_status=_overall_change_status_response(change_summary.overall),
         warnings=warnings,
-        digest=digest_response,
+        digest=digest_response(digest),
+        weekly_digest=weekly_digest_response,
+        activity_by_source=[_source_activity_response(entry) for entry in activity_by_source],
+        source_quality_signals=[
+            _source_quality_signal_response(signal) for signal in source_quality_signals
+        ],
     )
 
 

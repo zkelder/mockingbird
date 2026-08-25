@@ -781,6 +781,10 @@ def test_api_serialization_contract_exposes_only_documented_fields(
         "overall_change_status",
         "warnings",
         "digest",
+        # Place / Yard Intelligence v2.
+        "weekly_digest",
+        "activity_by_source",
+        "source_quality_signals",
     }
     assert body["total_visit_count"] == 1
     # A full day of durable exposure on both Streams is well past the
@@ -804,8 +808,25 @@ def test_api_serialization_contract_exposes_only_documented_fields(
         "most_active_zone",
         "most_active_hour",
         "representative_evidence",
+        # Place / Yard Intelligence v2.
+        "regularity_narrative",
+        "seasonal_pattern",
+        "temporal_pattern",
+        "habitat_associations",
     }
     assert taxon["label"] == "northern_cardinal"
+    # Place / Yard Intelligence v2: identical truth-contract condition as
+    # historical_status/change_status above -- "first_record" passes
+    # through the regularity synthesis unchanged (see `regularity_
+    # narrative.compute_regularity_narrative`'s own decision table), never
+    # overridden by the equally-insufficient change_status. No phenology
+    # ever recorded in this fixture, so no habitat association is possible.
+    assert taxon["regularity_narrative"] == {
+        "state": "first_record", "basis": "historical_status_only",
+    }
+    assert taxon["seasonal_pattern"]["status"] == "insufficient_history"
+    assert len(taxon["seasonal_pattern"]["months"]) == 12
+    assert taxon["habitat_associations"] == []
     assert taxon["category"] == "bird"
     # This fixture's Visit has no evidence at all (`_add_visit` never
     # attaches media) -- a completely valid, non-error state; see "No-image
@@ -920,6 +941,9 @@ def test_api_serialization_contract_exposes_only_documented_fields(
         "change_note",
         "pattern_note",
         "representative_evidence",
+        # Place / Yard Intelligence v2.
+        "regularity_note",
+        "seasonal_note",
     }
     assert highlight["label"] == "northern_cardinal"
     # Insufficient Place-wide baseline (asserted above) -> "first_record"
@@ -934,6 +958,12 @@ def test_api_serialization_contract_exposes_only_documented_fields(
     # most_active_zone/most_active_hour above) -> no fabricated pattern.
     assert highlight["pattern_note"] is None
     assert highlight["representative_evidence"] is None
+    # Place / Yard Intelligence v2: "first_record" has no entry in
+    # `_REGULARITY_NOTES` (its own historical_note above already says the
+    # calm equivalent), and "insufficient_history" never triggers the
+    # seasonal note.
+    assert highlight["regularity_note"] is None
+    assert highlight["seasonal_note"] is None
     assert body["digest"]["other_species"] == []
     assert body["digest"]["other_activity"] == {
         "provisional_visit_count": 0,

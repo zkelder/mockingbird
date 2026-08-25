@@ -95,9 +95,30 @@ PlaceChangeStatusValue = Literal[
 ]
 ReportMaturity = Literal["no_data", "sparse", "usable"]
 
+# Place / Yard Intelligence v2: mirrors `regularity_narrative.
+# RegularityStateValue` / `seasonal_pattern.SeasonalPatternStatus` by
+# convention, exactly like the three re-declarations above -- this module
+# stays dependency-free rather than importing two more sibling modules for
+# two Literal aliases.
+RegularityStateValue = Literal[
+    "first_record",
+    "new",
+    "occasional",
+    "becoming_regular",
+    "regular",
+    "quieter_lately",
+    "returned_after_absence",
+]
+SeasonalPatternStatusValue = Literal[
+    "insufficient_history", "no_pattern_detected", "developing_pattern", "established_pattern"
+]
+
 HighlightReason = Literal[
     "first_confirmed_record",
+    "returned_after_absence",
     "meaningful_change",
+    "unusual_timing",
+    "seasonal_pattern_typical",
     "strong_representative_evidence",
     "regular_activity",
     "confirmed_activity",
@@ -110,9 +131,18 @@ MAX_PRIMARY_HIGHLIGHTS = 5
 
 # Fixed priority order -- see the module docstring's "Ranking" section. A
 # tuple (not a dict) so `.index(...)` doubles as the numeric sort rank.
+# Place / Yard Intelligence v2 inserted three new tiers (`returned_after_
+# absence`, `unusual_timing`, `seasonal_pattern_typical`) among the
+# original five, ranked by how notable/actionable each signal is: a
+# comeback after a real gap is more worth surfacing than a routine
+# recurring change, and a single surprisingly-timed Visit is more worth a
+# reader's attention than a merely-strong photo.
 _TIER_ORDER: tuple[HighlightReason, ...] = (
     "first_confirmed_record",
+    "returned_after_absence",
     "meaningful_change",
+    "unusual_timing",
+    "seasonal_pattern_typical",
     "strong_representative_evidence",
     "regular_activity",
     "confirmed_activity",
@@ -140,6 +170,26 @@ _CHANGE_NOTES: dict[ChangeStatusValue, str] = {
     "higher_recent_presence": "Recorded more often recently",
     "lower_recent_presence": "Recorded less often recently",
 }
+
+# Place / Yard Intelligence v2: `regularity_narrative`'s synthesized states
+# that are not already fully covered by `_HISTORICAL_NOTES`/`_CHANGE_NOTES`
+# above. "occasional"/"regular"/"new"/"first_record"/"seen_before"
+# deliberately have no entry here -- either the historical-status note
+# above already says the calm equivalent, or (for "seen_before"/
+# "occasional"/plain "regular") silence is correct, matching every other
+# "ordinary case gets no badge" choice in this module.
+_REGULARITY_NOTES: dict[RegularityStateValue, str] = {
+    "becoming_regular": "Becoming a regular visitor",
+    "quieter_lately": "Quieter than usual lately",
+    "returned_after_absence": "Back after a quiet stretch",
+}
+
+# Rendered only when `seasonal_status == "established_pattern" and
+# is_in_typical_season` -- see `_highlight_reason`/`_compose_highlight`
+# below. Every other seasonal state (including the common, honest
+# "insufficient_history" case) renders nothing, matching this module's
+# universal "an unsupported claim gets silence, not a hedge" discipline.
+_SEASONAL_TYPICAL_NOTE = "Typical for this time of year"
 
 # I.11 "Developing installation" -- reused verbatim from the accepted
 # Place-wide change message (`overallChangeMessage` in TodayReportPanel.tsx)
@@ -243,6 +293,26 @@ class DigestTaxonFact:
     # `representative_evidence.py`. Used only for tier-3 ranking below;
     # never inferred from pixel counts or presence alone.
     has_strong_representative_evidence: bool = False
+    # Place / Yard Intelligence v2 additions, all optional/default-safe so
+    # every pre-existing caller/test keeps working unchanged. `None` under
+    # the identical truth-contract condition as `historical_status`/
+    # `change_status` above -- these are synthesized *from* those two
+    # facts (see `regularity_narrative.compute_regularity_narrative`), so
+    # they can never be present when the inputs that would produce them
+    # are absent.
+    regularity_state: RegularityStateValue | None = None
+    # Whether at least one of this taxon's Visits within the digest's own
+    # period had a timing `temporal_pattern.compare_visit_timing` judged
+    # "unusual" against this taxon's own established time-of-day pattern.
+    # Named "in_period", not "today", because the identical `DigestTaxonFact`
+    # shape is reused unmodified for the weekly digest (Phase 13) -- see
+    # the module docstring's "Weekly digest" note below.
+    unusual_timing_in_period: bool = False
+    seasonal_status: SeasonalPatternStatusValue | None = None
+    # `None` unless `seasonal_status == "established_pattern"` -- mirrors
+    # `seasonal_pattern.SeasonalPattern.current_month_is_typical`'s own
+    # identical guard.
+    is_in_typical_season: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -265,6 +335,9 @@ class DigestSpeciesHighlight:
     change_note: str | None
     pattern_note: str | None
     has_representative_evidence: bool
+    # Place / Yard Intelligence v2 additions -- see `DigestTaxonFact` above.
+    regularity_note: str | None = None
+    seasonal_note: str | None = None
 
 
 @dataclass(frozen=True)
@@ -343,8 +416,14 @@ class DailyDigest:
 def _highlight_reason(taxon: DigestTaxonFact) -> HighlightReason:
     if taxon.historical_status in ("new", "first_record"):
         return "first_confirmed_record"
+    if taxon.regularity_state == "returned_after_absence":
+        return "returned_after_absence"
     if taxon.change_status in ("higher_recent_presence", "lower_recent_presence"):
         return "meaningful_change"
+    if taxon.unusual_timing_in_period:
+        return "unusual_timing"
+    if taxon.seasonal_status == "established_pattern" and taxon.is_in_typical_season:
+        return "seasonal_pattern_typical"
     if taxon.has_strong_representative_evidence:
         return "strong_representative_evidence"
     if taxon.historical_status == "regular":
@@ -367,6 +446,14 @@ def _compose_highlight(taxon: DigestTaxonFact) -> DigestSpeciesHighlight:
         _HISTORICAL_NOTES.get(taxon.historical_status) if taxon.historical_status else None
     )
     change_note = _CHANGE_NOTES.get(taxon.change_status) if taxon.change_status else None
+    regularity_note = (
+        _REGULARITY_NOTES.get(taxon.regularity_state) if taxon.regularity_state else None
+    )
+    seasonal_note = (
+        _SEASONAL_TYPICAL_NOTE
+        if taxon.seasonal_status == "established_pattern" and taxon.is_in_typical_season
+        else None
+    )
     return DigestSpeciesHighlight(
         label=taxon.label,
         display_name=taxon.display_name,
@@ -381,6 +468,8 @@ def _compose_highlight(taxon: DigestTaxonFact) -> DigestSpeciesHighlight:
         change_note=change_note,
         pattern_note=_pattern_note(taxon.most_active_zone_name, taxon.most_active_hour),
         has_representative_evidence=taxon.has_representative_evidence,
+        regularity_note=regularity_note,
+        seasonal_note=seasonal_note,
     )
 
 
@@ -390,23 +479,28 @@ def _classify_coverage(
     confirmed_wildlife_visit_count: int,
     provisional_wildlife_visit_count: int,
     unresolved_visit_count: int,
+    period_label: str,
 ) -> DigestCoverageSummary:
     # Low-maturity states are decided first and unconditionally on coverage
     # alone -- see the module docstring's "Coverage semantics" section and
     # "I.18 sparse monitoring suppresses overconfident language": even a
     # day with real confirmed activity gets the calm coverage-limited
     # sentence here, never a claim implying the whole day was observed.
+    # `period_label` (Place / Yard Intelligence v2) lets the identical
+    # weekly-digest call (Phase 13) say "this week" instead of a
+    # word-for-word "today" claim about a week-long period -- see
+    # `compute_daily_digest`'s own docstring.
     if maturity == "no_data":
         return DigestCoverageSummary(
             state="no_monitoring",
             maturity=maturity,
-            message="MockingBird hasn't started monitoring here yet today.",
+            message=f"MockingBird hasn't started monitoring here yet {period_label}.",
         )
     if maturity == "sparse":
         return DigestCoverageSummary(
             state="sparse_monitoring",
             maturity=maturity,
-            message="Monitoring coverage is still limited today.",
+            message=f"Monitoring coverage is still limited {period_label}.",
         )
 
     if confirmed_wildlife_visit_count > 0:
@@ -421,7 +515,7 @@ def _classify_coverage(
         return DigestCoverageSummary(
             state="unresolved_activity_only",
             maturity=maturity,
-            message="Wildlife activity was recorded today, but nothing has been reviewed yet.",
+            message=f"Wildlife activity was recorded {period_label}, but nothing has been reviewed yet.",
         )
 
     # Useful monitoring, genuinely zero wildlife activity of any kind --
@@ -430,7 +524,7 @@ def _classify_coverage(
     return DigestCoverageSummary(
         state="no_confirmed_activity",
         maturity=maturity,
-        message="No reviewed wildlife records yet today.",
+        message=f"No reviewed wildlife records yet {period_label}.",
     )
 
 
@@ -447,6 +541,7 @@ def compute_daily_digest(
     first_activity_at: datetime | None,
     last_activity_at: datetime | None,
     place_change_status: PlaceChangeStatusValue | None = None,
+    period_label: str = "today",
 ) -> DailyDigest:
     """Compute one deterministic `DailyDigest` from already-resolved report
     facts. `taxa` may include provisional-only and unresolved-adjacent
@@ -455,6 +550,19 @@ def compute_daily_digest(
     docstring's truth boundary. The five report-level count parameters
     should be the identical honest-accounting fields `PlaceActivityReport`
     itself already computes, not re-derived here.
+
+    **Weekly digest (Place / Yard Intelligence v2, Phase 13).** Nothing in
+    this function's ranking/highlight logic is calendar-day-specific --
+    `period_start_at`/`period_end_at` are already generic bounds, so a
+    caller may supply the 7-usable-day recent-window boundaries (the exact
+    window `place_change_summary` already establishes) plus the identical
+    `DigestTaxonFact` shape computed over that window instead of "today,"
+    and get a correct weekly digest with no new ranking module. The one
+    place calendar-day language leaked into this module's output is
+    `_classify_coverage`'s literal "today" wording -- `period_label`
+    (default `"today"`, fully backward compatible) exists solely to let a
+    weekly caller pass `"this week"` instead, so a week's worth of activity
+    is never mis-described as "today."
     """
 
     confirmed = [taxon for taxon in taxa if taxon.confirmed_visit_count > 0]
@@ -483,6 +591,7 @@ def compute_daily_digest(
         confirmed_wildlife_visit_count=confirmed_wildlife_visit_count,
         provisional_wildlife_visit_count=provisional_wildlife_visit_count,
         unresolved_visit_count=unresolved_visit_count,
+        period_label=period_label,
     )
 
     place_change_note = (
@@ -520,6 +629,8 @@ __all__ = [
     "HighlightReason",
     "HistoricalStatusValue",
     "PlaceChangeStatusValue",
+    "RegularityStateValue",
     "ReportMaturity",
+    "SeasonalPatternStatusValue",
     "compute_daily_digest",
 ]

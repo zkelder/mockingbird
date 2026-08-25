@@ -1,6 +1,8 @@
 import type {
   CameraHealthState,
   ListEvidenceModality,
+  PlaceActivityReportRegularityNarrative,
+  PlaceActivityReportSeasonalPattern,
   PlaceActivityReportTaxonChangeStatus,
   SpeciesHistoricalStatus,
 } from "./api/types";
@@ -163,6 +165,42 @@ export function historicalStatusBadge(
     default:
       return null;
   }
+}
+
+/**
+ * Place / Yard Intelligence v2: same "only when it says something the
+ * historical/change badges above did not already say" discipline --
+ * `"first_record"`/`"new"`/`"occasional"`/plain `"regular"` render nothing
+ * here (their equivalent already shows via `historicalStatusBadge`/
+ * `changeStatusBadge`), so a taxon never carries a redundant third badge
+ * saying the same thing twice.
+ */
+export function regularityNarrativeBadge(
+  narrative: PlaceActivityReportRegularityNarrative | null | undefined,
+): { label: string; tone: "good" | "quiet" } | null {
+  switch (narrative?.state) {
+    case "becoming_regular":
+      return { label: "Becoming a regular visitor", tone: "good" };
+    case "quieter_lately":
+      return { label: "Quieter than usual lately", tone: "quiet" };
+    case "returned_after_absence":
+      return { label: "Back after a quiet stretch", tone: "quiet" };
+    default:
+      return null;
+  }
+}
+
+/** `null` for every non-"established_pattern" status, including the
+ * common, honest "insufficient_history" case -- see `seasonal_pattern.py`'s
+ * own docstring for why that is the expected state for a young
+ * installation. */
+export function seasonalPatternNote(
+  pattern: PlaceActivityReportSeasonalPattern | null | undefined,
+): string | null {
+  if (pattern?.status !== "established_pattern") {
+    return null;
+  }
+  return pattern.current_month_is_typical ? "Typical for this time of year" : null;
 }
 
 export function formatDateTime(value: string): string {

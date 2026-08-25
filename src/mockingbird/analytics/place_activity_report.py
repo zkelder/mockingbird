@@ -127,6 +127,16 @@ class VisitFact:
     # two). See `test_confirmed_truth_overrides_a_stale_provisional_
     # suggestion` in tests/test_place_activity_report.py.
     provisional_taxon: TaxonFact | None = None
+    # Place / Yard Intelligence v2: which Source (camera) this Visit came
+    # from, added so `source_activity.py` can group an already-gathered
+    # `VisitFact` sequence by Source at zero additional queries -- mirrors
+    # `zone_id`/`zone_name` above exactly (a real durable identifier plus a
+    # display name, both optional so every pre-existing caller that never
+    # populates them keeps working unchanged). `None` means "not resolved by
+    # this caller," never "no Source" -- every real Visit has exactly one
+    # Source in the current architecture.
+    source_id: str | None = None
+    source_name: str | None = None
 
     def __post_init__(self) -> None:
         if self.resolution != "reviewed" and self.confirmed_taxon is not None:

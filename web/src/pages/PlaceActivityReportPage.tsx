@@ -7,6 +7,7 @@ import type {
   PlaceActivityReportOverallChangeStatus,
   PlaceActivityReportRequest,
   PlaceActivityReportResponse,
+  PlaceActivityReportSourceActivity,
   PlaceActivityReportTaxonEntry,
   PlaceActivityReportZoneActivity,
   PlaceBiodiversitySummaryResponse,
@@ -18,7 +19,14 @@ import { EmptyState } from "../components/EmptyState";
 import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { changeStatusBadge, formatDateTime, historicalStatusBadge, phenologyDateRange } from "../utils";
+import {
+  changeStatusBadge,
+  formatDateTime,
+  historicalStatusBadge,
+  phenologyDateRange,
+  regularityNarrativeBadge,
+  seasonalPatternNote,
+} from "../utils";
 
 /**
  * Everyday Discovery / Product Experience v2 (Phase G): the secondary
@@ -351,6 +359,41 @@ function ZoneActivityList({
   );
 }
 
+// Place / Yard Intelligence v2, Phase 7: coverage-normalized cross-Source
+// activity comparison, mirroring ZoneActivityList's own bar-list style. A
+// Source below the minimum-monitored-hours floor (`data_sufficient: false`)
+// still shows its raw confirmed count but never a fabricated rate, and
+// sorts after every sufficient Source (matching `compute_source_activity`'s
+// own ranking, which this list preserves rather than re-sorting).
+function SourceActivityList({ sources }: { sources: PlaceActivityReportSourceActivity[] }) {
+  const maxRate = sources.reduce((max, source) => Math.max(max, source.visits_per_monitored_hour ?? 0), 0);
+  return (
+    <div className="bar-list" aria-label="Wildlife activity by camera">
+      {sources.map((source) => (
+        <div className="bar-row" key={source.source_id}>
+          <span>{source.source_name}</span>
+          <div>
+            {source.data_sufficient && source.visits_per_monitored_hour !== null && source.visits_per_monitored_hour !== undefined ? (
+              <>
+                <i
+                  style={{
+                    width: `${maxRate > 0 ? Math.max((source.visits_per_monitored_hour / maxRate) * 100, 4) : 4}%`,
+                  }}
+                />
+                <strong>{source.visits_per_monitored_hour.toFixed(2)} / hour</strong>
+              </>
+            ) : (
+              <span className="meta-text">
+                {plural(source.confirmed_wildlife_visit_count, "visit")} · not enough monitoring to compare
+              </span>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // Mirrors BirdLogPage.tsx's private JournalThumbnail fallback behavior
 // (an honest "no image"/"heard" state, reusing its exact `.journal-
 // thumbnail-fallback`/`.journal-thumbnail-audio` styling) over this
@@ -391,7 +434,15 @@ function TaxonCard({
   const isConfirmed = taxon.confirmed_visit_count > 0;
   const historicalBadge = historicalStatusBadge(taxon.historical_status?.status);
   const changeBadge = changeStatusBadge(taxon.change_status);
+  const regularityBadge = regularityNarrativeBadge(taxon.regularity_narrative);
+  const seasonalNote = seasonalPatternNote(taxon.seasonal_pattern);
   const patternNote = taxonPatternNote(taxon);
+  // Place / Yard Intelligence v2, Phase 11: association language only,
+  // shown compactly (one line, first match) -- never a chart wall of every
+  // recorded phenomenon.
+  const habitatAssociation = (taxon.habitat_associations ?? []).find(
+    (association) => association.status !== "no_clear_association",
+  );
   const visitId = taxon.representative_evidence?.visit_id;
   return (
     <article className="journal-label-card">
@@ -418,6 +469,7 @@ function TaxonCard({
             )}
             {historicalBadge ? <StatusPill label={historicalBadge.label} tone={historicalBadge.tone} /> : null}
             {changeBadge ? <StatusPill label={changeBadge.label} tone={changeBadge.tone} /> : null}
+            {regularityBadge ? <StatusPill label={regularityBadge.label} tone={regularityBadge.tone} /> : null}
           </div>
         </div>
         <div className="journal-label-facts">
@@ -425,6 +477,14 @@ function TaxonCard({
           <span>Latest: <strong>{formatDateTime(taxon.last_activity_at)}</strong></span>
         </div>
         {patternNote ? <span className="meta-text">{patternNote}</span> : null}
+        {seasonalNote ? <span className="meta-text">{seasonalNote}</span> : null}
+        {habitatAssociation ? (
+          <span className="meta-text">
+            {habitatAssociation.status === "more_common_under_condition" ? "Observed more often" : "Observed less often"}
+            {" while "}
+            {habitatAssociation.phenomenon} was current ({habitatAssociation.subject_label})
+          </span>
+        ) : null}
         {isConfirmed ? (
           <button className="text-action" onClick={() => onOpenBirdLog(taxon.label)} type="button">
             View in Bird Log
@@ -757,6 +817,21 @@ export function PlaceActivityReportPage({ sources, onOpenVisit, onOpenBirdLog }:
                   <EmptyState title="No area activity recorded yet" description="Draw Zones on a Stream to break activity down by area." />
                 )}
               </section>
+
+              {/* Place / Yard Intelligence v2, Phase 7: which camera currently
+                  sees the most wildlife activity, normalized for how long each
+                  one was actually monitored -- never a raw side-by-side count. */}
+              {(report.activity_by_source ?? []).length > 1 ? (
+                <section className="panel" aria-label="Wildlife activity by camera">
+                  <div className="section-heading">
+                    <div>
+                      <h2>Camera activity</h2>
+                      <span className="meta-text">Confirmed wildlife visits per monitored hour, this period</span>
+                    </div>
+                  </div>
+                  <SourceActivityList sources={report.activity_by_source} />
+                </section>
+              ) : null}
 
               <section className="panel" aria-label="Species seen in this period">
                 <div className="section-heading">
