@@ -588,6 +588,20 @@ health check -> rollback/recovery`:
   prerequisite, not a tangent). This remains future work, correctly scoped
   as its own future milestone, not started here.
 
+  **Closed by Release Engineering Foundation v1** (see
+  [release-engineering-foundation-v1-report.md](release-engineering-foundation-v1-report.md)):
+  `ProductRepository`'s pre-migration hook now creates and verifies a real
+  `create_backup(kind="pre_migration")` archive before any in-place schema
+  upgrade runs, exactly the predicted third `kind` value; a genuine
+  post-migration `PRAGMA quick_check` re-run (not merely "no exception was
+  raised") gates whether the process ever reports readiness, paid only on
+  an actual migration; and restoring the automatic pre-migration backup is
+  the documented rollback path ("Upgrading MockingBird" in
+  [using-mockingbird.md](using-mockingbird.md)) -- resolving "what rollback
+  means" the way this section's own "no cheap down-migration story"
+  reasoning already anticipated, rather than inventing schema
+  down-migration.
+
 ## Camera/Source bounded carry-forward
 
 Both items named in the milestone brief as cheap-if-touching-the-same-

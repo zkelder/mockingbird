@@ -86,6 +86,13 @@ class DatabaseSchemaStatus:
     current_version: int
     integrity_check: str
     initialized_schema_record: bool
+    # Release Engineering Foundation v1: set only when *this* call actually
+    # ran the migration chain (never on a brand-new database, never on an
+    # already-current one) -- the one genuine "an upgrade just happened"
+    # signal, distinct from `version`/`current_version` which describe
+    # steady-state facts true on every ordinary launch too.
+    migrated_from_version: int | None = None
+    pre_migration_backup_id: str | None = None
 
 
 SchemaMigration = Callable[[Connection], None]
@@ -1960,15 +1967,50 @@ def _run_migrations_with_transactional_ddl(engine: Engine, version: int) -> int:
     return version
 
 
-def _validate_or_migrate_schema_version(engine: Engine, recorded_version: int) -> int:
+def _validate_or_migrate_schema_version(
+    engine: Engine,
+    recorded_version: int,
+    *,
+    pre_migration_hook: Callable[[int, int], str | None] | None = None,
+) -> tuple[int, str | None]:
     if recorded_version > CURRENT_DATABASE_SCHEMA_VERSION:
         raise DatabaseSchemaCompatibilityError(
             "This MockingBird database was created by a newer app version. "
             "Upgrade MockingBird before opening it."
         )
+    if recorded_version < CURRENT_DATABASE_SCHEMA_VERSION and not database_schema_version_is_compatible(
+        recorded_version
+    ):
+        # Checked upfront, before the pre-migration-backup hook below ever
+        # fires -- a database with no complete registered migration chain to
+        # `CURRENT_DATABASE_SCHEMA_VERSION` is never going to migrate
+        # successfully regardless (this is the same fact `_run_schema_
+        # migration_loop` would eventually discover mid-chain), so there is
+        # no reason to attempt a backup of it first. Real installations never
+        # hit this -- `database_schema_version_is_compatible` reuses the
+        # exact same registered-migration-chain check `LocalBackupManager`
+        # itself already enforces before accepting a backup's own recorded
+        # version, so a database this old could not have been safely backed
+        # up here either.
+        raise DatabaseSchemaCompatibilityError(
+            "This MockingBird database needs an explicit migration before it "
+            "can be opened safely."
+        )
 
     version = recorded_version
+    backup_id: str | None = None
     if version < CURRENT_DATABASE_SCHEMA_VERSION:
+        # Appliance / Update / Recovery: a real migration is genuinely about
+        # to mutate this database, in place, with no way back except a
+        # restored backup (see docs/appliance-storage-privacy-recovery-v1-
+        # contract.md's "Bounded update-readiness review" -- this hook is
+        # exactly the "pre-upgrade backup trigger" that review named and
+        # deliberately deferred). Firing it here, before either migration
+        # branch below runs, and letting any exception it raises propagate
+        # unmodified, means a safety backup that cannot be created safely
+        # stops the upgrade before any destructive mutation -- never after.
+        if pre_migration_hook is not None:
+            backup_id = pre_migration_hook(version, CURRENT_DATABASE_SCHEMA_VERSION)
         if engine.dialect.name == "sqlite":
             version = _run_migrations_with_transactional_ddl(engine, version)
         else:
@@ -1980,16 +2022,48 @@ def _validate_or_migrate_schema_version(engine: Engine, recorded_version: int) -
             # than through this SQLite-specific transactional-DDL path.
             with engine.begin() as connection:
                 version = _run_schema_migration_loop(connection, version)
-    return version
+    return version, backup_id
 
 
-def initialize_database(engine: Engine) -> DatabaseSchemaStatus:
-    """Validate compatibility, create the current schema, and record its version."""
+def initialize_database(
+    engine: Engine,
+    *,
+    pre_migration_hook: Callable[[int, int], str | None] | None = None,
+) -> DatabaseSchemaStatus:
+    """Validate compatibility, create the current schema, and record its version.
+
+    `pre_migration_hook`, when given, is called at most once -- only when a
+    pre-existing (not brand-new) database is about to be migrated forward --
+    as `(from_version, to_version) -> backup_id | None`, before any migration
+    runs. It never fires for a brand-new database (nothing to preserve yet)
+    or an already-current one (no mutation about to happen). See
+    `_validate_or_migrate_schema_version` for the exact fail-closed contract.
+    """
 
     integrity_check = _sqlite_integrity_check(engine)
     recorded_version = _read_recorded_schema_version(engine)
+    migrated_from_version: int | None = None
+    pre_migration_backup_id: str | None = None
     if recorded_version is not None:
-        recorded_version = _validate_or_migrate_schema_version(engine, recorded_version)
+        starting_version = recorded_version
+        recorded_version, pre_migration_backup_id = _validate_or_migrate_schema_version(
+            engine, recorded_version, pre_migration_hook=pre_migration_hook
+        )
+        if recorded_version != starting_version:
+            migrated_from_version = starting_version
+            # docs/appliance-storage-privacy-recovery-v1-contract.md's
+            # "Bounded update-readiness review" named this exactly: "a
+            # health check *after* migration but *before* declaring the
+            # upgrade successful." A migration completing without raising
+            # only proves no *exception* happened, not that the resulting
+            # database is actually healthy -- re-running the same integrity
+            # check the pre-migration snapshot above already used (never
+            # skipped, never assumed) is what actually proves that, and its
+            # result -- not the pre-migration one -- is what gets reported
+            # and gates readiness below. Only paid on a genuine migration;
+            # an ordinary already-current launch checks integrity once, same
+            # as before this change.
+            integrity_check = _sqlite_integrity_check(engine)
 
     # Product tables are created only after a recorded version is known to be
     # compatible, so a newer database is never modified by an older app.
@@ -2027,4 +2101,6 @@ def initialize_database(engine: Engine) -> DatabaseSchemaStatus:
         current_version=CURRENT_DATABASE_SCHEMA_VERSION,
         integrity_check=integrity_check,
         initialized_schema_record=initialized_schema_record,
+        migrated_from_version=migrated_from_version,
+        pre_migration_backup_id=pre_migration_backup_id,
     )

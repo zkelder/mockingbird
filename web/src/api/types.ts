@@ -4808,7 +4808,7 @@ export interface LocalDataStatus {
   local_first_note: string;
 }
 
-export type LocalBackupKind = "manual" | "pre_restore";
+export type LocalBackupKind = "manual" | "pre_restore" | "pre_migration";
 export type LocalBackupVerificationStatus = "verified" | "not_checked";
 
 export interface LocalBackupSummary {
@@ -5205,6 +5205,9 @@ export interface ProductHealthStatus {
   };
   previous_shutdown_clean?: boolean | null;
   database_schema_version: number;
+  // Release Engineering Foundation v1: set only when this running process
+  // actually performed an in-place schema upgrade at its own startup.
+  database_migrated_from_version?: number | null;
   log_path?: string | null;
   // Appliance / Storage / Privacy / Recovery v1, Phase N: fixed, always-
   // present compatibility constants (never a live network probe) -- this

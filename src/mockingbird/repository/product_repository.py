@@ -704,6 +704,7 @@ from mockingbird.storage.camera_node_transport_ledger import (
     read_camera_node_transport_backlog_summary,
     resolve_transport_root,
 )
+from mockingbird.storage.backup import LocalBackupManager
 from mockingbird.storage.database import (
     DEFAULT_DB_URL,
     create_database_engine,
@@ -3627,7 +3628,9 @@ class ProductRepository:
         )
         self.research_export_root = Path(research_export_root or DEFAULT_RESEARCH_EXPORT_ROOT)
         self.engine = engine or create_database_engine(self.db_url)
-        self.schema_status = initialize_database(self.engine)
+        self.schema_status = initialize_database(
+            self.engine, pre_migration_hook=self._create_pre_migration_safety_backup
+        )
         self.session_factory = create_session_factory(self.engine)
         self._storage_retention_lock = threading.Lock()
         # A local model runner is bounded and request-bound. Keep a second request
@@ -3672,6 +3675,32 @@ class ProductRepository:
         """Release pooled database handles before local data is replaced."""
 
         self.engine.dispose()
+
+    def _create_pre_migration_safety_backup(self, from_version: int, to_version: int) -> str:
+        """Create and verify a local safety backup before an in-place schema
+        upgrade actually mutates anything (Release Engineering Foundation v1).
+
+        Passed to `initialize_database` as its `pre_migration_hook` -- called
+        at most once per process start, and only when a pre-existing database
+        is genuinely about to migrate forward. Reuses the exact backup
+        mechanism and `kind` convention `POST .../backups/{id}/restore`
+        already uses for its own automatic `kind="pre_restore"` safety
+        snapshot (see docs/local-backup-recovery-design.md), so this artifact
+        is retrievable and restorable through the existing, already-verified
+        Local Data UI -- no new recovery machinery.
+
+        `LocalBackupManager.create_backup` itself is verified and atomic; if
+        it raises for any reason (unwritable disk, failed verification), that
+        exception propagates unchanged and `initialize_database` never
+        proceeds to migrate -- this database is left exactly as it was.
+        Failure must be recoverable or must fail before destructive
+        mutation; a schema upgrade with no safety net is not an acceptable
+        default.
+        """
+
+        manager = LocalBackupManager(db_url=self.db_url, media_root=self.media_root)
+        verification = manager.create_backup(kind="pre_migration")
+        return verification.backup.id
 
     def seed_if_empty(self) -> None:
         with self.session_factory() as session:

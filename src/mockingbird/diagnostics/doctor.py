@@ -1545,7 +1545,10 @@ def _interpret_ffmpeg(gathered: dict[str, Any]) -> DoctorCheckResult:
             summary="ffmpeg was not found.",
             detail="A configured Stream (RTSP, USB, or DirectShow) may need it for live playback.",
             recoverability=DoctorRecoverability.DEGRADED,
-            user_action="Install ffmpeg and make sure it is on PATH.",
+            user_action=(
+                "Install ffmpeg (https://ffmpeg.org/download.html) and make sure it is on "
+                "PATH. A paired MockingBird Camera Node does not need this."
+            ),
         )
     return DoctorCheckResult(
         code=DoctorCheckCode.FFMPEG,

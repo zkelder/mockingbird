@@ -873,7 +873,11 @@ export function LocalDataPage({
                     <div className="section-heading">
                       <div>
                         <strong>
-                          {backup.kind === "pre_restore" ? "Before restore" : "Local backup"}
+                          {backup.kind === "pre_restore"
+                            ? "Before restore"
+                            : backup.kind === "pre_migration"
+                              ? "Before update"
+                              : "Local backup"}
                         </strong>
                         <span className="meta-text">{formatBackupTime(backup.created_at)}</span>
                       </div>

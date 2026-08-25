@@ -1719,7 +1719,7 @@ def test_write_build_identity_writes_the_expected_file(tmp_path: Path) -> None:
     (site_packages / "mockingbird").mkdir(parents=True)
     identity = BuildIdentity(
         git_commit="a" * 40, build_id="deadbeefcafef00d", built_at="2026-01-01T00:00:00+00:00",
-        app_version="0.1.0",
+        app_version="0.1.0", source_clean=True,
     )
 
     destination = write_build_identity(site_packages=site_packages, identity=identity)
@@ -1728,7 +1728,7 @@ def test_write_build_identity_writes_the_expected_file(tmp_path: Path) -> None:
     payload = json.loads(destination.read_text(encoding="utf-8"))
     assert payload == {
         "git_commit": "a" * 40, "build_id": "deadbeefcafef00d", "built_at": "2026-01-01T00:00:00+00:00",
-        "app_version": "0.1.0",
+        "app_version": "0.1.0", "source_clean": True,
     }
 
 
@@ -1739,7 +1739,7 @@ def test_write_manifest_records_build_identity(tmp_path: Path) -> None:
     zip_path = write_deterministic_zip(bundle_dir, tmp_path / "out.zip")
     identity = BuildIdentity(
         git_commit="b" * 40, build_id="0123456789abcdef", built_at="2026-02-02T00:00:00+00:00",
-        app_version="0.1.0",
+        app_version="0.1.0", source_clean=True,
     )
 
     manifest_path, _ = write_manifest(
@@ -1750,7 +1750,7 @@ def test_write_manifest_records_build_identity(tmp_path: Path) -> None:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["build_identity"] == {
         "git_commit": "b" * 40, "build_id": "0123456789abcdef", "built_at": "2026-02-02T00:00:00+00:00",
-        "app_version": "0.1.0",
+        "app_version": "0.1.0", "source_clean": True,
     }
 
 
@@ -1875,6 +1875,7 @@ def test_build_local_product_end_to_end_records_a_verified_build_identity(
     assert len(artifact.build_identity.build_id) == 16
     assert all(character in "0123456789abcdef" for character in artifact.build_identity.build_id)
     assert artifact.build_identity.app_version
+    assert artifact.build_identity.source_clean is True
 
     build_info_path = (
         artifact.bundle_dir / "python" / "site-packages" / "mockingbird" / PACKAGED_BUILD_INFO_FILENAME
@@ -1882,10 +1883,12 @@ def test_build_local_product_end_to_end_records_a_verified_build_identity(
     payload = json.loads(build_info_path.read_text(encoding="utf-8"))
     assert payload["git_commit"] == fake_commit
     assert payload["build_id"] == artifact.build_identity.build_id
+    assert payload["source_clean"] is True
 
     manifest = json.loads(artifact.manifest_path.read_text(encoding="utf-8"))
     assert manifest["build_identity"]["git_commit"] == fake_commit
     assert manifest["build_identity"]["build_id"] == artifact.build_identity.build_id
+    assert manifest["build_identity"]["source_clean"] is True
     assert manifest["source_state"] == f"git:{fake_commit}"
 
 
@@ -1934,6 +1937,12 @@ def test_build_local_product_dirty_source_records_a_best_effort_commit(
     )
 
     assert artifact.build_identity.git_commit == "d" * 40
+    # Release Engineering Foundation v1: `git_commit` alone does not mean
+    # clean (it's populated here too, from a best-effort `git rev-parse`) --
+    # `source_clean` is the one explicit, structured field a consumer can
+    # check without parsing `source_state`'s string prefix.
+    assert artifact.build_identity.source_clean is False
     manifest = json.loads(artifact.manifest_path.read_text(encoding="utf-8"))
     assert manifest["source_state"] == "dirty:unverified-working-tree"
     assert manifest["build_identity"]["git_commit"] == "d" * 40
+    assert manifest["build_identity"]["source_clean"] is False

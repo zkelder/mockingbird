@@ -130,6 +130,15 @@ export function ProductHealthPanel({ storageSummary }: ProductHealthPanelProps =
           <span>MockingBird did not shut down cleanly last time. Your local data is unaffected.</span>
         </div>
       ) : null}
+      {health.database_migrated_from_version != null ? (
+        <div className="notice-panel">
+          <span>
+            MockingBird updated your data on this start (format {health.database_migrated_from_version}{" "}
+            &rarr; {health.database_schema_version}). A backup from just before the update was made
+            automatically and is available in <a href="/local-data">Local Data</a>.
+          </span>
+        </div>
+      ) : null}
       <details className="review-diagnostic-details">
         <summary>Advanced diagnostics</summary>
         <div className="review-diagnostic-grid">

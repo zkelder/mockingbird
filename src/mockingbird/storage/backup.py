@@ -712,7 +712,7 @@ class LocalBackupManager:
         return {"path": member_name, "size_bytes": size, "sha256": digest}
 
     def create_backup(self, *, kind: str = "manual") -> BackupVerificationData:
-        if kind not in {"manual", "pre_restore"}:
+        if kind not in {"manual", "pre_restore", "pre_migration"}:
             raise ValueError("unsupported_backup_kind")
         self._ensure_backup_root()
 
@@ -820,7 +820,7 @@ class LocalBackupManager:
             raise LocalBackupValidationError("backup_manifest_invalid_backup_id")
         created_at = _parse_created_at(manifest.get("created_at"))
         kind = _require_string(manifest.get("kind"), "kind")
-        if kind not in {"manual", "pre_restore"}:
+        if kind not in {"manual", "pre_restore", "pre_migration"}:
             raise LocalBackupValidationError("backup_manifest_invalid_kind")
 
         source_layout = _require_dict(manifest.get("source_layout"), "source_layout")

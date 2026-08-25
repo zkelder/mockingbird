@@ -117,6 +117,11 @@ class RuntimePreflight:
     frontend_dist: Path
     database_schema_version: int
     database_integrity_check: str
+    # Release Engineering Foundation v1: set only when this preflight call
+    # actually performed an in-place schema upgrade -- see
+    # `mockingbird.storage.database.DatabaseSchemaStatus`.
+    database_migrated_from_version: int | None = None
+    database_pre_migration_backup_id: str | None = None
 
 
 def resolve_runtime_home(workspace_root: Path | None = None) -> Path:
@@ -197,6 +202,8 @@ def run_preflight(*, build_frontend: bool = True) -> RuntimePreflight:
         frontend_dist=frontend_dist,
         database_schema_version=repository.schema_status.version,
         database_integrity_check=repository.schema_status.integrity_check,
+        database_migrated_from_version=repository.schema_status.migrated_from_version,
+        database_pre_migration_backup_id=repository.schema_status.pre_migration_backup_id,
     )
 
 
@@ -228,6 +235,15 @@ def healthy_mockingbird_at(base_url: str, *, timeout_seconds: float = 0.4) -> bo
 
 
 def _print_preflight(preflight: RuntimePreflight) -> None:
+    if preflight.database_migrated_from_version is not None:
+        print(
+            "MockingBird is ready: "
+            f"data format upgraded {preflight.database_migrated_from_version} -> "
+            f"{preflight.database_schema_version} (safety backup "
+            f"{preflight.database_pre_migration_backup_id}), "
+            f"integrity {preflight.database_integrity_check}."
+        )
+        return
     print(
         "MockingBird is ready: "
         f"data format {preflight.database_schema_version}, "

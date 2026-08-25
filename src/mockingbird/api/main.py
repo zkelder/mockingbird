@@ -647,7 +647,7 @@ async def _app_lifespan(_app: FastAPI):
 
 app = FastAPI(
     title="MockingBird API",
-    version="0.1.0",
+    version=APP_VERSION,
     description=(
         "Local-first outdoor video intelligence centered on streams, zones, "
         "events, visits, review, corrections, exports, and analytics."
@@ -10823,6 +10823,7 @@ async def get_product_health() -> ProductHealthStatus:
         ),
         previous_shutdown_clean=previous_shutdown_was_clean(),
         database_schema_version=repository.schema_status.version,
+        database_migrated_from_version=repository.schema_status.migrated_from_version,
         log_path=str(current_log_path()) if current_log_path() else None,
         camera_node_service_version=repository.most_recent_camera_node_service_version(),
         research_export_schema_version=RESEARCH_EXPORT_SCHEMA_VERSION,

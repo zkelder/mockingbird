@@ -6185,6 +6185,14 @@ class ProductHealthStatus(BaseModel):
     backup: ProductHealthBackupSummary
     previous_shutdown_clean: bool | None = None
     database_schema_version: int = Field(ge=1)
+    # Release Engineering Foundation v1: set only when *this running
+    # process* actually performed an in-place schema upgrade at its own
+    # startup (never on an ordinary already-current launch) -- see
+    # `mockingbird.storage.database.DatabaseSchemaStatus.migrated_from_
+    # version`. Advanced-tier, alongside `database_schema_version`, so a
+    # user who just upgraded can confirm it worked without needing the
+    # (often console-less, packaged-launcher) startup log.
+    database_migrated_from_version: int | None = None
     log_path: str | None = None
     camera_node_service_version: str | None = None
     research_export_schema_version: str
@@ -6316,6 +6324,7 @@ class StorageCleanupPurgeRequest(BaseModel):
 class LocalBackupKind(str, Enum):
     manual = "manual"
     pre_restore = "pre_restore"
+    pre_migration = "pre_migration"
 
 
 class LocalBackupVerificationStatus(str, Enum):

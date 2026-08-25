@@ -1139,6 +1139,241 @@ def test_a_mid_chain_migration_failure_rolls_back_every_step_not_only_its_own(
         recovered.close()
 
 
+def test_reopening_an_old_database_creates_a_verified_pre_migration_safety_backup(
+    tmp_path: Path,
+) -> None:
+    """Release Engineering Foundation v1: closes the "pre-upgrade backup
+    trigger" docs/appliance-storage-privacy-recovery-v1-contract.md's own
+    "Bounded update-readiness review" named and deliberately deferred.
+    Rewinds a real database one version back and confirms reopening it (the
+    same thing replacing an old app bundle with a new one and relaunching
+    does) creates a real, verified, restorable `.mbbackup` archive *before*
+    migrating -- not merely records that it should have."""
+
+    from mockingbird.storage.backup import LocalBackupManager
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    media_root = tmp_path / "media"
+    repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=media_root)
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            f"UPDATE mockingbird_schema SET version = {CURRENT_DATABASE_SCHEMA_VERSION - 1} "
+            "WHERE singleton_id = 1"
+        )
+    engine.dispose()
+
+    migrated = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=media_root)
+    try:
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+        assert migrated.schema_status.migrated_from_version == CURRENT_DATABASE_SCHEMA_VERSION - 1
+        backup_id = migrated.schema_status.pre_migration_backup_id
+        assert backup_id is not None
+
+        manager = LocalBackupManager(db_url=migrated.db_url, media_root=media_root)
+        library = manager.list_backups()
+        [backup] = [entry for entry in library.backups if entry.id == backup_id]
+        assert backup.kind == "pre_migration"
+        # The archived database is the *pre*-migration state, not the
+        # already-upgraded one this process is now running.
+        assert backup.database_schema_version == CURRENT_DATABASE_SCHEMA_VERSION - 1
+        assert backup.verification_status == "verified"
+        assert backup.restore_compatible is True
+    finally:
+        migrated.close()
+
+
+def test_no_pre_migration_backup_on_a_brand_new_database(tmp_path: Path) -> None:
+    """A first-ever launch has nothing pre-upgrade to preserve -- confirms
+    the hook stays silent for the one case it must never fire on."""
+
+    from mockingbird.storage.backup import LocalBackupManager
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    media_root = tmp_path / "media"
+    repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=media_root)
+    try:
+        assert repository.schema_status.migrated_from_version is None
+        assert repository.schema_status.pre_migration_backup_id is None
+        manager = LocalBackupManager(db_url=repository.db_url, media_root=media_root)
+        assert manager.list_backups().backups == []
+    finally:
+        repository.close()
+
+
+def test_no_pre_migration_backup_when_reopening_an_already_current_database(
+    tmp_path: Path,
+) -> None:
+    """An ordinary daily relaunch -- already at the current schema version --
+    must stay exactly as side-effect-free as it always was; only a genuine
+    forward migration should ever create a backup here."""
+
+    from mockingbird.storage.backup import LocalBackupManager
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    media_root = tmp_path / "media"
+    repository = repository_for(db_path)
+    repository.close()
+
+    reopened = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=media_root)
+    try:
+        assert reopened.schema_status.migrated_from_version is None
+        assert reopened.schema_status.pre_migration_backup_id is None
+        manager = LocalBackupManager(db_url=reopened.db_url, media_root=media_root)
+        assert manager.list_backups().backups == []
+    finally:
+        reopened.close()
+
+
+def test_a_failed_pre_migration_backup_blocks_the_migration_entirely(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Failure must be recoverable or must fail before destructive mutation
+    -- if the safety backup itself cannot be created and verified, the
+    migration that would follow it must never run at all, exactly mirroring
+    `test_a_mid_chain_migration_failure_rolls_back_every_step_not_only_its_
+    own`'s own verification style for the in-migration failure case."""
+
+    from mockingbird.storage import backup as backup_module
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    media_root = tmp_path / "media"
+    repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=media_root)
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            f"UPDATE mockingbird_schema SET version = {CURRENT_DATABASE_SCHEMA_VERSION - 1} "
+            "WHERE singleton_id = 1"
+        )
+    engine.dispose()
+
+    def _broken_create_backup(self, *, kind: str = "manual"):
+        raise RuntimeError("synthetic pre-migration backup failure")
+
+    monkeypatch.setattr(backup_module.LocalBackupManager, "create_backup", _broken_create_backup)
+
+    with pytest.raises(RuntimeError, match="synthetic pre-migration backup failure"):
+        ProductRepository(db_url=f"sqlite:///{db_path}", media_root=media_root)
+
+    verify_engine = create_database_engine(f"sqlite:///{db_path}")
+    with verify_engine.connect() as connection:
+        recorded_version = connection.exec_driver_sql(
+            "SELECT version FROM mockingbird_schema WHERE singleton_id = 1"
+        ).scalar_one()
+    verify_engine.dispose()
+    assert recorded_version == CURRENT_DATABASE_SCHEMA_VERSION - 1  # never touched
+
+    monkeypatch.undo()
+    recovered = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=media_root)
+    try:
+        assert recovered.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+        assert recovered.schema_status.pre_migration_backup_id is not None
+    finally:
+        recovered.close()
+
+
+def test_integrity_is_checked_again_after_a_real_migration_not_only_before(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """docs/appliance-storage-privacy-recovery-v1-contract.md's own
+    deferred "health check *after* migration but *before* declaring the
+    upgrade successful" -- a migration completing without raising only
+    proves no exception happened, not that the resulting database is
+    actually healthy. An ordinary already-current launch must stay exactly
+    as cheap as before (one check, not two)."""
+
+    from mockingbird.storage import database as database_module
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    media_root = tmp_path / "media"
+    repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=media_root)
+    repository.close()
+
+    real_check = database_module._sqlite_integrity_check
+    call_count = 0
+
+    def _counting_check(engine):
+        nonlocal call_count
+        call_count += 1
+        return real_check(engine)
+
+    monkeypatch.setattr(database_module, "_sqlite_integrity_check", _counting_check)
+    reopened = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=media_root)
+    reopened.close()
+    assert call_count == 1  # already current -- one check, same as always
+
+    call_count = 0
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            f"UPDATE mockingbird_schema SET version = {CURRENT_DATABASE_SCHEMA_VERSION - 1} "
+            "WHERE singleton_id = 1"
+        )
+    engine.dispose()
+
+    migrated = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=media_root)
+    try:
+        assert call_count == 2  # pre-migration snapshot, then a real post-migration re-check
+        assert migrated.schema_status.integrity_check == "ok"
+    finally:
+        migrated.close()
+
+
+def test_a_post_migration_integrity_failure_blocks_the_upgrade_from_completing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Even though the migration's own transaction already committed (SQL-
+    level, it genuinely succeeded), a failed post-migration integrity check
+    must still stop this process from ever reporting readiness -- the
+    pre-migration safety backup remains the recovery path, exactly as
+    documented in "Upgrading MockingBird" in docs/using-mockingbird.md."""
+
+    from mockingbird.storage import database as database_module
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    media_root = tmp_path / "media"
+    repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=media_root)
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            f"UPDATE mockingbird_schema SET version = {CURRENT_DATABASE_SCHEMA_VERSION - 1} "
+            "WHERE singleton_id = 1"
+        )
+    engine.dispose()
+
+    real_check = database_module._sqlite_integrity_check
+    call_count = 0
+
+    def _fail_on_second_call(engine):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise DatabaseSchemaCompatibilityError("synthetic post-migration integrity failure")
+        return real_check(engine)
+
+    monkeypatch.setattr(database_module, "_sqlite_integrity_check", _fail_on_second_call)
+
+    with pytest.raises(DatabaseSchemaCompatibilityError, match="synthetic post-migration"):
+        ProductRepository(db_url=f"sqlite:///{db_path}", media_root=media_root)
+
+    # The migration itself really did commit (a real, if now moot,
+    # SQL-level fact) -- this failure mode is about the app refusing to
+    # ever *serve* on top of it, not about the migration transaction lying.
+    verify_engine = create_database_engine(f"sqlite:///{db_path}")
+    with verify_engine.connect() as connection:
+        recorded_version = connection.exec_driver_sql(
+            "SELECT version FROM mockingbird_schema WHERE singleton_id = 1"
+        ).scalar_one()
+    verify_engine.dispose()
+    assert recorded_version == CURRENT_DATABASE_SCHEMA_VERSION
+
+
 def test_database_needing_unknown_migration_is_rejected(tmp_path: Path) -> None:
     db_path = tmp_path / "mockingbird.sqlite3"
     repository = repository_for(db_path)

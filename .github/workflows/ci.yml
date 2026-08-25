@@ -1,0 +1,115 @@
+name: CI
+
+# Release Engineering Foundation v1: this repository previously had no CI
+# automation at all. Scoped to what a Linux GitHub Actions runner can
+# honestly prove -- see docs/local-product-packaging-design.md's own
+# "Validation tier" for the identical "fidelity-booted proxy... since this
+# session cannot execute a native Windows binary" framing this workflow
+# follows. Native-Windows / real-GPU / real-model acceptance stays a
+# separate, explicit, documented handoff (docs/using-mockingbird.md); this
+# workflow never claims to substitute for it.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-tests:
+    name: Backend tests (Core gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install MockingBird (editable)
+        run: pip install -e .
+
+      - name: Core gate (pytest -m "not slow")
+        run: python scripts/verify_core.py -q
+
+      - name: Structural preflight (python -m mockingbird --check)
+        # An isolated runtime home -- never the checkout itself -- exactly
+        # the same real preflight/migration path a packaged launch takes,
+        # against a brand-new database this run creates and discards.
+        env:
+          MOCKINGBIRD_HOME: ${{ runner.temp }}/mockingbird-ci-home
+        run: python -m mockingbird --check
+
+  frontend:
+    name: Frontend typecheck and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Typecheck and build (tsc --noEmit && vite build)
+        run: npm run build
+
+  packaging-smoke:
+    name: Release artifact packaging smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install MockingBird (editable, for the build script's own imports)
+        run: pip install -e .
+
+      - name: Build a structural Windows release bundle
+        # No local model-bundle/GPU/BioCLIP source exists on a CI runner --
+        # this proves the packaging pipeline itself (real npm ci/build,
+        # clean-tree guard, wheel build from a git-archive snapshot,
+        # embeddable-Python assembly, core dependency closure, the BirdNET
+        # non-redistribution guard, manifest/checksum/zip generation) stays
+        # correct on every change, exactly the same "honest missing-model
+        # state, never a build failure" contract a real operator without
+        # the model bundle sees too -- see docs/local-product-packaging-
+        # design.md. GPU/BioCLIP tiers are skipped: they need a real
+        # offline wheel cache or a slow network resolve neither useful nor
+        # necessary for this structural check.
+        run: >
+          python scripts/build_local_product.py dist
+          --skip-gpu-runtime
+          --skip-bioclip-runtime
+
+      - name: Independently verify the produced artifact
+        # Deliberately a separate script/process from the builder above --
+        # see scripts/verify_release_artifact.py's own docstring for why.
+        run: python scripts/verify_release_artifact.py dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mockingbird-windows-x64-structural-smoke
+          path: |
+            dist/manifest.json
+            dist/SHA256SUMS
+          retention-days: 14
+          if-no-files-found: error

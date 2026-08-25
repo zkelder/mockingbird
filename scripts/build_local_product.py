@@ -694,13 +694,26 @@ class BuildIdentity:
     build_id: str
     built_at: str
     app_version: str
+    # Release Engineering Foundation v1: `git_commit` alone is not a
+    # reliable cleanliness signal -- it is populated with the real current
+    # HEAD hash in *both* branches of `build_local_product`, dirty-allowed
+    # or not (`_current_head_commit()` vs. the verified `commit` from
+    # `verify_clean_tracked_source()`). The only prior cleanliness signal
+    # was the top-level `source_state` string's `"git:"`/`"dirty:"` prefix,
+    # which a consumer would have to parse rather than check directly --
+    # unlike `scripts/build_camera_node_artifact.py`'s own manifest, which
+    # already carries an explicit `source_clean` boolean. This mirrors that
+    # existing, already-accepted convention exactly, rather than inventing
+    # a new one.
+    source_clean: bool
 
-    def as_manifest_dict(self) -> dict[str, str | None]:
+    def as_manifest_dict(self) -> dict[str, str | bool | None]:
         return {
             "git_commit": self.git_commit,
             "build_id": self.build_id,
             "built_at": self.built_at,
             "app_version": self.app_version,
+            "source_clean": self.source_clean,
         }
 
 
@@ -1970,6 +1983,7 @@ def build_local_product(
         build_id=secrets.token_hex(8),
         built_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         app_version=_source_version(),
+        source_clean=not allow_dirty_source,
     )
     write_build_identity(
         site_packages=bundle_dir / "python" / "site-packages", identity=build_identity,

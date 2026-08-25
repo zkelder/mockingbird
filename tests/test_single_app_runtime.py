@@ -13,6 +13,8 @@ import mockingbird.runtime_state as runtime_state
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.runtime import (
     APP_HOME_ENV_VAR,
+    RuntimePreflight,
+    _print_preflight,
     healthy_mockingbird_at,
     resolve_runtime_home,
     run,
@@ -120,6 +122,45 @@ def test_runtime_home_override_is_stable_outside_workspace(tmp_path: Path, monke
     monkeypatch.setenv(APP_HOME_ENV_VAR, str(configured_home))
 
     assert resolve_runtime_home(workspace_root=None) == configured_home.resolve()
+
+
+def test_print_preflight_reports_an_ordinary_already_current_launch_unchanged(capsys) -> None:
+    """Release Engineering Foundation v1 must not change the message an
+    ordinary, non-upgrading launch has always printed."""
+
+    _print_preflight(
+        RuntimePreflight(
+            runtime_home=Path("/tmp/runtime-home"),
+            frontend_dist=Path("/tmp/runtime-home/frontend"),
+            database_schema_version=53,
+            database_integrity_check="ok",
+        )
+    )
+
+    assert capsys.readouterr().out == "MockingBird is ready: data format 53, integrity ok.\n"
+
+
+def test_print_preflight_honestly_reports_a_migration_that_just_ran(capsys) -> None:
+    """`--check`/a real launch performs the migration as a real side effect
+    (see docs/release-engineering-foundation-v1-report.md's "not a dry
+    run" finding); the console message is the one console-visible place
+    this fact can be confirmed, alongside the automatic safety backup id."""
+
+    _print_preflight(
+        RuntimePreflight(
+            runtime_home=Path("/tmp/runtime-home"),
+            frontend_dist=Path("/tmp/runtime-home/frontend"),
+            database_schema_version=53,
+            database_integrity_check="ok",
+            database_migrated_from_version=52,
+            database_pre_migration_backup_id="deadbeefcafef00d",
+        )
+    )
+
+    assert capsys.readouterr().out == (
+        "MockingBird is ready: data format upgraded 52 -> 53 "
+        "(safety backup deadbeefcafef00d), integrity ok.\n"
+    )
 
 
 def test_runtime_refuses_network_binding_without_explicit_permission(capsys) -> None:

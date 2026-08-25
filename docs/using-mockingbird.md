@@ -92,6 +92,13 @@ into, then use **Import Media** (always in the main menu, not hidden away)
 to add the files themselves and analyze them the same way a live camera's
 activity is analyzed.
 
+A MockingBird Camera Node needs nothing else installed -- everything it
+needs is already in your MockingBird folder. A network camera, a USB or
+built-in camera, and recorded video import each additionally need a free
+program called **ffmpeg** installed on this computer and available on its
+PATH; if it isn't there yet, MockingBird says so plainly (rather than
+failing in a confusing way) and links to where to get it.
+
 After choosing a live camera, drag on the preview to mark the area that
 matters (where birds actually land, for example) -- this helps MockingBird
 focus on what you care about.
@@ -158,6 +165,38 @@ Open **Settings** (Local Data) to:
 
 Restoring is a two-step confirmation on purpose: it replaces your current
 local data with the backup's.
+
+## Upgrading MockingBird
+
+1. Close MockingBird (close its browser tab; MockingBird itself does not
+   need to be stopped first).
+2. Download the new version's `MockingBird-windows-x64.zip` and unpack it
+   -- anywhere, including over the old folder or as a fresh folder next to
+   it. Your cameras, Zones, and reviewed history are **not** stored inside
+   this folder, so replacing it changes nothing about your data.
+3. Double-click **Start MockingBird.vbs** in the new folder, the same as
+   any normal start.
+
+That's it -- there is no separate installer or upgrade wizard. The first
+time the new version opens your existing data, it may need to update its
+internal data format to match; when it does, MockingBird automatically
+creates a safety backup of your data first, before changing anything. You
+don't need to do anything for this to happen, and you can still confirm it
+happened afterward: the status area shows a short note ("MockingBird
+updated your data on this start...") the first time you open it after an
+upgrade that needed one, and that automatic backup appears in **Local
+Data** alongside any backups you created yourself, labeled "Before
+update."
+
+If anything looks wrong after upgrading, restore that automatic backup
+from **Local Data** exactly as described in "Backup and restore," above --
+it returns your data to exactly how it was the moment before the update
+ran.
+
+Older MockingBird versions are not supported as an upgrade source forever;
+if a very old version's data cannot be updated automatically, MockingBird
+says so plainly rather than guessing, and the same "Backup and restore"
+recovery path still applies.
 
 ## If something goes wrong
 

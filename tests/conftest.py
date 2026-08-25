@@ -23,9 +23,29 @@ exercise real default-resolution behavior). An autouse fixture cannot
 protect against a test that intentionally undoes its own setup; the
 storage-layer guard can, because it checks the *resolved path* itself
 every time, not whether a fixture happened to run first.
+
+Release Engineering Foundation v1 extended this same layer to
+`MOCKINGBIRD_BACKUP_ROOT`: `ProductRepository` now creates a real, verified
+`LocalBackupManager` backup (`kind="pre_migration"`) the moment any test
+rewinds a database's recorded schema version and reopens it, since that is
+exactly the "a real migration is about to run" condition this milestone's
+pre-migration safety backup fires on. `LocalBackupManager`'s own default
+`backup_root` (`storage/backup.py`'s `backup_root_from_env`) is the
+*relative* path `data/backups` -- correct for a packaged app that already
+`os.chdir()`d into its runtime home (`runtime.run_preflight`), but resolved
+against pytest's own working directory (normally the repository root) for
+every test that does not otherwise configure it. Without the env var set
+here, any such test would silently write a real backup archive into this
+checkout's own `data/backups/` -- exactly the class of bug this file exists
+to prevent. Tests that care about backup behavior specifically already
+construct their own explicit `backup_root=tmp_path / "..."` (see
+`tests/test_persistence.py`, `tests/test_local_backup_recovery.py`) and are
+unaffected by this default.
 """
 
 from __future__ import annotations
+
+import os
 
 import httpx
 import pytest
@@ -34,6 +54,8 @@ from starlette.testclient import TestClient as _StarletteTestClient
 from mockingbird.api import main as api_main
 from mockingbird.api.main import configure_repository
 from mockingbird.repository.product_repository import ProductRepository
+
+_BACKUP_ROOT_ENV_VAR = "MOCKINGBIRD_BACKUP_ROOT"
 
 
 @pytest.fixture(autouse=True)
@@ -60,9 +82,34 @@ def _default_isolated_repository(tmp_path_factory: pytest.TempPathFactory):
     time this fixture unwinds, this only closes its own repository object
     directly instead of touching whatever is active now -- never
     double-tearing-down another fixture's state.
+
+    Points the default *pre-migration backup* root at this same isolated
+    directory for the duration of this fixture -- see the module docstring
+    above -- restored by hand in the `finally` block below, deliberately
+    **not** via `monkeypatch.setenv`: adding a `monkeypatch` dependency to
+    this specific autouse fixture (present on literally every test in the
+    suite) was tried first and confirmed, by direct clean-baseline-vs-
+    changed-only bisection, to shift this fixture's own position in
+    pytest's per-test fixture-teardown order enough to expose a real,
+    pre-existing, unrelated test-isolation fragility in
+    `tests/test_camera_health.py`/`tests/test_stream_monitoring_contract.py`
+    (each manually saves/restores `api_main._live_camera_session_manager`
+    around a test rather than using `monkeypatch`'s own auto-revert) as two
+    new teardown-only errors in `tests/test_stream_playback_contract.py`.
+    Plain `os.environ` get/set/restore carries no such fixture-graph side
+    effect and does not reproduce it -- confirmed directly. This is a
+    genuine, narrow finding about pytest fixture-teardown ordering, not a
+    reason to believe `monkeypatch.setenv` is unsafe in general.
+
+    This is deliberately a different physical directory than a test's own
+    explicit `db_url`/`media_root` when one is configured; that is harmless,
+    since the only property that matters here is "never the real repository-
+    relative default," not "the same tmp root as this test's own data."
     """
 
     isolation_root = tmp_path_factory.mktemp("default_isolation")
+    previous_backup_root = os.environ.get(_BACKUP_ROOT_ENV_VAR)
+    os.environ[_BACKUP_ROOT_ENV_VAR] = str(isolation_root / "backups")
     repository = ProductRepository(
         db_url=f"sqlite:///{isolation_root / 'mockingbird.sqlite3'}",
         media_root=isolation_root / "media",
@@ -71,6 +118,10 @@ def _default_isolated_repository(tmp_path_factory: pytest.TempPathFactory):
     try:
         yield repository
     finally:
+        if previous_backup_root is None:
+            os.environ.pop(_BACKUP_ROOT_ENV_VAR, None)
+        else:
+            os.environ[_BACKUP_ROOT_ENV_VAR] = previous_backup_root
         if api_main._repository is repository:
             configure_repository(None)
         else:
