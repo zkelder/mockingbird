@@ -914,6 +914,19 @@ export function BirdLogPage({
                           {association.phenomenon} was current ({association.subject_label})
                         </p>
                       ))}
+                    {/* Environmental Context v2: identical association-
+                        language-only, all-matches-listed convention as
+                        habitat_associations above -- see docs/
+                        environmental-context-v2-contract.md "Phase 6/16". */}
+                    {(activeHistory.weather_associations ?? [])
+                      .filter((association) => association.status !== "no_clear_association")
+                      .map((association) => (
+                        <p className="meta-text" key={association.condition}>
+                          {association.status === "more_common_under_condition" ? "Observed more often" : "Observed less often"}
+                          {" during "}
+                          {association.condition_label}
+                        </p>
+                      ))}
                   </div>
                 </section>
               ) : null}

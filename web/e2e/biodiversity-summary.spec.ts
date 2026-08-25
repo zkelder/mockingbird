@@ -67,7 +67,11 @@ async function mockBiodiversitySummary(page: Page, overrides: Record<string, unk
     recently_observed_taxa: [],
     provisional_taxa: [],
     habitat_context: { habitat_facts: [], current_phenology: [], recent_phenology: [] },
-    environmental_context: { available: false, for_date: new Date().toISOString().slice(0, 10) },
+    environmental_context: {
+      available: false,
+      for_date: new Date().toISOString().slice(0, 10),
+      weather: { status: "not_configured" },
+    },
     warnings: [],
   };
   const body = { ...base, ...overrides };
@@ -282,7 +286,12 @@ test("a taxon's history shows habitat/environment context for its most recent si
   await mockJournalHistory(page, "northern_cardinal", {
     place_context: {
       observed_at: observedAt,
-      environmental_context: { available: true, daylight_state: "day", reason: "computed" },
+      environmental_context: {
+        available: true,
+        daylight_state: "day",
+        reason: "computed",
+        weather: { status: "not_configured" },
+      },
       phenology_context: [
         { id: "phen-1", subject_label: "Deciduous canopy", phenomenon: "leafed out", status: "current" },
       ],

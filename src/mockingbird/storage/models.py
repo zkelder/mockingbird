@@ -1559,6 +1559,18 @@ class EnvironmentalContextSettingsModel(Base):
     Never read by, or written from, `CamtrapDpExportRequest.latitude`/
     `.longitude` or `RecordedAudioAnalysisRequest.latitude`/`.longitude`,
     which remain explicit-per-call-only and untouched by this milestone.
+
+    `weather_enabled` (Environmental Context v2, schema 54): a second,
+    independent opt-in gate, deliberately separate from
+    `coarse_latitude`/`coarse_longitude` being set. Configuring coordinates
+    enables only local, offline solar/daylight computation (`solar_local`,
+    zero network access); `weather_enabled` is the explicit, separate
+    consent required before this installation ever sends that coordinate
+    to an external weather provider (`open_meteo`) over the network -- see
+    docs/environmental-context-v2-contract.md "Phase 16" /
+    "Privacy / location". `NOT NULL DEFAULT 0`: an upgraded installation
+    that already has a location configured for solar does not silently
+    start making outbound weather requests.
     """
 
     __tablename__ = "environmental_context_settings"
@@ -1566,6 +1578,7 @@ class EnvironmentalContextSettingsModel(Base):
     singleton_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     coarse_latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     coarse_longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    weather_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 

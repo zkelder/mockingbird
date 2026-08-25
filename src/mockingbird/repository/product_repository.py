@@ -73,6 +73,7 @@ from mockingbird.analytics.place_activity_report_adapter import (
     _regularity_narrative_response,
     _seasonal_pattern_response,
     _temporal_pattern_response,
+    _weather_association_response,
     place_activity_report_response,
     place_biodiversity_summary_response,
     taxon_change_status_response,
@@ -97,6 +98,10 @@ from mockingbird.analytics.habitat_association import (
     PhenologyIntervalFact,
     TaxonHabitatAssociation,
     compute_habitat_associations,
+)
+from mockingbird.analytics.weather_association import (
+    TaxonWeatherAssociation,
+    compute_weather_associations,
 )
 from mockingbird.analytics.temporal_pattern import (
     DaylightBucket,
@@ -723,8 +728,9 @@ from mockingbird.api.schemas import (
     UserRoleUpdate,
     UserSummary,
     VisitEnvironmentalContext,
+    WeatherConditions,
 )
-from mockingbird.environment import solar_context
+from mockingbird.environment import condition_bands, solar_context, weather_provider
 from mockingbird.habitat import phenology as habitat_phenology
 from mockingbird.playback import local_camera_bridge, rtsp_bridge, windows_camera_bridge
 from mockingbird.monitoring.durable_supervisor import DurableMonitoringCandidate
@@ -883,6 +889,11 @@ MAX_STORAGE_CLEANUP_PREVIEW_ITEMS = 200
 MAX_STORAGE_CLEANUP_HISTORY_ITEMS = 30
 STORAGE_CLEANUP_PREVIEW_TTL = timedelta(minutes=15)
 STORAGE_CLEANUP_RECOVERY_WINDOW = timedelta(days=14)
+# Environmental Context v2: bounds how often "today"'s own weather rows are
+# re-fetched (see docs/environmental-context-v2-contract.md "Phase 10").
+# Every other (non-today) date is fetched at most once, ever, per distinct
+# location -- immutable-reuse, matching solar's per-day cache exactly.
+WEATHER_REFRESH_INTERVAL = timedelta(minutes=30)
 DEFAULT_STORAGE_REVIEWED_NON_BIRD_AGE_DAYS = 180
 DEFAULT_STORAGE_SUPERSEDED_AGE_DAYS = 90
 DEFAULT_STORAGE_ORPHANED_AGE_DAYS = 30
@@ -3698,6 +3709,7 @@ class ProductRepository:
         media_root: str | Path | None = None,
         classifier_manifest_export_root: str | Path | None = None,
         research_export_root: str | Path | None = None,
+        weather_requester: weather_provider.WeatherRequester | None = None,
     ) -> None:
         self.db_url = resolve_database_url(db_url)
         self.media_root = resolve_media_root(media_root)
@@ -3747,6 +3759,10 @@ class ProductRepository:
         # action). See `storage_summary`'s own docstring.
         self._storage_summary_cache: tuple[float, StorageSummary] | None = None
         self._storage_summary_cache_lock = threading.Lock()
+        # Environmental Context v2: dependency-injected so tests never open
+        # a real socket (mirrors `onvif_client.OnvifRequester`'s identical
+        # seam) -- see docs/environmental-context-v2-contract.md "Phase 1".
+        self._weather_requester = weather_requester or weather_provider.UrlLibWeatherRequester()
         self.seed_if_empty()
 
     def close(self) -> None:
@@ -4302,13 +4318,14 @@ class ProductRepository:
             model = session.get(EnvironmentalContextSettingsModel, 1)
             if model is None:
                 return EnvironmentalContextSettings(
-                    configured=False, updated_at=datetime.now(UTC)
+                    configured=False, weather_enabled=False, updated_at=datetime.now(UTC)
                 )
             return EnvironmentalContextSettings(
                 coarse_latitude=model.coarse_latitude,
                 coarse_longitude=model.coarse_longitude,
                 configured=model.coarse_latitude is not None
                 and model.coarse_longitude is not None,
+                weather_enabled=model.weather_enabled,
                 updated_at=_as_utc(model.updated_at),
             )
 
@@ -4327,10 +4344,20 @@ class ProductRepository:
             with session.begin():
                 model = session.get(EnvironmentalContextSettingsModel, 1)
                 if model is None:
-                    model = EnvironmentalContextSettingsModel(singleton_id=1, updated_at=now)
+                    model = EnvironmentalContextSettingsModel(
+                        singleton_id=1, weather_enabled=False, updated_at=now
+                    )
                     session.add(model)
                 model.coarse_latitude = rounded_latitude
                 model.coarse_longitude = rounded_longitude
+                # Environmental Context v2: a second, independent opt-in --
+                # see docs/environmental-context-v2-contract.md "Phase 16".
+                # Deliberately not defaulted based on `payload.latitude`/
+                # `.longitude` being present: enabling weather is always the
+                # caller's own explicit choice, on this same PUT-style
+                # full-replacement request, never inferred from location
+                # alone.
+                model.weather_enabled = payload.weather_enabled
                 model.updated_at = now
                 self._record_audit_event_in_session(
                     session, now=now, actor_user_id=acting_user.id, actor_display_name=acting_user.display_name,
@@ -4342,6 +4369,7 @@ class ProductRepository:
                     coarse_longitude=model.coarse_longitude,
                     configured=model.coarse_latitude is not None
                     and model.coarse_longitude is not None,
+                    weather_enabled=model.weather_enabled,
                     updated_at=model.updated_at,
                 )
 
@@ -4466,6 +4494,289 @@ class ProductRepository:
         ]
         return solar_context.find_daylight_window(candidates, instant)
 
+    def _get_or_fetch_hourly_weather_in_session(
+        self,
+        session: Session,
+        *,
+        now: datetime,
+        for_date: date,
+        latitude: float,
+        longitude: float,
+    ) -> tuple[str, tuple[weather_provider.HourlyWeatherObservation, ...], datetime | None]:
+        """Cache-or-fetch primitive for one UTC calendar date's hourly
+        weather, mirroring `_get_or_compute_daily_solar_facts_in_session`'s
+        "reuse existing rows if present, else compute/fetch and persist"
+        shape -- see docs/environmental-context-v2-contract.md
+        "Phase 10/14/15". Callers must already have confirmed coordinates
+        are configured and `weather_enabled` is true; this method has no
+        "not configured"/"disabled" outcome of its own.
+
+        Returns `(status, observations, retrieved_at)` where `status` is
+        one of `"available"` / `"out_of_range"` / `"unavailable"` /
+        `"stale"`.
+
+        - Cache key is `(source_id IS NULL, provider_key, for_date)`,
+          reusing the existing lookup index -- no migration needed.
+        - **Basis check** (Phase 15): existing rows are only reused if
+          their `basis_latitude`/`basis_longitude` match the *current*
+          `latitude`/`longitude`. A location change makes the next lookup
+          for any previously-cached date a cache miss for the new
+          location; old rows are never deleted or reinterpreted as if
+          acquired for the new location.
+        - **Immutability** (Phase 14): a date strictly before `now`'s own
+          UTC calendar date, once it has any basis-matching cached rows,
+          is never re-fetched, regardless of `retrieved_at`'s age. Only
+          `for_date == now.date()` is ever re-fetched, gated by
+          `WEATHER_REFRESH_INTERVAL`, since that day has not finished.
+        - **Bounded window** (Phase 4/25): the *provider* is never asked
+          for a `for_date` outside `[now.date() - WEATHER_MAX_PAST_DAYS,
+          now.date()]` -- `"out_of_range"` gates new fetch attempts only,
+          checked *after* the cache-hit check below, never before it:
+          already-cached data for an old date remains fully readable
+          forever (Phase 14 immutability), even long after "now" has moved
+          far enough that the *provider* could no longer serve a fresh
+          fetch for that same date. A date already cached before this
+          window boundary passed it does not retroactively become unusable
+          -- only a genuine cache *miss* for an out-of-range date is ever
+          refused.
+        - **Degraded mode** (Phase 9): any `WeatherProviderError` is
+          caught here -- never raised to the caller. If basis-matching
+          cached data already exists, it is served anyway, marked
+          `"stale"`; otherwise `"unavailable"` with no observations.
+        """
+
+        existing = session.scalars(
+            select(EnvironmentalContextRecordModel).where(
+                EnvironmentalContextRecordModel.source_id.is_(None),
+                EnvironmentalContextRecordModel.provider_key == weather_provider.WEATHER_PROVIDER_KEY,
+                EnvironmentalContextRecordModel.for_date == for_date,
+            )
+        ).all()
+        # Scoped to rows matching the *current* settings location -- a row
+        # left over from a since-changed location (Phase 15) is never
+        # reused, never counted toward `retrieved_at` freshness, and (below)
+        # never deleted. `existing` above intentionally still fetches every
+        # row for this date regardless of basis, only so a location-change
+        # fetch can coexist with, rather than clobber, whatever a prior
+        # location already wrote for the same calendar date.
+        matching_rows = [
+            row for row in existing if row.basis_latitude == latitude and row.basis_longitude == longitude
+        ]
+        latest_retrieved_at = (
+            max(_as_utc(row.retrieved_at) for row in matching_rows) if matching_rows else None
+        )
+        is_today = for_date == now.date()
+        needs_refresh = is_today and (
+            latest_retrieved_at is None or now - latest_retrieved_at >= WEATHER_REFRESH_INTERVAL
+        )
+
+        if matching_rows and not needs_refresh:
+            return (
+                "available",
+                tuple(_hourly_observation_from_environmental_context_record(row) for row in matching_rows),
+                latest_retrieved_at,
+            )
+
+        # Only reached on a genuine cache miss (or today's refresh gate) --
+        # the provider itself is never asked for a date outside its own
+        # confirmed window.
+        if for_date > now.date() or (now.date() - for_date).days > weather_provider.WEATHER_MAX_PAST_DAYS:
+            return "out_of_range", (), None
+
+        try:
+            result = weather_provider.fetch_hourly_weather(
+                latitude, longitude, for_date, requester=self._weather_requester, now=now,
+            )
+        except weather_provider.WeatherProviderError:
+            if matching_rows:
+                return (
+                    "stale",
+                    tuple(
+                        _hourly_observation_from_environmental_context_record(row) for row in matching_rows
+                    ),
+                    latest_retrieved_at,
+                )
+            return "unavailable", (), None
+
+        # Only same-location, same-day rows are ever superseded (today is
+        # not yet immutable history -- Phase 14). Reaching this point with
+        # `matching_rows` non-empty is only possible when `is_today` (a
+        # non-today date with matching rows would already have returned
+        # "available" above, since `needs_refresh` is unconditionally False
+        # for a non-today date) -- the explicit `is_today` guard is kept
+        # anyway as a defensive, self-documenting invariant. Rows for a
+        # *different* location (Phase 15) are never touched here, at any
+        # date: old rows are never deleted or reinterpreted as if acquired
+        # for the new location.
+        if is_today:
+            for row in matching_rows:
+                session.delete(row)
+            if matching_rows:
+                session.flush()
+
+        for observation in result.observations:
+            session.add(
+                EnvironmentalContextRecordModel(
+                    id=f"envctx-{uuid.uuid4().hex[:16]}",
+                    source_id=None,
+                    provider_key=weather_provider.WEATHER_PROVIDER_KEY,
+                    information_class=weather_provider.WEATHER_INFORMATION_CLASS,
+                    metric=observation.metric,
+                    value_numeric=observation.value_numeric,
+                    value_text=None,
+                    unit=observation.unit,
+                    observed_at=observation.observed_at,
+                    observed_at_end=None,
+                    for_date=observation.for_date,
+                    retrieved_at=result.retrieved_at,
+                    basis_latitude=latitude,
+                    basis_longitude=longitude,
+                    provenance_json=json.dumps(
+                        {
+                            "api_field": weather_provider.metric_api_field(observation.metric),
+                            "model": "best_match",
+                        }
+                    ),
+                    provenance_schema_version=1,
+                    created_at=now,
+                )
+            )
+        return "available", result.observations, result.retrieved_at
+
+    def _weather_conditions_response(
+        self,
+        session: Session,
+        *,
+        now: datetime,
+        instant: datetime,
+        latitude: float | None,
+        longitude: float | None,
+    ) -> WeatherConditions:
+        """Resolve one `WeatherConditions` snapshot for `instant` (the
+        current moment for Today, or a Visit's `activity_started_at` for a
+        Visit) -- absence-safe throughout, never raises. See
+        docs/environmental-context-v2-contract.md "Phase 5/8/9/16"."""
+
+        settings = session.get(EnvironmentalContextSettingsModel, 1)
+        weather_enabled = settings.weather_enabled if settings is not None else False
+        status = weather_provider.get_weather_provider_status(
+            latitude, longitude, weather_enabled=weather_enabled
+        )
+        if status.status == "not_configured":
+            return WeatherConditions(status="not_configured")
+        if status.status == "disabled":
+            return WeatherConditions(status="disabled")
+
+        assert latitude is not None and longitude is not None
+        day_status, observations, retrieved_at = self._get_or_fetch_hourly_weather_in_session(
+            session, now=now, for_date=instant.date(), latitude=latitude, longitude=longitude,
+        )
+        if day_status in ("out_of_range", "unavailable"):
+            return WeatherConditions(status=day_status)
+
+        latest_by_metric = {
+            metric: condition_bands.latest_observation(observations, metric=metric, at=instant)
+            for metric in weather_provider.ALL_WEATHER_METRICS
+        }
+        temperature_observation = latest_by_metric["air_temperature"]
+        if temperature_observation is None:
+            # A day marked available/stale but with no temperature reading
+            # for this specific instant (e.g. a genuine provider gap for
+            # that hour) is honestly unavailable for this instant -- never
+            # a fabricated reading.
+            return WeatherConditions(status="unavailable")
+
+        temperature_band = self._recent_temperature_band(
+            session, instant=instant, latitude=latitude, longitude=longitude, mean_temperature_c=temperature_observation.value_numeric,
+        )
+        precipitation_observation = latest_by_metric["precipitation_amount"]
+        snowfall_observation = latest_by_metric["snowfall_amount"]
+        precipitation_state = condition_bands.classify_precipitation_state(
+            precipitation_observation.value_numeric if precipitation_observation is not None else 0.0,
+            snowfall_observation.value_numeric if snowfall_observation is not None else 0.0,
+        )
+        cloud_cover_observation = latest_by_metric["cloud_cover"]
+        cloud_cover_band = (
+            condition_bands.classify_cloud_cover(cloud_cover_observation.value_numeric)
+            if cloud_cover_observation is not None
+            else None
+        )
+
+        def _value(metric: weather_provider.WeatherMetric) -> float | None:
+            observation = latest_by_metric[metric]
+            return observation.value_numeric if observation is not None else None
+
+        return WeatherConditions(
+            status=day_status,
+            observed_at=temperature_observation.observed_at,
+            retrieved_at=retrieved_at,
+            provider_key=weather_provider.WEATHER_PROVIDER_KEY,
+            information_class=weather_provider.WEATHER_INFORMATION_CLASS,
+            air_temperature_c=_value("air_temperature"),
+            relative_humidity_percent=_value("relative_humidity"),
+            precipitation_mm=_value("precipitation_amount"),
+            snowfall_cm=_value("snowfall_amount"),
+            wind_speed_kmh=_value("wind_speed"),
+            wind_direction_degrees=_value("wind_direction"),
+            cloud_cover_percent=_value("cloud_cover"),
+            surface_pressure_hpa=_value("surface_pressure"),
+            temperature_band=temperature_band,
+            precipitation_state=precipitation_state,
+            summary_text=condition_bands.describe_current_conditions(
+                temperature_band=temperature_band,
+                cloud_cover_band=cloud_cover_band,
+                precipitation_state=precipitation_state,
+            ),
+        )
+
+    def _recent_temperature_band(
+        self,
+        session: Session,
+        *,
+        instant: datetime,
+        latitude: float,
+        longitude: float,
+        mean_temperature_c: float,
+    ) -> condition_bands.TemperatureBand | None:
+        """Place-relative classification of one instant's temperature
+        reading against this Place's own recent daily-mean distribution --
+        see docs/environmental-context-v2-contract.md "Phase 6/7". Reads
+        only already-persisted rows (bounded to the `WEATHER_MAX_PAST_DAYS`
+        window this Place could ever have cached) -- never triggers a new
+        provider fetch itself.
+
+        The baseline window is anchored at `instant`'s own date, **not**
+        "now": a historical Visit's temperature must be judged against
+        conditions typical around *that* date (a seasonally-appropriate
+        comparison), never against whatever season "now" happens to be
+        when the Visit is later viewed. This mirrors `_historical_place_
+        baseline_and_species_statuses`'s own documented reason for
+        anchoring its trailing window at the caller's `window_end_at`
+        rather than `datetime.now()`: the result must stay reproducible
+        regardless of when it is re-viewed. Data strictly after `instant`'s
+        own date is never included, even if more recently cached, for the
+        identical reason."""
+
+        window_end = instant.date()
+        window_start = window_end - timedelta(days=weather_provider.WEATHER_MAX_PAST_DAYS)
+        rows = session.scalars(
+            select(EnvironmentalContextRecordModel).where(
+                EnvironmentalContextRecordModel.source_id.is_(None),
+                EnvironmentalContextRecordModel.provider_key == weather_provider.WEATHER_PROVIDER_KEY,
+                EnvironmentalContextRecordModel.metric == "air_temperature",
+                EnvironmentalContextRecordModel.for_date >= window_start,
+                EnvironmentalContextRecordModel.for_date <= window_end,
+                EnvironmentalContextRecordModel.basis_latitude == latitude,
+                EnvironmentalContextRecordModel.basis_longitude == longitude,
+            )
+        ).all()
+        observations = tuple(_hourly_observation_from_environmental_context_record(row) for row in rows)
+        hour_counts = condition_bands.daily_hour_counts(observations, metric="air_temperature")
+        usable_dates = condition_bands.usable_environmental_dates(hour_counts)
+        means = condition_bands.daily_mean(observations, metric="air_temperature", dates=usable_dates)
+        baseline = condition_bands.compute_temperature_baseline(means)
+        return condition_bands.classify_temperature_day(mean_temperature_c, baseline)
+
     def get_place_environmental_context_today(self) -> PlaceEnvironmentalContext:
         now = datetime.now(UTC)
         with self.session_factory() as session:
@@ -4473,16 +4784,32 @@ class ProductRepository:
                 settings = session.get(EnvironmentalContextSettingsModel, 1)
                 latitude = settings.coarse_latitude if settings is not None else None
                 longitude = settings.coarse_longitude if settings is not None else None
+                # Weather is resolved independently of solar's own
+                # availability below -- a genuine polar-night UTC date
+                # makes solar unavailable but has no bearing on weather
+                # (see docs/environmental-context-v2-contract.md
+                # "Phase 16"). `_weather_conditions_response` itself
+                # returns `not_configured`/`disabled` honestly when either
+                # gate is not met -- no coordinate check is duplicated here.
+                weather = self._weather_conditions_response(
+                    session, now=now, instant=now, latitude=latitude, longitude=longitude,
+                )
                 if latitude is None or longitude is None:
                     return PlaceEnvironmentalContext(
-                        available=False, reason="not_configured", for_date=now.date()
+                        available=False,
+                        reason="not_configured",
+                        for_date=now.date(),
+                        weather=weather,
                     )
                 window = self._get_daylight_window_in_session(
                     session, now=now, instant=now, latitude=latitude, longitude=longitude,
                 )
                 if window is None:
                     return PlaceEnvironmentalContext(
-                        available=False, reason="unavailable_for_date", for_date=now.date()
+                        available=False,
+                        reason="unavailable_for_date",
+                        for_date=now.date(),
+                        weather=weather,
                     )
                 sunrise_at, sunset_at = window
                 return PlaceEnvironmentalContext(
@@ -4501,6 +4828,7 @@ class ProductRepository:
                     # (see "Solar temporal semantics" in docs/environmental-
                     # context-foundation-v1-contract.md).
                     for_date=now.date(),
+                    weather=weather,
                 )
 
     def get_visit_environmental_context(self, visit_id: str) -> VisitEnvironmentalContext | None:
@@ -4526,12 +4854,19 @@ class ProductRepository:
                 settings = session.get(EnvironmentalContextSettingsModel, 1)
                 latitude = settings.coarse_latitude if settings is not None else None
                 longitude = settings.coarse_longitude if settings is not None else None
+                # See the identical note in `get_place_environmental_
+                # context_today` -- weather is resolved for the Visit's own
+                # instant independently of solar's availability for it.
+                weather = self._weather_conditions_response(
+                    session, now=now, instant=evaluated_at, latitude=latitude, longitude=longitude,
+                )
                 if latitude is None or longitude is None:
                     return VisitEnvironmentalContext(
                         available=False,
                         reason="not_configured",
                         visit_id=visit_id,
                         evaluated_at=evaluated_at,
+                        weather=weather,
                     )
                 window = self._get_daylight_window_in_session(
                     session, now=now, instant=evaluated_at, latitude=latitude, longitude=longitude,
@@ -4542,6 +4877,7 @@ class ProductRepository:
                         reason="unavailable_for_date",
                         visit_id=visit_id,
                         evaluated_at=evaluated_at,
+                        weather=weather,
                     )
                 sunrise_at, sunset_at = window
                 return VisitEnvironmentalContext(
@@ -4558,6 +4894,7 @@ class ProductRepository:
                     basis_longitude=longitude,
                     visit_id=visit_id,
                     evaluated_at=evaluated_at,
+                    weather=weather,
                 )
 
     # --- Habitat & Phenology Foundation v1 ---------------------------------
@@ -30111,6 +30448,120 @@ class ProductRepository:
             ):
                 habitat_associations.setdefault(association.taxon.label, []).append(association)
 
+        # Environmental Context v2 (Phase 6): read-only over whatever
+        # weather has already been cached via Today/Visit lookups -- never
+        # a live provider call from inside report generation (see
+        # docs/environmental-context-v2-contract.md "Phase 6/10" for why).
+        # Skipped entirely (empty dict) when weather is not configured/
+        # enabled, or nothing has been cached yet for this window -- a
+        # coverage limitation this method's own docstring records as a
+        # recorded future opportunity ("proactively backfill the report's
+        # own comparison window"), not a silent bias: missing/disabled
+        # weather data must never break core Place intelligence, mirroring
+        # habitat association's identical coverage-safety discipline above.
+        weather_associations: dict[str, list[TaxonWeatherAssociation]] = {}
+        env_settings = session.get(EnvironmentalContextSettingsModel, 1)
+        if (
+            env_settings is not None
+            and env_settings.weather_enabled
+            and env_settings.coarse_latitude is not None
+            and env_settings.coarse_longitude is not None
+        ):
+            weather_window_start = (
+                window_end_at - timedelta(days=weather_provider.WEATHER_MAX_PAST_DAYS)
+            ).date()
+            # Upper-bounded at `window_end_at`'s own date too: `usable_dates`
+            # below is already scoped to this report's own trailing window,
+            # so a cached weather row from *after* window_end_at (e.g. a
+            # historical report re-viewed after more recent Today lookups
+            # cached newer dates) would be excluded from the association
+            # result regardless via that intersection -- this bound is a
+            # belt-and-suspenders query-efficiency tightening, not a
+            # correctness fix on its own.
+            weather_window_end = window_end_at.date()
+            weather_rows = session.execute(
+                select(
+                    EnvironmentalContextRecordModel.metric,
+                    EnvironmentalContextRecordModel.value_numeric,
+                    EnvironmentalContextRecordModel.observed_at,
+                    EnvironmentalContextRecordModel.for_date,
+                ).where(
+                    EnvironmentalContextRecordModel.source_id.is_(None),
+                    EnvironmentalContextRecordModel.provider_key == weather_provider.WEATHER_PROVIDER_KEY,
+                    EnvironmentalContextRecordModel.metric.in_(("air_temperature", "precipitation_amount")),
+                    EnvironmentalContextRecordModel.basis_latitude == env_settings.coarse_latitude,
+                    EnvironmentalContextRecordModel.basis_longitude == env_settings.coarse_longitude,
+                    EnvironmentalContextRecordModel.for_date >= weather_window_start,
+                    EnvironmentalContextRecordModel.for_date <= weather_window_end,
+                )
+            ).all()
+            if weather_rows:
+                weather_observations = tuple(
+                    weather_provider.HourlyWeatherObservation(
+                        metric=metric,
+                        value_numeric=value_numeric if value_numeric is not None else 0.0,
+                        unit="",
+                        observed_at=_as_utc(observed_at),
+                        for_date=for_date if for_date is not None else _as_utc(observed_at).date(),
+                    )
+                    for metric, value_numeric, observed_at, for_date in weather_rows
+                )
+                # Bucketed by `local_timezone` (not the storage layer's own
+                # UTC `for_date`) -- this axis is intersected against
+                # `usable_dates`/taxon presence dates below, which are
+                # already local-day-bucketed by the rest of this reporting
+                # pipeline (`presence_dates_by_taxon`); see
+                # `condition_bands._bucket_date`'s own docstring for why a
+                # UTC/local mismatch here would silently misalign whole
+                # days for a Place far from UTC, not just round a few
+                # boundary hours.
+                temperature_hour_counts = condition_bands.daily_hour_counts(
+                    weather_observations, metric="air_temperature", local_timezone=local_timezone,
+                )
+                temperature_usable_dates = condition_bands.usable_environmental_dates(
+                    temperature_hour_counts
+                )
+                temperature_means = condition_bands.daily_mean(
+                    weather_observations,
+                    metric="air_temperature",
+                    dates=temperature_usable_dates,
+                    local_timezone=local_timezone,
+                )
+                temperature_baseline = condition_bands.compute_temperature_baseline(temperature_means)
+                temperature_bands = {
+                    day: band
+                    for day, mean_c in temperature_means.items()
+                    if (band := condition_bands.classify_temperature_day(mean_c, temperature_baseline))
+                    is not None
+                }
+
+                precipitation_hour_counts = condition_bands.daily_hour_counts(
+                    weather_observations, metric="precipitation_amount", local_timezone=local_timezone,
+                )
+                precipitation_usable_dates = condition_bands.usable_environmental_dates(
+                    precipitation_hour_counts
+                )
+                precipitation_sums = condition_bands.daily_sum(
+                    weather_observations,
+                    metric="precipitation_amount",
+                    dates=precipitation_usable_dates,
+                    local_timezone=local_timezone,
+                )
+                precipitation_bands = {
+                    day: condition_bands.classify_precipitation_day(total_mm)
+                    for day, total_mm in precipitation_sums.items()
+                }
+
+                for association in compute_weather_associations(
+                    window_visits,
+                    taxa=taxa,
+                    usable_dates=usable_dates,
+                    local_timezone=local_timezone,
+                    temperature_bands=temperature_bands,
+                    precipitation_bands=precipitation_bands,
+                ):
+                    weather_associations.setdefault(association.taxon.label, []).append(association)
+
         return HistoricalPlaceIntelligence(
             baseline=baseline,
             species_historical_statuses=species_historical_statuses,
@@ -30120,6 +30571,7 @@ class ProductRepository:
             seasonal_patterns=seasonal_patterns,
             temporal_patterns=temporal_patterns,
             habitat_associations=habitat_associations,
+            weather_associations=weather_associations,
         )
 
     def list_likely_species_overview(self, *, limit: int = 20) -> LikelySpeciesOverviewResponse:
@@ -30770,6 +31222,12 @@ class ProductRepository:
                 habitat_associations=[
                     _habitat_association_response(association)
                     for association in historical_place_intelligence.habitat_associations.get(
+                        canonical_label, []
+                    )
+                ],
+                weather_associations=[
+                    _weather_association_response(association)
+                    for association in historical_place_intelligence.weather_associations.get(
                         canonical_label, []
                     )
                 ],
@@ -39703,6 +40161,23 @@ def _clean_optional_text(value: str | None) -> str | None:
 
 def _as_utc(value: datetime) -> datetime:
     return normalize_utc(value)
+
+
+def _hourly_observation_from_environmental_context_record(
+    row: EnvironmentalContextRecordModel,
+) -> weather_provider.HourlyWeatherObservation:
+    """Reconstruct one provider-neutral hourly fact from a persisted row --
+    the inverse of the write path in `_get_or_fetch_hourly_weather_in_
+    session`. `row.metric`/`row.for_date` are trusted as already-valid
+    (this only ever reads rows this same repository wrote)."""
+
+    return weather_provider.HourlyWeatherObservation(
+        metric=row.metric,
+        value_numeric=row.value_numeric if row.value_numeric is not None else 0.0,
+        unit=row.unit or "",
+        observed_at=_as_utc(row.observed_at),
+        for_date=row.for_date if row.for_date is not None else _as_utc(row.observed_at).date(),
+    )
 
 
 def _optional_string(value: Any) -> str | None:

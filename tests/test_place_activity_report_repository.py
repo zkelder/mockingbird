@@ -813,6 +813,8 @@ def test_api_serialization_contract_exposes_only_documented_fields(
         "seasonal_pattern",
         "temporal_pattern",
         "habitat_associations",
+        # Environmental Context v2.
+        "weather_associations",
     }
     assert taxon["label"] == "northern_cardinal"
     # Place / Yard Intelligence v2: identical truth-contract condition as
@@ -827,6 +829,11 @@ def test_api_serialization_contract_exposes_only_documented_fields(
     assert taxon["seasonal_pattern"]["status"] == "insufficient_history"
     assert len(taxon["seasonal_pattern"]["months"]) == 12
     assert taxon["habitat_associations"] == []
+    # No weather provider configured/enabled in this fixture -- see
+    # docs/environmental-context-v2-contract.md "Phase 6": weather
+    # association is skipped entirely, never a fabricated/insufficient
+    # placeholder, when weather is not configured/enabled.
+    assert taxon["weather_associations"] == []
     assert taxon["category"] == "bird"
     # This fixture's Visit has no evidence at all (`_add_visit` never
     # attaches media) -- a completely valid, non-error state; see "No-image

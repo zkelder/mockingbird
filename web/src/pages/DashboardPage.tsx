@@ -299,8 +299,8 @@ export function DashboardPage({
   // the environmental context afterward, not the whole dashboard, so a
   // location edit cannot appear to also refresh unrelated Visit/health data.
   const saveEnvironmentalContextLocation = useCallback(
-    async (latitude: number | null, longitude: number | null) => {
-      await apiClient.updateEnvironmentalContextSettings({ latitude, longitude });
+    async (latitude: number | null, longitude: number | null, weatherEnabled: boolean) => {
+      await apiClient.updateEnvironmentalContextSettings({ latitude, longitude, weather_enabled: weatherEnabled });
       const nextEnvironmentalContext = await apiClient.getTodayEnvironmentalContext().catch(() => null);
       setEnvironmentalContext(nextEnvironmentalContext);
     },

@@ -4432,6 +4432,19 @@ export interface PlaceActivityReportHabitatAssociation {
   usable_days_out_of_condition: number;
 }
 
+// Environmental Context v2 -- mirrors PlaceActivityReportHabitatAssociation
+// field-for-field, using a weather condition axis instead of a phenology
+// interval. See docs/environmental-context-v2-contract.md "Phase 6/7".
+export interface PlaceActivityReportWeatherAssociation {
+  condition: "cooler_than_typical" | "warmer_than_typical" | "wet_day";
+  condition_label: string;
+  status: "no_clear_association" | "more_common_under_condition" | "less_common_under_condition";
+  presence_days_in_condition: number;
+  usable_days_in_condition: number;
+  presence_days_out_of_condition: number;
+  usable_days_out_of_condition: number;
+}
+
 export interface PlaceActivityReportSourceActivity {
   source_id: string;
   source_name: string;
@@ -4487,6 +4500,7 @@ export interface PlaceActivityReportTaxonEntry {
   seasonal_pattern?: PlaceActivityReportSeasonalPattern | null;
   temporal_pattern?: PlaceActivityReportTemporalPattern | null;
   habitat_associations: PlaceActivityReportHabitatAssociation[];
+  weather_associations: PlaceActivityReportWeatherAssociation[];
 }
 
 // Place-wide historical baseline facts, bounded to a trailing window ending
@@ -4890,6 +4904,7 @@ export interface WildlifeJournalHistoryResponse {
   seasonal_pattern?: PlaceActivityReportSeasonalPattern | null;
   temporal_pattern?: PlaceActivityReportTemporalPattern | null;
   habitat_associations: PlaceActivityReportHabitatAssociation[];
+  weather_associations: PlaceActivityReportWeatherAssociation[];
   activity_library_drilldown: WildlifeJournalDrilldown;
   gallery: WildlifeJournalGallery;
 }
@@ -5129,12 +5144,19 @@ export interface EnvironmentalContextSettings {
   coarse_latitude?: number | null;
   coarse_longitude?: number | null;
   configured: boolean;
+  // Environmental Context v2: a second, independent opt-in -- see
+  // docs/environmental-context-v2-contract.md "Privacy / location".
+  // Configuring coordinates enables only local, offline solar computation;
+  // this flag is the explicit, separate consent before this installation
+  // ever sends that coordinate to an external weather provider.
+  weather_enabled: boolean;
   updated_at: string;
 }
 
 export interface EnvironmentalContextSettingsUpdate {
   latitude?: number | null;
   longitude?: number | null;
+  weather_enabled?: boolean;
 }
 
 // Mirrors api.schemas.SolarContext/VisitEnvironmentalContext/
@@ -5153,13 +5175,41 @@ export interface SolarContext {
   basis_longitude?: number | null;
 }
 
+// Mirrors api.schemas.WeatherConditions (Environmental Context v2 -- see
+// docs/environmental-context-v2-contract.md). `status` carries *why*
+// weather may be unavailable, independent of the containing response's
+// own solar `available`/`reason`. Every value field is `null` unless
+// `status` is `"available"` or `"stale"`. `information_class` is always
+// `"inferred"`, never `"measured"` -- see product-doctrine.md "Measured,
+// Inferred, and Reviewed".
+export interface WeatherConditions {
+  status: "available" | "not_configured" | "disabled" | "out_of_range" | "unavailable" | "stale";
+  observed_at?: string | null;
+  retrieved_at?: string | null;
+  provider_key?: string | null;
+  information_class?: "inferred" | null;
+  air_temperature_c?: number | null;
+  relative_humidity_percent?: number | null;
+  precipitation_mm?: number | null;
+  snowfall_cm?: number | null;
+  wind_speed_kmh?: number | null;
+  wind_direction_degrees?: number | null;
+  cloud_cover_percent?: number | null;
+  surface_pressure_hpa?: number | null;
+  temperature_band?: "cooler_than_typical" | "typical" | "warmer_than_typical" | null;
+  precipitation_state?: "dry" | "rain" | "snow" | null;
+  summary_text?: string | null;
+}
+
 export interface VisitEnvironmentalContext extends SolarContext {
   visit_id: string;
   evaluated_at?: string | null;
+  weather: WeatherConditions;
 }
 
 export interface PlaceEnvironmentalContext extends SolarContext {
   for_date: string;
+  weather: WeatherConditions;
 }
 
 // Habitat & Phenology Foundation v1 -- see docs/habitat-phenology-

@@ -59,6 +59,7 @@ from mockingbird.analytics.regularity_narrative import RegularityNarrative
 from mockingbird.analytics.seasonal_pattern import MonthPresence, SeasonalPattern
 from mockingbird.analytics.temporal_pattern import TaxonTemporalPattern
 from mockingbird.analytics.habitat_association import TaxonHabitatAssociation
+from mockingbird.analytics.weather_association import TaxonWeatherAssociation
 from mockingbird.analytics.source_activity import SourceActivityEntry, SourceQualitySignal
 from mockingbird.api.schemas import (
     DashboardTodaySpecies,
@@ -87,6 +88,7 @@ from mockingbird.api.schemas import (
     PlaceActivityReportTaxonHourActivity,
     PlaceActivityReportTaxonZoneActivity,
     PlaceActivityReportTemporalPattern,
+    PlaceActivityReportWeatherAssociation,
     PlaceActivityReportZoneActivity,
     PlaceBiodiversitySummaryResponse,
     PlaceBiodiversityTaxonEntry,
@@ -120,6 +122,7 @@ class HistoricalPlaceIntelligence(NamedTuple):
     seasonal_patterns: dict[str, SeasonalPattern]
     temporal_patterns: dict[str, TaxonTemporalPattern]
     habitat_associations: dict[str, list[TaxonHabitatAssociation]]
+    weather_associations: dict[str, list[TaxonWeatherAssociation]]
 
 _RESOLUTION_BY_REVIEW_STATUS: dict[ReviewStatus, VisitResolution] = {
     ReviewStatus.needs_review: "needs_review",
@@ -323,6 +326,20 @@ def _habitat_association_response(
     )
 
 
+def _weather_association_response(
+    association: TaxonWeatherAssociation,
+) -> PlaceActivityReportWeatherAssociation:
+    return PlaceActivityReportWeatherAssociation(
+        condition=association.condition,
+        condition_label=association.condition_label,
+        status=association.association.status,
+        presence_days_in_condition=association.association.presence_days_in_condition,
+        usable_days_in_condition=association.association.usable_days_in_condition,
+        presence_days_out_of_condition=association.association.presence_days_out_of_condition,
+        usable_days_out_of_condition=association.association.usable_days_out_of_condition,
+    )
+
+
 def _taxon_entry_response(
     entry: TaxonReportEntry,
     *,
@@ -334,6 +351,7 @@ def _taxon_entry_response(
     seasonal_pattern: SeasonalPattern | None = None,
     temporal_pattern: TaxonTemporalPattern | None = None,
     habitat_associations: list[TaxonHabitatAssociation] | None = None,
+    weather_associations: list[TaxonWeatherAssociation] | None = None,
 ) -> PlaceActivityReportTaxonEntry:
     return PlaceActivityReportTaxonEntry(
         label=entry.label,
@@ -385,6 +403,11 @@ def _taxon_entry_response(
         habitat_associations=(
             [_habitat_association_response(association) for association in habitat_associations]
             if habitat_associations is not None
+            else []
+        ),
+        weather_associations=(
+            [_weather_association_response(association) for association in weather_associations]
+            if weather_associations is not None
             else []
         ),
     )
@@ -649,6 +672,7 @@ def place_activity_report_response(
     seasonal_patterns = historical_place_intelligence.seasonal_patterns
     temporal_patterns = historical_place_intelligence.temporal_patterns
     habitat_associations = historical_place_intelligence.habitat_associations
+    weather_associations = historical_place_intelligence.weather_associations
     change_status_by_label = {status.taxon.label: status for status in change_summary.taxa}
     assert change_summary.overall is not None
 
@@ -734,6 +758,7 @@ def place_activity_report_response(
                 seasonal_pattern=seasonal_patterns.get(entry.label),
                 temporal_pattern=temporal_patterns.get(entry.label),
                 habitat_associations=habitat_associations.get(entry.label),
+                weather_associations=weather_associations.get(entry.label),
             )
             for entry in report.taxa
         ],

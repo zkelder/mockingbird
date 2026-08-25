@@ -3050,10 +3050,47 @@ sensor ingestion, per-Source (as opposed to Place-wide) context, and any
 weather/environment-vs-activity analytics (that is Biodiversity & Place
 Intelligence, below, once this foundation has more history behind it).
 
-Still open beyond v1: **quality flags and spatial-resolution/distance**
-columns (deferred until a non-exact provider exists -- see the contract
-doc's "Explicitly deferred"), historical climate/anomalies, and the
-broader **later-provider** architecture question -- local environmental
+**2026-08-25 update (Environmental Context v2 -- Weather, Climate & Place
+Conditions):** the first general weather provider, on the same
+`environmental_context_records` table (zero schema change to it -- v1's
+`value_numeric`/`unit`/`observed_at_end` already anticipated exactly this)
+plus one new, narrow, `NOT NULL DEFAULT 0` opt-in column
+(`environmental_context_settings.weather_enabled`, schema 54) -- see
+[environmental-context-v2-contract.md](environmental-context-v2-contract.md).
+Selected provider: **Open-Meteo** (`api.open-meteo.com/v1/forecast`),
+free/non-commercial/no-API-key, global coverage, bounded to the provider's
+own confirmed 92-day recent-history window (no archive/ERA5 integration --
+this product's entire real history today is younger than that window).
+Eight provider-neutral metrics (air temperature, relative humidity,
+precipitation amount, snowfall amount, wind speed/direction, cloud cover,
+surface pressure), always `information_class="inferred"` -- never
+`"measured"`, since even "current" conditions are a gridded/interpolated
+model estimate, not a physical-sensor reading. A second, independent
+opt-in (`weather_enabled`) gates every outbound network call -- configuring
+a location for offline solar computation never silently starts sending it
+to a third party. Lazy, cache-bounded fetching (one HTTP call per not-yet-
+cached UTC calendar date, at most once ever for a past date, a bounded
+30-minute refresh cadence for "today" only); a location change causes a
+cache miss for the new location without deleting or reinterpreting old
+rows. Two Place-relative/physical-threshold association axes (cooler/
+warmer-than-typical temperature tertiles; wet vs. dry) feed
+`mockingbird.analytics.weather_association`, a thin wrapper over the
+existing, unmodified `conditional_association` primitive -- composed into
+`PlaceActivityReportResponse`/`WildlifeJournalHistoryResponse` alongside
+`habitat_associations`. Today/Visit detail show a small, restrained
+conditions line only when supported; no forecast, no chart, no dashboard.
+See the milestone report for the full record, including the Open-Meteo
+terms/license research, retention estimate, and recorded future
+opportunities (deeper historical backfill via the archive/ERA5 endpoint,
+wind/cloud-cover statistical associations, a dedicated Explore-page
+rendering).
+
+Still open beyond v1/v2: **quality flags and spatial-resolution/distance**
+columns (deferred until a non-exact provider exists -- see the v1 contract
+doc's "Explicitly deferred"; Open-Meteo's own resolution varies by model
+and location, but this milestone does not yet surface that as a quality
+flag), historical climate/anomalies beyond the bounded 92-day window, and
+the broader **later-provider** architecture question -- local environmental
 sensors, eBird, BirdCast where sanctioned access exists, USA-NPN,
 GBIF/iNaturalist, land cover, soils, water, satellite vegetation --
 without being built as a large integration platform now (see "External
@@ -3172,7 +3209,8 @@ the Place Report page. 173 new tests (zero bugs found in any new module);
 Core (4791 passed) and 46/46 targeted e2e passed, after fixing one real
 regression found live (a pre-existing e2e mock fixture predating a new
 additive field). Explicitly not built, recorded as future dependencies:
-weather/temperature association (no provider exists), a structured
+weather/temperature association (no provider existed yet -- closed the
+same day by Environmental Context v2, item 2 above), a structured
 Feeder/water-feature entity, and true year-over-year seasonality.
 
 ### 5. Land Management / Agriculture

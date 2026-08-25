@@ -276,7 +276,17 @@ fabricated.
   export path does not read it, still requires its own explicit per-call
   value, and still never infers one. "No persisted site/coordinate model"
   is therefore no longer true of the codebase as a whole; it remains true
-  of this export/BirdNET-narrowing surface specifically.
+  of this export/BirdNET-narrowing surface specifically. Environmental
+  Context v2 (see
+  [environmental-context-v2-contract.md](environmental-context-v2-contract.md))
+  later added an external weather provider (Open-Meteo) reusing that same
+  coordinate setting under its own separate `weather_enabled` opt-in --
+  this export path does not read that setting either, does not include
+  weather records in any export, and this doc's own claims here remain
+  accurate unchanged. Weather data carries CC BY 4.0 attribution
+  requirements of its own (see the v2 contract's "Phase 3" and "Research/
+  export considerations"); a future milestone that adds weather to an
+  export must carry that attribution forward explicitly, not silently.
 - **Metadata-only by default.** No export in this v1 copies media bytes;
   `include_media` is accepted for forward compatibility but has no
   additional effect yet (see "Generic research export," known limitation).

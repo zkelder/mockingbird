@@ -21,6 +21,7 @@ real HTTP surface; and backup/restore survival.
 from __future__ import annotations
 
 import json
+import urllib.parse
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from starlette.testclient import TestClient
 
 from mockingbird.api.main import app, configure_repository, get_repository
 from mockingbird.api.schemas import CurrentUser, EnvironmentalContextSettingsUpdate, UserRole
+from mockingbird.environment import weather_provider
 from mockingbird.environment.solar_context import (
     SolarContextUnavailableError,
     candidate_dates_for_window,
@@ -38,7 +40,7 @@ from mockingbird.environment.solar_context import (
     find_daylight_window,
     get_solar_context_status,
 )
-from mockingbird.repository.product_repository import ProductRepository
+from mockingbird.repository.product_repository import WEATHER_REFRESH_INTERVAL, ProductRepository
 from mockingbird.storage.models import (
     EnvironmentalContextRecordModel,
     EnvironmentalContextSettingsModel,
@@ -574,6 +576,504 @@ def test_environmental_context_never_touches_review_truth(repository: ProductRep
     assert after.reviewed_label is None
 
 
+# --- Weather provider (Environmental Context v2) ----------------------------
+# See docs/environmental-context-v2-contract.md. Uses a dedicated fixture
+# (`weather_repository`) with a fake, network-free requester injected --
+# mirrors this codebase's existing `OnvifRequester`-style dependency-
+# injection convention -- so these tests can never make a real HTTP call by
+# accident, unlike `repository` above (which uses the real
+# `UrlLibWeatherRequester`, correct for the solar-only tests that never
+# exercise the weather path at all).
+
+
+class _FakeWeatherRequester:
+    """Deterministic, network-free stand-in for `weather_provider.
+    UrlLibWeatherRequester`. Returns a canned 24-hour response for whatever
+    `start_date` was requested; raises `fail_with` (if set) instead."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.fail_with: Exception | None = None
+
+    def get(self, url: str, *, timeout_seconds: float) -> bytes:
+        self.calls.append(url)
+        if self.fail_with is not None:
+            raise self.fail_with
+        params = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+        start_date = params["start_date"][0]
+        times = [f"{start_date}T{hour:02d}:00" for hour in range(24)]
+        body = {
+            "hourly_units": {"time": "iso8601"},
+            "hourly": {
+                "time": times,
+                "temperature_2m": [15.0 for _ in range(24)],
+                "relative_humidity_2m": [60.0 for _ in range(24)],
+                "precipitation": [0.0 for _ in range(24)],
+                "snowfall": [0.0 for _ in range(24)],
+                "wind_speed_10m": [10.0 for _ in range(24)],
+                "wind_direction_10m": [180.0 for _ in range(24)],
+                "cloud_cover": [50.0 for _ in range(24)],
+                "surface_pressure": [1013.0 for _ in range(24)],
+            },
+        }
+        return json.dumps(body).encode("utf-8")
+
+
+@pytest.fixture
+def weather_repository(tmp_path: Path):
+    fake = _FakeWeatherRequester()
+    repository = ProductRepository(
+        db_url=f"sqlite:///{tmp_path / 'weather.sqlite3'}",
+        media_root=tmp_path / "media",
+        weather_requester=fake,
+    )
+    configure_repository(repository)
+    yield repository, fake
+    configure_repository(None)
+
+
+def _enable_weather(repository: ProductRepository, *, latitude: float = NYC_LATITUDE, longitude: float = NYC_LONGITUDE) -> None:
+    repository.update_environmental_context_settings(
+        EnvironmentalContextSettingsUpdate(latitude=latitude, longitude=longitude, weather_enabled=True),
+        acting_user=_acting_user(),
+    )
+
+
+def test_weather_settings_default_off(weather_repository) -> None:
+    repository, _fake = weather_repository
+    settings = repository.get_environmental_context_settings()
+    assert settings.weather_enabled is False
+
+
+def test_weather_status_not_configured_without_location(weather_repository) -> None:
+    repository, fake = weather_repository
+    context = repository.get_place_environmental_context_today()
+    assert context.weather.status == "not_configured"
+    assert fake.calls == []
+
+
+def test_weather_status_disabled_when_location_set_but_not_opted_in(weather_repository) -> None:
+    repository, fake = weather_repository
+    repository.update_environmental_context_settings(
+        EnvironmentalContextSettingsUpdate(latitude=NYC_LATITUDE, longitude=NYC_LONGITUDE, weather_enabled=False),
+        acting_user=_acting_user(),
+    )
+    context = repository.get_place_environmental_context_today()
+    assert context.weather.status == "disabled"
+    # Configuring a location for solar must never silently also start
+    # sending it to an external provider -- see the v2 contract's
+    # "Privacy / location".
+    assert fake.calls == []
+
+
+def test_weather_available_after_enabling_with_exactly_one_http_call(weather_repository) -> None:
+    repository, fake = weather_repository
+    _enable_weather(repository)
+    context = repository.get_place_environmental_context_today()
+    assert context.weather.status == "available"
+    assert context.weather.provider_key == weather_provider.WEATHER_PROVIDER_KEY
+    assert context.weather.information_class == "inferred"
+    assert context.weather.air_temperature_c == pytest.approx(15.0)
+    assert context.weather.relative_humidity_percent == pytest.approx(60.0)
+    assert context.weather.precipitation_state == "dry"
+    assert len(fake.calls) == 1
+
+
+def test_weather_information_class_is_always_inferred_never_measured(weather_repository) -> None:
+    """Direct proof of the governing brief's own information-model
+    requirement: even "current" conditions from a gridded/interpolated
+    external model must never be classified `"measured"`."""
+
+    repository, _fake = weather_repository
+    _enable_weather(repository)
+    context = repository.get_place_environmental_context_today()
+    assert context.weather.information_class == "inferred"
+    with repository.session_factory() as session:
+        rows = session.scalars(
+            select(EnvironmentalContextRecordModel).where(
+                EnvironmentalContextRecordModel.provider_key == weather_provider.WEATHER_PROVIDER_KEY
+            )
+        ).all()
+        assert rows
+        assert all(row.information_class == "inferred" for row in rows)
+
+
+def test_weather_cache_reused_within_refresh_interval(weather_repository) -> None:
+    repository, fake = weather_repository
+    _enable_weather(repository)
+    repository.get_place_environmental_context_today()
+    repository.get_place_environmental_context_today()
+    assert len(fake.calls) == 1
+
+
+def test_weather_today_refetched_after_refresh_interval_elapses(weather_repository) -> None:
+    repository, fake = weather_repository
+    _enable_weather(repository)
+    now = datetime(2026, 6, 21, 10, 0, tzinfo=UTC)
+    with repository.session_factory() as session:
+        with session.begin():
+            repository._get_or_fetch_hourly_weather_in_session(
+                session, now=now, for_date=now.date(), latitude=NYC_LATITUDE, longitude=NYC_LONGITUDE,
+            )
+    assert len(fake.calls) == 1
+    later_same_day = now + WEATHER_REFRESH_INTERVAL + timedelta(minutes=1)
+    with repository.session_factory() as session:
+        with session.begin():
+            status, _obs, _retrieved = repository._get_or_fetch_hourly_weather_in_session(
+                session, now=later_same_day, for_date=later_same_day.date(),
+                latitude=NYC_LATITUDE, longitude=NYC_LONGITUDE,
+            )
+    assert status == "available"
+    assert len(fake.calls) == 2
+
+
+def test_weather_past_date_never_refetched_regardless_of_age(weather_repository) -> None:
+    """Phase 14 immutability: once a strictly-past date has any cached
+    rows, it is never re-fetched, no matter how much later it is looked up
+    again -- unlike "today", which is re-fetched on a bounded cadence."""
+
+    repository, fake = weather_repository
+    _enable_weather(repository)
+    now = datetime(2026, 6, 21, 10, 0, tzinfo=UTC)
+    past_date = date(2026, 6, 1)
+    with repository.session_factory() as session:
+        with session.begin():
+            repository._get_or_fetch_hourly_weather_in_session(
+                session, now=now, for_date=past_date, latitude=NYC_LATITUDE, longitude=NYC_LONGITUDE,
+            )
+    assert len(fake.calls) == 1
+    much_later = now + timedelta(days=30)
+    with repository.session_factory() as session:
+        with session.begin():
+            status, _obs, _retrieved = repository._get_or_fetch_hourly_weather_in_session(
+                session, now=much_later, for_date=past_date, latitude=NYC_LATITUDE, longitude=NYC_LONGITUDE,
+            )
+    assert status == "available"
+    assert len(fake.calls) == 1  # still just the one original fetch
+
+
+def test_weather_location_change_causes_refetch_and_preserves_old_rows(weather_repository) -> None:
+    """Phase 15: a location change makes the next lookup for a previously-
+    cached date a cache miss for the new location; old rows are never
+    deleted or reinterpreted as if acquired for the new location."""
+
+    repository, fake = weather_repository
+    _enable_weather(repository, latitude=NYC_LATITUDE, longitude=NYC_LONGITUDE)
+    target_date = date(2026, 6, 1)
+    now = datetime(2026, 6, 21, tzinfo=UTC)
+    with repository.session_factory() as session:
+        with session.begin():
+            repository._get_or_fetch_hourly_weather_in_session(
+                session, now=now, for_date=target_date, latitude=NYC_LATITUDE, longitude=NYC_LONGITUDE,
+            )
+    assert len(fake.calls) == 1
+
+    new_latitude, new_longitude = 51.5, -0.1  # London
+    _enable_weather(repository, latitude=new_latitude, longitude=new_longitude)
+    with repository.session_factory() as session:
+        with session.begin():
+            status, _obs, _retrieved = repository._get_or_fetch_hourly_weather_in_session(
+                session, now=now, for_date=target_date, latitude=new_latitude, longitude=new_longitude,
+            )
+    assert status == "available"
+    assert len(fake.calls) == 2  # the location change forced a second real fetch
+
+    with repository.session_factory() as session:
+        rows = session.scalars(
+            select(EnvironmentalContextRecordModel).where(
+                EnvironmentalContextRecordModel.provider_key == weather_provider.WEATHER_PROVIDER_KEY,
+                EnvironmentalContextRecordModel.for_date == target_date,
+            )
+        ).all()
+        old_basis_rows = [r for r in rows if r.basis_latitude == NYC_LATITUDE]
+        new_basis_rows = [r for r in rows if r.basis_latitude == new_latitude]
+        assert old_basis_rows, "original NYC-basis rows must remain, never deleted"
+        assert new_basis_rows, "new London-basis rows must exist after the location change"
+
+
+def test_weather_provider_failure_with_no_cache_is_unavailable(weather_repository) -> None:
+    repository, fake = weather_repository
+    _enable_weather(repository)
+    fake.fail_with = weather_provider.WeatherProviderUnavailableError("simulated outage")
+    context = repository.get_place_environmental_context_today()
+    assert context.weather.status == "unavailable"
+    assert context.weather.air_temperature_c is None
+
+
+def test_weather_provider_failure_with_existing_cache_serves_stale(weather_repository) -> None:
+    repository, fake = weather_repository
+    _enable_weather(repository)
+    now = datetime(2026, 6, 21, 10, 0, tzinfo=UTC)
+    with repository.session_factory() as session:
+        with session.begin():
+            repository._get_or_fetch_hourly_weather_in_session(
+                session, now=now, for_date=now.date(), latitude=NYC_LATITUDE, longitude=NYC_LONGITUDE,
+            )
+    fake.fail_with = weather_provider.WeatherProviderTimeoutError("simulated timeout")
+    later = now + WEATHER_REFRESH_INTERVAL + timedelta(minutes=1)
+    with repository.session_factory() as session:
+        with session.begin():
+            status, observations, _retrieved = repository._get_or_fetch_hourly_weather_in_session(
+                session, now=later, for_date=later.date(), latitude=NYC_LATITUDE, longitude=NYC_LONGITUDE,
+            )
+    assert status == "stale"
+    assert observations  # the earlier successful fetch's data, served anyway
+
+
+def test_weather_date_beyond_max_past_days_is_out_of_range_without_calling_provider(
+    weather_repository,
+) -> None:
+    repository, fake = weather_repository
+    _enable_weather(repository)
+    now = datetime(2026, 8, 25, tzinfo=UTC)
+    too_old = now.date() - timedelta(days=weather_provider.WEATHER_MAX_PAST_DAYS + 1)
+    with repository.session_factory() as session:
+        with session.begin():
+            status, observations, _retrieved = repository._get_or_fetch_hourly_weather_in_session(
+                session, now=now, for_date=too_old, latitude=NYC_LATITUDE, longitude=NYC_LONGITUDE,
+            )
+    assert status == "out_of_range"
+    assert observations == ()
+    assert fake.calls == []
+
+
+def test_weather_future_date_is_out_of_range_without_calling_provider(weather_repository) -> None:
+    repository, fake = weather_repository
+    _enable_weather(repository)
+    now = datetime(2026, 8, 25, tzinfo=UTC)
+    with repository.session_factory() as session:
+        with session.begin():
+            status, _obs, _retrieved = repository._get_or_fetch_hourly_weather_in_session(
+                session, now=now, for_date=now.date() + timedelta(days=1),
+                latitude=NYC_LATITUDE, longitude=NYC_LONGITUDE,
+            )
+    assert status == "out_of_range"
+    assert fake.calls == []
+
+
+def test_old_visit_beyond_provider_window_reports_out_of_range_weather(weather_repository) -> None:
+    repository, fake = weather_repository
+    _enable_weather(repository)
+    old_at = datetime.now(UTC) - timedelta(days=weather_provider.WEATHER_MAX_PAST_DAYS + 10)
+    _add_visit(repository, visit_id="ancient-visit", at=old_at)
+    context = repository.get_visit_environmental_context("ancient-visit")
+    assert context is not None
+    assert context.weather.status == "out_of_range"
+    assert fake.calls == []
+
+
+def test_visit_weather_resolved_independently_of_solar_availability(weather_repository) -> None:
+    """A genuine polar-night UTC date makes solar `unavailable_for_date`
+    but has no bearing on whether weather is available -- see the v2
+    contract's "Phase 16". Exercises the private resolution methods
+    directly with a controlled `now`/`instant` (the same pattern the
+    caching tests above use), so this proof does not depend on which real
+    calendar date this suite happens to run on -- Antarctic polar night is
+    only genuine for part of the year, and `datetime.now()` at test-run
+    time is not under this test's control."""
+
+    repository, _fake = weather_repository
+    latitude, longitude = -78.0, 15.0
+    _enable_weather(repository, latitude=latitude, longitude=longitude)
+    now = datetime(2026, 8, 20, 12, 0, tzinfo=UTC)
+    # Confirmed via a direct astral probe during this milestone's
+    # implementation: latitude=-78.0 on 2026-06-21 (Southern winter
+    # solstice) never reaches 6 degrees below the horizon -- genuine polar
+    # night, not a guess. 60 days before `now`, comfortably inside
+    # WEATHER_MAX_PAST_DAYS (92).
+    instant = datetime(2026, 6, 21, 12, 0, tzinfo=UTC)
+
+    with repository.session_factory() as session:
+        with session.begin():
+            window = repository._get_daylight_window_in_session(
+                session, now=now, instant=instant, latitude=latitude, longitude=longitude,
+            )
+            weather = repository._weather_conditions_response(
+                session, now=now, instant=instant, latitude=latitude, longitude=longitude,
+            )
+
+    assert window is None  # confirms genuine polar night for solar
+    assert weather.status == "available"
+    assert weather.air_temperature_c is not None
+
+
+def test_weather_never_mutates_review_truth(weather_repository) -> None:
+    repository, _fake = weather_repository
+    _enable_weather(repository)
+    _add_visit(repository, visit_id="weather-truth-visit", at=datetime(2026, 6, 21, 16, 0, tzinfo=UTC))
+    before = repository.get_visit("weather-truth-visit")
+    assert before is not None
+    repository.get_visit_environmental_context("weather-truth-visit")
+    after = repository.get_visit("weather-truth-visit")
+    assert after is not None
+    assert before.review_status == after.review_status
+    assert after.reviewed_label is None
+
+
+def test_weather_provenance_json_is_bounded_never_a_raw_payload_dump(weather_repository) -> None:
+    repository, _fake = weather_repository
+    _enable_weather(repository)
+    repository.get_place_environmental_context_today()
+    with repository.session_factory() as session:
+        rows = session.scalars(
+            select(EnvironmentalContextRecordModel).where(
+                EnvironmentalContextRecordModel.provider_key == weather_provider.WEATHER_PROVIDER_KEY
+            )
+        ).all()
+        assert rows
+        for row in rows:
+            provenance = json.loads(row.provenance_json)
+            assert set(provenance.keys()) == {"api_field", "model"}  # bounded, fixed shape
+            assert "http" not in provenance["api_field"]  # never a URL/raw response
+
+
+def test_temperature_band_insufficient_until_baseline_established(weather_repository) -> None:
+    repository, _fake = weather_repository
+    _enable_weather(repository)
+    context = repository.get_place_environmental_context_today()
+    assert context.weather.status == "available"
+    assert context.weather.temperature_band is None  # only 1 cached day so far
+
+
+def test_temperature_band_established_once_enough_days_are_cached(weather_repository) -> None:
+    repository, fake = weather_repository
+    _enable_weather(repository)
+    now = datetime(2026, 6, 21, 12, 0, tzinfo=UTC)
+    from mockingbird.environment.condition_bands import MIN_DAYS_FOR_TEMPERATURE_BASELINE
+
+    with repository.session_factory() as session:
+        with session.begin():
+            for offset in range(1, MIN_DAYS_FOR_TEMPERATURE_BASELINE + 1):
+                repository._get_or_fetch_hourly_weather_in_session(
+                    session, now=now, for_date=now.date() - timedelta(days=offset),
+                    latitude=NYC_LATITUDE, longitude=NYC_LONGITUDE,
+                )
+    assert len(fake.calls) == MIN_DAYS_FOR_TEMPERATURE_BASELINE
+    context = repository.get_place_environmental_context_today()
+    # The fake requester returns a flat 15.0C for every hour of every date,
+    # so "today" (also 15.0C) lands exactly on the (degenerate, zero-spread)
+    # baseline -- "typical", not cooler/warmer, proving the baseline is now
+    # genuinely established rather than absent.
+    assert context.weather.temperature_band == "typical"
+
+
+def _insert_air_temperature_day(
+    repository: ProductRepository,
+    *,
+    for_date: date,
+    temperature_c: float,
+    latitude: float = NYC_LATITUDE,
+    longitude: float = NYC_LONGITUDE,
+) -> None:
+    """Directly inserts one full day (24 hourly rows) of `air_temperature`
+    at a fixed value -- bypasses the fetch path entirely, giving precise
+    per-date-varying control the shared `_FakeWeatherRequester` (always a
+    flat value) cannot."""
+
+    now = datetime.now(UTC)
+    with repository.session_factory() as session:
+        with session.begin():
+            for hour in range(24):
+                session.add(
+                    EnvironmentalContextRecordModel(
+                        id=f"envctx-test-{for_date.isoformat()}-{hour:02d}",
+                        source_id=None,
+                        provider_key=weather_provider.WEATHER_PROVIDER_KEY,
+                        information_class=weather_provider.WEATHER_INFORMATION_CLASS,
+                        metric="air_temperature",
+                        value_numeric=temperature_c,
+                        value_text=None,
+                        unit="celsius",
+                        observed_at=datetime(
+                            for_date.year, for_date.month, for_date.day, hour, tzinfo=UTC
+                        ),
+                        observed_at_end=None,
+                        for_date=for_date,
+                        retrieved_at=now,
+                        basis_latitude=latitude,
+                        basis_longitude=longitude,
+                        provenance_json=json.dumps({"api_field": "temperature_2m", "model": "best_match"}),
+                        provenance_schema_version=1,
+                        created_at=now,
+                    )
+                )
+
+
+def test_temperature_baseline_anchored_at_visit_date_not_now(weather_repository) -> None:
+    """Regression test for a real bug found during this milestone's own
+    implementation: the first draft anchored the trailing baseline window
+    at "now", so a historical Visit's temperature was judged against
+    whatever season "now" happened to be when the Visit was later viewed,
+    rather than conditions typical around the Visit's own date -- see
+    docs/environmental-context-v2-contract.md "Phase 6/7" and
+    `_historical_place_baseline_and_species_statuses`'s own identical
+    "anchor at the caller's own period, not now" precedent."""
+
+    repository, _fake = weather_repository
+    _enable_weather(repository)
+
+    # Ten cold March days (0..9 degC) -- the March Visit's own baseline.
+    march_base = date(2026, 3, 1)
+    for offset in range(10):
+        _insert_air_temperature_day(
+            repository, for_date=march_base + timedelta(days=offset), temperature_c=float(offset)
+        )
+
+    # Ten warm "recent" days ending at `now` (August) -- deliberately far
+    # outside the March window (gap > WEATHER_MAX_PAST_DAYS) and
+    # deliberately much warmer, so contamination from the wrong window
+    # would be unmistakable in the assertion below.
+    now = datetime(2026, 8, 25, 12, 0, tzinfo=UTC)
+    assert (now.date() - march_base).days > weather_provider.WEATHER_MAX_PAST_DAYS
+    for offset in range(10):
+        _insert_air_temperature_day(
+            repository, for_date=now.date() - timedelta(days=offset), temperature_c=30.0
+        )
+
+    visit_at = datetime(2026, 3, 10, 12, 0, tzinfo=UTC)  # the warmest cached March day (9.0C)
+    with repository.session_factory() as session:
+        with session.begin():
+            weather = repository._weather_conditions_response(
+                session, now=now, instant=visit_at, latitude=NYC_LATITUDE, longitude=NYC_LONGITUDE,
+            )
+
+    # 9.0C is the *warmest* day in the March-anchored 0..9 distribution --
+    # correctly "warmer_than_typical" relative to that window. Judged
+    # against the contaminating August window (all 30.0C) it would instead
+    # register as a dramatic "cooler_than_typical" outlier -- the exact
+    # wrong-season failure this test guards against.
+    assert weather.status == "available"
+    assert weather.temperature_band == "warmer_than_typical"
+
+
+def test_cached_data_beyond_provider_window_remains_readable(weather_repository) -> None:
+    """Regression test for a second real bug found alongside the one
+    above: the out-of-range check must gate new *fetch* attempts only.
+    Data already cached for a date remains readable forever, even once
+    `now` has moved far enough that the provider could no longer serve a
+    *fresh* fetch for that same date (Phase 14 immutability) -- a date
+    does not retroactively become unusable merely because the calendar
+    moved on."""
+
+    repository, fake = weather_repository
+    _enable_weather(repository)
+    old_date = date(2026, 3, 1)
+    _insert_air_temperature_day(repository, for_date=old_date, temperature_c=10.0)
+
+    far_future_now = datetime(2027, 1, 1, tzinfo=UTC)
+    assert (far_future_now.date() - old_date).days > weather_provider.WEATHER_MAX_PAST_DAYS
+    with repository.session_factory() as session:
+        with session.begin():
+            status, observations, _retrieved = repository._get_or_fetch_hourly_weather_in_session(
+                session, now=far_future_now, for_date=old_date,
+                latitude=NYC_LATITUDE, longitude=NYC_LONGITUDE,
+            )
+
+    assert status == "available"
+    assert observations
+    assert fake.calls == []  # never attempted a new fetch -- served entirely from cache
+
+
 # --- HTTP surface -------------------------------------------------------------
 
 
@@ -624,6 +1124,47 @@ def test_put_environmental_context_settings_rejects_partial_coordinate_over_http
     client = LegacyAuthenticatedSyncTestClient(app)
     response = client.put("/api/settings/environmental-context", json={"latitude": 40.7})
     assert response.status_code == 422
+
+
+def test_put_environmental_context_settings_weather_enabled_over_http_defaults_off(
+    repository: ProductRepository,
+) -> None:
+    client = LegacyAuthenticatedSyncTestClient(app)
+    response = client.put(
+        "/api/settings/environmental-context", json={"latitude": 40.7, "longitude": -74.0}
+    )
+    assert response.status_code == 200
+    assert response.json()["weather_enabled"] is False
+
+
+def test_put_environmental_context_settings_weather_enabled_over_http(
+    repository: ProductRepository,
+) -> None:
+    client = LegacyAuthenticatedSyncTestClient(app)
+    response = client.put(
+        "/api/settings/environmental-context",
+        json={"latitude": 40.7, "longitude": -74.0, "weather_enabled": True},
+    )
+    assert response.status_code == 200
+    assert response.json()["weather_enabled"] is True
+    again = client.get("/api/settings/environmental-context")
+    assert again.json()["weather_enabled"] is True
+
+
+def test_get_today_weather_over_http(weather_repository) -> None:
+    _repository, _fake = weather_repository
+    client = LegacyAuthenticatedSyncTestClient(app)
+    client.put(
+        "/api/settings/environmental-context",
+        json={"latitude": NYC_LATITUDE, "longitude": NYC_LONGITUDE, "weather_enabled": True},
+    )
+    response = client.get("/api/place/environmental-context/today")
+    assert response.status_code == 200
+    weather = response.json()["weather"]
+    assert weather["status"] == "available"
+    assert weather["provider_key"] == "open_meteo"
+    assert weather["information_class"] == "inferred"
+    assert weather["air_temperature_c"] is not None
 
 
 def test_get_place_environmental_context_today_over_http(repository: ProductRepository) -> None:
@@ -686,3 +1227,34 @@ def test_backup_restore_preserves_environmental_context_settings_and_records(
         # 6, not 2: one "today" lookup caches all 3 bracketing UTC dates
         # (see `test_daily_solar_context_is_cached_not_recomputed`, above).
         assert len(rows) == 6
+
+
+def test_backup_restore_preserves_weather_enabled_and_weather_records(weather_repository) -> None:
+    repository, _fake = weather_repository
+    client = LegacyAuthenticatedSyncTestClient(app)
+    client.put(
+        "/api/settings/environmental-context",
+        json={"latitude": NYC_LATITUDE, "longitude": NYC_LONGITUDE, "weather_enabled": True},
+    )
+    client.get("/api/place/environmental-context/today")  # populate weather + solar records
+
+    backup_response = client.post("/api/settings/backups")
+    assert backup_response.status_code == 201, backup_response.text
+    backup_id = backup_response.json()["backup"]["id"]
+
+    restore_response = client.post(
+        f"/api/settings/backups/{backup_id}/restore", json={"confirm": True}
+    )
+    assert restore_response.status_code == 200, restore_response.text
+
+    restored_repository = get_repository()
+    restored_settings = restored_repository.get_environmental_context_settings()
+    assert restored_settings.weather_enabled is True
+    with restored_repository.session_factory() as session:
+        weather_rows = session.scalars(
+            select(EnvironmentalContextRecordModel).where(
+                EnvironmentalContextRecordModel.provider_key == weather_provider.WEATHER_PROVIDER_KEY
+            )
+        ).all()
+        assert weather_rows, "weather records must survive backup/restore"
+        assert all(row.information_class == "inferred" for row in weather_rows)

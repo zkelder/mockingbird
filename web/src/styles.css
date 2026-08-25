@@ -9413,6 +9413,17 @@ a.secondary-action {
   margin: 0 0 4px;
 }
 
+/* Environmental Context v2: the one row that is a checkbox rather than a
+   lat/lon text input -- overrides the stacked label/input grid above (a
+   more specific selector, not !important) with a simple inline flex row,
+   spanning both columns like p.meta-text. */
+.environmental-context-location-fields label.environmental-context-weather-toggle {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .crop-history-list {
   border-top: 1px solid #dce3d8;
   padding-top: 10px;

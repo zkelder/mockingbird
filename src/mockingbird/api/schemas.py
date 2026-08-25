@@ -5338,6 +5338,26 @@ class PlaceActivityReportHabitatAssociation(BaseModel):
     usable_days_out_of_condition: int = Field(ge=0)
 
 
+class PlaceActivityReportWeatherAssociation(BaseModel):
+    """Environmental Context v2: association language only, never causal --
+    mirrors `PlaceActivityReportHabitatAssociation` field-for-field, using
+    `mockingbird.analytics.weather_association`'s identical
+    `conditional_association`-backed gating instead of a phenology interval.
+    See docs/environmental-context-v2-contract.md "Phase 6/7". Only entries
+    clearing `conditional_association`'s own minimum-sample floor on both
+    sides are ever produced."""
+
+    condition: Literal["cooler_than_typical", "warmer_than_typical", "wet_day"]
+    condition_label: str
+    status: Literal[
+        "no_clear_association", "more_common_under_condition", "less_common_under_condition"
+    ]
+    presence_days_in_condition: int = Field(ge=0)
+    usable_days_in_condition: int = Field(ge=0)
+    presence_days_out_of_condition: int = Field(ge=0)
+    usable_days_out_of_condition: int = Field(ge=0)
+
+
 class PlaceActivityReportSourceActivity(BaseModel):
     """Place / Yard Intelligence v2, Phase 7: one Source's (camera's)
     coverage-normalized confirmed-wildlife activity for this report's own
@@ -5436,6 +5456,10 @@ class PlaceActivityReportTaxonEntry(BaseModel):
     seasonal_pattern: PlaceActivityReportSeasonalPattern | None = None
     temporal_pattern: PlaceActivityReportTemporalPattern | None = None
     habitat_associations: list[PlaceActivityReportHabitatAssociation] = Field(default_factory=list)
+    # Environmental Context v2: identical truth-contract/coverage-safety
+    # condition as `habitat_associations` above. See
+    # docs/environmental-context-v2-contract.md "Phase 6/7".
+    weather_associations: list[PlaceActivityReportWeatherAssociation] = Field(default_factory=list)
 
 
 class PlaceActivityReportZoneActivity(BaseModel):
@@ -6057,6 +6081,7 @@ class WildlifeJournalHistoryResponse(BaseModel):
     seasonal_pattern: PlaceActivityReportSeasonalPattern | None = None
     temporal_pattern: PlaceActivityReportTemporalPattern | None = None
     habitat_associations: list[PlaceActivityReportHabitatAssociation] = Field(default_factory=list)
+    weather_associations: list[PlaceActivityReportWeatherAssociation] = Field(default_factory=list)
     activity_library_drilldown: WildlifeJournalDrilldown
     gallery: WildlifeJournalGallery
 
@@ -7598,6 +7623,13 @@ class EnvironmentalContextSettings(BaseModel):
     coarse_latitude: float | None = None
     coarse_longitude: float | None = None
     configured: bool
+    # Environmental Context v2: a second, independent opt-in, separate from
+    # `configured` above -- see docs/environmental-context-v2-contract.md
+    # "Phase 16" / "Privacy / location". Configuring coordinates enables
+    # only local, offline solar computation; this flag is the explicit,
+    # separate consent required before this installation ever sends that
+    # coordinate to an external weather provider over the network.
+    weather_enabled: bool = False
     updated_at: datetime
 
 
@@ -7606,6 +7638,7 @@ class EnvironmentalContextSettingsUpdate(BaseModel):
 
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
+    weather_enabled: bool = False
 
     @field_validator("latitude", "longitude")
     @classmethod
@@ -7656,13 +7689,61 @@ class SolarContext(BaseModel):
     basis_longitude: float | None = None
 
 
+class WeatherConditions(BaseModel):
+    """One resolved weather snapshot from the `open_meteo` provider
+    (Environmental Context v2 -- see docs/environmental-context-v2-
+    contract.md). `information_class` is always `"inferred"`, never
+    `"measured"`: every value here is a gridded/interpolated numerical-
+    weather-prediction estimate for the Place's coordinate, not a direct
+    physical-sensor reading, including "current" conditions -- the same
+    reasoning `SolarContext` already applies to deterministic solar
+    computation, extended to a genuinely probabilistic external estimate
+    (see product-doctrine.md "Measured, Inferred, and Reviewed").
+
+    `status` carries *why* weather may be unavailable, independently of the
+    containing response's own `available`/`reason` (which describe solar):
+    `"not_configured"` (no location), `"disabled"` (location set but
+    weather not opted in), `"out_of_range"` (older than the provider's
+    bounded window, or in the future), `"unavailable"` (provider failure,
+    nothing cached), `"stale"` (cached data exists but is older than the
+    refresh interval and a refresh attempt just failed), `"available"`.
+    Every value field below is `None` unless `status` is `"available"` or
+    `"stale"`. `temperature_band` is `None` whenever this Place's own
+    recent temperature baseline is not yet established (Phase 7: never an
+    absolute-threshold claim without a Place-relative basis)."""
+
+    status: Literal["available", "not_configured", "disabled", "out_of_range", "unavailable", "stale"]
+    observed_at: datetime | None = None
+    retrieved_at: datetime | None = None
+    provider_key: str | None = None
+    information_class: Literal["inferred"] | None = None
+    air_temperature_c: float | None = None
+    relative_humidity_percent: float | None = None
+    precipitation_mm: float | None = None
+    snowfall_cm: float | None = None
+    wind_speed_kmh: float | None = None
+    wind_direction_degrees: float | None = None
+    cloud_cover_percent: float | None = None
+    surface_pressure_hpa: float | None = None
+    temperature_band: Literal["cooler_than_typical", "typical", "warmer_than_typical"] | None = None
+    precipitation_state: Literal["dry", "rain", "snow"] | None = None
+    summary_text: str | None = None
+
+
 class VisitEnvironmentalContext(SolarContext):
     visit_id: str
     evaluated_at: datetime | None = None
+    # Environmental Context v2: `None` only when weather has never been
+    # resolved for this response at all (defensive; every real call site
+    # populates it -- see `ProductRepository.get_visit_environmental_
+    # context`). Absence of *data* is expressed via `weather.status`, not by
+    # this field being `None`.
+    weather: WeatherConditions | None = None
 
 
 class PlaceEnvironmentalContext(SolarContext):
     for_date: date
+    weather: WeatherConditions | None = None
 
 
 # --- Habitat & Phenology Foundation v1 -------------------------------------

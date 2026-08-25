@@ -1,5 +1,14 @@
 # Environmental Context Foundation v1 Contract
 
+**Extended, not superseded, by
+[environmental-context-v2-contract.md](environmental-context-v2-contract.md)
+(2026-08-25):** v2 adds the first general weather provider (Open-Meteo) on
+top of this document's substrate, with zero changes to anything described
+below -- the solar/daylight provider, its temporal semantics, the Place
+coordinate setting, and every design decision on this page remain exactly
+as documented here. Read this document first; it still governs solar/
+daylight specifically.
+
 ## Purpose
 
 Establish the durable, provider-neutral environmental-context substrate

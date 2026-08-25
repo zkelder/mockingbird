@@ -42,7 +42,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 53
+CURRENT_DATABASE_SCHEMA_VERSION = 54
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -1491,6 +1491,49 @@ def _migrate_to_scene_confusor_reviewed_evidence_learning(connection: Connection
             )
 
 
+def _migrate_to_environmental_context_weather(connection: Connection) -> None:
+    """Environmental Context v2: one additive, `NOT NULL DEFAULT 0` column
+    gating outbound weather-provider network requests -- see
+    docs/environmental-context-v2-contract.md "Phase 1" / "Phase 26".
+
+    `environmental_context_records` (schema 51) needs no migration at all:
+    its `value_numeric`/`value_text`/`unit`/`observed_at_end` columns were
+    already shaped, at v1, to hold a future provider's numeric metrics
+    without a schema change -- confirmed by direct inspection before this
+    migration was written. The only genuine gap is consent: v1's
+    `environmental_context_settings` has no notion of "the user has agreed
+    to an outbound network call," because its only v1 writer (`solar_local`)
+    never makes one.
+
+    `weather_enabled` (`NOT NULL DEFAULT 0`): every existing installation --
+    including one that already has `coarse_latitude`/`coarse_longitude`
+    configured for local solar computation -- starts with weather requests
+    off. Configuring a location for offline solar/daylight must never
+    silently also start sending that location to an external provider over
+    the network; that remains a second, explicit, separate opt-in (Phase 16
+    / "Privacy / location"). A brand-new installation starts identically:
+    `weather_enabled=False` until the user explicitly enables it.
+
+    Purely additive: does not touch `visits`, `events`, `review_labels`, or
+    any other wildlife-truth table.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Environmental Context v2 migration requires local SQLite storage."
+        )
+    if inspect(connection).has_table("environmental_context_settings"):
+        columns = {
+            column["name"]
+            for column in inspect(connection).get_columns("environmental_context_settings")
+        }
+        if "weather_enabled" not in columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE environmental_context_settings "
+                "ADD COLUMN weather_enabled BOOLEAN NOT NULL DEFAULT 0"
+            )
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -1544,6 +1587,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     51: _migrate_to_environmental_context_foundation,
     52: _migrate_to_habitat_phenology_foundation,
     53: _migrate_to_scene_confusor_reviewed_evidence_learning,
+    54: _migrate_to_environmental_context_weather,
 }
 
 

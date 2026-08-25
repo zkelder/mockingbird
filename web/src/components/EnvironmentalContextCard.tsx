@@ -1,15 +1,21 @@
 import { useState } from "react";
 import type { PlaceEnvironmentalContext } from "../api/types";
-import { formatTimeOfDay } from "../utils";
+import { formatTimeOfDay, formatWeatherLine } from "../utils";
 
 interface EnvironmentalContextCardProps {
   context: PlaceEnvironmentalContext | null;
-  onSaveLocation: (latitude: number | null, longitude: number | null) => Promise<void>;
+  onSaveLocation: (
+    latitude: number | null,
+    longitude: number | null,
+    weatherEnabled: boolean,
+  ) => Promise<void>;
 }
 
 /**
  * Environmental Context Foundation v1 (see docs/environmental-context-
- * foundation-v1-contract.md "Frontend surface"). The only place a
+ * foundation-v1-contract.md "Frontend surface"), extended by Environmental
+ * Context v2 (see docs/environmental-context-v2-contract.md "Phase 16")
+ * with an optional weather toggle and conditions line. The only place a
  * coordinate is ever entered -- no new page, no new nav entry. A sibling
  * of `TodayReportPanel`, not nested inside it: that component's own
  * early-return states (loading/unavailable report) are about Place
@@ -20,14 +26,17 @@ interface EnvironmentalContextCardProps {
  * Renders nothing while the fetch is still in flight or failed
  * (`context === null`) rather than a loading/error state of its own --
  * this is a small, optional annotation, never a blocking part of the
- * dashboard. Never phrases sunrise/sunset/daylight as a cause of anything
- * ("the bird appeared because...") -- context only, matching "External
- * ecological context" in docs/product-doctrine.md.
+ * dashboard. Never phrases sunrise/sunset/daylight/weather as a cause of
+ * anything ("the bird appeared because...") -- context only, matching
+ * "External ecological context" in docs/product-doctrine.md. Weather is
+ * resolved and rendered independently of solar's own availability -- see
+ * `weatherCurrentlyEnabled`/`weatherLine`, below.
  */
 export function EnvironmentalContextCard({ context, onSaveLocation }: EnvironmentalContextCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [latitudeInput, setLatitudeInput] = useState("");
   const [longitudeInput, setLongitudeInput] = useState("");
+  const [weatherEnabledInput, setWeatherEnabledInput] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,9 +44,19 @@ export function EnvironmentalContextCard({ context, onSaveLocation }: Environmen
     return null;
   }
 
+  // Weather is resolved independently of solar availability (see
+  // docs/environmental-context-v2-contract.md "Phase 16"), so its own
+  // `status` reliably reflects the current `weather_enabled` setting even
+  // on a date where solar itself is unavailable -- unlike `basis_latitude`/
+  // `basis_longitude` below, which (a pre-existing v1 behavior, unchanged
+  // here) are only populated when solar computation itself succeeded.
+  const weatherCurrentlyEnabled =
+    context.weather.status !== "disabled" && context.weather.status !== "not_configured";
+
   const startEditing = () => {
     setLatitudeInput(context.basis_latitude != null ? String(context.basis_latitude) : "");
     setLongitudeInput(context.basis_longitude != null ? String(context.basis_longitude) : "");
+    setWeatherEnabledInput(weatherCurrentlyEnabled);
     setError(null);
     setIsEditing(true);
   };
@@ -52,7 +71,7 @@ export function EnvironmentalContextCard({ context, onSaveLocation }: Environmen
     setIsSaving(true);
     setError(null);
     try {
-      await onSaveLocation(latitude, longitude);
+      await onSaveLocation(latitude, longitude, weatherEnabledInput);
       setIsEditing(false);
     } catch {
       setError("Could not save your location. Try again.");
@@ -65,7 +84,10 @@ export function EnvironmentalContextCard({ context, onSaveLocation }: Environmen
     setIsSaving(true);
     setError(null);
     try {
-      await onSaveLocation(null, null);
+      // Clearing location also turns weather off -- a location-less
+      // installation has nothing to send a weather provider anyway, and
+      // this avoids a stale "enabled" flag lingering with no coordinate.
+      await onSaveLocation(null, null, false);
       setIsEditing(false);
     } catch {
       setError("Could not update your location. Try again.");
@@ -111,6 +133,23 @@ export function EnvironmentalContextCard({ context, onSaveLocation }: Environmen
               value={longitudeInput}
             />
           </label>
+          <label className="environmental-context-weather-toggle">
+            <input
+              checked={weatherEnabledInput}
+              onChange={(event) => setWeatherEnabledInput(event.target.checked)}
+              type="checkbox"
+            />
+            Also fetch local weather conditions
+          </label>
+          <p className="meta-text">
+            Sends the approximate location above to Open-Meteo.com to look up temperature,
+            precipitation, and wind for this Place. Off by default; never shared or exported
+            automatically.{" "}
+            <a href="https://open-meteo.com/" rel="noreferrer noopener" target="_blank">
+              Weather data by Open-Meteo.com
+            </a>
+            .
+          </p>
         </fieldset>
         {error ? (
           <div aria-live="polite" className="notice-panel">
@@ -134,6 +173,13 @@ export function EnvironmentalContextCard({ context, onSaveLocation }: Environmen
     );
   }
 
+  // Weather is resolved independently of solar (see docs/environmental-
+  // context-v2-contract.md "Phase 16") -- it can be present here even when
+  // solar itself is unavailable for this date, and absent (`null`) when
+  // disabled/not configured/genuinely unavailable. Absence is silence,
+  // never an error banner, matching every other optional fact on this card.
+  const weatherLine = formatWeatherLine(context.weather);
+
   if (context.available && context.sunrise_at && context.sunset_at) {
     return (
       <section aria-label="Today's daylight context" className="panel environmental-context-card">
@@ -150,6 +196,12 @@ export function EnvironmentalContextCard({ context, onSaveLocation }: Environmen
             <span>Right now</span>
             <strong>{context.daylight_state === "day" ? "Daylight" : "Night"}</strong>
           </div>
+          {weatherLine ? (
+            <div className="today-report-fact">
+              <span>Conditions</span>
+              <strong>{weatherLine}</strong>
+            </div>
+          ) : null}
         </div>
         <div className="today-report-footer">
           <button className="text-action" onClick={startEditing} type="button">
@@ -164,6 +216,14 @@ export function EnvironmentalContextCard({ context, onSaveLocation }: Environmen
     return (
       <section aria-label="Today's daylight context" className="panel environmental-context-card">
         <p className="meta-text">No sunrise or sunset today at your configured location.</p>
+        {weatherLine ? (
+          <div className="today-report-facts">
+            <div className="today-report-fact">
+              <span>Conditions</span>
+              <strong>{weatherLine}</strong>
+            </div>
+          </div>
+        ) : null}
         <div className="today-report-footer">
           <button className="text-action" onClick={startEditing} type="button">
             Edit location

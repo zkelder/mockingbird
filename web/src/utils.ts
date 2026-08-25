@@ -5,6 +5,7 @@ import type {
   PlaceActivityReportSeasonalPattern,
   PlaceActivityReportTaxonChangeStatus,
   SpeciesHistoricalStatus,
+  WeatherConditions,
 } from "./api/types";
 
 /**
@@ -221,6 +222,31 @@ export function formatTimeOfDay(value: string): string {
     hour: "numeric",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+// Environmental Context v2 (see docs/environmental-context-v2-contract.md
+// "Phase 16"): a small, restrained sentence describing conditions, composed
+// server-side (`condition_bands.describe_current_conditions`) from this
+// Place's own Place-relative temperature band plus sky/precipitation --
+// never a bare number presented as more precise than it is. `air_temperature_
+// c` is shown alongside as a supplementary, honest raw reading (converted to
+// Fahrenheit only for display; the stored/API value stays Celsius). Shared
+// by EnvironmentalContextCard (Today) and VisitDetailPage (a Visit's own
+// Conditions card) so the two surfaces can never phrase the same fact
+// differently. Returns `null` when there is nothing to show -- callers
+// treat that as silence, never an error state.
+export function formatWeatherLine(weather: WeatherConditions): string | null {
+  if (weather.status !== "available" && weather.status !== "stale") {
+    return null;
+  }
+  if (weather.air_temperature_c == null) {
+    return weather.summary_text ?? null;
+  }
+  const fahrenheit = Math.round((weather.air_temperature_c * 9) / 5 + 32);
+  const staleSuffix = weather.status === "stale" ? " (last updated a while ago)" : "";
+  return weather.summary_text
+    ? `${fahrenheit}°F, ${weather.summary_text}${staleSuffix}`
+    : `${fahrenheit}°F${staleSuffix}`;
 }
 
 // Habitat & Phenology Foundation v1: `value` is a plain UTC calendar date

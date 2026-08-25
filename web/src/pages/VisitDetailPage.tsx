@@ -29,7 +29,7 @@ import { VisitEvidenceSequence } from "../components/VisitEvidenceSequence";
 import { RefinedCropEditor } from "../components/RefinedCropEditor";
 import { displayTaxonomyLabel, findTaxonomyLabel, isBirdReviewLabel } from "../components/taxonomy";
 import { explainMultimodalAssociation } from "../components/suggestionExplanation";
-import { formatDateTime, formatLabel, formatTimeOfDay } from "../utils";
+import { formatDateTime, formatLabel, formatTimeOfDay, formatWeatherLine } from "../utils";
 
 interface VisitDetailPageProps {
   visitId: string;
@@ -1256,23 +1256,43 @@ export function VisitDetailPage({
             </span>
           </div>
         ) : null}
-        {/* Environmental Context Foundation v1: omitted entirely (not a
-            loading/error state) when unavailable -- see
+        {/* Environmental Context Foundation v1 / v2: omitted entirely (not
+            a loading/error state) when nothing is available -- see
             docs/environmental-context-foundation-v1-contract.md "Frontend
             surface". Context only, never a claim about why the Visit
-            happened. */}
-        {visitEnvironmentalContext?.available &&
-        visitEnvironmentalContext.sunrise_at &&
-        visitEnvironmentalContext.sunset_at ? (
-          <div className="panel case-summary-card">
-            <span className="meta-text">Conditions</span>
-            <strong>{visitEnvironmentalContext.daylight_state === "day" ? "Daylight" : "Night"}</strong>
-            <span className="meta-text">
-              Sunrise {formatTimeOfDay(visitEnvironmentalContext.sunrise_at)} · Sunset{" "}
-              {formatTimeOfDay(visitEnvironmentalContext.sunset_at)}
-            </span>
-          </div>
-        ) : null}
+            happened. Weather is resolved independently of solar (see
+            docs/environmental-context-v2-contract.md "Phase 16"), so this
+            card can show either, both, or neither. */}
+        {(() => {
+          const solarAvailable = Boolean(
+            visitEnvironmentalContext?.available &&
+              visitEnvironmentalContext.sunrise_at &&
+              visitEnvironmentalContext.sunset_at,
+          );
+          const weatherLine = visitEnvironmentalContext
+            ? formatWeatherLine(visitEnvironmentalContext.weather)
+            : null;
+          if (!solarAvailable && !weatherLine) {
+            return null;
+          }
+          return (
+            <div className="panel case-summary-card">
+              <span className="meta-text">Conditions</span>
+              {solarAvailable ? (
+                <>
+                  <strong>
+                    {visitEnvironmentalContext!.daylight_state === "day" ? "Daylight" : "Night"}
+                  </strong>
+                  <span className="meta-text">
+                    Sunrise {formatTimeOfDay(visitEnvironmentalContext!.sunrise_at!)} · Sunset{" "}
+                    {formatTimeOfDay(visitEnvironmentalContext!.sunset_at!)}
+                  </span>
+                </>
+              ) : null}
+              {weatherLine ? <span className="meta-text">{weatherLine}</span> : null}
+            </div>
+          );
+        })()}
       </section>
 
       <VisitCurationPanel

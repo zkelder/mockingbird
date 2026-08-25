@@ -443,6 +443,12 @@ function TaxonCard({
   const habitatAssociation = (taxon.habitat_associations ?? []).find(
     (association) => association.status !== "no_clear_association",
   );
+  // Environmental Context v2: identical compact, first-match convention as
+  // habitatAssociation above -- see docs/environmental-context-v2-
+  // contract.md "Phase 6/16".
+  const weatherAssociation = (taxon.weather_associations ?? []).find(
+    (association) => association.status !== "no_clear_association",
+  );
   const visitId = taxon.representative_evidence?.visit_id;
   return (
     <article className="journal-label-card">
@@ -483,6 +489,13 @@ function TaxonCard({
             {habitatAssociation.status === "more_common_under_condition" ? "Observed more often" : "Observed less often"}
             {" while "}
             {habitatAssociation.phenomenon} was current ({habitatAssociation.subject_label})
+          </span>
+        ) : null}
+        {weatherAssociation ? (
+          <span className="meta-text">
+            {weatherAssociation.status === "more_common_under_condition" ? "Observed more often" : "Observed less often"}
+            {" during "}
+            {weatherAssociation.condition_label}
           </span>
         ) : null}
         {isConfirmed ? (

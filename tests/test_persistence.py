@@ -22,6 +22,7 @@ from mockingbird.storage.database import (
 from mockingbird.storage.models import (
     BioClipIdentificationAttemptModel,
     CameraSourceModel,
+    EnvironmentalContextSettingsModel,
     MediaAssetModel,
     StreamModel,
 )
@@ -1535,5 +1536,89 @@ def test_schema_37_adds_camera_node_boot_identity_columns_without_data_loss(
             "camera_node_service_version",
             "camera_node_recent_boot_transitions_json",
         } <= columns
+    finally:
+        migrated.close()
+
+
+def test_schema_53_upgrades_to_current_with_environmental_context_weather(
+    tmp_path: Path,
+) -> None:
+    """Environmental Context v2: a real database at the previously-current
+    schema (v53) upgrades cleanly through the one new additive column
+    (`environmental_context_settings.weather_enabled`) -- mirroring this
+    file's own `test_schema_37_adds_camera_node_boot_identity_columns_
+    without_data_loss`, above: "rebuild the pre-migration table shape, roll
+    the recorded version back, reopen," applied to a column addition
+    rather than a whole-table drop. `environmental_context_records` needs
+    no migration at all (see docs/environmental-context-v2-contract.md
+    "Phase 1/26") -- only `environmental_context_settings` is touched
+    here."""
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = repository_for(db_path)
+    now = datetime.now(UTC)
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                EnvironmentalContextSettingsModel(
+                    singleton_id=1, coarse_latitude=40.7, coarse_longitude=-74.0, updated_at=now,
+                )
+            )
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        # Rebuild the table in its pre-migration (v53, no `weather_enabled`)
+        # shape, copying the existing row across unchanged (deliberately
+        # not `weather_enabled` -- that column did not exist at v53, so a
+        # real pre-existing row could never have carried a value for it),
+        # then roll the recorded schema version back so the next open must
+        # migrate forward for real.
+        connection.exec_driver_sql(
+            """
+            CREATE TABLE environmental_context_settings_schema_53 (
+                singleton_id INTEGER NOT NULL PRIMARY KEY,
+                coarse_latitude FLOAT,
+                coarse_longitude FLOAT,
+                updated_at DATETIME NOT NULL
+            )
+            """
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO environmental_context_settings_schema_53 "
+            "(singleton_id, coarse_latitude, coarse_longitude, updated_at) "
+            "SELECT singleton_id, coarse_latitude, coarse_longitude, updated_at "
+            "FROM environmental_context_settings"
+        )
+        connection.exec_driver_sql("DROP TABLE environmental_context_settings")
+        connection.exec_driver_sql(
+            "ALTER TABLE environmental_context_settings_schema_53 "
+            "RENAME TO environmental_context_settings"
+        )
+        connection.exec_driver_sql("UPDATE mockingbird_schema SET version = 53 WHERE singleton_id = 1")
+    engine.dispose()
+
+    migrated = repository_for(db_path)
+    try:
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+        settings = migrated.get_environmental_context_settings()
+        # Every pre-existing field survives untouched.
+        assert settings.coarse_latitude == 40.7
+        assert settings.coarse_longitude == -74.0
+        # The new column reads back the honest, conservative default --
+        # an upgraded installation that already has a location configured
+        # for solar does not silently start making outbound weather
+        # requests (see docs/environmental-context-v2-contract.md
+        # "Phase 16" / "Privacy / location").
+        assert settings.weather_enabled is False
+
+        with migrated.engine.connect() as connection:
+            columns = {
+                row[1]
+                for row in connection.exec_driver_sql(
+                    "PRAGMA table_info(environmental_context_settings)"
+                ).fetchall()
+            }
+        assert "weather_enabled" in columns
     finally:
         migrated.close()
