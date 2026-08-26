@@ -1448,10 +1448,13 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  getWildlifeJournal: (order: WildlifeJournalOrder = "most_recent") =>
-    request<WildlifeJournalOverviewResponse>(
-      `/api/bird-log/journal?${new URLSearchParams({ order }).toString()}`,
-    ),
+  getWildlifeJournal: (order: WildlifeJournalOrder = "most_recent", streamId?: string) => {
+    const params = new URLSearchParams({ order });
+    // Multi-Camera Place Experience v2: optional camera scoping, matching
+    // the per-species drilldown's existing stream_id filter.
+    if (streamId) params.set("stream_id", streamId);
+    return request<WildlifeJournalOverviewResponse>(`/api/bird-log/journal?${params.toString()}`);
+  },
   getLikelySpeciesOverview: () =>
     request<LikelySpeciesOverviewResponse>("/api/bird-log/likely"),
   getWildlifeJournalHistory: (label: string, params: WildlifeJournalHistoryRequest = {}) => {

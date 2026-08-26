@@ -731,9 +731,34 @@ export function DashboardPage({
           <div className="section-heading">
             <div>
               <h2>Cameras needing attention</h2>
-              <span className="meta-text">Compact observation-health facts from enabled Streams</span>
+              <span className="meta-text">
+                {/* Multi-Camera Place Experience v2: every currently-armed
+                    camera being unhealthy at once is materially different
+                    from one of several -- Phase 21 ("if all active cameras
+                    stop... Product should clearly communicate"). Computed
+                    from two already-returned facts (the unhealthy list vs.
+                    `headline.monitored_stream_count`, the same "currently
+                    armed" denominator Today's own camera filter already
+                    uses), never a new backend computation. `observation_
+                    health` is bounded to 12 (see the schema), so this stays
+                    exact within this milestone's own supported concurrency
+                    envelope; a Place with more unhealthy cameras than that
+                    is already well beyond it. */}
+                {summary.headline.monitored_stream_count > 0 &&
+                today.observation_health.length >= summary.headline.monitored_stream_count
+                  ? "MockingBird is not currently observing visually — every armed camera needs attention."
+                  : "Compact observation-health facts from enabled Streams"}
+              </span>
             </div>
-            <StatusPill label={`${today.observation_health.length} needs attention`} tone="review" />
+            <StatusPill
+              label={`${today.observation_health.length} needs attention`}
+              tone={
+                summary.headline.monitored_stream_count > 0 &&
+                today.observation_health.length >= summary.headline.monitored_stream_count
+                  ? "alert"
+                  : "review"
+              }
+            />
           </div>
           <div className="dashboard-visit-list">
             {today.observation_health.map((camera) => (

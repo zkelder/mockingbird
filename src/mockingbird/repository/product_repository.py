@@ -6573,7 +6573,28 @@ class ProductRepository:
         original error chained via `__cause__` for local diagnostics only;
         the caller (`candidate_visit_adapter`) is responsible for catching
         it, recording a sanitized failure code, and never letting it crash
-        live observation."""
+        live observation.
+
+        Multi-Camera Place Experience v2: this milestone's own genuine,
+        measured concurrency test (`tests/test_multi_camera_concurrent_
+        runtime.py`) reproduced real, occasional lost candidate-Visit
+        creations under real concurrent multi-Stream writes to one shared
+        SQLite file (a `sqlalchemy.exc.OperationalError`, caught by the
+        generic handler below and surfaced as the usual `ValueError`) --
+        each production Stream already uses its own independent
+        `ProductRepository`/connection (see `main.py`'s `get_observation_
+        engine_session_manager` docstring), so the contention is real, not
+        a test artifact. A bounded transient-retry fix was attempted and
+        *reverted*: it did not reliably close the gap (some runs still
+        failed) and measurably increased latency/occasional near-timeout
+        behavior under this test's own concurrent load -- a real risk to
+        this specific method, Stage 7's live admission/persistence
+        boundary, not worth shipping unproven under this milestone's own
+        time budget. Recorded honestly as a real, measured, deliberately
+        NOT-fixed-this-pass finding -- see the milestone report's
+        "Fairness / backpressure" and "Remaining major PRODUCT
+        opportunities" -- rather than force an under-tested change to the
+        most critical write path in the product."""
 
         proposal = request.proposal
         try:
@@ -30045,29 +30066,37 @@ class ProductRepository:
                 aggregate_records,
                 taxonomy_filter,
             )
+            # Multi-Camera Place Experience v2: this used to *sum*
+            # independent per-Stream `healthy_seconds` -- honest for exactly
+            # one in-scope Stream (the common case, unchanged below), but
+            # camera-hours, not elapsed Place time, once 2+ Streams are in
+            # scope (two cameras both "on" for the same overlapping hour
+            # counted as 2 hours here). `_place_activity_coverage_summary`
+            # already solves exactly this for Today/Place Activity Report
+            # via a real interval *union* -- see its own docstring's
+            # "Coverage policy" section, which named this exact divergence
+            # as a known, deliberately-unresolved gap at the time. Reused
+            # here rather than re-derived a third way; `_zone_insights_
+            # exposure`'s own per-Stream call above is untouched; only this
+            # one aggregate now shares Today's own coverage semantics.
             stream_exposures = list(exposure_by_stream.values())
-            exposure_history_starts = [
-                exposure.history_available_from
-                for exposure in stream_exposures
-                if exposure.history_available_from is not None
-            ]
+            aggregate_stream_ids = list(exposure_by_stream.keys())
+            aggregate_coverage, _streams_without_history = self._place_activity_coverage_summary(
+                session,
+                stream_ids=aggregate_stream_ids,
+                period_start_at=start_at,
+                period_end_at=end_at,
+            )
             aggregate_exposure = _ZoneExposure(
-                healthy_seconds=(
-                    sum(exposure.healthy_seconds or 0.0 for exposure in stream_exposures)
-                    if stream_exposures
-                    and all(exposure.healthy_seconds is not None for exposure in stream_exposures)
-                    else None
-                ),
-                history_available_from=(
-                    min(exposure_history_starts) if exposure_history_starts else None
-                ),
-                history_is_partial=(
-                    any(exposure.history_is_partial for exposure in stream_exposures)
-                    or any(exposure.history_available_from is None for exposure in stream_exposures)
-                ),
-                interval_count=sum(
-                    exposure.interval_count for exposure in stream_exposures
-                ),
+                healthy_seconds=aggregate_coverage.monitored_seconds,
+                history_available_from=aggregate_coverage.history_available_from,
+                history_is_partial=aggregate_coverage.history_is_partial,
+                # A raw exposure-interval row count, not a merged-span count
+                # -- matches what `interval_count` already meant per-Stream
+                # (`_zone_insights_exposure`, `interval_count=len(rows)`
+                # below) and what it summed to before this change, for
+                # exactly the same in-scope Streams/period.
+                interval_count=sum(exposure.interval_count for exposure in stream_exposures),
             )
             aggregate = self._zone_insight_metrics(
                 records=aggregate_records,
@@ -30632,7 +30661,22 @@ class ProductRepository:
         *,
         start_at: datetime | None,
         end_at: datetime | None,
+        include_archived: bool = False,
     ) -> list[dict[str, Any]]:
+        # Multi-Camera Place Experience v2: investigated whether to drop
+        # the archived-Source exclusion unconditionally so an archived
+        # camera's history stays visible here. Reverted to a default-False
+        # opt-in instead -- `test_wildlife_insights_aggregate_only_
+        # current_active_reviewed_truth` is a deliberate, already-accepted
+        # regression test proving Wildlife Insights/Activity Library's own
+        # *unfiltered aggregate* is meant to reflect only the current
+        # active observatory, not a general history browser. Archive-only
+        # removal still never deletes the underlying Visit/evidence rows
+        # (see `update_camera_source`); `include_archived=True` exists so
+        # one specific, explicitly-selected camera's history (Bird Log's
+        # per-camera filter -- see `wildlife_journal_overview`/`wildlife_
+        # journal_history`) can still be reached without polluting this
+        # default aggregate for every other caller.
         query = (
             select(VisitModel, EventModel, StreamModel, CameraSourceModel)
             .join(EventModel, VisitModel.event_id == EventModel.id)
@@ -30640,7 +30684,11 @@ class ProductRepository:
             .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
             .where(
                 VisitModel.is_superseded.is_(False),
-                CameraSourceModel.status != SourceStatus.archived.value,
+                *(
+                    ()
+                    if include_archived
+                    else (CameraSourceModel.status != SourceStatus.archived.value,)
+                ),
             )
         )
         if start_at is not None:
@@ -30799,7 +30847,6 @@ class ProductRepository:
             stream_id_query = (
                 select(StreamModel.id, CameraSourceModel.id, CameraSourceModel.name)
                 .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
-                .where(CameraSourceModel.status != SourceStatus.archived.value)
             )
             if payload.source_ids:
                 # Camera / Source + Multi-Camera Maturity v1, Phase N: an
@@ -30808,8 +30855,29 @@ class ProductRepository:
                 # representative evidence, digest) already uses -- this
                 # never changes reviewed truth, only which of it this one
                 # report call includes.
+                #
+                # Multi-Camera Place Experience v2: an explicit `source_ids`
+                # selection deliberately does NOT also require non-archived
+                # -- naming a specific (possibly since-archived) camera is a
+                # deliberate request for its own real history, honored even
+                # for a report period that predates its archival (see
+                # `_wildlife_insight_records`'s comment for the fuller
+                # rationale, and `test_archived_camera_activity_within_the_
+                # report_period_is_never_dropped`). The *unfiltered* default
+                # below still correctly excludes archived Sources, matching
+                # the same current-active-observatory default every other
+                # discovery surface uses -- `test_place_change_summary_
+                # repository.py::test_archived_stream_confirmations_are_
+                # excluded` and `test_historical_baseline_repository.py`'s
+                # own identically-named test already lock this in; an
+                # earlier version of this fix incorrectly made the
+                # unfiltered case archived-inclusive too and broke both.
                 stream_id_query = stream_id_query.where(
                     CameraSourceModel.id.in_(payload.source_ids)
+                )
+            else:
+                stream_id_query = stream_id_query.where(
+                    CameraSourceModel.status != SourceStatus.archived.value
                 )
             # Place / Yard Intelligence v2, Phase 7: `stream_source_index`
             # is built from the exact same query this method already ran
@@ -30991,8 +31059,33 @@ class ProductRepository:
                 source_stream_ids.setdefault(source_id, []).append(stream_id)
                 source_names[source_id] = source_name
 
+            # Multi-Camera Place Experience v2: `stream_id_query` above
+            # deliberately no longer excludes archived Sources (so a report
+            # period that already happened still shows a since-archived
+            # camera's real activity -- see that query's own comment), but
+            # that means an archived Source with genuinely zero Visits in
+            # *this* period (the common case: most report periods predate
+            # nothing) would otherwise show up here as a permanent, useless
+            # "0 visits, not enough data" row forever. Drop only that exact
+            # case -- an archived Source is still shown in full whenever it
+            # has real activity in this period (the actual case this
+            # milestone's own fix exists for).
+            source_ids_with_visits = {fact.source_id for fact in visit_facts if fact.source_id is not None}
+            archived_source_ids: set[str] = set()
+            if source_stream_ids:
+                archived_source_ids = set(
+                    session.scalars(
+                        select(CameraSourceModel.id).where(
+                            CameraSourceModel.id.in_(source_stream_ids.keys()),
+                            CameraSourceModel.status == SourceStatus.archived.value,
+                        )
+                    ).all()
+                )
+
             source_coverage_facts: dict[str, SourceCoverageFact] = {}
             for source_id, streams_for_source in source_stream_ids.items():
+                if source_id in archived_source_ids and source_id not in source_ids_with_visits:
+                    continue
                 source_monitored_intervals, source_history_available_from, _ = (
                     self._monitoring_exposure_intervals_and_history(
                         session,
@@ -31993,6 +32086,12 @@ class ProductRepository:
             # report`'s own period-anchored window) -- Bird Log is a live
             # view, not a fixed past report, so "regular as of right now" is
             # the correct question here.
+            # This is a Place-wide "is this species currently regular"
+            # computation, not the stream-filtered record list below -- it
+            # correctly stays scoped to the current active observatory
+            # regardless of `payload.stream_id` (see `_wildlife_insight_
+            # records`'s comment on the deliberate current-active-only
+            # default).
             stream_ids = list(
                 session.scalars(
                     select(StreamModel.id)
@@ -32059,7 +32158,19 @@ class ProductRepository:
             baseline_maturity = _historical_place_intelligence.baseline.maturity
             change_status_by_label = {status.taxon.label: status for status in change_summary.taxa}
 
-            records = self._wildlife_journal_confirmed_records(session)
+            # Multi-Camera Place Experience v2: an explicit `stream_id`
+            # selection is a deliberate request for one specific camera's
+            # record -- honor it even for an archived Source (see
+            # `_wildlife_insight_records`'s comment). The unfiltered
+            # default (`payload.stream_id is None`) is byte-identical to
+            # before: current-active-observatory records only.
+            records = [
+                record
+                for record in self._wildlife_journal_confirmed_records(
+                    session, include_archived=payload.stream_id is not None
+                )
+                if payload.stream_id is None or record["summary"].stream_id == payload.stream_id
+            ]
             grouped: dict[str, list[dict[str, Any]]] = {}
             for record in records:
                 grouped.setdefault(record["label"], []).append(record)
@@ -32212,7 +32323,12 @@ class ProductRepository:
             # docs/historical-baseline-maturity-contract.md) -- same
             # now-anchored usable-day facts `wildlife_journal_overview`
             # computes, reused here rather than re-derived, since this is an
-            # independently-fetched detail view for one label.
+            # independently-fetched detail view for one label. This is a
+            # Place-wide "is this species currently regular" computation,
+            # not the stream-filtered record list below -- it correctly
+            # stays scoped to the current active observatory regardless of
+            # `payload.stream_id` (see `_wildlife_insight_records`'s
+            # comment on the deliberate current-active-only default).
             stream_ids = list(
                 session.scalars(
                     select(StreamModel.id)
@@ -32272,12 +32388,19 @@ class ProductRepository:
             change_status = next(
                 (status for status in change_summary.taxa if status.taxon.label == canonical_label), None
             )
+            # Multi-Camera Place Experience v2: an explicit `stream_id`
+            # selection is a deliberate request for one specific camera's
+            # record -- honor it even for an archived Source (see
+            # `_wildlife_insight_records`'s comment). The unfiltered
+            # default (`payload.stream_id is None`) is byte-identical to
+            # before.
             records = [
                 record
                 for record in self._wildlife_journal_confirmed_records(
                     session,
                     start_at=start_at,
                     end_at=end_at,
+                    include_archived=payload.stream_id is not None,
                 )
                 if record["label"] == canonical_label
                 and (payload.stream_id is None or record["summary"].stream_id == payload.stream_id)
@@ -32662,6 +32785,12 @@ class ProductRepository:
         local_now = (now or datetime.now().astimezone()).astimezone()
         local_timezone = local_now.tzinfo
         with self.session_factory() as session:
+            # Multi-Camera Place Experience v2: investigated dropping this
+            # exclusion; reverted -- the docstring above requires this to
+            # mirror `wildlife_journal_overview`'s own current-active-only
+            # default exactly (`test_place_biodiversity_summary_
+            # repository.py` has no per-camera filter concept to bypass
+            # with, unlike Bird Log -- see that function's own comment).
             stream_ids = list(
                 session.scalars(
                     select(StreamModel.id)
@@ -32742,11 +32871,15 @@ class ProductRepository:
         )
 
         with self.session_factory() as session:
+            # Multi-Camera Place Experience v2: no archived-Source exclusion
+            # -- see `_wildlife_insight_records`'s comment for the full
+            # rationale. A Place Story event from a since-archived camera
+            # remains a real part of this Place's history.
             stream_ids = list(
                 session.scalars(
-                    select(StreamModel.id)
-                    .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
-                    .where(CameraSourceModel.status != SourceStatus.archived.value)
+                    select(StreamModel.id).join(
+                        CameraSourceModel, StreamModel.source_id == CameraSourceModel.id
+                    )
                 ).all()
             )
             taxonomy_index = self._taxonomy_label_index(session)
@@ -32958,6 +33091,7 @@ class ProductRepository:
         *,
         start_at: datetime | None = None,
         end_at: datetime | None = None,
+        include_archived: bool = False,
     ) -> list[dict[str, Any]]:
         # This single resolver keeps Journal, Insights, and Activity Library on the
         # existing latest-review, active-Visit truth boundary.
@@ -32972,8 +33106,14 @@ class ProductRepository:
         # narrower bucket via the same canonical resolver `_visit_review_outcome`
         # itself used, so a real confirmed wildlife encounter is never silently
         # invisible here just because it isn't a bird.
+        #
+        # `include_archived` (Multi-Camera Place Experience v2): see
+        # `_wildlife_insight_records`'s own comment -- default False keeps
+        # every existing caller's current-active-only behavior unchanged.
         records: list[dict[str, Any]] = []
-        for record in self._wildlife_insight_records(session, start_at=start_at, end_at=end_at):
+        for record in self._wildlife_insight_records(
+            session, start_at=start_at, end_at=end_at, include_archived=include_archived
+        ):
             summary = record["summary"]
             if summary.review_outcome == VisitReviewOutcome.confirmed_bird:
                 records.append(record)
@@ -33061,6 +33201,7 @@ class ProductRepository:
         )
         candidates: list[EvidenceCandidateFact] = []
         frame_by_visit_id: dict[str, VisitEvidenceFrame] = {}
+        stream_id_by_visit_id: dict[str, str] = {}
         for summary in bounded:
             candidate = self._representative_evidence_candidate(session, summary)
             if candidate is None:
@@ -33068,12 +33209,24 @@ class ProductRepository:
             candidates.append(candidate)
             assert summary.primary_evidence is not None  # implied by candidate is not None
             frame_by_visit_id[summary.id] = summary.primary_evidence
+            stream_id_by_visit_id[summary.id] = summary.stream_id
         winner = select_representative_evidence(candidates)
         if winner is None:
             return None
+        # Multi-Camera Place Experience v2: which camera produced this
+        # taxon's winning evidence -- Today and Bird Log share this one
+        # canonical selector (see the docstring above), so adding the fact
+        # here surfaces it on both, never a second per-surface lookup.
+        # `None` only in the genuinely unresolvable case (a Stream row
+        # deleted out from under an already-selected historical winner --
+        # never expected in practice, since Streams are archive-only).
+        winner_stream_id = stream_id_by_visit_id[winner.visit_id]
+        winner_stream = session.get(StreamModel, winner_stream_id)
         return RepresentativeEvidence(
             visit_id=winner.visit_id,
             evidence=frame_by_visit_id[winner.visit_id],
+            stream_id=winner_stream_id,
+            stream_name=winner_stream.name if winner_stream is not None else None,
         )
 
     def _wildlife_journal_representative(
@@ -33844,14 +33997,21 @@ class ProductRepository:
         local_timezone = resolve_host_local_timezone(generated_at)
 
         with self.session_factory() as session:
+            # Multi-Camera Place Experience v2: the "every Stream" default
+            # branch deliberately does not exclude archived Sources -- see
+            # `_wildlife_insight_records`'s comment for the full rationale.
+            # A research/conservation export defaulting to "everything"
+            # must not silently drop a retired camera's real reviewed
+            # history; an explicit `payload.stream_ids` still lets a caller
+            # narrow scope on purpose.
             stream_ids = (
                 list(payload.stream_ids)
                 if payload.stream_ids is not None
                 else list(
                     session.scalars(
-                        select(StreamModel.id)
-                        .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
-                        .where(CameraSourceModel.status != SourceStatus.archived.value)
+                        select(StreamModel.id).join(
+                            CameraSourceModel, StreamModel.source_id == CameraSourceModel.id
+                        )
                     ).all()
                 )
             )

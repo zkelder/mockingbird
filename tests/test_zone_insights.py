@@ -524,3 +524,79 @@ def test_taxonomy_resolution_costs_exactly_one_query_regardless_of_visit_count(
 
     assert small == 1
     assert large == 1
+
+
+def test_zone_insights_aggregate_unions_across_cameras_instead_of_summing_camera_hours(
+    repository: ProductRepository,
+) -> None:
+    """Multi-Camera Place Experience v2: unlike a single camera's own
+    interval-overlap union (test_zone_insights_unions_overlapping_durable_
+    intervals, above -- unaffected by this fix), the *aggregate* across
+    multiple cameras used to sum each Stream's own healthy_seconds
+    independently -- two cameras both "on" for the same overlapping hour
+    counted as 2 hours of Place coverage, not 1. This proves the aggregate
+    now reuses the same real interval union Today/Place Activity Report
+    already use (`_place_activity_coverage_summary`)."""
+
+    second_source_id = "source-zone-insights-second-camera"
+    second_stream_id = "stream-zone-insights-second-camera"
+    second_zone_id = "zone-zone-insights-second-camera"
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                CameraSourceModel(
+                    id=second_source_id, name="Second camera", kind="manual_upload",
+                    status="connected", description="Cross-camera union fixture.",
+                )
+            )
+            session.add(
+                StreamModel(
+                    id=second_stream_id, source_id=second_source_id, name="Second stream",
+                    description="Cross-camera union fixture.", is_live=False,
+                )
+            )
+            session.add(
+                ZoneModel(
+                    id=second_zone_id, stream_id=second_stream_id, name="Second yard",
+                    zone_type="yard", polygon_json="[]", is_active=True, monitoring_policy_json=None,
+                )
+            )
+            # First camera: healthy for [RANGE_START, RANGE_START+2h) -- 2 hours.
+            session.add(
+                MonitoringExposureIntervalModel(
+                    id="exposure-cross-camera-first", stream_id=STREAM_ID, source_id=SOURCE_ID,
+                    runtime_generation_id="cross-camera-first", started_at=RANGE_START,
+                    last_confirmed_fresh_at=RANGE_START + timedelta(hours=2),
+                    ended_at=RANGE_START + timedelta(hours=2), close_reason="session_stopped",
+                    created_at=RANGE_START, updated_at=RANGE_START + timedelta(hours=2),
+                )
+            )
+            # Second camera: healthy for [RANGE_START+1h, RANGE_START+3h) -- 2
+            # hours, overlapping the first by exactly 1 hour. Real elapsed
+            # Place coverage across both is [RANGE_START, RANGE_START+3h) = 3
+            # hours -- a naive per-Stream sum would instead claim 4.
+            session.add(
+                MonitoringExposureIntervalModel(
+                    id="exposure-cross-camera-second", stream_id=second_stream_id, source_id=second_source_id,
+                    runtime_generation_id="cross-camera-second", started_at=RANGE_START + timedelta(hours=1),
+                    last_confirmed_fresh_at=RANGE_START + timedelta(hours=3),
+                    ended_at=RANGE_START + timedelta(hours=3), close_reason="session_stopped",
+                    created_at=RANGE_START + timedelta(hours=1), updated_at=RANGE_START + timedelta(hours=3),
+                )
+            )
+
+    # Unfiltered (no stream_id/source_id): both cameras in scope.
+    summary = repository.zone_insights(ZoneInsightsRequest(start_at=RANGE_START, end_at=RANGE_END))
+    assert summary.aggregate.healthy_monitored_hours == 3
+
+    # Each camera's own single-Stream view is unaffected -- still exactly
+    # its own 2 hours, proving this fix changed only the *cross-camera*
+    # aggregate, never a single camera's own honest figure.
+    first_only = repository.zone_insights(
+        ZoneInsightsRequest(start_at=RANGE_START, end_at=RANGE_END, stream_id=STREAM_ID)
+    )
+    assert first_only.aggregate.healthy_monitored_hours == 2
+    second_only = repository.zone_insights(
+        ZoneInsightsRequest(start_at=RANGE_START, end_at=RANGE_END, stream_id=second_stream_id)
+    )
+    assert second_only.aggregate.healthy_monitored_hours == 2

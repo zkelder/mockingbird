@@ -851,3 +851,60 @@ async def test_bird_log_representative_prefers_better_evidence_over_merely_newer
     cardinal = next(row for row in labels if row["label"] == "northern_cardinal")
     assert cardinal["representative"]["visit_id"] == "cardinal-native-older"
     assert cardinal["representative"]["primary_evidence"]["resolution_provenance"] == "synchronized"
+
+
+async def test_archived_camera_history_excluded_by_default_but_reachable_by_explicit_camera_filter(
+    client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
+) -> None:
+    """Multi-Camera Place Experience v2: archiving a camera must never
+    delete its reviewed history (see camera-source-experience-v1-
+    report.md, "archive-only history preservation is correct"), but Bird
+    Log's own unfiltered overview/drilldown are a deliberate current-
+    active-observatory view, not a general history browser (see
+    `test_journal_resolves_current_reviewed_truth_and_combines_scope_
+    filters`'s own "archived-cardinal" case, and `_wildlife_insight_
+    records`'s comment). An explicit per-camera filter selecting the
+    archived camera by name must still be able to reach that real,
+    never-deleted history -- today there was no way to reach it at all."""
+
+    add_graph(isolated_repository)
+    started_at = datetime(2026, 7, 10, 9, tzinfo=UTC)
+    add_visit(isolated_repository, visit_id="active-jay", started_at=started_at)
+    add_visit(
+        isolated_repository,
+        visit_id="retired-camera-cardinal",
+        started_at=started_at + timedelta(minutes=5),
+        stream_id=ARCHIVED_STREAM,
+        source_id=ARCHIVED_SOURCE,
+        zone_id=ARCHIVED_ZONE,
+    )
+    await review(client, "active-jay", "blue_jay")
+    await review(client, "retired-camera-cardinal", "northern_cardinal")
+
+    # Default (unfiltered) overview: only the active camera's bird, exactly
+    # as the existing "archived-cardinal" precedent already established.
+    default_overview = await client.get("/api/bird-log/journal")
+    assert [row["label"] for row in default_overview.json()["labels"]] == ["blue_jay"]
+
+    # Explicitly filtering to the retired camera's own Stream reaches its
+    # real, preserved history.
+    scoped_overview = await client.get(f"/api/bird-log/journal?stream_id={ARCHIVED_STREAM}")
+    assert [row["label"] for row in scoped_overview.json()["labels"]] == ["northern_cardinal"]
+
+    # Same proof through the per-species drilldown: default excludes it,
+    # explicit stream_id reaches it.
+    default_history = await client.get("/api/bird-log/journal/northern_cardinal")
+    assert default_history.json()["observation_count"] == 0
+    scoped_history = await client.get(
+        f"/api/bird-log/journal/northern_cardinal?stream_id={ARCHIVED_STREAM}"
+    )
+    assert scoped_history.json()["observation_count"] == 1
+
+    # Filtering to the *active* Stream must not accidentally surface the
+    # archived camera's Visit either -- the bypass is scoped to the
+    # explicitly-requested Stream, not "any explicit filter at all."
+    other_stream_history = await client.get(
+        f"/api/bird-log/journal/northern_cardinal?stream_id={STREAM_A}"
+    )
+    assert other_stream_history.json()["observation_count"] == 0

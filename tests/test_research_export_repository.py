@@ -27,12 +27,14 @@ from mockingbird.api.schemas import (
 from mockingbird.observation.candidate_visit_authority import ObservationAuthorityMode
 from mockingbird.repository.product_repository import (
     AcousticDetectionFacts,
+    CameraSourceModel,
     CandidateEvidenceItem,
     CandidateVisitProposalFacts,
     CreateCandidateVisitRequest,
     EventModel,
     MediaAssetModel,
     ProductRepository,
+    StreamModel,
     VisitModel,
 )
 
@@ -572,6 +574,38 @@ def test_conservation_report_never_exposes_a_population_or_percentage_field(repo
     )
     forbidden = {"population", "abundance", "occupancy", "biodiversity_index", "percentage", "trend"}
     assert forbidden.isdisjoint(set(type(report).model_fields))
+
+
+def test_conservation_report_default_scope_still_includes_a_camera_archived_afterward(
+    repository: ProductRepository,
+) -> None:
+    """Multi-Camera Place Experience v2: a research/conservation export
+    defaulting to "every Stream" (no explicit `stream_ids` filter) must not
+    silently drop a retired camera's real reviewed history -- a scientific
+    record does not stop being real because the camera that captured it was
+    later retired. Archive-only removal never deletes the underlying Visit
+    (see camera-source-experience-v1-report.md)."""
+
+    _activate(repository)
+    visit_id = _create_visit(repository)
+    _review(repository, visit_id, "northern_cardinal")
+
+    with repository.session_factory() as session:
+        with session.begin():
+            stream = session.get(StreamModel, STREAM_ID)
+            assert stream is not None
+            source = session.get(CameraSourceModel, stream.source_id)
+            assert source is not None
+            source.status = "archived"
+
+    report = repository.conservation_report(
+        ConservationReportRequest(
+            start_at=datetime(2026, 8, 8, tzinfo=UTC), end_at=datetime(2026, 8, 9, tzinfo=UTC)
+        )
+    )
+    assert report.reviewed_wildlife_visit_count == 1
+    assert len(report.confirmed_species) == 1
+    assert report.confirmed_species[0].label == "northern_cardinal"
 
 
 # --- collections / contributor attribution (regressions #22, #23, #24) -----

@@ -1815,6 +1815,10 @@ export interface VisitEvidenceFrame {
 export interface RepresentativeEvidence {
   visit_id: string;
   evidence: VisitEvidenceFrame;
+  // Multi-Camera Place Experience v2: which camera/view produced this
+  // winning evidence. A human-readable name, never a raw UUID.
+  stream_id?: string | null;
+  stream_name?: string | null;
 }
 
 /**

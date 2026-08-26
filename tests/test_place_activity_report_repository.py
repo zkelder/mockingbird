@@ -2224,3 +2224,45 @@ def test_source_ids_filter_scopes_the_report_without_changing_truth(
     # still reads back with its confirmed label regardless of report scope.
     unfiltered_visit = repository.get_visit("cardinal-source-a")
     assert unfiltered_visit is not None and unfiltered_visit.reviewed_label == "northern_cardinal"
+
+
+def test_archived_camera_activity_within_the_report_period_is_reachable_by_explicit_filter(
+    repository: ProductRepository,
+) -> None:
+    """Multi-Camera Place Experience v2: the *unfiltered* Place Activity
+    Report/Today stays a deliberate current-active-observatory view, the
+    same default every other discovery surface uses (see test_wildlife_
+    journal.py's own "archived-cardinal" precedent) -- confirmed here by a
+    real pre-existing test elsewhere in this codebase (test_place_change_
+    summary_repository.py::test_archived_stream_confirmations_are_excluded
+    and test_historical_baseline_repository.py's own identically-named
+    test) that already locked this default in; an earlier version of this
+    milestone's own fix incorrectly made the unfiltered case archived-
+    inclusive too and broke both. What genuinely was missing, and is now
+    fixed: naming a specific (possibly since-archived) camera by explicit
+    `source_ids` is a deliberate request for its own real history, honored
+    even for a report period that predates its archival -- archive-only
+    removal never deletes the underlying Visit (see camera-source-
+    experience-v1-report.md). This file's own `ARCHIVED_SOURCE_ID`/
+    `ARCHIVED_STREAM`/`ARCHIVED_ZONE` fixtures already exist for exactly
+    this case."""
+
+    _add_visit(
+        repository,
+        visit_id="retired-camera-cardinal",
+        at=PERIOD_START + timedelta(hours=3),
+        stream_id=ARCHIVED_STREAM,
+        zone_id=ARCHIVED_ZONE,
+    )
+    _confirm(repository, visit_id="retired-camera-cardinal", label="northern_cardinal")
+
+    unfiltered = _report(repository)
+    assert unfiltered.taxa == []
+    assert unfiltered.confirmed_wildlife_visit_count == 0
+
+    filtered_to_archived = repository.place_activity_report(
+        PlaceActivityReportRequest(
+            start_at=PERIOD_START, end_at=PERIOD_END, source_ids=[ARCHIVED_SOURCE_ID]
+        ),
+    )
+    assert {taxon.label for taxon in filtered_to_archived.taxa} == {"northern_cardinal"}

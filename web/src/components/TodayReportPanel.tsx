@@ -6,6 +6,7 @@ import type {
 } from "../api/types";
 import { apiClient } from "../api/client";
 import { EmptyState } from "./EmptyState";
+import { SourceActivityList } from "./SourceActivityList";
 import { StatusPill } from "./StatusPill";
 import { formatDateTime } from "../utils";
 
@@ -319,6 +320,16 @@ export function TodayReportPanel({
                         <div className="today-report-species-name">
                           <span>{highlight.display_name}</span>
                           <span className="today-report-species-meta">{speciesTimeRange(highlight)}</span>
+                          {/* Multi-Camera Place Experience v2: which camera
+                              produced this highlight's evidence -- only
+                              worth naming once there is more than one
+                              camera to distinguish (see "Do not turn Today
+                              into a camera-monitoring dashboard"). */}
+                          {monitoredStreamCount > 1 && highlight.representative_evidence?.stream_name ? (
+                            <span className="today-report-species-meta">
+                              via {highlight.representative_evidence.stream_name}
+                            </span>
+                          ) : null}
                           {highlight.pattern_note ? (
                             <span className="today-report-species-meta">{highlight.pattern_note}</span>
                           ) : null}
@@ -389,6 +400,21 @@ export function TodayReportPanel({
                   <span className="meta-text">{plural(report.busiest_zone.wildlife_visit_count, "visit")}</span>
                 </div>
               ) : null}
+            </div>
+          ) : null}
+
+          {/* Multi-Camera Place Experience v2: a compact, coverage-normalized
+              per-camera comparison -- reuses the exact same SourceActivityList
+              presentation as the full Place Activity Report page, never a
+              second bar-list. Only worth showing once there is more than one
+              camera to compare (matching that page's own gating); Today stays
+              a report, not a camera-monitoring dashboard. */}
+          {monitoredStreamCount > 1 && (report.activity_by_source ?? []).length > 1 ? (
+            <div className="today-report-species">
+              <div className="section-heading">
+                <h3>By camera</h3>
+              </div>
+              <SourceActivityList sources={report.activity_by_source} />
             </div>
           ) : null}
         </>

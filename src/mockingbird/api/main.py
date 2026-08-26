@@ -14995,10 +14995,15 @@ async def dismiss_alert(alert_id: str) -> ProductAlertUnreadResponse:
 @app.get("/api/bird-log/journal", response_model=WildlifeJournalOverviewResponse)
 async def get_wildlife_journal(
     order: WildlifeJournalOrder = WildlifeJournalOrder.most_recent,
+    # Multi-Camera Place Experience v2: optional camera scoping, matching
+    # the per-species drilldown route's existing `stream_id` param below.
+    stream_id: str | None = None,
 ) -> WildlifeJournalOverviewResponse:
     """Read bounded current reviewed-wildlife label summaries for Bird Log."""
 
-    return get_repository().wildlife_journal_overview(WildlifeJournalOverviewRequest(order=order))
+    return get_repository().wildlife_journal_overview(
+        WildlifeJournalOverviewRequest(order=order, stream_id=stream_id)
+    )
 
 
 @app.get("/api/bird-log/likely", response_model=LikelySpeciesOverviewResponse)

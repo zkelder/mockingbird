@@ -289,3 +289,40 @@ def test_pagination_and_kind_filter_via_real_http(repository: ProductRepository)
     assert len(all_ids) == len(set(all_ids)) == 3
     assert page1["has_more"] is True
     assert page2["has_more"] is False
+
+
+def test_archiving_the_camera_afterward_does_not_erase_its_story_entry(
+    repository: ProductRepository,
+) -> None:
+    """Multi-Camera Place Experience v2: Place Story is explicitly "A
+    Living History of the Place" -- unlike Bird Log's own deliberate
+    current-active-observatory default (see test_wildlife_journal.py),
+    hiding a real past event just because its recording camera was later
+    retired would falsify the timeline's own "living history" promise.
+    Archive-only removal never deletes the underlying Visit (see
+    camera-source-experience-v1-report.md); this proves the Story entry it
+    produced survives that archival too."""
+
+    start = date(2025, 3, 1)
+    _cover_days(repository, start=start, days=10)
+    _add_visit(repository, visit_id="v-before-archive", at=datetime(2025, 3, 3, 10, tzinfo=UTC))
+    _confirm(repository, visit_id="v-before-archive")
+
+    before_archive = repository.place_story(
+        start_at=datetime(2025, 3, 1, tzinfo=UTC), end_at=datetime(2025, 3, 10, tzinfo=UTC),
+    )
+    assert [e.kind for e in before_archive.entries if e.kind == "first_seen"] == ["first_seen"]
+
+    with repository.session_factory() as session:
+        with session.begin():
+            source = session.get(CameraSourceModel, SOURCE_ID)
+            assert source is not None
+            source.status = "archived"
+
+    after_archive = repository.place_story(
+        start_at=datetime(2025, 3, 1, tzinfo=UTC), end_at=datetime(2025, 3, 10, tzinfo=UTC),
+    )
+    first_seen_after = [e for e in after_archive.entries if e.kind == "first_seen"]
+    assert len(first_seen_after) == 1
+    assert first_seen_after[0].taxon_label == "northern_cardinal"
+    assert first_seen_after[0].event_date == date(2025, 3, 3)

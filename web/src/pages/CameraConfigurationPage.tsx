@@ -7,7 +7,7 @@ import type {
   CameraNodePairResponse,
 } from "../api/types";
 import { StatusPill } from "../components/StatusPill";
-import { formatDateTime, formatLabel } from "../utils";
+import { cameraHealthLabel, cameraHealthTone, formatDateTime, formatLabel } from "../utils";
 
 interface CameraConfigurationPageProps {
   streamId: string;
@@ -19,11 +19,15 @@ function idempotencyKey() {
   return `camera-configuration-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`}`;
 }
 
-function healthTone(state: CameraConfigurationEditResponse["health"]["state"]): "good" | "review" | "quiet" {
-  if (state === "healthy") return "good";
-  if (state === "starting" || state === "stopped") return "quiet";
-  return "review";
-}
+// Multi-Camera Place Experience v2: this page used to define its own
+// local, 3-tone `healthTone` (no "alert" tone) and render the state via
+// generic `formatLabel` (Title Case) -- so `camera_unavailable`/`no_
+// recent_frame` rendered as merely "review" here instead of "alert," and
+// the same state's label text literally differed between pages ("Camera
+// Unavailable" here vs. "Camera unavailable" on Dashboard/Yard Map).
+// Reuses the canonical `cameraHealthTone`/`cameraHealthLabel` (utils.ts)
+// every other health surface already converged on, rather than a third
+// drifting copy.
 
 function configurationPayload(
   configuration: CameraConfigurationEditResponse,
@@ -377,7 +381,7 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
       {error ? <div className="error-panel">{error}</div> : null}
 
       <section className="panel page-stack" aria-label="Current camera health">
-        <div className="section-heading"><div><h2>Camera health and next actions</h2><span className="meta-text">Saved operational state is separate from wildlife activity and review truth.</span></div><StatusPill label={formatLabel(configuration.health.state)} tone={healthTone(configuration.health.state)} /></div>
+        <div className="section-heading"><div><h2>Camera health and next actions</h2><span className="meta-text">Saved operational state is separate from wildlife activity and review truth.</span></div><StatusPill label={cameraHealthLabel(configuration.health.state)} tone={cameraHealthTone(configuration.health.state)} /></div>
         <span><strong>Desired monitoring:</strong> {formatLabel(configuration.monitoring_policy.mode)} · <strong>actual:</strong> {formatLabel(configuration.runtime.actual_state)}</span>
         <span><strong>Open activity sessions:</strong> {configuration.health.open_activity_session_count}</span>
         <span><strong>Last good frame:</strong> {configuration.health.last_good_frame_at ? formatDateTime(configuration.health.last_good_frame_at) : "Not yet received"}</span>

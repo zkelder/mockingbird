@@ -501,7 +501,7 @@ export function BirdLogPage({
     setError(null);
     if (!journalLabel) {
       void apiClient
-        .getWildlifeJournal(location.order)
+        .getWildlifeJournal(location.order, location.streamId || undefined)
         .then((next) => {
           if (active) setOverview(next);
         })

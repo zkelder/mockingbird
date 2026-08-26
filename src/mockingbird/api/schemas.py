@@ -2389,10 +2389,18 @@ class RepresentativeEvidence(BaseModel):
     Visit it belongs to. Always derived, never persisted (see "Schema" in
     the contract doc); recomputed on every report read, so a reviewed
     correction is reflected on the very next read with no backfill.
+
+    `stream_id`/`stream_name` (Multi-Camera Place Experience v2): which
+    camera/view produced this winning evidence -- a human-readable name,
+    never a raw UUID surfaced as the label (see product-doctrine.md). Both
+    additive; `None` only in the practically-unreachable case of the
+    winning Visit's own Stream row having disappeared underneath it.
     """
 
     visit_id: str
     evidence: VisitEvidenceFrame
+    stream_id: str | None = None
+    stream_name: str | None = None
 
 
 class ClassifierSupportingEvidence(BaseModel):
@@ -6055,6 +6063,13 @@ class WildlifeJournalOverviewRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     order: WildlifeJournalOrder = WildlifeJournalOrder.most_recent
+    # Multi-Camera Place Experience v2: optional camera scoping, matching
+    # the per-species drilldown's existing `stream_id` filter (Wildlife
+    # JournalHistoryRequest) rather than inventing a second convention on
+    # the same page family. `None` (the default) is byte-identical to
+    # this field not existing -- unfiltered, current-active-observatory
+    # scope, unchanged from before this field was added.
+    stream_id: str | None = Field(default=None, min_length=1, max_length=256)
 
 
 class WildlifeJournalHistoryRequest(BaseModel):
