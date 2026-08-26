@@ -23,12 +23,54 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `763fe22` -- the implementation commit for Multi-Camera
-  Place Experience v2 (see §16)
-- **Schema:** `v57`, unchanged by this milestone -- every fix is a
-  query-scope correction or an additive field on an already-derived
-  response object, never a new/changed table.
-- **Latest accepted milestone:** Multi-Camera Place Experience v2 -- One
+- **Accepted HEAD:** `790513e` -- the implementation commit for Concurrent
+  Candidate Visit Persistence Reliability v1
+- **Schema:** `v57`, unchanged by this milestone -- a narrower exception
+  classification inside one existing repository method plus a bounded
+  retry loop inside one existing caller method; no persisted shape
+  changed.
+- **Latest accepted milestone:** Concurrent Candidate Visit Persistence
+  Reliability v1 -- see
+  [concurrent-candidate-visit-persistence-reliability-v1-report.md](concurrent-candidate-visit-persistence-reliability-v1-report.md).
+  Classification **A** -- a bounded correctness milestone, not a further
+  Multi-Camera product pass, closing the real, disclosed occasional
+  lost-candidate-Visit concurrent-write reliability gap Multi-Camera Place
+  Experience v2 found, root-caused, and deliberately left unfixed (its own
+  bounded transient-retry attempt did not reliably close the gap and was
+  reverted). Root cause confirmed directly (a real captured
+  `sqlalchemy.exc.OperationalError: database is locked` stack trace under
+  real concurrent multi-Stream SQLite writes) and reproduced
+  deterministically on demand (a real second SQLite connection holding a
+  real write lock, independent of host load) -- not merely inferred.
+  `create_candidate_visit_from_proposal` was already idempotent
+  (`proposal_id`-keyed) and fully transactional (a failed attempt rolls
+  back completely, already proven by a pre-existing test), which made a
+  bounded, classified retry provably safe. Fixed by (1) classifying the
+  one demonstrated SQLite lock/busy shape as a new, narrow, retryable code
+  distinct from every other repository failure, and (2) a bounded
+  (3-attempt), short jittered-backoff retry at the *caller* boundary
+  (`candidate_visit_adapter.attempt_candidate`) -- deliberately not inside
+  the repository method again, which is what the reverted attempt already
+  tried. No schema change; no change to Reviewed truth, concurrent-sibling
+  Event reuse, or ambiguous-boundary arbitration. 4 new tests (1
+  deterministic real-SQLite-lock end-to-end test, 3 fast mock-based
+  tests), each independently confirmed RED against the pre-fix code and
+  GREEN after. Tier 1/2: 231 passed, 0 failed. Tier 3 (full Core gate):
+  5109 passed, 3 failed -- 2 already-disclosed pre-existing
+  (`test_place_biodiversity_summary_repository.py`) and 1
+  (`test_transport_worker.py`) confirmed unrelated by import-graph proof
+  (a separate Camera Node-side package, zero code path to either changed
+  file) plus a clean 5/5 re-run in isolation -- zero regressions
+  attributable to this milestone. See the report for full detail,
+  including honestly-disclosed remaining risk (an orphaned-media-file edge
+  case on a failed-then-retried attempt, pre-existing and not introduced
+  by this fix; the write transaction still does more work than strictly
+  minimal while holding SQLite's lock, a real but separately-scoped future
+  opportunity; WAL mode/a higher `busy_timeout` were not empirically
+  tested, deliberately, given this exact codebase's own documented prior
+  negative result from changing the shared engine's transaction
+  configuration).
+- **Prior accepted milestone:** Multi-Camera Place Experience v2 -- One
   Observatory, Many Views (see
   [multi-camera-place-experience-v2-report.md](multi-camera-place-experience-v2-report.md)).
   Classification **B** -- an integrated multi-camera product pass on top
@@ -236,21 +278,31 @@ preserved here, not relaxed.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
+Concurrent Candidate Visit Persistence Reliability v1 (directly authorized
+outside this file, reconciled here at its own closure) is now accepted at
+classification **A** -- see §1, above, and
+[concurrent-candidate-visit-persistence-reliability-v1-report.md](concurrent-candidate-visit-persistence-reliability-v1-report.md)
+for the full record. This closes the one specific, bounded item named
+below (the lost-candidate-Visit concurrent-write reliability gap); it does
+**not** reopen or advance any other part of Multi-Camera Place Experience
+v2's own remaining scope.
+
 Multi-Camera Place Experience v2 (directly authorized outside this file,
-reconciled here at its own closure -- see §16) is now accepted at
+reconciled here at its own closure -- see §16) remains accepted at
 classification **B** -- see
 [multi-camera-place-experience-v2-report.md](multi-camera-place-experience-v2-report.md)
 and §1/§6 Lane F, above/below, for the full record. Do NOT automatically
-authorize, by adjacency to this closure: a dedicated follow-on
-investigation into the real, disclosed occasional lost-candidate-Visit
-concurrent-write reliability gap this milestone found, root-caused, and
-deliberately did not fix (a real, bounded engineering investigation, but
-not self-authorized here); notification-level (Calm Attention)
-cross-camera grouping; Place Story wildlife-event source attribution;
-camera-filter UI consolidation; multi-camera Place Feature linking; or
-broad multi-site -- each individually real and recorded in the report's
-"Remaining major PRODUCT opportunities," none automatically the next
-milestone by adjacency.
+authorize, by adjacency to this closure: notification-level (Calm
+Attention) cross-camera grouping; Place Story wildlife-event source
+attribution; camera-filter UI consolidation; multi-camera Place Feature
+linking; or broad multi-site -- each individually real and recorded in the
+report's "Remaining major PRODUCT opportunities," none automatically the
+next milestone by adjacency. (The one item this same list previously named
+-- "a dedicated follow-on investigation into the real, disclosed occasional
+lost-candidate-Visit concurrent-write reliability gap" -- is no longer an
+open item: Concurrent Candidate Visit Persistence Reliability v1, above,
+is exactly that dedicated investigation, and it reached a proven, validated
+fix, not merely an investigation.)
 
 Ecological Interoperability & Submission Workflows v1 (directly authorized
 outside this file, reconciled here at its own closure -- see §16) is now
@@ -368,15 +420,15 @@ Do NOT automatically authorize:
 - Place Story period summaries, weather-caveat composition, or dedicated
   taxon/Feature story pages, as a standalone follow-on campaign;
 - Land Management / Agriculture as a separate campaign;
-- a dedicated investigation/fix for the real, disclosed occasional
-  lost-candidate-Visit concurrent-write reliability gap Multi-Camera Place
-  Experience v2 found, root-caused, and deliberately did not fix (see that
-  report's "Fairness / backpressure") -- real and recorded, but not
-  self-authorized by this reconciliation; notification-level (Calm
-  Attention) cross-camera health grouping, Place Story wildlife-event
-  source attribution, or camera-filter UI consolidation as standalone
-  follow-on campaigns -- each individually real and recorded in that same
-  report, none automatically the next milestone by adjacency;
+- notification-level (Calm Attention) cross-camera health grouping, Place
+  Story wildlife-event source attribution, or camera-filter UI
+  consolidation as standalone follow-on campaigns -- each individually
+  real and recorded in the Multi-Camera Place Experience v2 report, none
+  automatically the next milestone by adjacency. (The lost-candidate-Visit
+  concurrent-write reliability gap that report also found, root-caused,
+  and deliberately did not fix is **no longer on this list** -- Concurrent
+  Candidate Visit Persistence Reliability v1, see §1, closed it at
+  classification A.);
 - broad multi-site, merely because single-Place multi-camera work just
   closed;
 - final Release Hardening.
@@ -659,6 +711,15 @@ sandbox lacks); a multi-hour concurrent soak beyond the single-pass
 measured proof; the pre-existing, disclosed 2-Stream cap on the separate
 legacy motion pipeline (RTSP/USB/local providers, not the modern
 Observation Engine's own Camera Node path).
+
+**Reliability lane status (Concurrent Candidate Visit Persistence
+Reliability v1, same-day follow-on):** this lane's one item touching the
+critical Visit write path -- occasional silent loss of an admitted
+candidate under real concurrent multi-Stream SQLite writes -- is now
+**CLOSED** at classification **A**; see §1, above, and
+[concurrent-candidate-visit-persistence-reliability-v1-report.md](concurrent-candidate-visit-persistence-reliability-v1-report.md).
+Every other item in the "Remaining, not closed by this pass" list directly
+above is unaffected and still open.
 
 True multi-site remains a separate product/architecture decision. Do not
 silently make it v0.1 scope, and do not self-authorize it by adjacency to
