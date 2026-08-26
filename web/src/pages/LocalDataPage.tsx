@@ -3,6 +3,7 @@ import { apiClient, ApiError } from "../api/client";
 import type {
   LocalBackupSummary,
   LocalDataStatus,
+  ProductConnectionInfo,
   StorageCleanupHistoryItem,
   StorageCleanupPreviewResponse,
   StorageRetentionSettings,
@@ -74,6 +75,8 @@ export function LocalDataPage({
   const [storageOperation, setStorageOperation] = useState<string | null>(null);
   const [isConfirmingCleanup, setIsConfirmingCleanup] = useState(false);
   const [confirmingPurgeId, setConfirmingPurgeId] = useState<string | null>(null);
+  const [connectionInfo, setConnectionInfo] = useState<ProductConnectionInfo | null>(null);
+  const [connectionCopyFeedback, setConnectionCopyFeedback] = useState<string | null>(null);
 
   // Populates both `error` (always) and `errorDetail` (only when the
   // caught failure is an ApiError carrying a well-shaped structuredError --
@@ -150,7 +153,24 @@ export function LocalDataPage({
     void loadStatus();
     void loadBackups();
     void loadStorage();
+    // Secondary/informational card -- a failed load leaves it simply
+    // unrendered rather than raising the same page-wide error banner a
+    // failed backup/storage load would (see EmptyState fallback below).
+    apiClient
+      .getProductConnectionInfo()
+      .then(setConnectionInfo)
+      .catch(() => setConnectionInfo(null));
   }, []);
+
+  async function copyConnectionUrl(url: string) {
+    try {
+      await navigator.clipboard.writeText(url);
+      setConnectionCopyFeedback("Copied.");
+    } catch {
+      setConnectionCopyFeedback("Could not copy automatically -- select and copy the address above.");
+    }
+    window.setTimeout(() => setConnectionCopyFeedback(null), 4000);
+  }
 
   function upsertBackup(backup: LocalBackupSummary) {
     setBackups((current) =>
@@ -521,6 +541,57 @@ export function LocalDataPage({
               </div>
             </div>
           </section>
+
+          {connectionInfo ? (
+            <section className="panel local-data-card">
+              <div className="section-heading">
+                <h2>Connection &amp; Remote Access</h2>
+                <StatusPill
+                  label={connectionInfo.is_loopback_only ? "This device only" : "This device + local network"}
+                  tone={connectionInfo.is_loopback_only ? "good" : "review"}
+                />
+              </div>
+              <div className="data-row">
+                <span>At home, on this device</span>
+                <strong>Always available -- open MockingBird's usual address in this browser.</strong>
+              </div>
+              {connectionInfo.local_network_url ? (
+                <div className="data-row">
+                  <span>At home, from your phone (same WiFi)</span>
+                  <strong>
+                    {connectionInfo.local_network_url}{" "}
+                    <button
+                      className="text-action"
+                      onClick={() => void copyConnectionUrl(connectionInfo.local_network_url as string)}
+                      type="button"
+                    >
+                      Copy
+                    </button>
+                  </strong>
+                </div>
+              ) : (
+                <div className="data-row">
+                  <span>At home, from your phone (same WiFi)</span>
+                  <strong>
+                    {connectionInfo.is_loopback_only
+                      ? "Not enabled -- MockingBird only answers on this device right now."
+                      : "Enabled, but this device's local network address could not be detected automatically."}
+                  </strong>
+                </div>
+              )}
+              {connectionCopyFeedback ? <p role="status">{connectionCopyFeedback}</p> : null}
+              <p>
+                Signing in is always required, on any device -- enabling network access never weakens that. This
+                device serves plain HTTP unless you add a reverse proxy for TLS, so only allow network access on a
+                WiFi you trust.
+              </p>
+              <p>
+                Away from home, the supported path is a private network between your phone and this device (for
+                example Tailscale) -- MockingBird does not require, and does not provide, a cloud relay. Publicly
+                forwarding this device's port on your router is not supported.
+              </p>
+            </section>
+          ) : null}
 
           <section className="panel local-data-card">
             <div className="section-heading">

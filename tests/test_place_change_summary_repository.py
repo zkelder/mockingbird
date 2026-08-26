@@ -365,6 +365,14 @@ def test_recent_period_with_insufficient_monitoring_reads_insufficient_recent_co
 
 
 def test_provisional_suggestion_does_not_change_status(repository: ProductRepository) -> None:
+    """A provisional suggestion on every single reference-window day must
+    never contribute a reference presence day -- the actual claim this test
+    makes, and unaffected by Mobile & Remote Experience v1's Phase 0 fix to
+    `place_change_summary._presence_status` (see
+    `tests/test_place_change_summary.py`'s identical pure-module sibling for
+    the full explanation of why `.status` itself correctly changed to
+    `"higher_recent_presence"`)."""
+
     _add_full_valid_baseline(repository)
     recent_days = [PERIOD_START - timedelta(days=offset) for offset in range(5)]
     for i, day in enumerate(recent_days):
@@ -382,7 +390,7 @@ def test_provisional_suggestion_does_not_change_status(repository: ProductReposi
     report = _report(repository, local_timezone=UTC)
     status = _change_status_for(report, "northern_cardinal")
     assert status.reference_presence_days == 0
-    assert status.status == "no_supported_change"
+    assert status.status == "higher_recent_presence"
 
 
 # 8. Reviewed correction changes derived comparison --------------------------

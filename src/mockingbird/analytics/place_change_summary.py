@@ -81,10 +81,19 @@ A status of `higher_recent_presence`/`lower_recent_presence` requires *all*
 of:
 
 - at least `MIN_REFERENCE_PRESENCE_DAYS_FOR_COMPARISON` (1) reference-window
-  presence days -- a taxon never seen in the reference window has no
-  historical rate to compare against (see "new"/"first_record" in
-  `historical_baseline` for that already-covered case; this module reports
-  `no_supported_change` rather than fabricating a directional claim);
+  presence days, UNLESS recent presence alone already clears
+  `MIN_ABSOLUTE_PRESENCE_DAY_DIFFERENCE` (below) -- a taxon never seen in
+  the reference window has no historical rate to compare against (see
+  "new"/"first_record" in `historical_baseline` for that already-covered
+  "genuinely never seen before" case), but zero reference presence plus a
+  real run of recent presence days is exactly the "established taxon,
+  absent for the whole reference window, then reappeared" case
+  `regularity_narrative.compute_regularity_narrative`'s own
+  `"returned_after_absence"` branch depends on being reachable here (Mobile
+  & Remote Experience v1 fixed this module's own over-broad zero-reference
+  guard, which previously made that branch unreachable through this
+  module's only caller composition regardless of how much recent presence
+  existed -- see `docs/mobile-remote-experience-v1-report.md`);
 - a rate difference (`recent_presence_days / RECENT_WINDOW_USABLE_DAYS`
   minus `reference_presence_days / REFERENCE_WINDOW_USABLE_DAYS`) of at
   least `MIN_PROPORTIONAL_DIFFERENCE` (0.25, i.e. 25 percentage points);
@@ -306,11 +315,20 @@ def _presence_status(
     window forces `insufficient_baseline`/`insufficient_recent_coverage`
     directly, bypassing this function entirely."""
 
-    if reference_presence_days < MIN_REFERENCE_PRESENCE_DAYS_FOR_COMPARISON:
-        # No (or negligible) reference-window presence to compare against --
-        # see "new"/"first_record" in historical_baseline for the adjacent,
-        # already-covered "first ever" case this deliberately does not
-        # re-claim as a directional change.
+    if (
+        reference_presence_days < MIN_REFERENCE_PRESENCE_DAYS_FOR_COMPARISON
+        and recent_presence_days < MIN_ABSOLUTE_PRESENCE_DAY_DIFFERENCE
+    ):
+        # No (or negligible) reference-window presence, AND recent presence
+        # too thin to mean anything on its own either -- see "new"/
+        # "first_record" in historical_baseline for the adjacent, already-
+        # covered "first ever" case this deliberately does not re-claim as a
+        # directional change. When recent presence *does* clear the
+        # absolute-difference floor below, this guard steps aside and lets
+        # the shared rate/absolute-difference math run exactly as it does
+        # for every other input -- see the module docstring's "Threshold
+        # policy" section for why a real, established-taxon absence-then-
+        # return must not be forced through this early return too.
         return "no_supported_change"
 
     recent_rate = recent_presence_days / RECENT_WINDOW_USABLE_DAYS

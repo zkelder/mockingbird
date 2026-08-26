@@ -156,8 +156,20 @@ button {
   text-transform: capitalize;
 }
 
+/* Mobile & Remote Experience v1: a bounded horizontal-scroll wrapper for
+   the one raw <table> in the frontend (UsersPage) -- keeps every column
+   intact and familiar rather than reflowing into cards, while never
+   forcing the surrounding page itself to scroll sideways (see
+   `body`'s own no-horizontal-overflow requirement). */
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 .data-table {
   width: 100%;
+  min-width: 560px;
   border-collapse: collapse;
 }
 
@@ -8880,6 +8892,171 @@ a.secondary-action {
 
   .export-proof-note {
     flex-direction: column;
+  }
+}
+
+/* Mobile & Remote Experience v1: a compact top bar + off-canvas drawer +
+   bottom nav, replacing the un-pinned-but-still-fully-stacked sidebar
+   phones got below 980px (every one of ~20 nav destinations, above every
+   page's own content, on every navigation). `.mobile-topbar`/
+   `.mobile-bottom-nav` render unconditionally in App.tsx but stay hidden
+   until this same 760px breakpoint; `.sidebar` itself is untouched above
+   it. 760px matches this file's existing breakpoint convention (already
+   used elsewhere) rather than inventing a new number. */
+.mobile-topbar,
+.mobile-bottom-nav {
+  display: none;
+}
+
+.sidebar-backdrop {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .mobile-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    color: #f7faf6;
+    background: #1f3329;
+  }
+
+  .mobile-topbar .brand-block {
+    gap: 8px;
+    color: #f7faf6;
+  }
+
+  .mobile-topbar .brand-mark {
+    width: 32px;
+    height: 32px;
+    font-size: 0.82rem;
+  }
+
+  .mobile-topbar .alerts-control {
+    margin: 0;
+    width: auto;
+    margin-left: auto;
+  }
+
+  .mobile-topbar .alerts-button {
+    width: auto;
+  }
+
+  /* `.alerts-drawer` normally opens `left: 0` against a full-width sidebar
+     button; here the button sits at the topbar's right edge, so anchor the
+     drawer from the right instead -- otherwise it would extend off the
+     right edge of a narrow viewport. */
+  .mobile-topbar .alerts-drawer {
+    left: auto;
+    right: 0;
+  }
+
+  .mobile-nav-toggle {
+    display: grid;
+    width: 44px;
+    height: 44px;
+    flex: none;
+    place-items: center;
+    border: 1px solid #33513f;
+    border-radius: 8px;
+    background: #24402f;
+  }
+
+  .mobile-nav-toggle-icon,
+  .mobile-nav-toggle-icon::before,
+  .mobile-nav-toggle-icon::after {
+    display: block;
+    width: 20px;
+    height: 2px;
+    border-radius: 2px;
+    background: #f7faf6;
+  }
+
+  .mobile-nav-toggle-icon {
+    position: relative;
+  }
+
+  .mobile-nav-toggle-icon::before,
+  .mobile-nav-toggle-icon::after {
+    position: absolute;
+    left: 0;
+    content: "";
+  }
+
+  .mobile-nav-toggle-icon::before {
+    top: -6px;
+  }
+
+  .mobile-nav-toggle-icon::after {
+    top: 6px;
+  }
+
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 35;
+    background: rgb(24 35 29 / 55%);
+  }
+
+  .app-shell {
+    display: block;
+  }
+
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 40;
+    overflow-y: auto;
+    width: min(84vw, 320px);
+    max-width: none;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    box-shadow: 4px 0 18px rgb(24 35 29 / 35%);
+  }
+
+  .sidebar.sidebar-open {
+    transform: translateX(0);
+  }
+
+  .sidebar .nav-list {
+    grid-template-columns: 1fr;
+  }
+
+  .main-content {
+    padding-bottom: 84px;
+  }
+
+  .mobile-bottom-nav {
+    position: fixed;
+    inset: auto 0 0 0;
+    z-index: 30;
+    display: flex;
+    padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px));
+    background: #1f3329;
+    box-shadow: 0 -2px 12px rgb(24 35 29 / 25%);
+  }
+
+  .mobile-bottom-nav-item {
+    flex: 1;
+    min-height: 48px;
+    border: none;
+    border-radius: 8px;
+    padding: 6px 4px;
+    color: #b8cdbb;
+    background: transparent;
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-align: center;
+  }
+
+  .mobile-bottom-nav-item.active {
+    color: #f7faf6;
+    background: #2f493b;
   }
 }
 

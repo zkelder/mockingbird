@@ -10,6 +10,8 @@ contract it implements), including which `basis` each branch reports.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 from mockingbird.analytics.regularity_narrative import (
@@ -150,6 +152,110 @@ def test_regular_with_nonzero_increase_stays_regular_with_a_change_basis() -> No
     )
     assert result.state == "regular"
     assert result.basis == "historical_and_change"
+
+
+# ---------------------------------------------------------------------------
+# first_confirmed_at / reference_window_start_at (Mobile & Remote
+# Experience v1 Phase 0): optional timing context distinguishing a real
+# established-taxon return from a merely young taxon.
+# ---------------------------------------------------------------------------
+
+
+def test_returned_after_absence_still_fires_when_timing_context_is_omitted() -> None:
+    """Backward compatibility: a caller that never learned about the new
+    keyword-only parameters (every call site before this milestone) gets
+    the identical, original, ungated behavior -- this is an additive
+    refinement, never a narrower default."""
+
+    result = compute_regularity_narrative(
+        "seen_before", "higher_recent_presence", reference_presence_days=0
+    )
+    assert result.state == "returned_after_absence"
+
+
+def test_returned_after_absence_fires_when_first_confirmed_before_reference_window() -> None:
+    reference_window_start_at = datetime(2026, 8, 1, tzinfo=UTC)
+    result = compute_regularity_narrative(
+        "regular",
+        "higher_recent_presence",
+        reference_presence_days=0,
+        first_confirmed_at=datetime(2026, 1, 1, tzinfo=UTC),
+        reference_window_start_at=reference_window_start_at,
+    )
+    assert result.state == "returned_after_absence"
+    assert result.basis == "historical_and_change"
+
+
+def test_returned_after_absence_suppressed_for_a_taxon_younger_than_the_reference_window() -> None:
+    """The taxon's own all-time-first confirmation falls *after* the
+    reference window started -- its zero reference presence is honestly
+    explained by not existing yet, not by a real absence, so this must
+    fall back to the plain `"regular"`/`"becoming_regular"` a change signal
+    without the zero-reference special case would produce (mirrors the
+    former `place_story._effective_regularity_state`'s own `(d)` guard,
+    now shared here instead of duplicated per caller)."""
+
+    reference_window_start_at = datetime(2026, 8, 1, tzinfo=UTC)
+    first_confirmed_at = datetime(2026, 8, 10, tzinfo=UTC)  # after the window started
+    assert first_confirmed_at > reference_window_start_at
+
+    regular_result = compute_regularity_narrative(
+        "regular",
+        "higher_recent_presence",
+        reference_presence_days=0,
+        first_confirmed_at=first_confirmed_at,
+        reference_window_start_at=reference_window_start_at,
+    )
+    assert regular_result.state == "regular"
+
+    seen_before_result = compute_regularity_narrative(
+        "seen_before",
+        "higher_recent_presence",
+        reference_presence_days=0,
+        first_confirmed_at=first_confirmed_at,
+        reference_window_start_at=reference_window_start_at,
+    )
+    assert seen_before_result.state == "becoming_regular"
+
+
+def test_returned_after_absence_suppressed_only_when_both_timing_fields_are_known() -> None:
+    """Half-known timing context (one field present, the other `None`) must
+    not accidentally suppress the state either -- only a caller that
+    supplies *both* fields gets the guard applied."""
+
+    result_missing_reference = compute_regularity_narrative(
+        "regular",
+        "higher_recent_presence",
+        reference_presence_days=0,
+        first_confirmed_at=datetime(2026, 8, 10, tzinfo=UTC),
+        reference_window_start_at=None,
+    )
+    assert result_missing_reference.state == "returned_after_absence"
+
+    result_missing_first_confirmed = compute_regularity_narrative(
+        "regular",
+        "higher_recent_presence",
+        reference_presence_days=0,
+        first_confirmed_at=None,
+        reference_window_start_at=datetime(2026, 8, 1, tzinfo=UTC),
+    )
+    assert result_missing_first_confirmed.state == "returned_after_absence"
+
+
+def test_first_confirmed_timing_is_ignored_when_reference_presence_is_nonzero() -> None:
+    """The timing guard only ever matters for the zero-reference branch --
+    a taxon younger than the reference window but with real (nonzero)
+    reference presence is a contradiction that cannot occur from honest
+    inputs, and is not this guard's concern either way."""
+
+    result = compute_regularity_narrative(
+        "seen_before",
+        "higher_recent_presence",
+        reference_presence_days=3,
+        first_confirmed_at=datetime(2026, 8, 10, tzinfo=UTC),
+        reference_window_start_at=datetime(2026, 8, 1, tzinfo=UTC),
+    )
+    assert result.state == "becoming_regular"
 
 
 # ---------------------------------------------------------------------------

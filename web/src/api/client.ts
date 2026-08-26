@@ -79,6 +79,7 @@ import type {
   LegacyFolderImportPreviewRequest,
   HealthStatus,
   LocalCameraFrameCaptureResponse,
+  ProductConnectionInfo,
   LiveCameraSessionStatus,
   ObservationSessionStatus,
   SceneConfusorLearningStatus,
@@ -460,6 +461,7 @@ function importFolderMedia(
 export const apiClient = {
   baseUrl: API_BASE_URL,
   getHealth: () => request<HealthStatus>("/health"),
+  getProductConnectionInfo: () => request<ProductConnectionInfo>("/api/product/connection"),
   getTaxonomyLabels: () => request<TaxonomyLabel[]>("/api/taxonomy/labels"),
   getTaxonomyLabel: (label: string) =>
     request<TaxonomyLabel>(`/api/taxonomy/labels/${encodeURIComponent(label)}`),

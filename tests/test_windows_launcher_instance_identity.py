@@ -427,3 +427,181 @@ def test_launcher_frontend_resolution_is_independent_of_the_launch_directory(
     from_unrelated_cwd = resolve_frontend_dist()
 
     assert from_repo_root == from_unrelated_cwd
+
+
+# ---------------------------------------------------------------------------
+# Mobile & Remote Experience v1: `GET /api/product/connection` and the
+# `runtime.run()` state it reads back -- see ProductConnectionInfo's own
+# docstring in api/schemas.py for the authenticated-vs-public reasoning.
+# ---------------------------------------------------------------------------
+
+
+def test_detect_local_network_address_returns_a_string_on_this_host() -> None:
+    """Sanity check against this real development host -- not a mock, since
+    the whole point of the UDP-connect trick is that it works without real
+    connectivity to the target; a `None` here on an ordinary dev machine
+    would itself be the interesting failure."""
+
+    address = runtime_module.detect_local_network_address()
+    assert address is None or isinstance(address, str) and address
+
+
+def test_detect_local_network_address_is_none_on_any_socket_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No network interface / sandboxed networking must read "could not
+    determine," never raise and never crash the endpoint that calls this."""
+
+    class _RaisingSocket:
+        def __init__(self, *_args, **_kwargs) -> None:
+            raise OSError("no network available")
+
+    monkeypatch.setattr(runtime_module.socket, "socket", _RaisingSocket)
+    assert runtime_module.detect_local_network_address() is None
+
+
+def test_run_wires_bind_state_onto_app_state_for_network_allowed_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The one real place these facts are set -- `GET /api/product/
+    connection` only ever reads them back (see the endpoint's own
+    docstring)."""
+
+    _prepare_runtime_env(tmp_path, monkeypatch, port=8204)
+    monkeypatch.setattr(runtime_module, "port_is_available", lambda _host, _port: True)
+    monkeypatch.delattr(api_main.app.state, "bind_host", raising=False)
+    monkeypatch.delattr(api_main.app.state, "bind_port", raising=False)
+    monkeypatch.delattr(api_main.app.state, "network_access_allowed", raising=False)
+
+    try:
+        result = run(["--host", "0.0.0.0", "--allow-network", "--port", "8204", "--no-browser"])
+        assert result == 0
+        assert api_main.app.state.bind_host == "0.0.0.0"
+        assert api_main.app.state.bind_port == 8204
+        assert api_main.app.state.network_access_allowed is True
+    finally:
+        monkeypatch.delattr(api_main.app.state, "bind_host", raising=False)
+        monkeypatch.delattr(api_main.app.state, "bind_port", raising=False)
+        monkeypatch.delattr(api_main.app.state, "network_access_allowed", raising=False)
+
+
+async def _sign_in_as_bootstrap_administrator(client: httpx.AsyncClient) -> None:
+    response = await client.post(
+        "/api/setup/administrator",
+        json={
+            "display_name": "Ada Admin",
+            "login_identity": "ada-connection-test",
+            "password": "correct horse battery staple",
+        },
+    )
+    assert response.status_code in (200, 201), response.text
+
+
+@pytest.mark.anyio
+async def test_product_connection_endpoint_requires_authentication() -> None:
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.get("/api/product/connection")
+    assert response.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_product_connection_endpoint_reports_conservative_defaults_without_a_real_launch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delattr(app.state, "bind_host", raising=False)
+    monkeypatch.delattr(app.state, "bind_port", raising=False)
+    monkeypatch.delattr(app.state, "network_access_allowed", raising=False)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await _sign_in_as_bootstrap_administrator(client)
+        response = await client.get("/api/product/connection")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["bind_host"] == "127.0.0.1"
+    assert payload["bind_port"] == 8000
+    assert payload["network_access_allowed"] is False
+    assert payload["is_loopback_only"] is True
+    assert payload["local_network_url"] is None
+
+
+@pytest.mark.anyio
+async def test_product_connection_endpoint_reports_explicit_loopback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app.state, "bind_host", "127.0.0.1", raising=False)
+    monkeypatch.setattr(app.state, "bind_port", 9001, raising=False)
+    monkeypatch.setattr(app.state, "network_access_allowed", False, raising=False)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await _sign_in_as_bootstrap_administrator(client)
+        response = await client.get("/api/product/connection")
+    payload = response.json()
+    assert payload["is_loopback_only"] is True
+    assert payload["local_network_url"] is None
+
+
+@pytest.mark.anyio
+async def test_product_connection_endpoint_detects_lan_address_for_a_wildcard_bind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--host 0.0.0.0 --allow-network`: the literal bind host is not
+    itself a usable URL, so the endpoint falls back to best-effort LAN
+    detection."""
+
+    monkeypatch.setattr(app.state, "bind_host", "0.0.0.0", raising=False)
+    monkeypatch.setattr(app.state, "bind_port", 8000, raising=False)
+    monkeypatch.setattr(app.state, "network_access_allowed", True, raising=False)
+    monkeypatch.setattr(runtime_module, "detect_local_network_address", lambda: "192.168.1.42")
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await _sign_in_as_bootstrap_administrator(client)
+        response = await client.get("/api/product/connection")
+    payload = response.json()
+    assert payload["is_loopback_only"] is False
+    assert payload["local_network_url"] == "http://192.168.1.42:8000"
+
+
+@pytest.mark.anyio
+async def test_product_connection_endpoint_uses_the_literal_host_when_not_wildcard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--host 192.168.1.42 --allow-network` (a specific address, not the
+    `0.0.0.0` wildcard): the host is already known, so no LAN-detection
+    guess is needed -- proven by making detection raise if it is ever
+    called."""
+
+    def _must_not_be_called() -> str | None:
+        raise AssertionError("detect_local_network_address should not be called for a non-wildcard bind_host")
+
+    monkeypatch.setattr(app.state, "bind_host", "192.168.1.42", raising=False)
+    monkeypatch.setattr(app.state, "bind_port", 8000, raising=False)
+    monkeypatch.setattr(app.state, "network_access_allowed", True, raising=False)
+    monkeypatch.setattr(runtime_module, "detect_local_network_address", _must_not_be_called)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await _sign_in_as_bootstrap_administrator(client)
+        response = await client.get("/api/product/connection")
+    payload = response.json()
+    assert payload["local_network_url"] == "http://192.168.1.42:8000"
+
+
+@pytest.mark.anyio
+async def test_product_connection_endpoint_reports_no_lan_url_when_detection_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app.state, "bind_host", "0.0.0.0", raising=False)
+    monkeypatch.setattr(app.state, "bind_port", 8000, raising=False)
+    monkeypatch.setattr(app.state, "network_access_allowed", True, raising=False)
+    monkeypatch.setattr(runtime_module, "detect_local_network_address", lambda: None)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        await _sign_in_as_bootstrap_administrator(client)
+        response = await client.get("/api/product/connection")
+    payload = response.json()
+    assert payload["local_network_url"] is None

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { apiClient, onSessionExpired } from "./api/client";
 import type {
   ActivityLibraryFilters,
@@ -186,6 +186,16 @@ export default function App() {
   const [loadWarnings, setLoadWarnings] = useState<string[]>([]);
   const [isAdvancedNavOpen, setIsAdvancedNavOpen] = useState(false);
   const [isDeveloperMode, setIsDeveloperMode] = useState(false);
+  // Mobile & Remote Experience v1: the sidebar previously had no compact
+  // form at phone widths -- it simply un-pinned and stacked, in full, above
+  // every page's own content (every nav destination, every time). Below
+  // the mobile nav breakpoint (760px, see styles.css) the sidebar becomes an
+  // off-canvas drawer, opened from a small top bar and/or the bottom nav's
+  // "More" button, closed on navigation/Escape/backdrop click. Irrelevant
+  // (and harmless) above that breakpoint, where the sidebar renders inline
+  // as before.
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const mobileNavToggleRef = useRef<HTMLButtonElement>(null);
   // `null` while unknown. A read failure fails open (treated as complete)
   // rather than trapping an existing user behind a broken wizard -- see
   // docs/local-product-packaging-design.md.
@@ -396,6 +406,31 @@ export default function App() {
     window.addEventListener("popstate", handleBrowserNavigation);
     return () => window.removeEventListener("popstate", handleBrowserNavigation);
   }, []);
+
+  // Close the mobile drawer on every navigation (including browser
+  // back/forward, since `page` changes there too) -- a reviewer stepping
+  // from the drawer into Review should land on the page, not the drawer
+  // still open over it.
+  useEffect(() => {
+    setIsMobileNavOpen(false);
+  }, [page]);
+
+  // Escape closes the drawer and returns focus to the control that opened
+  // it, matching the disclosure-pattern behavior a phone/keyboard user
+  // expects from any off-canvas panel.
+  useEffect(() => {
+    if (!isMobileNavOpen) {
+      return;
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsMobileNavOpen(false);
+        mobileNavToggleRef.current?.focus();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isMobileNavOpen]);
 
   const isAdvancedPageActive = advancedPages.has(page);
 
@@ -1011,10 +1046,52 @@ export default function App() {
     (item) => !item.minRole || roleAtLeast(currentUser.role, item.minRole),
   );
 
+  // Bottom-nav destinations for phone widths (below the 760px mobile nav
+  // breakpoint, see styles.css): the 4 most common daily-loop destinations
+  // this milestone's own mobile archaeology named (Today, Story, Cameras,
+  // Review-or-Bird-Log depending on role), plus a "More" button that opens
+  // the same full drawer as the top bar's hamburger -- deliberately small
+  // (Phase 3: "do not put twelve destinations into a bottom bar"), never a
+  // second, separate navigation model from `productNavItems` above.
+  const mobileNavItems: Array<{ page: Page; label: string }> = [
+    { page: "dashboard", label: "Today" },
+    { page: "place-story", label: "Story" },
+    { page: "streams", label: "Cameras" },
+    roleAtLeast(currentUser.role, "reviewer")
+      ? { page: "review", label: "Review" }
+      : { page: "bird-log", label: "Bird Log" },
+  ];
+
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
+    <>
+      <header className="mobile-topbar">
+        <button
+          aria-controls="primary-navigation"
+          aria-expanded={isMobileNavOpen}
+          aria-label={isMobileNavOpen ? "Close navigation" : "Open navigation"}
+          className="mobile-nav-toggle"
+          onClick={() => setIsMobileNavOpen((current) => !current)}
+          ref={mobileNavToggleRef}
+          type="button"
+        >
+          <span aria-hidden="true" className="mobile-nav-toggle-icon" />
+        </button>
         <div className="brand-block">
+          <span className="brand-mark">MB</span>
+          <strong>MockingBird</strong>
+        </div>
+        <AlertsControl onAction={openAlertAction} onOpenInbox={() => setPage("alerts-inbox")} />
+      </header>
+      {isMobileNavOpen ? (
+        <div
+          aria-hidden="true"
+          className="sidebar-backdrop"
+          onClick={() => setIsMobileNavOpen(false)}
+        />
+      ) : null}
+      <div className="app-shell">
+        <aside className={isMobileNavOpen ? "sidebar sidebar-open" : "sidebar"} id="primary-navigation">
+          <div className="brand-block">
           <span className="brand-mark">MB</span>
           <div>
             <strong>MockingBird</strong>
@@ -1115,6 +1192,28 @@ export default function App() {
         ) : null}
         {renderPage()}
       </main>
-    </div>
+      </div>
+      <nav aria-label="Primary" className="mobile-bottom-nav">
+        {mobileNavItems.map((item) => (
+          <button
+            className={page === item.page ? "mobile-bottom-nav-item active" : "mobile-bottom-nav-item"}
+            key={item.page}
+            onClick={() => setPage(item.page)}
+            type="button"
+          >
+            {item.label}
+          </button>
+        ))}
+        <button
+          aria-controls="primary-navigation"
+          aria-expanded={isMobileNavOpen}
+          className="mobile-bottom-nav-item"
+          onClick={() => setIsMobileNavOpen((current) => !current)}
+          type="button"
+        >
+          More
+        </button>
+      </nav>
+    </>
   );
 }

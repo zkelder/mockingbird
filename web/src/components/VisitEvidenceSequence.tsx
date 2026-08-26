@@ -276,7 +276,7 @@ export function VisitEvidenceSequence({
               }}
               type="button"
             >
-              <img alt="" src={previewUrl(frame)} />
+              <img alt="" loading="lazy" src={previewUrl(frame)} />
               <span>
                 {frame.is_primary
                   ? "Primary"

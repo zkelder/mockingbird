@@ -263,11 +263,38 @@ def test_clearly_lower_recent_presence_is_the_symmetric_case() -> None:
     assert _taxon_status_for(summary, "northern_cardinal").status == "lower_recent_presence"
 
 
-def test_zero_reference_presence_never_claims_a_directional_change() -> None:
-    """Section 10's "minimum historical species presence": even maximal
-    recent presence (7 of 7) cannot support "higher" against zero reference
-    presence -- that is a "new"/"first_record" question historical_baseline
-    already answers honestly, not a fabricated increase here."""
+def test_zero_reference_presence_with_trivial_recent_presence_stays_no_supported_change() -> None:
+    """A single stray recent day against zero reference presence still must
+    not claim a directional change -- `MIN_ABSOLUTE_PRESENCE_DAY_DIFFERENCE`
+    (2) governs this exactly like every other input, not a separate rule.
+    (Mobile & Remote Experience v1: this scenario used to be covered by
+    `test_zero_reference_presence_never_claims_a_directional_change`, which
+    asserted *all* zero-reference inputs -- including a real 7-of-7 run --
+    stay `no_supported_change`; that was the reproduced defect this
+    milestone fixed, see the sibling test below.)"""
+
+    usable = _full_usable_dates()
+    recent_dates = set(list(windows_recent(usable))[:1])
+    visits = _visits_on_dates(NORTHERN_CARDINAL, recent_dates, prefix="r")
+    summary = _summary(visits, taxa={"northern_cardinal": NORTHERN_CARDINAL}, usable_dates=usable)
+    status = _taxon_status_for(summary, "northern_cardinal")
+    assert status.recent_presence_days == 1
+    assert status.reference_presence_days == 0
+    assert status.status == "no_supported_change"
+
+
+def test_zero_reference_presence_with_real_recent_run_is_higher_recent_presence() -> None:
+    """Mobile & Remote Experience v1 Phase 0: reproduces, then proves fixed,
+    the defect recorded at this milestone's own release-execution-state.md
+    checkpoint -- an established taxon present on every one of the last 7
+    usable days, after zero presence anywhere in the prior 14-usable-day
+    reference window, is exactly the "returned after a real absence" case
+    `regularity_narrative.compute_regularity_narrative`'s own
+    `"returned_after_absence"` branch depends on `_presence_status` being
+    able to report -- and previously never could, at any recent-presence
+    count, purely because `reference_presence_days == 0` short-circuited
+    before the shared rate/absolute-difference math ever ran (see
+    `docs/mobile-remote-experience-v1-report.md`)."""
 
     usable = _full_usable_dates()
     recent_dates = windows_recent(usable)
@@ -276,7 +303,7 @@ def test_zero_reference_presence_never_claims_a_directional_change() -> None:
     status = _taxon_status_for(summary, "northern_cardinal")
     assert status.recent_presence_days == 7
     assert status.reference_presence_days == 0
-    assert status.status == "no_supported_change"
+    assert status.status == "higher_recent_presence"
 
 
 @pytest.mark.parametrize(
@@ -376,7 +403,18 @@ def test_offline_days_are_excluded_not_counted_as_absences() -> None:
 def test_provisional_suggestion_does_not_change_status() -> None:
     """Requirement 10: a needs_review Visit carrying only a provisional
     SpeciesSuggestion, even on every single reference-window day, must
-    never contribute a reference presence day."""
+    never contribute a reference presence day -- the actual claim this test
+    makes, and unaffected by Mobile & Remote Experience v1's Phase 0 fix.
+
+    `.status` itself is now `"higher_recent_presence"` rather than
+    `"no_supported_change"` (flipped by that same fix, exactly like
+    `test_zero_reference_presence_with_real_recent_run_is_higher_recent_
+    presence` above): from `_presence_status`'s honest perspective, a
+    reference window with only unreviewed provisional suggestions and one
+    with nothing recorded at all are the identical zero-confirmed-presence
+    input -- correctly indistinguishable, since a provisional suggestion
+    must never be treated as if it happened for this comparison either way.
+    """
 
     usable = _full_usable_dates()
     recent_dates = set(list(windows_recent(usable))[:5])
@@ -388,7 +426,7 @@ def test_provisional_suggestion_does_not_change_status() -> None:
     summary = _summary(visits, taxa={"northern_cardinal": NORTHERN_CARDINAL}, usable_dates=usable)
     status = _taxon_status_for(summary, "northern_cardinal")
     assert status.reference_presence_days == 0
-    assert status.status == "no_supported_change"  # zero reference presence, never "higher"
+    assert status.status == "higher_recent_presence"
 
 
 def test_unresolved_wildlife_does_not_affect_named_species_comparison_but_does_count_overall() -> None:

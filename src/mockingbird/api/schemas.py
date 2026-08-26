@@ -6426,6 +6426,34 @@ class ProductInstanceIdentity(BaseModel):
     build_id: str | None = None
 
 
+class ProductConnectionInfo(BaseModel):
+    """How THIS Host is currently reachable on the network -- Mobile &
+    Remote Experience v1's bounded "Phase 14/17" surface. Authenticated
+    (not part of `_ALWAYS_PUBLIC_PATHS`), unlike `ProductInstanceIdentity`/
+    `ProductHealthStatus`: this is operational detail about the running
+    Host's own network exposure, not a launcher-facing liveness check, so
+    it stays behind a signed-in session even though the underlying facts
+    (an install's own bind flags) are not deeply sensitive.
+
+    Every field is either a directly-known launch fact (`bind_host`,
+    `bind_port`, `network_access_allowed` -- exactly what `--host`/
+    `--allow-network` were passed at startup, see runtime.py) or a single
+    best-effort local-network address detection with an honest `None` on
+    any failure -- never a guess presented as certain. This intentionally
+    stops short of trying to distinguish "local" from "remote/overlay-
+    network" per-request (see Phase 20 of the governing brief: normal UI
+    should not need NAT/network topology to make sense of this); that
+    remains future, if ever built, Advanced Diagnostics work, not this
+    field.
+    """
+
+    bind_host: str
+    bind_port: int
+    network_access_allowed: bool
+    is_loopback_only: bool
+    local_network_url: str | None = None
+
+
 class StorageCleanupCategorySummary(BaseModel):
     category: str
     media_count: int = Field(ge=0)

@@ -157,11 +157,30 @@ A status of `higher_recent_presence`/`lower_recent_presence` requires
 *all* of:
 
 1. at least `MIN_REFERENCE_PRESENCE_DAYS_FOR_COMPARISON` (1) reference-
-   window presence days -- a taxon never seen in the reference window has
-   no historical rate to compare against (that is a "new"/"first_record"
-   question `historical_baseline` already answers honestly); zero
-   reference presence always reads `no_supported_change`, never a
-   fabricated increase, regardless of how much recent presence exists;
+   window presence days, **unless** recent presence alone already clears
+   `MIN_ABSOLUTE_PRESENCE_DAY_DIFFERENCE` (below) -- a taxon never seen in
+   the reference window, with only thin recent presence too, has no
+   historical rate to compare against and reads `no_supported_change`
+   (that is the "new"/"first_record" question `historical_baseline`
+   already answers honestly, or too little recent signal either way to
+   support any claim). **Revised 2026-08-25 (Mobile & Remote Experience
+   v1):** zero reference presence no longer *unconditionally* reads
+   `no_supported_change` regardless of recent presence -- that original
+   wording made `regularity_narrative.compute_regularity_narrative`'s own
+   documented `"returned_after_absence"` state (an established taxon,
+   absent for the whole reference window, then reappearing) structurally
+   unreachable through this module, a real defect discovered by Place
+   Story & Seasonal Timeline v1 and fixed at the source here. A taxon with
+   zero reference presence and a real run of recent presence (clearing
+   `MIN_ABSOLUTE_PRESENCE_DAY_DIFFERENCE`) now correctly reads
+   `higher_recent_presence`, exactly like any other input, via the same
+   rate/absolute-difference math below -- no new threshold, no separate
+   rule. `regularity_narrative.compute_regularity_narrative`'s own
+   `first_confirmed_at`/`reference_window_start_at` parameters separately
+   guard the narrative layer against mistaking a merely *young* taxon
+   (whose reference window predates its own existence) for a real
+   absence-then-return -- see that module's docstring and
+   `docs/mobile-remote-experience-v1-report.md`;
 2. a rate difference (`recent_presence_days / 7` minus
    `reference_presence_days / 14`) of at least
    `MIN_PROPORTIONAL_DIFFERENCE` (0.25, i.e. 25 percentage points); and

@@ -62,39 +62,38 @@ always reproduces the same historical facts regardless of when it is re-viewed")
 A Place Story event for a past day is therefore reproducible from persisted
 facts, not a snapshot of whatever "now" happened to look like when computed.
 
-## A discovered gap in the existing composition: `"returned_after_absence"`
+## A gap this module discovered, since closed at the source
 
-`place_change_summary._presence_status` returns `"no_supported_change"`
+`place_change_summary._presence_status` used to return `"no_supported_change"`
 unconditionally whenever `reference_presence_days < MIN_REFERENCE_PRESENCE_
-DAYS_FOR_COMPARISON` (i.e. whenever it is `0`) -- so `TaxonChangeStatus.status`
-can never actually be `"higher_recent_presence"` at the same time
-`reference_presence_days == 0`. That means `regularity_narrative.compute_
-regularity_narrative`'s own documented `"returned_after_absence"` branch
-(`change_status == "higher_recent_presence" and reference_presence_days == 0`)
-is structurally unreachable through the only existing caller composition
-(confirmed by a synthetic-history regression test in `test_place_story.py`
-before this fix; `place_change_summary.py`'s own docstring explains the `>= 1`
-floor as deliberately deferring the "never seen in the reference window" case
-to `historical_baseline`'s "new"/"first_record" handling -- correct for a
-genuinely brand-new taxon, but that reasoning does not hold for an
-already-established taxon's real absence-then-return, which is exactly the
-case `regularity_narrative.py` names and this milestone brief's own headline
-example describes).
+DAYS_FOR_COMPARISON` (i.e. whenever it was `0`), regardless of how much recent
+presence existed -- so `TaxonChangeStatus.status` could never actually be
+`"higher_recent_presence"` at the same time `reference_presence_days == 0`,
+making `regularity_narrative.compute_regularity_narrative`'s own documented
+`"returned_after_absence"` branch structurally unreachable through the only
+existing caller composition (confirmed by a synthetic-history regression test
+in `test_place_story.py`). This module originally worked around the gap
+locally, with a narrow supplemental check (`_effective_regularity_state`)
+rather than patching the frozen `place_change_summary.py`/
+`regularity_narrative.py` primitives, since "Threshold policy (versioned)"
+changes there were explicitly outside a Place Story milestone's authority.
 
-This module does not patch `place_change_summary.py` to close that gap --
-that module is frozen, already governs Today's and Bird Log's own live
-digest wording today, and "Threshold policy (versioned)" changes there are
-explicitly outside a Place Story milestone's authority (see Phase 6 of the
-governing brief: "use existing... primitives," not rewrite them). Instead,
-`_effective_regularity_state` below applies one narrow, clearly-labeled
-supplemental check using only fields `compute_place_change_summary` already
-computes correctly (`TaxonChangeStatus.reference_presence_days`/`.recent_
-presence_days` -- the *counts* are right; only the derived `.status` collapses
-them) and the module's own already-versioned `MIN_ABSOLUTE_PRESENCE_DAY_
-DIFFERENCE` constant (reused, not reinvented) as the "is this recent presence
-non-trivial" bar. See "Remaining major PRODUCT opportunities" in
-docs/place-story-seasonal-timeline-v1-report.md for the recommendation to
-revisit `place_change_summary.py` itself in a future, dedicated milestone.
+**Mobile & Remote Experience v1 closed the gap at its source** instead of
+leaving the local workaround as the only fix: `_presence_status` now falls
+through to its existing rate/absolute-difference math whenever recent
+presence alone already clears `MIN_ABSOLUTE_PRESENCE_DAY_DIFFERENCE`, and
+`compute_regularity_narrative` gained two optional parameters
+(`first_confirmed_at`/`reference_window_start_at`) so it -- not each caller
+separately -- can distinguish a real established-taxon return from a merely
+young taxon whose reference window simply predates its own existence (the
+exact protection this module's own former `_effective_regularity_state`
+helper used to provide, but only for this module's own checkpoint scan).
+Both
+`product_repository.py` (Today/Bird Log's direct path) and this module now
+pass real timing context and get the identical, correct answer; the local
+override is removed as fully redundant, not merely dead-but-harmless. See
+`docs/mobile-remote-experience-v1-report.md` for the reproduction, fix, and
+consistency proof.
 
 ## Truth boundary
 
@@ -134,9 +133,7 @@ from mockingbird.analytics.historical_baseline import (
 )
 from mockingbird.analytics.place_activity_report import TaxonFact, VisitFact
 from mockingbird.analytics.place_change_summary import (
-    MIN_ABSOLUTE_PRESENCE_DAY_DIFFERENCE,
     PlaceChangeStatusValue,
-    TaxonChangeStatus,
     compute_place_change_summary,
     compute_place_change_windows,
 )
@@ -575,10 +572,11 @@ def detect_regularity_transition_events(
                 status.status,
                 change.status if change is not None else None,
                 reference_presence_days=change.reference_presence_days if change is not None else None,
-            )
-            effective_state = _effective_regularity_state(
-                narrative.state,
-                change=change,
+                # See the module docstring's "A gap this module discovered,
+                # since closed at the source" -- `compute_regularity_
+                # narrative` itself now applies the young-taxon guard that
+                # used to live only in this module's own
+                # `_effective_regularity_state` (removed).
                 first_confirmed_at=all_time_first_confirmed_at.get(status.taxon.label),
                 reference_window_start_at=change_summary.windows.reference_window_start_at,
             )
@@ -587,7 +585,7 @@ def detect_regularity_transition_events(
                 previous_states=previous_states,
                 ever_reached_regular=ever_reached_regular,
                 key=status.taxon.label,
-                new_state=effective_state,
+                new_state=narrative.state,
                 checkpoint_at=checkpoint_at,
                 checkpoint_date=checkpoint_local_date - timedelta(days=1),
                 taxon=status.taxon,
@@ -603,56 +601,6 @@ def detect_regularity_transition_events(
             )
 
     return events
-
-
-def _effective_regularity_state(
-    narrative_state: RegularityStateValue,
-    *,
-    change: TaxonChangeStatus | None,
-    first_confirmed_at: datetime | None,
-    reference_window_start_at: datetime | None,
-) -> RegularityStateValue:
-    """`compute_regularity_narrative`'s own state, with one narrow
-    supplemental override for the discovered `"returned_after_absence"` gap
-    -- see the module docstring's "A discovered gap" section for why this
-    exists and why it does not touch `place_change_summary.py`.
-
-    Fires only when: (a) `compute_regularity_narrative` did not already
-    reach a story-worthy state; (b) the reference window had truly zero
-    presence (`TaxonChangeStatus.reference_presence_days == 0`, a field
-    `compute_place_change_summary` already computes correctly -- only its
-    derived `.status` collapses this case); (c) the recent window's
-    presence clears the *existing* `MIN_ABSOLUTE_PRESENCE_DAY_DIFFERENCE`
-    floor (2 days) `place_change_summary.py` already uses for "is this
-    difference real," not a new number; and (d) the taxon's own all-time
-    first confirmation predates the reference window entirely -- so a
-    taxon in only its first few days of ever existing at this Place (whose
-    reference window is trivially empty because it did not exist yet, not
-    because it went quiet) is never mistaken for a real return. (d) is
-    what keeps this from double-counting `compute_first_seen_events`' own,
-    separate "new"/"first_record" events.
-    """
-
-    # "regular"/"occasional" are `compute_regularity_narrative`'s own two
-    # fallback states (from `historical_status == "regular"`/`"seen_before"`
-    # respectively) when no usable change signal was available -- exactly
-    # the case the discovered gap collapses `"higher_recent_presence"`
-    # into. Every other narrative state either already reached a real
-    # change-driven verdict (impossible here anyway when `reference_
-    # presence_days == 0`, since that always yields one of these two
-    # fallbacks -- see the module docstring) or is `"new"`/`"first_record"`,
-    # which this checkpoint scan never produces by construction.
-    if narrative_state not in ("regular", "occasional") or change is None:
-        return narrative_state
-    if change.reference_presence_days != 0 or change.recent_presence_days < MIN_ABSOLUTE_PRESENCE_DAY_DIFFERENCE:
-        return narrative_state
-    if (
-        first_confirmed_at is None
-        or reference_window_start_at is None
-        or first_confirmed_at >= reference_window_start_at
-    ):
-        return narrative_state
-    return "returned_after_absence"
 
 
 def _record_transition(

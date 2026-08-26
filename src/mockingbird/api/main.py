@@ -28,6 +28,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 from mockingbird import __version__ as APP_VERSION
+from mockingbird import runtime
 from mockingbird.api.auth import (
     build_admin_users_router,
     build_auth_router,
@@ -198,6 +199,7 @@ from mockingbird.api.schemas import (
     ProductHealthBackupSummary,
     ProductHealthCameraSummary,
     ProductHealthObservationSummary,
+    ProductConnectionInfo,
     ProductHealthStatus,
     ProductInstanceIdentity,
     ReviewLabel,
@@ -666,7 +668,18 @@ app = FastAPI(
     lifespan=_app_lifespan,
 )
 
-# Local Vite dev origins let the stream-first frontend use the API.
+# Local Vite dev origins let the stream-first frontend use the API. An
+# explicit, bounded allowlist -- never a wildcard -- because `allow_
+# credentials=True` is set: `allow_origins=["*"]` combined with credentials
+# is a real, well-known CORS misconfiguration (a browser would refuse to
+# honor it too, per the CORS spec, but never rely on that alone). The
+# packaged product itself never needs this middleware at all (frontend and
+# API share one origin -- see web_app.py's "Same-origin hosting"); this
+# exists only for the separate `npm run dev` Vite server during
+# development. Mobile & Remote Experience v1 confirmed this stays exactly
+# this narrow even though a LAN/overlay-network client is a materially
+# different browsing context than a dev server -- see
+# tests/test_cors_security.py and docs/mobile-remote-experience-v1-report.md.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -10900,6 +10913,41 @@ async def get_product_instance_identity() -> ProductInstanceIdentity:
         app_version=APP_VERSION,
         git_commit=git_commit,
         build_id=build_id,
+    )
+
+
+@app.get("/api/product/connection", response_model=ProductConnectionInfo)
+async def get_product_connection_info() -> ProductConnectionInfo:
+    """How this Host is currently reachable -- see `ProductConnectionInfo`'s
+    own docstring for the authenticated-vs-public reasoning. Every field
+    reads back exactly what `runtime.run()` set on `app.state` at startup
+    (see runtime.py); a process that never went through that real launch
+    path (a bare test/dev import of this module) gets the same
+    conservative "loopback-only, unknown otherwise" defaults `--host`
+    itself defaults to, never a crash or a fabricated address.
+    """
+
+    bind_host = getattr(app.state, "bind_host", "127.0.0.1")
+    bind_port = getattr(app.state, "bind_port", 8000)
+    network_access_allowed = getattr(app.state, "network_access_allowed", False)
+    is_loopback_only = bind_host in runtime._LOOPBACK_HOSTS
+
+    local_network_url: str | None = None
+    if network_access_allowed:
+        address = (
+            runtime.detect_local_network_address()
+            if bind_host in runtime._WILDCARD_BIND_HOSTS
+            else bind_host
+        )
+        if address:
+            local_network_url = runtime.local_base_url(address, bind_port)
+
+    return ProductConnectionInfo(
+        bind_host=bind_host,
+        bind_port=bind_port,
+        network_access_allowed=network_access_allowed,
+        is_loopback_only=is_loopback_only,
+        local_network_url=local_network_url,
     )
 
 

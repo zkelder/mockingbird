@@ -19,6 +19,7 @@ imply individual-animal recognition).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal
 
 # Mirrors `historical_baseline.SpeciesHistoricalStatusValue` /
@@ -75,6 +76,8 @@ def compute_regularity_narrative(
     change_status: ChangeStatusValue | None,
     *,
     reference_presence_days: int | None = None,
+    first_confirmed_at: datetime | None = None,
+    reference_window_start_at: datetime | None = None,
 ) -> RegularityNarrative:
     """Synthesize one taxon's regularity narrative.
 
@@ -82,6 +85,17 @@ def compute_regularity_narrative(
     -- required only to distinguish `returned_after_absence` (zero reference
     presence, a real gap) from a plain increase; ignored, safely, when
     `change_status` is not `"higher_recent_presence"`.
+
+    `first_confirmed_at`/`reference_window_start_at` are optional timing
+    context (`SpeciesHistoricalStatus.first_confirmed_at` and
+    `PlaceChangeWindows.reference_window_start_at`) that, when both are
+    supplied, additionally guard `returned_after_absence` against a taxon
+    that is merely *young* -- its reference window reads zero presence
+    because the taxon did not exist yet, not because an established taxon
+    went quiet and came back. A caller that omits either (the historical
+    default, before Mobile & Remote Experience v1) gets the original,
+    ungated behavior -- this is an additive refinement, never a narrower
+    default for existing callers.
 
     Decision table, most specific first:
 
@@ -94,10 +108,12 @@ def compute_regularity_narrative(
        fall back to plain `"occasional"` (from `seen_before`) or
        `"regular"` (from `regular`).
     3. `change_status == "higher_recent_presence"`:
-       - `reference_presence_days == 0` -> `"returned_after_absence"`
-         (stronger and more specific than a generic increase: this taxon
-         was entirely absent from the whole 14-usable-day reference window
-         immediately prior, then reappeared).
+       - `reference_presence_days == 0` AND the taxon is not merely young
+         (see `first_confirmed_at`/`reference_window_start_at` above) ->
+         `"returned_after_absence"` (stronger and more specific than a
+         generic increase: this taxon was entirely absent from the whole
+         14-usable-day reference window immediately prior, then
+         reappeared).
        - else, from `"seen_before"` -> `"becoming_regular"` (trending
          upward, not yet at the `>=3`-distinct-usable-day regular bar).
        - else, from `"regular"` -> stays `"regular"` (already regular; the
@@ -129,7 +145,15 @@ def compute_regularity_narrative(
         return RegularityNarrative(state=fallback_state, basis="historical_status_only")
 
     if change_status == "higher_recent_presence":
-        if reference_presence_days == 0:
+        # Unknown timing context (either omitted) preserves the original,
+        # ungated behavior -- only a taxon this function can actually prove
+        # predates the reference window is ever excluded.
+        predates_reference_window = (
+            first_confirmed_at is None
+            or reference_window_start_at is None
+            or first_confirmed_at < reference_window_start_at
+        )
+        if reference_presence_days == 0 and predates_reference_window:
             return RegularityNarrative(
                 state="returned_after_absence", basis="historical_and_change"
             )

@@ -194,6 +194,17 @@ export interface HealthStatus {
   status: string;
 }
 
+// Mobile & Remote Experience v1: how this Host is currently reachable --
+// see the backend's ProductConnectionInfo docstring (api/schemas.py) for
+// why this is authenticated rather than public like ProductHealthStatus.
+export interface ProductConnectionInfo {
+  bind_host: string;
+  bind_port: number;
+  network_access_allowed: boolean;
+  is_loopback_only: boolean;
+  local_network_url: string | null;
+}
+
 // Appliance / Storage / Privacy / Recovery v1: mirrors the backend's shared
 // `mockingbird.diagnostics.error_taxonomy` shape. Attached today only to
 // database-write failures (`SQLAlchemyError`) that reach the API boundary

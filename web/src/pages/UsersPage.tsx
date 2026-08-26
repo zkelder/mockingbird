@@ -255,6 +255,14 @@ export function UsersPage({ currentUser }: UsersPageProps) {
       />
       {rowError ? <div className="error-panel">{rowError}</div> : null}
       <section className="panel page-stack">
+        {/* Mobile & Remote Experience v1 (Phase 10): the only raw <table> in
+            the frontend -- an admin-only, low-row-count surface where
+            horizontal scroll is a genuinely appropriate, well-understood
+            pattern rather than justifying a one-off stacked-card rebuild or
+            a new generic responsive-table framework. Every column stays
+            visible, in its familiar shape, just scrollable at narrow
+            widths. */}
+        <div className="table-scroll">
         <table className="data-table">
           <thead>
             <tr>
@@ -304,6 +312,7 @@ export function UsersPage({ currentUser }: UsersPageProps) {
             ))}
           </tbody>
         </table>
+        </div>
       </section>
       <CreateUserForm onCreated={(user) => setUsers((current) => [...current, user])} />
       <section className="panel page-stack">

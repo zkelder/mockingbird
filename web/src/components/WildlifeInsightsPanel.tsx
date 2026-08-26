@@ -88,6 +88,7 @@ function RepresentativeLink({
       {observation.primary_evidence && !imageUnavailable ? (
         <img
           alt={`Reviewed ${observation.display_name}`}
+          loading="lazy"
           onError={() => setImageUnavailable(true)}
           src={`${apiClient.baseUrl}${observation.primary_evidence.preview_url}`}
         />

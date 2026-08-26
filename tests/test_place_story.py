@@ -201,7 +201,9 @@ def test_returned_after_absence_not_claimed_for_a_brand_new_taxon() -> None:
     mistaken for "returning from absence" -- the reference window is empty
     because the taxon did not exist yet, not because it went quiet. Guarded
     by requiring `first_confirmed_at` to predate the reference window
-    entirely (see `_effective_regularity_state`)."""
+    entirely (see `regularity_narrative.compute_regularity_narrative`'s
+    `first_confirmed_at`/`reference_window_start_at` parameters, which this
+    module's checkpoint scan now passes directly)."""
 
     start = date(2025, 6, 1)
     visits = [_visit("v0", NORTHERN_CARDINAL, start), _visit("v1", NORTHERN_CARDINAL, start + timedelta(days=1))]

@@ -207,6 +207,33 @@ def run_preflight(*, build_frontend: bool = True) -> RuntimePreflight:
     )
 
 
+_WILDCARD_BIND_HOSTS = {"0.0.0.0", "::"}
+
+
+def detect_local_network_address() -> str | None:
+    """Best-effort discovery of this machine's own LAN-facing IP address,
+    for `GET /api/product/connection` (Mobile & Remote Experience v1) to
+    show a user "the address your phone would use on this WiFi" when
+    MockingBird was started with `--host 0.0.0.0`/`--allow-network`.
+
+    Uses the standard `connect()`-a-UDP-socket-then-read-its-own-address
+    trick: `connect()` on `SOCK_DGRAM` never actually sends a packet or
+    requires the target to be reachable, it only asks the OS routing table
+    which local interface *would* be used to reach that address -- so this
+    works offline and never contacts `8.8.8.8`. Returns `None` on any
+    failure (no network interface, sandboxed/container networking, etc.)
+    rather than ever fabricating an address -- a caller must treat `None`
+    as "could not determine," never "no network.\""""
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(("8.8.8.8", 80))
+            address = probe.getsockname()[0]
+    except OSError:
+        return None
+    return address or None
+
+
 def local_base_url(host: str, port: int) -> str:
     browser_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
     if ":" in browser_host and not browser_host.startswith("["):
@@ -281,7 +308,18 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--allow-network",
         action="store_true",
-        help="Allow binding beyond this device. No production authentication is provided.",
+        # Local Identity, Multi-User & Organization Access v1 added real
+        # sign-in for every /api/ route (this help text used to say "No
+        # production authentication is provided," written before that
+        # shipped -- see docs/mobile-remote-experience-v1-report.md). The
+        # honest remaining caveat is transport, not authentication: without
+        # a reverse proxy terminating TLS, traffic on this network segment
+        # -- including the session cookie -- is plain HTTP.
+        help=(
+            "Allow binding beyond this device (for example your home network). "
+            "Sign-in is required either way; traffic stays plain HTTP unless you "
+            "add a reverse proxy for TLS."
+        ),
     )
     return parser
 
@@ -373,6 +411,17 @@ def run(argv: list[str] | None = None) -> int:
             ).start()
 
         from mockingbird.api.main import app
+
+        # Mobile & Remote Experience v1: `GET /api/product/connection` (see
+        # api/main.py) reads these back -- set once, here, at the one place
+        # that actually knows what was launched; a bare `python -m
+        # mockingbird`-free test/dev import of `api.main.app` (this
+        # function never runs then) simply never sets them, and that
+        # endpoint's own `getattr(..., default)` reads treat that as
+        # "loopback-only, unknown otherwise," never a crash.
+        app.state.bind_host = args.host
+        app.state.bind_port = args.port
+        app.state.network_access_allowed = args.host not in _LOOPBACK_HOSTS
 
         uvicorn.run(
             app,

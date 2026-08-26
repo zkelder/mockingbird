@@ -31189,6 +31189,13 @@ class ProductRepository:
                 reference_presence_days=(
                     change_status.reference_presence_days if change_status is not None else None
                 ),
+                # Mobile & Remote Experience v1: lets `returned_after_absence`
+                # distinguish a real established-taxon return from a merely
+                # young taxon whose reference window predates its own
+                # existence -- the same guard place_story.py's own checkpoint
+                # scan already applies, now shared rather than duplicated.
+                first_confirmed_at=all_time_first_confirmed_at.get(label),
+                reference_window_start_at=change_summary.windows.reference_window_start_at,
             )
 
         # Phase 5: reuses the exact same window_visits/usable_dates/taxa

@@ -733,6 +733,7 @@ export function ActivityLibraryPage({
                     <img
                       alt="Primary Visit evidence"
                       className="activity-thumbnail"
+                      loading="lazy"
                       onError={() => setThumbnailFailures((current) => new Set([...current, visit.id]))}
                       src={`${apiClient.baseUrl}${visit.primary_evidence?.preview_url ?? ""}`}
                     />

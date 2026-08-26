@@ -128,6 +128,48 @@ confirmed history -- your Bird Log, your yard's statistics, or an export --
 until you explicitly confirm or correct it. MockingBird's own guesses stay
 labeled as guesses until then.
 
+## Use MockingBird on your phone
+
+MockingBird's whole everyday loop -- Today, a Visit's evidence, review,
+Bird Log, Place Story, camera health -- works on a phone's browser, not
+just a desktop. On the same device MockingBird is running on, this needs
+nothing extra. From a *different* device (your phone, on the same home
+WiFi), MockingBird needs to be told to answer the network, not just this
+one computer -- off by default, so nothing changes unless you ask for it:
+
+1. Close MockingBird if it's running.
+2. Start it with two extra words: on Windows, open Command Prompt in
+   MockingBird's folder and run `"Start MockingBird.cmd" --host 0.0.0.0
+   --allow-network` (a shortcut can be edited to add these to its Target);
+   on Linux/macOS, `./start-mockingbird.sh --host 0.0.0.0 --allow-network`.
+3. Open **Settings**, then **Connection & Remote Access**, for the exact
+   address to open on your phone (also copyable from there).
+
+Signing in is required either way -- enabling network access never skips
+it. This device serves plain HTTP unless you separately add a reverse
+proxy for TLS, so only do this on a WiFi you trust (see "Use MockingBird
+away from home," next, for a securable path). Add MockingBird to your
+phone's home screen (your browser's "Add to Home Screen"/"Install") for an
+app-like icon -- MockingBird still needs a real connection to this device
+for real data either way; installing it does not make it work offline.
+
+## Use MockingBird away from home
+
+The supported way to reach MockingBird when you're not on its home WiFi is
+a private network between your phone and this device -- for example
+[Tailscale](https://tailscale.com) or a similar WireGuard-based tool.
+Install it on both this device and your phone, sign in to the same private
+network on both, then open MockingBird at the private address that tool
+gives this device (still starts with `--allow-network` as above; Settings
+still shows the exact address to use).
+
+MockingBird does not require, and does not itself provide, a cloud
+account, a cloud relay, or a hosted service to do this -- your data and
+this connection stay between your own devices. Forwarding this device's
+port directly on your home router so it is reachable from the public
+internet is **not supported** -- it would expose an unencrypted connection
+to anyone, not just you.
+
 ## Product status
 
 The Dashboard shows a compact **MockingBird status** area: whether

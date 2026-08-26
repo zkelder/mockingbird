@@ -58,6 +58,7 @@ export function MediaAssetPreview({
           <div className="media-preview-image-stage" style={imageStageStyle}>
             <img
               alt={asset.original_filename}
+              loading="lazy"
               onError={() => setPreviewFailed(true)}
               onLoad={(event) =>
                 setImageDimensions({

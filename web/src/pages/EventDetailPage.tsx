@@ -388,7 +388,7 @@ export function EventDetailPage({
                       {preview.content_type.startsWith("audio/") ? (
                         <div className="detail-link-card-preview-audio" aria-hidden="true">🔊 Heard</div>
                       ) : (
-                        <img alt="" src={`${apiClient.baseUrl}${preview.preview_url}`} />
+                        <img alt="" loading="lazy" src={`${apiClient.baseUrl}${preview.preview_url}`} />
                       )}
                     </div>
                   ) : null}
@@ -482,7 +482,7 @@ export function EventDetailPage({
                       {preview.content_type.startsWith("audio/") ? (
                         <div className="detail-link-card-preview-audio" aria-hidden="true">🔊 Heard</div>
                       ) : (
-                        <img alt="" src={`${apiClient.baseUrl}${preview.preview_url}`} />
+                        <img alt="" loading="lazy" src={`${apiClient.baseUrl}${preview.preview_url}`} />
                       )}
                     </div>
                   ) : null}
