@@ -23,9 +23,33 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `055bd4a`
-- **Schema:** `v55`
-- **Latest accepted milestone:** Place Story & Seasonal Timeline v1 -- A
+- **Accepted HEAD:** the implementation commit for Mobile & Remote Experience
+  v1 (see §16)
+- **Schema:** `v55` (unchanged by this milestone)
+- **Latest accepted milestone:** Mobile & Remote Experience v1 -- Your
+  Observatory Away From the Desk (see
+  [mobile-remote-experience-v1-report.md](mobile-remote-experience-v1-report.md)).
+  Classification **B** -- strong mobile experience and a clear secure
+  remote posture with bounded external-network/PWA gaps. A verified
+  navigation fix (a ~20-item sidebar that previously stacked in full above
+  every page's own content below 980px is now a compact top bar + off-
+  canvas drawer + 4-item bottom nav, proven overflow-free across 10 real
+  automated phone-width screenshots); a from-scratch bounded PWA shell
+  (manifest, icons, a service worker that only ever caches Vite's own
+  immutable hashed assets, never navigation/API/data); LAN access made
+  genuinely discoverable (`GET /api/product/connection` + a new Settings
+  card); a private-overlay-network (Tailscale-compatible) remote-access
+  posture investigated against real architecture and documented, with
+  direct public-internet exposure and a cloud relay explicitly not built;
+  new CORS regression coverage where none existed. Also closed, ahead of
+  the broader mobile work, a bounded pre-existing correctness defect in
+  the accepted Place Intelligence primitive `place_change_summary.py`
+  (see "Bounded return-after-absence correction," below). Schema
+  unchanged. See the report for real, honestly-recorded remaining gaps
+  (Visit/Stream/Settings page density, a pre-existing Review Queue
+  `product_category` data gap, no login rate-limiting, no live external-
+  overlay-network validation possible in this sandbox).
+- **Prior accepted milestone:** Place Story & Seasonal Timeline v1 -- A
   Living History of the Place (see
   [place-story-seasonal-timeline-v1-report.md](place-story-seasonal-timeline-v1-report.md)).
   Classification **B** -- major useful capability, bounded history/story
@@ -126,10 +150,17 @@ preserved here, not relaxed.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
-Place Story & Seasonal Timeline v1 (directly authorized outside this
-file, reconciled here at its own closure -- see §16) is now accepted at
-classification **B** (major useful capability, bounded history/story
-gaps -- see
+Mobile & Remote Experience v1 (directly authorized outside this file,
+reconciled here at its own closure -- see §16) is now accepted at
+classification **B** (strong mobile experience and a clear secure remote
+posture with bounded external-network/PWA gaps -- see
+[mobile-remote-experience-v1-report.md](mobile-remote-experience-v1-report.md)).
+This milestone also closed, as its own bounded Phase 0, the
+`place_change_summary.py`/`_presence_status` threshold gap the Place
+Story & Seasonal Timeline v1 report (below) had recommended as future
+work -- that item is now resolved, not still outstanding.
+Place Story & Seasonal Timeline v1 remains accepted at classification
+**B** (major useful capability, bounded history/story gaps -- see
 [place-story-seasonal-timeline-v1-report.md](place-story-seasonal-timeline-v1-report.md)).
 Place Features & Habitat Change v2 remains accepted at classification
 **B** (major useful capability, bounded feature/data-model maturity
@@ -146,13 +177,19 @@ and closed at classification **C** (usable, bounded further closure
 remains -- see Lane G, §6). No new implementation milestone is currently
 authorized. The next milestone will be selected only after the governing
 external process verifies this execution state against the complete
-remaining-v0.1 queue, the remaining Place Story product opportunities
-(period summaries -- deferred on a measured performance cost, not simply
-unattempted; environmental-context/weather caveats on a before/after
-insight; a dedicated taxon/Feature story page; representative imagery on
-Story cards; a recommended future fix to `place_change_summary.py`'s own
-`_presence_status` threshold gap -- see the Place Story & Seasonal
-Timeline v1 report), the remaining Place Features & Habitat Change
+remaining-v0.1 queue, the remaining Mobile & Remote Experience product
+opportunities (progressive disclosure for the dense Visit/Stream/Settings
+pages; a genuine pre-existing `ReviewQueuePage` `product_category`/
+"animals"-tab gap, found and documented, not fixed; no login rate-
+limiting, a real pre-existing gap whose relevance this milestone's own
+expanded network reachability directly heightens; no live external-
+overlay-network (Tailscale/WireGuard) validation was possible from this
+sandbox -- see the Mobile & Remote Experience v1 report's "Remaining
+major PRODUCT opportunities"), the remaining Place Story product
+opportunities (period summaries -- deferred on a measured performance
+cost, not simply unattempted; environmental-context/weather caveats on a
+before/after insight; a dedicated taxon/Feature story page; representative
+imagery on Story cards), the remaining Place Features & Habitat Change
 product opportunities (composing environmental-context/weather caveats
 onto a before/after result, multi-camera Feature linking, representative
 evidence in Feature detail, a ranked feature-comparison view -- see the
@@ -169,17 +206,25 @@ choose the next milestone by adjacency to this one.
 Do NOT automatically authorize:
 
 - Remote Field Productization;
-- Mobile/PWA;
-- Calm Notifications;
+- Calm Notifications (Mobile & Remote Experience v1 deliberately built the
+  substrate this lane will need -- responsive shell, an installable PWA
+  path, connection/network facts on `/api/product/connection` -- without
+  implementing any notification itself; see that report's Phase 31
+  record);
+- further Mobile/PWA/remote-access work as a standalone follow-on
+  campaign -- specifically: progressive disclosure for the dense Visit/
+  Stream/Settings pages, the `ReviewQueuePage` `product_category`/
+  "animals"-tab fix, login rate-limiting, or a live external-overlay-
+  network acceptance pass -- each individually real and recorded, none
+  automatically the next milestone by adjacency;
 - Local Species/Taxon Prior;
 - another classifier benchmark;
 - Provider Integrations;
 - a second weather provider or user-facing provider choice;
 - Open-Meteo archive/ERA5 deep historical backfill;
 - a Feature/Zone multi-camera join table;
-- Place Story period summaries, weather-caveat composition, dedicated
-  taxon/Feature story pages, or a `place_change_summary.py` threshold-
-  policy rewrite, as a standalone follow-on campaign;
+- Place Story period summaries, weather-caveat composition, or dedicated
+  taxon/Feature story pages, as a standalone follow-on campaign;
 - Land Management / Agriculture as a separate campaign;
 - final Release Hardening.
 
@@ -357,11 +402,37 @@ cloud push infrastructure merely to satisfy this roadmap heading.
 
 ### E. Mobile / Remote UX
 
-**Status:** OPEN/PARTIAL -- PRE-v0.1 DECISION REQUIRED.
+**Status:** PARTIAL, MATERIALLY ADVANCED -- Mobile & Remote Experience v1
+(2026-08-25) closed the core decision this lane was waiting on; see
+[mobile-remote-experience-v1-report.md](mobile-remote-experience-v1-report.md).
+Classification **B**.
 
-Distinguish: responsive web; installable PWA; secure remote access; native
-mobile. Native mobile is not current scope. Do not equate responsive CSS
-with full mobile support.
+Delivered: a verified (10 real automated phone-width screenshots, zero
+overflow) responsive navigation fix -- top bar + off-canvas drawer +
+4-item bottom nav, replacing a sidebar that previously stacked in full
+above every page below 980px; a bounded, safety-reasoned installable PWA
+shell (manifest, icons, a service worker that only ever caches Vite's own
+immutable hashed assets, never navigation/API/data -- no offline data
+claim made anywhere); LAN access made discoverable (`GET /api/product/
+connection` + a Settings card, with a corrected, no-longer-stale
+`--allow-network` help string); a private-overlay-network
+(Tailscale-compatible) posture chosen and documented as the supported
+away-from-home path, with direct public-internet exposure and a cloud
+relay explicitly, plainly documented as unsupported/not-built; new CORS
+regression coverage. Native mobile remains explicitly out of scope,
+unchanged.
+
+Remaining, not closed by this pass (see the report's "Remaining major
+PRODUCT opportunities" for the full record): progressive disclosure for
+the dense Visit/Stream/Settings pages; a pre-existing `ReviewQueuePage`
+`product_category` gap (found, documented, not fixed -- independently
+reproduced against an unmodified existing e2e spec); no login rate-
+limiting (pre-existing, real, and directly more relevant now that this
+lane increased network reachability); no live external-overlay-network
+(Tailscale/WireGuard) acceptance was possible from this sandbox --
+validated structurally only. Do not equate this closure with a finished,
+fully-polished mobile product, and do not automatically authorize a
+follow-on Mobile/PWA campaign by adjacency -- see §3.
 
 ### F. Multi-Camera / Multi-Site
 
@@ -746,7 +817,49 @@ each session that touches this repository.
 
 ## 14. Validation baselines
 
-**Latest accepted Core checkpoint (Place Story & Seasonal Timeline v1):**
+**Latest accepted Core checkpoint (Mobile & Remote Experience v1):** 4976
+passed / 3 failed / 3 skipped / 23 deselected (slow-marked) / 11 xfailed
+(24m02s -- measurably longer than the historical ~9min baseline; this
+sandbox was independently confirmed under real, unrelated concurrent CPU
+load throughout this session via `uptime`/`ps`, not a Core-gate
+regression). Two failures are the identical, already-documented
+`test_place_biodiversity_summary_repository.py` pair immediately below --
+directly re-confirmed this session via a fresh `git stash push -u`
+bisection against the clean pre-milestone baseline (byte-identical
+failure, same `'seen_before' == 'new'` assertion mismatch, with zero of
+this milestone's changes applied). The third,
+`test_transport_worker.py::test_sticky_diagnostic_set_on_protocol_
+incompatibility_and_cleared_on_next_success`, has zero code relationship
+to this milestone (Camera Node transport/protocol diagnostics), passed
+7/7 cleanly on immediate isolated re-run, and matches an already-
+documented precedent for exactly this file under exactly this condition
+(the Environmental Context v2 checkpoint below recorded a different test
+in this same file failing only under confirmed heavy concurrent load,
+clean in isolation) -- the identical evidentiary shape, not bisected via
+`git stash` a second time given that precedent and the isolation proof
+already in hand. No schema change, so no guard-rail
+assertions needed touching. 138 tests pass across the six directly
+touched/added test files (20 genuinely new -- 2 for the Phase 0 RED/GREEN
+proof, 5 for the new timing-guard parameters, 9 for the new
+`/api/product/connection` endpoint, 4 for CORS -- plus 2 pre-existing
+tests corrected to match the fixed behavior, their own actual claims
+unaffected); `ruff check` clean
+(0 new findings; the 57 pre-existing findings elsewhere in
+`product_repository.py` confirmed unrelated via `git stash` bisection);
+`tsc --noEmit`/`vite build` clean. Frontend e2e: new
+`mobile-viewport-audit.spec.ts` 19/19 passing (10 core surfaces at
+phone-viewport emulation, real seeded/imported data, zero horizontal-
+overflow findings, plus a 360px/390px/768px matrix on the two densest
+surfaces per Phase 25); full existing suite (112 tests, no filter) re-run
+in full -- 111 passed, 1 failed, and that one failure
+(`reviewed-product-loop.spec.ts`) is an independently-
+reproduced, genuinely pre-existing defect (unmodified spec, run alone,
+fails identically -- a `ReviewQueuePage` `product_category`/"animals"-tab
+data gap, unrelated to this milestone's own changes) -- zero regressions
+from the navigation/CSS changes across every other spec, including two
+pre-existing mobile-specific tests.
+
+**Prior accepted Core checkpoint (Place Story & Seasonal Timeline v1):**
 4958 passed / 2 failed / 3 skipped / 23 deselected (slow-marked) / 11
 xfailed (22m29s). Both failures are the identical, already-documented
 `test_place_biodiversity_summary_repository.py` pair immediately below --
@@ -862,13 +975,61 @@ authorization field.
 
 ## 16. Transition checkpoint
 
-- **Accepted HEAD:** `055bd4a`
-- **Schema:** v55 -> v55, unchanged. `mockingbird.analytics.place_story.
-  PlaceStoryEvent` is a pure, frozen read-model dataclass, not a
-  persisted materialization -- see the Place Story & Seasonal Timeline v1
-  report's "Story event model" for why a new table was deliberately not
-  added.
-- **Latest accepted milestone:** Place Story & Seasonal Timeline v1 -- A
+- **Accepted HEAD:** `b7a786d` (Mobile & Remote
+  Experience v1 implementation commit -- filled in at reconciliation)
+- **Schema:** v55 -> v55, unchanged. Nothing in this milestone alters
+  persisted data shape.
+- **Latest accepted milestone:** Mobile & Remote Experience v1 -- Your
+  Observatory Away From the Desk
+- **Mobile & Remote Experience v1 classification:** B -- strong mobile
+  experience and a clear secure remote posture with bounded external-
+  network/PWA gaps. See
+  [mobile-remote-experience-v1-report.md](mobile-remote-experience-v1-report.md)
+  for the full record: a verified responsive-navigation fix (top bar +
+  off-canvas drawer + 4-item bottom nav, replacing a sidebar that
+  previously stacked in full above every page below 980px, proven across
+  10 real automated phone-width screenshots with zero horizontal-overflow
+  findings); a bounded, from-scratch installable PWA shell (manifest,
+  icons generated from the product's own existing brand mark, a service
+  worker that caches only Vite's own immutable content-hashed assets and
+  never navigation/API/data -- no offline data claim anywhere); LAN access
+  made genuinely discoverable (`GET /api/product/connection`, a Settings
+  "Connection & Remote Access" card, a corrected `--allow-network` help
+  string that had gone stale since real authentication shipped); a
+  private-overlay-network (Tailscale-compatible) remote-access posture
+  investigated against real architecture and documented as the supported
+  away-from-home path, with direct public-internet exposure and a cloud
+  relay explicitly, plainly documented as unsupported/not-built; 4 new
+  CORS regression tests closing a real, previously-zero coverage gap. Also
+  closed, as its own bounded Phase 0 ahead of the broader mobile work: a
+  genuine pre-existing defect in `place_change_summary._presence_status`
+  that made the accepted `regularity_narrative` "returned after absence"
+  wording structurally unreachable through Today/Bird Log's direct
+  composition -- fixed at the source (not merely worked around a second
+  time), including a second, deeper defect the naive fix alone would have
+  introduced (a young-taxon false positive), closed by sharing one timing
+  guard between Today/Bird Log and Place Story instead of duplicating it.
+  138 tests pass across the six directly touched/added test files (20
+  genuinely new, 2 pre-existing corrected -- see §14), Core 4976 passed /
+  3 failed (2 pre-existing and re-confirmed via fresh `git stash push -u`
+  bisection, 1 a load-induced flake in an unrelated file matching an
+  already-documented precedent, isolation-confirmed clean -- see §14) /
+  3 skipped / 11 xfailed; frontend `tsc`/`vite build` clean;
+  19/19 new mobile-viewport e2e tests passed (10 core surfaces +
+  360px/390px/768px matrix); full existing e2e suite
+  (112 tests) re-run with only the one already-
+  known pre-existing failure (`reviewed-product-loop.spec.ts`, a
+  `ReviewQueuePage` `product_category` gap, independently reproduced and
+  unrelated to this milestone). Real,
+  honestly-recorded remaining gaps -- not release blockers, this is
+  substantial product development -- are detailed in the report's
+  "Remaining major PRODUCT opportunities": Visit/Stream/Settings page
+  density (long but not broken), the `ReviewQueuePage` `product_category`
+  gap itself (found, documented, not fixed), no login rate-limiting
+  (pre-existing, real, more relevant now that reachability increased), and
+  no live external-overlay-network acceptance was possible from this
+  sandbox (validated structurally only).
+- **Prior accepted milestone:** Place Story & Seasonal Timeline v1 -- A
   Living History of the Place
 - **Place Story & Seasonal Timeline v1 classification:** B -- major
   useful capability, bounded history/story gaps. New `GET /api/place/
@@ -1005,7 +1166,23 @@ authorization field.
 - **State:** Milestone-closure checkpoint
 - **Final release hardening:** not authorized
 - **Remote LTE/solar:** not a v0.1 blocker
-- **Mobile/PWA:** not authorized
+- **Mobile/PWA:** delivered this milestone (classification B) -- see Lane
+  E, §6; a further Mobile/PWA/remote-access campaign is not automatically
+  authorized (see §3)
+- **Mobile experience capability:** B -- responsive navigation verified
+  overflow-free across 10 real phone-width screenshots; dense secondary
+  pages (Visit/Stream/Settings) remain long but not broken
+- **Remote-access support posture:** private overlay network
+  (Tailscale-compatible) is the documented, supported away-from-home
+  path; direct public-internet exposure and a MockingBird-operated cloud
+  relay are explicitly unsupported/not-built; LAN access via
+  `--allow-network` is now discoverable in-product
+- **Security implications (this milestone):** 4 new CORS regression
+  tests closing a previously-zero coverage gap; new
+  `GET /api/product/connection` deliberately kept authenticated (not
+  public); media/evidence routes re-confirmed authenticated by policy-
+  table inspection; no login rate-limiting exists (real, pre-existing,
+  found and documented, not fixed -- see the milestone report)
 - **Local Species Prior:** not authorized
 - **Another classifier campaign:** not authorized
 - **LICENSE:** still genuinely absent -- open business/legal decision, not
@@ -1027,5 +1204,9 @@ authorization field.
   bisection re-created it) -- removed again; the working tree was
   confirmed to hold exactly the seven preserved files, untouched, at this
   milestone's own start and close, alongside this milestone's own
-  committed additions.
+  committed additions. Mobile & Remote Experience v1 used `git stash
+  push -u`/`pop` for its own Core-gate bisection (see §14) and confirmed,
+  both before and after, that the working tree held exactly the seven
+  preserved files, byte-identical to milestone start, alongside this
+  milestone's own committed additions.
 - **Push:** explicit authorization required

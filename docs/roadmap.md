@@ -3339,6 +3339,19 @@ appropriate. Notifications stay calm and meaningful (see
 "Calm-observatory notifications" in product-doctrine.md); do not turn
 habitat/environment additions into high-volume alert spam.
 
+**2026-08-25 update (Mobile & Remote Experience v1):** the mobile/remote
+half of this layer is substantially delivered -- responsive navigation,
+an installable PWA shell, discoverable LAN access, and a documented
+private-overlay-network remote-access posture, exactly reusing the Layer
+1 identity/session system with no second truth layer -- see
+[mobile-remote-experience-v1-report.md](mobile-remote-experience-v1-report.md).
+Calm Notifications remains deliberately untouched (the mobile substrate
+was built without adjacency-authorizing it -- see that report's Phase 31
+record); real, bounded gaps remain in mobile page density and a couple of
+pre-existing, incidentally-discovered defects (see the report's
+"Remaining major PRODUCT opportunities"). Do not treat this layer as
+fully closed.
+
 ### 8. Remaining product maturity
 
 Retain remaining important lanes: site-specific learning/fine-tuning;
