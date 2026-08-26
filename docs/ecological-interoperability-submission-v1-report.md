@@ -3,7 +3,7 @@
 ## Identity
 
 - **Starting HEAD:** `9364511` (Calm Attention & Notifications v1 reconciliation -- verified before any edit)
-- **Implementation HEAD:** `[[IMPLEMENTATION_HEAD_PLACEHOLDER]]` ("Ecological Interoperability & Submission Workflows v1: Reviewed Observations -> eBird / iNaturalist / External Ecology")
+- **Implementation HEAD:** `3c60d79` ("Ecological Interoperability & Submission Workflows v1: Reviewed Observations -> eBird / iNaturalist / External Ecology")
 - **Reconciliation HEAD:** the commit immediately following this one (release-execution-state.md + roadmap.md + this report)
 - **Schema:** v56 -> v57 (two new additive tables:
   `ecological_taxonomy_mappings`, `ecological_submission_records`; no
@@ -537,4 +537,18 @@ and after this milestone's work:
 
 ## Exact git status --short
 
-[[GIT_STATUS_PLACEHOLDER]]
+Immediately after the reconciliation commit (this report + `release-
+execution-state.md` + `roadmap.md`), the working tree returns to exactly
+the seven preserved files, untouched, and nothing else:
+
+```
+?? docs/wildlife-detector-training-contract.md.orig
+?? scripts/evaluate_small_bird_detector.py
+?? scripts/materialize_wildlife_stage2.py.orig
+?? scripts/train_wildlife_stage2_rfdetr.py.orig
+?? src/mockingbird/detectors/small_bird_benchmark.py
+?? src/mockingbird/training/wildlife.py.orig
+?? tests/test_small_bird_benchmark.py
+```
+
+Nothing pushed (local accepted state; explicit authorization required).

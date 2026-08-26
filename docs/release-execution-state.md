@@ -23,14 +23,44 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** the implementation commit for Calm Attention &
-  Notifications v1 (see §16)
-- **Schema:** `v56` -- one new additive table, `user_notification_preferences`
-  (per-user delivery preferences). No existing table changed; `ProductAlertModel.
-  category`/`.action_type` are plain `String` columns with no database-level
-  enum/check constraint, so the new `"insight"` category and the two new
-  `open_place_story`/`open_place_report` action types needed no migration.
-- **Latest accepted milestone:** Calm Attention & Notifications v1 -- Tell Me
+- **Accepted HEAD:** the implementation commit for Ecological
+  Interoperability & Submission Workflows v1 (see §16)
+- **Schema:** `v57` -- two new additive tables, `ecological_taxonomy_
+  mappings` (a bounded, reusable "MockingBird label -> destination taxon"
+  resolution cache) and `ecological_submission_records` (a durable
+  per-Visit external-submission-preparation record). No existing table's
+  shape changed.
+- **Latest accepted milestone:** Ecological Interoperability & Submission
+  Workflows v1 -- Reviewed Observations -> eBird / iNaturalist / External
+  Ecology (see
+  [ecological-interoperability-submission-v1-report.md](ecological-interoperability-submission-v1-report.md)).
+  Classification **B** -- a real, working, submission-ready iNaturalist
+  workflow (eligibility preview with per-record reasons, explicit never-
+  inferred location/media consent, batch prepare, a destination-shaped CSV
+  confirmed directly against iNaturalist's own open-source bulk-import
+  code, fingerprint-based staleness detection, and a self-reported
+  external-result close-the-loop step -- proven end to end by a real,
+  executable 12-Visit product-shaped scenario test) plus a bounded,
+  additive Darwin Core Occurrence-core export (`basisOfRecord=
+  "MachineObservation"`, GBIF's own recommended camera-trap value); eBird
+  and direct GBIF publication both honestly, evidence-backed deferred
+  rather than built -- eBird's own current "Rules and Best Practices"
+  (checked 2026-08-25) explicitly excludes feeder/trail-camera data
+  ("eBird is designed to collect in-person observations of living wild
+  birds"), and GBIF direct publication requires organizational
+  Participant-Node endorsement, not a backyard-user workflow. No live,
+  authenticated destination submission exists anywhere in this milestone
+  (Phase 26: no unsafe credential-storage workaround invented) -- a user
+  uploads the generated file themselves. Two real security findings made
+  and fixed during the milestone's own work: a CSV-injection gap in the
+  one shared CSV writer behind every export in this codebase (generic
+  research export, Camtrap DP, Darwin Core, and the new ecological CSV
+  alike), and a `javascript:`-scheme external-URL gap on the self-reported
+  result field. See the report for the full official-source destination
+  research (URLs, quotes, access dates) and real, honestly-recorded
+  remaining gaps (no live OAuth submit, no media-byte inclusion, no
+  single-Visit deep-link pre-selection).
+- **Prior accepted milestone:** Calm Attention & Notifications v1 -- Tell Me
   When Something Matters (see
   [calm-attention-notifications-v1-report.md](calm-attention-notifications-v1-report.md)).
   Classification **B** -- a real canonical attention-selection layer
@@ -177,6 +207,14 @@ preserved here, not relaxed.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
+Ecological Interoperability & Submission Workflows v1 (directly authorized
+outside this file, reconciled here at its own closure -- see §16) is now
+accepted at classification **B** (a real, working, submission-ready
+iNaturalist workflow proven end to end by an executable 12-Visit
+product-shaped scenario, plus a bounded additive Darwin Core export; eBird
+and direct GBIF publication both honestly, evidence-backed deferred rather
+than built -- see
+[ecological-interoperability-submission-v1-report.md](ecological-interoperability-submission-v1-report.md)).
 Calm Attention & Notifications v1 (directly authorized outside this file,
 reconciled here at its own closure -- see §16) is now accepted at
 classification **B** (a real canonical attention-selection layer composed
@@ -246,6 +284,19 @@ choose the next milestone by adjacency to this one.
 
 Do NOT automatically authorize:
 
+- live, authenticated iNaturalist OAuth submission, or any eBird workflow
+  of any kind, merely to close Ecological Interoperability & Submission
+  Workflows v1's own deliberately-deferred external-authorization boundary
+  -- see that report for the full evidence (eBird's own current policy
+  conflict; no secure server-side credential-storage pattern exists yet)
+  this decision rests on;
+- direct GBIF publication as a standalone follow-on -- see that report's
+  destination research for why this remains institutional, not a
+  backyard-user workflow;
+- ecological-submission media-byte inclusion, or a single-Visit deep-link
+  pre-selection on the Ecological Destinations page, as a standalone
+  follow-on campaign -- each individually real and recorded, neither
+  automatically the next milestone by adjacency;
 - Remote Field Productization;
 - standalone Web Push (VAPID/subscription persistence, a genuine outbound
   call to a third-party push service) merely to close Calm Attention &
@@ -396,6 +447,9 @@ remains open (see Lane R, below).
 
 **Research / Conservation.** Substantial accepted work: conservation
 reporting; effort/coverage; research-safe eligibility/export; Camtrap DP;
+Darwin Core Occurrence-core export (2026-08-25, additive to Camtrap DP, not
+redundant with it -- see
+[ecological-interoperability-submission-v1-report.md](ecological-interoperability-submission-v1-report.md));
 contributor/research provenance.
 
 ## 6. Global remaining execution queue
@@ -560,12 +614,36 @@ campaign solely to fill the matrix.
 
 ### J. Ecological / External Workflows
 
-**Status:** OPEN DECISION.
+**Status:** MATERIALLY ADVANCED -- Ecological Interoperability & Submission
+Workflows v1 (2026-08-25) closed this lane's decision; see
+[ecological-interoperability-submission-v1-report.md](ecological-interoperability-submission-v1-report.md).
+Classification **B**.
 
-Potential examples: eBird-style reviewed-truth-gated workflow;
-iNaturalist-style reviewed-truth-gated workflow. Do not assume existing
-exports equal implemented submission workflows. Decide first-release scope
-explicitly.
+Delivered: a real, working, submission-ready iNaturalist workflow
+(eligibility preview with per-record reasons, explicit never-inferred
+location/media consent, batch prepare, a destination-shaped CSV confirmed
+directly against iNaturalist's own open-source bulk-import code,
+fingerprint-based staleness detection, a self-reported external-result
+close-the-loop step); a bounded, additive Darwin Core Occurrence-core
+export; the destination-decision research itself (eBird's own current
+policy explicitly excludes feeder/trail-camera data -- not offered, and
+the product UI says why persistently, not merely in a hover tooltip; GBIF
+direct publication requires organizational endorsement -- correctly
+deferred as institutional); two real security findings made and fixed
+(CSV injection in the shared CSV writer behind every export in this
+codebase, retroactively hardening the pre-existing generic/Camtrap DP
+paths too; a `javascript:`-scheme external-URL gap). Schema 56 -> 57 (two
+additive tables). No live, authenticated destination submission exists
+anywhere -- Phase 26 of that milestone's own brief: no unsafe
+credential-storage workaround invented for a capability that does not yet
+exist.
+
+Remaining, not closed by this pass -- see the report's "Remaining major
+PRODUCT opportunities": live OAuth iNaturalist submission; media-byte
+inclusion; a single-Visit deep-link pre-selection on the Ecological
+Destinations page; broader batch-filter UI depth (stream/source/collection
+scoping, already supported server-side via the reused
+`ResearchExportFilters`, not yet exposed in the frontend).
 
 ### K. Ecosystem / Provider Integrations
 
@@ -886,7 +964,32 @@ each session that touches this repository.
 
 ## 14. Validation baselines
 
-**Latest accepted Core checkpoint (Calm Attention & Notifications v1):** 4991
+**Latest accepted Core checkpoint (Ecological Interoperability & Submission
+Workflows v1):** 5095 passed / 2 failed / 3 skipped / 23 deselected
+(slow-marked) / 11 xfailed (27m29s). Both failures are the identical
+`test_place_biodiversity_summary_repository.py` pair (`'seen_before' ==
+'new'` assertion mismatch) independently re-confirmed as pre-existing
+across at least eight consecutive prior milestone checkpoints below --
+re-run in isolation this session and reproduced byte-identically (same two
+test names, same exact assertion values), confirming the established
+precedent rather than a full `git stash` bisection for code sharing zero
+files or logic with this milestone. No schema-version guard-rail
+regression: all 14 hard-coded `CURRENT_DATABASE_SCHEMA_VERSION == 56`
+assertions across 7 files were found and bumped to `57` (the identical
+class of drift every prior schema bump has tripped -- see the milestone
+report). 98 new tests across eight new test files plus targeted additions
+to three existing ones, all passing; `ruff check` confirmed zero new
+findings via a direct line-level diff against a clean baseline (stronger
+than a bisection -- every pre-existing finding reproduces byte-identically
+at its new, shifted line number; an over-broad `ruff --fix` run was caught
+removing ~19 unrelated pre-existing unused imports and precisely reverted
+first); `tsc --noEmit`/`vite build` clean; new `ecological-destinations.
+spec.ts` 5/5 passing; full existing e2e suite (127 tests) re-run with only
+the one already-known pre-existing failure (`reviewed-product-loop.
+spec.ts`, unrelated to this milestone, recorded across at least three
+prior milestones).
+
+**Prior accepted Core checkpoint (Calm Attention & Notifications v1):** 4991
 passed / 3 failed / 3 skipped / 23 deselected (slow-marked) / 11 xfailed
 (28m02s). All 3 failures independently re-bisected this session: the two
 `test_place_biodiversity_summary_repository.py` failures (identical
@@ -1072,7 +1175,80 @@ authorization field.
 
 ## 16. Transition checkpoint
 
-- **Accepted HEAD:** `c22bf94` (Calm Attention &
+- **Accepted HEAD:** `3c60d79` (Ecological
+  Interoperability & Submission Workflows v1 implementation commit --
+  filled in at reconciliation)
+- **Schema:** v56 -> v57. Two new additive tables:
+  `ecological_taxonomy_mappings` (a bounded, reusable "MockingBird label ->
+  destination taxon" resolution cache, one row per `(destination, label)`)
+  and `ecological_submission_records` (a durable per-Visit
+  external-submission-preparation record, one mutable row per `(visit_id,
+  destination)` until a self-reported external result freezes it). No
+  existing table's shape changed.
+- **Latest accepted milestone:** Ecological Interoperability & Submission
+  Workflows v1 -- Reviewed Observations -> eBird / iNaturalist / External
+  Ecology
+- **Ecological Interoperability & Submission Workflows v1 classification:**
+  B -- a real, working, submission-ready iNaturalist workflow composed
+  entirely over the already-accepted research-eligibility gate and
+  `ResearchObservation` shape (`mockingbird.ecological.destination_
+  eligibility`/`adapters` never re-derive either), never a second truth
+  system. See
+  [ecological-interoperability-submission-v1-report.md](ecological-interoperability-submission-v1-report.md)
+  for the full record: eligibility preview with per-record, never-bare
+  status and reasons; a credential-free iNaturalist taxonomy mapping cache
+  (`GET /v1/taxa`, confirmed public/no-auth against the official swagger
+  spec) whose exact-name-match logic was directly corrected against a real
+  live API call during this milestone's own testing (a plain "Northern
+  Cardinal" query returns several candidates, not one -- requiring an exact
+  match among them, not a bare single-result rule); explicit, never-
+  inferred-from-the-weather-coordinate location/media consent (directly
+  tested); a batch prepare/export pipeline producing the exact positional
+  8-column CSV iNaturalist's own open-source bulk importer expects
+  (confirmed directly against `lib/bulk_observation_file.rb`); deterministic
+  content fingerprinting closing idempotency and correction-after-
+  preparation staleness (a real precedence bug -- a stale-and-currently-
+  ineligible record reported the less useful reason first -- found and
+  fixed by this milestone's own test-writing); a self-reported external-
+  result close-the-loop step, never a live automated submit; a bounded,
+  additive Darwin Core Occurrence-core exporter
+  (`basisOfRecord="MachineObservation"`, GBIF's own recommended camera-trap
+  value, confirmed via its official camera-trap guide); eBird correctly,
+  evidence-backed **not offered** (its own current "Rules and Best
+  Practices," checked 2026-08-25, explicitly excludes feeder/trail-camera
+  data -- a real policy conflict, not a time constraint, and the product UI
+  now shows this reason persistently rather than behind a disabled
+  button's hover-only tooltip, a real gap this milestone's own e2e testing
+  found and fixed); direct GBIF publication correctly deferred as
+  institutional (organizational Participant-Node endorsement required, not
+  a backyard-user workflow); two real security findings made and fixed
+  (CSV injection in the one shared `_write_csv` helper behind every export
+  in this codebase, retroactively hardening the pre-existing generic
+  research/Camtrap DP export paths too -- and a real regression in an
+  early version of that exact fix, which corrupted legitimate negative
+  coordinates, caught by this milestone's own test before shipping; a
+  `javascript:`-scheme external-URL rejection on the self-reported result
+  field); a real, executable 12-Visit product-shaped scenario test proving
+  the whole workflow end to end with zero user interaction and zero
+  provisional/superseded truth ever reaching a prepared record. 107+ new
+  tests across nine new test files plus targeted additions to three
+  existing ones, all passing; `ruff check` confirmed zero new findings via
+  a direct line-level diff against a clean baseline (not merely a
+  bisection) -- an over-broad `ruff --fix` run was caught removing ~19
+  unrelated pre-existing unused imports and precisely reverted before that
+  confirmation; `tsc --noEmit`/`vite build` clean; new
+  `ecological-destinations.spec.ts` 4/4 passing; full existing e2e suite
+  re-run at 126 passed / 1 failed, that one failure the identical,
+  already-independently-documented pre-existing `reviewed-product-loop.
+  spec.ts` gap recorded across at least three prior milestones' own
+  acceptance records. Real, honestly-recorded remaining gaps -- not release
+  blockers, this is substantial product development -- are detailed in the
+  report's "Remaining major PRODUCT opportunities": live OAuth iNaturalist
+  submission; media-byte inclusion; a single-Visit deep-link pre-selection
+  on the Ecological Destinations page; broader batch-filter UI depth.
+- **Prior accepted milestone:** Calm Attention & Notifications v1 -- Tell Me
+  When Something Matters
+- **Prior accepted HEAD:** `c22bf94` (Calm Attention &
   Notifications v1 implementation commit -- filled in at reconciliation)
 - **Schema:** v55 -> v56. One new additive table, `user_notification_
   preferences` (per-user delivery preferences). No existing table's shape
@@ -1288,16 +1464,26 @@ authorization field.
   collapse; no real reachable camera/RTSP/ONVIF/local-USB/Camera-Node
   hardware exercised this session). See
   [camera-source-experience-v1-report.md](camera-source-experience-v1-report.md).
-- **Native-Windows acceptance (this milestone):** none -- Calm Attention &
-  Notifications v1 was validated via targeted Python tests (including a
-  real 28-minute Core run), new Playwright e2e (including 4 real-browser
-  `Notification`/fake-clock tests), `tsc`/`vite build`, and `ruff` on the
-  Linux/WSL dev stack; every new module is plain Python/TypeScript with no
-  OS-specific branch, so it is not expected to behave differently on native
-  Windows, but that remains an expectation, not fresh Windows evidence. The
-  most recent real native-Windows acceptance remains further below (Place /
-  Yard Intelligence v2), unaffected by this milestone's additive-only
-  schema change.
+- **Native-Windows acceptance (this milestone):** none -- Ecological
+  Interoperability & Submission Workflows v1 was validated via targeted
+  and full Core Python tests, new Playwright e2e, `tsc`/`vite build`, and
+  `ruff` on the Linux/WSL dev stack, plus a real live call to iNaturalist's
+  own public taxonomy API during development (not a Windows-specific
+  proof, but real external-network evidence). Every new module is plain
+  Python/TypeScript with no OS-specific branch (the one external HTTP call
+  uses the same stdlib `urllib.request` convention the existing weather
+  provider already validated cross-platform), so it is not expected to
+  behave differently on native Windows, but that remains an expectation,
+  not fresh Windows evidence. The most recent real native-Windows
+  acceptance remains further below (Place / Yard Intelligence v2),
+  unaffected by this milestone's additive-only schema change.
+- **Native-Windows acceptance (Calm Attention & Notifications v1):** none --
+  validated via targeted Python tests (including a real 28-minute Core
+  run), new Playwright e2e (including 4 real-browser `Notification`/
+  fake-clock tests), `tsc`/`vite build`, and `ruff` on the Linux/WSL dev
+  stack; every new module is plain Python/TypeScript with no OS-specific
+  branch, so it is not expected to behave differently on native Windows,
+  but that remains an expectation, not fresh Windows evidence.
 - **Native-Windows acceptance (Place Story & Seasonal Timeline v1):** none
   -- Place Story &
   Seasonal Timeline v1 was validated via targeted Playwright e2e against
@@ -1339,6 +1525,18 @@ authorization field.
 - **State:** Milestone-closure checkpoint
 - **Final release hardening:** not authorized
 - **Remote LTE/solar:** not a v0.1 blocker
+- **Ecological Interoperability:** delivered this milestone (classification
+  B) -- see Lane J, §6; live OAuth iNaturalist submission, any eBird
+  workflow, direct GBIF publication, media-byte inclusion, and a
+  single-Visit deep-link pre-selection are not automatically authorized
+  (see §3)
+- **Ecological destination decisions:** eBird -- not offered (own current
+  policy excludes feeder/trail-camera data); iNaturalist -- submission-ready
+  CSV workflow delivered, live OAuth submit deliberately not built; Darwin
+  Core -- built, additive to Camtrap DP; GBIF -- deferred, institutional
+- **Darwin Core export:** delivered this milestone, additive to the
+  already-accepted Camtrap DP export (not a replacement) -- see Lane
+  "Research / Conservation," §5
 - **Calm Notifications:** delivered this milestone (classification B) -- see
   Lane D, §6; a further Web Push/per-user-read-state/precise-deep-link
   campaign is not automatically authorized (see §3)
@@ -1395,5 +1593,10 @@ authorization field.
   push -u`/`pop` for its own Core-gate bisection (see §14) and confirmed,
   both before and after, that the working tree held exactly the seven
   preserved files, byte-identical to milestone start, alongside this
-  milestone's own committed additions.
+  milestone's own committed additions. Ecological Interoperability &
+  Submission Workflows v1 confirmed the same at its own start (before any
+  edit) and again at close: exactly the seven preserved files, untouched,
+  alongside this milestone's own committed additions -- two peer sessions
+  sharing this same working directory were confirmed idle (no file writes
+  in 11+ and 105+ minutes respectively) before any write began.
 - **Push:** explicit authorization required

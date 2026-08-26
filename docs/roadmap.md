@@ -2702,21 +2702,37 @@ observations + bounded structural validator), and a bounded named-collection
 reference-only lane for training use, not research export. Media-byte
 bundling into a research export bundle remains unimplemented (accepted as a
 request flag, no effect yet -- see "Explicitly deferred" in that contract
-doc). GBIF, eBird, Wildlife Insights (the external destination -- distinct
-from MockingBird's own `/analytics` Wildlife Insights panel), Darwin Core,
-and iNaturalist interoperability still do not exist anywhere in the
-repository (confirmed absent) -- genuinely new after release direction for each
-specific destination, not a correction. External sharing always consumes
-data already permitted by the existing reviewed-truth/research-eligibility
-contract; do not build a second "human verification" mechanism per
-destination. eBird: eventual assisted/reviewed export where the checklist
-context is eligible under then-current eBird rules -- no autonomous
-reporting of unreviewed machine detections, and eBird's data model never
-becomes MockingBird's internal truth model. GBIF: future publication
-interoperability through the now-existing Camtrap DP export where
-appropriate. Other legitimate destinations (iNaturalist, other research
-datasets): keep the architecture extensible; verify each destination's
-actual current rules/API when actually built. None of this delays release.
+doc). Wildlife Insights (the external destination -- distinct from
+MockingBird's own `/analytics` Wildlife Insights panel) still does not
+exist anywhere in the repository and remains an open, not-yet-researched
+decision.
+
+**Ecological Interoperability & Submission Workflows v1 (2026-08-25, see
+[ecological-interoperability-submission-v1-report.md](ecological-interoperability-submission-v1-report.md))**
+closed the eBird/iNaturalist/Darwin Core/GBIF decisions this section
+previously left open, using current official sources rather than
+remembered API behavior: **eBird is not offered** -- its own current
+"Rules and Best Practices" (checked 2026-08-25) explicitly excludes
+nest/feeder/trail-camera data ("eBird is designed to collect in-person
+observations of living wild birds"), a real, cited policy conflict, not a
+missing feature; **iNaturalist** got a real, working submission-ready
+workflow -- eligibility preview, explicit location/media consent, a
+destination-shaped CSV confirmed directly against iNaturalist's own
+open-source bulk-import code (needing zero credentials), fingerprint-based
+staleness detection, and a self-reported external-result step, with live
+OAuth automated submission deliberately not built (no secure server-side
+credential-storage pattern exists yet); **Darwin Core** got a bounded,
+additive Occurrence-core exporter (`basisOfRecord="MachineObservation"`,
+GBIF's own recommended camera-trap value) -- confirmed genuinely additive
+to, not redundant with, the existing Camtrap DP export, which is a
+Frictionless Data Package, not a Darwin Core Archive; **GBIF** direct
+publication was confirmed to require organizational Participant-Node
+endorsement, correctly deferred as institutional -- the new Darwin Core
+export is the "GBIF-ready through later institutional workflow" outcome
+this section's own prior language anticipated. External sharing continues
+to consume only data already permitted by the existing reviewed-truth/
+research-eligibility contract; no second "human verification" mechanism
+was built per destination. None of this delays release.
 
 **Public benchmark / training governance.** See
 [public-benchmark-governance.md](public-benchmark-governance.md) (new --
@@ -3366,6 +3382,14 @@ infrastructure merely to satisfy this roadmap heading" instruction, not
 overridden by it. Do not treat this layer as fully closed either: see that
 report's own remaining opportunities (Web Push, detector/model-unavailable
 health attention, per-user read state, precise Place Story deep links).
+
+**2026-08-25 update (Ecological Interoperability & Submission Workflows
+v1):** see "Ecological export & sharing interoperability," above, for the
+full record. A real, working iNaturalist submission-ready workflow;
+eBird correctly not offered on cited current policy grounds; a bounded,
+additive Darwin Core export; GBIF direct publication correctly deferred as
+institutional -- see
+[ecological-interoperability-submission-v1-report.md](ecological-interoperability-submission-v1-report.md).
 
 ### 8. Remaining product maturity
 
