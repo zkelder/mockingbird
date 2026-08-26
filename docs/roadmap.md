@@ -2975,6 +2975,25 @@ habitat/Zone piece specifically now belongs to "Habitat & Phenology
 Foundation" (Layer 3) in "Remaining roadmap -- canonical sequence," below,
 not to this phase.
 
+Multi-Camera Place Experience v2 (2026-08-26) closed this phase's own
+integrated-acceptance question -- "does several-camera MockingBird feel
+like one observatory" -- for the single-Place, 2-4-camera envelope this
+milestone measured and targeted; see
+[multi-camera-place-experience-v2-report.md](multi-camera-place-experience-v2-report.md).
+Classification **B**. Found and fixed a real defect (an archived camera's
+history was unreachable from every discovery surface); surfaced Today's
+own already-computed per-camera facts for the first time; extended Bird
+Log's camera filter to its overview list; fixed a naive camera-hours-not-
+elapsed-time bug in Zone Insights' aggregate coverage; distinguished "some
+cameras need attention" from "every camera down" on Dashboard; a real,
+measured (not merely claimed) concurrency proof at 2-4 simultaneous
+cameras with zero cross-Stream contamination and no starvation found; a
+comprehensive product-shaped scenario proving the whole chain -- identity,
+coverage, overlap dedup, health, correction propagation -- coheres.
+Broader wildlife/behavioral-proposal/habitat-Zone scope remains unstarted
+by this milestone too, unchanged from above; true multi-site remains a
+separate, not-yet-authorized product/architecture decision.
+
 ### Phase 8 -- Learning / Contributor Ecosystem
 
 Not started, and explicitly gated behind mature evidence and dataset

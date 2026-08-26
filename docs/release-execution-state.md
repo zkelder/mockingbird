@@ -23,14 +23,43 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** the implementation commit for Ecological
-  Interoperability & Submission Workflows v1 (see §16)
-- **Schema:** `v57` -- two new additive tables, `ecological_taxonomy_
-  mappings` (a bounded, reusable "MockingBird label -> destination taxon"
-  resolution cache) and `ecological_submission_records` (a durable
-  per-Visit external-submission-preparation record). No existing table's
-  shape changed.
-- **Latest accepted milestone:** Ecological Interoperability & Submission
+- **Accepted HEAD:** `763fe22` -- the implementation commit for Multi-Camera
+  Place Experience v2 (see §16)
+- **Schema:** `v57`, unchanged by this milestone -- every fix is a
+  query-scope correction or an additive field on an already-derived
+  response object, never a new/changed table.
+- **Latest accepted milestone:** Multi-Camera Place Experience v2 -- One
+  Observatory, Many Views (see
+  [multi-camera-place-experience-v2-report.md](multi-camera-place-experience-v2-report.md)).
+  Classification **B** -- an integrated multi-camera product pass on top
+  of the already-accepted Camera/Source + Multi-Camera Maturity v1
+  foundation (cross-camera association engine, Area vocabulary, provider
+  compatibility -- that milestone's own report had gone missing from this
+  file's own bookkeeping, corrected here). A real correctness defect found
+  and fixed with principled nuance across two rounds of correction (Tier 1
+  test evidence, then a full Tier 3 Core run) rather than a blanket
+  overcorrection: an archived camera's history was unreachable from every
+  discovery surface; the fix preserves every already-tested current-
+  active-observatory default exactly (Bird Log overview, Wildlife
+  Insights, Biodiversity, Place Activity Report/Today) while making that
+  real history reachable by explicit camera selection, with Place Story
+  and research/conservation export unconditionally inclusive where no
+  existing test disagreed. Today now surfaces its own already-computed
+  per-camera activity/evidence-source facts for the first time; Bird Log's
+  camera filter now reaches its overview list; Zone Insights' Place-wide
+  aggregate coverage was a naive camera-hours sum, now a real elapsed-time
+  union matching Today's own semantics; Dashboard distinguishes "some
+  cameras need attention" from "every armed camera needs attention"; a
+  real, measured concurrency proof (genuine concurrent threads, 2-camera
+  and 4-camera-asymmetric topologies) found zero cross-Stream contamination
+  and no starvation, and separately found, root-caused, and honestly
+  disclosed (not shipped -- an attempted fix did not reliably help) a real
+  occasional lost-candidate-Visit reliability gap under real concurrent
+  write contention; a comprehensive, real, executable 3-camera product-
+  shaped scenario proves the whole chain -- identity, coverage, overlap
+  dedup, health, correction propagation -- coheres end to end. See the
+  report for full detail and honestly-disclosed remaining gaps.
+- **Prior accepted milestone:** Ecological Interoperability & Submission
   Workflows v1 -- Reviewed Observations -> eBird / iNaturalist / External
   Ecology (see
   [ecological-interoperability-submission-v1-report.md](ecological-interoperability-submission-v1-report.md)).
@@ -207,6 +236,22 @@ preserved here, not relaxed.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
+Multi-Camera Place Experience v2 (directly authorized outside this file,
+reconciled here at its own closure -- see §16) is now accepted at
+classification **B** -- see
+[multi-camera-place-experience-v2-report.md](multi-camera-place-experience-v2-report.md)
+and §1/§6 Lane F, above/below, for the full record. Do NOT automatically
+authorize, by adjacency to this closure: a dedicated follow-on
+investigation into the real, disclosed occasional lost-candidate-Visit
+concurrent-write reliability gap this milestone found, root-caused, and
+deliberately did not fix (a real, bounded engineering investigation, but
+not self-authorized here); notification-level (Calm Attention)
+cross-camera grouping; Place Story wildlife-event source attribution;
+camera-filter UI consolidation; multi-camera Place Feature linking; or
+broad multi-site -- each individually real and recorded in the report's
+"Remaining major PRODUCT opportunities," none automatically the next
+milestone by adjacency.
+
 Ecological Interoperability & Submission Workflows v1 (directly authorized
 outside this file, reconciled here at its own closure -- see §16) is now
 accepted at classification **B** (a real, working, submission-ready
@@ -323,6 +368,17 @@ Do NOT automatically authorize:
 - Place Story period summaries, weather-caveat composition, or dedicated
   taxon/Feature story pages, as a standalone follow-on campaign;
 - Land Management / Agriculture as a separate campaign;
+- a dedicated investigation/fix for the real, disclosed occasional
+  lost-candidate-Visit concurrent-write reliability gap Multi-Camera Place
+  Experience v2 found, root-caused, and deliberately did not fix (see that
+  report's "Fairness / backpressure") -- real and recorded, but not
+  self-authorized by this reconciliation; notification-level (Calm
+  Attention) cross-camera health grouping, Place Story wildlife-event
+  source attribution, or camera-filter UI consolidation as standalone
+  follow-on campaigns -- each individually real and recorded in that same
+  report, none automatically the next milestone by adjacency;
+- broad multi-site, merely because single-Place multi-camera work just
+  closed;
 - final Release Hardening.
 
 ## 4. Product/release guardrails
@@ -559,13 +615,54 @@ follow-on Mobile/PWA campaign by adjacency -- see §3.
 
 ### F. Multi-Camera / Multi-Site
 
-**Status:** MIXED.
+**Status:** MATERIALLY ADVANCED -- Multi-Camera Place Experience v2
+(2026-08-26) closed this lane's integrated-acceptance decision; see
+[multi-camera-place-experience-v2-report.md](multi-camera-place-experience-v2-report.md).
+Classification **B**.
 
-Multi-camera foundations are substantial. Need integrated acceptance for:
-multiple simultaneous cameras; health; backlog; performance;
-duplicate/cross-camera behavior; presentation. True multi-site remains a
-separate product/architecture decision. Do not silently make it v0.1
-scope.
+Camera/Source + Multi-Camera Maturity v1 (2026-08-23) had already built the
+real foundation this lane's own text below was actually waiting on
+(cross-camera duplicate-encounter association, Area vocabulary, provider
+compatibility, health coherence) -- that milestone's own report was
+missing (only a `-contract.md` existed, no `-report.md`), which is why
+this lane's status had not been updated to reflect it; corrected here.
+Delivered this milestone: a real, previously-hidden defect found and fixed
+with principled nuance (an archived camera's history was unreachable from
+every discovery surface, contradicting this codebase's own documented
+archive-only-preserves-history doctrine; the fix deliberately preserves
+already-tested current-active-only *defaults* on Bird Log/Wildlife
+Insights/Biodiversity while making that real history reachable by explicit
+camera filter and by period-scoped reports); Today surfacing its own
+already-computed per-camera activity/evidence-source facts for the first
+time; a Bird Log camera filter reaching the overview list, not only the
+per-species drilldown; a real coverage-union fix for Zone Insights'
+Place-wide aggregate (was a naive per-camera-hours sum); Dashboard
+distinguishing "some cameras need attention" from "every armed camera
+needs attention"; a real, measured (2-camera and 4-camera-asymmetric,
+genuinely concurrent real-thread) admission/assembly-layer concurrency
+proof with zero cross-Stream contamination and no starvation found; a
+comprehensive, real, executable product-shaped scenario proving the whole
+chain -- identity, coverage, overlap dedup, health, correction propagation
+-- coheres end to end. Schema unchanged (v57 -> v57): every fix is a query-
+scope correction or an additive field on an already-derived response
+object.
+
+Remaining, not closed by this pass -- see the report's "Remaining major
+PRODUCT opportunities": notification-level (Calm Attention) cross-camera
+grouping beyond the Dashboard status-view fix; Place Story wildlife-event
+source attribution (the field exists, populating it needs restructuring a
+shared SQL-aggregation layer, not a field-threading exercise); consolidating
+at least 6 independently-implemented camera-filter UI controls into one
+canonical component; multi-camera Place Feature linking; real GPU/CUDA-
+driver-level concurrent-inference measurement (needs real hardware this
+sandbox lacks); a multi-hour concurrent soak beyond the single-pass
+measured proof; the pre-existing, disclosed 2-Stream cap on the separate
+legacy motion pipeline (RTSP/USB/local providers, not the modern
+Observation Engine's own Camera Node path).
+
+True multi-site remains a separate product/architecture decision. Do not
+silently make it v0.1 scope, and do not self-authorize it by adjacency to
+this lane's closure.
 
 ### G. Camera / Source Experience
 
@@ -964,7 +1061,44 @@ each session that touches this repository.
 
 ## 14. Validation baselines
 
-**Latest accepted Core checkpoint (Ecological Interoperability & Submission
+**Latest accepted Core checkpoint (Multi-Camera Place Experience v2):**
+5106 passed / 2 failed / 3 skipped / 23 deselected (slow-marked) / 11
+xfailed (26m48s). Both failures are the identical, already-documented
+pre-existing `test_place_biodiversity_summary_repository.py` pair
+(`'seen_before' == 'new'` assertion mismatch) below, re-confirmed this
+session. A first full Core run this session (5103 passed / 5 failed)
+surfaced 3 genuinely new failures beyond that pre-existing pair, all
+traced to the same root cause -- this milestone's own first attempt at
+its archived-camera-history fix had made `place_activity_report`'s
+*unfiltered default* archived-inclusive too, contradicting a real,
+pre-existing, deliberately-authored test from the already-accepted
+"Gate C -- Meaningful Change Detection / Baseline Comparison v1" milestone
+(`test_place_change_summary_repository.py::test_archived_stream_
+confirmations_are_excluded` and `test_historical_baseline_repository.py`'s
+own identically-named test) that this session's own narrower Tier 1
+re-runs had not included in scope. Corrected precisely (the unfiltered
+default stays archived-exclusive, matching Bird Log/Wildlife Insights/
+Biodiversity's identical default; an explicit `source_ids` selection still
+reaches archived history) and reconfirmed clean by this second, full run
+-- see [multi-camera-place-experience-v2-report.md](multi-camera-place-experience-v2-report.md)'s
+"Validation" for the complete record. No schema-version guard-rail
+regression (schema unchanged, so no guard-rail assertions needed
+touching). 87+ new/modified tests across the directly touched files plus
+two new dedicated test files (`test_multi_camera_concurrent_runtime.py`,
+`test_multi_camera_place_experience_scenario.py`), all passing; `ruff
+check` confirmed zero new findings via a direct clean-baseline bisection
+(`git stash push -u`/pop, content-normalized comparison) both before and
+after the correction above; `tsc --noEmit`/`vite build` clean; targeted
+e2e (`today-report.spec.ts` 19/19, `place-activity-report.spec.ts` 3/3,
+`bird-log-historical-status.spec.ts` 9/9) passing; full existing e2e suite
+(128 tests) re-run at 127 passed / 1 failed, that one failure the
+identical, already-independently-documented pre-existing
+`reviewed-product-loop.spec.ts` gap recorded across at least three prior
+milestones' own acceptance records, including `mobile-viewport-audit.
+spec.ts`'s own full clean re-run (zero horizontal-overflow findings)
+across exactly the surfaces this milestone modified.
+
+**Prior accepted Core checkpoint (Ecological Interoperability & Submission
 Workflows v1):** 5095 passed / 2 failed / 3 skipped / 23 deselected
 (slow-marked) / 11 xfailed (27m29s). Both failures are the identical
 `test_place_biodiversity_summary_repository.py` pair (`'seen_before' ==
@@ -1175,7 +1309,85 @@ authorization field.
 
 ## 16. Transition checkpoint
 
-- **Accepted HEAD:** `3c60d79` (Ecological
+- **Accepted HEAD:** `763fe22` (Multi-Camera Place Experience v2
+  implementation commit)
+- **Schema:** v57 -> v57, unchanged. Every fix is a query-scope correction
+  or an additive field on an already-derived, never-persisted response
+  object -- no new/changed table.
+- **Latest accepted milestone:** Multi-Camera Place Experience v2 -- One
+  Observatory, Many Views
+- **Multi-Camera Place Experience v2 classification:** B -- an integrated
+  multi-camera product pass on the already-accepted Camera/Source +
+  Multi-Camera Maturity v1 foundation (cross-camera association engine,
+  Area vocabulary, provider compatibility, health WAN-vs-camera
+  disambiguation -- that milestone's own report had gone missing from this
+  file's own bookkeeping despite being a real, merged, accepted ancestor
+  of this HEAD; corrected here, see Lane F, above). See
+  [multi-camera-place-experience-v2-report.md](multi-camera-place-experience-v2-report.md)
+  for the full record: a real correctness defect (an archived camera's
+  history was unreachable from every discovery surface, contradicting this
+  codebase's own documented archive-only-preserves-history doctrine) found
+  and fixed with principled nuance across two rounds of correction --
+  Tier 1 test evidence first corrected an initial blanket overcorrection,
+  then this milestone's own full Tier 3 Core run caught a second, more
+  subtle one (`place_activity_report`'s unfiltered default had also become
+  archived-inclusive, contradicting a real pre-existing test from the
+  already-accepted "Gate C -- Meaningful Change Detection / Baseline
+  Comparison v1" milestone -- see §14); the fix that shipped preserves
+  every already-tested current-active-observatory default exactly (Bird
+  Log overview, Wildlife Insights, Biodiversity, Place Activity
+  Report/Today) while making that real history reachable by explicit
+  camera/`source_ids` selection, with Place Story and research/
+  conservation export unconditionally inclusive where no existing test
+  disagreed; Today now surfaces its own already-computed per-camera
+  activity/evidence-source facts for the first time (a compact "By camera"
+  section and per-highlight camera attribution, both gated to 2+ cameras
+  so Today stays a report, never a camera-monitoring dashboard); Bird
+  Log's camera filter now reaches its overview list, not only the
+  per-species drilldown; Zone Insights' Place-wide aggregate coverage was
+  a naive per-camera-hours sum, now a real elapsed-time interval union
+  matching Today's own already-correct semantics (proven with real
+  before/after numbers: 2 hours + 2 hours overlapping by 1 hour now
+  correctly reports 3, not 4); Dashboard distinguishes "some cameras need
+  attention" from "every armed camera needs attention," computed from
+  already-returned facts; `CameraConfigurationPage.tsx`'s own locally-
+  drifted 3-tone health-tone/generic-label presentation now reuses the
+  canonical `cameraHealthTone`/`cameraHealthLabel` every other health
+  surface already converged on; a real, measured (not merely claimed)
+  concurrency proof -- genuine concurrent `threading.Thread`s, one per
+  Stream, each with its own `ProductRepository`/connection against one
+  shared SQLite file, matching production's actual architecture -- found
+  zero cross-Stream contamination and no starvation across 2-camera and
+  4-camera-asymmetric topologies, and separately found, root-caused, and
+  honestly disclosed (an attempted bounded transient-retry fix did not
+  reliably close the gap and was deliberately reverted rather than shipped
+  unproven on Stage 7's own live admission/persistence boundary) a real,
+  reproducible occasional lost-candidate-Visit reliability gap under real
+  concurrent write contention; a comprehensive, real, executable 3-camera
+  product-shaped scenario (Front Feeder/Back Yard/Bird Bath, a real
+  cross-camera "associated" pair, an archival, a rename, a reviewed
+  correction) proves the whole chain -- identity, coverage, overlap dedup,
+  health, correction propagation -- coheres end to end with zero mocking
+  of product logic. Full Core 5106 passed / 2 failed (both the identical,
+  independently-reconfirmed pre-existing `test_place_biodiversity_summary_
+  repository.py` pair -- see §14) / 3 skipped / 23 deselected / 11 xfailed
+  (26m48s); `ruff check`/`tsc --noEmit`/`vite build` clean; full existing
+  e2e suite (128 tests) at 127 passed / 1 failed (the identical,
+  already-independently-documented pre-existing `reviewed-product-loop.
+  spec.ts` gap). Real, honestly-recorded remaining gaps -- not release
+  blockers, this is substantial product development -- are detailed in the
+  report's "Remaining major PRODUCT opportunities": the occasional
+  lost-candidate-Visit concurrent-write reliability gap (the single most
+  concrete, actionable follow-on item); notification-level (Calm
+  Attention) cross-camera grouping beyond the Dashboard status-view fix;
+  Place Story wildlife-event source attribution; camera-filter UI
+  consolidation (6+ independently-implemented controls); multi-camera
+  Place Feature linking; real GPU/CUDA-driver-level concurrent-inference
+  measurement (needs real hardware this sandbox lacks); a multi-hour
+  concurrent soak; the pre-existing, disclosed 2-Stream cap on the
+  separate legacy motion pipeline (RTSP/USB/local providers, not the
+  modern Observation Engine's own Camera Node path).
+- **Prior accepted HEAD:** `3c60d79` (Ecological
   Interoperability & Submission Workflows v1 implementation commit --
   filled in at reconciliation)
 - **Schema:** v56 -> v57. Two new additive tables:
@@ -1185,7 +1397,7 @@ authorization field.
   external-submission-preparation record, one mutable row per `(visit_id,
   destination)` until a self-reported external result freezes it). No
   existing table's shape changed.
-- **Latest accepted milestone:** Ecological Interoperability & Submission
+- **Prior accepted milestone:** Ecological Interoperability & Submission
   Workflows v1 -- Reviewed Observations -> eBird / iNaturalist / External
   Ecology
 - **Ecological Interoperability & Submission Workflows v1 classification:**
@@ -1599,4 +1811,14 @@ authorization field.
   alongside this milestone's own committed additions -- two peer sessions
   sharing this same working directory were confirmed idle (no file writes
   in 11+ and 105+ minutes respectively) before any write began.
+  Multi-Camera Place Experience v2 confirmed the identical seven preserved
+  files, untouched, at its own start, throughout (re-verified after two
+  `git stash push -u`/`pop` ruff-bisection round-trips), and again at
+  close alongside this milestone's own committed additions; two peer
+  sessions sharing this same working directory (`mockingbird-active-65`,
+  `mockingbird-active-c6`) were confirmed idle/read-only both before any
+  write began and again immediately before the implementation commit
+  (`git log`'s own unmoved HEAD across the full session, `763fe22`'s
+  parent still `21fbc42`, was independent, objective confirmation neither
+  peer had committed anything in the interim).
 - **Push:** explicit authorization required
