@@ -16,7 +16,11 @@ from pathlib import Path
 
 import pytest
 
-from mockingbird.observation.candidate_visit_adapter import CandidateVisitAuthorityAdapter
+from mockingbird.observation.candidate_visit_adapter import (
+    _MAX_PERSISTENCE_ATTEMPTS,
+    _PERSISTENCE_CONTENTION_CODE,
+    CandidateVisitAuthorityAdapter,
+)
 from mockingbird.observation.candidate_visit_authority import ObservationAuthorityMode
 from mockingbird.observation.contracts import (
     CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE,
@@ -314,6 +318,112 @@ def test_repository_failure_is_caught_and_recorded_not_raised(
 
     status = repository.get_observation_authority_state(stream_id=STREAM_ID)
     assert status.failure_count == 1
+
+
+# --------------------------------------------------------------------------
+# Concurrent Candidate Visit Persistence Reliability v1 (see docs/concurrent-
+# candidate-visit-persistence-reliability-v1-report.md): deterministic,
+# mock-based proof of the bounded retry/classification logic itself -- fast
+# and independent of real thread-timing luck. Complements the slower, real-
+# SQLite-lock end-to-end proof in
+# tests/test_concurrent_candidate_visit_persistence_reliability.py.
+# --------------------------------------------------------------------------
+
+
+def test_non_contention_failure_is_not_retried(
+    repository: ProductRepository, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A permanent (non-contention) repository failure must fail on the
+    very first attempt, exactly as before this milestone -- retrying it
+    would waste time for no benefit and could mask a genuine bug."""
+
+    tracklet = _tracklet("gen-1", 0, 4500)
+    proposal = assemble_visit_episodes((tracklet,)).proposals[0]
+    _activate(repository)
+    calls = []
+
+    def _boom(self, request):
+        calls.append(request.proposal.proposal_id)
+        raise ValueError("observation_candidate_visit_persistence_failed")
+
+    monkeypatch.setattr(ProductRepository, "create_candidate_visit_from_proposal", _boom)
+    outcome = _adapter(repository).attempt_candidate(
+        proposal, evidence_candidates=_evidence_candidates(),
+        evidence_bytes={"shadow-burst:hash-id": JPEG_BYTES}, observed_at=NOW,
+    )
+    assert outcome.outcome == "failed"
+    assert len(calls) == 1  # no retry for a non-retryable code
+    status = repository.get_observation_authority_state(stream_id=STREAM_ID)
+    assert status.failure_count == 1
+    assert status.last_failure_code == "observation_candidate_visit_persistence_failed"
+
+
+def test_transient_persistence_contention_recovers_via_bounded_retry(
+    repository: ProductRepository, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The demonstrated root cause (a real `sqlalchemy.exc.OperationalError`
+    -- SQLite lock/busy contention under real concurrent multi-Stream
+    writes, see `ProductRepository.create_candidate_visit_from_proposal`'s
+    own docstring) recovers instead of silently losing the candidate: a
+    proposal that fails with the classified-retryable code on its first two
+    attempts must still end up created, not lost, on the real, unmodified
+    repository call it eventually succeeds on."""
+
+    tracklet = _tracklet("gen-1", 0, 4500)
+    proposal = assemble_visit_episodes((tracklet,)).proposals[0]
+    _activate(repository)
+    real_create = ProductRepository.create_candidate_visit_from_proposal
+    calls = []
+
+    def _flaky(self, request):
+        calls.append(request.proposal.proposal_id)
+        if len(calls) < 3:
+            raise ValueError(_PERSISTENCE_CONTENTION_CODE)
+        return real_create(self, request)
+
+    monkeypatch.setattr(ProductRepository, "create_candidate_visit_from_proposal", _flaky)
+    outcome = _adapter(repository).attempt_candidate(
+        proposal, evidence_candidates=_evidence_candidates(), evidence_bytes={"shadow-burst:hash-id": JPEG_BYTES},
+        observed_at=NOW,
+    )
+    assert outcome.created  # recovered -- never silently lost
+    assert len(calls) == 3
+    # A candidate lost this way must never also show up as a recorded
+    # failure -- the eventual success is the only fact of record.
+    status = repository.get_observation_authority_state(stream_id=STREAM_ID)
+    assert status.failure_count == 0
+
+
+def test_persistent_contention_exhausts_bounded_retry_and_is_recorded_failed(
+    repository: ProductRepository, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Contention that never clears must still give up -- bounded recovery,
+    never an infinite retry loop -- and the resulting `"failed"` outcome
+    must be honestly distinguishable, in the durable per-Stream diagnostic,
+    from a failure that was never retried at all."""
+
+    tracklet = _tracklet("gen-1", 0, 4500)
+    proposal = assemble_visit_episodes((tracklet,)).proposals[0]
+    _activate(repository)
+    calls = []
+
+    def _always_contended(self, request):
+        calls.append(request.proposal.proposal_id)
+        raise ValueError(_PERSISTENCE_CONTENTION_CODE)
+
+    monkeypatch.setattr(ProductRepository, "create_candidate_visit_from_proposal", _always_contended)
+    outcome = _adapter(repository).attempt_candidate(
+        proposal, evidence_candidates=_evidence_candidates(), evidence_bytes={"shadow-burst:hash-id": JPEG_BYTES},
+        observed_at=NOW,
+    )
+    assert outcome.outcome == "failed"
+    assert not outcome.created
+    assert len(calls) == _MAX_PERSISTENCE_ATTEMPTS  # bounded -- not one, not unbounded
+    status = repository.get_observation_authority_state(stream_id=STREAM_ID)
+    # Exactly one recorded failure per genuinely-lost candidate, never one
+    # per internal retry attempt.
+    assert status.failure_count == 1
+    assert status.last_failure_code == f"{_PERSISTENCE_CONTENTION_CODE}:retries_exhausted"
 
 
 # --------------------------------------------------------------------------

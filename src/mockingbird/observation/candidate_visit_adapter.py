@@ -19,6 +19,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from datetime import datetime
 import json
+import random
+import time
 from typing import Mapping
 
 from mockingbird.observation.contracts import CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE, EvidenceCandidate
@@ -30,6 +32,30 @@ from mockingbird.repository.product_repository import (
     CreateCandidateVisitRequest,
     ProductRepository,
 )
+
+# Concurrent Candidate Visit Persistence Reliability v1 (see docs/concurrent-
+# candidate-visit-persistence-reliability-v1-report.md): the one demonstrated,
+# reproducible failure -- a real `sqlalchemy.exc.OperationalError` ("database
+# is locked") under real concurrent multi-Stream SQLite writes -- is retried
+# *here*, at the caller boundary, never inside `ProductRepository.create_
+# candidate_visit_from_proposal` itself (Multi-Camera Place Experience v2
+# already tried that and reverted it -- see that method's own docstring).
+# Each attempt below calls the repository method completely fresh, so it
+# always opens a brand-new session/transaction; the method's own idempotency
+# guarantee (re-validated from scratch every call, keyed on `proposal_id`,
+# inside one atomic transaction) is what makes retrying the *whole* call
+# safe -- a retried attempt either creates the candidate or discovers it was
+# already created by a racing attempt and returns that same one, never a
+# duplicate. Only the one classified-retryable code is retried; every other
+# repository failure still fails on the very first attempt, unchanged.
+_PERSISTENCE_CONTENTION_CODE = "observation_candidate_visit_persistence_contention"
+#: Short, deterministic, jittered backoff between attempts -- long enough to
+#: let a genuinely transient SQLite writer finish and release its lock, far
+#: too short to meaningfully delay the next frame on this Stream's own
+#: dedicated processing thread (a live Camera Node's own frame cadence is
+#: far slower than this). Bounded: exactly 3 total attempts, never unbounded.
+_PERSISTENCE_RETRY_DELAYS_SECONDS: tuple[float, ...] = (0.05, 0.15)
+_MAX_PERSISTENCE_ATTEMPTS = len(_PERSISTENCE_RETRY_DELAYS_SECONDS) + 1
 
 
 @dataclass(frozen=True)
@@ -103,7 +129,16 @@ class CandidateVisitAuthorityAdapter:
         Never raises: a repository-level failure is caught, recorded as a
         sanitized diagnostic, and returned as an ordinary `"failed"`
         outcome, so a caller driving a live observation loop can always
-        continue to the next frame/proposal."""
+        continue to the next frame/proposal.
+
+        Concurrent Candidate Visit Persistence Reliability v1: a repository
+        failure classified as `_PERSISTENCE_CONTENTION_CODE` (real SQLite
+        lock/busy contention -- see `ProductRepository.create_candidate_
+        visit_from_proposal`'s own docstring) is retried up to
+        `_MAX_PERSISTENCE_ATTEMPTS` times, fresh each time, before being
+        recorded and returned as `"failed"`. Every other repository failure
+        is recorded and returned exactly as before -- on the first
+        attempt, no retry."""
 
         visit_proposal = project_to_visit_proposal(proposal)
         # Same-Frame Species Evidence v1 (see docs/same-frame-species-
@@ -164,21 +199,38 @@ class CandidateVisitAuthorityAdapter:
             confidence_evidence_json=json.dumps(asdict(proposal.confidence_evidence), sort_keys=True),
         )
         request = CreateCandidateVisitRequest(proposal=facts, observed_at=observed_at, evidence_items=evidence_items)
-        try:
-            outcome = self._repository.create_candidate_visit_from_proposal(request)
-        except ValueError as error:
-            # A genuine repository/storage failure (never an ordinary policy
-            # rejection -- those come back as a typed outcome, not a raised
-            # error). Record it and keep going; this adapter must never be
-            # the reason a live observation loop crashes.
-            failure_code = str(error) or "observation_candidate_visit_persistence_failed"
-            self._repository.record_observation_authority_failure(
-                stream_id=proposal.stream_id, failure_code=failure_code, now=observed_at,
-            )
-            return CandidateAttemptResult(proposal.proposal_id, "failed", failure_code, None, None)
-        return CandidateAttemptResult(
-            outcome.proposal_id, outcome.outcome, outcome.reason, outcome.visit_id, outcome.event_id,
-        )
+        attempt = 0
+        retried = False
+        while True:
+            attempt += 1
+            try:
+                outcome = self._repository.create_candidate_visit_from_proposal(request)
+            except ValueError as error:
+                # A genuine repository/storage failure (never an ordinary
+                # policy rejection -- those come back as a typed outcome,
+                # not a raised error).
+                failure_code = str(error) or "observation_candidate_visit_persistence_failed"
+                if failure_code == _PERSISTENCE_CONTENTION_CODE and attempt < _MAX_PERSISTENCE_ATTEMPTS:
+                    retried = True
+                    delay = _PERSISTENCE_RETRY_DELAYS_SECONDS[attempt - 1]
+                    time.sleep(delay + random.uniform(0, delay))
+                    continue
+                # Permanent failure, or a retryable one that exhausted its
+                # bounded budget -- either way, record it and keep going;
+                # this adapter must never be the reason a live observation
+                # loop crashes. A retry-exhausted contention failure gets a
+                # distinguishable suffix so the bounded per-Stream diagnostic
+                # (`last_failure_code`) can tell "we tried and gave up" apart
+                # from "this was never retryable in the first place".
+                recorded_code = f"{failure_code}:retries_exhausted" if retried else failure_code
+                self._repository.record_observation_authority_failure(
+                    stream_id=proposal.stream_id, failure_code=recorded_code, now=observed_at,
+                )
+                return CandidateAttemptResult(proposal.proposal_id, "failed", failure_code, None, None)
+            else:
+                return CandidateAttemptResult(
+                    outcome.proposal_id, outcome.outcome, outcome.reason, outcome.visit_id, outcome.event_id,
+                )
 
 
 def _build_evidence_items(

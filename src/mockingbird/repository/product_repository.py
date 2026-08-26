@@ -31,6 +31,7 @@ from sqlalchemy import (
     Boolean, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text,
 )
 from sqlalchemy import Engine, and_, delete, func, or_, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from mockingbird.security.passwords import (
@@ -6593,8 +6594,32 @@ class ProductRepository:
         time budget. Recorded honestly as a real, measured, deliberately
         NOT-fixed-this-pass finding -- see the milestone report's
         "Fairness / backpressure" and "Remaining major PRODUCT
-        opportunities" -- rather than force an under-tested change to the
-        most critical write path in the product."""
+        opportunities".
+
+        Concurrent Candidate Visit Persistence Reliability v1 (see
+        docs/concurrent-candidate-visit-persistence-reliability-v1-report.md)
+        closed this gap by fixing the *boundary*, not by re-attempting a
+        wider retry here: this method's own existing idempotency guarantee
+        (a repeated call for the same `proposal_id` always converges on
+        exactly one Visit, proven by the `existing` check below plus full
+        transaction atomicity -- SQLAlchemy's `session.begin()` rolls back
+        the *entire* attempt, including every provisional id/row, on any
+        exception) makes it provably safe to retry the *whole* call from a
+        fresh session. The classification below distinguishes a genuine
+        SQLite lock/busy `OperationalError` (`"database is locked"` /
+        `"database is busy"` -- the one demonstrated, reproducible
+        mechanism; forced deterministically in
+        `tests/test_concurrent_candidate_visit_persistence_reliability.py`
+        via a real second connection holding a real write lock, and
+        reproduced under real concurrent multi-thread load with induced
+        host contention) from every other repository/storage failure, which
+        stays classified and behaves exactly as before. The bounded retry
+        itself lives one layer up, in `candidate_visit_adapter.
+        attempt_candidate` -- deliberately *not* here again, since wrapping
+        it around this already-fully-idempotent, already-fresh-session
+        boundary (rather than re-using a session a failed flush may have
+        left rollback-only) is the one concrete alternative the reverted
+        attempt's own report named as untried."""
 
         proposal = request.proposal
         try:
@@ -6654,7 +6679,36 @@ class ProductRepository:
                     return outcome
         except ValueError:
             raise
+        except OperationalError as error:
+            # The one demonstrated, reproducible mechanism (see this
+            # method's own docstring): real SQLite lock/busy contention
+            # across independent per-Stream connections to one shared
+            # file. `error.orig` is the underlying `sqlite3.
+            # OperationalError`; its message is the one place SQLite
+            # actually distinguishes this from every other `OperationalError`
+            # shape (a genuine disk/corruption fault, for example, must
+            # never be classified as retryable). Logged here -- not only
+            # re-raised -- because the caller only ever sees this method's
+            # own sanitized `ValueError` string, never the original
+            # exception detail.
+            detail = str(getattr(error, "orig", None) or error).lower()
+            contention = "locked" in detail or "busy" in detail
+            code = (
+                "observation_candidate_visit_persistence_contention" if contention
+                else "observation_candidate_visit_persistence_failed"
+            )
+            log_error_event(
+                "observation_engine",
+                "candidate_visit_persistence_contention" if contention else "candidate_visit_persistence_failed",
+                code=code, exception=error, stream_id=proposal.stream_id, proposal_id=proposal.proposal_id,
+            )
+            raise ValueError(code) from error
         except Exception as error:  # pragma: no cover - defensive repository boundary
+            log_error_event(
+                "observation_engine", "candidate_visit_persistence_failed",
+                code="observation_candidate_visit_persistence_failed",
+                exception=error, stream_id=proposal.stream_id, proposal_id=proposal.proposal_id,
+            )
             raise ValueError("observation_candidate_visit_persistence_failed") from error
 
     def _create_candidate_visit_locked(
