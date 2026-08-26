@@ -25,6 +25,7 @@ export type Page =
   | "place-story"
   | "alerts-inbox"
   | "analytics"
+  | "ecological-destinations"
   | "exports"
   | "saved-media-retention"
   | "worker-status"
@@ -62,6 +63,7 @@ const pagePaths: Partial<Record<Page, string>> = {
   "place-story": "/place-story",
   "alerts-inbox": "/alerts",
   analytics: "/analytics",
+  "ecological-destinations": "/ecological-destinations",
   exports: "/exports",
   "saved-media-retention": "/retention",
   "worker-status": "/worker-status",

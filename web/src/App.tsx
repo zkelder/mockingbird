@@ -26,6 +26,7 @@ import { CameraSetupPage } from "./pages/CameraSetupPage";
 import { CameraConfigurationPage } from "./pages/CameraConfigurationPage";
 import { OnboardingWizard } from "./components/OnboardingWizard";
 import { ClassifierManifestPage } from "./pages/ClassifierManifestPage";
+import { EcologicalDestinationsPage } from "./pages/EcologicalDestinationsPage";
 import { ClassifierReadinessPage } from "./pages/ClassifierReadinessPage";
 import { CollectionsPage } from "./pages/CollectionsPage";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -108,6 +109,7 @@ const productNavItems: Array<{ page: Page; label: string; minRole?: UserRole }> 
   { page: "place-story", label: "Place Story" },
   { page: "activity-library", label: "Activity" },
   { page: "analytics", label: "Insights" },
+  { page: "ecological-destinations", label: "Ecological Destinations" },
   { page: "settings", label: "Settings" },
   { page: "users", label: "Users", minRole: "administrator" },
 ];
@@ -866,6 +868,10 @@ export default function App() {
       );
     }
 
+    if (page === "ecological-destinations") {
+      return <EcologicalDestinationsPage onOpenVisit={openVisit} />;
+    }
+
     if (page === "stream-detail" && selectedStream) {
       return (
         <StreamDetailPage
@@ -913,6 +919,7 @@ export default function App() {
           correctionPrefill={visitCorrectionPrefill}
           onOpenCollections={() => openCollections()}
           onOpenActivityLibrary={openActivityLibrary}
+          onOpenEcologicalDestinations={() => setPage("ecological-destinations")}
         />
       );
     }

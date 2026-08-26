@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from mockingbird.api.schemas import (
     CamtrapDpExportRequest,
     ConservationReportRequest,
+    DarwinCoreExportRequest,
     ResearchExportFilters,
     ResearchExportRequest,
 )
@@ -155,6 +156,52 @@ def run_export_camtrap_dp(argv: list[str] | None = None) -> int:
         for error in result.validation.errors:
             print(f"  error: {error}")
     return 0 if result.validation.valid else 1
+
+
+def run_export_darwin_core(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="mockingbird export-darwin-core",
+        description=(
+            "Export research-safe reviewed Observations as a bounded Darwin Core "
+            "Occurrence-core archive (https://dwc.tdwg.org/) -- additive to, never a "
+            "replacement for, export-camtrap-dp."
+        ),
+    )
+    _add_filter_arguments(parser)
+    parser.add_argument("--site-name", default=None, help="Explicit site/location name (never inferred).")
+    parser.add_argument("--latitude", type=float, default=None, help="Explicit site latitude (never inferred).")
+    parser.add_argument("--longitude", type=float, default=None, help="Explicit site longitude (never inferred).")
+    parser.add_argument("--coordinate-uncertainty-meters", type=float, default=None)
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--output-name", default=None)
+    parser.add_argument("--json", action="store_true")
+    args = parser.parse_args(argv)
+
+    repository = ProductRepository()
+    try:
+        result = repository.export_darwin_core_package(
+            DarwinCoreExportRequest(
+                filters=_filters_from_args(args),
+                site_name=args.site_name,
+                latitude=args.latitude,
+                longitude=args.longitude,
+                coordinate_uncertainty_meters=args.coordinate_uncertainty_meters,
+                dry_run=args.dry_run,
+                output_name=args.output_name,
+            )
+        )
+    finally:
+        repository.close()
+
+    if args.json:
+        print(result.model_dump_json(indent=2))
+    else:
+        print(f"export_id: {result.export_id}")
+        print(f"output_directory: {result.output_directory}")
+        print(f"schema_version: {result.schema_version}")
+        print(f"occurrences: {result.occurrence_count}")
+        print(f"dry_run: {result.dry_run}")
+    return 0
 
 
 def run_conservation_report(argv: list[str] | None = None) -> int:

@@ -69,6 +69,21 @@ def test_export_camtrap_dp_accepts_explicit_site_override() -> None:
     assert exit_code == 0
 
 
+def test_export_darwin_core_dry_run_end_to_end(capsys: pytest.CaptureFixture[str]) -> None:
+    exit_code = research_cli.run_export_darwin_core(["--dry-run", "--json"])
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert '"dry_run": true' in output
+    assert '"schema_version": "darwin-core-archive-v1"' in output
+
+
+def test_export_darwin_core_accepts_explicit_site_override() -> None:
+    exit_code = research_cli.run_export_darwin_core(
+        ["--dry-run", "--site-name", "Test Yard", "--latitude", "40.0", "--longitude", "-105.0"]
+    )
+    assert exit_code == 0
+
+
 def test_conservation_report_end_to_end(capsys: pytest.CaptureFixture[str]) -> None:
     exit_code = research_cli.run_conservation_report(
         ["--start-at", "2026-08-01T00:00:00Z", "--end-at", "2026-08-08T00:00:00Z"]

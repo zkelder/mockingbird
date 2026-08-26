@@ -5720,3 +5720,150 @@ export interface PlaceStoryRequest {
   page_size?: number;
   offset?: number;
 }
+
+// --- Ecological Interoperability & Submission Workflows v1 ---------------
+// See docs/ecological-interoperability-submission-v1-contract.md. A
+// distinct concept from the generic research-export family above:
+// preparing/tracking a Reviewed Visit's submission to a specific named
+// external ecological destination.
+
+export type EcologicalDestinationKey = "inaturalist" | "ebird";
+
+export interface EcologicalDestinationInfo {
+  key: EcologicalDestinationKey;
+  display_name: string;
+  offered: boolean;
+  offered_reason?: string | null;
+}
+
+export type EcologicalLocationChoice = "none" | "coarse" | "exact";
+export type EcologicalMediaPolicy = "none" | "metadata_only";
+
+export interface EcologicalLocationInput {
+  choice: EcologicalLocationChoice;
+  latitude?: number | null;
+  longitude?: number | null;
+  place_name?: string | null;
+}
+
+export interface EcologicalMediaInput {
+  policy: EcologicalMediaPolicy;
+  media_asset_id?: string | null;
+}
+
+export interface ResearchExportFiltersInput {
+  start_at?: string | null;
+  end_at?: string | null;
+  stream_ids?: string[] | null;
+  source_ids?: string[] | null;
+  taxon_labels?: string[] | null;
+  acquisition_scope?: "live" | "offline" | "both";
+  collection_id?: string | null;
+}
+
+export interface EcologicalEligibilityPreviewRequest {
+  destination: EcologicalDestinationKey;
+  filters?: ResearchExportFiltersInput;
+}
+
+export type EcologicalRecordStatus = "eligible" | "needs_input" | "excluded";
+
+export interface EcologicalEligibilityPreviewItem {
+  visit_id: string;
+  classification: string;
+  taxon_label?: string | null;
+  taxon_display_name?: string | null;
+  captured_at: string;
+  status: EcologicalRecordStatus;
+  needs_input_reasons: string[];
+  excluded_reasons: string[];
+}
+
+export interface EcologicalEligibilityPreviewResponse {
+  destination: EcologicalDestinationInfo;
+  items: EcologicalEligibilityPreviewItem[];
+  eligible_count: number;
+  needs_input_count: number;
+  excluded_count: number;
+}
+
+export interface PrepareEcologicalSubmissionsRequest {
+  visit_ids: string[];
+  destination: EcologicalDestinationKey;
+  location?: EcologicalLocationInput;
+  media?: EcologicalMediaInput;
+}
+
+export type EcologicalSubmissionStatus = "prepared" | "needs_input" | "excluded" | "exported" | "submitted";
+
+export interface EcologicalSubmissionRecord {
+  id: string;
+  visit_id: string;
+  destination: EcologicalDestinationKey;
+  status: EcologicalSubmissionStatus;
+  is_stale: boolean;
+  content_fingerprint: string;
+  taxon_label?: string | null;
+  taxon_scientific_name?: string | null;
+  destination_taxon_id?: string | null;
+  destination_taxon_match_status?: "matched" | "ambiguous" | "not_found" | null;
+  taxonomy_mapping_version?: string | null;
+  location_choice: EcologicalLocationChoice;
+  location_latitude?: number | null;
+  location_longitude?: number | null;
+  location_place_name?: string | null;
+  media_policy: EcologicalMediaPolicy;
+  media_selection_asset_id?: string | null;
+  needs_input_reasons: string[];
+  excluded_reasons: string[];
+  prepared_at: string;
+  prepared_by_user_id?: string | null;
+  exported_at?: string | null;
+  external_id?: string | null;
+  external_url?: string | null;
+  result_recorded_at?: string | null;
+  result_notes?: string | null;
+  updated_at: string;
+}
+
+export interface ExportEcologicalSubmissionsRequest {
+  submission_ids: string[];
+}
+
+export interface ExportEcologicalSubmissionsSkip {
+  submission_id: string;
+  reason: "stale_since_prepared" | "not_eligible";
+}
+
+export interface ExportEcologicalSubmissionsResponse {
+  destination: EcologicalDestinationKey;
+  output_directory?: string | null;
+  files: ClassifierManifestExportFile[];
+  included_count: number;
+  skipped: ExportEcologicalSubmissionsSkip[];
+}
+
+export interface RecordEcologicalSubmissionResultRequest {
+  external_id?: string | null;
+  external_url?: string | null;
+  result_notes?: string | null;
+}
+
+export interface DarwinCoreExportRequest {
+  filters?: ResearchExportFiltersInput;
+  site_name?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  coordinate_uncertainty_meters?: number | null;
+  dry_run?: boolean;
+  output_name?: string | null;
+}
+
+export interface DarwinCoreExportResponse {
+  export_id: string;
+  output_directory?: string | null;
+  files: ClassifierManifestExportFile[];
+  schema_version: string;
+  occurrence_count: number;
+  dry_run: boolean;
+}

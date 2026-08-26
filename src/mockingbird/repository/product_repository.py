@@ -169,10 +169,31 @@ from mockingbird.research.camtrap_dp import (
     OBSERVATION_CSV_FIELDNAMES as CAMTRAP_OBSERVATION_CSV_FIELDNAMES,
 )
 from mockingbird.research.conservation_report import ConservationReport, compute_conservation_report
+from mockingbird.research.darwin_core import (
+    DarwinCoreMappingOptions,
+    OCCURRENCE_CSV_FIELDNAMES as DARWIN_CORE_OCCURRENCE_CSV_FIELDNAMES,
+    build_darwin_core_archive,
+    build_eml_xml as darwin_core_eml_xml,
+    build_meta_xml as darwin_core_meta_xml,
+    occurrence_to_row as darwin_core_occurrence_to_row,
+)
 from mockingbird.research.eligibility import (
     RESEARCH_ELIGIBILITY_POLICY_VERSION,
     evaluate_research_export_eligibility,
 )
+from mockingbird.ecological.adapters import (
+    DESTINATION_ADAPTERS,
+    DestinationTaxonomyMapping,
+    LocationSelection,
+    MediaSelection,
+    build_submission_candidate,
+)
+from mockingbird.ecological.fingerprint import submission_candidate_fingerprint
+from mockingbird.ecological.inaturalist_csv import (
+    INATURALIST_CSV_COLUMNS,
+    submission_candidate_to_inaturalist_row,
+)
+from mockingbird.ecological import inaturalist_taxonomy
 from mockingbird.research.research_export import (
     OBSERVATION_CSV_FIELDNAMES as RESEARCH_OBSERVATION_CSV_FIELDNAMES,
     RESEARCH_EXPORT_SCHEMA_VERSION,
@@ -326,6 +347,18 @@ from mockingbird.api.schemas import (
     CamtrapDpExportRequest,
     CamtrapDpExportResponse,
     CamtrapDpValidation,
+    DarwinCoreExportRequest,
+    DarwinCoreExportResponse,
+    EcologicalDestinationInfo,
+    EcologicalEligibilityPreviewItem,
+    EcologicalEligibilityPreviewRequest,
+    EcologicalEligibilityPreviewResponse,
+    EcologicalSubmissionRecord,
+    ExportEcologicalSubmissionsRequest,
+    ExportEcologicalSubmissionsResponse,
+    ExportEcologicalSubmissionsSkip,
+    PrepareEcologicalSubmissionsRequest,
+    RecordEcologicalSubmissionResultRequest,
     ConservationReportRequest,
     ConservationReportResponse,
     ConservationSpeciesEntry,
@@ -799,6 +832,8 @@ from mockingbird.storage.models import (
     AuditLogEntryModel,
     Base,
     BioClipIdentificationAttemptModel,
+    EcologicalSubmissionRecordModel,
+    EcologicalTaxonomyMappingModel,
     CameraSetupOperationModel,
     CameraConfigurationRevisionModel,
     CameraHealthIncidentModel,
@@ -1279,6 +1314,14 @@ DEFAULT_CLASSIFIER_MANIFEST_EXPORT_ROOT = Path("data/classifier_manifest_exports
 # subdirectory per export" convention.
 DEFAULT_RESEARCH_EXPORT_ROOT = Path("data/research_exports")
 
+# Ecological Interoperability & Submission Workflows v1 (see docs/ecological-
+# interoperability-submission-v1-contract.md). Mirrors DEFAULT_RESEARCH_
+# EXPORT_ROOT's own convention -- a distinct root because this is a
+# different concept (destination-submission packages, not a generic
+# dataset/standards export), not because the underlying safety pattern
+# differs.
+DEFAULT_ECOLOGICAL_EXPORT_ROOT = Path("data/ecological_exports")
+
 # `ObservationCandidateVisitModel.provider_key` -> the honest, disclosed
 # `ResearchObservation.acquisition_type` it implies (see "Provider-neutral"
 # in the governing brief). Any provider key *not* listed here -- every real
@@ -1316,6 +1359,51 @@ CAMTRAP_DP_EXPORT_CONTENT_TYPES: dict[str, str] = {
     "observations.csv": "text/csv",
     "datapackage.json": "application/json",
 }
+
+DARWIN_CORE_EXPORT_CONTENT_TYPES: dict[str, str] = {
+    "occurrence.csv": "text/csv",
+    "meta.xml": "application/xml",
+    "eml.xml": "application/xml",
+}
+
+#: One CSV per batch export -- iNaturalist's own bulk importer expects a
+#: single file (see "iNaturalist workflow" in the governing contract doc).
+ECOLOGICAL_SUBMISSIONS_EXPORT_CONTENT_TYPES: dict[str, str] = {
+    "inaturalist_import.csv": "text/csv",
+}
+
+#: Leading characters a spreadsheet application (Excel, Google Sheets,
+#: LibreOffice Calc) treats as the start of a formula when a CSV cell is
+#: opened -- the classic "CSV injection" class Phase 39 of the Ecological
+#: Interoperability & Submission Workflows v1 milestone brief calls out by
+#: name. Applies to every CSV this repository writes (`_write_csv`, used by
+#: the generic research export, Camtrap DP, Darwin Core, and the new
+#: ecological-submission exports alike) since a user-supplied free-text
+#: field (a Camtrap DP `site_name`, an ecological-submission `place_name`,
+#: a Darwin Core `locality`) can end up as a cell value verbatim.
+_CSV_FORMULA_TRIGGER_CHARACTERS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_injection_safe_value(value: Any) -> Any:
+    """Prefix a string cell that would otherwise be interpreted as a
+    formula with a single quote -- the standard, widely-used mitigation
+    (OWASP's own recommended CSV-injection defense). Never touches a
+    non-string value (a number, `None`, a bool) -- there is nothing to
+    sanitize there, and stringifying one would silently change its type in
+    the exported file. A string that starts with `-` or `+` but is itself a
+    plain, valid number (a formatted negative/positive latitude/longitude,
+    for example) is never a formula and must round-trip unchanged -- a
+    real, caught-by-testing bug in an earlier version of this function
+    corrupted every western/southern-hemisphere coordinate this way."""
+
+    if not isinstance(value, str) or not value.startswith(_CSV_FORMULA_TRIGGER_CHARACTERS):
+        return value
+    try:
+        float(value)
+    except ValueError:
+        return f"'{value}"
+    return value
+
 
 RESEARCH_MEDIA_CSV_FIELDNAMES: tuple[str, ...] = (
     "media_id", "observation_id", "evidence_role", "is_crop",
@@ -3790,7 +3878,9 @@ class ProductRepository:
         media_root: str | Path | None = None,
         classifier_manifest_export_root: str | Path | None = None,
         research_export_root: str | Path | None = None,
+        ecological_export_root: str | Path | None = None,
         weather_requester: weather_provider.WeatherRequester | None = None,
+        inaturalist_taxonomy_requester: inaturalist_taxonomy.TaxonomyLookupRequester | None = None,
     ) -> None:
         self.db_url = resolve_database_url(db_url)
         self.media_root = resolve_media_root(media_root)
@@ -3798,6 +3888,7 @@ class ProductRepository:
             classifier_manifest_export_root or DEFAULT_CLASSIFIER_MANIFEST_EXPORT_ROOT
         )
         self.research_export_root = Path(research_export_root or DEFAULT_RESEARCH_EXPORT_ROOT)
+        self.ecological_export_root = Path(ecological_export_root or DEFAULT_ECOLOGICAL_EXPORT_ROOT)
         self.engine = engine or create_database_engine(self.db_url)
         self.schema_status = initialize_database(
             self.engine, pre_migration_hook=self._create_pre_migration_safety_backup
@@ -3844,6 +3935,12 @@ class ProductRepository:
         # a real socket (mirrors `onvif_client.OnvifRequester`'s identical
         # seam) -- see docs/environmental-context-v2-contract.md "Phase 1".
         self._weather_requester = weather_requester or weather_provider.UrlLibWeatherRequester()
+        # Ecological Interoperability & Submission Workflows v1: dependency-
+        # injected so tests never open a real socket -- mirrors `self.
+        # _weather_requester`'s identical seam, immediately above.
+        self._inaturalist_taxonomy_requester = (
+            inaturalist_taxonomy_requester or inaturalist_taxonomy.UrlLibTaxonomyLookupRequester()
+        )
         self.seed_if_empty()
 
     def close(self) -> None:
@@ -33460,7 +33557,9 @@ class ProductRepository:
             writer = csv.DictWriter(handle, fieldnames=fieldnames)
             writer.writeheader()
             for row in rows:
-                writer.writerow({name: row.get(name) for name in fieldnames})
+                writer.writerow(
+                    {name: _csv_injection_safe_value(row.get(name)) for name in fieldnames}
+                )
 
     def research_export_eligibility_preview(
         self, filters: ResearchExportFilters,
@@ -33979,6 +34078,573 @@ class ProductRepository:
             updated_at=_as_utc(model.updated_at),
             eligible_observation_count=eligible_count,
             excluded_count=excluded_count,
+        )
+
+    # -----------------------------------------------------------------
+    # Ecological Interoperability & Submission Workflows v1 (see docs/
+    # ecological-interoperability-submission-v1-contract.md). Composes
+    # `ResearchObservation`/the research-eligibility gate above -- never a
+    # second truth system. Darwin Core lives with the research-export
+    # family above (`export_darwin_core_package`, near `export_camtrap_dp_
+    # package`); this section is the destination-submission concept
+    # specifically (iNaturalist prepare/export; eBird deliberately not
+    # offered -- see "Destination decisions" in the governing contract doc).
+    # -----------------------------------------------------------------
+
+    def ecological_destinations(self) -> list[EcologicalDestinationInfo]:
+        """Static, built-in destination registry (Phase 28) -- no database
+        access, no network call. See `mockingbird.ecological.adapters.
+        DESTINATION_ADAPTERS`."""
+
+        infos: list[EcologicalDestinationInfo] = []
+        for key, adapter in DESTINATION_ADAPTERS.items():
+            requirements = adapter.requirements()
+            infos.append(
+                EcologicalDestinationInfo(
+                    key=key, display_name=adapter.display_name,
+                    offered=requirements.offered, offered_reason=requirements.offered_reason,
+                )
+            )
+        return infos
+
+    @staticmethod
+    def _ecological_taxonomy_query_text(observation: ResearchObservation) -> str:
+        return observation.taxon_scientific_name or observation.taxon_display_name or observation.taxon_label or ""
+
+    def _ecological_taxonomy_mapping_from_cache(
+        self, session: Session, destination: str, taxon_label: str,
+    ) -> DestinationTaxonomyMapping | None:
+        """Cache-only read -- never calls the network. Used wherever a
+        result must stay cheap and offline-safe (list/get, staleness
+        checks -- see "Offline preparation" in the governing contract doc:
+        reading already-prepared state must never require a network call).
+        """
+
+        row = session.scalar(
+            select(EcologicalTaxonomyMappingModel).where(
+                EcologicalTaxonomyMappingModel.destination == destination,
+                EcologicalTaxonomyMappingModel.mockingbird_taxon_label == taxon_label,
+            )
+        )
+        if row is None:
+            return None
+        return DestinationTaxonomyMapping(
+            match_status=row.match_status,
+            destination_taxon_id=row.destination_taxon_id,
+            destination_scientific_name=row.destination_scientific_name,
+            destination_display_name=row.destination_display_name,
+            taxonomy_source_version=row.taxonomy_source_version,
+        )
+
+    def _resolve_ecological_taxonomy_mapping(
+        self, session: Session, destination: str, observation: ResearchObservation, *, now: datetime,
+    ) -> DestinationTaxonomyMapping | None:
+        """Cache-or-live resolution for one `confirmed_taxon` observation
+        (Phase 7: "a bounded mapping cache may be appropriate" for a
+        credential-free destination lookup). Returns `None` for any other
+        classification (an honestly-unidentified record never needs a
+        mapping -- see "Confirmed unidentified wildlife" in the governing
+        contract doc) and for any destination other than iNaturalist (the
+        only destination with a live, credential-free taxonomy lookup;
+        eBird is never offered, so a mapping for it would have zero effect
+        on eligibility regardless -- see `EBirdAdapter`)."""
+
+        if observation.classification != "confirmed_taxon" or destination != "inaturalist":
+            return None
+        taxon_label = observation.taxon_label
+        if not taxon_label:
+            return None
+
+        cached = self._ecological_taxonomy_mapping_from_cache(session, destination, taxon_label)
+        if cached is not None:
+            return cached
+
+        query_text = self._ecological_taxonomy_query_text(observation)
+        if not query_text:
+            return None
+        try:
+            match = inaturalist_taxonomy.resolve_taxon(query_text, requester=self._inaturalist_taxonomy_requester)
+        except inaturalist_taxonomy.TaxonomyLookupError:
+            # A transient network/lookup failure must never be cached as a
+            # false "not_found" -- mirrors `weather_provider`'s identical
+            # "degrade honestly, never poison the cache" handling. Leaves
+            # this taxon unresolved for now; the next call retries fresh
+            # rather than remembering a spurious failure forever.
+            return None
+
+        session.add(
+            EcologicalTaxonomyMappingModel(
+                id=self._next_id(session, EcologicalTaxonomyMappingModel, "ecological-taxonomy-mapping"),
+                destination=destination, mockingbird_taxon_label=taxon_label,
+                match_status=match.status, destination_taxon_id=match.taxon_id,
+                destination_scientific_name=match.scientific_name, destination_display_name=match.display_name,
+                taxonomy_source_version=inaturalist_taxonomy.INATURALIST_TAXONOMY_SOURCE_VERSION,
+                query_text=query_text, resolved_at=now,
+            )
+        )
+        session.flush()
+        return DestinationTaxonomyMapping(
+            match_status=match.status, destination_taxon_id=match.taxon_id,
+            destination_scientific_name=match.scientific_name, destination_display_name=match.display_name,
+            taxonomy_source_version=inaturalist_taxonomy.INATURALIST_TAXONOMY_SOURCE_VERSION,
+        )
+
+    @staticmethod
+    def _ecological_location_selection_from_record(model: EcologicalSubmissionRecordModel) -> LocationSelection:
+        return LocationSelection(
+            choice=model.location_choice, latitude=model.location_latitude,
+            longitude=model.location_longitude, place_name=model.location_place_name,
+        )
+
+    @staticmethod
+    def _ecological_media_selection_from_record(model: EcologicalSubmissionRecordModel) -> MediaSelection:
+        return MediaSelection(policy=model.media_policy, media_asset_id=model.media_selection_asset_id)
+
+    def _ecological_submission_candidate_from_record(
+        self,
+        session: Session,
+        model: EcologicalSubmissionRecordModel,
+        *,
+        allow_live_taxonomy_lookup: bool,
+        now: datetime,
+    ):
+        """Rebuild a fresh candidate from CURRENT truth using this record's
+        own stored location/media choice -- the one place Phase 32 ("has
+        local truth changed since this was prepared?") is answered, by
+        comparing the result's fingerprint against `model.content_
+        fingerprint`, never by trusting a stored status alone. Returns
+        `None` only if the underlying Visit no longer resolves at all."""
+
+        visit_model = session.get(VisitModel, model.visit_id)
+        event_model = session.get(EventModel, visit_model.event_id) if visit_model is not None else None
+        if visit_model is None or event_model is None:
+            return None
+        observation = self._research_observation_for_visit(session, visit_model, event_model)
+        if allow_live_taxonomy_lookup:
+            mapping = self._resolve_ecological_taxonomy_mapping(session, model.destination, observation, now=now)
+        else:
+            mapping = (
+                self._ecological_taxonomy_mapping_from_cache(session, model.destination, observation.taxon_label)
+                if observation.classification == "confirmed_taxon" and observation.taxon_label
+                else None
+            )
+        return build_submission_candidate(
+            observation, destination=model.destination, taxonomy_mapping=mapping,
+            location=self._ecological_location_selection_from_record(model),
+            media=self._ecological_media_selection_from_record(model),
+        )
+
+    def _ecological_submission_record_response(
+        self, session: Session, model: EcologicalSubmissionRecordModel, *, now: datetime,
+    ) -> EcologicalSubmissionRecord:
+        candidate = self._ecological_submission_candidate_from_record(
+            session, model, allow_live_taxonomy_lookup=False, now=now,
+        )
+        is_stale = candidate is not None and submission_candidate_fingerprint(candidate) != model.content_fingerprint
+        needs_input_reasons: list[str] = []
+        excluded_reasons: list[str] = []
+        match_status = None
+        if candidate is not None:
+            needs_input_reasons = list(candidate.destination_eligibility.needs_input_reasons)
+            excluded_reasons = list(candidate.destination_eligibility.excluded_reasons)
+            if candidate.taxonomy_mapping is not None:
+                match_status = candidate.taxonomy_mapping.match_status
+        return EcologicalSubmissionRecord(
+            id=model.id, visit_id=model.visit_id, destination=model.destination, status=model.status,
+            is_stale=is_stale, content_fingerprint=model.content_fingerprint, taxon_label=model.taxon_label,
+            taxon_scientific_name=model.taxon_scientific_name, destination_taxon_id=model.destination_taxon_id,
+            destination_taxon_match_status=match_status, taxonomy_mapping_version=model.taxonomy_mapping_version,
+            location_choice=model.location_choice, location_latitude=model.location_latitude,
+            location_longitude=model.location_longitude, location_place_name=model.location_place_name,
+            media_policy=model.media_policy, media_selection_asset_id=model.media_selection_asset_id,
+            needs_input_reasons=needs_input_reasons, excluded_reasons=excluded_reasons,
+            prepared_at=_as_utc(model.prepared_at), prepared_by_user_id=model.prepared_by_user_id,
+            exported_at=_as_utc(model.exported_at) if model.exported_at else None,
+            external_id=model.external_id, external_url=model.external_url,
+            result_recorded_at=_as_utc(model.result_recorded_at) if model.result_recorded_at else None,
+            result_notes=model.result_notes, updated_at=_as_utc(model.updated_at),
+        )
+
+    def ecological_eligibility_preview(
+        self, payload: EcologicalEligibilityPreviewRequest,
+    ) -> EcologicalEligibilityPreviewResponse:
+        """Before data leaves MockingBird, show exactly what will happen
+        (Phase 21). Resolves each *distinct* confirmed-taxon label's
+        destination-taxonomy mapping at most once per call, reusing the
+        durable cache across calls thereafter (see "Taxonomy translation"
+        in the governing contract doc) -- never once per Visit. No location/
+        media choice has been made yet at preview time, so a destination
+        that required either would honestly report `needs_input` here (no
+        real destination in this milestone does)."""
+
+        now = datetime.now(UTC)
+        adapter = DESTINATION_ADAPTERS[payload.destination]
+        requirements = adapter.requirements()
+        destination_info = EcologicalDestinationInfo(
+            key=payload.destination, display_name=adapter.display_name,
+            offered=requirements.offered, offered_reason=requirements.offered_reason,
+        )
+
+        items: list[EcologicalEligibilityPreviewItem] = []
+        eligible_count = needs_input_count = excluded_count = 0
+        with self.session_factory() as session:
+            with session.begin():
+                taxonomy_index = self._taxonomy_label_index(session)
+                observations = self._research_observations_for_scope(
+                    session, filters=payload.filters, taxonomy_index=taxonomy_index,
+                )
+                mapping_by_label: dict[str, DestinationTaxonomyMapping | None] = {}
+                for observation in observations:
+                    mapping = None
+                    if (
+                        requirements.offered
+                        and observation.classification == "confirmed_taxon"
+                        and observation.taxon_label
+                    ):
+                        if observation.taxon_label not in mapping_by_label:
+                            mapping_by_label[observation.taxon_label] = self._resolve_ecological_taxonomy_mapping(
+                                session, payload.destination, observation, now=now,
+                            )
+                        mapping = mapping_by_label[observation.taxon_label]
+                    candidate = build_submission_candidate(
+                        observation, destination=payload.destination, taxonomy_mapping=mapping,
+                        location=LocationSelection(), media=MediaSelection(),
+                    )
+                    status = candidate.destination_eligibility.status
+                    if status == "eligible":
+                        eligible_count += 1
+                    elif status == "needs_input":
+                        needs_input_count += 1
+                    else:
+                        excluded_count += 1
+                    items.append(
+                        EcologicalEligibilityPreviewItem(
+                            visit_id=observation.observation_id, classification=observation.classification,
+                            taxon_label=observation.taxon_label, taxon_display_name=observation.taxon_display_name,
+                            captured_at=observation.captured_at, status=status,
+                            needs_input_reasons=list(candidate.destination_eligibility.needs_input_reasons),
+                            excluded_reasons=list(candidate.destination_eligibility.excluded_reasons),
+                        )
+                    )
+        return EcologicalEligibilityPreviewResponse(
+            destination=destination_info, items=items, eligible_count=eligible_count,
+            needs_input_count=needs_input_count, excluded_count=excluded_count,
+        )
+
+    def prepare_ecological_submissions(
+        self, payload: PrepareEcologicalSubmissionsRequest, *, acting_user: CurrentUser | None = None,
+    ) -> list[EcologicalSubmissionRecord]:
+        """Batch-prepare (Phase 16/20): one durable record per selected
+        Visit for one destination, snapshotting the explicit location/media
+        choice the caller supplied for this call -- never silently reused
+        from a prior call (see "Location is a separate consent boundary" in
+        the governing contract doc). Never overwrites a record that already
+        carries a self-reported external result (Phase 19/32: a submitted
+        record's own external link/id is never silently rewritten) -- a
+        fresh, separate record is created instead so history is preserved."""
+
+        now = datetime.now(UTC)
+        location = LocationSelection(
+            choice=payload.location.choice, latitude=payload.location.latitude,
+            longitude=payload.location.longitude, place_name=payload.location.place_name,
+        )
+        media = MediaSelection(policy=payload.media.policy, media_asset_id=payload.media.media_asset_id)
+        acting_user_id = acting_user.id if acting_user is not None else None
+
+        results: list[EcologicalSubmissionRecord] = []
+        with self.session_factory() as session:
+            with session.begin():
+                taxonomy_index = self._taxonomy_label_index(session)
+                for visit_id in payload.visit_ids:
+                    visit_model = session.get(VisitModel, visit_id)
+                    event_model = (
+                        session.get(EventModel, visit_model.event_id) if visit_model is not None else None
+                    )
+                    if visit_model is None or event_model is None:
+                        continue
+                    observation = self._research_observation_for_visit(
+                        session, visit_model, event_model, taxonomy_index=taxonomy_index,
+                    )
+                    mapping = self._resolve_ecological_taxonomy_mapping(
+                        session, payload.destination, observation, now=now,
+                    )
+                    candidate = build_submission_candidate(
+                        observation, destination=payload.destination, taxonomy_mapping=mapping,
+                        location=location, media=media,
+                    )
+                    fingerprint = submission_candidate_fingerprint(candidate)
+                    record_status = candidate.destination_eligibility.status
+                    if record_status == "eligible":
+                        record_status = "prepared"
+
+                    existing = session.scalar(
+                        select(EcologicalSubmissionRecordModel)
+                        .where(
+                            EcologicalSubmissionRecordModel.visit_id == visit_id,
+                            EcologicalSubmissionRecordModel.destination == payload.destination,
+                            EcologicalSubmissionRecordModel.external_id.is_(None),
+                        )
+                        .order_by(EcologicalSubmissionRecordModel.prepared_at.desc())
+                    )
+                    if existing is not None:
+                        model = existing
+                        model.status = record_status
+                        model.content_fingerprint = fingerprint
+                        model.taxon_label = observation.taxon_label
+                        model.taxon_scientific_name = observation.taxon_scientific_name
+                        model.destination_taxon_id = mapping.destination_taxon_id if mapping else None
+                        model.taxonomy_mapping_version = mapping.taxonomy_source_version if mapping else None
+                        model.location_choice = location.choice
+                        model.location_latitude = location.latitude
+                        model.location_longitude = location.longitude
+                        model.location_place_name = location.place_name
+                        model.media_policy = media.policy
+                        model.media_selection_asset_id = media.media_asset_id
+                        model.prepared_at = now
+                        model.prepared_by_user_id = acting_user_id
+                        model.exported_at = None
+                        model.updated_at = now
+                    else:
+                        model = EcologicalSubmissionRecordModel(
+                            id=self._next_id(session, EcologicalSubmissionRecordModel, "ecological-submission"),
+                            visit_id=visit_id, destination=payload.destination, status=record_status,
+                            content_fingerprint=fingerprint, taxon_label=observation.taxon_label,
+                            taxon_scientific_name=observation.taxon_scientific_name,
+                            destination_taxon_id=(mapping.destination_taxon_id if mapping else None),
+                            taxonomy_mapping_version=(mapping.taxonomy_source_version if mapping else None),
+                            location_choice=location.choice, location_latitude=location.latitude,
+                            location_longitude=location.longitude, location_place_name=location.place_name,
+                            media_policy=media.policy, media_selection_asset_id=media.media_asset_id,
+                            prepared_at=now, prepared_by_user_id=acting_user_id, exported_at=None,
+                            external_id=None, external_url=None, result_recorded_at=None, result_notes=None,
+                            updated_at=now,
+                        )
+                        session.add(model)
+                    session.flush()
+                    results.append(self._ecological_submission_record_response(session, model, now=now))
+        return results
+
+    def list_ecological_submissions(
+        self, *, visit_id: str | None = None, destination: str | None = None,
+    ) -> list[EcologicalSubmissionRecord]:
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            query = select(EcologicalSubmissionRecordModel)
+            if visit_id is not None:
+                query = query.where(EcologicalSubmissionRecordModel.visit_id == visit_id)
+            if destination is not None:
+                query = query.where(EcologicalSubmissionRecordModel.destination == destination)
+            models = session.scalars(query.order_by(EcologicalSubmissionRecordModel.prepared_at.desc())).all()
+            return [self._ecological_submission_record_response(session, model, now=now) for model in models]
+
+    def get_ecological_submission(self, submission_id: str) -> EcologicalSubmissionRecord | None:
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            model = session.get(EcologicalSubmissionRecordModel, submission_id)
+            if model is None:
+                return None
+            return self._ecological_submission_record_response(session, model, now=now)
+
+    def record_ecological_submission_result(
+        self, submission_id: str, payload: RecordEcologicalSubmissionResultRequest,
+    ) -> EcologicalSubmissionRecord | None:
+        """A user's own explicit, after-the-fact self-report of what the
+        destination gave back (Phase 18) -- never a live automated submit
+        (see "Authorization / secrets" in the governing contract doc: no
+        adapter in this milestone performs one)."""
+
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                model = session.get(EcologicalSubmissionRecordModel, submission_id)
+                if model is None:
+                    return None
+                model.external_id = payload.external_id
+                model.external_url = payload.external_url
+                model.result_notes = payload.result_notes
+                model.result_recorded_at = now
+                model.status = "submitted"
+                model.updated_at = now
+                session.flush()
+                return self._ecological_submission_record_response(session, model, now=now)
+
+    def export_ecological_submissions(
+        self, payload: ExportEcologicalSubmissionsRequest,
+    ) -> ExportEcologicalSubmissionsResponse:
+        """Explicit submission-package generation (Phase 17/24/32): re-
+        verifies every referenced record against CURRENT truth immediately
+        before writing anything -- a record whose truth changed since it
+        was prepared, or that is not currently eligible, is excluded with
+        an honest reason rather than silently exported stale. Idempotent by
+        construction: exporting the same up-to-date records again
+        reproduces an identical file (`submission_candidate_fingerprint` is
+        deterministic), and there is no live destination side effect to
+        duplicate since no adadapter in this milestone performs one."""
+
+        now = datetime.now(UTC)
+        included: list[tuple[str, dict[str, str]]] = []
+        skipped: list[ExportEcologicalSubmissionsSkip] = []
+        destination: str = "inaturalist"
+
+        with self.session_factory() as session:
+            with session.begin():
+                for submission_id in payload.submission_ids:
+                    model = session.get(EcologicalSubmissionRecordModel, submission_id)
+                    if model is None:
+                        skipped.append(
+                            ExportEcologicalSubmissionsSkip(submission_id=submission_id, reason="not_eligible")
+                        )
+                        continue
+                    destination = model.destination
+                    candidate = self._ecological_submission_candidate_from_record(
+                        session, model, allow_live_taxonomy_lookup=True, now=now,
+                    )
+                    # Staleness is checked BEFORE re-checking eligibility: a
+                    # record whose underlying truth has changed since it was
+                    # prepared is always reported as "stale_since_prepared"
+                    # -- the more actionable signal (Phase 32: "MockingBird
+                    # has been corrected... rebuild before use") -- even when
+                    # the new truth also happens to be currently ineligible
+                    # for an unrelated reason (e.g. the corrected taxon has
+                    # no resolved mapping yet). "not_eligible" is reserved
+                    # for a record whose truth has NOT changed but simply
+                    # never became eligible in the first place.
+                    if candidate is not None and submission_candidate_fingerprint(candidate) != model.content_fingerprint:
+                        skipped.append(
+                            ExportEcologicalSubmissionsSkip(
+                                submission_id=submission_id, reason="stale_since_prepared",
+                            )
+                        )
+                        continue
+                    if candidate is None or not candidate.destination_eligibility.eligible:
+                        skipped.append(
+                            ExportEcologicalSubmissionsSkip(submission_id=submission_id, reason="not_eligible")
+                        )
+                        continue
+                    included.append((model.id, submission_candidate_to_inaturalist_row(candidate)))
+
+        if not included:
+            return ExportEcologicalSubmissionsResponse(
+                destination=destination, output_directory=None, files=[], included_count=0, skipped=skipped,
+            )
+        if destination != "inaturalist":
+            # No offered destination other than iNaturalist can reach this
+            # point today -- eBird is never eligible (see `EBirdAdapter`),
+            # so `included` would always be empty for it. Defensive, not a
+            # reachable path in production.
+            raise ValueError(f"export is not supported for destination {destination!r}")
+
+        export_root = self.ecological_export_root.resolve(strict=False)
+        export_root.mkdir(parents=True, exist_ok=True)
+        export_id = self._research_export_id(None, prefix="ecological-inaturalist")
+        output_dir = self._research_export_output_dir(export_root, export_id)
+        temporary_dir = self._research_export_output_dir(export_root, f".{export_id}.tmp")
+        if output_dir.exists() or temporary_dir.exists():
+            raise ValueError("ecological export directory already exists")
+
+        temporary_dir.mkdir()
+        try:
+            self._write_csv(
+                temporary_dir / "inaturalist_import.csv", list(INATURALIST_CSV_COLUMNS),
+                [row for _submission_id, row in included],
+            )
+            temporary_dir.rename(output_dir)
+        except Exception:
+            shutil.rmtree(temporary_dir, ignore_errors=True)
+            raise
+
+        included_ids = {submission_id for submission_id, _row in included}
+        with self.session_factory() as session:
+            with session.begin():
+                for submission_id in included_ids:
+                    model = session.get(EcologicalSubmissionRecordModel, submission_id)
+                    if model is not None:
+                        model.status = "exported"
+                        model.exported_at = now
+                        model.updated_at = now
+
+        return ExportEcologicalSubmissionsResponse(
+            destination=destination,
+            output_directory=str(output_dir),
+            files=[
+                ClassifierManifestExportFile(
+                    name="inaturalist_import.csv", relative_path="inaturalist_import.csv",
+                    content_type=ECOLOGICAL_SUBMISSIONS_EXPORT_CONTENT_TYPES["inaturalist_import.csv"],
+                    size_bytes=(output_dir / "inaturalist_import.csv").stat().st_size,
+                )
+            ],
+            included_count=len(included),
+            skipped=skipped,
+        )
+
+    def export_darwin_core_package(self, payload: DarwinCoreExportRequest) -> DarwinCoreExportResponse:
+        """Bounded Darwin Core Occurrence-core export (Phase 29 -- see
+        "Darwin Core export" in the governing contract doc). Mirrors
+        `export_camtrap_dp_package`'s identical shape exactly, sharing the
+        same `research_export_root` (this is part of the research-export
+        family, not the destination-submission concept above)."""
+
+        with self.session_factory() as session:
+            taxonomy_index = self._taxonomy_label_index(session)
+            observations = self._research_observations_for_scope(
+                session, filters=payload.filters, taxonomy_index=taxonomy_index,
+            )
+
+        options = DarwinCoreMappingOptions(
+            site_name=payload.site_name, latitude=payload.latitude, longitude=payload.longitude,
+            coordinate_uncertainty_meters=payload.coordinate_uncertainty_meters,
+        )
+        archive = build_darwin_core_archive(observations, options=options)
+        generated_at = datetime.now(UTC)
+
+        export_id = self._research_export_id(payload.output_name, prefix="darwin-core")
+        file_names = ["occurrence.csv", "meta.xml", "eml.xml"]
+
+        if payload.dry_run:
+            return DarwinCoreExportResponse(
+                export_id=export_id,
+                output_directory=None,
+                files=[
+                    ClassifierManifestExportFile(
+                        name=name, relative_path=name,
+                        content_type=DARWIN_CORE_EXPORT_CONTENT_TYPES[name], size_bytes=None,
+                    )
+                    for name in file_names
+                ],
+                schema_version=archive.schema_version, occurrence_count=len(archive.occurrences), dry_run=True,
+            )
+
+        export_root = self.research_export_root.resolve(strict=False)
+        export_root.mkdir(parents=True, exist_ok=True)
+        output_dir = self._research_export_output_dir(export_root, export_id)
+        temporary_dir = self._research_export_output_dir(export_root, f".{export_id}.tmp")
+        if output_dir.exists() or temporary_dir.exists():
+            raise ValueError("darwin core export directory already exists")
+
+        temporary_dir.mkdir()
+        try:
+            self._write_csv(
+                temporary_dir / "occurrence.csv", list(DARWIN_CORE_OCCURRENCE_CSV_FIELDNAMES),
+                [darwin_core_occurrence_to_row(occurrence) for occurrence in archive.occurrences],
+            )
+            (temporary_dir / "meta.xml").write_text(darwin_core_meta_xml(), encoding="utf-8")
+            (temporary_dir / "eml.xml").write_text(darwin_core_eml_xml(generated_at=generated_at), encoding="utf-8")
+            temporary_dir.rename(output_dir)
+        except Exception:
+            shutil.rmtree(temporary_dir, ignore_errors=True)
+            raise
+
+        return DarwinCoreExportResponse(
+            export_id=export_id,
+            output_directory=str(output_dir),
+            files=[
+                ClassifierManifestExportFile(
+                    name=name, relative_path=name, content_type=DARWIN_CORE_EXPORT_CONTENT_TYPES[name],
+                    size_bytes=(output_dir / name).stat().st_size,
+                )
+                for name in file_names
+            ],
+            schema_version=archive.schema_version, occurrence_count=len(archive.occurrences), dry_run=False,
         )
 
     def _resolve_import_stream(

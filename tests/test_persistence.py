@@ -1730,3 +1730,59 @@ def test_schema_55_upgrades_to_current_with_notification_preferences(
             assert row_count == 0
     finally:
         migrated.close()
+
+
+def test_schema_56_upgrades_to_current_with_ecological_interoperability(
+    tmp_path: Path,
+) -> None:
+    """Ecological Interoperability & Submission Workflows v1: a real
+    database at the previously-current schema (v56) upgrades cleanly
+    through the two new additive tables (`ecological_taxonomy_mappings`,
+    `ecological_submission_records`) -- mirrors `test_schema_55_upgrades_
+    to_current_with_notification_preferences`'s own "additive table(s), no
+    seeded row" proof pattern."""
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = repository_for(db_path)
+    existing_source_count = len(repository.list_sources())
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql("DROP TABLE ecological_taxonomy_mappings")
+        connection.exec_driver_sql("DROP TABLE ecological_submission_records")
+        connection.exec_driver_sql("UPDATE mockingbird_schema SET version = 56 WHERE singleton_id = 1")
+    engine.dispose()
+
+    migrated = repository_for(db_path)
+    try:
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+        assert len(migrated.list_sources()) == existing_source_count
+
+        with migrated.engine.connect() as connection:
+            mapping_columns = {
+                row[1]
+                for row in connection.exec_driver_sql(
+                    "PRAGMA table_info(ecological_taxonomy_mappings)"
+                ).fetchall()
+            }
+            assert {
+                "id", "destination", "mockingbird_taxon_label", "match_status",
+                "destination_taxon_id", "destination_scientific_name", "destination_display_name",
+                "taxonomy_source_version", "query_text", "resolved_at",
+            } <= mapping_columns
+            submission_columns = {
+                row[1]
+                for row in connection.exec_driver_sql(
+                    "PRAGMA table_info(ecological_submission_records)"
+                ).fetchall()
+            }
+            assert {
+                "id", "visit_id", "destination", "status", "content_fingerprint",
+                "location_choice", "media_policy", "prepared_at", "external_id", "external_url",
+            } <= submission_columns
+            for table in ("ecological_taxonomy_mappings", "ecological_submission_records"):
+                row_count = connection.exec_driver_sql(f"SELECT COUNT(*) FROM {table}").scalar()
+                assert row_count == 0
+    finally:
+        migrated.close()

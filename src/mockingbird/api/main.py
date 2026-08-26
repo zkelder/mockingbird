@@ -58,6 +58,16 @@ from mockingbird.api.schemas import (
     CamtrapDpExportResponse,
     ConservationReportRequest,
     ConservationReportResponse,
+    DarwinCoreExportRequest,
+    DarwinCoreExportResponse,
+    EcologicalDestinationInfo,
+    EcologicalEligibilityPreviewRequest,
+    EcologicalEligibilityPreviewResponse,
+    EcologicalSubmissionRecord,
+    ExportEcologicalSubmissionsRequest,
+    ExportEcologicalSubmissionsResponse,
+    PrepareEcologicalSubmissionsRequest,
+    RecordEcologicalSubmissionResultRequest,
     ResearchCollection,
     ResearchCollectionCreate,
     ResearchCollectionSummary,
@@ -14703,6 +14713,21 @@ async def create_camtrap_dp_export(payload: CamtrapDpExportRequest) -> CamtrapDp
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
+@app.post("/api/research/export-darwin-core", response_model=DarwinCoreExportResponse, status_code=201)
+async def create_darwin_core_export(payload: DarwinCoreExportRequest) -> DarwinCoreExportResponse:
+    """Bounded Darwin Core Occurrence-core export (Phase 29 of the
+    Ecological Interoperability & Submission Workflows v1 milestone brief
+    -- see docs/ecological-interoperability-submission-v1-contract.md
+    "Darwin Core export"). Additive to, never a replacement for, the
+    existing Camtrap DP export above -- the two are categorically different
+    container formats."""
+
+    try:
+        return get_repository().export_darwin_core_package(payload)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
 @app.post("/api/research/conservation-report", response_model=ConservationReportResponse)
 async def get_conservation_report(payload: ConservationReportRequest) -> ConservationReportResponse:
     """Bounded conservation/natural-history report -- read-only, never a
@@ -14738,6 +14763,102 @@ async def get_research_collection(collection_id: str) -> ResearchCollection:
     if collection is None:
         raise _not_found("Research collection", collection_id)
     return collection
+
+
+# -------------------------------------------------------------------------
+# Ecological Interoperability & Submission Workflows v1 (see docs/
+# ecological-interoperability-submission-v1-contract.md). A distinct
+# concept from the research-export family above: preparing/tracking a
+# Reviewed Visit's submission to a specific named external ecological
+# destination (iNaturalist; eBird deliberately not offered -- see
+# "Destination decisions"). No route here ever performs a live,
+# authenticated submit to a destination -- see "Authorization / secrets" in
+# the governing contract doc. Every route composes the research-eligibility
+# gate above; none of this ever creates or mutates Visit/Event/ReviewLabel/
+# SpeciesSuggestion truth.
+# -------------------------------------------------------------------------
+
+
+@app.get("/api/ecological/destinations", response_model=list[EcologicalDestinationInfo])
+async def list_ecological_destinations() -> list[EcologicalDestinationInfo]:
+    return get_repository().ecological_destinations()
+
+
+@app.post("/api/ecological/eligibility-preview", response_model=EcologicalEligibilityPreviewResponse)
+async def preview_ecological_eligibility(
+    payload: EcologicalEligibilityPreviewRequest,
+) -> EcologicalEligibilityPreviewResponse:
+    """Before data leaves MockingBird, show exactly what will happen
+    (Phase 21) -- read-only from the product's own truth, though resolving
+    a not-yet-cached taxonomy mapping may make a bounded, credential-free
+    call to the destination's own taxonomy lookup (Phase 7)."""
+
+    try:
+        return get_repository().ecological_eligibility_preview(payload)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.post("/api/ecological/submissions", response_model=list[EcologicalSubmissionRecord], status_code=201)
+async def prepare_ecological_submissions(
+    payload: PrepareEcologicalSubmissionsRequest, request: Request,
+) -> list[EcologicalSubmissionRecord]:
+    """Batch or single-Visit prepare (Phase 16/20) -- an explicit user
+    selection and an explicit location/media choice, never "everything
+    reviewed" and never a silently-reused prior choice."""
+
+    current_user = current_user_or_401(request)
+    try:
+        return get_repository().prepare_ecological_submissions(payload, acting_user=current_user)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.get("/api/ecological/submissions", response_model=list[EcologicalSubmissionRecord])
+async def list_ecological_submissions(
+    visit_id: str | None = Query(default=None),
+    destination: str | None = Query(default=None),
+) -> list[EcologicalSubmissionRecord]:
+    return get_repository().list_ecological_submissions(visit_id=visit_id, destination=destination)
+
+
+@app.get("/api/ecological/submissions/{submission_id}", response_model=EcologicalSubmissionRecord)
+async def get_ecological_submission(submission_id: str) -> EcologicalSubmissionRecord:
+    record = get_repository().get_ecological_submission(submission_id)
+    if record is None:
+        raise _not_found("Ecological submission", submission_id)
+    return record
+
+
+@app.post("/api/ecological/submissions/export", response_model=ExportEcologicalSubmissionsResponse, status_code=201)
+async def export_ecological_submissions(
+    payload: ExportEcologicalSubmissionsRequest,
+) -> ExportEcologicalSubmissionsResponse:
+    """Explicit submission-package generation (Phase 24: nothing leaves the
+    Host without a deliberate action) -- re-verifies every referenced
+    record against current truth immediately before writing anything
+    (Phase 32)."""
+
+    try:
+        return get_repository().export_ecological_submissions(payload)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.post(
+    "/api/ecological/submissions/{submission_id}/record-result",
+    response_model=EcologicalSubmissionRecord,
+)
+async def record_ecological_submission_result(
+    submission_id: str, payload: RecordEcologicalSubmissionResultRequest,
+) -> EcologicalSubmissionRecord:
+    """A user's own explicit, after-the-fact self-report of what the
+    destination gave back (Phase 18) -- never a live automated submit."""
+
+    record = get_repository().record_ecological_submission_result(submission_id, payload)
+    if record is None:
+        raise _not_found("Ecological submission", submission_id)
+    return record
 
 
 @app.get("/api/analytics/summary", response_model=AnalyticsSummary)

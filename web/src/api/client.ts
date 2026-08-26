@@ -276,8 +276,18 @@ import type {
   ZoneMutationResult,
   ZoneUpdate,
   CurrentUser,
+  DarwinCoreExportRequest,
+  DarwinCoreExportResponse,
+  EcologicalDestinationInfo,
+  EcologicalEligibilityPreviewRequest,
+  EcologicalEligibilityPreviewResponse,
+  EcologicalSubmissionRecord,
+  ExportEcologicalSubmissionsRequest,
+  ExportEcologicalSubmissionsResponse,
   InstallationSettings,
   InstallationSettingsUpdate,
+  PrepareEcologicalSubmissionsRequest,
+  RecordEcologicalSubmissionResultRequest,
   SelfPasswordChangeRequest,
   SignInRequest,
   UserCreate,
@@ -1683,5 +1693,38 @@ export const apiClient = {
   updateNotificationPreferences: (payload: UserNotificationPreferencesUpdate) =>
     request<UserNotificationPreferences>("/api/notification-preferences", {
       method: "PUT", body: JSON.stringify(payload),
+    }),
+
+  // Ecological Interoperability & Submission Workflows v1
+  getEcologicalDestinations: () => request<EcologicalDestinationInfo[]>("/api/ecological/destinations"),
+  previewEcologicalEligibility: (payload: EcologicalEligibilityPreviewRequest) =>
+    request<EcologicalEligibilityPreviewResponse>("/api/ecological/eligibility-preview", {
+      method: "POST", body: JSON.stringify(payload),
+    }),
+  prepareEcologicalSubmissions: (payload: PrepareEcologicalSubmissionsRequest) =>
+    request<EcologicalSubmissionRecord[]>("/api/ecological/submissions", {
+      method: "POST", body: JSON.stringify(payload),
+    }),
+  listEcologicalSubmissions: (params?: { visitId?: string; destination?: string }) => {
+    const query = new URLSearchParams();
+    if (params?.visitId) query.set("visit_id", params.visitId);
+    if (params?.destination) query.set("destination", params.destination);
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return request<EcologicalSubmissionRecord[]>(`/api/ecological/submissions${suffix}`);
+  },
+  getEcologicalSubmission: (submissionId: string) =>
+    request<EcologicalSubmissionRecord>(`/api/ecological/submissions/${encodeURIComponent(submissionId)}`),
+  exportEcologicalSubmissions: (payload: ExportEcologicalSubmissionsRequest) =>
+    request<ExportEcologicalSubmissionsResponse>("/api/ecological/submissions/export", {
+      method: "POST", body: JSON.stringify(payload),
+    }),
+  recordEcologicalSubmissionResult: (submissionId: string, payload: RecordEcologicalSubmissionResultRequest) =>
+    request<EcologicalSubmissionRecord>(
+      `/api/ecological/submissions/${encodeURIComponent(submissionId)}/record-result`,
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
+  exportDarwinCore: (payload: DarwinCoreExportRequest) =>
+    request<DarwinCoreExportResponse>("/api/research/export-darwin-core", {
+      method: "POST", body: JSON.stringify(payload),
     }),
 };

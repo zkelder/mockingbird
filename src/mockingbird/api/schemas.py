@@ -6,6 +6,7 @@ import json
 from datetime import date, datetime, timedelta
 from enum import Enum
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -4880,6 +4881,226 @@ class ResearchCollectionSummary(BaseModel):
     curator_identity: str | None = None
     visit_count: int = Field(ge=0)
     created_at: datetime
+
+
+class DarwinCoreExportRequest(BaseModel):
+    """Bounded Darwin Core Occurrence-core export (Phase 29 of the
+    Ecological Interoperability & Submission Workflows v1 milestone brief)
+    -- mirrors `CamtrapDpExportRequest` exactly, including the same
+    never-inferred location fields."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    filters: ResearchExportFilters = Field(default_factory=ResearchExportFilters)
+    site_name: str | None = Field(default=None, max_length=200)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    coordinate_uncertainty_meters: float | None = Field(default=None, ge=0)
+    dry_run: bool = False
+    output_name: str | None = None
+
+    @field_validator("output_name")
+    @classmethod
+    def validate_output_name(cls, value: str | None) -> str | None:
+        return _validate_export_output_name(value)
+
+
+class DarwinCoreExportResponse(BaseModel):
+    export_id: str
+    output_directory: str | None = None
+    files: list[ClassifierManifestExportFile] = Field(default_factory=list)
+    schema_version: str
+    occurrence_count: int = Field(ge=0)
+    dry_run: bool
+
+
+# ---------------------------------------------------------------------------
+# Ecological Interoperability & Submission Workflows v1 (see docs/ecological-
+# interoperability-submission-v1-contract.md). A distinct concept from the
+# research-export family above: preparing/tracking a Reviewed Visit's
+# submission to a specific named external ecological destination
+# (iNaturalist today; eBird deliberately not offered -- see "Destination
+# decisions"), rather than a generic dataset/standards export. Composes the
+# research-eligibility gate and `ResearchObservation` above; never a second
+# truth system.
+# ---------------------------------------------------------------------------
+
+
+class EcologicalDestinationInfo(BaseModel):
+    key: Literal["inaturalist", "ebird"]
+    display_name: str
+    offered: bool
+    offered_reason: str | None = None
+
+
+class EcologicalLocationInput(BaseModel):
+    """An explicit, never-defaulted location choice (see "Location is a
+    separate consent boundary" in the governing contract doc) -- never
+    silently reused from `EnvironmentalContextSettingsModel`'s coarse
+    weather coordinate."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    choice: Literal["none", "coarse", "exact"] = "none"
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    place_name: str | None = Field(default=None, max_length=200)
+
+    @model_validator(mode="after")
+    def validate_choice_matches_coordinates(self) -> "EcologicalLocationInput":
+        has_coordinates = self.latitude is not None and self.longitude is not None
+        if self.choice == "none" and has_coordinates:
+            raise ValueError("choice='none' must not carry a latitude/longitude")
+        if self.choice in ("coarse", "exact") and not has_coordinates:
+            raise ValueError(f"choice={self.choice!r} requires both latitude and longitude")
+        return self
+
+
+class EcologicalMediaInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    policy: Literal["none", "metadata_only"] = "none"
+    media_asset_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_policy_matches_asset(self) -> "EcologicalMediaInput":
+        if self.policy == "none" and self.media_asset_id is not None:
+            raise ValueError("policy='none' must not carry a media_asset_id")
+        if self.policy == "metadata_only" and self.media_asset_id is None:
+            raise ValueError("policy='metadata_only' requires a media_asset_id")
+        return self
+
+
+class EcologicalEligibilityPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    destination: Literal["inaturalist", "ebird"]
+    filters: ResearchExportFilters = Field(default_factory=ResearchExportFilters)
+
+
+class EcologicalEligibilityPreviewItem(BaseModel):
+    visit_id: str
+    classification: str
+    taxon_label: str | None = None
+    taxon_display_name: str | None = None
+    captured_at: datetime
+    status: Literal["eligible", "needs_input", "excluded"]
+    needs_input_reasons: list[str] = Field(default_factory=list)
+    excluded_reasons: list[str] = Field(default_factory=list)
+
+
+class EcologicalEligibilityPreviewResponse(BaseModel):
+    destination: EcologicalDestinationInfo
+    items: list[EcologicalEligibilityPreviewItem] = Field(default_factory=list)
+    eligible_count: int = Field(ge=0)
+    needs_input_count: int = Field(ge=0)
+    excluded_count: int = Field(ge=0)
+
+
+class PrepareEcologicalSubmissionsRequest(BaseModel):
+    """Batch prepare (Phase 20): one explicit location/media choice applied
+    uniformly to every selected Visit, mirroring `CamtrapDpExportRequest`'s
+    identical one-site-level-override-per-call convention. Explicit user
+    selection required -- never "everything reviewed" (Phase 20)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    visit_ids: list[str] = Field(min_length=1, max_length=500)
+    destination: Literal["inaturalist", "ebird"]
+    location: EcologicalLocationInput = Field(default_factory=EcologicalLocationInput)
+    media: EcologicalMediaInput = Field(default_factory=EcologicalMediaInput)
+
+    @field_validator("visit_ids")
+    @classmethod
+    def validate_visit_ids(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip() for value in values]
+        if not all(normalized) or len(set(normalized)) != len(normalized):
+            raise ValueError("visit_ids must be unique non-empty Visit IDs")
+        return normalized
+
+
+class EcologicalSubmissionRecord(BaseModel):
+    id: str
+    visit_id: str
+    destination: Literal["inaturalist", "ebird"]
+    status: Literal["prepared", "needs_input", "excluded", "exported", "submitted"]
+    #: Computed fresh at read time by comparing this record's stored
+    #: `content_fingerprint` against a fresh rebuild from current truth --
+    #: never a stored/cached flag (Phase 32: "MockingBird has been corrected
+    #: since this external submission" must always reflect *current* truth).
+    is_stale: bool = False
+    content_fingerprint: str
+    taxon_label: str | None = None
+    taxon_scientific_name: str | None = None
+    destination_taxon_id: str | None = None
+    destination_taxon_match_status: Literal["matched", "ambiguous", "not_found"] | None = None
+    taxonomy_mapping_version: str | None = None
+    location_choice: Literal["none", "coarse", "exact"]
+    location_latitude: float | None = None
+    location_longitude: float | None = None
+    location_place_name: str | None = None
+    media_policy: Literal["none", "metadata_only"]
+    media_selection_asset_id: str | None = None
+    needs_input_reasons: list[str] = Field(default_factory=list)
+    excluded_reasons: list[str] = Field(default_factory=list)
+    prepared_at: datetime
+    prepared_by_user_id: str | None = None
+    exported_at: datetime | None = None
+    external_id: str | None = None
+    external_url: str | None = None
+    result_recorded_at: datetime | None = None
+    result_notes: str | None = None
+    updated_at: datetime
+
+
+class ExportEcologicalSubmissionsRequest(BaseModel):
+    """Explicit submission-package generation (Phase 24: nothing leaves the
+    Host without a deliberate action). Every id must reference an already-
+    `prepare`d record -- this never silently prepares on the caller's
+    behalf."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    submission_ids: list[str] = Field(min_length=1, max_length=500)
+
+
+class ExportEcologicalSubmissionsSkip(BaseModel):
+    submission_id: str
+    reason: Literal["stale_since_prepared", "not_eligible"]
+
+
+class ExportEcologicalSubmissionsResponse(BaseModel):
+    destination: Literal["inaturalist", "ebird"]
+    output_directory: str | None = None
+    files: list[ClassifierManifestExportFile] = Field(default_factory=list)
+    included_count: int = Field(ge=0)
+    skipped: list[ExportEcologicalSubmissionsSkip] = Field(default_factory=list)
+
+
+class RecordEcologicalSubmissionResultRequest(BaseModel):
+    """A user's own explicit, after-the-fact self-report of what the
+    destination gave back (Phase 18) -- free text the user pastes in, never
+    a value MockingBird itself fetched or validated against the destination.
+    `external_url` is restricted to `http`/`https` (Phase 39 security
+    review): the frontend renders this back as a clickable link, and
+    without this check a `javascript:`-scheme value would be stored
+    verbatim and execute in the viewer's own session when clicked."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    external_id: str | None = Field(default=None, max_length=200)
+    external_url: str | None = Field(default=None, max_length=500)
+    result_notes: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("external_url")
+    @classmethod
+    def validate_external_url_scheme(cls, value: str | None) -> str | None:
+        if value is None or value.strip() == "":
+            return None
+        parsed = urlsplit(value)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("external_url must be an http(s) URL")
+        return value
 
 
 def _validate_export_output_name(value: str | None) -> str | None:

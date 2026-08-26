@@ -72,6 +72,9 @@ if __name__ == "__main__":
     elif len(sys.argv) > 1 and sys.argv[1] == "export-camtrap-dp":
         from mockingbird.research.research_cli import run_export_camtrap_dp
         raise SystemExit(run_export_camtrap_dp(sys.argv[2:]))
+    elif len(sys.argv) > 1 and sys.argv[1] == "export-darwin-core":
+        from mockingbird.research.research_cli import run_export_darwin_core
+        raise SystemExit(run_export_darwin_core(sys.argv[2:]))
     elif len(sys.argv) > 1 and sys.argv[1] == "conservation-report":
         from mockingbird.research.research_cli import run_conservation_report
         raise SystemExit(run_conservation_report(sys.argv[2:]))

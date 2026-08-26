@@ -2038,3 +2038,90 @@ class PlaceFeatureChangeEventModel(Base):
     actor_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class EcologicalTaxonomyMappingModel(Base):
+    """Ecological Interoperability & Submission Workflows v1 (schema 57): a
+    bounded, reusable cache of "MockingBird taxon label -> destination taxon"
+    resolutions (see docs/ecological-interoperability-submission-v1-contract.md
+    "Taxonomy translation"). Never mutates `TaxonomyLabelModel` -- this is a
+    separate translation-layer fact, keyed by MockingBird's own stable taxon
+    label, not a correction to local reviewed truth (product-doctrine.md "The
+    truth boundary": a destination's taxonomy disagreeing never changes
+    MockingBird's own label). `destination_taxon_id`/`destination_scientific_
+    name`/`destination_display_name` are `None` whenever `match_status` is not
+    `"matched"` -- an honest "not resolved," never a guessed value. One row
+    per (destination, mockingbird_taxon_label); a destination's own taxonomy
+    occasionally changes (a synonym, a split), so a fresh lookup replaces the
+    existing row (`resolved_at` advances) rather than accumulating stale
+    duplicates -- see "Taxonomy conflict" in the governing contract doc."""
+
+    __tablename__ = "ecological_taxonomy_mappings"
+    __table_args__ = (
+        UniqueConstraint(
+            "destination",
+            "mockingbird_taxon_label",
+            name="uq_ecological_taxonomy_mapping_destination_label",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    destination: Mapped[str] = mapped_column(String, nullable=False)
+    mockingbird_taxon_label: Mapped[str] = mapped_column(String, nullable=False)
+    match_status: Mapped[str] = mapped_column(String, nullable=False)
+    destination_taxon_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    destination_scientific_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    destination_display_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    taxonomy_source_version: Mapped[str] = mapped_column(String, nullable=False)
+    query_text: Mapped[str] = mapped_column(String, nullable=False)
+    resolved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class EcologicalSubmissionRecordModel(Base):
+    """Ecological Interoperability & Submission Workflows v1 (schema 57): a
+    durable per-Visit record of preparing -- and, only ever by explicit,
+    after-the-fact self-report, never a live automated submit -- an external
+    ecological submission for one Reviewed MockingBird Visit at one
+    destination (see "Submission workflow state" in the governing contract
+    doc). This never stores a destination credential/token (product-
+    doctrine.md; "Authorization / secrets" in the governing brief):
+    `external_id`/`external_url` are populated only from a value the *user*
+    pastes back in after they submit the prepared record *themselves* through
+    the destination's own site -- no adapter in this milestone performs a
+    live submit (see the contract doc's "iNaturalist workflow"). `content_
+    fingerprint` changes whenever the underlying Reviewed truth, taxonomy
+    mapping, or the user's own location/media choices change; a stale
+    fingerprint is the signal a previously-prepared package must be rebuilt
+    before use (Phase 32 of the governing brief), never silently reused.
+    Location/media fields are a snapshot of what the user explicitly chose at
+    prepare time, never a silently-reused default (Phase 10/12) -- rebuilding
+    after a correction re-asks rather than replaying the old choice."""
+
+    __tablename__ = "ecological_submission_records"
+    __table_args__ = (
+        Index("ix_ecological_submission_records_visit_destination", "visit_id", "destination"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    visit_id: Mapped[str] = mapped_column(ForeignKey("visits.id"), nullable=False)
+    destination: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    content_fingerprint: Mapped[str] = mapped_column(String, nullable=False)
+    taxon_label: Mapped[str | None] = mapped_column(String, nullable=True)
+    taxon_scientific_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    destination_taxon_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    taxonomy_mapping_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    location_choice: Mapped[str] = mapped_column(String, nullable=False)
+    location_latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    location_longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    location_place_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    media_selection_asset_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    media_policy: Mapped[str] = mapped_column(String, nullable=False)
+    prepared_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    prepared_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    exported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    external_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    external_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    result_recorded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    result_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

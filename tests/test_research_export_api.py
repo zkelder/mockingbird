@@ -120,3 +120,27 @@ async def test_research_collection_create_list_and_get(
 async def test_research_collection_create_requires_at_least_one_visit(client: httpx.AsyncClient) -> None:
     response = await client.post("/api/research/collections", json={"name": "Empty", "visit_ids": []})
     assert response.status_code == 422
+
+
+async def test_darwin_core_export_dry_run_round_trips(client: httpx.AsyncClient) -> None:
+    response = await client.post("/api/research/export-darwin-core", json={"dry_run": True})
+    assert response.status_code == 201
+    body = response.json()
+    assert body["dry_run"] is True
+    assert body["schema_version"] == "darwin-core-archive-v1"
+    assert {"occurrence.csv", "meta.xml", "eml.xml"} == {f["name"] for f in body["files"]}
+
+
+async def test_darwin_core_export_writes_real_files(client: httpx.AsyncClient) -> None:
+    response = await client.post(
+        "/api/research/export-darwin-core",
+        json={"site_name": "Example Yard", "latitude": 40.015, "longitude": -105.2705},
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["dry_run"] is False
+    assert body["output_directory"] is not None
+    output_dir = Path(body["output_directory"])
+    assert (output_dir / "occurrence.csv").exists()
+    assert (output_dir / "meta.xml").exists()
+    assert (output_dir / "eml.xml").exists()

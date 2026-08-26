@@ -42,6 +42,7 @@ interface VisitDetailPageProps {
   onCorrectionSaved: () => Promise<void>;
   onOpenCollections: () => void;
   onOpenActivityLibrary: (filters: ActivityLibraryFilters) => void;
+  onOpenEcologicalDestinations: () => void;
   correctionPrefill?: VisitCorrectionPrefill | null;
 }
 
@@ -75,6 +76,7 @@ export function VisitDetailPage({
   correctionPrefill,
   onOpenCollections,
   onOpenActivityLibrary,
+  onOpenEcologicalDestinations,
 }: VisitDetailPageProps) {
   const [detail, setDetail] = useState<VisitDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1747,6 +1749,9 @@ export function VisitDetailPage({
               type="button"
             >
               {isReopening ? "Reopening..." : "Reopen as needs review"}
+            </button>
+            <button className="secondary-action" onClick={onOpenEcologicalDestinations} type="button">
+              Prepare for an external destination
             </button>
           </div>
           {isEditingReviewed ? (

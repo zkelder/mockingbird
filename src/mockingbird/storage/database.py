@@ -42,7 +42,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 56
+CURRENT_DATABASE_SCHEMA_VERSION = 57
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -1579,6 +1579,26 @@ def _migrate_to_notification_preferences(connection: Connection) -> None:
     Base.metadata.tables["user_notification_preferences"].create(bind=connection, checkfirst=True)
 
 
+def _migrate_to_ecological_interoperability(connection: Connection) -> None:
+    """Ecological Interoperability & Submission Workflows v1: add the two
+    additive, empty-on-upgrade tables (see docs/ecological-interoperability-
+    submission-v1-contract.md) -- `ecological_taxonomy_mappings` (a bounded,
+    reusable "MockingBird label -> destination taxon" resolution cache) and
+    `ecological_submission_records` (a durable per-Visit external-submission-
+    preparation record). Mirrors `_migrate_to_research_collections`'s own
+    "additive table(s), no seeded row" pattern exactly: an installation
+    upgrading from schema 56 has never prepared an external submission or
+    resolved a destination taxonomy mapping, so it correctly starts with
+    none of either."""
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Ecological Interoperability migration requires local SQLite storage."
+        )
+    for table_name in ("ecological_taxonomy_mappings", "ecological_submission_records"):
+        Base.metadata.tables[table_name].create(bind=connection, checkfirst=True)
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -1635,6 +1655,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     54: _migrate_to_environmental_context_weather,
     55: _migrate_to_place_features_habitat_change,
     56: _migrate_to_notification_preferences,
+    57: _migrate_to_ecological_interoperability,
 }
 
 
