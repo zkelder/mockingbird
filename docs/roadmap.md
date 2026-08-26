@@ -3345,12 +3345,27 @@ an installable PWA shell, discoverable LAN access, and a documented
 private-overlay-network remote-access posture, exactly reusing the Layer
 1 identity/session system with no second truth layer -- see
 [mobile-remote-experience-v1-report.md](mobile-remote-experience-v1-report.md).
-Calm Notifications remains deliberately untouched (the mobile substrate
-was built without adjacency-authorizing it -- see that report's Phase 31
-record); real, bounded gaps remain in mobile page density and a couple of
+Real, bounded gaps remain in mobile page density and a couple of
 pre-existing, incidentally-discovered defects (see the report's
 "Remaining major PRODUCT opportunities"). Do not treat this layer as
 fully closed.
+
+**2026-08-25 update (Calm Attention & Notifications v1):** the Calm
+Notifications half of this layer is now materially delivered -- one
+canonical attention-selection layer composed entirely over already-
+accepted Place Story/digest facts and the existing review/monitoring/
+storage/journal alert system, a small user-centered taxonomy (Discovery/
+Insight/Needs Help/Observatory Health) with explicit urgency, genuine
+semantic-dedup fixes, reused (not reinvented) health/storage debounce,
+per-user preferences with quiet hours, and foreground-only browser-
+notification delivery -- see
+[calm-attention-notifications-v1-report.md](calm-attention-notifications-v1-report.md).
+Web Push (a genuinely closed-browser interruption) was investigated and
+deliberately deferred, matching this section's own "do not add cloud push
+infrastructure merely to satisfy this roadmap heading" instruction, not
+overridden by it. Do not treat this layer as fully closed either: see that
+report's own remaining opportunities (Web Push, detector/model-unavailable
+health attention, per-user read state, precise Place Story deep links).
 
 ### 8. Remaining product maturity
 

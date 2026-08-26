@@ -23,10 +23,37 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** the implementation commit for Mobile & Remote Experience
-  v1 (see §16)
-- **Schema:** `v55` (unchanged by this milestone)
-- **Latest accepted milestone:** Mobile & Remote Experience v1 -- Your
+- **Accepted HEAD:** the implementation commit for Calm Attention &
+  Notifications v1 (see §16)
+- **Schema:** `v56` -- one new additive table, `user_notification_preferences`
+  (per-user delivery preferences). No existing table changed; `ProductAlertModel.
+  category`/`.action_type` are plain `String` columns with no database-level
+  enum/check constraint, so the new `"insight"` category and the two new
+  `open_place_story`/`open_place_report` action types needed no migration.
+- **Latest accepted milestone:** Calm Attention & Notifications v1 -- Tell Me
+  When Something Matters (see
+  [calm-attention-notifications-v1-report.md](calm-attention-notifications-v1-report.md)).
+  Classification **B** -- a real canonical attention-selection layer
+  (`ProductRepository.sync_attention_signals`) composed entirely over
+  already-accepted facts (`place_story`, `daily_digest`/its weekly reuse,
+  the existing `ProductAlertModel` review/monitoring/storage/journal alert
+  system), never a second computation path; genuine semantic-dedup work
+  (two real double-notification anti-patterns found and fixed by tests, not
+  merely by review -- first-seen vs. the 1st-species diversity milestone, and
+  the underlying "first confirmed" fact computed two different ways in two
+  different subsystems); reused, not reinvented, health/storage debounce;
+  new per-user notification preferences (the product's first per-user
+  settings row) with quiet hours evaluated in the viewer's own browser-local
+  time (deliberately avoiding a server/Place timezone that does not exist);
+  foreground-only browser-notification delivery (Phase 22 Decision B --
+  Web Push explicitly evaluated and deferred, no cloud/push infrastructure
+  added); a real, executable Monday-through-Sunday product-shaped quiet-week
+  test proving the whole week stays calm (<=14 total attention items, zero
+  ever `immediate` urgency). See the report for real, honestly-recorded
+  remaining gaps (Web Push, detector/model-unavailable health attention,
+  global not-per-user read/dismiss state, coarse Place Story deep-link
+  scoping).
+- **Prior accepted milestone:** Mobile & Remote Experience v1 -- Your
   Observatory Away From the Desk (see
   [mobile-remote-experience-v1-report.md](mobile-remote-experience-v1-report.md)).
   Classification **B** -- strong mobile experience and a clear secure
@@ -150,12 +177,20 @@ preserved here, not relaxed.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
-Mobile & Remote Experience v1 (directly authorized outside this file,
+Calm Attention & Notifications v1 (directly authorized outside this file,
 reconciled here at its own closure -- see §16) is now accepted at
-classification **B** (strong mobile experience and a clear secure remote
-posture with bounded external-network/PWA gaps -- see
+classification **B** (a real canonical attention-selection layer composed
+entirely over already-accepted facts, genuine semantic-dedup fixes found by
+tests, reused health/storage debounce, new per-user preferences and quiet
+hours, foreground-only browser notifications with Web Push deliberately
+evaluated and deferred, and a real executable product-shaped quiet-week
+proof -- see
+[calm-attention-notifications-v1-report.md](calm-attention-notifications-v1-report.md)).
+Mobile & Remote Experience v1 remains accepted at classification **B**
+(strong mobile experience and a clear secure remote posture with bounded
+external-network/PWA gaps -- see
 [mobile-remote-experience-v1-report.md](mobile-remote-experience-v1-report.md)).
-This milestone also closed, as its own bounded Phase 0, the
+That milestone also closed, as its own bounded Phase 0, the
 `place_change_summary.py`/`_presence_status` threshold gap the Place
 Story & Seasonal Timeline v1 report (below) had recommended as future
 work -- that item is now resolved, not still outstanding.
@@ -177,7 +212,13 @@ and closed at classification **C** (usable, bounded further closure
 remains -- see Lane G, §6). No new implementation milestone is currently
 authorized. The next milestone will be selected only after the governing
 external process verifies this execution state against the complete
-remaining-v0.1 queue, the remaining Mobile & Remote Experience product
+remaining-v0.1 queue, the remaining Calm Attention & Notifications
+opportunities (Web Push for a genuinely closed-browser interruption,
+deliberately deferred; detector/model-unavailable Observatory Health
+attention; per-user, not global, read/dismiss state; precise per-taxon/
+per-Feature Place Story deep links; a live attention-sync diagnostics
+surface -- see that report's "Remaining major PRODUCT opportunities"), the
+remaining Mobile & Remote Experience product
 opportunities (progressive disclosure for the dense Visit/Stream/Settings
 pages; a genuine pre-existing `ReviewQueuePage` `product_category`/
 "animals"-tab gap, found and documented, not fixed; no login rate-
@@ -206,11 +247,16 @@ choose the next milestone by adjacency to this one.
 Do NOT automatically authorize:
 
 - Remote Field Productization;
-- Calm Notifications (Mobile & Remote Experience v1 deliberately built the
-  substrate this lane will need -- responsive shell, an installable PWA
-  path, connection/network facts on `/api/product/connection` -- without
-  implementing any notification itself; see that report's Phase 31
-  record);
+- standalone Web Push (VAPID/subscription persistence, a genuine outbound
+  call to a third-party push service) merely to close Calm Attention &
+  Notifications v1's own deliberately-deferred Phase 22 Decision B gap --
+  see that report for the full local-first/privacy reasoning this decision
+  rests on;
+- a Review Queue product_category/"animals"-tab fix, per-user read/dismiss
+  state, or precise per-taxon/Feature Place Story deep links as a
+  standalone follow-on campaign -- each individually real and recorded in
+  the Calm Attention & Notifications v1 report, none automatically the
+  next milestone by adjacency;
 - further Mobile/PWA/remote-access work as a standalone follow-on
   campaign -- specifically: progressive disclosure for the dense Visit/
   Stream/Settings pages, the `ReviewQueuePage` `product_category`/
@@ -393,12 +439,35 @@ Do not turn this into a giant redesign.
 
 ### D. Calm Notifications
 
-**Status:** OPEN -- PRE-v0.1 DECISION REQUIRED.
+**Status:** MATERIALLY DELIVERED -- Calm Attention & Notifications v1
+(2026-08-25) closed this lane's decision; see
+[calm-attention-notifications-v1-report.md](calm-attention-notifications-v1-report.md).
+Classification **B**.
 
-Need explicit decision whether first release needs them. If implemented:
-meaningful change rather than raw detections; calm/digest behavior;
-quiet-hours semantics where useful; no security-camera spam. Do not add
-cloud push infrastructure merely to satisfy this roadmap heading.
+Delivered: one canonical attention-selection layer over already-accepted
+facts (Place Story, the daily/weekly digest, the existing review/monitoring/
+storage/journal alert system); a small user-centered taxonomy (Discovery/
+Insight/Needs Help/Observatory Health) and explicit urgency (immediate/
+digest/in-app-only), never raw internal severity/error vocabulary; genuine
+semantic deduplication (two real double-notification anti-patterns found
+and fixed by tests); reused, not reinvented, health/storage debounce; a
+daily/weekly digest notification reusing the existing digest computation
+unmodified, suppressed when there is genuinely nothing meaningful; per-user
+notification preferences (four category toggles + quiet hours, evaluated in
+the viewer's own browser-local time); foreground-only browser-notification
+delivery (Web Push explicitly evaluated and deferred -- Decision B, no
+cloud push infrastructure added, matching this lane's own standing
+instruction); an extended Attention Center and a calm "N things worth
+noticing" line on Today; a real, executable product-shaped quiet-week test
+proving the whole week stays calm. Schema 55 -> 56 (one additive per-user
+preferences table).
+
+Remaining, not closed by this pass -- see the report's "Remaining major
+PRODUCT opportunities": Web Push for a genuinely closed-browser
+interruption; detector/model-unavailable Observatory Health attention;
+per-user (not global) read/dismiss state; precise per-taxon/Feature Place
+Story deep links (today scoped to a category group); a live attention-sync
+diagnostics surface.
 
 ### E. Mobile / Remote UX
 
@@ -817,7 +886,35 @@ each session that touches this repository.
 
 ## 14. Validation baselines
 
-**Latest accepted Core checkpoint (Mobile & Remote Experience v1):** 4976
+**Latest accepted Core checkpoint (Calm Attention & Notifications v1):** 4991
+passed / 3 failed / 3 skipped / 23 deselected (slow-marked) / 11 xfailed
+(28m02s). All 3 failures independently re-bisected this session: the two
+`test_place_biodiversity_summary_repository.py` failures (identical
+`'seen_before' == 'new'` mismatch, see immediately below) reproduce
+byte-identically against a fresh `git stash push -u` clean-baseline run with
+zero of this milestone's changes applied. The third,
+`test_transport_worker.py::test_sticky_diagnostic_set_on_protocol_
+incompatibility_and_cleared_on_next_success` -- the identical test name
+already recorded as a load-induced flake in the Mobile & Remote Experience v1
+checkpoint below -- passed cleanly both in isolation and as part of its own
+file (7/7) when re-run directly on this milestone's own code immediately
+after the full Core run, confirming the flake again rather than assuming the
+precedent still held. No schema-version guard-rail regression: all 14
+hard-coded `CURRENT_DATABASE_SCHEMA_VERSION == 55` assertions across 7 files
+were found and bumped to `56` (the identical class of drift every prior
+schema bump has tripped -- see the milestone report). 22 new tests across two
+new files (`tests/test_calm_attention.py`, `tests/test_attention_sync_
+service.py`) plus one new schema-migration regression test in `tests/
+test_persistence.py`, all passing; `ruff check` clean (0 new findings,
+bisected file-by-file against a clean baseline); `tsc --noEmit`/`vite build`
+clean; 11/11 new `notification-preferences.spec.ts` e2e tests passing
+(4 of which install a fake `Notification` global and a fake clock to prove
+the live-notification decision logic end to end, not only that Settings
+persists a toggle); full existing e2e suite (118 tests) re-run with only the
+one already-known pre-existing failure (`reviewed-product-loop.spec.ts`,
+independently reproduced and unrelated to this milestone).
+
+**Prior accepted Core checkpoint (Mobile & Remote Experience v1):** 4976
 passed / 3 failed / 3 skipped / 23 deselected (slow-marked) / 11 xfailed
 (24m02s -- measurably longer than the historical ~9min baseline; this
 sandbox was independently confirmed under real, unrelated concurrent CPU
@@ -975,11 +1072,76 @@ authorization field.
 
 ## 16. Transition checkpoint
 
-- **Accepted HEAD:** `b7a786d` (Mobile & Remote
-  Experience v1 implementation commit -- filled in at reconciliation)
-- **Schema:** v55 -> v55, unchanged. Nothing in this milestone alters
-  persisted data shape.
-- **Latest accepted milestone:** Mobile & Remote Experience v1 -- Your
+- **Accepted HEAD:** `c22bf94` (Calm Attention &
+  Notifications v1 implementation commit -- filled in at reconciliation)
+- **Schema:** v55 -> v56. One new additive table, `user_notification_
+  preferences` (per-user delivery preferences). No existing table's shape
+  changed; `ProductAlertModel.category`/`.action_type` are plain `String`
+  columns with no database-level enum/check constraint, so the new
+  `"insight"` category and the two new `open_place_story`/`open_place_report`
+  action types needed no migration of their own.
+- **Latest accepted milestone:** Calm Attention & Notifications v1 -- Tell Me
+  When Something Matters
+- **Calm Attention & Notifications v1 classification:** B -- a real canonical
+  attention-selection layer (`ProductRepository.sync_attention_signals`)
+  composed entirely over already-accepted facts (Place Story's already-
+  deduplicated event stream, the existing daily/weekly digest, the existing
+  review/monitoring/storage/journal `ProductAlert` system), never a second
+  computation path. See
+  [calm-attention-notifications-v1-report.md](calm-attention-notifications-v1-report.md)
+  for the full record: a small user-centered taxonomy (Discovery/Insight/
+  Needs Help/Observatory Health) and explicit urgency (immediate/digest/
+  in-app-only) computed as a pure presentation-layer mapping, never stored
+  and never a raw internal severity/error vocabulary leaking into copy;
+  genuine semantic-deduplication work that found and fixed two real
+  double-notification anti-patterns by *writing tests*, not merely by
+  design review (`first_seen` excluded from the new sync because `_sync_
+  journal_milestone_alert` already owns that fact; the 1st-species
+  diversity milestone excluded too, since it is always dated at that same
+  taxon's own first-ever confirmation); reused, not reinvented, health/
+  storage debounce (`_sync_camera_health_incident`'s own already-debounced
+  named-duration/consecutive-failure thresholds, untouched); a daily/weekly
+  digest notification reusing `daily_digest.compute_daily_digest` unmodified
+  via the exact same `place_activity_report` entry point Today/the Place
+  Report already call, suppressed when there is genuinely nothing meaningful
+  and never suppressed for an ordinary day of confirmed regular activity;
+  Needs Help reclassified to `in_app_only` urgency and grouped into the
+  digest's own "N observations could use your help" sentence instead of a
+  second per-item interruption; new per-user notification preferences (this
+  product's first per-user settings row -- four category toggles + quiet
+  hours) with quiet hours deliberately evaluated in the viewer's own
+  browser-local time rather than inventing a server/Place timezone that does
+  not exist; a fixed role rule hiding Needs Help attention from Viewers
+  server-side, not merely in the UI; foreground-only browser-notification
+  delivery (Phase 22 Decision B, Web Push explicitly evaluated against real
+  architecture facts and deferred -- no VAPID/subscription persistence, no
+  outbound push-service call, no cloud infrastructure added, matching this
+  lane's own standing "do not add cloud push infrastructure" instruction);
+  a real, executable Monday-through-Sunday product-shaped quiet-week test
+  proving the whole week stays calm (<=14 total attention items, zero ever
+  reaching `immediate` urgency); a real controlled-checkbox revert bug found
+  and fixed in the new Notifications settings UI by a failing Playwright
+  assertion; 4 new e2e tests that install a fake `Notification` global and a
+  fake clock to prove the live-notification decision logic end to end, not
+  only that Settings persists a toggle. 22 new backend tests (`tests/
+  test_calm_attention.py` + `tests/test_attention_sync_service.py`) plus one
+  new schema-migration regression test, all passing; Core 4991 passed / 3
+  failed (all 3 independently re-bisected this session -- 2 byte-identical
+  pre-existing via fresh `git stash push -u`, 1 a load-induced flake
+  reconfirmed clean in isolation and matching an identical documented
+  precedent -- see §14) / 3 skipped / 11 xfailed; `ruff check`/`tsc --noEmit`/
+  `vite build` clean; 11/11 new e2e tests passed; full existing e2e suite
+  (118 tests) re-run with only the one already-known pre-existing failure
+  (`reviewed-product-loop.spec.ts`, unrelated to this milestone). Real,
+  honestly-recorded remaining gaps -- not release blockers, this is
+  substantial product development -- are detailed in the report's "Remaining
+  major PRODUCT opportunities": Web Push for a genuinely closed-browser
+  interruption (deliberately deferred, not merely unattempted); detector/
+  model-unavailable Observatory Health attention; per-user (not global)
+  read/dismiss state; precise per-taxon/Feature Place Story deep links
+  (today scoped to a category group); a live attention-sync diagnostics
+  surface beyond the current structured log line.
+- **Prior accepted milestone:** Mobile & Remote Experience v1 -- Your
   Observatory Away From the Desk
 - **Mobile & Remote Experience v1 classification:** B -- strong mobile
   experience and a clear secure remote posture with bounded external-
@@ -1126,7 +1288,18 @@ authorization field.
   collapse; no real reachable camera/RTSP/ONVIF/local-USB/Camera-Node
   hardware exercised this session). See
   [camera-source-experience-v1-report.md](camera-source-experience-v1-report.md).
-- **Native-Windows acceptance (this milestone):** none -- Place Story &
+- **Native-Windows acceptance (this milestone):** none -- Calm Attention &
+  Notifications v1 was validated via targeted Python tests (including a
+  real 28-minute Core run), new Playwright e2e (including 4 real-browser
+  `Notification`/fake-clock tests), `tsc`/`vite build`, and `ruff` on the
+  Linux/WSL dev stack; every new module is plain Python/TypeScript with no
+  OS-specific branch, so it is not expected to behave differently on native
+  Windows, but that remains an expectation, not fresh Windows evidence. The
+  most recent real native-Windows acceptance remains further below (Place /
+  Yard Intelligence v2), unaffected by this milestone's additive-only
+  schema change.
+- **Native-Windows acceptance (Place Story & Seasonal Timeline v1):** none
+  -- Place Story &
   Seasonal Timeline v1 was validated via targeted Playwright e2e against
   the real running app (Linux/WSL dev stack) and full Core; it is a pure
   read-model over already-cross-platform data with no platform-specific
@@ -1166,6 +1339,20 @@ authorization field.
 - **State:** Milestone-closure checkpoint
 - **Final release hardening:** not authorized
 - **Remote LTE/solar:** not a v0.1 blocker
+- **Calm Notifications:** delivered this milestone (classification B) -- see
+  Lane D, §6; a further Web Push/per-user-read-state/precise-deep-link
+  campaign is not automatically authorized (see §3)
+- **Calm attention capability:** B -- one canonical attention-selection
+  layer over already-accepted facts, genuine semantic-dedup fixes found by
+  tests, reused health/storage debounce, per-user preferences and quiet
+  hours, foreground-only browser notifications with Web Push deliberately
+  deferred, a real product-shaped quiet-week proof
+- **Notification delivery decision:** foreground-only page-level
+  `Notification` calls while the tab is open or backgrounded (Phase 22
+  Decision B); no Web Push, no VAPID/subscription persistence, no outbound
+  push-service call, no MockingBird-operated cloud notification backend --
+  see the milestone report's "PWA / browser notification decision" for the
+  full evaluation of all three options against real codebase facts
 - **Mobile/PWA:** delivered this milestone (classification B) -- see Lane
   E, §6; a further Mobile/PWA/remote-access campaign is not automatically
   authorized (see §3)
