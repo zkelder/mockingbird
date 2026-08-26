@@ -1,6 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiClient } from "../api/client";
-import type { AlertCategory, ProductAlert, ProductAlertAction } from "../api/types";
+import type { AlertCategory, AttentionCategory, ProductAlert, ProductAlertAction, UserNotificationPreferences } from "../api/types";
+import {
+  deliverForegroundNotification,
+  shouldDeliverForegroundNotification,
+} from "../notifications/foregroundNotifications";
 import { EmptyState } from "./EmptyState";
 import { PageHeader } from "./PageHeader";
 import { StatusPill } from "./StatusPill";
@@ -9,6 +13,7 @@ import { formatDateTime } from "../utils";
 const filters: Array<{ value: AlertCategory | undefined; label: string }> = [
   { value: undefined, label: "All" },
   { value: "review", label: "Review" },
+  { value: "insight", label: "Insight" },
   { value: "monitoring", label: "Monitoring" },
   { value: "storage", label: "Storage" },
   // Everyday Product / Discovery UX Closure v1: the visible label says "Bird
@@ -18,10 +23,24 @@ const filters: Array<{ value: AlertCategory | undefined; label: string }> = [
   { value: "journal", label: "Bird Log" },
 ];
 
+// Calm Attention & Notifications v1, Phase 2: the small, plain-language
+// taxonomy shown next to each item so a user learns "what kind of thing is
+// this" without ever seeing an internal `AlertCategory` name like
+// "journal"/"monitoring" (see PlaceStoryEntry's identical "never render the
+// internal enum name directly" discipline).
+const ATTENTION_CATEGORY_LABEL: Record<AttentionCategory, string> = {
+  discovery: "Discovery",
+  insight: "Insight",
+  needs_help: "Needs Help",
+  observatory_health: "Observatory Health",
+};
+
 function actionLabel(action: ProductAlertAction): string {
   if (action.action_type === "review_visit") return "Review Visit";
   if (action.action_type === "open_stream") return "Open Stream";
   if (action.action_type === "open_storage_retention") return "Open Storage & Retention";
+  if (action.action_type === "open_place_story") return "View in Place Story";
+  if (action.action_type === "open_place_report") return "View report";
   return "Open Bird Log";
 }
 
@@ -62,7 +81,12 @@ function AlertRow({
   return (
     <article className={`alert-row alert-${alert.severity}`}>
       <div className="alert-row-heading">
-        <div><h3>{alert.title}</h3><span className="meta-text">{formatDateTime(alert.created_at)}</span></div>
+        <div>
+          <h3>{alert.title}</h3>
+          <span className="meta-text">
+            {ATTENTION_CATEGORY_LABEL[alert.attention_category]} · {formatDateTime(alert.created_at)}
+          </span>
+        </div>
         <StatusPill label={alert.status} tone={tone(alert)} />
       </div>
       <p>{alert.message}</p>
@@ -88,12 +112,38 @@ export function AlertsControl({
   const [alerts, setAlerts] = useState<ProductAlert[]>([]);
   const [unread, setUnread] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // Calm Attention & Notifications v1: `null` means "no poll has completed
+  // yet" -- deliberately distinct from an empty set, so the very first
+  // poll after opening the app never fires a flood of live notifications
+  // for attention items that already existed before this page loaded.
+  // Only an id that is genuinely new *since the previous poll* is ever
+  // eligible for a live interruption (Phase 8: cooldowns/hysteresis).
+  const seenAlertIdsRef = useRef<Set<string> | null>(null);
+  // A ref, not a `useCallback` dependency: `onAction` is a fresh function
+  // identity on every parent render (App.tsx does not memoize it), and
+  // `refresh`'s own identity must stay stable so the 60s poll interval
+  // below is not torn down and restarted on every unrelated re-render.
+  const onActionRef = useRef(onAction);
+  onActionRef.current = onAction;
   const refresh = useCallback(async () => {
     try {
-      const result = await apiClient.getAlertUnread();
+      const [result, preferences] = await Promise.all([
+        apiClient.getAlertUnread(),
+        apiClient.getNotificationPreferences().catch(() => null),
+      ]);
       setUnread(result.unread_count);
       setAlerts(result.recent);
       setError(null);
+      const previouslySeen = seenAlertIdsRef.current;
+      seenAlertIdsRef.current = new Set(result.recent.map((alert) => alert.id));
+      if (previouslySeen && preferences) {
+        const now = new Date();
+        for (const alert of result.recent) {
+          if (previouslySeen.has(alert.id)) continue;
+          if (!shouldDeliverForegroundNotification(alert, preferences, now)) continue;
+          deliverForegroundNotification(alert, () => onActionRef.current(alert.action));
+        }
+      }
     } catch {
       setError("Recent alerts could not refresh. The last available alerts are still shown.");
     }
@@ -112,7 +162,7 @@ export function AlertsControl({
         <section className="alerts-drawer" aria-label="Recent alerts">
           <div className="section-heading"><div><h2>Alerts</h2><span className="meta-text">Local attention items only.</span></div><button className="text-action" onClick={onOpenInbox} type="button">Open inbox</button></div>
           {error ? <div className="error-panel">{error}</div> : null}
-          {!alerts.length ? <EmptyState title="No alerts right now" description="Important review, monitoring, storage, and Bird Log milestones appear here." /> : alerts.slice(0, 5).map((alert) => <AlertRow alert={alert} key={alert.id} onAction={onAction} onChanged={refresh} />)}
+          {!alerts.length ? <EmptyState title="Nothing worth noticing right now" description="A new species, a meaningful change, review work, or a real observatory issue will appear here -- MockingBird stays quiet otherwise." /> : alerts.slice(0, 5).map((alert) => <AlertRow alert={alert} key={alert.id} onAction={onAction} onChanged={refresh} />)}
         </section>
       ) : null}
     </div>

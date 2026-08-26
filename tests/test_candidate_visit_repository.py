@@ -137,7 +137,7 @@ def test_schema_v34_adds_scene_confusor_regions_table_empty_and_unseeded(tmp_pat
 
     db_path = tmp_path / "schema-v34.sqlite3"
     repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 55
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 56
     _activate(repository)
     outcome = repository.create_candidate_visit_from_proposal(
         CreateCandidateVisitRequest(
@@ -156,7 +156,7 @@ def test_schema_v34_adds_scene_confusor_regions_table_empty_and_unseeded(tmp_pat
 
     migrated = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
     try:
-        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 55
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 56
         from sqlalchemy import inspect as sa_inspect
 
         from mockingbird.repository.product_repository import SceneConfusorRegionModel
@@ -187,7 +187,7 @@ def test_schema_v31_adds_confidence_evidence_column_without_fabricating_legacy_d
     # path below always exercises "roll back to just before this column
     # existed, then migrate all the way forward to current," regardless of
     # how many later schema versions have been added since.
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 55
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 56
     _activate(repository)
     pre_migration_outcome = repository.create_candidate_visit_from_proposal(
         CreateCandidateVisitRequest(
@@ -210,7 +210,7 @@ def test_schema_v31_adds_confidence_evidence_column_without_fabricating_legacy_d
 
     migrated = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
     try:
-        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 55
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 56
         with migrated.session_factory() as session:
             pre_ledger = session.get(ObservationCandidateVisitModel, "visit-episode:pre-migration")
             assert pre_ledger is not None
@@ -805,7 +805,7 @@ def test_schema_v33_adds_geometry_attribution_column_without_fabricating_legacy_
 
     db_path = tmp_path / "schema-v33.sqlite3"
     repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 55
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 56
     _activate(repository)
     pre_migration_outcome = repository.create_candidate_visit_from_proposal(
         CreateCandidateVisitRequest(
@@ -829,7 +829,7 @@ def test_schema_v33_adds_geometry_attribution_column_without_fabricating_legacy_
 
     migrated = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
     try:
-        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 55
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 56
         with migrated.session_factory() as session:
             pre_media = session.get(MediaAssetModel, pre_migration_media_id)
             assert pre_media is not None
@@ -870,7 +870,7 @@ def test_schema_v36_adds_concurrent_sibling_column_without_fabricating_legacy_da
 
     db_path = tmp_path / "schema-v36.sqlite3"
     repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 55
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 56
     _activate(repository)
     pre_migration_outcome = repository.create_candidate_visit_from_proposal(
         CreateCandidateVisitRequest(
@@ -892,7 +892,7 @@ def test_schema_v36_adds_concurrent_sibling_column_without_fabricating_legacy_da
 
     migrated = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
     try:
-        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 55
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 56
         with migrated.session_factory() as session:
             pre_ledger = session.get(ObservationCandidateVisitModel, "visit-episode:pre-migration-sibling")
             assert pre_ledger is not None

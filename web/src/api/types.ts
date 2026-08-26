@@ -3535,15 +3535,31 @@ export interface FastReviewUndoResponse {
   message: string;
 }
 
-export type AlertCategory = "review" | "monitoring" | "storage" | "journal";
+export type AlertCategory = "review" | "monitoring" | "storage" | "journal" | "insight";
 export type AlertSeverity = "info" | "warning" | "high";
-export type AlertActionType = "review_visit" | "open_stream" | "open_storage_retention" | "open_wildlife_journal";
+export type AlertActionType =
+  | "review_visit"
+  | "open_stream"
+  | "open_storage_retention"
+  | "open_wildlife_journal"
+  | "open_place_story"
+  | "open_place_report";
+
+// Calm Attention & Notifications v1, Phase 2/3: the small, user-centered
+// taxonomy every `AlertCategory`/`AlertSeverity` pair presents as. Derived
+// server-side (`ProductRepository._attention_category_for`/`_attention_
+// urgency_for`), never stored -- treat as read-only presentation data.
+export type AttentionCategory = "discovery" | "insight" | "needs_help" | "observatory_health";
+export type AttentionUrgency = "immediate" | "digest" | "in_app_only";
 
 export interface ProductAlertAction {
   action_type: AlertActionType;
   visit_id?: string | null;
   stream_id?: string | null;
   label?: string | null;
+  taxon_label?: string | null;
+  feature_id?: string | null;
+  story_kind?: string | null;
 }
 
 export interface ProductAlert {
@@ -3565,6 +3581,8 @@ export interface ProductAlert {
   visit_id?: string | null;
   source_id?: string | null;
   action: ProductAlertAction;
+  attention_category: AttentionCategory;
+  urgency: AttentionUrgency;
 }
 
 export interface ProductAlertListResponse {
@@ -3575,6 +3593,29 @@ export interface ProductAlertListResponse {
 export interface ProductAlertUnreadResponse {
   unread_count: number;
   recent: ProductAlert[];
+}
+
+export interface UserNotificationPreferences {
+  discovery_enabled: boolean;
+  insight_enabled: boolean;
+  needs_help_enabled: boolean;
+  observatory_health_enabled: boolean;
+  browser_notifications_enabled: boolean;
+  quiet_hours_enabled: boolean;
+  quiet_hours_start_minute: number;
+  quiet_hours_end_minute: number;
+  updated_at: string;
+}
+
+export interface UserNotificationPreferencesUpdate {
+  discovery_enabled?: boolean;
+  insight_enabled?: boolean;
+  needs_help_enabled?: boolean;
+  observatory_health_enabled?: boolean;
+  browser_notifications_enabled?: boolean;
+  quiet_hours_enabled?: boolean;
+  quiet_hours_start_minute?: number;
+  quiet_hours_end_minute?: number;
 }
 
 export type ReviewQueueBulkCorrectionTargetType = "event" | "visit";

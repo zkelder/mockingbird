@@ -12,6 +12,7 @@ import type {
 } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { MetricCard } from "../components/MetricCard";
+import { NotificationPreferences } from "../components/NotificationPreferences";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
 import { formatBytes, formatLabel } from "../utils";
@@ -592,6 +593,8 @@ export function LocalDataPage({
               </p>
             </section>
           ) : null}
+
+          <NotificationPreferences />
 
           <section className="panel local-data-card">
             <div className="section-heading">

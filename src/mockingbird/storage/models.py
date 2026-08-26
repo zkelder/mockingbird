@@ -841,6 +841,29 @@ class ProductAlertModel(Base):
     action_parameters_json: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+class UserNotificationPreferenceModel(Base):
+    """Calm Attention & Notifications v1 (schema 56): one signed-in user's
+    own attention-delivery preferences -- the first per-user settings row
+    in the product (every other settings table, e.g.
+    `EnvironmentalContextSettingsModel`, is a Host-wide singleton). The
+    underlying `ProductAlertModel` condition stays observatory-level and
+    shared; only what one person is shown/notified about is per-user. See
+    docs/calm-attention-notifications-v1-report.md."""
+
+    __tablename__ = "user_notification_preferences"
+
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    discovery_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    insight_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    needs_help_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    observatory_health_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    browser_notifications_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    quiet_hours_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    quiet_hours_start_minute: Mapped[int] = mapped_column(Integer, nullable=False, default=22 * 60)
+    quiet_hours_end_minute: Mapped[int] = mapped_column(Integer, nullable=False, default=7 * 60)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class DetectionRunModel(Base):
     __tablename__ = "detection_runs"
 

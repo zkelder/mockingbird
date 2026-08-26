@@ -158,6 +158,24 @@ const advancedPages = new Set<Page>([
   "motion-evidence-detail",
 ]);
 
+// Calm Attention & Notifications v1: maps a Place Story `PlaceStoryEventKind`
+// (carried on an `open_place_story` alert action as `story_kind`) onto
+// PlaceStoryPage's existing group filter -- see that page's own
+// `KINDS_BY_GROUP`, mirrored here rather than imported to avoid a
+// page-into-App dependency for one small lookup table.
+function placeStoryCategoryForKind(kind: string | null | undefined): "all" | "wildlife" | "place" | "context" {
+  if (kind === "return" || kind === "regularity_change" || kind === "diversity_milestone" || kind === "noteworthy_activity" || kind === "first_seen") {
+    return "wildlife";
+  }
+  if (kind === "feature_change" || kind === "phenology") {
+    return "place";
+  }
+  if (kind === "comparison_insight") {
+    return "context";
+  }
+  return "all";
+}
+
 export default function App() {
   const [initialRoute] = useState<AppRoute>(() => readAppRoute());
   const [page, setPageState] = useState<Page>(initialRoute.page);
@@ -170,6 +188,12 @@ export default function App() {
   const [selectedVisitId, setSelectedVisitId] = useState<string | null>(
     initialRoute.visitId ?? null,
   );
+  // Calm Attention & Notifications v1: set only by `openAlertAction`'s
+  // `open_place_story` branch, immediately before navigating -- see that
+  // function and `placeStoryCategoryForKind` below.
+  const [placeStoryInitialCategory, setPlaceStoryInitialCategory] = useState<
+    "all" | "wildlife" | "place" | "context"
+  >("all");
   const [selectedMotionEvidenceId, setSelectedMotionEvidenceId] = useState<string | null>(
     initialRoute.motionEvidenceId ?? null,
   );
@@ -520,6 +544,21 @@ export default function App() {
       const path = action.label ? `/bird-log/${encodeURIComponent(action.label)}` : "/bird-log";
       window.history.pushState({}, "", path);
       applyRoute({ page: "bird-log" });
+      return;
+    }
+    if (action.action_type === "open_place_story") {
+      // Calm Attention & Notifications v1, Phase 25: land already scoped
+      // to the right category group instead of an unfiltered timeline --
+      // Place Story has no per-taxon/per-Feature filter control today, so
+      // this is the most precise deep link available without adding one.
+      setPlaceStoryInitialCategory(placeStoryCategoryForKind(action.story_kind));
+      window.history.pushState({}, "", "/place-story");
+      applyRoute({ page: "place-story" });
+      return;
+    }
+    if (action.action_type === "open_place_report") {
+      window.history.pushState({}, "", "/place-report");
+      applyRoute({ page: "place-activity-report" });
     }
   }
 
@@ -628,6 +667,7 @@ export default function App() {
           onOpenVisit={openVisit}
           onOpenPlaceActivityReport={() => setPage("place-activity-report")}
           onOpenPlaceStory={() => setPage("place-story")}
+          onOpenAlertsInbox={() => setPage("alerts-inbox")}
         />
       );
     }
@@ -937,6 +977,7 @@ export default function App() {
     if (page === "place-story") {
       return (
         <PlaceStoryPage
+          initialCategory={placeStoryInitialCategory}
           onOpenBirdLog={openBirdLogLabel}
           onOpenPlaceActivityReport={() => setPage("place-activity-report")}
           onOpenVisit={openVisit}

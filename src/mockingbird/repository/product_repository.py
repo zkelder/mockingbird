@@ -354,6 +354,8 @@ from mockingbird.api.schemas import (
     AlertActionType,
     AlertCategory,
     AlertSeverity,
+    AttentionCategory,
+    AttentionUrgency,
     BoundingBox,
     CameraSource,
     CameraSourceCreate,
@@ -483,11 +485,14 @@ from mockingbird.api.schemas import (
     OnvifRecordProfileRequest,
     OnvifRecordProfileResponse,
     PixelBoundingBox,
+    PlaceActivityReportDigest,
     PlaceActivityReportRequest,
     PlaceActivityReportResponse,
     Point,
     ProductAlert,
     ProductAlertAction,
+    UserNotificationPreferences,
+    UserNotificationPreferencesUpdate,
     ProductAlertListResponse,
     ProductAlertUnreadResponse,
     ProductHealthBackupSummary,
@@ -818,6 +823,7 @@ from mockingbird.storage.models import (
     PlaceHabitatFactModel,
     PlacePhenologyObservationModel,
     ProductAlertModel,
+    UserNotificationPreferenceModel,
     ResearchCollectionModel,
     ReviewIdentificationAssistantRunModel,
     ReviewLabelModel,
@@ -18403,15 +18409,30 @@ class ProductRepository:
         category: AlertCategory | None = None,
         offset: int = 0,
         page_size: int = 30,
+        viewer: CurrentUser | None = None,
     ) -> ProductAlertListResponse:
-        """Read bounded inbox history. Reading never reconciles product conditions."""
+        """Read bounded inbox history. Reading never reconciles product
+        conditions. `viewer` is optional only for internal/test callers
+        that pre-date Calm Attention & Notifications v1's per-user
+        preferences; every real route passes the signed-in user (Phase 16/
+        18: preferences and the Viewer Needs-Help ceiling are enforced
+        here, once, rather than in each caller)."""
 
         bounded_size = max(1, min(page_size, MAX_ALERT_PAGE_SIZE))
         bounded_offset = max(0, min(offset, 10_000))
+        visible = (
+            self._visible_alert_categories(viewer_role=viewer.role, user_id=viewer.id)
+            if viewer is not None
+            else None
+        )
+        if category is not None and visible is not None and category not in visible:
+            return ProductAlertListResponse(items=[], next_offset=None)
         with self.session_factory() as session:
             query = select(ProductAlertModel)
             if category is not None:
                 query = query.where(ProductAlertModel.category == category.value)
+            elif visible is not None:
+                query = query.where(ProductAlertModel.category.in_([item.value for item in visible]))
             rows = session.scalars(
                 query.order_by(ProductAlertModel.created_at.desc(), ProductAlertModel.id.desc())
                 .offset(bounded_offset)
@@ -18422,19 +18443,26 @@ class ProductRepository:
                 next_offset=(bounded_offset + bounded_size if len(rows) > bounded_size else None),
             )
 
-    def product_alert_unread(self) -> ProductAlertUnreadResponse:
+    def product_alert_unread(self, *, viewer: CurrentUser | None = None) -> ProductAlertUnreadResponse:
+        visible = (
+            self._visible_alert_categories(viewer_role=viewer.role, user_id=viewer.id)
+            if viewer is not None
+            else None
+        )
         with self.session_factory() as session:
-            unread_count = session.scalar(
-                select(func.count(ProductAlertModel.id)).where(
-                    ProductAlertModel.read_at.is_(None),
-                    ProductAlertModel.dismissed_at.is_(None),
-                    ProductAlertModel.resolved_at.is_(None),
-                )
-            ) or 0
+            unread_query = select(func.count(ProductAlertModel.id)).where(
+                ProductAlertModel.read_at.is_(None),
+                ProductAlertModel.dismissed_at.is_(None),
+                ProductAlertModel.resolved_at.is_(None),
+            )
+            recent_query = select(ProductAlertModel).where(ProductAlertModel.dismissed_at.is_(None))
+            if visible is not None:
+                allowed_values = [item.value for item in visible]
+                unread_query = unread_query.where(ProductAlertModel.category.in_(allowed_values))
+                recent_query = recent_query.where(ProductAlertModel.category.in_(allowed_values))
+            unread_count = session.scalar(unread_query) or 0
             recent = session.scalars(
-                select(ProductAlertModel)
-                .where(ProductAlertModel.dismissed_at.is_(None))
-                .order_by(ProductAlertModel.created_at.desc(), ProductAlertModel.id.desc())
+                recent_query.order_by(ProductAlertModel.created_at.desc(), ProductAlertModel.id.desc())
                 .limit(MAX_RECENT_ALERTS)
             ).all()
             return ProductAlertUnreadResponse(
@@ -18501,16 +18529,21 @@ class ProductRepository:
             visit_id=alert.visit_id if action_type == AlertActionType.review_visit else None,
             stream_id=alert.stream_id if action_type == AlertActionType.open_stream else None,
             label=(str(action_data.get("label")) if action_type == AlertActionType.open_wildlife_journal and action_data.get("label") else None),
+            taxon_label=(str(action_data["taxon_label"]) if action_type == AlertActionType.open_place_story and action_data.get("taxon_label") else None),
+            feature_id=(str(action_data["feature_id"]) if action_type == AlertActionType.open_place_story and action_data.get("feature_id") else None),
+            story_kind=(str(action_data["story_kind"]) if action_type == AlertActionType.open_place_story and action_data.get("story_kind") else None),
         )
         status = (
             "dismissed" if alert.dismissed_at is not None else
             "resolved" if alert.resolved_at is not None else
             "read" if alert.read_at is not None else "unread"
         )
+        category = AlertCategory(alert.category)
+        severity = AlertSeverity(alert.severity)
         return ProductAlert(
             id=alert.id,
-            category=AlertCategory(alert.category),
-            severity=AlertSeverity(alert.severity),
+            category=category,
+            severity=severity,
             title=alert.title,
             message=alert.message,
             created_at=_as_utc(alert.created_at),
@@ -18526,7 +18559,49 @@ class ProductRepository:
             visit_id=alert.visit_id,
             source_id=alert.source_id,
             action=action,
+            attention_category=self._attention_category_for(category),
+            urgency=self._attention_urgency_for(category, severity),
         )
+
+    @staticmethod
+    def _attention_category_for(category: AlertCategory) -> AttentionCategory:
+        """Calm Attention & Notifications v1, Phase 2: map this product's
+        existing, internal `AlertCategory` vocabulary onto the small,
+        user-centered taxonomy the milestone brief defines -- a pure
+        presentation function, computed fresh on every read and never
+        persisted, so refining this mapping later needs no migration."""
+
+        return {
+            AlertCategory.review: AttentionCategory.needs_help,
+            AlertCategory.monitoring: AttentionCategory.observatory_health,
+            AlertCategory.storage: AttentionCategory.observatory_health,
+            AlertCategory.journal: AttentionCategory.discovery,
+            AlertCategory.insight: AttentionCategory.insight,
+        }[category]
+
+    @staticmethod
+    def _attention_urgency_for(category: AlertCategory, severity: AlertSeverity) -> AttentionUrgency:
+        """Phase 3: explicit delivery urgency, distinct from `severity`
+        (how bad) and `AttentionCategory` (what kind). Per-Visit review
+        work is always `in_app_only` -- Phase 10 groups it into the daily
+        digest's own "N observations could use your help" sentence
+        instead of a second, per-item interruption (see `_compose_digest_
+        message`). Wildlife Discovery/Insight content -- even a first-ever
+        species -- defaults to `digest`, never `immediate` (Phase 9: "Do
+        NOT notify for every ordinary Visit... Do NOT use raw classifier
+        confidence as importance"). `immediate` is reserved for a `high`-
+        severity Observatory Health condition, and only ever reached after
+        `_sync_camera_health_incident`/`_sync_storage_alert`'s own existing,
+        already-debounced sustained-failure thresholds are crossed -- see
+        docs/calm-attention-notifications-v1-report.md "Debounce /
+        hysteresis" for the exact thresholds reused, not reinvented, here.
+        """
+
+        if category == AlertCategory.review:
+            return AttentionUrgency.in_app_only
+        if category in (AlertCategory.monitoring, AlertCategory.storage):
+            return AttentionUrgency.immediate if severity == AlertSeverity.high else AttentionUrgency.in_app_only
+        return AttentionUrgency.digest
 
     def _refresh_product_alert(
         self,
@@ -18696,6 +18771,370 @@ class ProductRepository:
             action_type=AlertActionType.open_storage_retention, action_parameters={}, now=now,
             cleanup_context="protected_target" if protected else "managed_target",
         )
+
+    # ------------------------------------------------------------------
+    # Calm Attention & Notifications v1: Insight/Discovery/digest sync.
+    # See docs/calm-attention-notifications-v1-report.md.
+    # ------------------------------------------------------------------
+
+    _PLACE_STORY_ATTENTION_LOOKBACK_DAYS = 30
+    _DIGEST_SUPPRESSED_COVERAGE_STATES = frozenset(
+        {"no_monitoring", "sparse_monitoring", "no_confirmed_activity"}
+    )
+    _STORY_KIND_TO_ALERT_CATEGORY: dict[str, AlertCategory] = {
+        # Discovery: notable wildlife facts, the same spirit as `journal`'s
+        # existing "first confirmed local observation" (Bird Log-flavored).
+        "return": AlertCategory.journal,
+        "diversity_milestone": AlertCategory.journal,
+        # Insight: longer-horizon understanding -- regularity/activity
+        # transitions, Reviewed Place facts, and mature before/after
+        # comparisons.
+        "regularity_change": AlertCategory.insight,
+        "noteworthy_activity": AlertCategory.insight,
+        "feature_change": AlertCategory.insight,
+        "phenology": AlertCategory.insight,
+        "comparison_insight": AlertCategory.insight,
+        # "first_seen" is deliberately absent -- see `_sync_place_story_
+        # attention`'s own docstring below.
+    }
+
+    def _sync_place_story_attention(self, session: Session, story: PlaceStoryResponse, *, now: datetime) -> int:
+        """Calm Attention & Notifications v1, Phase 4/6/9: turn recent Place
+        Story events into durable attention items -- a thin adapter over
+        `place_story`'s own already-idempotent, already-deduplicated event
+        stream (stable ids, structural dedup -- see `place_story.build_
+        place_story`'s own docstring), never a second computation of "is
+        this worth mentioning."
+
+        `first_seen` is deliberately excluded: `_sync_journal_milestone_
+        alert` (already called inline at Visit-review-commit time) owns
+        that exact fact today. Surfacing it a second time here, computed a
+        second way (via `historical_baseline` instead of a raw label
+        COUNT), is exactly the "four notifications from four subsystems"
+        anti-pattern Phase 6 warns against -- see the milestone report's
+        "Semantic deduplication" for the full reasoning this repository
+        chose not to unify the two mechanisms outright (the existing
+        per-Visit check is cheap and synchronous; recomputing full
+        historical intelligence at every Visit-review commit would
+        reintroduce the Phase 38 performance problem this method's own
+        bounded, periodic cadence exists to avoid).
+
+        Returns the count of Place Story-derived alerts left active after
+        this call (created, updated, or already current).
+        """
+
+        current_keys: set[str] = set()
+        for entry in story.entries:
+            if entry.kind == "first_seen":
+                continue
+            if entry.kind == "diversity_milestone" and entry.id == "diversity-milestone:1":
+                # The Place's 1st-species milestone is, by construction,
+                # always dated at that same taxon's own all-time-first
+                # confirmation (`compute_diversity_milestone_events` sorts
+                # taxa by `first_confirmed_at`) -- i.e. it always co-occurs
+                # with the `journal:first-label:{taxon}` alert `_sync_
+                # journal_milestone_alert` already created for that exact
+                # moment. A second "1st species recorded!" alert beside
+                # "First <taxon> observation" is the same Phase 6 anti-
+                # pattern this method's `first_seen` exclusion above
+                # already avoids -- so this one ordinal is excluded too.
+                # Ordinals 5/10/25/50/100 are kept: by the time a Place
+                # reaches its 5th+ species, that species' own "first
+                # confirmed" fact is comparatively routine, and "5th
+                # species recorded here" is genuinely new, calm-worthy
+                # information a per-taxon alert does not otherwise convey.
+                continue
+            category = self._STORY_KIND_TO_ALERT_CATEGORY.get(entry.kind)
+            if category is None:
+                continue
+            key = f"place-story:{entry.id}"
+            current_keys.add(key)
+            action_parameters = {
+                field_name: field_value
+                for field_name, field_value in (
+                    ("taxon_label", entry.taxon_label),
+                    ("feature_id", entry.feature_id),
+                    ("story_kind", entry.kind),
+                )
+                if field_value
+            }
+            self._refresh_product_alert(
+                session,
+                category=category,
+                severity=AlertSeverity.info,
+                title=entry.title,
+                message=entry.summary,
+                deduplication_key=key,
+                # `entry.id` already encodes every fact that could change
+                # this event's meaning (taxon, state, date, or change-event
+                # id) -- `place_story` never reuses one id for two
+                # different facts (`build_place_story` asserts this) -- so
+                # a constant fingerprint is correct: once true, this
+                # condition never needs a second version under the same
+                # key.
+                condition_fingerprint="place_story_event",
+                action_type=AlertActionType.open_place_story,
+                action_parameters=action_parameters,
+                now=now,
+                zone_id=entry.zone_id,
+                source_id=entry.source_id,
+            )
+
+        # Correction safety (Phase 32): resolve any previously-active
+        # Place Story attention item whose underlying fact no longer
+        # recomputes -- e.g. a correction changed the confirmed taxon
+        # behind a `return`/`regularity_change` event, or a Reviewed
+        # Place Feature change event was deleted. Bounded to alerts
+        # created within this same lookback window, so an older, already-
+        # read/dismissed item from outside the recomputed range is never
+        # touched (Phase 33: "Attention history retention").
+        stale_cutoff = now - timedelta(days=self._PLACE_STORY_ATTENTION_LOOKBACK_DAYS)
+        for alert in session.scalars(
+            select(ProductAlertModel).where(
+                ProductAlertModel.deduplication_key.like("place-story:%"),
+                ProductAlertModel.resolved_at.is_(None),
+                ProductAlertModel.created_at >= stale_cutoff,
+            )
+        ).all():
+            if alert.deduplication_key not in current_keys:
+                alert.resolved_at = now
+                alert.updated_at = now
+        return len(current_keys)
+
+    @staticmethod
+    def _compose_digest_message(digest: PlaceActivityReportDigest) -> str:
+        """Calm Attention & Notifications v1, Phase 14/15: calm digest
+        copy composed entirely from `daily_digest.compute_daily_digest`'s
+        own already-resolved, already-ranked facts -- no new wildlife
+        judgment is made here, only sentence assembly. Reuses the exact
+        same `other_activity.unresolved_visit_count` Today/the Place
+        Report already display for Phase 10's "N observations could use
+        your help" clause, instead of a second, separately-computed Needs
+        Help summary."""
+
+        if not digest.primary_highlights:
+            parts = [digest.coverage.message]
+        else:
+            names = [highlight.display_name for highlight in digest.primary_highlights[:3]]
+            if len(names) == 1:
+                joined = names[0]
+            elif len(names) == 2:
+                joined = f"{names[0]} and {names[1]}"
+            else:
+                joined = f"{', '.join(names[:-1])}, and {names[-1]}"
+            lead = digest.primary_highlights[0]
+            note = (
+                lead.historical_note or lead.regularity_note
+                or lead.change_note or lead.pattern_note or lead.seasonal_note
+            )
+            parts = [f"{joined} recorded."]
+            if note:
+                parts.append(note)
+        if digest.place_change_note:
+            parts.append(digest.place_change_note)
+        unresolved = digest.other_activity.unresolved_visit_count
+        if unresolved > 0:
+            parts.append(f"{unresolved} observation{'s' if unresolved != 1 else ''} could use your help.")
+        return " ".join(parts)
+
+    def _sync_digest_attention_for_period(
+        self,
+        session: Session,
+        *,
+        digest: PlaceActivityReportDigest | None,
+        dedup_key: str,
+        title: str,
+        now: datetime,
+    ) -> bool:
+        """One idempotent-per-period digest attention item. Phase 14: "Do
+        not send '0 birds detected today' as a depressing routine
+        notification" -- suppressed entirely (and any previously-active
+        item for this exact period resolved) whenever coverage has
+        genuinely nothing meaningful to say, never merely "less than
+        usual." An ordinary day of confirmed regular species still
+        produces a calm recap; that is what a digest is for (Phase 15's
+        own "cardinals remained regular" example)."""
+
+        if digest is None or digest.coverage.state in self._DIGEST_SUPPRESSED_COVERAGE_STATES:
+            self._resolve_product_alerts(session, dedup_key, now)
+            return False
+        self._refresh_product_alert(
+            session,
+            category=AlertCategory.insight,
+            severity=AlertSeverity.info,
+            title=title,
+            message=self._compose_digest_message(digest),
+            deduplication_key=dedup_key,
+            # Coarse and constant, not content-derived: the same digest
+            # period should refresh its text in place as later-arriving
+            # facts sharpen it throughout the day/week, never re-version
+            # (and so never re-mark unread) merely because the wording
+            # changed (Phase 8: cooldowns/hysteresis -- "do not produce a
+            # new message every recomputation").
+            condition_fingerprint="digest_has_content",
+            action_type=AlertActionType.open_place_report,
+            action_parameters={},
+            now=now,
+        )
+        return True
+
+    def sync_attention_signals(self, *, now: datetime | None = None) -> None:
+        """Calm Attention & Notifications v1, Phase 4/13/38: the one
+        periodic, bounded reconciliation between already-authoritative
+        Place facts and durable attention state. Every fact this method
+        turns into an attention item is read through the exact same
+        public, already-accepted methods Place Story/Today/the Place
+        Report call themselves (`place_story`, `place_activity_report`) --
+        never a second query or statistical path. Read and write happen in
+        separate sessions/transactions on purpose: `place_story`/`place_
+        activity_report` are top-level, already-accepted entry points that
+        open and close their own session, exactly like a normal Place
+        Story/Place Report page load would; this method's own write phase
+        then reconciles attention state from their already-computed,
+        already-detached results in one short transaction.
+
+        Called on a bounded periodic cadence (see
+        `mockingbird.monitoring.attention_sync_service.AttentionSyncService`,
+        default every 15 minutes) rather than per-Visit/per-frame -- Phase
+        38 explicitly warns against re-running Place history computation
+        at that frequency; this is the same cost `place_activity_report`
+        already pays on every ordinary Dashboard/Today page load today, so
+        it adds no new order of magnitude of work, and idempotent reruns
+        (a missed tick, a restart) are always safe: every alert this
+        method creates or resolves is keyed by a stable, content-derived
+        `deduplication_key`, never a counter or a timestamp.
+        """
+
+        moment = now or datetime.now(UTC)
+        window_start_at = moment - timedelta(days=self._PLACE_STORY_ATTENTION_LOOKBACK_DAYS)
+        story = self.place_story(start_at=window_start_at, end_at=moment, now=moment, page_size=200)
+
+        resolved_local_timezone = resolve_host_local_timezone(moment)
+        local_now = moment.astimezone(resolved_local_timezone)
+        local_day_start = datetime.combine(local_now.date(), datetime.min.time(), tzinfo=resolved_local_timezone)
+        report = self.place_activity_report(
+            PlaceActivityReportRequest(start_at=local_day_start, end_at=moment),
+            now=moment,
+            local_timezone=resolved_local_timezone,
+        )
+        iso_year, iso_week, _ = local_now.isocalendar()
+
+        with self.session_factory() as session:
+            with session.begin():
+                story_alert_count = self._sync_place_story_attention(session, story, now=moment)
+                daily_active = self._sync_digest_attention_for_period(
+                    session, digest=report.digest,
+                    dedup_key=f"digest:daily:{local_now.date().isoformat()}",
+                    title="Today in your yard", now=moment,
+                )
+                weekly_active = self._sync_digest_attention_for_period(
+                    session, digest=report.weekly_digest,
+                    dedup_key=f"digest:weekly:{iso_year}-W{iso_week:02d}",
+                    title="This week at your Place", now=moment,
+                )
+        log_event(
+            "attention", "sync_completed",
+            place_story_alerts_active=story_alert_count,
+            daily_digest_active=daily_active, weekly_digest_active=weekly_active,
+        )
+
+    def get_notification_preferences(self, user_id: str) -> UserNotificationPreferences:
+        """Calm Attention & Notifications v1, Phase 16: read-only,
+        mirroring `storage_retention_settings`'s own established "read
+        intent without creating settings" discipline exactly -- a row is
+        persisted only by `update_notification_preferences`'s first real
+        write, never merely by reading (this method is also called from
+        `_visible_alert_categories`, itself called on every `/api/alerts*`
+        poll, so a read-triggered write here would mean an ordinary GET
+        request writing to the database on a signed-in user's very first
+        poll). When no row exists yet, the response schema's own declared
+        field defaults -- the same conservative values a real saved row
+        would start with -- are returned computed, not persisted."""
+
+        with self.session_factory() as session:
+            row = session.get(UserNotificationPreferenceModel, user_id)
+            if row is None:
+                return UserNotificationPreferences(updated_at=datetime.now(UTC))
+            return self._notification_preferences_from_model(row)
+
+    def update_notification_preferences(
+        self, user_id: str, payload: UserNotificationPreferencesUpdate
+    ) -> UserNotificationPreferences:
+        now = datetime.now(UTC)
+        updates = payload.model_dump(exclude_unset=True)
+        with self.session_factory() as session:
+            with session.begin():
+                row = session.get(UserNotificationPreferenceModel, user_id)
+                if row is None:
+                    row = UserNotificationPreferenceModel(user_id=user_id, updated_at=now)
+                    session.add(row)
+                for field_name, value in updates.items():
+                    setattr(row, field_name, value)
+                row.updated_at = now
+                session.flush()
+                return self._notification_preferences_from_model(row)
+
+    @staticmethod
+    def _notification_preferences_from_model(row: UserNotificationPreferenceModel) -> UserNotificationPreferences:
+        return UserNotificationPreferences(
+            discovery_enabled=row.discovery_enabled,
+            insight_enabled=row.insight_enabled,
+            needs_help_enabled=row.needs_help_enabled,
+            observatory_health_enabled=row.observatory_health_enabled,
+            browser_notifications_enabled=row.browser_notifications_enabled,
+            quiet_hours_enabled=row.quiet_hours_enabled,
+            quiet_hours_start_minute=row.quiet_hours_start_minute,
+            quiet_hours_end_minute=row.quiet_hours_end_minute,
+            updated_at=_as_utc(row.updated_at),
+        )
+
+    _ATTENTION_CATEGORY_PREFERENCE_FIELD: dict[AttentionCategory, str] = {
+        AttentionCategory.discovery: "discovery_enabled",
+        AttentionCategory.insight: "insight_enabled",
+        AttentionCategory.needs_help: "needs_help_enabled",
+        AttentionCategory.observatory_health: "observatory_health_enabled",
+    }
+
+    def _visible_alert_categories(self, *, viewer_role: UserRole, user_id: str) -> set[AlertCategory] | None:
+        """Calm Attention & Notifications v1, Phase 16/18: which
+        `AlertCategory` values this signed-in user should see, combining
+        their own stored preferences with one fixed role ceiling. Returns
+        `None` (meaning "no filter, show every category") only when every
+        category is both enabled and role-permitted, so an ordinary
+        Administrator/Reviewer with default preferences sees exactly what
+        every alert-listing endpoint already showed before this milestone
+        -- adding preferences changes nothing for a user who never opens
+        Settings.
+
+        The one fixed role rule (Phase 18: "Do not send Reviewer-only
+        action notifications to a Viewer who cannot act"): a Viewer can
+        open a Visit to look, but never submit a correction, so `review`
+        (Needs Help) attention is never shown to a Viewer regardless of
+        their own stored toggle -- there is nothing they could do about
+        it, only something to feel nagged by.
+        """
+
+        preferences = self.get_notification_preferences(user_id)
+        hidden: set[AttentionCategory] = set()
+        for category, field_name in self._ATTENTION_CATEGORY_PREFERENCE_FIELD.items():
+            if not getattr(preferences, field_name):
+                hidden.add(category)
+        # Inlined rank check (not `mockingbird.api.auth.role_at_least`):
+        # this repository module must not import from the API auth layer,
+        # which itself imports `ProductRepository` only under
+        # `TYPE_CHECKING` today -- a real top-level import here would risk
+        # a circular import. `UserRole`'s three values are a fixed,
+        # already-imported ladder (viewer < reviewer < administrator), so
+        # "at least reviewer" is exactly "not a Viewer."
+        if viewer_role == UserRole.viewer:
+            hidden.add(AttentionCategory.needs_help)
+        if not hidden:
+            return None
+        return {
+            category
+            for category in AlertCategory
+            if self._attention_category_for(category) not in hidden
+        }
 
     def storage_retention_settings(self) -> StorageRetentionSettings:
         """Read retention intent without creating settings or starting cleanup."""

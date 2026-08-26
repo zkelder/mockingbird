@@ -42,7 +42,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 55
+CURRENT_DATABASE_SCHEMA_VERSION = 56
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -1557,6 +1557,28 @@ def _migrate_to_place_features_habitat_change(connection: Connection) -> None:
         Base.metadata.tables[table_name].create(bind=connection, checkfirst=True)
 
 
+def _migrate_to_notification_preferences(connection: Connection) -> None:
+    """Calm Attention & Notifications v1: add the per-user notification
+    preferences table (see docs/calm-attention-notifications-v1-report.md).
+
+    Purely additive (one new table, nothing backfilled): an upgraded
+    installation starts with zero preference rows, and every existing
+    `get_notification_preferences` caller lazily creates a row with the
+    same conservative defaults a brand-new installation would get --
+    identical to a fresh install. Does not touch `product_alerts`,
+    `users`, or any other existing table; `ProductAlertModel.category`
+    is a plain `String` column with no database-level enum/check
+    constraint, so the new `"insight"` category value needs no migration
+    of its own.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Calm Attention & Notifications migration requires local SQLite storage."
+        )
+    Base.metadata.tables["user_notification_preferences"].create(bind=connection, checkfirst=True)
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -1612,6 +1634,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     53: _migrate_to_scene_confusor_reviewed_evidence_learning,
     54: _migrate_to_environmental_context_weather,
     55: _migrate_to_place_features_habitat_change,
+    56: _migrate_to_notification_preferences,
 }
 
 

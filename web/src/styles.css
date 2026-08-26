@@ -674,6 +674,25 @@ a.secondary-action {
   font-size: 0.86rem;
 }
 
+.today-attention-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 8px 14px;
+  border: 1px solid #c3d6c8;
+  border-radius: 999px;
+  background: #eef5ee;
+  color: #2d4939;
+  font-size: 0.86rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.today-attention-summary:hover {
+  background: #dbe8c5;
+}
+
 .dashboard-action-error {
   padding: 10px 12px;
   border: 1px solid #deb7a5;

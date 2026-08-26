@@ -19,13 +19,21 @@ import { formatDate, formatMonthYear } from "../utils";
  * identical "present, never re-derive" discipline).
  */
 
+type PeriodPreset = "recent" | "this_month" | "this_year" | "all_history";
+type CategoryFilter = "all" | PlaceStoryEventGroup;
+
 interface PlaceStoryPageProps {
   onOpenVisit: (visitId: string) => void;
   onOpenBirdLog: (label?: string) => void;
   onOpenPlaceActivityReport: () => void;
+  // Calm Attention & Notifications v1: an attention item's deep link opens
+  // Place Story already scoped to the category group its own underlying
+  // event belongs to (see `App.tsx`'s `openAlertAction`) -- more precise
+  // than always landing on the unfiltered page, without needing a new
+  // taxon/feature filter control this page does not otherwise have.
+  // `undefined` (every pre-existing caller) keeps today's default ("all").
+  initialCategory?: CategoryFilter;
 }
-
-type PeriodPreset = "recent" | "this_month" | "this_year" | "all_history";
 
 const PERIOD_OPTIONS: Array<{ value: PeriodPreset; label: string }> = [
   { value: "recent", label: "Recent (last 90 days)" },
@@ -33,8 +41,6 @@ const PERIOD_OPTIONS: Array<{ value: PeriodPreset; label: string }> = [
   { value: "this_year", label: "This year" },
   { value: "all_history", label: "All history" },
 ];
-
-type CategoryFilter = "all" | PlaceStoryEventGroup;
 
 const CATEGORY_OPTIONS: Array<{ value: CategoryFilter; label: string }> = [
   { value: "all", label: "All" },
@@ -90,9 +96,14 @@ function periodRange(preset: PeriodPreset): { start_at?: string; end_at?: string
 
 const PAGE_SIZE = 20;
 
-export function PlaceStoryPage({ onOpenVisit, onOpenBirdLog, onOpenPlaceActivityReport }: PlaceStoryPageProps) {
+export function PlaceStoryPage({
+  onOpenVisit,
+  onOpenBirdLog,
+  onOpenPlaceActivityReport,
+  initialCategory,
+}: PlaceStoryPageProps) {
   const [period, setPeriod] = useState<PeriodPreset>("recent");
-  const [category, setCategory] = useState<CategoryFilter>("all");
+  const [category, setCategory] = useState<CategoryFilter>(initialCategory ?? "all");
   const [entries, setEntries] = useState<PlaceStoryEntry[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [nextOffset, setNextOffset] = useState<number | null>(null);

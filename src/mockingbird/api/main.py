@@ -196,6 +196,8 @@ from mockingbird.api.schemas import (
     ProductAlertListResponse,
     ProductAlertMarkVisibleReadRequest,
     ProductAlertUnreadResponse,
+    UserNotificationPreferences,
+    UserNotificationPreferencesUpdate,
     ProductHealthBackupSummary,
     ProductHealthCameraSummary,
     ProductHealthObservationSummary,
@@ -473,6 +475,7 @@ from mockingbird.monitoring import (
     SourceMonitorOptions,
     SourceMonitorState,
 )
+from mockingbird.monitoring.attention_sync_service import AttentionSyncService
 from mockingbird.observation import (
     ObservationEngineRegistry,
     SnapshotObservationProvider,
@@ -587,6 +590,13 @@ async def _app_lifespan(_app: FastAPI):
     # place restart recovery (Phase C) actually happens for any acoustic
     # work a previous process left mid-flight.
     get_acoustic_runtime_service().start()
+    # Calm Attention & Notifications v1: always started, mirroring the
+    # acoustic runtime service above -- a bounded, idempotent periodic
+    # reconciliation, never gated behind a user setting the way storage
+    # cleanup is (there is no "attention off" product mode; a user
+    # controls what they are shown/notified via their own preferences,
+    # not whether attention state exists at all).
+    get_attention_sync_service().start()
     # Appliance / Storage / Privacy / Recovery v1, Phase E: a bounded,
     # best-effort sweep of any Camera Node transport item that completed
     # but was never consumed (a crash between `POST .../complete` and its
@@ -633,6 +643,8 @@ async def _app_lifespan(_app: FastAPI):
 
         if _acoustic_runtime_service is not None:
             _acoustic_runtime_service.shutdown()
+        if _attention_sync_service is not None:
+            _attention_sync_service.shutdown()
         if _local_storage_retention_service is not None:
             _local_storage_retention_service.shutdown()
         if _durable_monitoring_supervisor is not None:
@@ -885,6 +897,7 @@ _live_preview_lease_manager: live_preview_leases.LivePreviewLeaseManager | None 
 _durable_monitoring_supervisor: DurableMonitoringSupervisor | None = None
 _local_storage_retention_service: LocalStorageRetentionService | None = None
 _acoustic_runtime_service: AcousticRuntimeService | None = None
+_attention_sync_service: AttentionSyncService | None = None
 _camera_node_client: CameraNodeClient | None = None
 _automatic_review_identification_assist: AutomaticReviewIdentificationAssist | None = (
     None
@@ -1486,6 +1499,7 @@ def _stop_runtime_activity(*, reason: str) -> None:
     global _source_monitor_manager, _live_camera_session_manager, _live_preview_lease_manager
     global _live_object_detector_manager, _tracked_activity_detector_manager
     global _observation_engine_session_manager, _acoustic_runtime_service
+    global _attention_sync_service
     detector_drained = False
 
     def drain_live_detector() -> None:
@@ -1504,6 +1518,9 @@ def _stop_runtime_activity(*, reason: str) -> None:
     if _local_storage_retention_service is not None:
         _local_storage_retention_service.shutdown()
         _local_storage_retention_service = None
+    if _attention_sync_service is not None:
+        _attention_sync_service.shutdown()
+        _attention_sync_service = None
     if _acoustic_runtime_service is not None:
         # Found via review: an earlier version never stopped this here, so
         # a local-backup restore (which swaps the live DB/media root out
@@ -1870,6 +1887,28 @@ def _sync_local_storage_retention_service(*, enabled: bool) -> None:
         get_local_storage_retention_service().start()
     elif _local_storage_retention_service is not None:
         _local_storage_retention_service.shutdown()
+
+
+def _run_attention_sync() -> None:
+    # Reads the live repository fresh on every tick (never a reference
+    # captured at service-construction time) -- the same discipline
+    # `_run_automatic_storage_maintenance` already follows, so a local
+    # backup restore that swaps the underlying database out from under a
+    # running process is reflected on this service's very next tick, not
+    # a stale one.
+    get_repository().sync_attention_signals()
+
+
+def get_attention_sync_service() -> AttentionSyncService:
+    """Return the single periodic Calm Attention & Notifications v1
+    reconciliation scheduler; it never owns review/health/digest truth,
+    only durable attention presentation over it -- see
+    docs/calm-attention-notifications-v1-report.md."""
+
+    global _attention_sync_service
+    if _attention_sync_service is None:
+        _attention_sync_service = AttentionSyncService(run_sync=_run_attention_sync)
+    return _attention_sync_service
 
 
 def get_automatic_review_identification_assist() -> AutomaticReviewIdentificationAssist:
@@ -14773,19 +14812,41 @@ async def get_soundscape_summary(
 
 
 @app.get("/api/alerts/unread", response_model=ProductAlertUnreadResponse)
-async def get_alert_unread() -> ProductAlertUnreadResponse:
-    return get_repository().product_alert_unread()
+async def get_alert_unread(request: Request) -> ProductAlertUnreadResponse:
+    current_user = current_user_or_401(request)
+    return get_repository().product_alert_unread(viewer=current_user)
 
 
 @app.get("/api/alerts", response_model=ProductAlertListResponse)
 async def list_alerts(
+    request: Request,
     category: AlertCategory | None = None,
     page_size: int = Query(default=30, ge=1, le=50),
     offset: int = Query(default=0, ge=0, le=10_000),
 ) -> ProductAlertListResponse:
+    current_user = current_user_or_401(request)
     return get_repository().list_product_alerts(
-        category=category, page_size=page_size, offset=offset,
+        category=category, page_size=page_size, offset=offset, viewer=current_user,
     )
+
+
+@app.get("/api/notification-preferences", response_model=UserNotificationPreferences)
+async def get_notification_preferences(request: Request) -> UserNotificationPreferences:
+    """Calm Attention & Notifications v1, Phase 16: one signed-in user's
+    own delivery preferences. Lazily created with conservative defaults on
+    first read; never requires a setup step before the rest of the product
+    is usable."""
+
+    current_user = current_user_or_401(request)
+    return get_repository().get_notification_preferences(current_user.id)
+
+
+@app.put("/api/notification-preferences", response_model=UserNotificationPreferences)
+async def update_notification_preferences(
+    payload: UserNotificationPreferencesUpdate, request: Request
+) -> UserNotificationPreferences:
+    current_user = current_user_or_401(request)
+    return get_repository().update_notification_preferences(current_user.id, payload)
 
 
 @app.post("/api/alerts/{alert_id}/read", response_model=ProductAlertUnreadResponse)

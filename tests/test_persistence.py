@@ -1684,3 +1684,49 @@ def test_schema_54_upgrades_to_current_with_place_features_habitat_change(
         assert migrated.list_place_features() == []
     finally:
         migrated.close()
+
+
+def test_schema_55_upgrades_to_current_with_notification_preferences(
+    tmp_path: Path,
+) -> None:
+    """Calm Attention & Notifications v1: a real database at the
+    previously-current schema (v55) upgrades cleanly through the one new
+    additive `user_notification_preferences` table -- mirroring
+    `test_schema_54_upgrades_to_current_with_place_features_habitat_change`'s
+    own "additive table, no seeded row" proof pattern."""
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = repository_for(db_path)
+    existing_source_count = len(repository.list_sources())
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql("DROP TABLE user_notification_preferences")
+        connection.exec_driver_sql("UPDATE mockingbird_schema SET version = 55 WHERE singleton_id = 1")
+    engine.dispose()
+
+    migrated = repository_for(db_path)
+    try:
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+        assert len(migrated.list_sources()) == existing_source_count
+
+        with migrated.engine.connect() as connection:
+            columns = {
+                row[1]
+                for row in connection.exec_driver_sql(
+                    "PRAGMA table_info(user_notification_preferences)"
+                ).fetchall()
+            }
+            assert {
+                "user_id", "discovery_enabled", "insight_enabled", "needs_help_enabled",
+                "observatory_health_enabled", "browser_notifications_enabled",
+                "quiet_hours_enabled", "quiet_hours_start_minute", "quiet_hours_end_minute",
+                "updated_at",
+            } <= columns
+            row_count = connection.exec_driver_sql(
+                "SELECT COUNT(*) FROM user_notification_preferences"
+            ).scalar()
+            assert row_count == 0
+    finally:
+        migrated.close()

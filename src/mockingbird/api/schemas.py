@@ -6091,6 +6091,14 @@ class AlertCategory(str, Enum):
     monitoring = "monitoring"
     storage = "storage"
     journal = "journal"
+    # Calm Attention & Notifications v1: Place Story-derived regularity
+    # transitions, mature Feature before/after comparisons, and the daily/
+    # weekly digest recap. Deliberately separate from `journal` (which stays
+    # exactly what it already meant -- "first confirmed local observation")
+    # rather than overloading one category with two different kinds of fact
+    # -- see docs/calm-attention-notifications-v1-report.md "Semantic
+    # deduplication."
+    insight = "insight"
 
 
 class AlertSeverity(str, Enum):
@@ -6104,6 +6112,36 @@ class AlertActionType(str, Enum):
     open_stream = "open_stream"
     open_storage_retention = "open_storage_retention"
     open_wildlife_journal = "open_wildlife_journal"
+    # Calm Attention & Notifications v1.
+    open_place_story = "open_place_story"
+    open_place_report = "open_place_report"
+
+
+class AttentionCategory(str, Enum):
+    """Calm Attention & Notifications v1, Phase 2: the small, user-centered
+    taxonomy every `AlertCategory` presents as -- never a second, divergent
+    vocabulary a user must learn alongside `AlertCategory`'s own internal/
+    historical names (`journal`, `monitoring`). Purely a presentation-layer
+    grouping computed from `(AlertCategory, AlertSeverity)`; never stored."""
+
+    discovery = "discovery"
+    insight = "insight"
+    needs_help = "needs_help"
+    observatory_health = "observatory_health"
+
+
+class AttentionUrgency(str, Enum):
+    """Calm Attention & Notifications v1, Phase 3: explicit delivery
+    urgency, distinct from `AlertSeverity` (how bad) and `AttentionCategory`
+    (what kind). `immediate` is reserved for a sustained, actionable
+    Observatory Health condition; almost everything else is `digest`;
+    per-item review work is always `in_app_only` (see Phase 10 -- reviewed
+    work is grouped into the daily digest's own sentence, never repeated as
+    a second per-item interruption)."""
+
+    immediate = "immediate"
+    digest = "digest"
+    in_app_only = "in_app_only"
 
 
 class ProductAlertAction(BaseModel):
@@ -6113,6 +6151,13 @@ class ProductAlertAction(BaseModel):
     visit_id: str | None = None
     stream_id: str | None = None
     label: str | None = None
+    # Calm Attention & Notifications v1: optional Place Story deep-link
+    # filters for `open_place_story` only -- mirrors `GET /api/place/story`'s
+    # own `taxon`/`feature_id`/`kinds` query filters exactly, so the link
+    # opens the Story page already scoped to the one event that prompted it.
+    taxon_label: str | None = None
+    feature_id: str | None = None
+    story_kind: str | None = None
 
 
 class ProductAlert(BaseModel):
@@ -6134,6 +6179,11 @@ class ProductAlert(BaseModel):
     visit_id: str | None = None
     source_id: str | None = None
     action: ProductAlertAction
+    # Calm Attention & Notifications v1: derived presentation fields, never
+    # persisted -- see `AttentionCategory`/`AttentionUrgency` above and
+    # `ProductRepository._attention_category_for`/`_attention_urgency_for`.
+    attention_category: AttentionCategory
+    urgency: AttentionUrgency
 
 
 class ProductAlertListResponse(BaseModel):
@@ -6150,6 +6200,50 @@ class ProductAlertMarkVisibleReadRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     alert_ids: list[str] = Field(default_factory=list, max_length=50)
+
+
+class UserNotificationPreferences(BaseModel):
+    """Calm Attention & Notifications v1, Phase 16/17/18: one signed-in
+    user's own delivery preferences. Deliberately per-user (this is the
+    first per-user settings row in the product -- see the milestone
+    report's "Multi-user behavior"), while the underlying attention
+    condition (`ProductAlertModel`) stays observatory-level exactly as
+    before -- a preference here changes what one person is shown/notified,
+    never the shared read/dismissed/resolved state other users see.
+
+    Defaults are conservative by design (Phase 16): every category starts
+    visible in-app, but `browser_notifications_enabled` starts `False` --
+    MockingBird never asks for OS notification permission, or delivers a
+    live interruption, until a signed-in user explicitly opts in (Phase 29).
+    """
+
+    discovery_enabled: bool = True
+    insight_enabled: bool = True
+    needs_help_enabled: bool = True
+    observatory_health_enabled: bool = True
+    browser_notifications_enabled: bool = False
+    quiet_hours_enabled: bool = False
+    # Minutes since local midnight, in the viewer's own browser-local time --
+    # never a stored server/Place timezone (there is no per-Place timezone
+    # setting; see mockingbird.time_utils.resolve_host_local_timezone's own
+    # docstring). Quiet hours affect delivery only, never the underlying
+    # attention condition or Observation Engine (Phase 17).
+    quiet_hours_start_minute: int = Field(default=22 * 60, ge=0, le=1439)
+    quiet_hours_end_minute: int = Field(default=7 * 60, ge=0, le=1439)
+    updated_at: datetime
+
+
+class UserNotificationPreferencesUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    discovery_enabled: bool | None = None
+    insight_enabled: bool | None = None
+    needs_help_enabled: bool | None = None
+    observatory_health_enabled: bool | None = None
+    browser_notifications_enabled: bool | None = None
+    quiet_hours_enabled: bool | None = None
+    quiet_hours_start_minute: int | None = Field(default=None, ge=0, le=1439)
+    quiet_hours_end_minute: int | None = Field(default=None, ge=0, le=1439)
 
 
 class DetectionProposalDecisionResult(BaseModel):

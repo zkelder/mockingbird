@@ -187,6 +187,8 @@ import type {
   ProductAlertListResponse,
   ProductAlertUnreadResponse,
   AlertCategory,
+  UserNotificationPreferences,
+  UserNotificationPreferencesUpdate,
   ReviewQueueBulkCorrectionRequest,
   ReviewQueueBulkCorrectionResponse,
   ReviewQueueItem,
@@ -1677,4 +1679,9 @@ export const apiClient = {
     }),
   dismissAlert: (alertId: string) =>
     request<ProductAlertUnreadResponse>(`/api/alerts/${encodeURIComponent(alertId)}/dismiss`, { method: "POST" }),
+  getNotificationPreferences: () => request<UserNotificationPreferences>("/api/notification-preferences"),
+  updateNotificationPreferences: (payload: UserNotificationPreferencesUpdate) =>
+    request<UserNotificationPreferences>("/api/notification-preferences", {
+      method: "PUT", body: JSON.stringify(payload),
+    }),
 };

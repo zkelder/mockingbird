@@ -30,6 +30,7 @@ import { LiveCameraOverview } from "../components/LiveCameraOverview";
 import { PlaceFeaturesCard } from "../components/PlaceFeaturesCard";
 import { ProductHealthPanel } from "../components/ProductHealthPanel";
 import { StatusPill } from "../components/StatusPill";
+import { TodayAttentionSummary } from "../components/TodayAttentionSummary";
 import { TodayReportPanel } from "../components/TodayReportPanel";
 import { WeeklySummaryCard } from "../components/WeeklySummaryCard";
 import {
@@ -61,6 +62,7 @@ interface DashboardPageProps {
   onOpenVisit: (visitId: string) => void;
   onOpenPlaceActivityReport: () => void;
   onOpenPlaceStory: () => void;
+  onOpenAlertsInbox: () => void;
 }
 
 const DASHBOARD_REFRESH_INTERVAL_MS = 30_000;
@@ -216,6 +218,7 @@ export function DashboardPage({
   onOpenVisit,
   onOpenPlaceActivityReport,
   onOpenPlaceStory,
+  onOpenAlertsInbox,
 }: DashboardPageProps) {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [report, setReport] = useState<PlaceActivityReportResponse | null>(null);
@@ -563,6 +566,7 @@ export function DashboardPage({
         </div>
       ) : null}
 
+      <TodayAttentionSummary onOpenAlertsInbox={onOpenAlertsInbox} />
       <TodayReportPanel
         configuredStreamCount={summary.headline.configured_stream_count}
         isLoading={isLoading}
