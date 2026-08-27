@@ -6651,6 +6651,30 @@ class ProductHealthBackupSummary(BaseModel):
     suggest_first_backup: bool = False
 
 
+class ProductHealthAcousticSummary(BaseModel):
+    """Whole-Product UI / Accessibility / Performance Closure v1: the
+    product's first product-facing acoustic health/status surface -- closes
+    the bounded gap
+    docs/acoustic-productization-licensing-field-acceptance-v1-report.md
+    disclosed ("the two status endpoints that could tell a user 'microphone/
+    model unavailable' have zero frontend callers anywhere"). Mirrors
+    `ProductHealthCameraSummary`'s bounded, additive shape -- composed
+    entirely from already-existing facts (`get_birdnet_status()`, each
+    Stream's existing `microphone` provider configuration,
+    `acoustic_analysis_queue_diagnostics`'s existing 24h failure signal);
+    never a new acoustic computation, never a live capture probe, and never
+    a factor in `ProductHealthStatus.ready` -- acoustic is optional and its
+    status can never make the product read as "not ready." See
+    ProductHealthPanel.tsx.
+    """
+
+    configured: bool
+    status: Literal[
+        "not_configured", "healthy", "degraded", "model_unavailable", "microphone_unavailable"
+    ]
+    detail: str
+
+
 class ProductHealthStatus(BaseModel):
     """One bounded, basic-first product status aggregate.
 
@@ -6695,6 +6719,7 @@ class ProductHealthStatus(BaseModel):
     cameras: ProductHealthCameraSummary
     observation: ProductHealthObservationSummary
     backup: ProductHealthBackupSummary
+    acoustic: ProductHealthAcousticSummary
     previous_shutdown_clean: bool | None = None
     database_schema_version: int = Field(ge=1)
     # Release Engineering Foundation v1: set only when *this running

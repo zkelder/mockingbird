@@ -318,6 +318,174 @@ def test_most_recent_camera_node_service_version_is_none_when_never_reported(tmp
         repository.close()
 
 
+def _add_microphone_source(
+    repository: ProductRepository, *, device: str | None, capture_consent: str | None,
+) -> None:
+    """Configures a real `microphone` Source provider via the same
+    `update_source_provider_configuration` path Settings uses -- not a raw
+    model insert -- so this exercises the real config-sanitization/storage
+    shape `_microphone_config_for_stream` reads back."""
+
+    from mockingbird.api.schemas import SourceKind, SourceProviderConfigurationUpdate, SourceStatus
+    from mockingbird.storage.models import CameraSourceModel, StreamModel
+
+    source_id, stream_id = "source-acoustic-health", "stream-acoustic-health"
+    with repository.session_factory() as session, session.begin():
+        session.add(
+            CameraSourceModel(
+                id=source_id,
+                name="Acoustic Health Fixture",
+                kind=SourceKind.manual_upload.value,
+                status=SourceStatus.connected.value,
+                description="Fixture source for GET /api/product/health acoustic status.",
+            )
+        )
+        session.add(
+            StreamModel(
+                id=stream_id, source_id=source_id, name="Acoustic Health Fixture Stream",
+                description="Fixture stream", is_live=False,
+            )
+        )
+    config: dict[str, str] = {}
+    if device is not None:
+        config["device"] = device
+    if capture_consent is not None:
+        config["capture_consent"] = capture_consent
+    repository.update_source_provider_configuration(
+        source_id,
+        SourceProviderConfigurationUpdate(provider_key="microphone", config=config),
+    )
+
+
+def test_product_health_acoustic_not_configured_by_default(
+    isolated_repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Whole-Product UI / Accessibility / Performance Closure v1: baseline
+    state with no microphone Source configured anywhere."""
+
+    monkeypatch.setattr(
+        isolated_repository, "dashboard_summary",
+        lambda *_args, **_kwargs: _fake_dashboard_summary(camera_states=[], configured=0, monitored=0),
+    )
+
+    body = _get("/api/product/health").json()
+
+    assert body["acoustic"] == {
+        "configured": False,
+        "status": "not_configured",
+        "detail": (
+            "No microphone is configured for any camera. Acoustic identification is "
+            "optional -- visual observation is unaffected."
+        ),
+    }
+    # Never a factor in overall readiness -- acoustic is optional.
+    assert body["ready"] is True
+
+
+def test_product_health_acoustic_microphone_unavailable_without_consent(
+    isolated_repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        isolated_repository, "dashboard_summary",
+        lambda *_args, **_kwargs: _fake_dashboard_summary(camera_states=[], configured=0, monitored=0),
+    )
+    _add_microphone_source(isolated_repository, device="default", capture_consent=None)
+
+    body = _get("/api/product/health").json()
+
+    assert body["acoustic"]["configured"] is True
+    assert body["acoustic"]["status"] == "microphone_unavailable"
+    assert "consent" in body["acoustic"]["detail"].lower()
+    assert body["ready"] is True
+
+
+def test_product_health_acoustic_model_unavailable(
+    isolated_repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        isolated_repository, "dashboard_summary",
+        lambda *_args, **_kwargs: _fake_dashboard_summary(camera_states=[], configured=0, monitored=0),
+    )
+    _add_microphone_source(isolated_repository, device="default", capture_consent="true")
+    monkeypatch.setattr(
+        api_main, "get_birdnet_status",
+        lambda: types.SimpleNamespace(
+            status="unavailable", runtime_available=False, detail="Optional BirdNET runtime dependencies are unavailable.",
+        ),
+    )
+
+    body = _get("/api/product/health").json()
+
+    assert body["acoustic"]["configured"] is True
+    assert body["acoustic"]["status"] == "model_unavailable"
+    assert "BirdNET" in body["acoustic"]["detail"]
+    assert body["ready"] is True
+
+
+def test_product_health_acoustic_healthy(
+    isolated_repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        isolated_repository, "dashboard_summary",
+        lambda *_args, **_kwargs: _fake_dashboard_summary(camera_states=[], configured=0, monitored=0),
+    )
+    _add_microphone_source(isolated_repository, device="default", capture_consent="true")
+    monkeypatch.setattr(
+        api_main, "get_birdnet_status",
+        lambda: types.SimpleNamespace(status="available", runtime_available=True, detail="ready"),
+    )
+
+    body = _get("/api/product/health").json()
+
+    assert body["acoustic"] == {
+        "configured": True,
+        "status": "healthy",
+        "detail": "A microphone and the BirdNET model are both available.",
+    }
+    assert body["ready"] is True
+
+
+def test_product_health_acoustic_degraded_after_recent_analysis_failures(
+    isolated_repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reuses the existing `acoustic_analysis_queue_diagnostics` 24h-failure
+    signal (already covered by its own dedicated tests) -- this test only
+    proves `_acoustic_health_summary` reacts to it correctly, so a synthetic
+    stand-in for its return value is appropriate here, mirroring how this
+    file already stands in for `dashboard_summary`."""
+
+    from mockingbird.repository.product_repository import AcousticQueueDiagnostics
+
+    monkeypatch.setattr(
+        isolated_repository, "dashboard_summary",
+        lambda *_args, **_kwargs: _fake_dashboard_summary(camera_states=[], configured=0, monitored=0),
+    )
+    _add_microphone_source(isolated_repository, device="default", capture_consent="true")
+    monkeypatch.setattr(
+        api_main, "get_birdnet_status",
+        lambda: types.SimpleNamespace(status="available", runtime_available=True, detail="ready"),
+    )
+    monkeypatch.setattr(
+        isolated_repository,
+        "acoustic_analysis_queue_diagnostics",
+        lambda *_args, **_kwargs: AcousticQueueDiagnostics(
+            queued_count=0, processing_count=0, oldest_queued_age_seconds=None,
+            recent_failure_count_24h=3, recent_capacity_evicted_count_24h=0,
+        ),
+    )
+
+    body = _get("/api/product/health").json()
+
+    assert body["acoustic"]["configured"] is True
+    assert body["acoustic"]["status"] == "degraded"
+    assert body["ready"] is True
+
+
 def test_most_recent_camera_node_service_version_reads_a_real_paired_camera_node(tmp_path: Path) -> None:
     from mockingbird.storage.models import CameraSourceModel
 

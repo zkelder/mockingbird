@@ -208,6 +208,7 @@ from mockingbird.api.schemas import (
     ProductAlertUnreadResponse,
     UserNotificationPreferences,
     UserNotificationPreferencesUpdate,
+    ProductHealthAcousticSummary,
     ProductHealthBackupSummary,
     ProductHealthCameraSummary,
     ProductHealthObservationSummary,
@@ -10853,6 +10854,79 @@ _CAMERA_HEALTH_OK_STATES = {
 }
 
 
+# Mirrors `mockingbird.diagnostics.doctor._STALE_ACOUSTIC_QUEUE_AGE_SECONDS`
+# exactly (not imported, to avoid a new main.py -> doctor.py module
+# dependency for one constant) -- keep the two in sync if either changes.
+_STALE_ACOUSTIC_QUEUE_AGE_SECONDS = 600.0
+
+
+def _acoustic_health_summary(repository: ProductRepository, *, now: datetime) -> ProductHealthAcousticSummary:
+    """Whole-Product UI / Accessibility / Performance Closure v1: composes
+    `GET /api/product/health`'s first acoustic status field entirely from
+    already-existing, already-cheap facts -- `_microphone_config_for_stream`
+    (below; the same per-Stream provider-config read the audio-capture
+    endpoints already use), `get_birdnet_status()` (a pure package-
+    importability check, no model load), and `acoustic_analysis_queue_
+    diagnostics` (Doctor's own existing 24h-windowed queue/failure signal).
+    Never a live capture probe, never a new DB query shape. Acoustic is
+    optional: no branch here ever feeds `ProductHealthStatus.ready`."""
+
+    configured_stream_id: str | None = None
+    device: str | None = None
+    consent_granted = False
+    for stream in repository.list_streams():
+        stream_device, stream_consent = _microphone_config_for_stream(stream.id)
+        if stream_device is None:
+            continue
+        configured_stream_id, device, consent_granted = stream.id, stream_device, stream_consent
+        if consent_granted:
+            break  # a fully-consented Source is decisive; keep looking otherwise
+
+    if configured_stream_id is None or device is None:
+        return ProductHealthAcousticSummary(
+            configured=False,
+            status="not_configured",
+            detail=(
+                "No microphone is configured for any camera. Acoustic identification is "
+                "optional -- visual observation is unaffected."
+            ),
+        )
+    if not consent_granted:
+        return ProductHealthAcousticSummary(
+            configured=True,
+            status="microphone_unavailable",
+            detail=(
+                "A microphone is configured but capture consent has not been granted yet, "
+                "so it cannot record. Visual observation is unaffected."
+            ),
+        )
+    birdnet = get_birdnet_status()
+    if not birdnet.runtime_available:
+        return ProductHealthAcousticSummary(
+            configured=True,
+            status="model_unavailable",
+            detail=f"{birdnet.detail} Visual observation is unaffected.",
+        )
+    queue = repository.acoustic_analysis_queue_diagnostics(now)
+    if queue.recent_failure_count_24h > 0 or (
+        queue.oldest_queued_age_seconds is not None
+        and queue.oldest_queued_age_seconds > _STALE_ACOUSTIC_QUEUE_AGE_SECONDS
+    ):
+        return ProductHealthAcousticSummary(
+            configured=True,
+            status="degraded",
+            detail=(
+                "A microphone and the BirdNET model are both available, but recent acoustic "
+                "analysis has had trouble keeping up. Visual observation is unaffected."
+            ),
+        )
+    return ProductHealthAcousticSummary(
+        configured=True,
+        status="healthy",
+        detail="A microphone and the BirdNET model are both available.",
+    )
+
+
 @app.get("/api/product/health", response_model=ProductHealthStatus)
 async def get_product_health() -> ProductHealthStatus:
     """One bounded, basic-first "is MockingBird okay" aggregate.
@@ -10891,6 +10965,9 @@ async def get_product_health() -> ProductHealthStatus:
         or storage.disk_free_bytes / storage.disk_total_bytes < LOW_DISK_FREE_RATIO_THRESHOLD
     )
 
+    generated_at = datetime.now(UTC)
+    acoustic = _acoustic_health_summary(repository, now=generated_at)
+
     ready = storage.is_writable and needs_attention_count == 0
     if not storage.is_writable:
         message = "MockingBird's local storage is not writable. Check that its data folder allows writes."
@@ -10927,6 +11004,7 @@ async def get_product_health() -> ProductHealthStatus:
             ),
             suggest_first_backup=suggest_first_backup,
         ),
+        acoustic=acoustic,
         previous_shutdown_clean=previous_shutdown_was_clean(),
         database_schema_version=repository.schema_status.version,
         database_migrated_from_version=repository.schema_status.migrated_from_version,
@@ -10937,7 +11015,7 @@ async def get_product_health() -> ProductHealthStatus:
         backup_format_version=BACKUP_FORMAT_VERSION,
         camera_node_api_version=NODE_API_VERSION,
         transport_protocol_version=TRANSPORT_PROTOCOL_VERSION,
-        generated_at=datetime.now(UTC),
+        generated_at=generated_at,
     )
 
 

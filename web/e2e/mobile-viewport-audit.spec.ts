@@ -330,10 +330,21 @@ test.describe("Sign-in (unauthenticated)", () => {
 // detail) plus the new nav drawer itself, rather than the full 10-surface
 // sweep again -- proportionate additional coverage, not a 3x-longer suite
 // for marginal extra evidence.
+//
+// Whole-Product UI / Accessibility / Performance Closure v1: added 1024px
+// (laptop) and 1440px (desktop) -- until now this matrix only ever
+// exercised mobile/tablet widths, so the two representative desktop widths
+// the milestone brief itself names had no automated regression coverage at
+// all (only manually verified, ad hoc, each prior pass). Both reuse the
+// identical assertions below; `isMobileNavWidth` already branches to the
+// always-visible desktop sidebar for anything >= 760px, so no separate
+// desktop-specific test shape is needed.
 for (const { label, width, height } of [
   { label: "360px (narrow Android)", width: 360, height: 740 },
   { label: "390px (iPhone-class)", width: 390, height: 844 },
   { label: "768px (tablet/narrow desktop)", width: 768, height: 1024 },
+  { label: "1024px (laptop)", width: 1024, height: 800 },
+  { label: "1440px (desktop)", width: 1440, height: 900 },
 ]) {
   test.describe(`Viewport matrix -- ${label}`, () => {
     test.use({ viewport: { width, height } });

@@ -245,6 +245,145 @@ def test_review_queue_product_categories_are_durable_and_reviewed_is_opt_in(tmp_
     assert demo_item.is_demo_source is True
 
 
+def test_imported_visits_without_detector_evidence_are_product_category_animal(tmp_path) -> None:
+    """Whole-Product UI / Accessibility / Performance Closure v1 regression.
+
+    Manually imported (`event_type == "manual_media_import"`) and folder
+    -imported (`event_type == "folder_media_import"`) Visits never run the
+    object detector and never populate `MotionEvidenceModel`, so before this
+    fix they always fell through `_review_queue_triage_fields` to
+    `product_category == "unchecked"` regardless of `subject_label` --
+    exactly the same gap the `observation_engine_candidate`/
+    `acoustic_observation_candidate` fallback above already closed for other
+    event types. Review Queue's default "Animals" tab excludes "unchecked"
+    items, so real imported wildlife photos -- the default, promoted
+    acquisition path for a camera-less setup -- were invisible from the
+    product's own default review view. This is the real, previously
+    misattributed root cause of `web/e2e/reviewed-product-loop.spec.ts`'s
+    long-standing failure.
+    """
+    repository = ProductRepository(db_url=f"sqlite:///{tmp_path / 'imported.sqlite3'}")
+    source_id = "source-import-fixture"
+    stream_id = "stream-import-fixture"
+    now = datetime(2026, 8, 27, 12, 0, tzinfo=UTC)
+
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                CameraSourceModel(
+                    id=source_id,
+                    name="Import Fixture Camera",
+                    kind=SourceKind.manual_upload.value,
+                    status=SourceStatus.connected.value,
+                    description="Non-demo source for import-classification fixture.",
+                )
+            )
+            session.add(
+                StreamModel(
+                    id=stream_id,
+                    source_id=source_id,
+                    name="Import Fixture Stream",
+                    description="Fixture stream",
+                    is_live=False,
+                )
+            )
+            for event_type, visit_id, subject_label in (
+                ("manual_media_import", "visit-manual-default", "unknown_animal"),
+                ("folder_media_import", "visit-folder-default", "unknown_animal"),
+                ("manual_media_import", "visit-manual-person", "person"),
+            ):
+                event_id = f"event-{visit_id}"
+                session.add(
+                    EventModel(
+                        id=event_id,
+                        stream_id=stream_id,
+                        title=visit_id,
+                        event_type=event_type,
+                        started_at=now,
+                        ended_at=now,
+                        primary_zone_id=None,
+                        review_status=ReviewStatus.needs_review.value,
+                    )
+                )
+                session.add(
+                    VisitModel(
+                        id=visit_id,
+                        event_id=event_id,
+                        subject_label=subject_label,
+                        species_guess=None,
+                        confidence=None,
+                        reviewed_label=None,
+                        review_status=ReviewStatus.needs_review.value,
+                        representative_media_path=None,
+                        zone_id=None,
+                        is_superseded=False,
+                    )
+                )
+
+    items = {
+        item.visit_id: item
+        for item in repository.review_queue_items()
+        if item.visit_id and item.stream_id == stream_id
+    }
+    assert items["visit-manual-default"].product_category == "animal"
+    assert items["visit-manual-default"].detector_class == "animal"
+    assert items["visit-folder-default"].product_category == "animal"
+    assert items["visit-folder-default"].detector_class == "animal"
+    # A user-supplied "person"/"vehicle" subject_label still correctly
+    # routes away from the Animals tab -- the fix only reclassifies the
+    # genuinely-wildlife default, it does not blindly mark every import
+    # "animal".
+    assert items["visit-manual-person"].product_category == "other_activity"
+    assert items["visit-manual-person"].detector_class == "person"
+
+
+def test_create_media_import_is_reviewable_from_the_default_animals_tab(tmp_path) -> None:
+    """End-to-end proof against the real production entry point
+    (`ProductRepository.create_media_import`, what `POST /api/media-import`
+    actually calls on a user's behalf): an imported photo with the default
+    subject_label must be findable via the same `review_queue_items()` call
+    the frontend's default "Animals" tab reads, not merely correctly
+    classified in isolation."""
+    repository = ProductRepository(db_url=f"sqlite:///{tmp_path / 'e2e-import.sqlite3'}")
+    source_id = "source-e2e-import"
+    stream_id = "stream-e2e-import"
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                CameraSourceModel(
+                    id=source_id,
+                    name="E2E Import Camera",
+                    kind=SourceKind.manual_upload.value,
+                    status=SourceStatus.connected.value,
+                    description="Non-demo source for the real create_media_import path.",
+                )
+            )
+            session.add(
+                StreamModel(
+                    id=stream_id,
+                    source_id=source_id,
+                    name="E2E Import Stream",
+                    description="Fixture stream",
+                    is_live=False,
+                )
+            )
+
+    jpeg_bytes = b"\xff\xd8\xff\xe0" + b"0" * 64 + b"\xff\xd9"
+    import_result = repository.create_media_import(
+        content=jpeg_bytes,
+        original_filename="backyard-visitor.jpg",
+        content_type="image/jpeg",
+        stream_id=stream_id,
+    )
+
+    animal_tab_visit_ids = {
+        item.visit_id
+        for item in repository.review_queue_items()
+        if item.product_category == "animal"
+    }
+    assert import_result.visit.id in animal_tab_visit_ids
+
+
 def _durable_counts(repository: ProductRepository) -> tuple[int, int, int, int]:
     with repository.session_factory() as session:
         return (

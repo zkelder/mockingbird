@@ -40609,9 +40609,35 @@ def _review_queue_product_context(
     # even after a human confirmed a real species. `subject_label` is always
     # the literal `"bird"` for this event_type (never person/vehicle), so
     # this always resolves to `detector_class = "animal"`, correctly.
+    #
+    # Whole-Product UI / Accessibility / Performance Closure v1: manually
+    # imported media (`event_type == "manual_media_import"`,
+    # `create_media_import` -- ManualImportPage's default, promoted
+    # camera-less acquisition path) and folder-imported media
+    # (`event_type == "folder_media_import"`, `import_folder_media` --
+    # FolderImportPage) have the identical gap for the identical reason:
+    # neither ever runs the object detector or populates MotionEvidence, so
+    # every imported Visit fell through to "unchecked" regardless of its
+    # `subject_label` (which defaults to "unknown_animal" and is otherwise
+    # free text the importing user chose). Confirmed live: Review Queue's
+    # default "Animals" tab excludes "unchecked" items, and its own "Reset
+    # filters" recovery action does not change tabs, so a user who imported
+    # real wildlife photos -- the literal default flow for a camera-less
+    # setup -- saw "No review items match these filters" with no working
+    # way forward, even though their imported Visits were sitting one tab
+    # away, unreviewed. This is the real, reproducible root cause of
+    # `web/e2e/reviewed-product-loop.spec.ts`'s long-standing failure,
+    # previously misattributed as an unrelated pre-existing flake across at
+    # least three prior milestones' own acceptance records. Reusing the
+    # identical subject_label fallback below is correct here too: using
+    # either import flow is itself a human assertion that the media is
+    # outdoor/wildlife activity worth reviewing, exactly like a Stage 7 or
+    # acoustic candidate Visit already is.
     if detector_class is None and event_type in {
         "observation_engine_candidate",
         "acoustic_observation_candidate",
+        "manual_media_import",
+        "folder_media_import",
     }:
         normalized_subject_label = (subject_label or "").strip().lower()
         if normalized_subject_label in {"person", "vehicle"}:

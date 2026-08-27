@@ -63,6 +63,20 @@ export function ProductHealthPanel({ storageSummary }: ProductHealthPanelProps =
         critical: "Critically low",
       }[health.storage_health_tier];
 
+  // Whole-Product UI / Accessibility / Performance Closure v1: acoustic is
+  // always optional -- "Not configured" is the calm, common, expected state
+  // for a purely-visual setup and is deliberately plain text (matching
+  // every other row in this list) rather than an alarming pill. The fuller
+  // `detail` sentence only surfaces in "Advanced diagnostics" below, and
+  // only when there's actually something to explain.
+  const acousticStatusLabel: Record<ProductHealthStatus["acoustic"]["status"], string> = {
+    not_configured: "Not configured",
+    healthy: "Healthy",
+    degraded: "Degraded",
+    model_unavailable: "Model unavailable",
+    microphone_unavailable: "Microphone unavailable",
+  };
+
   const totalUsageBytes =
     storageSummary != null
       ? storageSummary.total_managed_media_bytes + (storageSummary.approximate_database_bytes ?? 0)
@@ -107,6 +121,9 @@ export function ProductHealthPanel({ storageSummary }: ProductHealthPanelProps =
             "None yet"
           )}
         </span>
+        <span>
+          <strong>Acoustic</strong> {acousticStatusLabel[health.acoustic.status]}
+        </span>
       </div>
       {storageSummary ? (
         <span className="meta-text">
@@ -150,6 +167,9 @@ export function ProductHealthPanel({ storageSummary }: ProductHealthPanelProps =
           {health.log_path ? <span>Log file: {health.log_path}</span> : null}
           {health.backup.last_backup_at ? (
             <span>Last backup: {formatDateTime(health.backup.last_backup_at)}</span>
+          ) : null}
+          {health.acoustic.status !== "not_configured" && health.acoustic.status !== "healthy" ? (
+            <span>Acoustic: {health.acoustic.detail}</span>
           ) : null}
         </div>
       </details>

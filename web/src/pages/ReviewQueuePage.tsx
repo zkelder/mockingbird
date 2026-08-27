@@ -3937,8 +3937,34 @@ function FastReviewPanel({
   const [isRunningIdentificationAssistant, setIsRunningIdentificationAssistant] = useState(false);
   const [assistantPrefillSuggestionId, setAssistantPrefillSuggestionId] = useState<string | null>(null);
   const [reviewSessionId] = useState(() => createFastReviewKey("fast-review-session"));
+  // Whole-Product UI / Accessibility / Performance Closure v1: "Start Fast
+  // Review" (and save-and-next) swaps a large new in-place region into the
+  // page without any navigation -- confirmed live via keyboard that
+  // activating it left focus stranded on `document.body`, forcing a
+  // keyboard/screen-reader user to Tab from the very top of the page to
+  // reach the form that just appeared (section 8's "dynamic content does
+  // not strand keyboard users"). Mirrors the WAI-ARIA "focus the new
+  // region's own heading" pattern already used for the mobile nav drawer
+  // (see App.tsx's `mobileNavToggleRef`) -- a heading, not the first form
+  // control, so a screen-reader user hears what changed before landing in
+  // a form. `tabIndex={-1}` makes each heading programmatically focusable
+  // without adding it to the normal Tab order.
+  const activeItemHeadingRef = useRef<HTMLHeadingElement>(null);
+  const completeHeadingRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => { void apiClient.getVisitTags().then(setAvailableTags).catch(() => setAvailableTags([])); }, []);
+
+  useEffect(() => {
+    if (isOpen && activeItem) {
+      activeItemHeadingRef.current?.focus();
+    }
+  }, [isOpen, activeItem?.id]);
+
+  useEffect(() => {
+    if (isOpen && !activeItem) {
+      completeHeadingRef.current?.focus();
+    }
+  }, [isOpen, activeItem]);
 
   // Navigation accepts a bounded snapshot rather than the full queue. Its order is
   // exactly the active Review Queue order, so filters and Stream scoping are retained.
@@ -4324,7 +4350,17 @@ function FastReviewPanel({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [activeItem, draftLabel, draftNotes, isOpen, isSaving, undoState]);
 
-  if (items.length === 0) {
+  // Whole-Product UI / Accessibility / Performance Closure v1: only skip
+  // rendering entirely when there was never a session open -- an
+  // in-progress session (`isOpen`) whose last matching item was just
+  // resolved (Save & Next, so `items` -- the current tab/filter's own
+  // matching set -- drops to zero) must still fall through to the
+  // `!activeItem` "Filtered queue complete" branch below rather than the
+  // whole panel silently vanishing. Confirmed live via keyboard: reviewing
+  // the last visible item previously made Fast Review disappear with no
+  // acknowledgment at all, stranding focus on `document.body` a second way
+  // (see `completeHeadingRef`, above) instead of confirming the save.
+  if (items.length === 0 && !isOpen) {
     return null;
   }
 
@@ -4354,7 +4390,7 @@ function FastReviewPanel({
       <section className="panel fast-review-complete">
         <div>
           <span className="eyebrow">Fast Review</span>
-          <h2>Filtered queue complete</h2>
+          <h2 ref={completeHeadingRef} tabIndex={-1}>Filtered queue complete</h2>
           <p>{message ?? "No unresolved Visits remain in this filtered queue."}</p>
         </div>
         <button className="secondary-action" onClick={() => setIsOpen(false)} type="button">
@@ -4369,7 +4405,7 @@ function FastReviewPanel({
       <div className="fast-review-header">
         <div>
           <span className="eyebrow">Fast Review</span>
-          <h2>{activeItem.title}</h2>
+          <h2 ref={activeItemHeadingRef} tabIndex={-1}>{activeItem.title}</h2>
           <p>
             {processedCount} reviewed this session · {Math.min(boundedItems.length, 200)} matching
             unresolved Visit{boundedItems.length === 1 ? "" : "s"}

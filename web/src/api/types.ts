@@ -5586,6 +5586,15 @@ export interface ProductHealthStatus {
     last_backup_verified?: boolean | null;
     suggest_first_backup?: boolean;
   };
+  // Whole-Product UI / Accessibility / Performance Closure v1: the
+  // product's first acoustic health/status field -- optional and never a
+  // factor in `ready`. See ProductHealthAcousticSummary (schemas.py) and
+  // ProductHealthPanel.tsx.
+  acoustic: {
+    configured: boolean;
+    status: "not_configured" | "healthy" | "degraded" | "model_unavailable" | "microphone_unavailable";
+    detail: string;
+  };
   previous_shutdown_clean?: boolean | null;
   database_schema_version: number;
   // Release Engineering Foundation v1: set only when this running process
