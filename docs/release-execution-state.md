@@ -23,13 +23,56 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `790513e` -- the implementation commit for Concurrent
-  Candidate Visit Persistence Reliability v1
-- **Schema:** `v57`, unchanged by this milestone -- a narrower exception
-  classification inside one existing repository method plus a bounded
-  retry loop inside one existing caller method; no persisted shape
-  changed.
-- **Latest accepted milestone:** Concurrent Candidate Visit Persistence
+- **Accepted HEAD:** `ea00b3b` -- the implementation commit for
+  Representative Multi-Camera Field Acceptance & Release-Budget Evidence
+  v1
+- **Schema:** `v57`, unchanged by this milestone.
+- **Latest accepted milestone:** Representative Multi-Camera Field
+  Acceptance & Release-Budget Evidence v1 -- see
+  [representative-multi-camera-field-acceptance-release-budget-evidence-v1-report.md](representative-multi-camera-field-acceptance-release-budget-evidence-v1-report.md).
+  Classification **B** -- no live field session ran (session start, 20:26
+  EDT 2026-08-26, was after sunset -- the same "darkness produces an
+  unusable bird denominator" scenario this project has already hit twice
+  before, 2026-08-19/2026-08-20; this milestone's own governing brief
+  names exactly this as the case to not manufacture a field result under).
+  Executed the brief's own "no representative conditions" path instead:
+  re-verified every precondition a live daylight session needs (Camera
+  Node network reachability, GPU/detector idle and available, disk
+  headroom, the exact acceptance-recorder env-var settings/structured-log
+  path, the exact command/API sequence, minimum run duration), and --
+  while proving "the current deployed build contains accepted HEAD" --
+  found and fixed one real, previously-hidden defect: a fresh, full-
+  fidelity Windows dev build of the then-current accepted HEAD
+  (`db8588c`) failed outright with a genuine `LocalProductBuildError`
+  (site-packages ended up with two different `click` versions, 8.4.2 and
+  8.5.0, installed by two independent dependency-install tiers -- the
+  identical mechanism, and identical one-line-pin fix shape, as this same
+  file's own already-documented `idna` pin). Validated RED->GREEN against
+  an existing test that already covered this exact shape but had never
+  been run against today's live PyPI state
+  (`test_real_windows_bioclip_dependency_closure_installs_offline_with_no_duplicates`);
+  full `test_local_product_packaging.py` (66 fast + 4 slow) passing;
+  `ruff check` clean; Tier 3 not run (change isolated to Windows packaging
+  tooling, zero import relationship to the Core suite). Re-deployed after
+  the fix and independently re-verified via direct HTTP (`GET
+  /api/product/instance`/`/api/product/health`: `git_commit` exact match,
+  schema `57`, `ready: true`) that the deployed artifact carries the fix
+  (`click-8.4.2.dist-info` the only `click` entry anywhere in it), then
+  stopped it cleanly, leaving `db8588c` a retained, ledger-verified
+  release ready for instant relaunch. Also learned, via the
+  unauthenticated health endpoint only (no credentials used, matching the
+  standing decision below): only one real Stream (the reference Camera
+  Node) is currently configured in this dev instance -- a second real,
+  already-supported Windows-USB-webcam Source (hardware-validated for the
+  prior Acoustic milestone) is not yet wired up, and should be added as a
+  genuine second Stream before the next live session, so this project's
+  still-open "does the concurrent-persistence fix hold under genuine
+  multi-camera load" question can actually be tested with two real
+  cameras. No product/perception/admission/Visit/evidence/classification
+  code touched; no schema change; Gate A evidence body unchanged (zero new
+  field-cohort minutes gathered) -- no release budgets proposed. See Lane
+  R, §6, below, for the Gate A/field-acceptance-specific record.
+- **Prior accepted milestone:** Concurrent Candidate Visit Persistence
   Reliability v1 -- see
   [concurrent-candidate-visit-persistence-reliability-v1-report.md](concurrent-candidate-visit-persistence-reliability-v1-report.md).
   Classification **A** -- a bounded correctness milestone, not a further
@@ -277,6 +320,17 @@ preserved here, not relaxed.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+Representative Multi-Camera Field Acceptance & Release-Budget Evidence v1
+(directly authorized outside this file, reconciled here at its own
+closure) is now accepted at classification **B** -- see §1, above, and
+[representative-multi-camera-field-acceptance-release-budget-evidence-v1-report.md](representative-multi-camera-field-acceptance-release-budget-evidence-v1-report.md)
+for the full record. This does **not** close Lane R/Gate A -- no live
+field session ran (environmental conditions, not a product defect; see
+Lane R, §6) -- and does **not** authorize a next milestone by itself; it
+found and fixed one narrow, unrelated release-engineering defect (a
+Windows dependency-pin gap) while re-verifying execution-readiness for
+the next daylight session.
 
 Concurrent Candidate Visit Persistence Reliability v1 (directly authorized
 outside this file, reconciled here at its own closure) is now accepted at
@@ -955,6 +1009,40 @@ unless a future milestone specifically requires human acceptance and they
 explicitly agree first; ordinary auth-requiring development/validation
 work should instead use a fresh, isolated dev instance with a disposable
 bootstrapped local Administrator account.
+
+**Representative Multi-Camera Field Acceptance & Release-Budget Evidence
+v1 (2026-08-26) attempted, also returned no new live-field evidence --
+classification B, an acceptable outcome per this milestone's own governing
+brief, and a materially different shape from the 2026-08-25 attempt
+above.** Not blocked by authentication this time: the session start
+(20:26 EDT) was after sunset, the same "darkness produces an unusable bird
+denominator" scenario 2026-08-19/2026-08-20 already demonstrated twice: a
+post-sunset session produces a clean, real, but useless zero-track-
+generation result, not evidence about daytime bird activity. No
+Observation session was opened. Executed the "no representative
+conditions" path instead and used the time to make the next daylight
+session concretely more ready, not merely re-documented: found and fixed
+one real, previously-hidden Windows build defect (a `click` dependency-
+pin gap identical in mechanism to this codebase's own already-documented
+`idna` pin) that would otherwise have cost the next session its own
+debugging time; produced a fresh, independently-HTTP-verified, ledger-
+retained deployable artifact of accepted HEAD ready for instant relaunch;
+confirmed GPU/detector/storage/Camera-Node health; confirmed, via the
+unauthenticated health endpoint only, that only one real Stream is
+currently configured in the dev instance and that a second real, already-
+supported Source (a Windows-native USB webcam, already hardware-validated
+for the Acoustic milestone) should be wired up before the next session so
+the still-open "does the concurrent-persistence fix hold under genuine
+multi-camera load" question can actually be tested with two real cameras;
+and documented the exact command/API sequence, acceptance-recorder
+settings, and structured-log location (`.../userdata/logs/mockingbird.
+log`) that session needs. See
+[representative-multi-camera-field-acceptance-release-budget-evidence-v1-report.md](representative-multi-camera-field-acceptance-release-budget-evidence-v1-report.md).
+Gate A's evidence body is unchanged by this session (still exactly the
+two real 2026-08-19/2026-08-20 daylight cohorts) -- no release budgets
+proposed. The standing decision above (do not ask the user again for
+credentials/live participation absent explicit agreement) was not
+re-litigated and remains in force.
 
 ### S. Actual Final Release Hardening
 
