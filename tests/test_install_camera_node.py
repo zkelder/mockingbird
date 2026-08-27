@@ -118,6 +118,8 @@ class FakeCommandRunner:
         action = args[0]
         if action == "daemon-reload":
             return _result(0)
+        if action == "reset-failed":
+            return _result(0)
         if action == "enable":
             self._service_enabled = True
             return _result(0)
@@ -1198,6 +1200,71 @@ def test_failed_health_on_first_install_does_not_attempt_rollback(tmp_path) -> N
     assert report.rolled_back is False
     assert "connection refused" in report.health_message
     assert not any("rollback" in step for step in report.steps)
+
+
+def test_restart_failure_outright_also_triggers_automatic_rollback(tmp_path) -> None:
+    """Real-hardware acceptance found this exact shape: `systemctl restart`
+    can fail outright (not merely "restarted but then unhealthy") --
+    previously this raised immediately, bypassing automatic rollback
+    entirely. See "Real acceptance" in the governing report."""
+
+    paths = InstallPaths(prefix=tmp_path / "root")
+    runner = FakeCommandRunner()
+    install(
+        artifact_dir=_write_fake_artifact(tmp_path / "v1", build_id="1" * 32),
+        paths=paths, runner=runner, is_root=lambda: True, health_checker=_fake_healthy,
+    )
+
+    class _RunnerFailingSecondRestart(FakeCommandRunner):
+        def __init__(self, **kwargs) -> None:
+            super().__init__(**kwargs)
+            self._restart_count = 0
+
+        def _systemctl(self, args):
+            if args[0] == "restart":
+                self._restart_count += 1
+                if self._restart_count == 1:
+                    return _result(1, stderr="Job for mockingbird-camera-node.service failed (simulated)")
+            return super()._systemctl(args)
+
+    failing_runner = _RunnerFailingSecondRestart(service_active=True, service_enabled=True)
+    report = install(
+        artifact_dir=_write_fake_artifact(tmp_path / "v2", build_id="2" * 32),
+        paths=paths, runner=failing_runner, is_root=lambda: True, health_checker=_fake_healthy,
+    )
+
+    assert report.healthy is True
+    assert report.rolled_back is True
+    assert any("restart failed" in step for step in report.steps)
+    assert any("automatic rollback succeeded" in step for step in report.steps)
+    assert json.loads(paths.manifest_path.read_text())["provenance"]["build_id"] == "1" * 32
+
+
+def test_restart_calls_reset_failed_first_to_clear_a_prior_crash_loop(tmp_path) -> None:
+    """A prior crash loop can trip systemd's own restart-storm circuit
+    breaker (`StartLimitBurst`), making an entirely unrelated later restart
+    fail with "Start request repeated too quickly" -- found by this
+    milestone's own real-hardware acceptance. `reset-failed` must run
+    before every restart attempt, in both install() and rollback()."""
+
+    paths = InstallPaths(prefix=tmp_path / "root")
+    runner = FakeCommandRunner()
+    install(
+        artifact_dir=_write_fake_artifact(tmp_path / "v1", build_id="1" * 32),
+        paths=paths, runner=runner, is_root=lambda: True, health_checker=_fake_healthy,
+    )
+    install(
+        artifact_dir=_write_fake_artifact(tmp_path / "v2", build_id="2" * 32),
+        paths=paths, runner=runner, is_root=lambda: True, health_checker=_fake_healthy,
+    )
+    reset_failed_calls = [c for c in runner.calls if c == ["systemctl", "reset-failed", "mockingbird-camera-node"]]
+    restart_calls = [c for c in runner.calls if c == ["systemctl", "restart", "mockingbird-camera-node"]]
+    assert len(reset_failed_calls) == len(restart_calls) >= 1
+
+    rollback(paths=paths, runner=runner, is_root=lambda: True, health_checker=_fake_healthy)
+    reset_failed_calls_after = [c for c in runner.calls if c == ["systemctl", "reset-failed", "mockingbird-camera-node"]]
+    restart_calls_after = [c for c in runner.calls if c == ["systemctl", "restart", "mockingbird-camera-node"]]
+    assert len(reset_failed_calls_after) == len(restart_calls_after)
 
 
 # --- Identity preservation ----------------------------------------------------

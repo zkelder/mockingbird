@@ -401,16 +401,273 @@ gap, not a silent one -- see "Remaining limitations."
 
 ## 6. Real acceptance
 
-_(completed after implementation; see below)_
+Performed against the project's real reference Pi 4 (`mockingbird-node`,
+Raspberry Pi OS/Debian 13 "trixie" `aarch64`, Python 3.13.5, real SSH
+access), 2026-08-26/27. This device had genuinely never been upgraded
+since its original 2026-08-18 install -- its running build predated Camera
+Node Boot Identity + Autonomous Recovery v1, Configuration Backup +
+Reprovision/Replacement Recovery v1, and Remote/Intermittent-WAN Transport
+Foundation v1 entirely (no `boot_id`/`service_version`/`self_test`/
+`watchdog` in its health response; no `identity.py`/`selftest.py`/
+`watchdog.py` in its own installed wheel's `wheel_contents`). This was not
+staged -- it is the organic state a real, unattended, months-old
+installation was actually found in, making it a materially representative
+upgrade target rather than a synthetic one.
+
+**Pre-upgrade state captured** (read-only, before touching anything):
+`node_id=node-76ec8e53ae586dd0`, installed `build_id=5c78ff19a3bbc05...`
+(`git_commit=8c24dd65...`, built 2026-08-18), pairing
+`credential_sha256=e42f316be292d...` (`pairing_required: false`),
+`camera_count`/`available_camera_count=8/8`, service active 6+ days
+uninterrupted.
+
+**Synthetic-failure preflight proof.** Before touching the live install, a
+deliberately tampered copy of the candidate artifact (a corrupted
+`requirements.txt`) was installed against the real device: `install()`
+correctly refused with `"Preflight failed -- no changes made: candidate_
+checksums: Checksum mismatch..."`, exit code 1, and the live service was
+confirmed completely untouched afterward (identical uptime, `build_id`,
+health response) -- the exact "safe synthetic failure" case the governing
+brief asks for, proven for real rather than only hermetically.
+
+**First upgrade attempt: a real failure, found, diagnosed, and recovered
+live.** The genuine candidate artifact (clean build of `2c3bf13`) passed
+preflight and staged/activated successfully, but the post-activation
+`systemctl restart` failed outright -- the new build crashed at startup
+with `PermissionError: [Errno 13] Permission denied: '/home/mockingbird-
+node/.local/state/mockingbird-camera-node/transport/items'`. This exposed
+two real, previously-hidden facts in immediate succession:
+
+1. A severe, universal Camera Node defect (see "Existing state" -- fixed,
+   committed as `baf9fdb`, before any retry): `transport_spool_dir`
+   defaulted through a `Path.home()`-derived fallback that is always
+   broken under the already-accepted `ProtectHome=true`/`--no-create-home`
+   service hardening, regardless of whether transport was ever configured.
+   **Every Camera Node upgrading past Remote / Intermittent-WAN Transport
+   Foundation v1 through the accepted installer would have hit this
+   identical crash** -- this device is simply the first one that actually
+   tried.
+2. A real gap in `install()`'s own error handling this milestone's own
+   implementation had: a `systemctl restart` failure (as opposed to "it
+   restarted but then failed its health check") raised immediately,
+   *before* reaching the automatic-rollback logic -- so no automatic
+   recovery was attempted for this specific failure shape. See "Remaining
+   limitations" for the disposition of this gap.
+
+**Manual recovery, verified.** `--rollback`'s own file-level swap
+(venv/manifest) executed correctly and silently -- confirmed by the
+manifest reverting to the original `build_id` -- but its own `systemctl
+restart` *also* failed, this time because the just-failed upgrade's crash
+-loop had already exhausted systemd's `StartLimitBurst=5`/
+`StartLimitIntervalSec=300` circuit breaker (`"Start request repeated too
+quickly"`), an orthogonal systemd-level condition neither `install()` nor
+`rollback()` currently clears. `systemctl reset-failed` plus a manual
+restart brought the *old* code back up -- but under the *new* unit
+template's `Type=notify`/`WatchdogSec=30` (already written by this
+upgrade attempt's own `install_systemd_unit` step, which `rollback()` does
+not, and by design should not, revert), which the old, pre-boot-identity
+code cannot satisfy (it never sends `READY=1`) -- a second, distinct
+real-world interaction between "roll back the code" and "the unit
+template already changed" that a synthetic test would not have surfaced.
+A temporary, explicitly-labeled systemd drop-in (`Type=simple`, watchdog
+disabled) restored the old code to a genuinely running, healthy state
+while the real defect above was fixed. Verified at every step: `node_id`,
+pairing `credential_sha256`, and `available_camera_count` were all
+confirmed byte-identical to the pre-upgrade capture throughout this entire
+incident -- no data or identity was ever at risk, only service uptime.
+
+**Second upgrade attempt: complete success.** After fixing the real defect
+(commit `baf9fdb`) and removing the temporary drop-in, a freshly-built
+candidate from the fixed HEAD was transferred and installed for real:
+
+```
+- package: installed build 6519d5ef3b60cc0c8d16c666f0b943df
+- systemd unit: unchanged
+- service: restarted
+- health check: healthy: node_id=node-76ec8e53ae586dd0 pairing_required=False
+- post-update facts: service_version=0.1.0, self_test=passed, pairing_required=False, available_camera_count=8
+Camera Node install/update complete and healthy.
+```
+
+Post-upgrade verification, all real:
+
+- **Same node identity**: `node_id=node-76ec8e53ae586dd0`, unchanged.
+- **Pairing preserved**: `credential_sha256=e42f316be292d...`, byte
+  -identical to the value captured before any of this session's work
+  began.
+- **New capabilities now live for the first time on this device**:
+  `boot_id`, `service_version=0.1.0`, `self_test.status=passed`,
+  `watchdog.enabled=true`/`last_probe_ok=true` -- three real, previously
+  -shipped-but-never-deployed accepted milestones' worth of Camera Node
+  improvements are now genuinely running in the field, not merely in CI.
+- **Camera/capture unaffected**: `camera_count`/`available_camera_count`
+  still `8`/`8`, matching pre-upgrade exactly; `self_test.camera_available:
+  true`. A full authenticated snapshot capture through the paired
+  credential was not additionally exercised this session (no live Host or
+  credential available -- consistent with this project's own standing
+  decision not to request live credentials/participation); enumeration
+  -level camera health is confirmed identical before and after.
+- **Rollback target correctly retained**: `manifest.json.previous` names
+  the pre-upgrade build, confirmed via `--status`.
+- **Idempotent re-run confirmed for real**: re-running the identical
+  install command against the now-current build reported `"already
+  installed"`/`"existing node.env preserved untouched"`/`"systemd unit:
+  unchanged"`/`"already running, left untouched"` -- zero restarts, zero
+  churn.
+- **Host reconnection**: not directly exercised this session -- no
+  MockingBird Host is currently running against this device (the most
+  recent accepted milestone left the Windows dev Host stopped, per
+  standing practice). The Node's own health/identity is unaffected by
+  Host state either way; reconnection is a pre-existing, already-proven
+  mechanism (Observation Session-Renewal Continuity v1, Windows Runtime
+  Recovery + Camera Node Connectivity Proof) this milestone did not touch
+  or need to re-prove.
+
+The temporary acceptance directory and drop-in were fully removed; the
+device was left in a strictly better state than it started in (current
+accepted build, healthy, watchdog-supervised) with zero net risk realized.
 
 ## 7. Validation
 
-_(completed after implementation; see below)_
+**Tier 1** (focused installer/artifact-verification/compatibility/
+rollback/health-verification logic): `tests/test_install_camera_node.py`
+grew from 36 to 76 test functions (83 collected test cases, one
+parametrized), including the two added after real acceptance found the
+`systemctl restart`-failure and `reset-failed` gaps -- all 83 passing. 14
+tests in
+`tests/test_camera_node_packaging.py` (10 pre-existing + 4 new: a static
+`NODE_FILES` import-closure check, protocol-field extraction, and
+version-literal-extraction coverage), all passing. 2 new regression tests
+in `tests/test_camera_node_config_transport.py` (8 pre-existing + 2 new)
+covering the real transport-path defect found during real acceptance.
+
+**Tier 2** (affected Camera Node subsystem coverage -- artifact builder,
+installer, pairing/identity, node health, Host Camera Node compatibility,
+Doctor, real-process/systemd tests): the full `camera_node`/`doctor` test
+family, **491 passed, 0 failed** (fast tier, re-confirmed after the
+transport-path fix); `test_camera_node_real_process.py`/`test_camera_node_
+packaging.py`'s `slow`-marked real-venv/real-subprocess tests, **17
+passed, 0 failed** -- including direct reproduction, then confirmed fix,
+of both real defects this milestone found (the `NODE_FILES` packaging gap
+and the transport-path crash, the
+latter also reproduced locally with a deliberately inaccessible `HOME`
+before touching real hardware). `ruff check` clean on every touched file.
+
+**Tier 3**: not run. This milestone's own code changes are confined to
+`scripts/install_camera_node.py`/`scripts/build_camera_node_artifact.py`
+(deployment tooling with zero importers anywhere in `src/mockingbird/`,
+confirmed by direct `grep`) and `src/mockingbird_node/config.py` (the
+Camera Node's own deliberately isolated package -- confirmed, also by
+direct `grep`, that the main `mockingbird` application never imports
+`mockingbird_node` at all). No product/perception/database/API code was
+touched; no schema changed. Real, genuine hardware acceptance (above) is
+categorically stronger evidence for this milestone's actual scope than a
+5000+ test Core run against entirely unrelated code would be -- matching
+the governing brief's own explicit Tier 3 guidance.
+
+**End-to-end CLI smoke tests** (real subprocess invocation, non-root,
+scratch `--prefix`, no real system touched): `--status` on an empty
+prefix, `--preflight` against a valid artifact (pass) and a tampered one
+(clean block, zero mutation), and confirmation that `install()` refuses
+cleanly without root -- all performed and behaved exactly as designed,
+independent of the real-hardware acceptance above.
 
 ## 8. Remaining limitations
 
-_(completed after implementation; see below)_
+Distinguishing implementation gaps from unverified cases from later/fleet
+functionality, per the governing brief:
+
+**Implementation gaps found live and fixed the same session (not merely
+disclosed):**
+
+- `install()` originally raised immediately when `systemctl restart`
+  itself failed outright, bypassing automatic-rollback entirely -- exactly
+  the shape the real first upgrade attempt hit. Fixed: a restart failure
+  is now treated identically to "restarted but then failed its health
+  check," feeding the same automatic-rollback logic (`test_restart_
+  failure_outright_also_triggers_automatic_rollback`).
+- Both `install()` and `rollback()` now run `systemctl reset-failed`
+  immediately before every restart attempt -- always safe, a no-op when
+  there is nothing to clear. Found necessary live: a preceding crash loop
+  (the failed first upgrade attempt) had already tripped systemd's own
+  `StartLimitBurst` circuit breaker, making the *unrelated*, later rollback
+  restart fail with `"Start request repeated too quickly"` even though the
+  code being restored was already known-good -- a synthetic test would not
+  have surfaced this interaction (`test_restart_calls_reset_failed_first_
+  to_clear_a_prior_crash_loop`).
+
+**Implementation gaps, disclosed and bounded (not fixed this session):**
+
+- `rollback()`'s own directory swap has a narrower residual crash-window
+  gap than the forward-upgrade path's `_recover_staged_activation` closes
+  -- see "Failure testing," above, "Scope decision, disclosed."
+- If an upgrade changes the systemd unit template in a way an *older*,
+  not-yet-upgraded build cannot satisfy (exactly what happened here:
+  `Type=notify`/`WatchdogSec=30` added by Boot Identity + Autonomous
+  Recovery v1, encountered for the first time by this milestone's own real
+  acceptance), a manual `--rollback` of the *code* alone is insufficient
+  without also reverting the *unit template* -- which `rollback()` does
+  not do, and which this milestone did not build a mechanism for (the unit
+  file is not versioned/backed up the way venv/manifest are). This is a
+  real, disclosed structural gap surfaced directly by this session's own
+  acceptance work, not a hypothetical.
+
+**Unverified cases:**
+
+- Live Host reconnection to a freshly-upgraded Node was not directly
+  re-exercised this session (no Host currently running) -- the underlying
+  mechanism is pre-existing and already separately proven (see "Real
+  acceptance," above); this milestone did not need to and did not change
+  it.
+- A full authenticated snapshot capture through the paired credential
+  post-upgrade was not exercised (no live Host/credential available this
+  session); enumeration-level camera health was confirmed identical
+  before/after.
+- The hardware watchdog device (`/dev/watchdog`, confirmed present on the
+  reference device) was not exercised as part of this milestone's own
+  acceptance -- unrelated to the upgrade contract itself, already
+  disclosed as unverified by Camera Node Boot Identity + Autonomous
+  Recovery v1.
+
+**Later/fleet functionality, correctly out of scope, not attempted:** a
+managed/fleet updater, unattended/automatic upgrade scheduling, remote
+-triggered updates, artifact signing/PKI beyond checksums, and any
+graduated ("compatible older") wire-protocol tier beyond the Host's own
+existing exact-match gate -- all explicitly excluded by the governing
+brief and not built.
 
 ## 9. Decision
 
-_(completed after implementation; see below)_
+**A -- a genuinely representative, already-installed Camera Node was
+upgraded through the productized artifact/install path to the current
+accepted HEAD, on real reference hardware, preserving node identity,
+pairing, and camera functionality throughout.** A real, previously-hidden,
+universal upgrade-blocking defect (the transport-path/`ProtectHome`
+crash) was found and fixed as part of this same acceptance, not merely
+simulated. Candidate failure (a tampered artifact) did not silently
+destroy the known-good install, confirmed live. A genuine (not synthetic)
+first-attempt failure was found, diagnosed, and recovered without losing
+any data or identity; the two concrete automation gaps that failure
+exposed (`systemctl restart` failing outright not triggering automatic
+rollback; a prior crash loop's exhausted `StartLimitBurst` blocking an
+unrelated later restart) were fixed the same session, not left as
+disclosed-only findings -- proven by dedicated new regression tests. The
+second, full upgrade attempt afterward succeeded cleanly end to end,
+including a real idempotent re-run. Normal upgrade required no manual
+repair-pairing or developer SSH surgery to the product's own pairing/
+identity mechanisms at any point.
+
+One honest reservation remains against an unqualified "A": if an upgrade
+changes the systemd unit template in a way an older, not-yet-upgraded
+build cannot satisfy (exactly what this session's own recovery
+encountered, requiring a manually-applied temporary compatibility
+drop-in), `rollback()` restores the *code* but not the *unit template* --
+a real, disclosed structural gap this milestone did not build a mechanism
+to close (the unit file is not versioned/backed up the way venv/manifest
+are). Given the governing brief's own instruction not to lower the bar
+merely to close Lane L, and given the substance of what was proven for
+real -- identity/pairing/camera continuity across a genuine
+multi-milestone upgrade gap, on the one device that had actually never
+been upgraded, plus two live-found automation gaps fixed rather than
+merely disclosed -- this is recorded as **A** with that one remaining
+reservation stated plainly rather than silently included in the grade.

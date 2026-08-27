@@ -1253,14 +1253,39 @@ def install(
 
     _systemctl("enable", SERVICE_NAME, runner=runner)
     needs_restart = venv_outcome.changed or unit_changed or not service_is_active(runner=runner)
+    restart_failure: "str | None" = None
     if needs_restart:
+        # Clears systemd's own restart-storm circuit breaker
+        # (`StartLimitBurst`/`StartLimitIntervalSec`) before asking it to
+        # restart -- always safe, a no-op if there is nothing to clear.
+        # Found necessary by this milestone's own real-hardware acceptance:
+        # a prior crash loop (a bad candidate, or an earlier interrupted
+        # attempt) can otherwise make an entirely unrelated, later restart
+        # attempt fail with "Start request repeated too quickly" even
+        # though the code being started is perfectly fine.
+        _systemctl("reset-failed", SERVICE_NAME, runner=runner)
         restart = _systemctl("restart", SERVICE_NAME, runner=runner)
         if restart.returncode != 0:
-            raise InstallerError(f"systemctl restart {SERVICE_NAME} failed: {restart.stderr.strip()}")
-    steps.append("service: restarted" if needs_restart else "service: already running, left untouched")
+            # Never raised immediately: a restart that fails outright is
+            # treated exactly like "restarted but then failed its health
+            # check" below, so the same automatic-rollback logic applies --
+            # found necessary by this milestone's own real-hardware
+            # acceptance, where the very first real upgrade attempt hit
+            # exactly this shape (see "Real acceptance" in
+            # docs/camera-node-upgrade-compatibility-recovery-v1-report.md).
+            restart_failure = restart.stderr.strip()
+    if not needs_restart:
+        steps.append("service: already running, left untouched")
+    elif restart_failure is None:
+        steps.append("service: restarted")
+    else:
+        steps.append(f"service: restart failed ({restart_failure})")
 
-    url = _health_check_url(paths)
-    healthy, message, payload = health_checker(url) if url else (False, "no configuration to health-check", {})
+    if restart_failure is not None:
+        healthy, message, payload = False, f"systemctl restart {SERVICE_NAME} failed: {restart_failure}", {}
+    else:
+        url = _health_check_url(paths)
+        healthy, message, payload = health_checker(url) if url else (False, "no configuration to health-check", {})
     steps.append(f"health check: {message}")
 
     if healthy and pre_node_id is not None and payload.get("node_id") != pre_node_id:
@@ -1384,6 +1409,14 @@ def rollback(
         swap_venv.rename(paths.previous_venv_dir)
 
     restored = _manifest_build_id(paths.manifest_path)
+    # See "Real acceptance" in
+    # docs/camera-node-upgrade-compatibility-recovery-v1-report.md: a prior
+    # crash loop (exactly what a failed upgrade this rollback is recovering
+    # from typically is) can leave systemd's own restart-storm circuit
+    # breaker tripped, making this entirely unrelated restart fail with
+    # "Start request repeated too quickly" even though the code being
+    # restored is perfectly fine. Always safe to clear; a no-op otherwise.
+    _systemctl("reset-failed", SERVICE_NAME, runner=runner)
     restart = _systemctl("restart", SERVICE_NAME, runner=runner)
     if restart.returncode != 0:
         raise InstallerError(f"systemctl restart {SERVICE_NAME} failed during rollback: {restart.stderr.strip()}")
