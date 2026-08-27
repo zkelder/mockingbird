@@ -248,6 +248,28 @@ WINDOWS_RUNTIME_REQUIREMENTS: tuple[str, ...] = (
     # Keep this in sync with `WINDOWS_BIOCLIP_RUNTIME_REQUIREMENTS`'s own
     # `idna` pin if that one is ever intentionally re-validated and bumped.
     "idna==3.18",
+    # Identical defect class to the `idna` pin immediately above, newly
+    # reproduced (Representative Multi-Camera Field Acceptance & Release-
+    # Budget Evidence v1's own preflight build, a real `deploy_windows_dev.py
+    # --commit db8588c` run): not a direct MockingBird dependency -- pulled
+    # in transitively by `uvicorn`'s own CLI entry point requiring `click`.
+    # `install_windows_runtime_dependencies` has no wheel cache for the core
+    # tier and always does a live online resolve, so without an explicit pin
+    # here it silently installs whatever click is newest on PyPI at build
+    # time (observed for real: 8.5.0) -- while `WINDOWS_BIOCLIP_RUNTIME_
+    # REQUIREMENTS` already pins click to a specific, offline-wheel-cached
+    # version (8.4.2, via huggingface_hub's own CLI). Those two independent
+    # `pip install --target` calls into the same flat site-packages then
+    # produce two different `click-*.dist-info/` directories -- the exact
+    # corruption class `verify_no_duplicate_site_packages_metadata` exists to
+    # catch (and did: a real build failed outright on this exact shape before
+    # this pin existed). Exact-pinning it here, to precisely match
+    # `WINDOWS_BIOCLIP_RUNTIME_REQUIREMENTS`'s own pin, turns the later
+    # BioCLIP install into a genuine no-op for this package, the same fix
+    # shape as `idna`/`Pillow`/`numpy`/`anyio` above. Keep this in sync with
+    # `WINDOWS_BIOCLIP_RUNTIME_REQUIREMENTS`'s own `click` pin if that one is
+    # ever intentionally re-validated and bumped.
+    "click==8.4.2",
 )
 
 # The accepted Observation Engine's optional GPU detector stack (pyproject
