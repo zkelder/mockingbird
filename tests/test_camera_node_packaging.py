@@ -1,3 +1,4 @@
+import ast
 import json
 import os
 from pathlib import Path
@@ -10,10 +11,13 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+NODE_PACKAGE = ROOT / "src" / "mockingbird_node"
 _MODULE = runpy.run_path(ROOT / "scripts" / "build_camera_node_artifact.py")
 BUILD_ARTIFACT = _MODULE["build_camera_node_artifact"]
 VERIFY_CLEAN_SOURCE = _MODULE["verify_clean_camera_node_source"]
+EXTRACT_VERSION_LITERAL = _MODULE["_extract_version_literal"]
 CameraNodeArtifactError = _MODULE["CameraNodeArtifactError"]
+NODE_FILES = _MODULE["NODE_FILES"]
 
 
 def _init_fixture_repo(directory: Path) -> None:
@@ -31,6 +35,73 @@ def _commit_fixture_node_package(repo: Path) -> None:
     _init_fixture_repo(repo)
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
     subprocess.run(["git", "commit", "--quiet", "-m", "initial"], cwd=repo, check=True, capture_output=True)
+
+
+def _local_import_targets(source: str) -> set[str]:
+    """Every `mockingbird_node`-package-local *submodule* this file's own
+    `from .xxx import ...` / `from . import xxx` statements reference.
+    Ignores absolute imports (fastapi, pydantic, stdlib, ...) entirely --
+    those are declared in `RUNTIME_REQUIREMENTS`/the standard library, not
+    `NODE_FILES`. A bare `from . import xxx` is ambiguous by name alone --
+    `xxx` could be a submodule (`xxx.py`) or a plain attribute defined in
+    `__init__.py` (e.g. `from . import __version__`, a real case in
+    `identity.py`) -- resolved by checking which one actually exists on
+    disk; `__init__.py` itself is always unconditionally required regardless."""
+
+    targets: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom) and node.level == 1:  # `from .xxx import ...` / `from . import xxx`
+            if node.module:
+                targets.add(f"{node.module}.py")
+            else:
+                targets.update(
+                    f"{alias.name}.py" for alias in node.names
+                    if (NODE_PACKAGE / f"{alias.name}.py").is_file()
+                )
+    return targets
+
+
+# Camera Node Upgrade & Compatibility Recovery v1: a fast, static (no venv,
+# no pip, no subprocess) regression guard for the exact defect this
+# milestone found and fixed by direct reproduction -- see "Existing state"
+# in docs/camera-node-upgrade-compatibility-recovery-v1-report.md.
+# `NODE_FILES` had silently drifted behind `app.py`'s own real imports
+# (Remote / Intermittent-WAN Transport Foundation v1 added
+# `transport_client.py`/`transport_credential.py`/`transport_log.py`/
+# `transport_spool.py`/`transport_worker.py`/`atomic_io.py` without updating
+# it), which the *slow*, real-subprocess tests below would eventually catch
+# but only when actually run -- this runs in the ordinary Fast/Core gate on
+# every commit, so the same class of drift cannot silently recur.
+def test_node_files_cover_the_real_internal_import_closure() -> None:
+    declared = set(NODE_FILES)
+    referenced: set[str] = set()
+    for name in NODE_FILES:
+        referenced |= _local_import_targets((NODE_PACKAGE / name).read_text(encoding="utf-8"))
+    missing = referenced - declared
+    assert not missing, (
+        f"NODE_FILES is missing {sorted(missing)}, imported by one of {sorted(declared)} -- "
+        "a real install of this artifact would raise ModuleNotFoundError at startup."
+    )
+
+
+def test_extract_version_literal_finds_a_simple_module_constant() -> None:
+    assert EXTRACT_VERSION_LITERAL(b'NODE_API_VERSION = "v1"\n', "NODE_API_VERSION") == "v1"
+
+
+def test_extract_version_literal_raises_a_clear_error_when_the_pattern_is_absent() -> None:
+    with pytest.raises(CameraNodeArtifactError, match="NODE_API_VERSION"):
+        EXTRACT_VERSION_LITERAL(b"NODE_API_VERSION: str\n", "NODE_API_VERSION")
+
+
+def test_manifest_records_the_candidate_wire_protocol_versions(tmp_path) -> None:
+    """`install_camera_node.py`'s upgrade preflight compares a candidate's
+    declared protocol versions against the currently-installed build's --
+    see docs/camera-node-upgrade-compatibility-recovery-v1-report.md
+    "Compatibility"."""
+
+    artifact = BUILD_ARTIFACT(tmp_path / "artifact", allow_dirty_source=True)
+    manifest = json.loads(artifact.manifest.read_text(encoding="utf-8"))
+    assert manifest["protocol"] == {"node_api_version": "v1", "transport_protocol_version": "transport/v1"}
 
 
 # Test Suite Runtime & Baseline Reliability v1: a real venv + real `pip

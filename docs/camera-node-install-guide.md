@@ -139,8 +139,10 @@ reboot, not a service restart), `os_uptime_seconds` (machine uptime) versus
 camera degrades this, it never fails it), and `watchdog` (whether the
 systemd watchdog is active and when it last successfully pinged). `sudo
 python3 scripts/install_camera_node.py --status` reports the installer's
-own view (which build is installed, whether a rollback target exists, and
-whether a hardware watchdog device is present) alongside a live health
+own view (which build is installed, whether a rollback target exists,
+this build's own `node_api_version`/`transport_protocol_version`, whether a
+hardware watchdog device is present, and whether an interrupted upgrade or
+rollback attempt was left over from a prior run) alongside a live health
 probe.
 
 ## 7. Inspect logs
@@ -223,15 +225,54 @@ also observes this automatically once it reconnects.
 ## 9. Updating
 
 Build a new artifact from a newer commit (step 1), copy it to the device,
-and re-run the installer:
+and -- optionally, but recommended -- preview it first with a real,
+read-only preflight check before changing anything:
+
+```sh
+sudo python3 scripts/install_camera_node.py --preflight /home/you/new-camera-node-artifact
+```
+
+This verifies the candidate's `SHA256SUMS` checksums, confirms there is
+enough free disk space to stage it, and reports whether its wire protocol
+(`node_api_version`/`transport_protocol_version`) matches what is currently
+installed -- all without touching anything. Then run the same command you
+always run to actually upgrade:
 
 ```sh
 sudo python3 scripts/install_camera_node.py /home/you/new-camera-node-artifact
 ```
 
+There is no separate updater -- upgrading an already-installed Node reuses
+this exact command. Before touching anything live it repeats the same
+preflight check and refuses cleanly on the first problem found. The
+candidate is then built and verified in a separate staging location
+(`import mockingbird_node.app` must succeed inside its own fresh virtual
+environment) *before* your currently-running install is touched at all --
+if the candidate is bad, your Node keeps running exactly as it was. Only
+once staging passes is it activated (two fast directory renames) and the
+service restarted.
+
+After activation, the installer verifies the new service actually comes up
+healthy, reports the same `boot_id`/paired identity it had before, and
+prints the new `service_version`/self-test outcome. If that verification
+fails, MockingBird automatically restores the prior known-good build for
+you and restarts it again -- you will see `NOTE: the requested build did
+not pass verification; MockingBird automatically restored the prior
+known-good build instead` and the command exits non-zero (nothing is
+broken, but the upgrade itself did not happen; re-run `--preflight` and
+check the artifact/logs before trying again). This can never happen on
+your very first install (there is nothing yet to restore to) -- see
+"Recovering from a failed service/update," next, for that case.
+
 Your `node.env` and paired credential state are never touched by an update
 -- only the installed package itself changes. Exactly one prior version is
-retained automatically.
+retained automatically. If an update ever reports your Node's identity
+(`node_id`) changed, MockingBird deliberately does **not** try to fix this
+automatically -- that should never happen for an ordinary software update,
+and is surfaced as an error for you to investigate rather than silently
+handled. See
+[camera-node-upgrade-compatibility-recovery-v1-report.md](camera-node-upgrade-compatibility-recovery-v1-report.md)
+for the complete contract.
 
 ## 10. Recovering from a failed service/update
 
@@ -241,7 +282,17 @@ sudo python3 scripts/install_camera_node.py --rollback
 
 swaps back to the previously installed version and restarts. It refuses
 clearly if no prior version is available (a first-ever install has nothing
-to roll back to). Configuration and pairing state are unaffected either way.
+to roll back to). Configuration and pairing state are unaffected either
+way. You will rarely need this by hand -- an ordinary upgrade that fails
+its own post-update health check already does this for you automatically
+(see "Updating," above); this command exists for the case automatic
+recovery could not reach (for example, the service was already unhealthy
+*before* you started the upgrade), or simply to move back to an older
+build deliberately. `sudo python3 scripts/install_camera_node.py --status`
+always shows whether a rollback target currently exists, and will flag an
+interrupted upgrade or rollback attempt left over from a prior run (an
+extremely rare timing window -- a process kill or power loss at the exact
+instant of a directory rename) plainly rather than silently.
 
 ## 11. Distinguishing provider setup failure from host connectivity failure
 

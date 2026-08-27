@@ -1394,3 +1394,112 @@ Zones are all implemented and tested. A real destructive Pi reprovision
 against the reference device was not performed (not required by this
 milestone's own validation tiers); see the milestone report for the exact
 sandboxed/hermetic proof this rested on instead.
+
+## Camera Node Upgrade & Compatibility Recovery v1 (2026-08-26)
+
+Closes the one item explicitly left open by this document's own "Update
+behavior"/"Rollback" sections above: those already gave `install_camera_
+node.py` real update/rollback *mechanics* (`build_id`-keyed idempotency,
+exactly-one-retained-previous-version), but not a genuine upgrade
+*contract* -- no artifact-integrity verification before mutating anything,
+no staged build-and-verify before touching the live install, no automatic
+recovery when a newly-activated build fails its own health check, and no
+Host-facing wire-protocol compatibility reporting. Full contract,
+investigation, and validation record: see
+[camera-node-upgrade-compatibility-recovery-v1-report.md](camera-node-upgrade-compatibility-recovery-v1-report.md).
+This section records only what changed in this document's own areas.
+
+### A real, reproduced packaging defect found first
+
+Before any of the above could be exercised for real, this milestone's own
+required investigation (`scripts/build_camera_node_artifact.py`) found that
+`NODE_FILES` had silently drifted behind `app.py`'s own real imports:
+Remote / Intermittent-WAN Transport Foundation v1 added `transport_client.py`/
+`transport_credential.py`/`transport_log.py`/`transport_spool.py`/
+`transport_worker.py`/`atomic_io.py` to `src/mockingbird_node/` without
+updating this builder's file list -- the identical class of gap "Camera Node
+Boot Identity + Autonomous Recovery v1," above, already found and fixed
+once for `identity.py`/`selftest.py`/`watchdog.py`. Confirmed by direct
+reproduction, not inference: a real venv install of the pre-fix wheel
+raised `ModuleNotFoundError: No module named 'mockingbird_node.transport_
+client'` at `python -m mockingbird_node` startup -- every fresh install
+*and* every upgrade using the pre-fix builder was completely broken, a fact
+the existing `@pytest.mark.slow` real-process tests would have caught
+eventually but had not been run since the regression was introduced. Fixed
+(`NODE_FILES` now lists all fourteen files) and closed durably, not just
+patched: a new fast, static (no venv, no pip) test parses every packaged
+file's own `from .xxx import ...` statements via `ast` and asserts the
+target is itself in `NODE_FILES`, so the same class of drift cannot recur
+silently between slow-tier runs. `manifest.json` also gained a `protocol`
+object (`node_api_version`/`transport_protocol_version`, read via a plain
+text-pattern extraction over already-read source bytes -- never an import,
+keeping this builder stdlib-only) for the compatibility work below.
+
+### Preflight, staged activation, and automatic recovery
+
+`install_or_update_venv` no longer retires the live `venv` before the
+candidate is even built. It now stages the candidate at a separate
+`venv.staging`/`manifest.json.staging`, pip-installs into it, and runs the
+cheapest possible real verification -- `import mockingbird_node.app` inside
+that staged venv, the exact check that would have caught the packaging
+defect above at install time, on every device, forever -- *before* the live
+`venv`/`.previous` are touched at all. Activation then promotes the
+manifest *first* (a small, now-atomic file write via the existing
+`atomic_write_text` helper) and the venv *second* (two directory renames).
+This ordering is deliberate, not incidental: an interim design that
+activated the venv first and reconciled purely on "does `venv.staging`
+still exist" was found, during this milestone's own adversarial review, to
+miss the crash window *immediately after* that rename -- at that instant
+`venv.staging` is already gone, so nothing detected that the manifest
+still needed updating, and a subsequent retry could destroy the genuinely
+-good prior build. Making the manifest the single source of truth for
+"which build is meant to be live" closes that gap completely: `_recover_
+staged_activation` (which every `install_or_update_venv` call runs first,
+a no-op when nothing is in progress) resolves any interruption to exactly
+one of three states purely by comparing the live manifest's `build_id`
+against the staged one -- never started (discard and rebuild), manifest
+done but venv not yet promoted (finish the venv rename -- always safe,
+since staging was fully verified before activation ever began), or both
+already done (just clean up the now-redundant staging marker). `install()`
+itself gained a `run_preflight` gate (artifact well-formed, `SHA256SUMS`
+checksums verified against `build_camera_node_artifact.py`'s own existing,
+previously-unverified provenance machinery -- skipped only when the
+candidate is already installed, since nothing will be staged either way --
+disk space, wire-protocol compatibility; a pre-existing corrupted `node.env`
+or `pairing.json` is reported but never blocking, since the upgrade neither
+reads nor depends on either) that runs before any mutation and raises
+cleanly on the first blocking finding; `--preflight` runs the identical
+function read-only. If the newly-activated build fails its own post-update
+health verification, `install()` automatically invokes the existing
+`rollback()` to restore the prior known-good build (never on a first-ever
+install, where nothing exists to restore to) and reports the outcome
+honestly (`InstallReport.rolled_back`) rather than claiming an ordinary
+success -- `main()` only treats this as a warning-worthy surprise when it
+happened *inside* an `install()` call; a plain, directly-requested
+`--rollback` that succeeds is an ordinary, healthy, zero-exit-code outcome,
+not a masked failure. An unexpected `node_id` change during an upgrade is
+never silently "fixed" by this same rollback path -- it raises distinctly,
+matching this document's and the governing brief's own "do not confuse
+upgrade with replacement" boundary.
+
+### Compatibility
+
+A small `NodeUpgradeCompatibility` classification
+(`current`/`compatible_older`/`incompatible`/`unknown`), styled after the
+existing `mockingbird.observation.provider_compatibility` `Literal` +
+label-dict convention, compares a candidate's declared wire protocol
+against the currently-installed build's -- a Node-local, static
+self-comparison only; the installer has no configured Host address or
+credential to call. `compatible_older` is documented as not reachable
+today: the real Host gate (`NODE_API_VERSION`/`TRANSPORT_PROTOCOL_VERSION`
+in `mockingbird.source_providers.camera_node`/`mockingbird.api.
+camera_node_transport`) is exact-match only, a deliberate, already-accepted
+pre-1.0 choice (see "Host <-> Camera Node compatibility behavior" in
+docs/release-engineering-foundation-v1-report.md) not reopened here.
+
+### Decision
+
+See
+[camera-node-upgrade-compatibility-recovery-v1-report.md](camera-node-upgrade-compatibility-recovery-v1-report.md)
+for the classification and the complete acceptance record, including real
+hardware acceptance and any honestly-disclosed remaining limitations.

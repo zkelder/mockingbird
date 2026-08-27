@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 import hashlib
 import json
 from pathlib import Path
+import re
 import secrets
 import subprocess
 import tomllib
@@ -18,14 +19,35 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE_PACKAGE = ROOT / "src" / "mockingbird_node"
+#: The complete transitive import closure of `app.py`/`__main__.py`, verified
+#: by `test_node_files_cover_the_real_internal_import_closure` (a fast,
+#: static AST check -- no venv/pip needed) rather than trusted by hand a
+#: second time. Camera Node Upgrade & Compatibility Recovery v1: this list
+#: was missing `atomic_io.py`/`transport_client.py`/`transport_credential.py`/
+#: `transport_log.py`/`transport_spool.py`/`transport_worker.py` -- added by
+#: Remote / Intermittent-WAN Transport Foundation v1 (`bf7ba27`) without a
+#: matching `NODE_FILES` update, the identical class of gap Camera Node Boot
+#: Identity + Autonomous Recovery v1 already found and fixed once for
+#: `identity.py`/`selftest.py`/`watchdog.py`. Confirmed by direct reproduction
+#: (not merely inferred): a real venv install of the pre-fix wheel raised
+#: `ModuleNotFoundError: No module named 'mockingbird_node.transport_client'`
+#: at `python -m mockingbird_node` startup -- every fresh install *and* every
+#: upgrade using the pre-fix builder was completely broken. See "Existing
+#: state" in docs/camera-node-upgrade-compatibility-recovery-v1-report.md.
 NODE_FILES = (
     "__init__.py",
     "__main__.py",
     "app.py",
+    "atomic_io.py",
     "config.py",
     "identity.py",
     "providers.py",
     "selftest.py",
+    "transport_client.py",
+    "transport_credential.py",
+    "transport_log.py",
+    "transport_spool.py",
+    "transport_worker.py",
     "watchdog.py",
 )
 RUNTIME_REQUIREMENTS = (
@@ -114,6 +136,33 @@ def _current_head_commit(*, cwd: Path = ROOT) -> str | None:
     if completed.returncode != 0 or not completed.stdout.strip():
         return None
     return completed.stdout.strip()
+
+
+#: Camera Node Upgrade & Compatibility Recovery v1: a candidate artifact's
+#: own wire-protocol identity, so `scripts/install_camera_node.py` can
+#: compare a candidate against the currently-installed build *without*
+#: importing/executing either wheel (this builder stays stdlib-only -- see
+#: the module docstring) and without a live network call to any Host (the
+#: Node has no configured Host address to call -- see "Compatibility" in
+#: docs/camera-node-upgrade-compatibility-recovery-v1-report.md). A plain
+#: literal-assignment regex over source already read into `files` below,
+#: never an import: `NODE_API_VERSION`/`TRANSPORT_PROTOCOL_VERSION` are
+#: always simple `NAME = "value"` module constants (see `mockingbird_node.
+#: app`/`mockingbird_node.transport_client`) -- if a future edit ever makes
+#: that untrue, this fails loudly at build time rather than silently
+#: shipping a manifest with a missing/wrong protocol fact.
+_VERSION_LITERAL_PATTERN = r'^{name}\s*=\s*"([^"]+)"\s*$'
+
+
+def _extract_version_literal(source: bytes, name: str) -> str:
+    match = re.search(_VERSION_LITERAL_PATTERN.format(name=re.escape(name)), source.decode("utf-8"), re.MULTILINE)
+    if match is None:
+        raise CameraNodeArtifactError(
+            f"Could not find a `{name} = \"...\"` literal to record this artifact's protocol provenance. "
+            "This builder reads it via a plain text pattern, not an import, so a renamed or restructured "
+            "constant needs this pattern updated too."
+        )
+    return match.group(1)
 
 
 def _source_version() -> str:
@@ -206,6 +255,10 @@ def build_camera_node_artifact(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     files = {f"mockingbird_node/{name}": (NODE_PACKAGE / name).read_bytes() for name in NODE_FILES}
+    node_api_version = _extract_version_literal(files["mockingbird_node/app.py"], "NODE_API_VERSION")
+    transport_protocol_version = _extract_version_literal(
+        files["mockingbird_node/transport_client.py"], "TRANSPORT_PROTOCOL_VERSION"
+    )
     dist_info = f"{distribution}.dist-info"
     files[f"{dist_info}/METADATA"] = _metadata(version)
     files[f"{dist_info}/WHEEL"] = b"Wheel-Version: 1.0\nGenerator: MockingBird Camera Node artifact builder\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
@@ -242,6 +295,18 @@ def build_camera_node_artifact(
                     "source_clean": source_clean,
                     "build_id": secrets.token_hex(16),
                     "built_at": datetime.now(UTC).isoformat(timespec="seconds"),
+                },
+                # Camera Node Upgrade & Compatibility Recovery v1: this
+                # candidate's own wire-protocol identity -- see
+                # `_extract_version_literal` above. Read by the installer's
+                # upgrade preflight to compare a candidate against whatever
+                # is currently installed (never a live Host call -- the Node
+                # has no configured Host address). A pre-this-milestone
+                # artifact's manifest simply lacks this key, which the
+                # installer reads as "unknown," never as "incompatible."
+                "protocol": {
+                    "node_api_version": node_api_version,
+                    "transport_protocol_version": transport_protocol_version,
                 },
                 "version": version,
                 "runtime_requirements": list(RUNTIME_REQUIREMENTS),
