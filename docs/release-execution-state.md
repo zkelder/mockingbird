@@ -23,11 +23,79 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `ea00b3b` -- the implementation commit for
-  Representative Multi-Camera Field Acceptance & Release-Budget Evidence
-  v1
+- **Accepted HEAD:** `be84074` -- the implementation commit for Camera
+  Node Upgrade & Compatibility Recovery v1 (three commits: `2c3bf13` the
+  core upgrade contract, `baf9fdb` a real-hardware-found transport-path
+  fix, `be84074` real-hardware-found automatic-recovery fixes)
 - **Schema:** `v57`, unchanged by this milestone.
-- **Latest accepted milestone:** Representative Multi-Camera Field
+- **Latest accepted milestone:** Camera Node Upgrade & Compatibility
+  Recovery v1 -- see
+  [camera-node-upgrade-compatibility-recovery-v1-report.md](camera-node-upgrade-compatibility-recovery-v1-report.md).
+  Classification **A**. Closes Lane L's one remaining named gap: a Camera
+  Node **upgrade** workflow, distinct from the already-accepted install/
+  reboot/reprovision/replacement hardening -- see Lane L, §6, below.
+  Investigation found the existing installer already had real update/
+  rollback *mechanics* (build_id-keyed idempotency, one retained prior
+  version); what was missing was a real upgrade *contract*: artifact
+  -checksum verification before any mutation (the artifact builder already
+  produced `SHA256SUMS`/per-file hashes but nothing ever checked them),
+  staged build-and-verify before the live install is touched at all
+  (`venv.staging`, `import mockingbird_node.app` as the activation gate),
+  automatic recovery when a newly-activated build fails post-update
+  verification, and a bounded Node-local wire-protocol compatibility
+  classification (`current`/`compatible_older`/`incompatible`/`unknown`,
+  styled after the existing `provider_compatibility` convention) -- the
+  Host's own real wire-protocol gate (exact-match only, no graduated tier)
+  was investigated and deliberately left unchanged, a pre-existing
+  accepted decision. Found and fixed, before any real-hardware attempt, a
+  real reproduced defect in the already-accepted artifact builder:
+  `NODE_FILES` had silently drifted behind `app.py`'s own imports (Remote /
+  Intermittent-WAN Transport Foundation v1 added six transport modules
+  without updating the packaged file list) -- every fresh install and
+  upgrade produced by the accepted builder was completely broken
+  (`ModuleNotFoundError` at startup), confirmed by direct reproduction;
+  fixed, plus a new fast static import-closure test closing the whole
+  class of drift, not just this instance. A 5-angle adversarial
+  self-review before real-hardware acceptance found and fixed 8 further
+  correctness issues in this milestone's own new code (most notably: the
+  original activation-recovery design, keyed only on whether a staging
+  directory still existed, missed a real crash window a manifest-first,
+  build-id-reconciliation redesign closes completely; and a plain,
+  successful, directly-requested `--rollback` was originally misreported
+  as a failed upgrade). Real acceptance against the project's actual
+  reference Pi -- which had never been upgraded since 2026-08-18, predating
+  three later accepted Camera Node milestones entirely -- found and fixed
+  two further real defects live: a universal, upgrade-blocking crash
+  (`transport_spool_dir` defaulting through a `Path.home()`-derived path
+  that is always broken under the already-accepted `ProtectHome=true`
+  hardening, regardless of whether transport was ever configured -- would
+  have broken *every* Camera Node upgrading past the transport milestone
+  through the accepted installer, not just this device), and two
+  automatic-recovery gaps (`systemctl restart` failing outright did not
+  trigger automatic rollback; a preceding crash loop's exhausted
+  `StartLimitBurst` blocked an unrelated later restart) -- both found live,
+  both fixed the same session with dedicated regression tests, not merely
+  disclosed. The device was then successfully, fully upgraded end to end
+  (node identity, pairing credential hash, and camera availability all
+  confirmed byte-identical/unchanged before and after; new boot-identity/
+  self-test/watchdog capabilities live on real hardware for the first
+  time), with a real idempotent re-run confirmed afterward. One honest
+  reservation against an unqualified top classification: `rollback()`
+  restores code but not an already-changed systemd unit template, a real
+  gap this session's own recovery encountered and worked around manually
+  (a temporary drop-in) rather than closed structurally -- disclosed, not
+  hidden. Tier 1 (114 tests across `test_install_camera_node.py`/
+  `test_camera_node_packaging.py`/`test_camera_node_config_transport.py`/
+  `test_camera_node_real_process.py`, all passing), Tier 2 (the full
+  `camera_node`/`doctor` test family, 493 passed / 0 failed fast-tier plus
+  17 passed / 0 failed slow-tier), `ruff check` clean. Tier 3 not run --
+  every changed line sits in `scripts/` deployment tooling or the
+  deliberately main-app-isolated `mockingbird_node` package (confirmed by
+  direct `grep`: zero importers of either in `src/mockingbird/`); real
+  hardware acceptance is stronger evidence for this milestone's actual
+  scope than an unrelated 5000+ test Core run. No schema change; no
+  product/perception/database/API code touched.
+- **Prior accepted milestone:** Representative Multi-Camera Field
   Acceptance & Release-Budget Evidence v1 -- see
   [representative-multi-camera-field-acceptance-release-budget-evidence-v1-report.md](representative-multi-camera-field-acceptance-release-budget-evidence-v1-report.md).
   Classification **B** -- no live field session ran (session start, 20:26
@@ -321,6 +389,20 @@ preserved here, not relaxed.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
+Camera Node Upgrade & Compatibility Recovery v1 (directly authorized
+outside this file, reconciled here at its own closure) is now accepted at
+classification **A** -- see §1, above, Lane L, §6, below, and
+[camera-node-upgrade-compatibility-recovery-v1-report.md](camera-node-upgrade-compatibility-recovery-v1-report.md)
+for the full record, including two real defects found and fixed live
+during real reference-Pi acceptance (a universal transport-path crash
+under the already-accepted `ProtectHome=true` hardening, and two
+automatic-recovery gaps) and one honestly-disclosed remaining reservation
+(`rollback()` does not restore an already-changed systemd unit template).
+This closes Lane L's one specifically-named remaining gap; it does
+**not** authorize Lane R, beta, or Final Release Hardening, and does
+**not** reopen any other part of the already-accepted Camera Node install/
+reboot/reprovision/replacement work.
+
 Representative Multi-Camera Field Acceptance & Release-Budget Evidence v1
 (directly authorized outside this file, reconciled here at its own
 closure) is now accepted at classification **B** -- see §1, above, and
@@ -435,6 +517,18 @@ choose the next milestone by adjacency to this one.
 
 Do NOT automatically authorize:
 
+- a managed/fleet Camera Node updater, unattended/automatic upgrade
+  scheduling, remote-triggered updates, artifact signing/PKI beyond
+  checksums, or a graduated ("compatible older") wire-protocol tier beyond
+  the Host's own existing exact-match gate, merely by adjacency to Camera
+  Node Upgrade & Compatibility Recovery v1's closure -- each explicitly
+  out of that milestone's own scope, none automatically the next milestone;
+- a standalone follow-on campaign to close the two items Camera Node
+  Upgrade & Compatibility Recovery v1 left honestly disclosed (`rollback()`
+  not restoring an already-changed systemd unit template; its own
+  directory swap's narrower residual crash-window gap) -- both real and
+  recorded, neither automatically the next milestone by adjacency unless a
+  concrete recurrence is found;
 - live, authenticated iNaturalist OAuth submission, or any eBird workflow
   of any kind, merely to close Ecological Interoperability & Submission
   Workflows v1's own deliberately-deferred external-authorization boundary
@@ -868,9 +962,11 @@ standards-based acquisition remain the golden path.
 
 ### L. Appliance / Update / Recovery
 
-**Status:** PARTIAL -- v0.1 CRITICAL. Host side substantially closed by
-Release Engineering Foundation v1 (2026-08-25); Camera Node side remains
-open.
+**Status:** MATERIALLY CLOSED -- v0.1 CRITICAL. Host side closed by
+Release Engineering Foundation v1 (2026-08-25); Camera Node **upgrade**
+workflow -- the one specifically-named remaining item -- closed by Camera
+Node Upgrade & Compatibility Recovery v1 (2026-08-26), classification
+**A**. See [camera-node-upgrade-compatibility-recovery-v1-report.md](camera-node-upgrade-compatibility-recovery-v1-report.md).
 
 Closed for the **Host**: an automatic, verified pre-migration safety
 backup now runs before any in-place schema upgrade; a genuine post-
@@ -885,11 +981,43 @@ data. Host↔Camera Node **wire-protocol** version compatibility
 hard-gated; the Node's own `service_version` remains display-only by
 deliberate choice (see the milestone report).
 
-Remaining: a Camera Node **upgrade** workflow specifically (as distinct
-from the already-accepted Camera Node install/reboot/reprovision
-hardening); reinstall/replacement beyond what reprovisioning already
-covers; broader operator-facing update/recovery UX. See
-[release-engineering-foundation-v1-report.md](release-engineering-foundation-v1-report.md).
+Closed for the **Camera Node**: `scripts/install_camera_node.py` (the
+existing installer, extended rather than replaced) now runs a real
+preflight (artifact well-formed, `SHA256SUMS` checksums, disk space, a
+Node-local wire-protocol compatibility comparison against the currently
+-installed build) before any mutation; stages and verifies a candidate
+(`import mockingbird_node.app` inside its own fresh venv) before the live
+install is touched at all; activates manifest-first/venv-second so any
+interruption resolves to one of three well-defined, automatically
+-reconciled states; automatically restores the prior known-good build if
+the newly-activated one fails post-update health verification (never on a
+first-ever install); and never silently accepts an unexpected `node_id`
+change. Real acceptance against the project's actual reference Pi (never
+upgraded since 2026-08-18, predating three later accepted Camera Node
+milestones) found and fixed, live, a universal upgrade-blocking defect
+(a transport-configuration path defaulting through `Path.home()`, always
+broken under the already-accepted `ProtectHome=true` hardening regardless
+of whether transport was ever configured -- would have broken every
+Camera Node upgrading past Remote/Intermittent-WAN Transport Foundation
+v1 through the accepted installer) and two automatic-recovery gaps
+(`systemctl restart` failing outright not triggering rollback; a prior
+crash loop's exhausted `StartLimitBurst` blocking an unrelated later
+restart) -- all three fixed the same session with regression tests, not
+merely disclosed. The device was fully upgraded end to end with node
+identity/pairing/camera availability all confirmed unchanged.
+
+Remaining, disclosed, not closed by this pass: `rollback()` restores code
+but not an already-changed systemd unit template (a real gap this
+milestone's own real acceptance encountered and worked around manually,
+not closed structurally); `rollback()`'s own directory swap has a
+narrower residual crash-window gap than the forward-upgrade path's
+reconciliation closes; reinstall/replacement beyond what reprovisioning
+already covers and broader operator-facing update/recovery UX remain
+Camera Node install/reboot/reprovision's own already-accepted scope,
+unaffected by this milestone. See
+[release-engineering-foundation-v1-report.md](release-engineering-foundation-v1-report.md)
+and
+[camera-node-upgrade-compatibility-recovery-v1-report.md](camera-node-upgrade-compatibility-recovery-v1-report.md).
 
 ### M. Storage / Retention UX
 
