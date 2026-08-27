@@ -12,8 +12,9 @@ not authorize future work.
 ## CURRENT PHASE: SUBSTANTIAL PRODUCT DEVELOPMENT
 
 MockingBird is still in substantial product development. Representative
-Field Acceptance, External Beta, and Final Release Hardening (Lanes R/S,
-below) are downstream gates and must **not** become the default next
+Field Acceptance, External Pre-Release Acceptance, and Final Release
+Hardening (Lanes R/S, below) are downstream gates and must **not** become
+the default next
 milestone while substantial product-roadmap capability remains
 intentionally unfinished -- see §6, "Global remaining execution queue,"
 for the complete remaining-capability picture this phase label is
@@ -26,9 +27,56 @@ protecting.
 - **Accepted HEAD:** `be84074` -- the implementation commit for Camera
   Node Upgrade & Compatibility Recovery v1 (three commits: `2c3bf13` the
   core upgrade contract, `baf9fdb` a real-hardware-found transport-path
-  fix, `be84074` real-hardware-found automatic-recovery fixes)
+  fix, `be84074` real-hardware-found automatic-recovery fixes). One-Release
+  Roadmap & Scheduler Reconciliation v1's own commit is layered directly
+  on top and is itself the current git tip -- it is documentation-only
+  (this file and `roadmap.md`), touches zero product/schema code, and so
+  is not cited here as a second, separate code-bearing HEAD, matching this
+  field's own established convention (compare `cff0277` layered on top of
+  this same `be84074` at the prior closure, likewise never self-cited).
 - **Schema:** `v57`, unchanged by this milestone.
-- **Latest accepted milestone:** Camera Node Upgrade & Compatibility
+- **Latest accepted milestone:** One-Release Roadmap & Scheduler
+  Reconciliation v1 -- documentation/state-governance only, touching zero
+  product/test/schema code. See
+  [one-release-roadmap-scheduler-reconciliation-v1-report.md](one-release-roadmap-scheduler-reconciliation-v1-report.md)
+  for the complete record. Classification **A**. Reconciled this file and
+  `roadmap.md` to one coherent release doctrine: MockingBird has one
+  public release -- no public "v0.1" product stage, no beta product
+  release, no separate before-v1.0 roadmap phase. External Pre-Release
+  Acceptance (roadmap.md's Gate G, renamed here from its prior "External
+  Beta Acceptance") and internal release-candidate builds remain allowed
+  as pre-launch validation/engineering mechanics, never a separate product
+  stage; this file's own Lane S ("Actual Final Release Hardening") is
+  rewritten onto that same readiness-triggered, not version-number
+  -triggered, sequencing (External Pre-Release Acceptance -> Final Release
+  Hardening -> the one public launch). Renamed this file's own §7
+  ("First-public-v0.1 doctrine" -> "One-release doctrine") and §8
+  ("Post-v0.1 / before-v1.0 queue" -> "After-release queue"); replaced
+  "v0.1 CRITICAL"/"v0.1 blocker"/"v0.1 scope"/"v0.1 requirement" language
+  throughout both files with "release-critical"/"release
+  blocker"/"release scope"/"release requirement," matching wording
+  `roadmap.md` had already adopted for its own "Release gates"/
+  "After-release lanes"/"Release non-blockers" headings at an earlier,
+  partial reconciliation (`326207b`); fixed several cross-references that
+  earlier rename had left dangling ("v0.1 release gates" -> "Release
+  gates," "v0.1 non-blockers" -> "Release non-blockers," "Post-v0.1
+  lanes" -> "After-release lanes," and a "(see "v0.1 feature freeze,"
+  below)" pointer redirected to the section that actually carries that
+  content today). Added a short "Four release-shape categories" index to
+  §6, above, mapping the existing lettered lanes onto release-critical/
+  pre-release-decision/after-release/later-evidence-driven categories
+  without removing, renaming, or promoting any of them. `product-
+  doctrine.md` was read in full and left unedited -- it already frames the
+  release as the real product launch and creates no beta/v0.1 product
+  stage. Every dated historical milestone bullet, proper-noun milestone
+  title (for example "v0.1 Product Flow Gap Pass v1," "v0.1 Observational
+  Quality Closure v1," "v0.1 Acquisition/Ingest Interoperability Closure
+  v1"), and historical decision label (the 2026-08-22 "v0.1 feature
+  freeze now active" decision, and the reasoning tied to it) was left
+  verbatim, since it records what was actually named and decided at the
+  time, not current doctrine. No lane, gate, or roadmap capability was
+  added, removed, or promoted; no code, test, or schema changed.
+- **Prior accepted milestone:** Camera Node Upgrade & Compatibility
   Recovery v1 -- see
   [camera-node-upgrade-compatibility-recovery-v1-report.md](camera-node-upgrade-compatibility-recovery-v1-report.md).
   Classification **A**. Closes Lane L's one remaining named gap: a Camera
@@ -367,7 +415,7 @@ reasons to reopen the acoustic architecture:
 - no audio equivalent of visual Privacy Zone redaction/exclusion beyond
   the currently documented privacy boundary.
 
-Acoustics are optional in the first public release because of
+Acoustics are optional in the public release because of
 licensing/distribution posture, not because the core implementation is
 considered merely experimental.
 
@@ -389,6 +437,27 @@ preserved here, not relaxed.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
+One-Release Roadmap & Scheduler Reconciliation v1 (directly authorized
+outside this file, reconciled here at its own closure) is now accepted at
+classification **A** -- a documentation/state-governance milestone,
+touching zero product/test/schema code. It reconciles this file and
+`roadmap.md` to one coherent release doctrine: MockingBird has one public
+release; there is no public "v0.1" product stage, no beta product
+release, and no separate before-v1.0 roadmap phase; External Pre-Release
+Acceptance (roadmap.md's Gate G, renamed from "External Beta Acceptance")
+and internal release-candidate builds remain allowed as pre-launch
+validation/engineering mechanics, never a separate product stage; Final
+Release Hardening (Lane S, above) is readiness-triggered, not
+version-number-triggered. See §1, above, and
+[one-release-roadmap-scheduler-reconciliation-v1-report.md](one-release-roadmap-scheduler-reconciliation-v1-report.md)
+for the complete accounting, including confirmation that no lane, gate, or
+roadmap capability was added, removed, or promoted by this pass, and every
+dated historical milestone title/decision label that happened to use
+"v0.1"/"beta" vocabulary at the time was left verbatim. This closure does
+**not** authorize Lane R, External Pre-Release Acceptance, or Final
+Release Hardening, and does **not** select a next development milestone --
+see the bold statement immediately above, unchanged by this closure.
+
 Camera Node Upgrade & Compatibility Recovery v1 (directly authorized
 outside this file, reconciled here at its own closure) is now accepted at
 classification **A** -- see §1, above, Lane L, §6, below, and
@@ -399,9 +468,10 @@ under the already-accepted `ProtectHome=true` hardening, and two
 automatic-recovery gaps) and one honestly-disclosed remaining reservation
 (`rollback()` does not restore an already-changed systemd unit template).
 This closes Lane L's one specifically-named remaining gap; it does
-**not** authorize Lane R, beta, or Final Release Hardening, and does
-**not** reopen any other part of the already-accepted Camera Node install/
-reboot/reprovision/replacement work.
+**not** authorize Lane R, External Pre-Release Acceptance, or Final
+Release Hardening, and does **not** reopen any other part of the
+already-accepted Camera Node install/reboot/reprovision/replacement
+work.
 
 Representative Multi-Camera Field Acceptance & Release-Budget Evidence v1
 (directly authorized outside this file, reconciled here at its own
@@ -483,7 +553,7 @@ and closed at classification **C** (usable, bounded further closure
 remains -- see Lane G, §6). No new implementation milestone is currently
 authorized. The next milestone will be selected only after the governing
 external process verifies this execution state against the complete
-remaining-v0.1 queue, the remaining Calm Attention & Notifications
+remaining release queue, the remaining Calm Attention & Notifications
 opportunities (Web Push for a genuinely closed-browser interruption,
 deliberately deferred; detector/model-unavailable Observatory Health
 attention; per-user, not global, read/dismiss state; precise per-taxon/
@@ -713,6 +783,46 @@ contributor/research provenance.
 This is the most important section. Lanes are not removed merely because
 they are not next.
 
+**Four release-shape categories.** Every lane below already sorts into one
+of four categories; renaming the release model (§7, above) does not change
+which lanes are release-critical, deferred, or later -- it only fixes the
+words used to describe them:
+
+- **A. Release-critical** -- must be complete/credible before the one
+  public launch. Lanes marked **RELEASE-CRITICAL** below carry this:
+  representative field correctness/whole-product acceptance (Lane R),
+  camera/source golden path (Lane G), storage/retention/recovery (Lane M),
+  Local Only/privacy (Lane N), platform/runtime support truth (Lane O),
+  release/distribution closure (Lane P), accessibility/performance (Lane
+  Q), appliance/update/recovery (Lane L) -- plus, as the internal gates
+  above become credible, External Pre-Release Acceptance and Final
+  Release Hardening themselves (Lane S, below; roadmap.md Gates F-G).
+- **B. Pre-release decisions** -- decisions required before launch, not
+  necessarily implementation milestones: the codebase `LICENSE` and full
+  ffmpeg distribution licensing (Lane P); the still-open BirdNET
+  commercial-adjacent legal posture (§2, above); platform-support
+  declarations (Lane O, "RELEASE DECISION REQUIRED"); Ecosystem/Provider
+  Integrations scope (Lane K, "OPEN DECISION"); any other genuine
+  unresolved release decision as it surfaces.
+- **C. After release** -- real product development explicitly not
+  required for launch, kept so it is not lost: complete remote/
+  intermittent-WAN/LTE, solar/battery, custom CM4/CM5 (Lane B, and §8,
+  below); research-grade remote-field acceptance; broad multi-site (Lane
+  F's own explicitly-deferred remainder); native mobile (Lane E's own
+  explicitly-out-of-scope remainder); advanced acoustic analytics (Lane
+  A's own remaining bounded follow-up); mature automatic mammal species
+  identification (Lane I).
+- **D. Later / evidence-driven** -- the long-range, demand-driven queue in
+  §9, below: GenICam, GigE Vision, USB3 Vision, radiometric thermal,
+  specialized industrial cameras, individual-animal recognition,
+  population estimates, behavior prediction, causal ecological modeling,
+  large cloud/fleet infrastructure.
+
+This is a navigational grouping over the existing lettered lanes (A-S), not
+a new or renumbered lane system: no lane is removed, renamed, or promoted
+between categories by this grouping, and each lane's own status text below
+remains authoritative over this summary.
+
 ### A. Acoustic / BirdNET Productization
 
 **Status:** ACCEPTED -- RELEASE-READY OPTIONAL.
@@ -723,8 +833,8 @@ not schedule another acoustic architecture milestone automatically.
 
 ### B. Remote / Intermittent-WAN Field Productization
 
-**Status:** PARTIAL -- POST-v0.1 / BEFORE-v1.0 UNLESS A NEW CORE
-DEPENDENCY APPEARS.
+**Status:** PARTIAL -- AFTER RELEASE UNLESS A NEW CORE DEPENDENCY
+APPEARS.
 
 Existing foundation includes substantial spool; store-and-forward;
 transport; retry; Host consume-to-evidence behavior; diagnostics.
@@ -733,12 +843,12 @@ Remaining: real LTE/carrier acceptance; real remote Pi deployment;
 bandwidth behavior; resume granularity; extended outages; unattended
 recovery; remote operator experience; solar/battery/power reality.
 
-Remote LTE/solar/custom CM4/CM5 field deployment is **not** a
-first-public-v0.1 blocker.
+Remote LTE/solar/custom CM4/CM5 field deployment is **not** a release
+blocker.
 
 ### C. Everyday Product / Discovery UX
 
-**Status:** PARTIAL -- HIGH v0.1 VALUE.
+**Status:** PARTIAL -- HIGH RELEASE VALUE.
 
 Remaining: Best Moments; calm daily summary; New / Regular presentation;
 unknown/unresolved handling; sparse/no-wildlife states; understandable
@@ -870,13 +980,14 @@ Every other item in the "Remaining, not closed by this pass" list directly
 above is unaffected and still open.
 
 True multi-site remains a separate product/architecture decision. Do not
-silently make it v0.1 scope, and do not self-authorize it by adjacency to
-this lane's closure.
+silently make it release scope, and do not self-authorize it by adjacency
+to this lane's closure.
 
 ### G. Camera / Source Experience
 
-**Status:** PARTIAL, MATERIALLY CLOSED -- v0.1 CRITICAL. Camera / Source
-Experience & First-Hour Setup Closure v1 (2026-08-25) fixed two real P0
+**Status:** PARTIAL, MATERIALLY CLOSED -- RELEASE-CRITICAL. Camera /
+Source Experience & First-Hour Setup Closure v1 (2026-08-25) fixed two
+real P0
 first-hour gaps and two P1s; see
 [camera-source-experience-v1-report.md](camera-source-experience-v1-report.md)
 for the full archaeology, gap table, and evidence. Release
@@ -962,7 +1073,7 @@ standards-based acquisition remain the golden path.
 
 ### L. Appliance / Update / Recovery
 
-**Status:** MATERIALLY CLOSED -- v0.1 CRITICAL. Host side closed by
+**Status:** MATERIALLY CLOSED -- RELEASE-CRITICAL. Host side closed by
 Release Engineering Foundation v1 (2026-08-25); Camera Node **upgrade**
 workflow -- the one specifically-named remaining item -- closed by Camera
 Node Upgrade & Compatibility Recovery v1 (2026-08-26), classification
@@ -1021,7 +1132,7 @@ and
 
 ### M. Storage / Retention UX
 
-**Status:** PARTIAL -- v0.1 CRITICAL.
+**Status:** PARTIAL -- RELEASE-CRITICAL.
 
 Need integrated acceptance under: disk pressure; long-running storage
 growth; cleanup; retention; DB/media consistency; backup visibility;
@@ -1030,7 +1141,7 @@ decision, not an automatic blocker.
 
 ### N. Privacy / Contribution
 
-**Status:** PARTIAL -- LOCAL-ONLY v0.1 CRITICAL.
+**Status:** PARTIAL -- LOCAL-ONLY RELEASE-CRITICAL.
 
 **Local Only.** Operational/default requirement. Core product must be
 complete.
@@ -1058,7 +1169,7 @@ supports it.
 ### P. Release Engineering Foundation / Distribution
 
 **Status:** SUBSTANTIALLY CLOSED, two items deliberately left open --
-v0.1 CRITICAL. Release Engineering Foundation v1 (2026-08-25) closed:
+RELEASE-CRITICAL. Release Engineering Foundation v1 (2026-08-25) closed:
 upgrade procedure (see Lane L); a real, currently-live dependency-closure
 defect found and fixed via genuine native-Windows deployment (`astral`
 missing from the packaged bundle -- would have broken *every* launch,
@@ -1084,7 +1195,7 @@ honestly documented as a separate install step rather than silently
 missing, and the recommended Camera Node golden path does not need it).
 Public-repo hygiene beyond `SECURITY.md`/`CONTRIBUTING.md` (README/site
 polish, brand/trademark review) remains open per "Public release
-readiness" in [roadmap.md](roadmap.md), not v0.1-CRITICAL blocking.
+readiness" in [roadmap.md](roadmap.md), not release-critical blocking.
 
 Release Engineering Foundation may occur before all product development is
 finished. Release Engineering Foundation is not the same as final Release
@@ -1092,7 +1203,7 @@ Hardening.
 
 ### Q. Whole-Product UI / Accessibility / Performance
 
-**Status:** NOT CLOSED AS AN INTEGRATED PASS -- v0.1 CRITICAL.
+**Status:** NOT CLOSED AS AN INTEGRATED PASS -- RELEASE-CRITICAL.
 
 Eventually validate: responsive behavior; touch; keyboard; focus;
 accessibility; evidence/image loading; large histories; several cameras;
@@ -1102,7 +1213,7 @@ health/status gap (Lane A).
 
 ### R. Complete Field Acceptance
 
-**Status:** NOT DONE -- v0.1 CRITICAL.
+**Status:** NOT DONE -- RELEASE-CRITICAL.
 
 Component acceptance is not whole-product acceptance. Final integrated
 release configuration should exercise: several cameras; visual inference;
@@ -1110,7 +1221,7 @@ audio if included; review; Today/history; long unattended operation;
 disconnect/reconnect; Host reboot; Camera Node reboot; storage pressure;
 model unavailable; backup/restore; upgrade; clean installation; actual
 user operation. Remote LTE field acceptance remains separately scoped when
-Remote Field is not part of v0.1.
+Remote Field is not part of release scope.
 
 **Representative Field Acceptance & Release-Budget Closure v1 (2026-08-25)
 attempted, returned Gate C -- OPEN, insufficient representative evidence.**
@@ -1176,16 +1287,26 @@ re-litigated and remains in force.
 
 **Status:** LAST.
 
-Only after intended v0.1 capability scope stabilizes. Then freeze major
-features and focus only on: defects; reliability; performance; security;
-dependency/license closure; packaging; clean-install repetition;
-upgrade/uninstall; documentation; compatibility; field failures; beta;
-release candidate; public OSS release. Do not add major new capabilities
-during this phase without explicit authorization.
+Final Release Hardening begins once the intended release capability set
+stabilizes -- a readiness judgment, not a version-number boundary (see
+"Release readiness vs. continued capability work" in
+[roadmap.md](roadmap.md)). Release-critical correctness always outranks
+optional capability; capability development may continue up to that point
+whenever it materially improves the product without endangering a
+release-critical dependency. Once Final Release Hardening begins, no
+major capability is added without explicit authorization based on
+concrete necessity, and focus narrows to: defects; reliability;
+performance; UX; compatibility; packaging; security; documentation;
+installation; upgrade/recovery; field failures; External Pre-Release
+Acceptance findings; release-artifact validation; dependency/license
+closure; clean-install repetition; internal release-candidate builds (an
+engineering mechanic, not a separate product stage). External Pre-Release
+Acceptance -> Final Release Hardening -> the one public launch -- no
+separate beta release precedes it.
 
-## 7. First-public-v0.1 doctrine
+## 7. One-release doctrine
 
-The first public release target is a trustworthy single-site/home
+MockingBird's public release target is a trustworthy single-site/home
 observatory with:
 
 - dependable visual observation;
@@ -1213,9 +1334,9 @@ observatory with:
 - integrated field acceptance.
 
 Acoustics may ship as the now-accepted optional capability. Remote
-LTE/solar/custom field hardware are not v0.1 blockers.
+LTE/solar/custom field hardware are not release blockers.
 
-## 8. Post-v0.1 / before-v1.0 queue
+## 8. After-release queue
 
 Explicitly keep:
 
@@ -1228,7 +1349,8 @@ Explicitly keep:
 - advanced acoustic analytics;
 - mature automatic mammal species identification.
 
-Unless new evidence creates a dependency, do not promote these into v0.1.
+Unless new evidence creates a dependency, do not promote these into
+release scope.
 
 ## 9. Later / demand-driven queue
 
@@ -1247,7 +1369,7 @@ Examples:
 
 ## 10. Observability cross-cutting requirements
 
-Keep visible as v0.1 requirements:
+Keep visible as release requirements:
 
 - structured error taxonomy;
 - stable machine-readable codes;
@@ -2013,7 +2135,7 @@ authorization field.
   PRODUCT-ROADMAP RECONCILIATION REQUIRED
 - **State:** Milestone-closure checkpoint
 - **Final release hardening:** not authorized
-- **Remote LTE/solar:** not a v0.1 blocker
+- **Remote LTE/solar:** not a release blocker
 - **Ecological Interoperability:** delivered this milestone (classification
   B) -- see Lane J, §6; live OAuth iNaturalist submission, any eBird
   workflow, direct GBIF publication, media-byte inclusion, and a

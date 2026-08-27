@@ -634,7 +634,7 @@ looks indistinguishable from a detection miss. See Gate A and Gate B in
   a live (not only RED/GREEN-synthetic) proof point that the raised bound
   holds under real busy-session load -- mirroring exactly how the 2026-08-19
   session was itself the live-proof follow-up for the fix that preceded it.
-  See "v0.1 release gates" (Gate A) below and
+  See "Release gates" (Gate A) below and
   [end-to-end-bird-encounter-recall-closure-v1-report.md](end-to-end-bird-encounter-recall-closure-v1-report.md)'s
   own "Recommended next bounded step."
 - **Camera Node Connectivity & Recovery Diagnosis v1** (2026-08-20) answered
@@ -694,17 +694,17 @@ looks indistinguishable from a detection miss. See Gate A and Gate B in
   host-side truth through node failure, and straightforward
   reprovisioning/replacement. See the new subsections under Gate D and
   Gate E, below, the new cross-cutting invariant, below, and the extended
-  "v0.1 non-blockers," below, for what stays explicitly deferred.
+  "Release non-blockers," below, for what stays explicitly deferred.
 - **Independent Power / Node Supervisor + Solar/Battery Field Profile
   (roadmap amendment, 2026-08-20).** Same-day follow-up to the bad-boot
   amendment above: makes explicit what "External recovery boundary" (Gate
-  E) and the "Power / solar" lane (Post-v0.1 lanes) already gestured at but
-  never stated -- when an external power supervisor counts as genuine
-  independent recovery rather than another single point of failure, and
-  how that concept connects to remote, solar, battery, and PoE field
-  deployments. Planning-only: no code change, no new gate, no new v0.1
-  requirement. See "Independent Power / Node Supervisor" under Gate E and
-  the extended "Power / solar" lane, below.
+  E) and the "Power / solar" lane (After-release lanes) already gestured
+  at but never stated -- when an external power supervisor counts as
+  genuine independent recovery rather than another single point of
+  failure, and how that concept connects to remote, solar, battery, and
+  PoE field deployments. Planning-only: no code change, no new gate, no
+  new release requirement. See "Independent Power / Node Supervisor" under
+  Gate E and the extended "Power / solar" lane, below.
 - **Cache-128 Live Daylight Acceptance v1 (2026-08-20) closes the "current
   recommended next action" above.** After the Camera Node recovery blocker
   was cleared (bad-boot amendment above, then a clean post-power-cycle
@@ -969,11 +969,11 @@ not a data-volume problem. A real, previously-undiscovered defect was found
 and fixed: the Perception Replay Regression Harness's own documented CLI
 invocation silently did nothing (missing `__main__` guard). Decision:
 **D -- incumbents retained after benchmark; v0.1 feature freeze now active**
-(see "v0.1 feature freeze," below).
+(see "Release readiness vs. continued capability work," below).
 
 ## Release scope discipline
 
-The first public release means, approximately: install MockingBird →
+MockingBird's public release means, approximately: install MockingBird →
 connect a supported camera → reliably notice wildlife → preserve useful
 evidence → assemble correct Visits → provide honest species assistance →
 let the user confirm/correct → create durable Observations → return later
@@ -1081,7 +1081,7 @@ named pre-release milestone. What still governs, unchanged: release-blocking
 correctness work (Gate A and Gate B principally) takes priority order over
 new capability, per "Governing priority before release," above, and the
 scope discipline above (a requirement enters release scope only when
-evidenced) still applies. Readiness for the first public release and
+evidenced) still applies. Readiness for the public release and
 continued ecosystem-capability work (see "Remaining roadmap -- canonical
 sequence," below) now proceed together, bounded per milestone -- see
 "Execution discipline" in that section -- rather than via a blanket
@@ -2436,20 +2436,26 @@ the legal-releasability/license/consent layer needed before any public
 release did not exist before this pass -- see
 [public-benchmark-governance.md](public-benchmark-governance.md).
 
-### Gate G -- External Beta Acceptance
+### Gate G -- External Pre-Release Acceptance
 
 After the internal gates above are credible, move to a small external
 cohort -- not hundreds of users. Prioritize diversity of real setups over
 headcount. External usage should validate installation, Camera Node
 pairing, detection, multi-subject encounters, evidence quality, review,
 Today/report usefulness, recovery, and diagnostics under conditions this
-project cannot fully simulate itself. Beta findings outrank speculative
+project cannot fully simulate itself. Findings outrank speculative
 architecture work. Not started; no existing doctrine to reconcile.
 
-The first public release may be described externally as a beta -- that is a
-distribution/expectation-setting label, not reduced ambition. Release is
-release: it should be polished, credible, production-minded, and treated as
-the real public launch, backed by the non-software readiness in "Public
+Gate G is private validation of the still-unreleased product before
+launch, not a separately released public beta -- do not describe it, or
+the release that follows it, as a beta externally. Participants are
+testing the unreleased product, not using a shipped beta product. Gate G
+findings feed Final Release Hardening (see "Actual Final Release
+Hardening," Lane S, in release-execution-state.md), which comes last:
+External Pre-Release Acceptance -> Final Release Hardening -> the one
+public launch. Release is release: MockingBird's public release is the
+real product launch, and it should be polished, trustworthy, credible,
+and production-minded, backed by the non-software readiness in "Public
 release readiness," below.
 
 ### Numeric release budgets
@@ -2489,7 +2495,7 @@ what closes Gate A.
 
 ## Public release readiness
 
-The first public release is the real product launch (see "Release is
+MockingBird's public release is the real product launch (see "Release is
 release" in Gate G, above), not a soft/internal milestone. Distinct from
 Gate F's engineering-packaging closure, above, non-software readiness the
 canonical roadmap must retain -- eventually, not now -- includes:
@@ -2514,7 +2520,7 @@ canonical roadmap must retain -- eventually, not now -- includes:
   "Deployment and organization doctrine" in
   [product-doctrine.md](product-doctrine.md));
 - hardware/BOM/compatibility truth;
-- a beta/RC acceptance cohort (Gate G, above);
+- an external pre-release acceptance cohort (Gate G, above);
 - support/security/community plan;
 - release artifacts/versioning/checksums/SBOM/signing where practical;
 - launch media built from real MockingBird evidence, never staged/synthetic
@@ -3420,7 +3426,7 @@ research validation; organization deployment/admin documentation; full
 responsive/accessibility/performance polish; legal/license closure;
 model-license manifest; hardware/BOM/compatibility documentation; public
 launch assets/docs/site; field acceptance; security/packaging/OSS
-hardening (Gate F, above); and the first public release itself (see
+hardening (Gate F, above); and the public release itself (see
 "Public release readiness," above). Do not let consolidating the layers
 above accidentally drop any of these.
 
