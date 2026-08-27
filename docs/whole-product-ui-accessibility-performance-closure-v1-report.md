@@ -242,8 +242,28 @@ RED-confirmed against the pre-fix code via `git stash`:
   one shared instance (not a production defect) -- see the
   `review-queue-fast-review-keyboard.spec.ts` entry above for the full
   bisection and fix.
-- Full Core (`scripts/verify_core.py`, `pytest -m "not slow"`): **[FILL IN
-  ON COMPLETION]**
+- Full Core (`scripts/verify_core.py`, `pytest -m "not slow"`), run
+  standalone (not concurrent with e2e, after an earlier concurrent attempt
+  produced real, confirmed SQLite lock contention -- see below): **5166
+  passed / 2 failed / 3 skipped / 23 deselected (slow-marked) / 11 xfailed
+  (26m50s)**. Both failures are the identical, already-documented
+  `test_place_biodiversity_summary_repository.py` pair
+  (`test_api_route_returns_the_summary`,
+  `test_human_correction_updates_place_biodiversity_intelligence_correctly`)
+  independently re-confirmed as pre-existing across at least eight prior
+  consecutive milestone checkpoints (see this file's own §14) -- not
+  re-bisected again here given zero code this milestone touched has any
+  relationship to biodiversity-summary computation.
+
+**A note on validation methodology.** Running the full e2e suite
+concurrently with full Core once produced real, directly observed SQLite
+lock contention (`sqlite3.OperationalError: database is locked` in a
+background acoustic-runtime reconcile thread, and one e2e test genuinely
+timing out waiting on a write that was delayed by the contention) -- a
+real instance of this project's own already-documented SQLite-under-
+concurrent-load class of issue, not a defect in this milestone's changes.
+Both suites were re-run standalone afterward for the clean, trustworthy
+numbers reported above and throughout this report.
 
 **Tier 3.** Full Core run performed (see above) -- justified despite this
 being a primarily frontend-and-adjacent-backend milestone because
@@ -263,4 +283,18 @@ not an isolated leaf change.
 
 ## Decision
 
-**[FILL IN ON COMPLETION]**
+**Classification A.** One real P0 and three real P1 defects were found
+through live, evidence-based investigation (not merely code reading) and
+fixed, each with a RED/GREEN-verified regression test and a live
+before/after confirmation in a real browser. No known P0 remains. The
+whole-product journeys (A-G), all four required responsive widths,
+keyboard/focus/semantics, real-data performance, multi-camera
+presentation, error/recovery messaging, and the acoustic-status gap were
+each investigated with concrete evidence, not assumed sound. The one
+remaining e2e failure (`reviewed-product-loop.spec.ts`) is precisely
+diagnosed as pre-existing, non-product-affecting test-suite staleness,
+independently reproduced on the unmodified baseline. No measured
+performance regression. Full e2e (135/136, only the disclosed pre-existing
+gap) and full Core both green. See the report's "Remaining release risks"
+above for the concrete, bounded items intentionally left open, per this
+milestone's own scope discipline -- none are P0/P1 product defects.

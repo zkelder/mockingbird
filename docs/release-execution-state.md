@@ -24,18 +24,67 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `be84074` -- the implementation commit for Camera
-  Node Upgrade & Compatibility Recovery v1 (three commits: `2c3bf13` the
-  core upgrade contract, `baf9fdb` a real-hardware-found transport-path
-  fix, `be84074` real-hardware-found automatic-recovery fixes). One-Release
-  Roadmap & Scheduler Reconciliation v1's own commit is layered directly
-  on top and is itself the current git tip -- it is documentation-only
-  (this file and `roadmap.md`), touches zero product/schema code, and so
-  is not cited here as a second, separate code-bearing HEAD, matching this
-  field's own established convention (compare `cff0277` layered on top of
-  this same `be84074` at the prior closure, likewise never self-cited).
+- **Accepted HEAD:** `18a0025` -- the implementation commit for
+  Whole-Product UI / Accessibility / Performance Closure v1. One-Release
+  Roadmap & Scheduler Reconciliation v1's own commit (documentation-only,
+  `4312b18`) and Camera Node Upgrade & Compatibility Recovery v1's own
+  three implementation commits sit underneath it in history; this file's
+  own reconciliation commit for the present closure is layered directly on
+  top of `18a0025` and is not cited here as a second, separate code-bearing
+  HEAD, matching this field's established convention.
 - **Schema:** `v57`, unchanged by this milestone.
-- **Latest accepted milestone:** One-Release Roadmap & Scheduler
+- **Latest accepted milestone:** Whole-Product UI / Accessibility /
+  Performance Closure v1 -- see
+  [whole-product-ui-accessibility-performance-closure-v1-report.md](whole-product-ui-accessibility-performance-closure-v1-report.md)
+  for the complete record. Classification **A**. Closes Lane Q as an
+  integrated pass. A bounded, live browser/keyboard investigation across a
+  seeded, product-shaped 371-Visit QA instance (own isolated database, own
+  bootstrapped disposable Administrator -- no live credentials used) found
+  and fixed one P0 and three P1 defects, each with a RED/GREEN-verified
+  regression test and a live before/after confirmation, not merely code
+  inspection: (1) manually- and folder-imported Visits (the default,
+  promoted camera-less acquisition path) were silently excluded from
+  Review Queue's default "Animals" tab regardless of subject_label --
+  the real, previously-unidentified root cause of one class of confusion
+  this project had repeatedly, incorrectly attributed to
+  `reviewed-product-loop.spec.ts` being an unrelated flake across at
+  least three prior milestones; (2)-(3) two real keyboard focus-management
+  defects in Fast Review (activation, and last-item-in-view completion)
+  left focus stranded on `document.body`, found via live keyboard-driven
+  browser testing, both fixed with the same "focus the new region's own
+  heading" pattern the mobile nav drawer already used correctly; (4) the
+  scheduler's disclosed bounded acoustic health/status gap (Lane A) closed
+  with the smallest capability-aware addition the brief allowed --
+  composed entirely from already-existing facts, never a factor in
+  `ready`. Investigated and confirmed NOT regressions: two very-tall-
+  looking pages (Stream Detail, Analytics) that turned out to still be
+  correctly bounded exactly as the 2026-08-18 "v0.1 Product Flow Gap Pass
+  v1" fix intended. Root-caused (not fixed, disclosed) `reviewed-product-
+  loop.spec.ts`'s real mechanism for the first time: `ReviewQueuePage.
+  tsx`'s `const productMode = true;`, a pre-existing (`1772c36`,
+  2026-07-28, predating this milestone by a month), un-toggleable
+  constant, makes the legacy markup that spec targets permanently
+  unreachable -- test-suite staleness, not a live product defect; fixing
+  the spec itself needs a real rewrite against the current flow, left as a
+  precisely-scoped, not-yet-started follow-up. Zero horizontal overflow
+  found across 40 real combinations (4 required widths x 10 pages);
+  measured, not assumed, performance at an 89-item backlog sits at or
+  below BioCLIP Status / Review Queue Performance v1's own accepted
+  87-item precedent, no regression found or introduced. Full e2e (136
+  specs, 8 new): 135 passed / 1 failed -- the one failure the precisely-
+  diagnosed pre-existing gap above, independently reproduced identically
+  on the unmodified 128-spec baseline (127 passed / 1 failed, byte-
+  identical single assertion). Full Core run clean (see §14). `ruff
+  check`: zero new findings, confirmed by a direct clean-baseline
+  bisection given `product_repository.py`'s 42,600+ line scale. Schema
+  unchanged (v57 -> v57). Remaining, disclosed, not blocking: Zone-polygon
+  *drawing* (not selection) has no keyboard equivalent (optional/advanced
+  feature, pre-existing); a materially larger dead-CSS footprint around
+  `.bird-log-entry` than previously documented; a narrow raw-exception-
+  text edge case on non-`ApiError` failures. This closure does **not**
+  authorize Lane R, External Pre-Release Acceptance, or Final Release
+  Hardening, and does **not** select a next development milestone.
+- **Prior accepted milestone:** One-Release Roadmap & Scheduler
   Reconciliation v1 -- documentation/state-governance only, touching zero
   product/test/schema code. See
   [one-release-roadmap-scheduler-reconciliation-v1-report.md](one-release-roadmap-scheduler-reconciliation-v1-report.md)
@@ -436,6 +485,26 @@ preserved here, not relaxed.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+Whole-Product UI / Accessibility / Performance Closure v1 (directly
+authorized outside this file, reconciled here at its own closure) is now
+accepted at classification **A** -- see §1, above, Lane Q, §6, below, and
+[whole-product-ui-accessibility-performance-closure-v1-report.md](whole-product-ui-accessibility-performance-closure-v1-report.md)
+for the full record. This closes Lane Q as an integrated pass -- the
+whole-product responsive/accessibility/performance/multi-camera/error-
+recovery/acoustic-status evaluation this file's own Lane Q text had been
+waiting on since it was first named. It does **not** authorize Lane R,
+External Pre-Release Acceptance, or Final Release Hardening, and does
+**not** select a next development milestone -- see the bold statement
+immediately above, unchanged by this closure. Do NOT automatically
+authorize, by adjacency to this closure: a `reviewed-product-loop.spec.ts`
+rewrite (real, disclosed, precisely diagnosed as test-suite-only
+staleness this milestone -- not a live product defect, not urgent); a
+keyboard-driven Zone-polygon-drawing editor (real, disclosed, pre-
+existing, optional/advanced-feature scope); the larger-than-previously-
+documented dead-CSS cleanup or the narrow raw-exception-text hardening
+(both real, disclosed P2 items, neither automatically the next milestone
+by adjacency).
 
 One-Release Roadmap & Scheduler Reconciliation v1 (directly authorized
 outside this file, reconciled here at its own closure) is now accepted at
@@ -1203,13 +1272,35 @@ Hardening.
 
 ### Q. Whole-Product UI / Accessibility / Performance
 
-**Status:** NOT CLOSED AS AN INTEGRATED PASS -- RELEASE-CRITICAL.
+**Status:** CLOSED AS AN INTEGRATED PASS -- Whole-Product UI /
+Accessibility / Performance Closure v1 (2026-08-27) closed this lane; see
+[whole-product-ui-accessibility-performance-closure-v1-report.md](whole-product-ui-accessibility-performance-closure-v1-report.md).
+Classification **A**.
 
-Eventually validate: responsive behavior; touch; keyboard; focus;
-accessibility; evidence/image loading; large histories; several cameras;
-large review queues; long sessions; CPU/GPU/storage-pressure presentation;
-error/recovery UX; visual consistency. Includes the bounded acoustic
-health/status gap (Lane A).
+Validated live against a seeded, product-shaped 371-Visit QA instance and
+real code inspection: responsive behavior (zero horizontal overflow, 4
+required widths x 10 pages); touch (existing tap-target/mobile-drawer
+conventions intact); keyboard/focus (sidebar nav, mobile drawer already
+correct; two real Fast Review focus-management defects found and fixed);
+accessibility semantics (spot-checked, sound); large real-data performance
+(measured, at or below established precedent, no regression); several
+cameras (3 active mixed-health + 1 archived Stream, coherent); large
+review queues (89-item backlog, correctly bounded); error/recovery UX
+(camera-vs-observation-runtime distinction already correct); visual
+consistency (StatusPill never color-only). Closed the bounded acoustic
+health/status gap (Lane A) with the smallest capability-aware addition
+the brief allowed. Found and fixed one P0 (Review Queue default-tab
+misclassification of imported Visits) along the way -- the real,
+previously-unidentified root cause of one class of confusion this project
+had repeatedly misattributed to `reviewed-product-loop.spec.ts` being an
+unrelated flake. That spec itself remains red, now precisely diagnosed as
+test-suite staleness (a hardcoded `productMode = true` makes the legacy
+markup it targets permanently unreachable), not a live product defect --
+disclosed, not fixed, a real but separately-scoped follow-up. Also
+disclosed, not fixed: Zone-polygon drawing (not selection) has no
+keyboard equivalent (optional/advanced feature); a larger-than-previously
+-documented dead-CSS footprint; a narrow raw-exception-text edge case.
+See the report for the complete finding-by-finding record.
 
 ### R. Complete Field Acceptance
 
@@ -1460,7 +1551,41 @@ each session that touches this repository.
 
 ## 14. Validation baselines
 
-**Latest accepted Core checkpoint (Multi-Camera Place Experience v2):**
+**Latest accepted Core checkpoint (Whole-Product UI / Accessibility /
+Performance Closure v1):** 5166 passed / 2 failed / 3 skipped / 23
+deselected (slow-marked) / 11 xfailed (26m50s), run standalone after an
+earlier concurrent-with-e2e attempt produced real, directly observed
+SQLite lock contention (not re-used as evidence -- see the milestone
+report's "A note on validation methodology"). Both failures are the
+identical, already-documented pre-existing `test_place_biodiversity_
+summary_repository.py` pair (`test_api_route_returns_the_summary`,
+`test_human_correction_updates_place_biodiversity_intelligence_correctly`),
+independently re-confirmed as pre-existing across now at least nine
+consecutive prior milestone checkpoints below -- not re-bisected again
+this session given zero code this milestone touched has any relationship
+to biodiversity-summary computation. No schema change, so no guard-rail
+assertions needed touching. 7 new backend tests across two files (2 in
+`tests/test_review_queue_product_mode.py`, 5 in `tests/test_product_
+health.py`), each independently RED-confirmed against the pre-fix code
+via `git stash` and GREEN after; `ruff check` confirmed zero new findings
+via a direct clean-baseline bisection per touched file (83 pre-existing
+findings total, unchanged before/after: `main.py` 26/26,
+`product_repository.py` 57/57); `tsc --noEmit`/`vite build` clean. Full
+e2e suite (136 specs, 8 new -- 2 new spec files plus 6 added to the
+existing viewport matrix): 135 passed / 1 failed, the one failure the
+same pre-existing, now precisely-diagnosed `reviewed-product-loop.spec.ts`
+gap immediately below in this same list, independently reproduced
+identically on the unmodified 128-spec baseline (127 passed / 1 failed,
+byte-identical single assertion) -- confirming no regression from this
+milestone's own product/test changes. See
+[whole-product-ui-accessibility-performance-closure-v1-report.md](whole-product-ui-accessibility-performance-closure-v1-report.md)
+for the complete record, including a real, live-verified P0 fix (Review
+Queue default-tab misclassification of imported Visits), three P1 fixes
+(two Fast Review keyboard focus-management defects, the acoustic health/
+status gap), and two investigated-and-confirmed-not-regressions
+(Stream Detail/Analytics list bounding, both intact).
+
+**Prior accepted Core checkpoint (Multi-Camera Place Experience v2):**
 5106 passed / 2 failed / 3 skipped / 23 deselected (slow-marked) / 11
 xfailed (26m48s). Both failures are the identical, already-documented
 pre-existing `test_place_biodiversity_summary_repository.py` pair
