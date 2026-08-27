@@ -34,6 +34,41 @@ def test_unconfigured_host_address_means_transport_disabled(monkeypatch) -> None
     assert config.transport_spool_dir is not None
 
 
+def test_transport_paths_anchor_to_the_pairing_state_directory_not_home(monkeypatch, tmp_path) -> None:
+    """Camera Node Upgrade & Compatibility Recovery v1: a real, reproduced
+    defect found via genuine real-hardware upgrade acceptance. These two
+    paths used to fall all the way through to `Path.home()` even when
+    `MOCKINGBIRD_NODE_PAIRING_STATE_PATH` was explicitly set to something
+    completely unrelated -- crashing every installer-managed Node (a
+    dedicated system account with no real home directory, running under
+    `ProtectHome=true`) the instant it upgraded past this codebase's own
+    transport feature, regardless of whether transport was ever configured.
+    Fixed by anchoring both to `pairing_state_path`'s own directory instead
+    -- already guaranteed real/writable on every installer-managed device,
+    the same way `pairing_state_path` itself already is."""
+
+    _clear_transport_env(monkeypatch)
+    state_dir = tmp_path / "var-lib-mockingbird-camera-node"
+    monkeypatch.setenv("MOCKINGBIRD_NODE_PAIRING_STATE_PATH", str(state_dir / "pairing.json"))
+    # A deliberately wrong/irrelevant HOME -- the result must not depend on
+    # it at all once MOCKINGBIRD_NODE_PAIRING_STATE_PATH is set.
+    monkeypatch.setenv("HOME", str(tmp_path / "not-a-real-home"))
+    monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+
+    config = CameraNodeConfig.from_environment()
+
+    assert config.transport_spool_dir == state_dir / "transport"
+    assert config.transport_credential_state_path == state_dir / "transport-credential.json"
+
+
+def test_explicit_transport_spool_dir_still_overrides_the_pairing_anchored_default(monkeypatch, tmp_path) -> None:
+    _clear_transport_env(monkeypatch)
+    explicit = tmp_path / "custom-spool"
+    monkeypatch.setenv("MOCKINGBIRD_NODE_TRANSPORT_SPOOL_DIR", str(explicit))
+    config = CameraNodeConfig.from_environment()
+    assert config.transport_spool_dir == explicit
+
+
 def test_configured_host_address_enables_transport(monkeypatch) -> None:
     _clear_transport_env(monkeypatch)
     monkeypatch.setenv("MOCKINGBIRD_NODE_HOST_BASE_ADDRESS", "http://192.168.1.50:8000")

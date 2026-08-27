@@ -225,18 +225,47 @@ class CameraNodeConfig:
 
         raw_host_base_address = os.getenv("MOCKINGBIRD_NODE_HOST_BASE_ADDRESS", "").strip()
         host_base_address = normalize_host_base_address(raw_host_base_address) if raw_host_base_address else None
+        # Camera Node Upgrade & Compatibility Recovery v1: a real, reproduced
+        # defect found via genuine real-hardware upgrade acceptance. These two
+        # paths previously defaulted to `state_home` (itself falling back to
+        # `Path.home()`) -- the *same* fallback `pairing_state_path`, above,
+        # uses, but `pairing_state_path` is never actually affected by it on
+        # any installer-managed device, because `scripts/install_camera_
+        # node.py` always writes `MOCKINGBIRD_NODE_PAIRING_STATE_PATH`
+        # explicitly into `node.env` (an intentional, documented choice --
+        # see "State paths" in docs/camera-node-installer-design.md: "an
+        # explicit, predictable, documented path rather than an inherited
+        # guess"). Nothing gave the transport paths that same treatment, so
+        # they silently fell all the way through to `Path.home()` on a
+        # dedicated system account with no real home directory
+        # (`useradd --no-create-home`) running under `ProtectSystem=strict`/
+        # `ProtectHome=true` -- `TransportSpool`'s own `mkdir` then raised an
+        # uncaught `PermissionError`, crashing *every* Node at startup the
+        # instant it upgraded past Remote / Intermittent-WAN Transport
+        # Foundation v1, regardless of whether the operator ever opted into
+        # transport. Confirmed by direct reproduction on the project's real
+        # reference Pi -- see "Real acceptance" in
+        # docs/camera-node-upgrade-compatibility-recovery-v1-report.md.
+        # Fixed by giving the transport paths the identical treatment
+        # pairing state already has: anchored to `pairing_state_path`'s own
+        # directory (always a real, writable, already-correctly-configured
+        # location on every installer-managed device -- `StateDirectory=`'s
+        # own grant survives `ProtectSystem=strict`) rather than a second,
+        # independent, unreliable `state_home` guess. This preserves the
+        # original design intent unchanged (a spool directory is still
+        # always resolved regardless of whether a host is configured yet --
+        # durable retention does not require transport to already be
+        # enabled) while fixing only the broken default *location*; an
+        # explicit environment override still always wins.
         transport_spool_dir = Path(
-            os.getenv(
-                "MOCKINGBIRD_NODE_TRANSPORT_SPOOL_DIR",
-                str(state_home / "mockingbird-camera-node" / "transport"),
-            )
+            os.getenv("MOCKINGBIRD_NODE_TRANSPORT_SPOOL_DIR", str(pairing_state_path.parent / "transport"))
         ).expanduser()
         if not transport_spool_dir.is_absolute():
             raise ValueError("mockingbird_node_transport_spool_dir_invalid")
         transport_credential_state_path = Path(
             os.getenv(
                 "MOCKINGBIRD_NODE_TRANSPORT_CREDENTIAL_STATE_PATH",
-                str(state_home / "mockingbird-camera-node" / "transport-credential.json"),
+                str(pairing_state_path.parent / "transport-credential.json"),
             )
         ).expanduser()
         if not transport_credential_state_path.is_absolute():
