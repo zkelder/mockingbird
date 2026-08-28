@@ -486,6 +486,32 @@ preserved here, not relaxed.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
+Representative Daylight Field Acceptance & Gate A Evidence v2 (directly
+authorized outside this file, reconciled here at its own closure) is now
+accepted at classification **B** -- see §6 Lane R, below, and
+[representative-daylight-field-acceptance-gate-a-evidence-v2-report.md](representative-daylight-field-acceptance-gate-a-evidence-v2-report.md)
+for the full record. Accepted HEAD is unchanged (`80e1bb3`) -- this
+milestone touched zero product/perception/admission/Visit/evidence/
+classification/schema code; it only ran and cleanly stopped a fresh
+Windows dev deployment of the already-accepted build for verification.
+This does **not** close Lane R/Gate A: no live field session ran. Unlike
+the two immediately-preceding attempts, every environmental and
+infrastructure precondition (daylight, reference Camera Node health, GPU/
+detector health, storage headroom, acceptance-recorder readiness) was
+independently re-confirmed healthy this time -- the sole remaining
+blocker, isolated more precisely than either prior attempt could isolate
+it, is the identical authentication precondition first found 2026-08-25
+(real sign-in required on every session-relevant endpoint, empirically
+re-confirmed today via `401` on `GET /api/streams`/`GET /api/visits`
+against the freshly redeployed accepted HEAD; no credentials exist;
+standing user policy against asking again or routing around it via a
+disposable instance for this class of milestone). Gate A's evidence body
+is unchanged -- still exactly the two real 2026-08-19/2026-08-20 daylight
+cohorts, for the third consecutive milestone attempt. No release budgets
+proposed. The standing decision above (do not ask the user again for
+credentials/live participation absent explicit agreement) was not
+re-litigated and remains in force.
+
 Whole-Product UI / Accessibility / Performance Closure v1 (directly
 authorized outside this file, reconciled here at its own closure) is now
 accepted at classification **A** -- see §1, above, Lane Q, §6, below, and
@@ -1373,6 +1399,44 @@ two real 2026-08-19/2026-08-20 daylight cohorts) -- no release budgets
 proposed. The standing decision above (do not ask the user again for
 credentials/live participation absent explicit agreement) was not
 re-litigated and remains in force.
+
+**Representative Daylight Field Acceptance & Gate A Evidence v2
+(2026-08-28) attempted, also returned no new live-field evidence --
+classification B.** For the first time in three consecutive attempts,
+every environmental/infrastructure precondition was simultaneously
+satisfied: session start ~15:20 EDT (mid-afternoon, hours before sunset --
+unlike the 2026-08-26 attempt), reference Camera Node healthy and
+reachable (`GET /node/v1/health`: `status: "available"`, self-test
+passed, watchdog healthy, zero consecutive probe failures), GPU idle and
+available (RTX 4060 Ti, zero MockingBird compute process at check time),
+storage adequate, acceptance-recorder confirmed present and structurally
+isolated from product truth. The sole remaining blocker, isolated more
+precisely than either prior attempt could isolate it, is the identical
+authentication precondition from the 2026-08-25 attempt above,
+re-confirmed today against a freshly rebuilt and redeployed current
+accepted HEAD (`80e1bb3`): `GET /api/streams` and `GET /api/visits` both
+returned `401`, with no credentials attempted. Per the standing decision
+above, no credentials were requested, no fresh disposable instance was
+substituted for the real one, and production authentication was not
+touched. The fresh deploy itself hit one cold-start false-negative (the
+tool's own bounded 90-second verification window gave up before BioCLIP/
+CUDA cold start finished) -- manually confirmed healthy and identity-exact
+(`git_commit` exact match, schema 57, `ready: true`) via direct HTTP and a
+follow-up `--status` check, matching an already-documented recurring
+pattern, not a new defect; then stopped cleanly, leaving `80e1bb3`
+retained and ledger-verified. Confirmed, again via the unauthenticated
+health endpoint only, that the second real Source (the EMEET SmartCam
+S600 USB webcam identified 2026-08-26) remains unwired -- adding it needs
+the same authenticated path. Investigated one hypothesis for the
+continuing `C:` free-space decline (43.07GB on 2026-08-20 -> 18.8GB today)
+-- retained Windows dev-release accumulation -- and ruled it out (25
+retained releases total only ~700-750MB; each release is ~29MB, not a
+multi-GB per-release duplication); the actual cause remains open. Gate
+A's evidence body is unchanged -- still exactly the two real
+2026-08-19/2026-08-20 daylight cohorts, now for the third consecutive
+attempt, two of the three blocked by the identical authentication
+precondition. No release budgets proposed. See
+[representative-daylight-field-acceptance-gate-a-evidence-v2-report.md](representative-daylight-field-acceptance-gate-a-evidence-v2-report.md).
 
 ### S. Actual Final Release Hardening
 
