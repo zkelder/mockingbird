@@ -763,6 +763,9 @@ from mockingbird.api.schemas import (
     CurrentUser,
     EnvironmentalContextSettings,
     EnvironmentalContextSettingsUpdate,
+    FieldAcceptanceCredentialCreate,
+    FieldAcceptanceCredentialSummary,
+    FieldAcceptancePrincipal,
     InstallationSettings,
     InstallationSettingsUpdate,
     PlaceBiodiversitySummaryResponse,
@@ -851,6 +854,7 @@ from mockingbird.storage.models import (
     EnvironmentalContextRecordModel,
     EnvironmentalContextSettingsModel,
     EventModel,
+    FieldAcceptanceCredentialModel,
     InstallationSettingsModel,
     MediaAssetModel,
     MonitoringExposureIntervalModel,
@@ -4491,6 +4495,136 @@ class ProductRepository:
                     contact_display=model.contact_display,
                     updated_at=model.updated_at,
                 )
+
+    # --- Non-Interactive Field Acceptance Authentication & Session Access v1
+    # See docs/non-interactive-field-acceptance-authentication-session-
+    # access-v1-contract.md. A second, narrow, parallel identity system for
+    # bounded non-interactive tooling -- kept as its own contiguous block,
+    # mirroring the "Local Identity" block immediately above, since every
+    # method here shares the one new `field_acceptance_credentials` table
+    # (schema 58) and nothing else in this class touches it.
+
+    @staticmethod
+    def _field_acceptance_credential_summary(
+        model: FieldAcceptanceCredentialModel,
+    ) -> FieldAcceptanceCredentialSummary:
+        return FieldAcceptanceCredentialSummary(
+            id=model.id,
+            label=model.label,
+            created_at=_as_utc(model.created_at),
+            created_by_user_id=model.created_by_user_id,
+            created_by_display_name=model.created_by_display_name,
+            expires_at=_as_utc(model.expires_at),
+            revoked_at=_as_utc(model.revoked_at) if model.revoked_at is not None else None,
+            last_used_at=_as_utc(model.last_used_at) if model.last_used_at is not None else None,
+        )
+
+    def create_field_acceptance_credential(
+        self, payload: FieldAcceptanceCredentialCreate, *, acting_user: CurrentUser
+    ) -> tuple[FieldAcceptanceCredentialSummary, str]:
+        """Explicit provisioning, always Administrator-initiated (enforced
+        by the `/api/admin/` prefix rule in `mockingbird.api.auth`, not
+        re-checked here). Returns the durable summary plus the one and only
+        time the raw bearer token is ever available -- mirrors `create_
+        first_administrator`/`authenticate_user` returning `(identity,
+        raw_token)` for the identical reason. `expires_at` is always set
+        (never nullable, unlike `UserSessionModel`'s 30-day *rolling*
+        window) -- see `FieldAcceptanceCredentialModel`'s own docstring for
+        why no permanent-credential path exists in v1."""
+
+        label = payload.label.strip() or "Field Acceptance Operator"
+        now = datetime.now(UTC)
+        token = generate_session_token()
+        with self.session_factory() as session:
+            with session.begin():
+                credential = FieldAcceptanceCredentialModel(
+                    id=f"field-acceptance-{uuid.uuid4().hex[:16]}",
+                    label=label,
+                    token_hash=hash_session_token(token),
+                    created_at=now,
+                    created_by_user_id=acting_user.id,
+                    created_by_display_name=acting_user.display_name,
+                    expires_at=now + timedelta(hours=payload.expires_in_hours),
+                    revoked_at=None,
+                    last_used_at=None,
+                )
+                session.add(credential)
+                self._record_audit_event_in_session(
+                    session, now=now, actor_user_id=acting_user.id, actor_display_name=acting_user.display_name,
+                    action="field_acceptance_credential.created", target_type="field_acceptance_credential",
+                    target_id=credential.id,
+                    metadata={"label": label, "expires_in_hours": payload.expires_in_hours},
+                )
+                return self._field_acceptance_credential_summary(credential), token
+
+    def list_field_acceptance_credentials(self) -> list[FieldAcceptanceCredentialSummary]:
+        with self.session_factory() as session:
+            models = session.scalars(
+                select(FieldAcceptanceCredentialModel).order_by(
+                    FieldAcceptanceCredentialModel.created_at.desc()
+                )
+            ).all()
+            return [self._field_acceptance_credential_summary(model) for model in models]
+
+    def revoke_field_acceptance_credential(
+        self, credential_id: str, *, acting_user: CurrentUser
+    ) -> FieldAcceptanceCredentialSummary:
+        """Immediate and deterministic: `resolve_field_acceptance_token`
+        re-reads `revoked_at` fresh on every call (see its own docstring),
+        so the very next authentication attempt with this credential's
+        token fails -- no cache or blocklist sweep needed. Idempotent: an
+        already-revoked credential is returned unchanged rather than
+        raising, matching `revoke_session`'s own sign-out convention."""
+
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                credential = session.get(FieldAcceptanceCredentialModel, credential_id)
+                if credential is None:
+                    raise ValueError("field_acceptance_credential_not_found")
+                if credential.revoked_at is None:
+                    credential.revoked_at = now
+                    self._record_audit_event_in_session(
+                        session, now=now, actor_user_id=acting_user.id,
+                        actor_display_name=acting_user.display_name,
+                        action="field_acceptance_credential.revoked", target_type="field_acceptance_credential",
+                        target_id=credential.id, metadata={"label": credential.label},
+                    )
+                return self._field_acceptance_credential_summary(credential)
+
+    def resolve_field_acceptance_token(self, raw_token: str) -> FieldAcceptancePrincipal | None:
+        """Resolve a bearer token to its field-acceptance principal.
+        Returns `None` (never raises) for anything that shouldn't
+        authenticate: unknown/garbled token, a revoked credential, or an
+        expired one -- exactly `resolve_session`'s own contract, deliberately
+        mirrored so a server restart cannot accidentally resurrect a revoked
+        or expired credential (there is no in-memory cache of either fact;
+        both are read fresh from this row on every single call). Updates
+        `last_used_at` unconditionally on every successful resolution --
+        deliberately not throttled the way `resolve_session`'s renewal
+        write is, since field-acceptance call volume (a handful of requests
+        per bounded session) is orders of magnitude below an interactive
+        browser session's, so the extra write cost is negligible."""
+
+        if not raw_token:
+            return None
+        token_hash = hash_session_token(raw_token)
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                credential = session.scalar(
+                    select(FieldAcceptanceCredentialModel).where(
+                        FieldAcceptanceCredentialModel.token_hash == token_hash
+                    )
+                )
+                if credential is None:
+                    return None
+                if credential.revoked_at is not None:
+                    return None
+                if normalize_utc(credential.expires_at) <= now:
+                    return None
+                credential.last_used_at = now
+                return FieldAcceptancePrincipal(id=credential.id, label=credential.label)
 
     def get_environmental_context_settings(self) -> EnvironmentalContextSettings:
         with self.session_factory() as session:

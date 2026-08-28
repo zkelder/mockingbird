@@ -7993,6 +7993,63 @@ class InstallationSettingsUpdate(BaseModel):
     contact_display: str | None = Field(default=None, max_length=256)
 
 
+# --- Non-Interactive Field Acceptance Authentication & Session Access v1 ---
+# See docs/non-interactive-field-acceptance-authentication-session-access-
+# v1-contract.md. A second, narrow, parallel identity for bounded
+# non-interactive tooling -- deliberately not a `UserRole` value (see
+# `FieldAcceptanceCredentialModel`'s own docstring for why).
+
+DEFAULT_FIELD_ACCEPTANCE_CREDENTIAL_TTL_HOURS = 24
+MINIMUM_FIELD_ACCEPTANCE_CREDENTIAL_TTL_HOURS = 1
+MAXIMUM_FIELD_ACCEPTANCE_CREDENTIAL_TTL_HOURS = 720  # 30 days
+
+
+class FieldAcceptancePrincipal(BaseModel):
+    """The resolved identity of a valid bearer-token field-acceptance
+    credential -- the non-human counterpart to `CurrentUser`, populated on
+    `request.state.field_acceptance_principal` by the same central
+    authorization gate. Never returned directly by any endpoint; see
+    `FieldAcceptanceCredentialSummary` for the admin-facing shape."""
+
+    id: str
+    label: str
+
+
+class FieldAcceptanceCredentialCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(default="Field Acceptance Operator", min_length=1, max_length=128)
+    expires_in_hours: int = Field(
+        default=DEFAULT_FIELD_ACCEPTANCE_CREDENTIAL_TTL_HOURS,
+        ge=MINIMUM_FIELD_ACCEPTANCE_CREDENTIAL_TTL_HOURS,
+        le=MAXIMUM_FIELD_ACCEPTANCE_CREDENTIAL_TTL_HOURS,
+    )
+
+
+class FieldAcceptanceCredentialSummary(BaseModel):
+    """Administrator-facing credential listing/detail. Never includes
+    `token_hash` or the raw secret -- see `FieldAcceptanceCredentialCreated`
+    for the one-time-only shape that does carry the raw token."""
+
+    id: str
+    label: str
+    created_at: datetime
+    created_by_user_id: str | None = None
+    created_by_display_name: str | None = None
+    expires_at: datetime
+    revoked_at: datetime | None = None
+    last_used_at: datetime | None = None
+
+
+class FieldAcceptanceCredentialCreated(FieldAcceptanceCredentialSummary):
+    """Returned exactly once, at creation -- the only response shape in this
+    product that ever carries a field-acceptance bearer token in plaintext.
+    Never reconstructable afterward; losing it means creating a new
+    credential and revoking this one."""
+
+    token: str
+
+
 class EnvironmentalContextSettings(BaseModel):
     """The one opt-in, local-only Place location setting (Environmental
     Context Foundation v1) -- see docs/environmental-context-foundation-

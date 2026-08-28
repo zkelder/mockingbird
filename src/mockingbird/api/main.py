@@ -30,6 +30,8 @@ from starlette.responses import FileResponse, JSONResponse, Response, StreamingR
 from mockingbird import __version__ as APP_VERSION
 from mockingbird import runtime
 from mockingbird.api.auth import (
+    audit_actor,
+    build_admin_field_acceptance_router,
     build_admin_users_router,
     build_auth_router,
     current_user_or_401,
@@ -743,6 +745,9 @@ app.include_router(
 # defined further below and cannot be passed directly here yet.
 app.include_router(build_auth_router(lambda: get_repository()))
 app.include_router(build_admin_users_router(lambda: get_repository()))
+# Non-Interactive Field Acceptance Authentication & Session Access v1: same
+# deferred-lookup reasoning as the two routers immediately above.
+app.include_router(build_admin_field_acceptance_router(lambda: get_repository()))
 
 # A request's own correlation id, bounded to a plain hex token so it is
 # always safe to echo back and to fold into a log line/structured-error
@@ -11577,11 +11582,38 @@ async def _unified_observation_facts(
     return unified_status.unavailable_facts(config=configuration, playback=playback)
 
 
+def _observation_action_response(
+    request: Request, *, action: str, stream_id: str, facts: Any
+) -> ObservationSessionStatusResponse:
+    """Build the response and write one audit entry for an Observation
+    start/stop action (Non-Interactive Field Acceptance Authentication &
+    Session Access v1; see docs/non-interactive-field-acceptance-
+    authentication-session-access-v1-contract.md "Auditability") -- the
+    one place this codebase's audit trail covers arming/disarming a
+    detection pipeline, for either a human Administrator or the narrow
+    field-acceptance credential this milestone adds (the only two
+    identities that can ever reach this handler at all -- see
+    `mockingbird.api.auth`'s `FIELD_ACCEPTANCE_ALLOWED_ADMIN_ROUTES`).
+    Logged for every outcome, including an honest "no integrated runtime"
+    result: the attempted start/stop is itself the auditable action,
+    whether or not this Stream had anything to actually start."""
+
+    actor_user_id, actor_display_name = audit_actor(request)
+    if actor_user_id is not None or actor_display_name is not None:
+        get_repository().record_audit_event(
+            actor_user_id=actor_user_id, actor_display_name=actor_display_name,
+            action=action, target_type="stream", target_id=stream_id, metadata=None,
+        )
+    return _observation_panel_response(stream_id, facts)
+
+
 @app.post(
     "/api/streams/{stream_id}/observation/start",
     response_model=ObservationSessionStatusResponse,
 )
-async def start_stream_observation(stream_id: str) -> ObservationSessionStatusResponse:
+async def start_stream_observation(
+    stream_id: str, request: Request
+) -> ObservationSessionStatusResponse:
     """Unified Start observing (Unified Observation Experience v1): one
     product action for every currently-supported Stream type, each routed
     to its own existing, unmodified runtime.
@@ -11614,7 +11646,7 @@ async def start_stream_observation(stream_id: str) -> ObservationSessionStatusRe
             session_status=status, config=configuration,
             playback=repository.get_stream_playback_status(stream_id),
         )
-        return _observation_panel_response(stream_id, facts)
+        return _observation_action_response(request, action="stream.observation_started", stream_id=stream_id, facts=facts)
 
     if lane == unified_status.RUNTIME_KIND_LIVE_MONITORING:
         playback = repository.get_stream_playback_status(stream_id)
@@ -11627,7 +11659,7 @@ async def start_stream_observation(stream_id: str) -> ObservationSessionStatusRe
                 health=repository.get_stream_camera_health(stream_id).health,
                 playback=playback,
             )
-            return _observation_panel_response(stream_id, facts)
+            return _observation_action_response(request, action="stream.observation_started", stream_id=stream_id, facts=facts)
         mutation = await update_stream_monitoring_policy(
             stream_id,
             StreamMonitoringPolicyUpdate(
@@ -11639,7 +11671,7 @@ async def start_stream_observation(stream_id: str) -> ObservationSessionStatusRe
             health=repository.get_stream_camera_health(stream_id).health,
             playback=playback,
         )
-        return _observation_panel_response(stream_id, facts)
+        return _observation_action_response(request, action="stream.observation_started", stream_id=stream_id, facts=facts)
 
     if lane == unified_status.RUNTIME_KIND_SNAPSHOT_MONITOR:
         playback = repository.get_stream_playback_status(stream_id)
@@ -11654,23 +11686,25 @@ async def start_stream_observation(stream_id: str) -> ObservationSessionStatusRe
                 monitor=None, url_configured=url_configured, playback=playback,
             )
             facts = replace(facts, message=reason, camera_message=reason, engine_message=reason)
-            return _observation_panel_response(stream_id, facts)
+            return _observation_action_response(request, action="stream.observation_started", stream_id=stream_id, facts=facts)
         facts = unified_status.snapshot_monitor_facts(
             monitor=monitor, url_configured=url_configured, playback=playback,
         )
-        return _observation_panel_response(stream_id, facts)
+        return _observation_action_response(request, action="stream.observation_started", stream_id=stream_id, facts=facts)
 
     facts = unified_status.unavailable_facts(
         config=configuration, playback=repository.get_stream_playback_status(stream_id),
     )
-    return _observation_panel_response(stream_id, facts)
+    return _observation_action_response(request, action="stream.observation_started", stream_id=stream_id, facts=facts)
 
 
 @app.post(
     "/api/streams/{stream_id}/observation/stop",
     response_model=ObservationSessionStatusResponse,
 )
-async def stop_stream_observation(stream_id: str) -> ObservationSessionStatusResponse:
+async def stop_stream_observation(
+    stream_id: str, request: Request
+) -> ObservationSessionStatusResponse:
     """Unified Stop observing: works for every integrated runtime, is
     bounded, releases that runtime's own resources, and never deletes
     evidence or changes reviewed/candidate records. A user never needs to
@@ -11695,7 +11729,7 @@ async def stop_stream_observation(stream_id: str) -> ObservationSessionStatusRes
             session_status=status, config=configuration,
             playback=repository.get_stream_playback_status(stream_id),
         )
-        return _observation_panel_response(stream_id, facts)
+        return _observation_action_response(request, action="stream.observation_stopped", stream_id=stream_id, facts=facts)
 
     if lane == unified_status.RUNTIME_KIND_LIVE_MONITORING:
         mutation = await update_stream_monitoring_policy(
@@ -11709,7 +11743,7 @@ async def stop_stream_observation(stream_id: str) -> ObservationSessionStatusRes
             health=repository.get_stream_camera_health(stream_id).health,
             playback=repository.get_stream_playback_status(stream_id),
         )
-        return _observation_panel_response(stream_id, facts)
+        return _observation_action_response(request, action="stream.observation_stopped", stream_id=stream_id, facts=facts)
 
     if lane == unified_status.RUNTIME_KIND_SNAPSHOT_MONITOR:
         monitor = await stop_stream_monitor(stream_id)
@@ -11718,12 +11752,12 @@ async def stop_stream_observation(stream_id: str) -> ObservationSessionStatusRes
         facts = unified_status.snapshot_monitor_facts(
             monitor=monitor, url_configured=url_configured, playback=playback,
         )
-        return _observation_panel_response(stream_id, facts)
+        return _observation_action_response(request, action="stream.observation_stopped", stream_id=stream_id, facts=facts)
 
     facts = unified_status.unavailable_facts(
         config=configuration, playback=repository.get_stream_playback_status(stream_id),
     )
-    return _observation_panel_response(stream_id, facts)
+    return _observation_action_response(request, action="stream.observation_stopped", stream_id=stream_id, facts=facts)
 
 
 @app.get(

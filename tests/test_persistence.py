@@ -1786,3 +1786,52 @@ def test_schema_56_upgrades_to_current_with_ecological_interoperability(
                 assert row_count == 0
     finally:
         migrated.close()
+
+
+def test_schema_57_upgrades_to_current_with_field_acceptance_credentials(
+    tmp_path: Path,
+) -> None:
+    """Non-Interactive Field Acceptance Authentication & Session Access v1:
+    a real database at the previously-current schema (v57) upgrades
+    cleanly through the one new additive `field_acceptance_credentials`
+    table -- mirrors `test_schema_56_upgrades_to_current_with_ecological_
+    interoperability`'s own "additive table, no seeded row" proof pattern.
+    An upgraded installation must start with zero credentials: this table
+    is never backfilled and no credential is ever created automatically
+    (see docs/non-interactive-field-acceptance-authentication-session-
+    access-v1-contract.md "Provisioning contract" -- "not created
+    automatically on normal installs")."""
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = repository_for(db_path)
+    existing_source_count = len(repository.list_sources())
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        connection.exec_driver_sql("DROP TABLE field_acceptance_credentials")
+        connection.exec_driver_sql("UPDATE mockingbird_schema SET version = 57 WHERE singleton_id = 1")
+    engine.dispose()
+
+    migrated = repository_for(db_path)
+    try:
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+        assert len(migrated.list_sources()) == existing_source_count
+
+        with migrated.engine.connect() as connection:
+            columns = {
+                row[1]
+                for row in connection.exec_driver_sql(
+                    "PRAGMA table_info(field_acceptance_credentials)"
+                ).fetchall()
+            }
+            assert {
+                "id", "label", "token_hash", "created_at", "created_by_user_id",
+                "created_by_display_name", "expires_at", "revoked_at", "last_used_at",
+            } <= columns
+            row_count = connection.exec_driver_sql(
+                "SELECT COUNT(*) FROM field_acceptance_credentials"
+            ).scalar()
+            assert row_count == 0, "upgrade must never fabricate a credential"
+    finally:
+        migrated.close()

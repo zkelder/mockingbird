@@ -1559,6 +1559,66 @@ class InstallationSettingsModel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class FieldAcceptanceCredentialModel(Base):
+    """A narrow, explicitly-provisioned, non-interactive credential (Non-
+    Interactive Field Acceptance Authentication & Session Access v1, schema
+    58; see docs/non-interactive-field-acceptance-authentication-session-
+    access-v1-contract.md) that lets bounded field-acceptance tooling
+    authenticate to this one Host without sharing a human Administrator's
+    password and without a second, weaker auth stack.
+
+    Deliberately **not** a `UserModel` row and **not** a `role` value on the
+    existing Viewer < Reviewer < Administrator ladder: the acceptance
+    workflow's required permission shape (broad read access, plus exactly
+    two otherwise-Administrator-tier mutations -- Observation start/stop --
+    and nothing else Administrator-tier) is not a contiguous prefix of that
+    ladder, so no single rank placement could express it without either
+    under- or over-granting. This table is instead a second, parallel,
+    narrow identity system, mirroring this codebase's own established
+    precedent for exactly this shape: Camera Node device identity is
+    already a completely separate mechanism from human `UserModel` identity
+    (see docs/local-identity-multi-user-contract.md "Camera Node identity
+    separation"). See `mockingbird.api.auth`'s `FIELD_ACCEPTANCE_ALLOWED_
+    ADMIN_ROUTES`/`_authorize` for the exact, small, explicit allowlist this
+    identity is checked against.
+
+    `token_hash` follows `UserSessionModel.token_hash`'s exact convention --
+    only `hashlib.sha256(token).hexdigest()` is ever persisted, via the same
+    `generate_session_token`/`hash_session_token` helpers
+    (`mockingbird.security.passwords`) sessions already use; a stolen
+    database backup cannot be replayed as a live bearer credential. Unlike a
+    human session, `expires_at` is **not nullable** -- every credential this
+    table can ever hold is bounded by construction (no "permanent" path
+    exists at all in v1; see the governing contract's "Credential lifecycle"
+    for why this is a deliberately stricter default than the brief's own
+    minimum bar). `revoked_at` mirrors `UserSessionModel.revoked_at`'s exact
+    "honest absence" convention (`NULL` = never revoked, set once on
+    explicit revoke, never a hard row delete) -- revocation must be
+    immediate and deterministic, and `resolve_field_acceptance_token`
+    re-reads this row fresh on every single call (no cache, no blocklist
+    sweep needed), exactly like `resolve_session` does for `UserModel`.
+
+    `created_by_user_id`/`created_by_display_name` mirror `AuditLogEntry
+    Model.actor_user_id`/`.actor_display_name`'s point-in-time-snapshot
+    convention -- which Administrator provisioned this credential, captured
+    at creation time so a later rename/disable never rewrites how past
+    provisioning history reads.
+    """
+
+    __tablename__ = "field_acceptance_credentials"
+    __table_args__ = (UniqueConstraint("token_hash", name="uq_field_acceptance_credentials_token_hash"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    label: Mapped[str] = mapped_column(String, nullable=False)
+    token_hash: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_by_display_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class EnvironmentalContextSettingsModel(Base):
     """One durable, opt-in Place-level location setting (Environmental
     Context Foundation v1, schema 51) -- the same `singleton_id`-primary-key

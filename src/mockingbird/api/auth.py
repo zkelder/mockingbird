@@ -60,6 +60,18 @@ rationale):
   -- never by this module. See `tests/test_local_identity_multi_user.py`
   for the tests that instead exercise this real policy directly (real
   401/403, real role/disable/session behavior).
+
+Non-Interactive Field Acceptance Authentication & Session Access v1 (see
+docs/non-interactive-field-acceptance-authentication-session-access-v1-
+contract.md) later added a second, narrow, parallel identity to this same
+gate: a bearer-token field-acceptance credential, resolved independently of
+the cookie-based `current_user` above and never merged into it (see
+`FieldAcceptanceCredentialModel`'s own docstring for why it is deliberately
+not a `UserModel`/role-ladder identity). It satisfies the `authenticated`
+tier like any signed-in human, plus the small, explicit `FIELD_ACCEPTANCE_
+ALLOWED_ADMIN_ROUTES` carve-out below (Observation start/stop only) --
+nothing else Administrator- or Reviewer-tier. See `tests/test_field_
+acceptance_authentication.py` for its own direct real-HTTP policy tests.
 """
 
 from __future__ import annotations
@@ -76,6 +88,10 @@ from mockingbird.api.schemas import (
     AdminPasswordResetRequest,
     AuditLogEntry,
     CurrentUser,
+    FieldAcceptanceCredentialCreate,
+    FieldAcceptanceCredentialCreated,
+    FieldAcceptanceCredentialSummary,
+    FieldAcceptancePrincipal,
     InstallationSettings,
     InstallationSettingsUpdate,
     SelfPasswordChangeRequest,
@@ -145,6 +161,53 @@ def clear_session_cookie(response: Response) -> None:
     response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
 
 
+# --- Field acceptance bearer-token helpers ---------------------------------
+# See docs/non-interactive-field-acceptance-authentication-session-access-
+# v1-contract.md. Bearer tokens (not a cookie) are the right transport for
+# this identity: its only callers are non-interactive scripts, never a
+# browser, so there is no CSRF/Secure/SameSite surface to reuse from the
+# human-session mechanism above -- standard `Authorization: Bearer <token>`
+# header behavior instead, matching every other bearer-token convention.
+
+
+def _bearer_token(request: Request) -> str | None:
+    """Extract a raw bearer token from `Authorization: Bearer <token>`.
+    Never reads a token from a query string or the URL -- see the governing
+    contract's "Session/token transport". Returns `None` (never raises) for
+    a missing/malformed header."""
+
+    header = request.headers.get("authorization")
+    if not header:
+        return None
+    scheme, _, value = header.partition(" ")
+    if scheme.lower() != "bearer" or not value.strip():
+        return None
+    return value.strip()
+
+
+def audit_actor(request: Request) -> tuple[str | None, str | None]:
+    """Resolve `(actor_user_id, actor_display_name)` for an audit-log entry
+    from whichever identity actually authenticated this request -- a
+    signed-in human user, or a bearer-token field-acceptance credential
+    (never both meaningfully at once; see `_authorize` below for how a
+    request can carry either or both). A field-acceptance principal is
+    never a `UserModel` row, so `actor_user_id` is always `None` for it --
+    `actor_display_name` alone (a distinct, greppable "Field Acceptance
+    Operator: ..." prefix) is what lets audit history distinguish its
+    actions from a human Administrator's, per the governing contract's
+    "Auditability". Returns `(None, None)` if neither identity is present,
+    which a handler should treat as "no actor to attribute" rather than
+    fail loudly -- audit logging must never itself break a request."""
+
+    current_user = getattr(request.state, "current_user", None)
+    if current_user is not None:
+        return current_user.id, current_user.display_name
+    principal = getattr(request.state, "field_acceptance_principal", None)
+    if principal is not None:
+        return None, f"Field Acceptance Operator: {principal.label} ({principal.id})"
+    return None, None
+
+
 def current_user_or_401(request: Request) -> CurrentUser:
     """Defense-in-depth: every route that calls this is already gated
     `authenticated`-or-higher by the central policy table below, so
@@ -193,6 +256,18 @@ _USER_MUTATION_ERROR_MESSAGES: dict[str, tuple[int, str]] = {
 
 def user_mutation_http_error(error: ValueError) -> HTTPException:
     status_code, message = _USER_MUTATION_ERROR_MESSAGES.get(
+        str(error), (400, "This request could not be completed.")
+    )
+    return HTTPException(status_code=status_code, detail=message)
+
+
+_FIELD_ACCEPTANCE_CREDENTIAL_ERROR_MESSAGES: dict[str, tuple[int, str]] = {
+    "field_acceptance_credential_not_found": (404, "That field-acceptance credential was not found."),
+}
+
+
+def field_acceptance_credential_mutation_http_error(error: ValueError) -> HTTPException:
+    status_code, message = _FIELD_ACCEPTANCE_CREDENTIAL_ERROR_MESSAGES.get(
         str(error), (400, "This request could not be completed.")
     )
     return HTTPException(status_code=status_code, detail=message)
@@ -316,6 +391,49 @@ def build_admin_users_router(get_repository: Callable[[], "ProductRepository"]) 
     return router
 
 
+def build_admin_field_acceptance_router(get_repository: Callable[[], "ProductRepository"]) -> APIRouter:
+    """Provisioning/inspection/revocation for field-acceptance bearer-token
+    credentials (Non-Interactive Field Acceptance Authentication & Session
+    Access v1; see docs/non-interactive-field-acceptance-authentication-
+    session-access-v1-contract.md). Every route here is classified `tier
+    administrator` via the pre-existing `/api/admin/` prefix rule in
+    `install_authorization` below, not a per-route entry -- this is a
+    deliberately Administrator-only surface: the credential this router
+    manages can start/stop Observation, so creating or revoking one is
+    itself at least as sensitive as the user-management actions the
+    sibling `/api/admin/users` router already gates the same way."""
+
+    router = APIRouter(prefix="/api/admin/field-acceptance-credentials", tags=["field-acceptance"])
+
+    @router.post("", response_model=FieldAcceptanceCredentialCreated, status_code=201)
+    async def create_field_acceptance_credential(
+        payload: FieldAcceptanceCredentialCreate, request: Request
+    ) -> FieldAcceptanceCredentialCreated:
+        current_user = current_user_or_401(request)
+        summary, token = get_repository().create_field_acceptance_credential(
+            payload, acting_user=current_user
+        )
+        return FieldAcceptanceCredentialCreated(**summary.model_dump(), token=token)
+
+    @router.get("", response_model=list[FieldAcceptanceCredentialSummary])
+    async def list_field_acceptance_credentials() -> list[FieldAcceptanceCredentialSummary]:
+        return get_repository().list_field_acceptance_credentials()
+
+    @router.post("/{credential_id}/revoke", response_model=FieldAcceptanceCredentialSummary)
+    async def revoke_field_acceptance_credential(
+        credential_id: str, request: Request
+    ) -> FieldAcceptanceCredentialSummary:
+        current_user = current_user_or_401(request)
+        try:
+            return get_repository().revoke_field_acceptance_credential(
+                credential_id, acting_user=current_user
+            )
+        except ValueError as error:
+            raise field_acceptance_credential_mutation_http_error(error) from error
+
+    return router
+
+
 # --- Central authorization gate --------------------------------------------
 
 
@@ -340,6 +458,30 @@ _TIER_MINIMUM_ROLE: dict[PolicyTier, UserRole | None] = {
 # Node identity separation") -- this prefix is the *only* place that
 # separation is expressed in this module.
 DEVICE_PATH_PREFIXES: tuple[str, ...] = ("/api/camera-nodes/transport",)
+
+# Non-Interactive Field Acceptance Authentication & Session Access v1: the
+# one, small, explicit set of otherwise-Administrator-tier mutations a valid
+# bearer-token field-acceptance credential may also perform -- see
+# docs/non-interactive-field-acceptance-authentication-session-access-v1-
+# contract.md "Principle of least privilege". Every other `authenticated`
+# -tier route (streams, visits, evidence, counterfactual lineage, health,
+# and so on) is already reachable by that same credential via the
+# `PolicyTier.authenticated` branch below, with no allowlist needed --
+# reusing the existing Viewer floor's own read/alert-ack breadth rather
+# than building a second, bespoke per-endpoint scoping mechanism (see the
+# contract's own "Read scope" for why this is a deliberate, disclosed
+# choice, not an oversight). This tuple is deliberately as short as the
+# governing brief's own required workflow, not "every operational capture
+# control" (`monitor/start`, `live-motion/start`, `audio-capture/start`, and
+# similar siblings deliberately stay Administrator-only, unreachable by this
+# credential) -- kept as a flat, hand-auditable table, matching `ROUTE_
+# POLICY`'s own explicit-over-clever philosophy immediately below.
+FIELD_ACCEPTANCE_ALLOWED_ADMIN_ROUTES: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("POST", "/api/streams/{stream_id}/observation/start"),
+        ("POST", "/api/streams/{stream_id}/observation/stop"),
+    }
+)
 
 # Reachable with no session at all. Kept short and every entry commented:
 # each is either needed before any session can exist (setup/sign-in), or
@@ -530,6 +672,18 @@ def _resolve_tier(request: Request) -> PolicyTier:
     return PolicyTier.authenticated
 
 
+def _matches_field_acceptance_allowlist(request: Request) -> bool:
+    """Whether this request's *actual dispatch route* (via the same real
+    `Route.matches` resolution `_resolve_tier` already used, never a raw
+    `request.url.path` string compare) is one of the small, explicit
+    `FIELD_ACCEPTANCE_ALLOWED_ADMIN_ROUTES` entries a field-acceptance
+    credential may perform despite otherwise needing Administrator."""
+
+    route = _match_route(request)
+    path = getattr(route, "path", "") if route is not None else ""
+    return (request.method, path) in FIELD_ACCEPTANCE_ALLOWED_ADMIN_ROUTES
+
+
 def _deny(status_code: int, message: str) -> JSONResponse:
     # Matches the universal `{"detail": "..."}` shape every existing
     # `HTTPException(detail=...)` produces (see docs/local-identity-multi-
@@ -561,12 +715,44 @@ def install_authorization(app: "FastAPI", *, get_repository: Callable[[], "Produ
             current_user = get_repository().resolve_session(token)
         request.state.current_user = current_user
 
+        # Non-Interactive Field Acceptance Authentication & Session Access
+        # v1: resolved independently of, and never merged into, `current_
+        # user` above -- a field-acceptance credential is deliberately not
+        # a `UserModel`/`CurrentUser` identity (see `FieldAcceptanceCredent
+        # ialModel`'s own docstring). Resolving it unconditionally (not only
+        # when no cookie session was found) keeps the two identities fully
+        # independent, so a request carrying both is judged on whichever
+        # one actually satisfies the tier below, never on which was checked
+        # first.
+        field_acceptance_principal: FieldAcceptancePrincipal | None = None
+        bearer_token = _bearer_token(request)
+        if bearer_token:
+            field_acceptance_principal = get_repository().resolve_field_acceptance_token(bearer_token)
+        request.state.field_acceptance_principal = field_acceptance_principal
+
         tier = _resolve_tier(request)
         if tier in (PolicyTier.public, PolicyTier.device):
             return await call_next(request)
-        if current_user is None:
+
+        if tier == PolicyTier.authenticated:
+            # The Viewer floor: reachable by a signed-in human of any role,
+            # or by a valid field-acceptance credential -- see `FIELD_
+            # ACCEPTANCE_ALLOWED_ADMIN_ROUTES`'s own docstring for why this
+            # credential's read scope is deliberately the existing Viewer
+            # floor rather than a narrower bespoke allowlist.
+            if current_user is not None or field_acceptance_principal is not None:
+                return await call_next(request)
             return _deny(401, "Sign in to continue.")
-        minimum_role = _TIER_MINIMUM_ROLE.get(tier)
-        if minimum_role is not None and not role_at_least(current_user.role, minimum_role):
-            return _deny(403, f"This action requires {minimum_role.value.capitalize()} access.")
-        return await call_next(request)
+
+        minimum_role = _TIER_MINIMUM_ROLE[tier]
+        if current_user is not None and role_at_least(current_user.role, minimum_role):
+            return await call_next(request)
+        if (
+            tier == PolicyTier.administrator
+            and field_acceptance_principal is not None
+            and _matches_field_acceptance_allowlist(request)
+        ):
+            return await call_next(request)
+        if current_user is None and field_acceptance_principal is None:
+            return _deny(401, "Sign in to continue.")
+        return _deny(403, f"This action requires {minimum_role.value.capitalize()} access.")

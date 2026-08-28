@@ -524,6 +524,22 @@ invitations, cloud user accounts, mobile/PWA, notifications, HA
 clustering, Kubernetes, remote relay, public-Internet-exposure
 automation, ACME/PKI infrastructure, and fine-grained enterprise RBAC.
 
+## Later addition: non-interactive field-acceptance credentials
+
+Non-Interactive Field Acceptance Authentication & Session Access v1
+(schema 58; see
+[non-interactive-field-acceptance-authentication-session-access-v1-contract.md](non-interactive-field-acceptance-authentication-session-access-v1-contract.md))
+added a second, narrow, parallel, bearer-token-authenticated identity --
+"Field Acceptance Operator" -- for bounded non-interactive tooling, mirroring
+this document's own "Camera Node identity separation" precedent rather than
+extending the Viewer/Reviewer/Administrator ladder above. It is checked by
+the exact same central `install_authorization` gate this document describes,
+provisioned only by an already-signed-in Administrator, and can reach
+nothing beyond the existing Viewer read floor plus one explicit,
+Administrator-tier exception (Observation start/stop). See that document
+for the full design; nothing in this document's own Viewer/Reviewer/
+Administrator model changed.
+
 ## Known bounded gaps
 
 - `POST /api/review-queue/bulk-correct` accepts an optional per-`target_id`
