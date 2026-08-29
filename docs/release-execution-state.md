@@ -28,8 +28,12 @@ protecting.
   Only / Privacy Closure v1 (its own separate documentation-only report
   commit, `64f0a4d`, sits directly on top and is not cited here as a
   second, separate code-bearing HEAD, matching this field's established
-  convention). `9c52c7f` (Retention Correctness & Bounded Cleanup Closure
-  v1's own implementation commit), `fe54ac9` (Storage / Retention /
+  convention). Native-Windows Packaged Local-Only Acceptance & Privacy
+  Closure v1's own report commit (`c8016b9`) also sits on top, likewise
+  not cited as a separate code-bearing HEAD -- that milestone found zero
+  reproduced defects and changed zero production code, so it added only
+  its own report file. `9c52c7f` (Retention Correctness & Bounded Cleanup
+  Closure v1's own implementation commit), `fe54ac9` (Storage / Retention /
   Disk-Pressure & Recovery Closure v1's own implementation commit),
   `1656f1a` (Non-Interactive Field Acceptance Authentication & Session
   Access v1's own implementation commit), `18a0025` (Whole-Product UI /
@@ -41,12 +45,77 @@ protecting.
   those closures (`7f98e43`, `8572308`, `4581424`, `4aeb658`, `e01e691`,
   `c03d0b1`, `80e1bb3`) are likewise not cited as separate code-bearing
   HEADs for the identical reason.
-- **Schema:** `v58` -- unchanged by this milestone. Local Only / Privacy
-  Closure v1 changed zero production code (see its own "Latest accepted
-  milestone" entry, immediately below): its own investigation found zero
-  reproduced Local Only/privacy defects, so the only new file is an
-  additive test module.
-- **Latest accepted milestone:** Local Only / Privacy Closure v1 -- see
+- **Schema:** `v58` -- unchanged by this milestone. Native-Windows
+  Packaged Local-Only Acceptance & Privacy Closure v1 changed zero
+  production code (see its own "Latest accepted milestone" entry,
+  immediately below): a real, live, native-Windows acceptance run found
+  zero reproduced defects.
+- **Latest accepted milestone:** Native-Windows Packaged Local-Only
+  Acceptance & Privacy Closure v1 -- see
+  [native-windows-packaged-local-only-acceptance-privacy-closure-v1-report.md](native-windows-packaged-local-only-acceptance-privacy-closure-v1-report.md)
+  for the complete record. Classification **A**. Closes both material gaps
+  Local Only / Privacy Closure v1's own "Remaining risks" left open:
+  actual native-Windows packaged runtime, and assets-present MDv5a/
+  BioCLIP-2 operation under internet denial. Built and deployed the
+  accepted native-Windows packaging path (`scripts/deploy_windows_dev.py`
+  over `scripts/build_local_product.py`'s real release logic) to a fresh,
+  disposable `--dev-root` -- never the operator's long-lived
+  `MockingBirdDev` identity -- with **no skip flags**, so the release
+  genuinely carries the full GPU/CUDA and BioCLIP dependency closures plus
+  both packaged model bundles. Internet denial used a real, disposable,
+  user-mode HTTP(S) egress-filtering proxy (no Administrator token is
+  available in this interop session, confirmed directly, so a kernel
+  firewall rule was not available -- the same class of environment-
+  appropriate substitution the prior milestone made in the other
+  direction for WSL): every optional-provider `CONNECT`/request the
+  MockingBird process attempted was classified by real destination IP and
+  either relayed (loopback/LAN) or refused before any real connection,
+  independently corroborated by a live, zero-external-connections
+  `Get-NetTCPConnection` snapshot and by the same mechanism separately
+  catching a real headless Edge browser's own unrelated background
+  telemetry. LAN preservation was proven live, not just configured: a
+  proxied request to the project's real reference Camera Node returned a
+  real `200` health payload. MDv5a and BioCLIP-2 were both proven
+  initializing and running real local inference at the exact production
+  code path (not a status flag) -- SHA-256 fingerprints matching this
+  project's own accepted provenance record, real CUDA execution-provider
+  selection for MDv5a, a real forward pass for BioCLIP-2 -- both before
+  and after network denial, with the proxy log showing **zero** entries
+  from either run (no download, no HF/network fallback attempted). Caught
+  and worked around, before accepting it as evidence, a real environment-
+  contamination finding: persistent User-level environment variables left
+  over from earlier, unrelated dev sessions on this same Windows machine
+  were silently redirecting BioCLIP resolution to a `\\wsl.localhost\...`
+  path rather than the packaged bundle -- cleared per-process (never
+  touching the persistent value) for every launch this milestone made,
+  disclosed plainly as a methodology fact about this specific reused dev
+  machine, not a product defect. A real browser render (headless Edge,
+  offline, routed through the same proxy) showed the packaged frontend
+  rendering correctly -- proper typography, layout, and product copy, zero
+  external dependency. All 16 named core workflows were exercised live
+  against real seeded product-shaped data, including a real local backup
+  (created, verified, confirmed on disk) and a real review correction
+  (submitted, immediately reflected). Both live optional-provider drills
+  (weather, iNaturalist) degraded gracefully under real forced
+  unreachability, with no retry storm and `ready: true` throughout. The
+  camera-credential-at-rest question Local Only / Privacy Closure v1 left
+  open was resolved by direct code/doc investigation to a documented
+  non-defect: credentials are stored plaintext, exactly as the existing
+  `docs/local-identity-multi-user-contract.md` already discloses, and no
+  contract anywhere promises otherwise. Zero reproduced Local Only/privacy
+  defects were found, so zero production code changed;
+  `tests/test_local_only_privacy.py` was re-run clean (8/8) as the
+  validation evidence, per the governing brief's own explicit guidance not
+  to run a full Core gate for a zero-code-change acceptance milestone.
+  Worktree safety reconfirmed throughout (the seven preserved untracked
+  detector files byte-identical at start and end). Lane N is now
+  genuinely, fully reconciled to **closed** (§6, below) -- both proofs the
+  prior closure's own classification B explicitly named as missing are
+  now real. This closure does **not** authorize the next Representative
+  Field Acceptance / Gate A session, External Pre-Release Acceptance, or
+  Final Release Hardening, and does **not** select a next development
+  milestone -- see §3, below.
+- **Prior accepted milestone:** Local Only / Privacy Closure v1 -- see
   [local-only-privacy-closure-v1-report.md](local-only-privacy-closure-v1-report.md)
   for the complete record. Classification **B**. A bounded, release
   -critical privacy/product-correctness milestone (Lane N) proving
@@ -812,6 +881,46 @@ preserved here, not relaxed.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+Native-Windows Packaged Local-Only Acceptance & Privacy Closure v1
+(directly authorized outside this file, as a bounded release-critical
+acceptance milestone closing the two specific gaps Local Only / Privacy
+Closure v1's own classification B left open, reconciled here at its own
+closure) is now accepted at classification **A** -- see §1, above, Lane N,
+§6, above, and
+[native-windows-packaged-local-only-acceptance-privacy-closure-v1-report.md](native-windows-packaged-local-only-acceptance-privacy-closure-v1-report.md)
+for the full record. Confirmed the starting-state discrepancy before
+proceeding: this file's own text (post the prior milestone's own
+reconciliation) already said Lane N "closed," while the governing brief
+for this milestone stated -- correctly, per ChatGPT's actual acceptance
+review of that same prior report -- that two material proofs remained
+(native-Windows packaged runtime; assets-present MDv5a/BioCLIP-2 operation
+under internet denial). Treated the brief's framing as authoritative,
+proceeded to actually close both gaps with real evidence rather than
+treating the discrepancy as a stop-and-report contradiction, per the
+brief's own explicit resolution of it. Both gaps are now closed for real:
+a fresh, disposable, no-skip-flags native-Windows packaged deployment
+(never the operator's long-lived dev identity); a real, disposable,
+process-level internet-denial mechanism (the only kind available without
+an Administrator token in this environment, independently corroborated by
+live OS-level connection accounting and by the same mechanism catching a
+real browser's own unrelated background traffic); both production models
+proven initializing and running real local inference at the exact
+production code path, both before and after denial, with independently-
+confirmed zero network activity; a real offline browser render; all 16
+named core workflows exercised live, including a real backup and a real
+review correction; both live optional-provider drills degrading
+gracefully with no retry storm; and the camera-credential-at-rest question
+resolved to a documented non-defect. Zero reproduced Local Only/privacy
+defects were found across either milestone -- this milestone changed zero
+production code, adding only its own report. This closure does **not**
+authorize the next Representative Field Acceptance / Gate A session,
+External Pre-Release Acceptance, or Final Release Hardening, and does
+**not** select a next development milestone -- see the bold statement
+immediately above, unchanged by this closure. `roadmap.md` was not
+edited -- this milestone is a bounded acceptance/correctness closure
+confined to native-Windows/privacy verification, not a roadmap-scope
+change.
 
 Local Only / Privacy Closure v1 (directly authorized outside this file,
 as a bounded release-critical privacy/product-correctness milestone,
@@ -1736,22 +1845,28 @@ remains open.
 ### N. Privacy / Contribution
 
 **Status:** CLOSED -- RELEASE-CRITICAL. Local Only / Privacy Closure v1
-closed this lane's Local Only requirement at classification **B**; see
-§1/§3, above, and
-[local-only-privacy-closure-v1-report.md](local-only-privacy-closure-v1-report.md).
-A real, live, OS-level network-denial runtime acceptance (not static
-inspection alone) proved core product functionality -- authenticated
-access, Streams/Observation start-stop, Visit/history, review, local
-model status, health, local environmental baseline, local backup -- works
-with zero internet route available, zero reproduced Local Only/privacy
-defect found. The two live, feature-gated explicit-optional-provider call
-sites this milestone found (weather; iNaturalist taxonomy lookup) both
-already fail independently and gracefully, live-proven under forced
-unreachability, not merely code-read. Not classification A: this
-session's own acceptance ran the Linux/WSL dev checkout rather than the
+first closed this lane's Local Only requirement at classification **B**
+(see
+[local-only-privacy-closure-v1-report.md](local-only-privacy-closure-v1-report.md)),
+proving core product functionality works with zero internet route
+available via a real, live, OS-level network-denial runtime acceptance --
+but that acceptance ran the Linux/WSL dev checkout rather than the
 packaged native-Windows artifact, and exercised the model-assets-absent
-path rather than assets-present -- named explicitly, not a suspected
-defect (see the report's "Remaining risks").
+path rather than assets-present, both named explicitly as the reason it
+was not classification A. Native-Windows Packaged Local-Only Acceptance &
+Privacy Closure v1 (see §1/§3, above, and
+[native-windows-packaged-local-only-acceptance-privacy-closure-v1-report.md](native-windows-packaged-local-only-acceptance-privacy-closure-v1-report.md))
+closed both of those specific gaps at classification **A**: a real
+disposable native-Windows packaged deployment (full GPU/BioCLIP dependency
+closure, no skip flags), a real (non-kernel, environment-appropriate)
+internet-denial mechanism with independent OS-level corroboration, and
+both production models (MDv5a, BioCLIP-2) proven initializing and running
+real local inference at the exact production code path both before and
+after denial, with zero outbound network activity. The camera-credential-
+at-rest question this lane's prior closure left open is now resolved to a
+documented non-defect (plaintext at rest, no contract promises
+otherwise -- see that report's own "Camera credential storage" section).
+Zero reproduced Local Only/privacy defects across either milestone.
 
 **Local Only.** Operational/default requirement. Confirmed met -- see
 above.
