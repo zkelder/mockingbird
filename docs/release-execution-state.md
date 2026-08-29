@@ -79,9 +79,16 @@ protecting.
   (referenced-hash walk over every currently-on-disk retained release, plus
   an unconditional orphaned-`.staging-*`/`.stale-*` sweep) -- 11 new tests,
   `tests/test_deploy_windows_dev.py`: 123 passed; `ruff check` clean on
-  both changed files. Applied live against the real Windows dev host to
-  reclaim real disk space (see the milestone report for exact before/after
-  figures). Separately, deep archaeology of the already-accepted storage-
+  both changed files. Applied live against the real Windows dev host,
+  completing cleanly (exit code 0): `%LOCALAPPDATA%\MockingBirdDev` fell
+  from 55.7GB to 26.1GB and real `C:` free space rose from ~20-23GB to
+  ~51-52GB (96% -> 90% full) in one real, verified pass -- 17 stale release
+  directories and 16 unreferenced/orphaned cache entries actually removed
+  (`releases/` correctly settling at exactly the 5 protected/kept:
+  `a56081a`, `248853a`, `f609c89`, `db8588c`, `80e1bb3`), independently
+  cross-confirmed by the matching rise in real `C:` free space (see the
+  milestone report for the complete numbers). Separately, deep archaeology
+  of the already-accepted storage-
   retention/backup/Doctor product contract (`docs/appliance-storage-
   privacy-recovery-v1-contract.md`, accepted 2026-08-23) -- re-verified,
   not rebuilt, via 349 real, independently re-run passing tests across the
