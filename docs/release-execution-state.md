@@ -24,21 +24,92 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `1656f1a` -- the implementation commit for
-  Non-Interactive Field Acceptance Authentication & Session Access v1
-  (its own separate documentation-only report commit, `16ffe1e`, sits
-  directly on top and is not cited here as a second, separate code-bearing
-  HEAD, matching this field's established convention). `18a0025`
-  (Whole-Product UI / Accessibility / Performance Closure v1's own
-  implementation commit), One-Release Roadmap & Scheduler Reconciliation
-  v1's own commit (documentation-only, `4312b18`), and Camera Node Upgrade
-  & Compatibility Recovery v1's own three implementation commits sit
-  underneath it in history; the two intervening reconciliation commits for
-  those closures (`c03d0b1`, `80e1bb3`) are likewise not cited as
-  separate code-bearing HEADs for the identical reason.
-- **Schema:** `v57 -> v58` -- one new additive table,
-  `field_acceptance_credentials` (see below).
-- **Latest accepted milestone:** Non-Interactive Field Acceptance
+- **Accepted HEAD:** `fe54ac9` -- the implementation commit for
+  Storage / Retention / Disk-Pressure & Recovery Closure v1 (its own
+  separate documentation-only report commit sits directly on top and is
+  not cited here as a second, separate code-bearing HEAD, matching this
+  field's established convention). `1656f1a` (Non-Interactive Field
+  Acceptance Authentication & Session Access v1's own implementation
+  commit), `18a0025` (Whole-Product UI / Accessibility / Performance
+  Closure v1's own implementation commit), One-Release Roadmap & Scheduler
+  Reconciliation v1's own commit (documentation-only, `4312b18`), and
+  Camera Node Upgrade & Compatibility Recovery v1's own three
+  implementation commits sit underneath it in history; the intervening
+  reconciliation commits for those closures (`e01e691`, `c03d0b1`,
+  `80e1bb3`) are likewise not cited as separate code-bearing HEADs for the
+  identical reason.
+- **Schema:** `v58` -- unchanged by this milestone. Every fix Storage /
+  Retention / Disk-Pressure & Recovery Closure v1 made lives entirely in
+  `scripts/deploy_windows_dev.py` (dev-deployment tooling) and its own test
+  file -- confirmed by direct grep that nothing under `src/mockingbird/`
+  imports it; no product, persistence, or schema code was touched.
+- **Latest accepted milestone:** Storage / Retention / Disk-Pressure &
+  Recovery Closure v1 -- see
+  [storage-retention-disk-pressure-recovery-closure-v1-report.md](storage-retention-disk-pressure-recovery-closure-v1-report.md)
+  for the complete record. Classification **B**. A bounded, release-critical
+  storage/reliability milestone (Lane M) that also determined the cause and
+  product significance of the Windows Host free-space decline this file's
+  own 2026-08-28 Lane R entry (below) first surfaced (`43.07GB -> 18.8GB`,
+  2026-08-20 -> 2026-08-28) but left open. Real, directly-measured disk
+  accounting (native `powershell.exe` interop against the real Windows dev
+  host, not estimated) found the single largest consumer anywhere in the
+  investigation: `%LOCALAPPDATA%\MockingBirdDev\runtime\` (the dev-only
+  `deploy_windows_dev.py` tool's runtime/model/BioCLIP-model cache) held
+  38.5GB across 21 never-pruned entries, including 6.25GB of definite
+  orphaned `.staging-*`/`.stale-*` leftovers from interrupted cache
+  populations -- a real, previously-disclosed-and-deliberately-deferred gap
+  (`docs/windows-dev-deployment-design.md`'s own "Left for follow-up"
+  section had judged this "unlikely to matter in practice," a judgment
+  real measurement falsifies). Combined with the field-acceptance
+  recorder's own real output directory (11.5GB, genuine evidentiary
+  artifacts from the project's own real 2026-08-19/08-20/08-21 daylight/
+  dusk sessions, not waste), directly-dated entries created inside the
+  exact 2026-08-20 -> 2026-08-28 decline window account for roughly 72%
+  of the observed 24.27GB decline -- **disposition B: MockingBird
+  development/test-artifact accumulation, root-caused, product
+  unaffected**. Neither growth path exists in, or is reachable by, a real
+  end-user installation: `%LOCALAPPDATA%\MockingBird` (the real production
+  runtime home) measures 1.1MB on this same machine, and the real product's
+  own upgrade mechanism (Release Engineering Foundation v1) is a
+  structurally different, single-version, database-level-pre-migration-
+  backup-only design with no multi-version content-addressed cache at all.
+  Fixed: a new `gc_cache_command`/`--gc-cache` flag in
+  `scripts/deploy_windows_dev.py` implementing exactly the bounded shape
+  the design doc's own deferred-follow-up section had already named
+  (referenced-hash walk over every currently-on-disk retained release, plus
+  an unconditional orphaned-`.staging-*`/`.stale-*` sweep) -- 11 new tests,
+  `tests/test_deploy_windows_dev.py`: 123 passed; `ruff check` clean on
+  both changed files. Applied live against the real Windows dev host to
+  reclaim real disk space (see the milestone report for exact before/after
+  figures). Separately, deep archaeology of the already-accepted storage-
+  retention/backup/Doctor product contract (`docs/appliance-storage-
+  privacy-recovery-v1-contract.md`, accepted 2026-08-23) -- re-verified,
+  not rebuilt, via 349 real, independently re-run passing tests across the
+  whole storage/retention/backup/doctor/deploy-tooling family -- found and
+  precisely disclosed (not fixed, each safe-direction/non-release-blocking,
+  none warranting a rushed change to the highest-stakes retention-
+  eligibility code under this milestone's own time bound) one real
+  documentation-vs-code mismatch (imported/folder-imported media is
+  over-retained forever, contrary to the accepted contract's own explicit
+  "same rules as any other Visit-linked evidence" claim -- empirically
+  reproduced, zero pre-existing test coverage for this exact path) plus
+  three smaller gaps (a `"staging"`-state cleanup batch can only ever be
+  restored, never purged; `storage_cleanup_history`'s own
+  `MAX_STORAGE_CLEANUP_HISTORY_ITEMS` constant does not actually bound the
+  underlying table, only a read-page/chunk size; no orphan-media,
+  file-with-no-DB-owner, detection exists anywhere in the product, a
+  structural gap distinct from, and confirmed still bounded/low-materiality
+  for, the already-accepted Concurrent Candidate Visit Persistence
+  Reliability v1 milestone's own disclosed orphan possibility, not
+  reopened). No schema change; Tier 3 (full Core) not run, matching this
+  codebase's own established precedent for changes confined entirely to
+  `scripts/` deployment tooling with zero importers in `src/mockingbird/`
+  (Camera Node Upgrade & Compatibility Recovery v1 made the identical call
+  for the identical reason). Does **not** authorize the next Representative
+  Field Acceptance / Gate A session, External Pre-Release Acceptance, or
+  Final Release Hardening, and does **not** select a next development
+  milestone -- see §3, below.
+- **Prior accepted milestone:** Non-Interactive Field Acceptance
   Authentication & Session Access v1 -- see
   [non-interactive-field-acceptance-authentication-session-access-v1-report.md](non-interactive-field-acceptance-authentication-session-access-v1-report.md)
   for the complete record. Classification **A**. A bounded, release-critical
@@ -572,6 +643,38 @@ preserved here, not relaxed.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+Storage / Retention / Disk-Pressure & Recovery Closure v1 (directly
+authorized outside this file, as a bounded release-critical storage/
+reliability milestone, reconciled here at its own closure) is now accepted
+at classification **B** -- see §1, above, Lane M, §6, below, and
+[storage-retention-disk-pressure-recovery-closure-v1-report.md](storage-retention-disk-pressure-recovery-closure-v1-report.md)
+for the full record. Determines, with real directly-measured evidence, the
+cause of the Windows Host free-space decline this file's own 2026-08-28
+Lane R entry (below) first surfaced and left open: **disposition B**
+(MockingBird development/test-artifact accumulation -- `deploy_windows_
+dev.py`'s own never-garbage-collected runtime/model cache, 38.5GB, the
+single largest consumer found anywhere in the investigation, plus the
+field-acceptance recorder's own real output directory, 11.5GB -- together
+accounting for roughly 72% of the exact dated decline window; neither path
+is reachable by a real end-user installation). The dominant contributor is
+fixed (`--gc-cache`, applied live against the real Windows dev host). This
+closure classifies **B**, not A, because the remaining ~28% of the exact
+decline window was not individually attributed to a single further cause
+(disclosed honestly rather than forced to round), and because three real,
+precisely-disclosed, safe-direction product-side retention findings
+(imported-media over-retention against its own documented contract; a
+`"staging"`-batch purge-path gap; a cosmetically-misnamed, slowly-
+unbounded `storage_cleanup_history` constant) were deliberately left
+disclosed rather than fixed under this milestone's own bounded time
+budget, each requiring either new test coverage this milestone did not
+build or a change to the highest-stakes retention-eligibility code this
+milestone judged not warranted without it. This closure does **not**
+itself authorize the next Representative Field Acceptance / Gate A
+session, External Pre-Release Acceptance, or Final Release Hardening, and
+does **not** select a next development milestone. `roadmap.md` was not
+edited -- this milestone is a bounded investigation/dependency-tooling fix,
+not a roadmap-scope change.
 
 Non-Interactive Field Acceptance Authentication & Session Access v1
 (directly authorized outside this file, as a bounded release-critical
@@ -1340,12 +1443,29 @@ and
 
 ### M. Storage / Retention UX
 
-**Status:** PARTIAL -- RELEASE-CRITICAL.
-
-Need integrated acceptance under: disk pressure; long-running storage
-growth; cleanup; retention; DB/media consistency; backup visibility;
-recovery. NAS/external-storage support remains an explicit product
-decision, not an automatic blocker.
+**Status:** MATERIALLY CLOSED -- RELEASE-CRITICAL. Integrated acceptance
+performed by Storage / Retention / Disk-Pressure & Recovery Closure v1
+(2026-08-28), classification **B** -- see §1/§3, above, and
+[storage-retention-disk-pressure-recovery-closure-v1-report.md](storage-retention-disk-pressure-recovery-closure-v1-report.md).
+Disk-pressure detection (a real, tested, graduated healthy/getting_low/
+action_recommended/critical ladder), long-running storage growth (real,
+directly-measured accounting on both the WSL dev host and the real Windows
+deployment), cleanup/retention (349 real tests, independently re-run,
+covering eligibility/idempotency/interruption-safety/transactional
+ordering), DB/media consistency (traced precisely in both directions), and
+backup visibility (Doctor-surfaced staleness/unreadable-count/interrupted-
+restore, all real and tested) were each verified integrated, not merely
+inspected in isolation. NAS/external-storage support remains an explicit
+product decision, not an automatic blocker, and was not built. Real,
+precisely-disclosed, safe-direction remaining gaps (imported-media
+over-retention against its own documented contract; a `"staging"`-batch
+purge-path gap; a cosmetically-misnamed `storage_cleanup_history` bound;
+no orphan-media/no-DB-owner detection anywhere in the product) are why
+this reads "materially closed," not "fully closed" -- none is
+release-blocking, none causes data loss, and each was deliberately left
+disclosed rather than risked as a rushed fix to high-stakes retention-
+eligibility code -- see the milestone report's "Remaining risks" for the
+complete, concrete list.
 
 ### N. Privacy / Contribution
 
