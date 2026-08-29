@@ -575,14 +575,26 @@ skipped, never failed, on a build host without that cache.
 
 ## Left for follow-up (deliberately out of scope here)
 
-- **Cache garbage collection.** `--keep` bounds *release* directories only;
-  a runtime/model cache entry no retained release still references is never
-  automatically removed. Given the cache is small in count (one entry per
-  distinct dependency/model version actually built, not per commit) this is
-  unlikely to matter in practice; a bounded `--gc-cache` pass (walk every
-  retained release's recorded `runtime_hash`/`model_hash`, remove any cache
-  directory none of them reference) would be a natural, self-contained
-  addition later.
+- ~~**Cache garbage collection.** `--keep` bounds *release* directories
+  only; a runtime/model cache entry no retained release still references is
+  never automatically removed. Given the cache is small in count (one entry
+  per distinct dependency/model version actually built, not per commit)
+  this is unlikely to matter in practice; a bounded `--gc-cache` pass (walk
+  every retained release's recorded `runtime_hash`/`model_hash`, remove any
+  cache directory none of them reference) would be a natural, self-contained
+  addition later.~~ -- **closed, Storage / Retention / Disk-Pressure &
+  Recovery Closure v1**: the "unlikely to matter in practice" judgment was
+  wrong. Real measurement on this project's own real dev machine found 21
+  never-pruned entries under `RUNTIME_CACHE_DIRNAME` alone (~38.5 GB,
+  including 6.25 GB of definite orphaned `.staging-*`/`.stale-*` leftovers
+  from interrupted cache populations) -- the single largest disk consumer
+  found anywhere in that investigation, and the dominant, dated,
+  directly-quantified driver of a real observed Windows Host `C:`
+  free-space decline. `gc_cache_command`/`--gc-cache` now implements
+  exactly the shape predicted above (referenced-hash walk over every
+  currently-on-disk retained release, plus an unconditional
+  `.staging-*`/`.stale-*` sweep) -- see
+  [storage-retention-disk-pressure-recovery-closure-v1-report.md](storage-retention-disk-pressure-recovery-closure-v1-report.md).
 - **A native Windows robocopy path for first-time cache population.** The
   one unavoidable full-size transfer (populating a cache entry for a new
   runtime/model hash) currently copies file-by-file from WSL Python
