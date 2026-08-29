@@ -24,11 +24,12 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `9c52c7f` -- the implementation commit for
-  Retention Correctness & Bounded Cleanup Closure v1 (its own separate
-  documentation-only report commit, `2624a41`, sits directly on top and
-  is not cited here as a second, separate code-bearing HEAD, matching
-  this field's established convention). `fe54ac9` (Storage / Retention /
+- **Accepted HEAD:** `81dec47` -- the implementation commit for Local
+  Only / Privacy Closure v1 (its own separate documentation-only report
+  commit, `64f0a4d`, sits directly on top and is not cited here as a
+  second, separate code-bearing HEAD, matching this field's established
+  convention). `9c52c7f` (Retention Correctness & Bounded Cleanup Closure
+  v1's own implementation commit), `fe54ac9` (Storage / Retention /
   Disk-Pressure & Recovery Closure v1's own implementation commit),
   `1656f1a` (Non-Interactive Field Acceptance Authentication & Session
   Access v1's own implementation commit), `18a0025` (Whole-Product UI /
@@ -37,20 +38,85 @@ protecting.
   (documentation-only, `4312b18`), and Camera Node Upgrade &
   Compatibility Recovery v1's own three implementation commits sit
   underneath it in history; the intervening reconciliation commits for
-  those closures (`8572308`, `4581424`, `4aeb658`, `e01e691`, `c03d0b1`,
-  `80e1bb3`) are likewise not cited as separate code-bearing HEADs for the
-  identical reason.
-- **Schema:** `v58` -- unchanged by this milestone. All three fixes reuse
-  existing columns (`VisitModel.is_superseded`/`representative_media_
-  path`, `MediaAssetModel.created_at`, and the existing
-  `StorageCleanupBatchModel`/`StorageCleanupItemModel` state vocabulary)
-  -- the data model already fully supported the documented/intended
-  behavior in all three cases; no new table, no new column. Every prior
-  fix Storage / Retention / Disk-Pressure & Recovery Closure v1 made
-  lives entirely in `scripts/deploy_windows_dev.py` (dev-deployment
-  tooling) and its own test file, unchanged and untouched by this
-  milestone.
-- **Latest accepted milestone:** Retention Correctness & Bounded Cleanup
+  those closures (`7f98e43`, `8572308`, `4581424`, `4aeb658`, `e01e691`,
+  `c03d0b1`, `80e1bb3`) are likewise not cited as separate code-bearing
+  HEADs for the identical reason.
+- **Schema:** `v58` -- unchanged by this milestone. Local Only / Privacy
+  Closure v1 changed zero production code (see its own "Latest accepted
+  milestone" entry, immediately below): its own investigation found zero
+  reproduced Local Only/privacy defects, so the only new file is an
+  additive test module.
+- **Latest accepted milestone:** Local Only / Privacy Closure v1 -- see
+  [local-only-privacy-closure-v1-report.md](local-only-privacy-closure-v1-report.md)
+  for the complete record. Classification **B**. A bounded, release
+  -critical privacy/product-correctness milestone (Lane N) proving
+  MockingBird's core product works Local Only, with no cloud account,
+  contribution pathway, remote service, analytics dependency, external
+  telemetry requirement, or provider credential required for ordinary
+  use. Two independent bounded static-inventory passes (backend:
+  `src/mockingbird/`, `src/mockingbird_node/`, all of `scripts/`,
+  `pyproject.toml`/`uv.lock`; frontend: `web/src/` plus the real
+  *compiled* `web/dist/assets/*.js` output) found: local production
+  inference (MDv5a ONNX, BioCLIP-2, BirdNET) loads exclusively from local
+  paths, with `HF_HUB_OFFLINE`/`TRANSFORMERS_OFFLINE`/
+  `HF_DATASETS_OFFLINE` defense-in-depth already present on the BioCLIP
+  path; zero telemetry/analytics/crash-reporting dependency anywhere in
+  the packaged dependency closure; zero mandatory external frontend
+  runtime asset (only 3 harmless external-origin strings exist in the
+  entire shipped JS bundle, none a fetch target); weather (Open-Meteo,
+  off by default) and iNaturalist taxonomy lookup (gated by feature use,
+  not a settings flag -- named explicitly since a search for only a
+  persistent "enabled" flag would undercount it) are the only two live
+  explicit-optional-provider call sites reachable from ordinary runtime,
+  both already well-hardened (bounded timeouts, typed failure exceptions
+  always caught, never poison a cache, never raise); no Derived Data
+  Contribution/media-upload pathway is implemented in the codebase at
+  all yet (every real "contribution" code hit is an unrelated internal
+  scene-confusor-region bookkeeping concept), so contribution privacy is
+  presently a non-question rather than a verified opt-in flow, stated
+  plainly rather than overclaimed. A real runtime acceptance then ran a
+  fresh disposable instance entirely inside a genuine, OS-level,
+  unprivileged network namespace (`unshare --net --map-root-user`, real
+  loopback confirmed working via an actual "connection refused" on an
+  unbound port, every other interface absent -- not a firewall rule that
+  could have a gap) -- proving 22 core authenticated API routes plus the
+  frontend document and a hashed asset all return `200` with zero
+  outbound connection possible; Observation start/stop against the
+  seeded demo Stream degrades honestly rather than crashing; a real
+  local backup creation succeeds and lands on local disk; and, with
+  weather and iNaturalist taxonomy lookup both deliberately enabled and
+  forced unreachable, every affected response still degrades gracefully
+  (bounded latency across 5 rapid repeats, no retry-storm growth,
+  `/api/product/health` stays `ready: true` throughout). A fresh, live,
+  separate LAN-reachability check (outside the denied namespace,
+  immediately afterward) confirmed the same sandbox that just proved
+  zero internet dependency can still reach the project's real reference
+  Camera Node over LAN -- direct evidence for the offline-vs-LAN-local
+  distinction, not only an assertion of it. Zero reproduced Local Only/
+  privacy defects were found, so zero production code changed; 8 new
+  tests (`tests/test_local_only_privacy.py`) convert the live proof into
+  a fast, hermetic, dependency-injected regression (never a real
+  socket), self-verified via call-count assertions on the injected fake
+  requesters that caught and fixed one test targeting the wrong endpoint
+  before it was counted as passing evidence. Tier 2 (18 files across
+  auth/environment-provider/ecological-interoperability/export/dashboard/
+  model-adapter areas): 374 passed, 1 skipped, 0 failed. Tier 3 (full
+  Core) not run -- this milestone changed zero production code, matching
+  this codebase's own established precedent for non-cross-cutting
+  changes. `ruff check`: clean on the one new file. Classification **B**,
+  not A: every functional acceptance-bar dimension is satisfied with
+  real, live evidence, but this session's own runtime acceptance ran the
+  Linux/WSL dev checkout rather than the packaged native-Windows
+  artifact end users receive, and exercised the model-assets-absent path
+  rather than assets-present -- both named explicitly as the one
+  material runtime-acceptance dimension left unverified fresh by this
+  session, per the governing brief's own B criterion, not because any
+  defect was found or is suspected. Lane N is now reconciled to
+  **closed** (§6, below) -- see §3, below, for the full accounting. Does
+  **not** authorize the next Representative Field Acceptance / Gate A
+  session, External Pre-Release Acceptance, or Final Release Hardening,
+  and does **not** select a next development milestone -- see §3, below.
+- **Prior accepted milestone:** Retention Correctness & Bounded Cleanup
   Closure v1 -- see
   [retention-correctness-bounded-cleanup-closure-v1-report.md](retention-correctness-bounded-cleanup-closure-v1-report.md)
   for the complete record. Classification **A**. A small, bounded,
@@ -746,6 +812,53 @@ preserved here, not relaxed.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+Local Only / Privacy Closure v1 (directly authorized outside this file,
+as a bounded release-critical privacy/product-correctness milestone,
+reconciled here at its own closure) is now accepted at classification
+**B** -- see §1, above, Lane N, §6, below, and
+[local-only-privacy-closure-v1-report.md](local-only-privacy-closure-v1-report.md)
+for the full record. Confirmed the sequencing premise before starting
+(Lane N still open/release-critical/independent; no higher-priority
+independent release-critical dependency blocks it; Lane R/Gate A still
+correctly gated on representative daylight conditions, unrelated). Proved
+the Local Only contract with real evidence rather than code inspection
+alone: a genuine OS-level, unprivileged network namespace
+(`unshare --net --map-root-user`) hosting a fresh disposable instance
+with no internet route at all (loopback confirmed working via a real
+"connection refused," not merely "everything fails the same way") --
+22 core authenticated API routes, the frontend document, a hashed asset,
+Observation start/stop against the seeded demo Stream, a real local
+backup, and two deliberate optional-provider-failure drills (weather,
+iNaturalist taxonomy lookup, both explicitly enabled and forced
+unreachable) all completed correctly with zero outbound connection
+required, zero retry storm, zero mislabeled health. A fresh, separate,
+live LAN-reachability check immediately afterward confirmed the same
+sandbox that just proved zero internet dependency can still reach the
+project's real reference Camera Node over LAN, directly evidencing
+(rather than only asserting) the offline-vs-LAN-local distinction the
+governing brief required. Zero reproduced Local Only/privacy defects
+were found -- this milestone changed zero production code; its own new
+test file (`tests/test_local_only_privacy.py`, 8 tests, self-verified via
+call-count assertions on injected fake requesters) converts the live
+proof into a standing, hermetic regression, including a trip-wire against
+any future undisclosed telemetry/analytics dependency ever being
+declared. Classification **B**, not A, because this session's own
+runtime acceptance ran the Linux/WSL dev checkout rather than the
+packaged native-Windows artifact end users receive, and exercised the
+model-assets-absent path rather than assets-present -- both named
+explicitly in the report's own "Remaining risks," not because any defect
+was found or is suspected. Lane N is now reconciled to **closed** (§6,
+below): the contract is proven and every reproduced-defect requirement is
+vacuously satisfied by real runtime acceptance (not static inspection
+alone), matching the governing brief's own stated precondition for
+closing it on that basis. This closure does **not** authorize the next
+Representative Field Acceptance / Gate A session, External Pre-Release
+Acceptance, or Final Release Hardening, and does **not** select a next
+development milestone -- see the bold statement immediately above,
+unchanged by this closure. `roadmap.md` was not edited -- this milestone
+is a bounded acceptance/correctness closure confined to privacy/network
+-dependency verification, not a roadmap-scope change.
 
 Retention Correctness & Bounded Cleanup Closure v1 (directly authorized
 outside this file, as a small, bounded, release-critical follow-up to
@@ -1622,16 +1735,39 @@ remains open.
 
 ### N. Privacy / Contribution
 
-**Status:** PARTIAL -- LOCAL-ONLY RELEASE-CRITICAL.
+**Status:** CLOSED -- RELEASE-CRITICAL. Local Only / Privacy Closure v1
+closed this lane's Local Only requirement at classification **B**; see
+§1/§3, above, and
+[local-only-privacy-closure-v1-report.md](local-only-privacy-closure-v1-report.md).
+A real, live, OS-level network-denial runtime acceptance (not static
+inspection alone) proved core product functionality -- authenticated
+access, Streams/Observation start-stop, Visit/history, review, local
+model status, health, local environmental baseline, local backup -- works
+with zero internet route available, zero reproduced Local Only/privacy
+defect found. The two live, feature-gated explicit-optional-provider call
+sites this milestone found (weather; iNaturalist taxonomy lookup) both
+already fail independently and gracefully, live-proven under forced
+unreachability, not merely code-read. Not classification A: this
+session's own acceptance ran the Linux/WSL dev checkout rather than the
+packaged native-Windows artifact, and exercised the model-assets-absent
+path rather than assets-present -- named explicitly, not a suspected
+defect (see the report's "Remaining risks").
 
-**Local Only.** Operational/default requirement. Core product must be
-complete.
+**Local Only.** Operational/default requirement. Confirmed met -- see
+above.
 
-**Derived Data Contribution.** Doctrine exists. Do not assume operational
+**Derived Data Contribution.** Doctrine exists; confirmed **not yet
+operationally implemented** -- Local Only / Privacy Closure v1 traced
+every "contribution" occurrence in `src/mockingbird/` and found none is a
+cloud-upload pathway (every real hit is an unrelated internal
+scene-confusor-region bookkeeping concept). Do not assume operational
 implementation or cloud backend exists. Never silently include:
 image/video/audio; thumbnails/crops; raw frames; embeddings/reconstructable
 media-derived features; local filesystem paths; free-text notes;
-faces/people/vehicle imagery; precise property/home coordinates.
+faces/people/vehicle imagery; precise property/home coordinates. The
+moment this capability is actually built, it needs its own dedicated
+privacy verification -- this lane's closure does not cover a capability
+that does not yet exist.
 
 **Media contribution.** Separate future consent capability. Contribution
 must never become required for core operation.
