@@ -19827,30 +19827,7 @@ class ProductRepository:
                             if not self._move_storage_item_to_recovery(item):
                                 item.state = "failed"
                                 continue
-                            current_links = session.scalars(
-                                select(VisitEvidenceLinkModel).where(
-                                    VisitEvidenceLinkModel.media_asset_id == item.media_asset_id
-                                )
-                            ).all()
-                            expected_links = self._storage_link_snapshot_signature(
-                                _json_list(item.evidence_links_json)
-                            )
-                            actual_links = self._storage_link_snapshot_signature(
-                                self._storage_link_snapshot(link) for link in current_links
-                            )
-                            if actual_links != expected_links:
-                                # No link is removed if product context changed. Put the
-                                # media back when possible; otherwise retain a durable
-                                # moving state so recovery remains available.
-                                item.state = (
-                                    "failed"
-                                    if self._restore_storage_item_from_recovery(item)
-                                    else "moving"
-                                )
-                                continue
-                            for link in current_links:
-                                session.delete(link)
-                            item.state = "quarantined"
+                            self._storage_cleanup_finish_recoverable_item(session, item)
                 except Exception:
                     # A failure after a filesystem move rolls its database transaction
                     # back to staged. Final reconciliation below detects the recovery
@@ -19865,24 +19842,14 @@ class ProductRepository:
                         StorageCleanupItemModel.batch_id == batch_id
                     )
                     ).all()
-                    moved_count = 0
-                    recovered_bytes = 0
-                    recoverable_staged_count = 0
-                    for item in persisted_items:
-                        if item.state == "quarantined":
-                            moved_count += 1
-                            recovered_bytes += item.file_size_bytes
-                            continue
-                        if item.state in {"staged", "moving"} and self._storage_item_has_recovery_file(
-                            item
-                        ):
-                            recoverable_staged_count += 1
-                            continue
-                        if item.state != "failed":
-                            item.state = "failed"
+                    moved_count, recoverable_staged_count, failed_count = (
+                        self._storage_cleanup_reconcile_batch(persisted_items)
+                    )
+                    recovered_bytes = sum(
+                        item.file_size_bytes for item in persisted_items if item.state == "quarantined"
+                    )
                     if persisted_batch is None:
                         raise ValueError("storage_cleanup_preview_missing")
-                    failed_count = sum(item.state == "failed" for item in persisted_items)
                     persisted_batch.state = (
                         "staging"
                         if recoverable_staged_count
@@ -19910,6 +19877,7 @@ class ProductRepository:
                     )
                     session.flush()
                     self._sync_storage_alert(session, now)
+                    self._prune_storage_cleanup_history(session)
                     return self._storage_cleanup_result_from_batch(persisted_batch)
         finally:
             self._storage_retention_lock.release()
@@ -20040,9 +20008,90 @@ class ProductRepository:
                     summary["failed_count"] = int(summary.get("failed_count", 0)) + conflicts
                     batch.summary_json = json.dumps(summary, sort_keys=True)
                     self._sync_storage_alert(session, now)
+                    self._prune_storage_cleanup_history(session)
                     return self._storage_cleanup_result_from_batch(batch, idempotent=False)
         finally:
             self._storage_retention_lock.release()
+
+    def _resolve_staging_batch_for_purge(
+        self,
+        batch_id: str,
+        *,
+        idempotency_key: str,
+        now: datetime,
+    ) -> StorageCleanupResult | None:
+        """Finish an interrupted execution's bookkeeping before a purge.
+
+        A `staging` batch can hold items whose file was already, genuinely
+        moved to `.recovery/<batch_id>/` (confirmed on disk) but whose DB
+        state was never committed past `staged`/`moving` -- the exact
+        interruption `test_interrupted_move_remains_recoverable_without_
+        removing_links` reproduces. `purge_storage_cleanup_batch`'s own
+        purge query only ever considers items already durably `quarantined`,
+        so those items were previously unreachable by any purge attempt,
+        forever -- restore was the only terminal path. This reuses the exact
+        reconciliation `execute_storage_cleanup` already performs at the end
+        of a clean run (`_storage_cleanup_finish_recoverable_item` +
+        `_storage_cleanup_reconcile_batch`) -- never a second cleanup state
+        machine -- so a `staging` batch can reach the same real
+        `quarantined`/`failed` terminal states a clean run reaches, instead
+        of staying stuck.
+
+        Returns an explicit terminal `StorageCleanupResult` only when nothing
+        in this batch ever actually moved (so there is nothing to purge --
+        every untouched file is left exactly where it always was, still
+        governed by ordinary retention). Returns `None` either to let the
+        caller proceed into its normal quarantined-item purge (real
+        `quarantined` items now exist) or to let the caller's own state
+        check reject an attempt that remains genuinely unresolved (an item
+        whose live links changed since the move and could not be restored
+        back either -- rare, and left `moving`, not resolved here).
+        """
+
+        with self.session_factory() as session:
+            with session.begin():
+                batch = session.get(StorageCleanupBatchModel, batch_id)
+                if batch is None or batch.state != "staging":
+                    # Already resolved (by this same caller's own idempotent
+                    # retry, or a concurrent one) -- let the normal path below
+                    # re-read current state rather than assume anything here.
+                    return None
+                items = session.scalars(
+                    select(StorageCleanupItemModel).where(
+                        StorageCleanupItemModel.batch_id == batch.id
+                    )
+                ).all()
+                for item in items:
+                    if item.state in {"staged", "moving"} and self._storage_item_has_recovery_file(
+                        item
+                    ):
+                        self._storage_cleanup_finish_recoverable_item(session, item)
+                moved_count, recoverable_staged_count, failed_count = (
+                    self._storage_cleanup_reconcile_batch(items)
+                )
+                if recoverable_staged_count:
+                    # Still genuinely ambiguous even after a real reconciliation
+                    # attempt. Leave the batch at `staging` -- do not report a
+                    # false terminal outcome -- and let the caller's own state
+                    # check raise the standard unavailable error.
+                    return None
+                batch.state = "quarantined" if moved_count else "failed"
+                summary = _json_object(batch.summary_json)
+                summary["failed_count"] = failed_count
+                batch.summary_json = json.dumps(summary, sort_keys=True)
+                if moved_count:
+                    # Real quarantined items now exist; let the caller's own
+                    # unmodified purge logic below actually remove them.
+                    return None
+                batch.safe_error = (
+                    "This interrupted cleanup never actually moved any media; "
+                    "nothing to purge. Untouched media remains subject to "
+                    "ordinary retention."
+                )
+                batch.last_purge_idempotency_key = idempotency_key
+                self._sync_storage_alert(session, now)
+                self._prune_storage_cleanup_history(session)
+                return self._storage_cleanup_result_from_batch(batch)
 
     def purge_storage_cleanup_batch(
         self,
@@ -20065,6 +20114,17 @@ class ProductRepository:
                     return self._storage_cleanup_result_from_batch(batch, idempotent=True)
                 if batch.state == "purged":
                     return self._storage_cleanup_result_from_batch(batch, idempotent=True)
+                needs_staging_resolution = batch.state == "staging"
+            if needs_staging_resolution:
+                early_result = self._resolve_staging_batch_for_purge(
+                    batch_id, idempotency_key=payload.idempotency_key, now=now
+                )
+                if early_result is not None:
+                    return early_result
+            with self.session_factory() as session:
+                batch = session.get(StorageCleanupBatchModel, batch_id)
+                if batch is None:
+                    return None
                 if batch.state not in {"quarantined", "restore_conflict"}:
                     raise ValueError("storage_cleanup_purge_unavailable")
                 if (
@@ -20106,6 +20166,7 @@ class ProductRepository:
                     batch.summary_json = json.dumps(summary, sort_keys=True)
                     batch.last_purge_idempotency_key = payload.idempotency_key
                     self._sync_storage_alert(session, now)
+                    self._prune_storage_cleanup_history(session)
                     return self._storage_cleanup_result_from_batch(batch)
         finally:
             self._storage_retention_lock.release()
@@ -20387,12 +20448,41 @@ class ProductRepository:
                 protected_bytes["ambiguous_visit_linkage"] += size
                 continue
             visits = [visit for _link, visit in visits_by_link if visit is not None]
-            # Older records can have a representative path without a materialized
-            # VisitEvidenceLink. Treat that ambiguous legacy relationship as protected.
+            # Older records -- including every manual/folder media import, which
+            # never materializes a VisitEvidenceLink at all -- can have a
+            # representative path without one. docs/appliance-storage-privacy-
+            # recovery-v1-contract.md is explicit that this evidence follows
+            # "the same active/superseded/reviewed rules as any other
+            # Visit-linked evidence -- no separate contract": protected forever
+            # while any referencing Visit remains active (the same guarantee
+            # active_visit_primary_evidence gives a linked primary frame,
+            # regardless of review state), and eligible only once every
+            # referencing Visit is superseded, on the same
+            # superseded_evidence_age_days clock superseded_only_evidence uses.
             legacy_representative_visits = session.scalars(
                 select(VisitModel).where(VisitModel.representative_media_path == asset.local_path)
             ).all()
             if legacy_representative_visits and not links:
+                if all(visit.is_superseded for visit in legacy_representative_visits):
+                    if age_days >= settings.superseded_evidence_age_days:
+                        candidates.append(
+                            _StorageRetentionCandidate(
+                                asset_id=asset.id,
+                                category="superseded_only_evidence",
+                                local_path=path,
+                                relative_path=relative,
+                                file_size_bytes=size,
+                                created_at=_as_utc(asset.created_at),
+                                affected_visit_ids=tuple(
+                                    sorted({visit.id for visit in legacy_representative_visits})
+                                ),
+                                evidence_links=(),
+                            )
+                        )
+                    else:
+                        protected_counts["superseded_evidence_too_recent"] += 1
+                        protected_bytes["superseded_evidence_too_recent"] += size
+                    continue
                 protected_counts["legacy_representative_evidence"] += 1
                 protected_bytes["legacy_representative_evidence"] += size
                 continue
@@ -20753,6 +20843,118 @@ class ProductRepository:
             if _parse_datetime(link.get("created_at")) is None:
                 return False
         return True
+
+    def _storage_cleanup_finish_recoverable_item(
+        self,
+        session: Session,
+        item: StorageCleanupItemModel,
+    ) -> None:
+        """Complete the staged->quarantined transition for an item already
+        confirmed moved to `.recovery/` on disk (see
+        `_storage_item_has_recovery_file`) whose links/state were never
+        durably committed -- exactly the gap an interruption between the
+        filesystem move and the owning DB commit leaves behind. Never moves
+        a file; only ever reconciles DB state to match what already happened
+        on disk. Shared by the first-attempt path in `execute_storage_cleanup`
+        and by resuming an already-`staging` batch, so there is exactly one
+        implementation of this transition, not two.
+        """
+
+        current_links = session.scalars(
+            select(VisitEvidenceLinkModel).where(
+                VisitEvidenceLinkModel.media_asset_id == item.media_asset_id
+            )
+        ).all()
+        expected_links = self._storage_link_snapshot_signature(
+            _json_list(item.evidence_links_json)
+        )
+        actual_links = self._storage_link_snapshot_signature(
+            self._storage_link_snapshot(link) for link in current_links
+        )
+        if actual_links != expected_links:
+            # No link is removed if product context changed. Put the media
+            # back when possible; otherwise retain a durable moving state so
+            # recovery remains available.
+            item.state = (
+                "failed"
+                if self._restore_storage_item_from_recovery(item)
+                else "moving"
+            )
+            return
+        for link in current_links:
+            session.delete(link)
+        item.state = "quarantined"
+
+    def _storage_cleanup_reconcile_batch(
+        self,
+        items: Sequence[StorageCleanupItemModel],
+    ) -> tuple[int, int, int]:
+        """Derive real batch progress from current per-item state, trusting a
+        live filesystem check over in-memory/DB assumptions for any item still
+        `staged`/`moving`. A `staged`/`moving` item with a confirmed recovery
+        file is left exactly as-is -- the caller is expected to have already
+        tried `_storage_cleanup_finish_recoverable_item` on it; one that was
+        never actually moved is marked `failed` here, since its media was
+        never touched. Returns
+        `(moved_count, recoverable_staged_count, failed_count)`. The one
+        canonical batch-state reconciliation, reused by a fresh execute and by
+        resuming an interrupted `staging` batch -- never a second cleanup
+        state machine.
+        """
+
+        moved_count = 0
+        recoverable_staged_count = 0
+        for item in items:
+            if item.state == "quarantined":
+                moved_count += 1
+                continue
+            if item.state in {"staged", "moving"} and self._storage_item_has_recovery_file(item):
+                recoverable_staged_count += 1
+                continue
+            if item.state != "failed":
+                item.state = "failed"
+        failed_count = sum(item.state == "failed" for item in items)
+        return moved_count, recoverable_staged_count, failed_count
+
+    def _prune_storage_cleanup_history(
+        self,
+        session: Session,
+        *,
+        keep: int = MAX_STORAGE_CLEANUP_HISTORY_ITEMS,
+    ) -> None:
+        """Bound `storage_cleanup_batches` to the newest `keep` fully-resolved
+        entries -- the actual enforcement `MAX_STORAGE_CLEANUP_HISTORY_ITEMS`'s
+        own name always implied but no code path ever performed (it previously
+        only bounded a read-page size and an unrelated automatic-purge chunk
+        size).
+
+        Only ever prunes a batch in a terminal, disk-safe state (`purged`,
+        `restored`, `failed`) -- one still holding live `.recovery/<batch_id>/`
+        files (`staging`, `quarantined`, `restore_conflict`) is never pruned,
+        regardless of age, so a row is never deleted while it remains the only
+        durable reference to real bytes still on disk. A `previewed` batch is
+        already excluded from "history" (see `storage_cleanup_history`) and is
+        left alone here too. Call from every write path that can produce a
+        newly-eligible terminal batch (execute/restore/purge); each already
+        holds the retention write lock and an open transaction.
+        """
+
+        prunable_ids = session.scalars(
+            select(StorageCleanupBatchModel.id)
+            .where(StorageCleanupBatchModel.state.in_(("purged", "restored", "failed")))
+            .order_by(StorageCleanupBatchModel.created_at.desc(), StorageCleanupBatchModel.id.desc())
+            .offset(max(0, keep))
+        ).all()
+        if not prunable_ids:
+            return
+        session.execute(
+            delete(StorageCleanupItemModel).where(
+                StorageCleanupItemModel.batch_id.in_(prunable_ids)
+            )
+        )
+        session.execute(
+            delete(StorageCleanupBatchModel).where(StorageCleanupBatchModel.id.in_(prunable_ids))
+        )
 
     def _storage_item_has_recovery_file(self, item: StorageCleanupItemModel) -> bool:
         """Recognize only a complete, managed recovery file as recoverable staging."""

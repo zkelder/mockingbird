@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zipfile import ZipFile
@@ -6,6 +7,7 @@ import pytest
 from sqlalchemy import func, select
 
 from mockingbird.api.schemas import (
+    FolderImportCreate,
     LabelCategory,
     StorageCleanupExecuteRequest,
     StorageCleanupPurgeRequest,
@@ -14,7 +16,11 @@ from mockingbird.api.schemas import (
     StorageRetentionSettingsUpdate,
 )
 from mockingbird.observation.contracts import CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE
-from mockingbird.repository.product_repository import MotionEvidenceModel, ProductRepository
+from mockingbird.repository.product_repository import (
+    MAX_STORAGE_CLEANUP_HISTORY_ITEMS,
+    MotionEvidenceModel,
+    ProductRepository,
+)
 from mockingbird.storage.backup import LocalBackupManager
 from mockingbird.storage.models import (
     EventModel,
@@ -148,6 +154,40 @@ def _add_active_visit_with_evidence(
                         created_at=now,
                     )
                 )
+
+
+def _create_imported_visit(
+    repository: ProductRepository,
+    *,
+    label: str,
+    folder: bool = False,
+    tmp_path: Path | None = None,
+) -> tuple[str, str, Path]:
+    """Create a real manually- or folder-imported Visit through the actual
+    product import path (never hand-constructed) -- Defect 1's fix must be
+    proven against the real `create_media_import`/`import_folder_media` code
+    path, not a synthetic shortcut. Returns
+    (visit_id, media_asset_id, file_path)."""
+
+    if folder:
+        assert tmp_path is not None
+        source_folder = tmp_path / f"{label}-folder"
+        source_folder.mkdir(exist_ok=True)
+        (source_folder / f"{label}.jpg").write_bytes(f"folder-import-bytes-{label}".encode())
+        result = repository.import_folder_media(
+            FolderImportCreate(folder_path=str(source_folder), subject_label="unknown_bird")
+        )
+        assert result.imported_count == 1
+        visit, asset = result.visits[0], result.media_assets[0]
+    else:
+        result = repository.create_media_import(
+            content=f"manual-import-bytes-{label}".encode(),
+            original_filename=f"{label}.jpg",
+            content_type="image/jpeg",
+            subject_label="unknown_bird",
+        )
+        visit, asset = result.visit, result.media_asset
+    return visit.id, asset.id, Path(asset.local_path)
 
 
 def test_default_storage_retention_read_is_safe_off_and_does_not_persist_policy(
@@ -1135,3 +1175,863 @@ def test_newly_seeded_mammal_taxonomy_labels_are_wildlife_retention_protected(
         visit = session.get(VisitModel, "bobcat-unseeded-visit")
         assert visit is not None
         assert repository._storage_visit_is_wildlife(session, visit) is False
+
+
+# --- Retention Correctness & Bounded Cleanup Closure v1 --------------------
+#
+# Defect 1: imported/folder-imported media (no materialized
+# VisitEvidenceLink -- see `_create_media_product_records`) is protected
+# forever unconditionally by the `legacy_representative_evidence` bucket,
+# contrary to docs/appliance-storage-privacy-recovery-v1-contract.md's own
+# "same active/superseded/reviewed rules as any other Visit-linked evidence
+# -- no separate contract." The fix makes it follow exactly that: protected
+# forever while any referencing Visit remains active (mirroring
+# active_visit_primary_evidence), eligible only once every referencing
+# Visit is superseded and old enough (mirroring superseded_only_evidence).
+
+
+def test_manual_imported_media_is_protected_while_visit_is_active(
+    repository: ProductRepository,
+) -> None:
+    _visit_id, _asset_id, path = _create_imported_visit(repository, label="manual-active")
+
+    preview = repository.preview_storage_cleanup()
+
+    assert preview.eligible_media_count == 0
+    protected = {item.category for item in preview.protected_counts}
+    assert "legacy_representative_evidence" in protected
+    assert path.exists()
+
+
+def test_folder_imported_media_is_protected_while_visit_is_active(
+    repository: ProductRepository,
+    tmp_path: Path,
+) -> None:
+    _visit_id, _asset_id, path = _create_imported_visit(
+        repository, label="folder-active", folder=True, tmp_path=tmp_path
+    )
+
+    preview = repository.preview_storage_cleanup()
+
+    assert preview.eligible_media_count == 0
+    protected = {item.category for item in preview.protected_counts}
+    assert "legacy_representative_evidence" in protected
+    assert path.exists()
+
+
+def test_reviewed_imported_visit_media_stays_protected_indefinitely(
+    repository: ProductRepository,
+) -> None:
+    """Reviewed truth protects the evidence needed to render it: an
+    imported Visit's media stays protected forever once reviewed, exactly
+    like a linked primary frame, as long as the Visit itself is not
+    superseded -- being old and reviewed is never enough by itself."""
+    visit_id, asset_id, path = _create_imported_visit(repository, label="manual-reviewed")
+    with repository.session_factory() as session:
+        with session.begin():
+            asset = session.get(MediaAssetModel, asset_id)
+            assert asset is not None
+            asset.created_at = datetime.now(UTC) - timedelta(days=3650)
+            visit = session.get(VisitModel, visit_id)
+            assert visit is not None
+            visit.review_status = "reviewed"
+            visit.reviewed_label = "northern_cardinal"
+    repository.update_storage_retention_settings(
+        _settings_payload(
+            "manual-reviewed-settings",
+            reviewed_non_bird_age_days=30,
+            retain_reviewed_bird_wildlife_evidence=False,
+        )
+    )
+
+    preview = repository.preview_storage_cleanup()
+
+    assert preview.eligible_media_count == 0
+    protected = {item.category for item in preview.protected_counts}
+    assert "legacy_representative_evidence" in protected
+    assert path.exists()
+
+
+def test_corrected_imported_visit_media_stays_protected(
+    repository: ProductRepository,
+) -> None:
+    """A correction (an already-reviewed Visit's label changed) never marks
+    the Visit superseded -- corrected truth is exactly as protected as
+    first-time-reviewed truth."""
+    visit_id, asset_id, path = _create_imported_visit(repository, label="manual-corrected")
+    with repository.session_factory() as session:
+        with session.begin():
+            asset = session.get(MediaAssetModel, asset_id)
+            assert asset is not None
+            asset.created_at = datetime.now(UTC) - timedelta(days=3650)
+            visit = session.get(VisitModel, visit_id)
+            assert visit is not None
+            visit.review_status = "reviewed"
+            visit.reviewed_label = "blue_jay"
+            session.flush()
+            # A correction: the label changes, review truth is re-affirmed,
+            # is_superseded is never touched by a correction.
+            visit.reviewed_label = "northern_cardinal"
+            assert visit.is_superseded is False
+
+    preview = repository.preview_storage_cleanup()
+
+    assert preview.eligible_media_count == 0
+    with repository.session_factory() as session:
+        visit = session.get(VisitModel, visit_id)
+        assert visit is not None
+        assert visit.reviewed_label == "northern_cardinal"
+        assert visit.is_superseded is False
+    assert path.exists()
+
+
+def test_superseded_imported_media_protected_before_age_threshold(
+    repository: ProductRepository,
+) -> None:
+    visit_id, asset_id, path = _create_imported_visit(repository, label="manual-too-recent")
+    with repository.session_factory() as session:
+        with session.begin():
+            asset = session.get(MediaAssetModel, asset_id)
+            assert asset is not None
+            asset.created_at = datetime.now(UTC) - timedelta(days=1)
+            visit = session.get(VisitModel, visit_id)
+            assert visit is not None
+            visit.is_superseded = True
+    repository.update_storage_retention_settings(
+        _settings_payload("manual-too-recent-settings", superseded_evidence_age_days=90)
+    )
+
+    preview = repository.preview_storage_cleanup()
+
+    assert preview.eligible_media_count == 0
+    protected = {item.category for item in preview.protected_counts}
+    assert "superseded_evidence_too_recent" in protected
+    assert path.exists()
+
+
+def test_superseded_imported_media_becomes_eligible_and_purges_with_no_dangling_reference(
+    repository: ProductRepository,
+) -> None:
+    """The reproducer for Defect 1: once every Visit referencing an
+    imported asset is superseded and old enough, ordinary retention -- the
+    documented contract -- makes it eligible, exactly like any other
+    Visit-linked evidence. After a real purge: the file is gone, the
+    MediaAssetModel row survives forever as an audit trail (the same,
+    already-accepted convention every other purged category already uses),
+    the Visit/Event rows and their truth fields are completely untouched,
+    and reading the now-orphaned representative_media_path does not crash."""
+    visit_id, asset_id, path = _create_imported_visit(repository, label="manual-supersede")
+    with repository.session_factory() as session:
+        with session.begin():
+            asset = session.get(MediaAssetModel, asset_id)
+            assert asset is not None
+            asset.created_at = datetime.now(UTC) - timedelta(days=365)
+            visit = session.get(VisitModel, visit_id)
+            assert visit is not None
+            visit.is_superseded = True
+    repository.update_storage_retention_settings(
+        _settings_payload("manual-supersede-settings", superseded_evidence_age_days=30)
+    )
+
+    preview = repository.preview_storage_cleanup()
+    assert preview.eligible_media_count == 1
+    assert {c.category for c in preview.categories} == {"superseded_only_evidence"}
+
+    result = repository.execute_storage_cleanup(
+        StorageCleanupExecuteRequest(
+            preview_token=preview.preview_token,
+            confirm=True,
+            idempotency_key="manual-supersede-cleanup",
+        )
+    )
+    assert result.state == "quarantined"
+    assert not path.exists()
+
+    with repository.session_factory() as session:
+        with session.begin():
+            batch = session.get(StorageCleanupBatchModel, result.batch_id)
+            assert batch is not None
+            batch.recovery_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    purged = repository.purge_storage_cleanup_batch(
+        result.batch_id,
+        StorageCleanupPurgeRequest(confirm=True, idempotency_key="manual-supersede-purge"),
+    )
+    assert purged is not None and purged.state == "purged"
+
+    with repository.session_factory() as session:
+        # DB -> media coherence: the MediaAssetModel row is retained forever
+        # as an audit trail (mirrors every other purge category); reading it
+        # -- and the Visit that used to point at it -- never crashes.
+        asset = session.get(MediaAssetModel, asset_id)
+        assert asset is not None
+        visit = session.get(VisitModel, visit_id)
+        assert visit is not None
+        assert visit.is_superseded is True
+        assert visit.representative_media_path == str(path)
+        assert visit.reviewed_label is None
+        event = session.get(EventModel, visit.event_id)
+        assert event is not None
+        assert event.event_type == "manual_media_import"
+    assert not path.exists()
+
+
+def test_legacy_representative_media_shared_by_two_visits_protected_until_all_superseded(
+    repository: ProductRepository,
+) -> None:
+    """Defensive: if more than one Visit's representative_media_path ever
+    points at the same imported asset, it stays protected as long as ANY
+    referencing Visit is active -- never eligible just because one of
+    several referencing Visits was superseded."""
+    visit_id, asset_id, path = _create_imported_visit(repository, label="shared-a")
+    other_visit_id, _other_asset_id, _other_path = _create_imported_visit(
+        repository, label="shared-b"
+    )
+    with repository.session_factory() as session:
+        with session.begin():
+            asset = session.get(MediaAssetModel, asset_id)
+            assert asset is not None
+            asset.created_at = datetime.now(UTC) - timedelta(days=365)
+            other_visit = session.get(VisitModel, other_visit_id)
+            assert other_visit is not None
+            other_visit.representative_media_path = asset.local_path
+            visit = session.get(VisitModel, visit_id)
+            assert visit is not None
+            visit.is_superseded = True
+    repository.update_storage_retention_settings(
+        _settings_payload("shared-legacy-settings", superseded_evidence_age_days=30)
+    )
+
+    preview = repository.preview_storage_cleanup()
+    assert preview.eligible_media_count == 0
+    protected = {item.category for item in preview.protected_counts}
+    assert "legacy_representative_evidence" in protected
+    assert path.exists()
+
+    with repository.session_factory() as session:
+        with session.begin():
+            other_visit = session.get(VisitModel, other_visit_id)
+            assert other_visit is not None
+            other_visit.is_superseded = True
+
+    preview_after = repository.preview_storage_cleanup()
+    assert preview_after.eligible_media_count == 1
+    assert {c.category for c in preview_after.categories} == {"superseded_only_evidence"}
+
+
+# Defect 2: a `"staging"` (interrupted) cleanup batch could only ever be
+# restored, never purged -- `purge_storage_cleanup_batch`'s own purge query
+# only ever considers items already durably `quarantined`, which an
+# interrupted item never reaches on its own. The fix teaches purge to first
+# resolve a `staging` batch (reusing the exact reconciliation
+# `execute_storage_cleanup` already performs at the end of a clean run) to a
+# real `quarantined`/`failed` terminal state before proceeding.
+
+
+def test_staging_batch_purge_completes_interrupted_move_and_removes_file(
+    repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_path = _add_media(repository, media_id="retention-staging-purge", age_days=365)
+    preview = repository.preview_storage_cleanup()
+    real_move = repository._move_storage_item_to_recovery
+
+    def move_then_interrupt(item: StorageCleanupItemModel) -> bool:
+        assert real_move(item)
+        raise OSError("simulated interruption after recovery move")
+
+    monkeypatch.setattr(repository, "_move_storage_item_to_recovery", move_then_interrupt)
+    result = repository.execute_storage_cleanup(
+        StorageCleanupExecuteRequest(
+            preview_token=preview.preview_token,
+            confirm=True,
+            idempotency_key="retention-staging-purge",
+        )
+    )
+    assert result.state == "staging"
+    assert not original_path.exists()
+    with repository.session_factory() as session:
+        item = session.scalar(
+            select(StorageCleanupItemModel).where(
+                StorageCleanupItemModel.batch_id == result.batch_id
+            )
+        )
+        assert item is not None and item.state == "staged"
+
+    with pytest.raises(ValueError, match="storage_cleanup_recovery_active"):
+        repository.purge_storage_cleanup_batch(
+            result.batch_id,
+            StorageCleanupPurgeRequest(confirm=True, idempotency_key="retention-staging-purge-early"),
+        )
+    with repository.session_factory() as session:
+        with session.begin():
+            batch = session.get(StorageCleanupBatchModel, result.batch_id)
+            assert batch is not None
+            batch.recovery_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+
+    purged = repository.purge_storage_cleanup_batch(
+        result.batch_id,
+        StorageCleanupPurgeRequest(confirm=True, idempotency_key="retention-staging-purge-final"),
+    )
+
+    assert purged is not None and purged.state == "purged"
+    with repository.session_factory() as session:
+        item = session.scalar(
+            select(StorageCleanupItemModel).where(
+                StorageCleanupItemModel.batch_id == result.batch_id
+            )
+        )
+        assert item is not None and item.state == "purged"
+        batch = session.get(StorageCleanupBatchModel, result.batch_id)
+        assert batch is not None and batch.state == "purged"
+    recovery_path = repository.media_root / ".recovery" / result.batch_id / "retention-staging-purge.bin"
+    assert not recovery_path.exists()
+    assert not original_path.exists()
+
+
+def test_staging_batch_purge_is_idempotent_on_repeat(
+    repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _add_media(repository, media_id="retention-staging-idempotent", age_days=365)
+    preview = repository.preview_storage_cleanup()
+    real_move = repository._move_storage_item_to_recovery
+
+    def move_then_interrupt(item: StorageCleanupItemModel) -> bool:
+        assert real_move(item)
+        raise OSError("simulated interruption after recovery move")
+
+    monkeypatch.setattr(repository, "_move_storage_item_to_recovery", move_then_interrupt)
+    result = repository.execute_storage_cleanup(
+        StorageCleanupExecuteRequest(
+            preview_token=preview.preview_token,
+            confirm=True,
+            idempotency_key="retention-staging-idempotent",
+        )
+    )
+    assert result.state == "staging"
+    with repository.session_factory() as session:
+        with session.begin():
+            batch = session.get(StorageCleanupBatchModel, result.batch_id)
+            assert batch is not None
+            batch.recovery_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+
+    first = repository.purge_storage_cleanup_batch(
+        result.batch_id,
+        StorageCleanupPurgeRequest(confirm=True, idempotency_key="retention-staging-idempotent-purge"),
+    )
+    assert first is not None and first.state == "purged" and first.idempotent is False
+
+    second = repository.purge_storage_cleanup_batch(
+        result.batch_id,
+        StorageCleanupPurgeRequest(confirm=True, idempotency_key="retention-staging-idempotent-purge"),
+    )
+    assert second is not None and second.idempotent is True
+    assert second.state == "purged"
+
+    third = repository.purge_storage_cleanup_batch(
+        result.batch_id,
+        StorageCleanupPurgeRequest(confirm=True, idempotency_key="a-different-later-key"),
+    )
+    assert third is not None and third.state == "purged"
+
+
+def test_staging_batch_with_all_items_restored_during_reconciliation_resolves_to_failed(
+    repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If reconciliation finds the live product state changed since the
+    interrupted move (its link snapshot no longer matches) and successfully
+    restores the file back, there is nothing left to purge. The batch must
+    resolve to the real, explicit `failed` outcome -- never a misleading
+    `purged` with zero items actually removed."""
+    _add_media(repository, media_id="retention-staging-restored-away", age_days=365)
+    preview = repository.preview_storage_cleanup()
+    real_move = repository._move_storage_item_to_recovery
+
+    def move_then_interrupt(item: StorageCleanupItemModel) -> bool:
+        assert real_move(item)
+        raise OSError("simulated interruption after recovery move")
+
+    monkeypatch.setattr(repository, "_move_storage_item_to_recovery", move_then_interrupt)
+    result = repository.execute_storage_cleanup(
+        StorageCleanupExecuteRequest(
+            preview_token=preview.preview_token,
+            confirm=True,
+            idempotency_key="retention-staging-restored-away",
+        )
+    )
+    assert result.state == "staging"
+
+    phantom_link = {
+        "id": "phantom-link",
+        "visit_id": "phantom-visit",
+        "captured_at": datetime.now(UTC).isoformat(),
+        "frame_sequence": None,
+        "sort_order": 0,
+        "is_primary": True,
+        "evidence_role": "monitoring_frame",
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    with repository.session_factory() as session:
+        with session.begin():
+            item = session.scalar(
+                select(StorageCleanupItemModel).where(
+                    StorageCleanupItemModel.batch_id == result.batch_id
+                )
+            )
+            assert item is not None
+            item.evidence_links_json = json.dumps([phantom_link])
+
+    purged = repository.purge_storage_cleanup_batch(
+        result.batch_id,
+        StorageCleanupPurgeRequest(confirm=True, idempotency_key="retention-staging-restored-away-purge"),
+    )
+
+    assert purged is not None
+    assert purged.state == "failed"
+    assert purged.moved_to_recovery_count == 0
+    with repository.session_factory() as session:
+        item = session.scalar(
+            select(StorageCleanupItemModel).where(
+                StorageCleanupItemModel.batch_id == result.batch_id
+            )
+        )
+        assert item is not None and item.state == "failed"
+    original_path = repository.media_root / "retention-staging-restored-away.bin"
+    assert original_path.exists()  # genuinely restored back -- nothing lost
+
+    repeated = repository.purge_storage_cleanup_batch(
+        result.batch_id,
+        StorageCleanupPurgeRequest(confirm=True, idempotency_key="retention-staging-restored-away-purge"),
+    )
+    assert repeated is not None and repeated.idempotent is True
+
+
+def test_staging_batch_still_ambiguous_after_reconciliation_rejects_purge(
+    repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Invalid transition rejected: if reconciliation cannot even restore
+    the file back (product context changed AND the original location is
+    unavailable), the item stays genuinely ambiguous. Purge must refuse
+    with the standard unavailable error rather than report a false terminal
+    outcome -- restore remains the escape hatch."""
+    _add_media(repository, media_id="retention-staging-ambiguous", age_days=365)
+    preview = repository.preview_storage_cleanup()
+    real_move = repository._move_storage_item_to_recovery
+
+    def move_then_interrupt(item: StorageCleanupItemModel) -> bool:
+        assert real_move(item)
+        raise OSError("simulated interruption after recovery move")
+
+    monkeypatch.setattr(repository, "_move_storage_item_to_recovery", move_then_interrupt)
+    result = repository.execute_storage_cleanup(
+        StorageCleanupExecuteRequest(
+            preview_token=preview.preview_token,
+            confirm=True,
+            idempotency_key="retention-staging-ambiguous",
+        )
+    )
+    assert result.state == "staging"
+
+    monkeypatch.setattr(repository, "_restore_storage_item_from_recovery", lambda item: False)
+    phantom_link = {
+        "id": "phantom-link",
+        "visit_id": "phantom-visit",
+        "captured_at": datetime.now(UTC).isoformat(),
+        "frame_sequence": None,
+        "sort_order": 0,
+        "is_primary": True,
+        "evidence_role": "monitoring_frame",
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+    with repository.session_factory() as session:
+        with session.begin():
+            item = session.scalar(
+                select(StorageCleanupItemModel).where(
+                    StorageCleanupItemModel.batch_id == result.batch_id
+                )
+            )
+            assert item is not None
+            item.evidence_links_json = json.dumps([phantom_link])
+
+    with pytest.raises(ValueError, match="storage_cleanup_purge_unavailable"):
+        repository.purge_storage_cleanup_batch(
+            result.batch_id,
+            StorageCleanupPurgeRequest(confirm=True, idempotency_key="retention-staging-ambiguous-purge"),
+        )
+
+    with repository.session_factory() as session:
+        batch = session.get(StorageCleanupBatchModel, result.batch_id)
+        assert batch is not None and batch.state == "staging"
+        item = session.scalar(
+            select(StorageCleanupItemModel).where(
+                StorageCleanupItemModel.batch_id == result.batch_id
+            )
+        )
+        assert item is not None and item.state == "moving"
+
+
+def test_staging_batch_purge_survives_deletion_permission_failure(
+    repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real deletion failure (e.g. a permission error) during the purge
+    step following staging-batch reconciliation must not corrupt state: the
+    item stays quarantined (still restorable), the batch reports
+    `restore_conflict`, never a false `purged`, and the call remains safely
+    retryable."""
+    _add_media(repository, media_id="retention-staging-permission", age_days=365)
+    preview = repository.preview_storage_cleanup()
+    real_move = repository._move_storage_item_to_recovery
+
+    def move_then_interrupt(item: StorageCleanupItemModel) -> bool:
+        assert real_move(item)
+        raise OSError("simulated interruption after recovery move")
+
+    monkeypatch.setattr(repository, "_move_storage_item_to_recovery", move_then_interrupt)
+    result = repository.execute_storage_cleanup(
+        StorageCleanupExecuteRequest(
+            preview_token=preview.preview_token,
+            confirm=True,
+            idempotency_key="retention-staging-permission",
+        )
+    )
+    assert result.state == "staging"
+    with repository.session_factory() as session:
+        with session.begin():
+            batch = session.get(StorageCleanupBatchModel, result.batch_id)
+            assert batch is not None
+            batch.recovery_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+
+    monkeypatch.setattr(repository, "_purge_storage_item", lambda item: False)
+
+    purged = repository.purge_storage_cleanup_batch(
+        result.batch_id,
+        StorageCleanupPurgeRequest(confirm=True, idempotency_key="retention-staging-permission-purge"),
+    )
+
+    assert purged is not None
+    assert purged.state == "restore_conflict"
+    assert purged.moved_to_recovery_count == 0
+    with repository.session_factory() as session:
+        item = session.scalar(
+            select(StorageCleanupItemModel).where(
+                StorageCleanupItemModel.batch_id == result.batch_id
+            )
+        )
+        assert item is not None and item.state == "quarantined"
+
+    repeated = repository.purge_storage_cleanup_batch(
+        result.batch_id,
+        StorageCleanupPurgeRequest(confirm=True, idempotency_key="retention-staging-permission-purge"),
+    )
+    assert repeated is not None and repeated.idempotent is True
+
+
+# Defect 3: MAX_STORAGE_CLEANUP_HISTORY_ITEMS bounded only a read-page size
+# and an unrelated automatic-purge chunk size -- the underlying
+# storage_cleanup_batches table had no row-deletion path anywhere and grew
+# forever. The fix prunes the oldest fully-resolved (purged/restored/failed)
+# rows beyond the newest MAX_STORAGE_CLEANUP_HISTORY_ITEMS at the end of
+# every write path that can produce a newly-eligible one.
+
+
+def _seed_resolved_history_batches(
+    repository: ProductRepository,
+    *,
+    count: int,
+    prefix: str,
+    state: str = "purged",
+) -> None:
+    now = datetime.now(UTC)
+    with repository.session_factory() as session:
+        with session.begin():
+            for index in range(count):
+                batch_id = f"{prefix}-{index:03d}"
+                session.add(
+                    StorageCleanupBatchModel(
+                        id=batch_id,
+                        origin="automatic",
+                        state=state,
+                        preview_token=f"preview-{batch_id}",
+                        state_fingerprint=f"fingerprint-{batch_id}",
+                        policy_revision=1,
+                        idempotency_key=f"exec-{batch_id}",
+                        created_at=now - timedelta(days=count - index),
+                        executed_at=now - timedelta(days=count - index),
+                        recovery_expires_at=now - timedelta(days=1),
+                        restored_at=now - timedelta(days=1) if state == "restored" else None,
+                        purged_at=now - timedelta(days=1) if state == "purged" else None,
+                        summary_json=json.dumps({"permanently_purged_count": 1}),
+                        safe_error=None,
+                        last_purge_idempotency_key=f"purge-{batch_id}" if state == "purged" else None,
+                        last_restore_idempotency_key=f"restore-{batch_id}" if state == "restored" else None,
+                    )
+                )
+
+
+def test_cleanup_history_table_row_count_exceeds_bound_before_any_pruning_runs(
+    repository: ProductRepository,
+) -> None:
+    """Proves the raw defect directly: seeding more resolved batches than
+    the intended bound, with no write path invoked afterward, leaves the
+    underlying table over the bound -- the bound is only ever enforced as a
+    side effect of a write path, never retroactively."""
+    total = MAX_STORAGE_CLEANUP_HISTORY_ITEMS + 5
+    _seed_resolved_history_batches(repository, count=total, prefix="history-raw-seed")
+
+    with repository.session_factory() as session:
+        row_count = session.scalar(select(func.count(StorageCleanupBatchModel.id)))
+    assert row_count == total
+
+
+def test_cleanup_history_is_bounded_after_a_real_execute_pass(
+    repository: ProductRepository,
+) -> None:
+    total = MAX_STORAGE_CLEANUP_HISTORY_ITEMS + 5
+    _seed_resolved_history_batches(repository, count=total, prefix="history-seed")
+
+    # Any ordinary write path that can complete a batch prunes history as a
+    # side effect -- a real orphaned-media cleanup pass here, matching how a
+    # real deployment's own daily/weekly automatic pass is the intended
+    # enforcement point, not a dedicated sweep job.
+    _add_media(repository, media_id="history-trigger", age_days=45)
+    preview = repository.preview_storage_cleanup()
+    triggering = repository.execute_storage_cleanup(
+        StorageCleanupExecuteRequest(
+            preview_token=preview.preview_token,
+            confirm=True,
+            idempotency_key="history-trigger-exec",
+        )
+    )
+    assert triggering.state == "quarantined"
+
+    with repository.session_factory() as session:
+        row_count = session.scalar(select(func.count(StorageCleanupBatchModel.id)))
+        remaining_ids = set(session.scalars(select(StorageCleanupBatchModel.id)).all())
+    # The newest MAX_STORAGE_CLEANUP_HISTORY_ITEMS seeded (purged, prunable)
+    # batches survive, plus the just-created (quarantined, not yet
+    # prunable) triggering batch -- never fewer, never materially more.
+    assert row_count == MAX_STORAGE_CLEANUP_HISTORY_ITEMS + 1
+    assert "history-seed-000" not in remaining_ids  # oldest pruned first
+    assert "history-seed-004" not in remaining_ids
+    assert f"history-seed-{total - 1:03d}" in remaining_ids  # newest seed survives
+    assert triggering.batch_id in remaining_ids  # the batch just created survives
+
+
+def test_cleanup_history_pruning_never_removes_a_batch_with_live_recovery_files(
+    repository: ProductRepository,
+) -> None:
+    """A `quarantined`/`staging`/`restore_conflict` batch still holds real
+    files under `.recovery/<batch_id>/`; pruning must never delete its row
+    merely for being old, or those files become permanently unrestorable
+    and unpurgeable -- a real orphan this fix must not create."""
+    now = datetime.now(UTC)
+    old_but_live_id = "history-old-but-quarantined"
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                StorageCleanupBatchModel(
+                    id=old_but_live_id,
+                    origin="manual",
+                    state="quarantined",
+                    preview_token="preview-old-live",
+                    state_fingerprint="fingerprint-old-live",
+                    policy_revision=1,
+                    idempotency_key="exec-old-live",
+                    created_at=now - timedelta(days=400),
+                    executed_at=now - timedelta(days=400),
+                    recovery_expires_at=now - timedelta(days=386),
+                    restored_at=None,
+                    purged_at=None,
+                    summary_json=json.dumps({"media_count": 1}),
+                    safe_error=None,
+                )
+            )
+    _seed_resolved_history_batches(
+        repository, count=MAX_STORAGE_CLEANUP_HISTORY_ITEMS + 5, prefix="history-newer-resolved"
+    )
+
+    with repository.session_factory() as session:
+        with session.begin():
+            repository._prune_storage_cleanup_history(session)
+
+    with repository.session_factory() as session:
+        remaining_ids = set(session.scalars(select(StorageCleanupBatchModel.id)).all())
+    assert old_but_live_id in remaining_ids
+
+
+def test_history_prune_failure_leaves_batch_safely_recoverable_not_corrupted(
+    repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pruning runs inside the same final transaction as the batch's own
+    terminal-state write. If it ever raised there, that transaction rolls
+    back -- the batch is left exactly where any other interruption at that
+    same point already leaves it (`staging`, its file already moved, links
+    already removed, fully recoverable), never a new, worse, corrupted
+    state."""
+    original_path = _add_media(repository, media_id="retention-prune-boundary", age_days=45)
+    preview = repository.preview_storage_cleanup()
+
+    def failing_prune(self: ProductRepository, session: object, *, keep: int = 0) -> None:
+        raise RuntimeError("simulated failure exactly at the transaction boundary")
+
+    monkeypatch.setattr(ProductRepository, "_prune_storage_cleanup_history", failing_prune)
+
+    with pytest.raises(RuntimeError, match="simulated failure"):
+        repository.execute_storage_cleanup(
+            StorageCleanupExecuteRequest(
+                preview_token=preview.preview_token,
+                confirm=True,
+                idempotency_key="retention-prune-boundary",
+            )
+        )
+
+    # The item's own move already committed independently (an earlier, real
+    # transaction) -- the file really is gone from its original location --
+    # but the batch's own terminal-state write, sharing a transaction with
+    # the now-failing prune, rolled back to its pre-reconciliation state.
+    assert not original_path.exists()
+    with repository.session_factory() as session:
+        batch = session.scalar(
+            select(StorageCleanupBatchModel).where(
+                StorageCleanupBatchModel.idempotency_key == "retention-prune-boundary"
+            )
+        )
+        assert batch is not None
+        assert batch.state == "staging"
+        batch_id = batch.id
+
+    monkeypatch.undo()
+    restored = repository.restore_storage_cleanup_batch(
+        batch_id,
+        StorageCleanupRestoreRequest(idempotency_key="retention-prune-boundary-restore"),
+    )
+    assert restored is not None and restored.state == "restored"
+    assert original_path.exists()
+
+
+# Integrated acceptance: one product-shaped pass proving all three fixes
+# interact correctly with ordinary retention execution in a single run.
+
+
+def test_integrated_cleanup_pass_resolves_all_three_defects_correctly(
+    repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Enough pre-existing resolved history to already exceed the bound.
+    _seed_resolved_history_batches(
+        repository, count=MAX_STORAGE_CLEANUP_HISTORY_ITEMS + 2, prefix="integrated-history"
+    )
+
+    # Ineligible: a Reviewed, camera-captured Visit's primary evidence.
+    reviewed_path = _add_media(repository, media_id="integrated-reviewed-primary", age_days=3650)
+    _add_active_visit_with_evidence(
+        repository,
+        visit_id="integrated-reviewed-visit",
+        evidence=[("integrated-reviewed-primary", True)],
+        review_status="reviewed",
+        reviewed_label="northern_cardinal",
+    )
+
+    # A staging (interrupted) batch, from an unrelated ordinary orphaned
+    # asset, that must resolve to a valid terminal state via purge. Run
+    # this before the imported media below becomes independently eligible,
+    # so this batch's own interrupted candidate set is exactly the orphan.
+    staging_path = _add_media(repository, media_id="integrated-staging-orphan", age_days=45)
+    staging_preview = repository.preview_storage_cleanup()
+    assert staging_preview.eligible_media_count == 1
+    real_move = repository._move_storage_item_to_recovery
+
+    def move_then_interrupt(item: StorageCleanupItemModel) -> bool:
+        assert real_move(item)
+        raise OSError("simulated interruption after recovery move")
+
+    monkeypatch.setattr(repository, "_move_storage_item_to_recovery", move_then_interrupt)
+    staging_result = repository.execute_storage_cleanup(
+        StorageCleanupExecuteRequest(
+            preview_token=staging_preview.preview_token,
+            confirm=True,
+            idempotency_key="integrated-staging-exec",
+        )
+    )
+    assert staging_result.state == "staging"
+    assert not staging_path.exists()
+    monkeypatch.setattr(repository, "_move_storage_item_to_recovery", real_move)
+
+    # Eligible: superseded, old-enough imported media (Defect 1).
+    import_visit_id, import_asset_id, imported_path = _create_imported_visit(
+        repository, label="integrated-imported"
+    )
+    with repository.session_factory() as session:
+        with session.begin():
+            asset = session.get(MediaAssetModel, import_asset_id)
+            assert asset is not None
+            asset.created_at = datetime.now(UTC) - timedelta(days=365)
+            visit = session.get(VisitModel, import_visit_id)
+            assert visit is not None
+            visit.is_superseded = True
+    repository.update_storage_retention_settings(
+        _settings_payload("integrated-settings", superseded_evidence_age_days=30)
+    )
+
+    # Now run the real, product-shaped cleanup pass over the imported,
+    # superseded evidence -- exercising Defect 1's fix and, as a side
+    # effect, Defect 3's history-bound enforcement together.
+    preview = repository.preview_storage_cleanup()
+    assert preview.eligible_media_count == 1
+    assert {c.category for c in preview.categories} == {"superseded_only_evidence"}
+    result = repository.execute_storage_cleanup(
+        StorageCleanupExecuteRequest(
+            preview_token=preview.preview_token,
+            confirm=True,
+            idempotency_key="integrated-cleanup-exec",
+        )
+    )
+    assert result.state == "quarantined"
+    assert not imported_path.exists()
+
+    # Resolve the interrupted staging batch -- exercises Defect 2's fix.
+    with repository.session_factory() as session:
+        with session.begin():
+            batch = session.get(StorageCleanupBatchModel, staging_result.batch_id)
+            assert batch is not None
+            batch.recovery_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    staging_purged = repository.purge_storage_cleanup_batch(
+        staging_result.batch_id,
+        StorageCleanupPurgeRequest(confirm=True, idempotency_key="integrated-staging-purge"),
+    )
+    assert staging_purged is not None and staging_purged.state == "purged"
+
+    # -- Final assertions: correct files retained, correct files removed --
+    assert reviewed_path.exists()  # Reviewed truth's evidence: retained
+    assert not imported_path.exists()  # superseded imported media: removed
+    recovery_path = (
+        repository.media_root / ".recovery" / staging_result.batch_id / "integrated-staging-orphan.bin"
+    )
+    assert not recovery_path.exists()  # staging batch: actually purged
+
+    # -- cleanup batch in a valid terminal state --
+    with repository.session_factory() as session:
+        staging_batch = session.get(StorageCleanupBatchModel, staging_result.batch_id)
+        assert staging_batch is not None and staging_batch.state == "purged"
+        cleanup_batch = session.get(StorageCleanupBatchModel, result.batch_id)
+        assert cleanup_batch is not None and cleanup_batch.state == "quarantined"
+
+    # -- history within bound --
+    with repository.session_factory() as session:
+        row_count = session.scalar(select(func.count(StorageCleanupBatchModel.id)))
+    assert row_count is not None and row_count <= MAX_STORAGE_CLEANUP_HISTORY_ITEMS + 3
+
+    # -- DB/media coherence intact --
+    with repository.session_factory() as session:
+        reviewed_visit = session.get(VisitModel, "integrated-reviewed-visit")
+        assert reviewed_visit is not None
+        assert reviewed_visit.reviewed_label == "northern_cardinal"
+        imported_visit = session.get(VisitModel, import_visit_id)
+        assert imported_visit is not None
+        assert imported_visit.is_superseded is True
+        imported_asset = session.get(MediaAssetModel, import_asset_id)
+        assert imported_asset is not None  # retained forever as an audit trail
