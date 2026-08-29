@@ -24,26 +24,122 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `fe54ac9` -- the implementation commit for
-  Storage / Retention / Disk-Pressure & Recovery Closure v1 (its own
-  separate documentation-only report commit sits directly on top and is
-  not cited here as a second, separate code-bearing HEAD, matching this
-  field's established convention). `1656f1a` (Non-Interactive Field
-  Acceptance Authentication & Session Access v1's own implementation
-  commit), `18a0025` (Whole-Product UI / Accessibility / Performance
-  Closure v1's own implementation commit), One-Release Roadmap & Scheduler
-  Reconciliation v1's own commit (documentation-only, `4312b18`), and
-  Camera Node Upgrade & Compatibility Recovery v1's own three
-  implementation commits sit underneath it in history; the intervening
-  reconciliation commits for those closures (`e01e691`, `c03d0b1`,
+- **Accepted HEAD:** `9c52c7f` -- the implementation commit for
+  Retention Correctness & Bounded Cleanup Closure v1 (its own separate
+  documentation-only report commit, `2624a41`, sits directly on top and
+  is not cited here as a second, separate code-bearing HEAD, matching
+  this field's established convention). `fe54ac9` (Storage / Retention /
+  Disk-Pressure & Recovery Closure v1's own implementation commit),
+  `1656f1a` (Non-Interactive Field Acceptance Authentication & Session
+  Access v1's own implementation commit), `18a0025` (Whole-Product UI /
+  Accessibility / Performance Closure v1's own implementation commit),
+  One-Release Roadmap & Scheduler Reconciliation v1's own commit
+  (documentation-only, `4312b18`), and Camera Node Upgrade &
+  Compatibility Recovery v1's own three implementation commits sit
+  underneath it in history; the intervening reconciliation commits for
+  those closures (`8572308`, `4581424`, `4aeb658`, `e01e691`, `c03d0b1`,
   `80e1bb3`) are likewise not cited as separate code-bearing HEADs for the
   identical reason.
-- **Schema:** `v58` -- unchanged by this milestone. Every fix Storage /
-  Retention / Disk-Pressure & Recovery Closure v1 made lives entirely in
-  `scripts/deploy_windows_dev.py` (dev-deployment tooling) and its own test
-  file -- confirmed by direct grep that nothing under `src/mockingbird/`
-  imports it; no product, persistence, or schema code was touched.
-- **Latest accepted milestone:** Storage / Retention / Disk-Pressure &
+- **Schema:** `v58` -- unchanged by this milestone. All three fixes reuse
+  existing columns (`VisitModel.is_superseded`/`representative_media_
+  path`, `MediaAssetModel.created_at`, and the existing
+  `StorageCleanupBatchModel`/`StorageCleanupItemModel` state vocabulary)
+  -- the data model already fully supported the documented/intended
+  behavior in all three cases; no new table, no new column. Every prior
+  fix Storage / Retention / Disk-Pressure & Recovery Closure v1 made
+  lives entirely in `scripts/deploy_windows_dev.py` (dev-deployment
+  tooling) and its own test file, unchanged and untouched by this
+  milestone.
+- **Latest accepted milestone:** Retention Correctness & Bounded Cleanup
+  Closure v1 -- see
+  [retention-correctness-bounded-cleanup-closure-v1-report.md](retention-correctness-bounded-cleanup-closure-v1-report.md)
+  for the complete record. Classification **A**. A small, bounded,
+  release-critical follow-up (Lane M) closing exactly the three
+  reproduced retention defects Storage / Retention / Disk-Pressure &
+  Recovery Closure v1's own "Remaining risks" disclosed and deliberately
+  left unfixed under its own bounded time budget: (1) imported/folder-
+  imported media (`create_media_import`/`import_folder_media`, via
+  `_create_media_product_records`, which never materializes a
+  `VisitEvidenceLink`) was protected forever unconditionally by
+  `_storage_retention_evaluation`'s `legacy_representative_evidence`
+  bucket, directly contradicting `docs/appliance-storage-privacy-
+  recovery-v1-contract.md:159-163`'s own "same active/superseded/
+  reviewed rules as any other Visit-linked evidence -- no separate
+  contract" claim -- fixed to become eligible once every referencing
+  Visit is superseded, on the identical `superseded_evidence_age_days`
+  clock `superseded_only_evidence` already uses for linked evidence,
+  while remaining protected forever while any referencing Visit stays
+  active regardless of review state, exactly matching a linked primary
+  frame's own existing protection (reviewed, corrected, unreviewed, and
+  folder-imported Visits all explicitly tested; the underlying import
+  code creates exactly one asset per import, so the brief's own "cannot
+  distinguish original from derived evidence" stop-condition did not
+  apply -- there is nothing to distinguish); (2) a `"staging"`
+  (interrupted) cleanup batch could only ever be restored, never purged,
+  because `purge_storage_cleanup_batch`'s own purge query only ever
+  considered items already durably `"quarantined"`, a state an
+  interrupted item can structurally never reach on its own -- fixed with
+  a new `_resolve_staging_batch_for_purge`, invoked only for a
+  `"staging"` batch before the existing, unmodified purge logic runs,
+  reusing (never duplicating) the exact reconciliation
+  `execute_storage_cleanup` already performs at the end of a clean run
+  (refactored into two shared helpers so there is exactly one
+  implementation of this transition, not two); a batch that never
+  actually moved anything resolves to the real `"failed"` outcome rather
+  than a misleading `"purged"`, and one still genuinely ambiguous even
+  after a real reconciliation attempt correctly stays rejected rather
+  than reporting a false terminal state; (3) `storage_cleanup_history`'s
+  own `MAX_STORAGE_CLEANUP_HISTORY_ITEMS` constant never actually bounded
+  the underlying `storage_cleanup_batches` table -- only a read-page size
+  and an unrelated automatic-purge chunk size -- fixed with a new
+  `_prune_storage_cleanup_history`, called at the tail of every write
+  path that can newly produce an eligible row (execute/restore/purge),
+  pruning the oldest rows beyond the newest 30 among batches in a
+  terminal, disk-safe state (purged/restored/failed) only -- a batch
+  still holding live `.recovery/<batch_id>/` files is never pruned
+  regardless of age, proven directly by a dedicated test seeding a
+  400-day-old still-quarantined batch alongside 35 newer purged ones and
+  confirming the old-but-live one survives. Reviewed truth verified
+  unaffected across all five required cases; DB/media coherence verified
+  in both directions (no new dangling reference beyond the same already-
+  accepted "row kept forever as audit trail, file gone, every read path
+  already handles a clean 404" contract every other purge category
+  already relies on; no new orphan file possible, since none of the
+  three fixes adds a file-write path -- the pre-existing, already-
+  disclosed structural no-DB-owner orphan-media gap is unaffected and was
+  not reopened, per the governing brief). No schema change (see
+  "Schema," above). 17 new tests (`tests/test_storage_retention.py`,
+  39/39 passing), each independently confirmed RED against the pre-fix
+  code -- via `git stash` of the production file while it was still
+  uncommitted, and later via a direct pre-fix-blob swap once committed --
+  and GREEN after. Tier 2 (23 files across storage/retention/imports/
+  backup/doctor/visit-curation/review-queue): 329 passed, 0 failed. Tier
+  3 (full Core): 5213 passed, 3 failed, 3 skipped, 23 deselected, 11
+  xfailed -- all 3 failures independently confirmed unrelated, not merely
+  assumed from precedent: a Camera Node picamera2-restoration test
+  passing cleanly both in isolation and as its own full file (a
+  full-suite-only flake); the identical, independently-reconfirmed
+  pre-existing `test_place_biodiversity_summary_repository.py` pair
+  (a bird-species historical-status classification defect with zero
+  code-path relationship to this milestone's own changes), confirmed
+  unrelated by directly swapping the pre-fix (`8572308`) blob back in and
+  reproducing the identical failure, then restoring a byte-exact match to
+  `HEAD` -- zero regressions attributable to this milestone (Tier 3's own
+  long-running process had already imported the module a few minutes
+  before a small, purely cosmetic, zero-behavior dead-parameter cleanup
+  landed in the implementation commit; that specific increment was
+  independently re-verified via a full Tier 1 + partial Tier 2 re-run
+  against the exact final code instead of a second full 39-minute Tier 3
+  pass for a provably zero-risk difference -- see the milestone report's
+  own "Precise sequencing note" for the complete accounting). `ruff
+  check`: zero new findings, confirmed by direct clean-baseline
+  bisection against this file's own 57 pre-existing, unrelated findings.
+  Lane M is now reconciled to **closed** (§6, below) -- see §3, below,
+  for the full accounting. Does **not** authorize the next Representative
+  Field Acceptance / Gate A session, External Pre-Release Acceptance, or
+  Final Release Hardening, and does **not** select a next development
+  milestone -- see §3, below.
+- **Prior accepted milestone:** Storage / Retention / Disk-Pressure &
   Recovery Closure v1 -- see
   [storage-retention-disk-pressure-recovery-closure-v1-report.md](storage-retention-disk-pressure-recovery-closure-v1-report.md)
   for the complete record. Classification **B**. A bounded, release-critical
@@ -650,6 +746,49 @@ preserved here, not relaxed.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+Retention Correctness & Bounded Cleanup Closure v1 (directly authorized
+outside this file, as a small, bounded, release-critical follow-up to
+Storage / Retention / Disk-Pressure & Recovery Closure v1, reconciled
+here at its own closure) is now accepted at classification **A** -- see
+§1, above, Lane M, §6, below, and
+[retention-correctness-bounded-cleanup-closure-v1-report.md](retention-correctness-bounded-cleanup-closure-v1-report.md)
+for the full record. Closes all three reproduced retention defects
+Storage / Retention / Disk-Pressure & Recovery Closure v1 disclosed and
+deliberately left unfixed under its own bounded time budget (imported/
+folder-imported media over-retention against its own documented
+contract; a `"staging"`-batch purge-path gap; a cosmetically-misnamed,
+actually-unbounded `storage_cleanup_history` constant) -- see §1, above,
+for the complete accounting of each fix, its RED/GREEN proof, and full
+Tier 1/2/3 validation (zero regressions attributable to this milestone,
+directly confirmed rather than assumed). Lane M is now reconciled to
+**closed** (§6, below): the retention contract this file's own prior
+entry called "materially closed, not fully closed" pending exactly these
+three fixes is no longer ambiguous -- each of the five governing
+questions the imported-media contract raised (which imported media is
+retainable indefinitely vs. eligible under ordinary retention; whether
+Reviewed truth implies indefinite evidence preservation or only product
+truth preservation; whether user-imported originals are distinguished
+from derived evidence in the data model; whether the current behavior was
+explicitly contradicted by existing docs/tests) was answered directly
+from code, traced and cited precisely, not inferred or guessed, and each
+fix was proven RED before GREEN against a dedicated, deterministic
+reproducer before being applied. The one remaining, already-disclosed,
+structural storage gap -- no code anywhere scans the media directory and
+cross-references it against the DB, so a file with no DB owner is
+permanently invisible to every existing integrity/retention check -- is
+real, bounded, low-materiality (per the prior closure's own
+investigation), unaffected by this milestone, and was deliberately not
+reopened, per this milestone's own governing brief; it remains a
+reasonable candidate for a future bounded "sampled orphan sweep," not a
+reason to withhold closing Lane M over these three specific, now-closed
+defects. This closure does **not** authorize the next Representative
+Field Acceptance / Gate A session, External Pre-Release Acceptance, or
+Final Release Hardening, and does **not** select a next development
+milestone -- see the bold statement immediately above, unchanged by this
+closure. `roadmap.md` was not edited -- this milestone is a bounded
+correctness closure confined to retention/import cleanup code, not a
+roadmap-scope change.
 
 Storage / Retention / Disk-Pressure & Recovery Closure v1 (directly
 authorized outside this file, as a bounded release-critical storage/
@@ -1450,29 +1589,36 @@ and
 
 ### M. Storage / Retention UX
 
-**Status:** MATERIALLY CLOSED -- RELEASE-CRITICAL. Integrated acceptance
-performed by Storage / Retention / Disk-Pressure & Recovery Closure v1
-(2026-08-28), classification **B** -- see §1/§3, above, and
-[storage-retention-disk-pressure-recovery-closure-v1-report.md](storage-retention-disk-pressure-recovery-closure-v1-report.md).
+**Status:** CLOSED -- RELEASE-CRITICAL. Integrated acceptance performed
+by Storage / Retention / Disk-Pressure & Recovery Closure v1 (2026-08-28,
+classification **B**), then closed by Retention Correctness & Bounded
+Cleanup Closure v1 (2026-08-28, classification **A**) -- see §1/§3,
+above, and
+[storage-retention-disk-pressure-recovery-closure-v1-report.md](storage-retention-disk-pressure-recovery-closure-v1-report.md)/
+[retention-correctness-bounded-cleanup-closure-v1-report.md](retention-correctness-bounded-cleanup-closure-v1-report.md).
 Disk-pressure detection (a real, tested, graduated healthy/getting_low/
 action_recommended/critical ladder), long-running storage growth (real,
 directly-measured accounting on both the WSL dev host and the real Windows
-deployment), cleanup/retention (349 real tests, independently re-run,
-covering eligibility/idempotency/interruption-safety/transactional
-ordering), DB/media consistency (traced precisely in both directions), and
-backup visibility (Doctor-surfaced staleness/unreadable-count/interrupted-
-restore, all real and tested) were each verified integrated, not merely
-inspected in isolation. NAS/external-storage support remains an explicit
-product decision, not an automatic blocker, and was not built. Real,
-precisely-disclosed, safe-direction remaining gaps (imported-media
-over-retention against its own documented contract; a `"staging"`-batch
-purge-path gap; a cosmetically-misnamed `storage_cleanup_history` bound;
-no orphan-media/no-DB-owner detection anywhere in the product) are why
-this reads "materially closed," not "fully closed" -- none is
-release-blocking, none causes data loss, and each was deliberately left
-disclosed rather than risked as a rushed fix to high-stakes retention-
-eligibility code -- see the milestone report's "Remaining risks" for the
-complete, concrete list.
+deployment), cleanup/retention (now 366+ real tests across the two
+closures, independently re-run, covering eligibility/idempotency/
+interruption-safety/transactional ordering/bounded history), DB/media
+consistency (traced precisely in both directions), and backup visibility
+(Doctor-surfaced staleness/unreadable-count/interrupted-restore, all real
+and tested) were each verified integrated, not merely inspected in
+isolation. NAS/external-storage support remains an explicit product
+decision, not an automatic blocker, and was not built. The three real,
+precisely-disclosed, safe-direction gaps the first closure found and
+deliberately left unfixed (imported-media over-retention against its own
+documented contract; a `"staging"`-batch purge-path gap; a cosmetically-
+misnamed, actually-unbounded `storage_cleanup_history` constant) are now
+fixed and tested by the second, closing this lane. One real,
+already-disclosed, structural gap remains, deliberately not reopened by
+either closure: no orphan-media/no-DB-owner detection anywhere in the
+product (no code scans the media directory and cross-references it
+against the DB) -- real, bounded, and low-materiality per the first
+closure's own investigation, not release-blocking, a reasonable candidate
+for a future bounded "sampled orphan sweep," not a reason this lane
+remains open.
 
 ### N. Privacy / Contribution
 

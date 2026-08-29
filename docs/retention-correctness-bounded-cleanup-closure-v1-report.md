@@ -527,6 +527,23 @@ merely assumed from precedent:
 **Zero regressions attributable to this milestone**, confirmed directly,
 not inferred from precedent alone.
 
+**Precise sequencing note.** Tier 3's pytest process started at 21:47
+and, as one long-running process, imported `product_repository.py`
+exactly once at that time; a small, purely cosmetic cleanup a few
+minutes later (removing an unused `now` keyword parameter from
+`_storage_cleanup_finish_recoverable_item` -- present in the code Tier 3
+was already running against, never read inside the function body in
+either version, zero behavioral difference) landed in the 21:55:40
+implementation commit Tier 3's own already-running process could not see.
+That specific incremental change was independently re-verified separately
+and faster instead of re-running the full 39-minute Tier 3 a second time
+for a provably zero-risk difference (matching this milestone's own "do
+not run duplicate long validation jobs" instruction): the full
+`test_storage_retention.py` suite (39/39) and an 11-file, 226-test Tier 2
+subset both re-run clean against the exact final, committed code
+immediately after the cleanup, and `ruff check` reconfirmed zero new
+findings.
+
 ## Remaining risks (concrete only)
 
 - The pre-existing, already-disclosed structural gap — no code anywhere
