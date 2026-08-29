@@ -1257,6 +1257,80 @@ def cleanup_releases(
     return removed
 
 
+def gc_cache_command(*, dev_root: Path, windows_host: WindowsHost) -> list[str]:
+    """`--gc-cache`: the runtime/model cache garbage collection
+    `docs/windows-dev-deployment-design.md`'s own "Left for follow-up"
+    section named and deliberately deferred at the time ("Given the cache
+    is small in count ... this is unlikely to matter in practice").
+
+    Real measurement during Storage / Retention / Disk-Pressure & Recovery
+    Closure v1 found that assumption false on this project's own real dev
+    machine: 18+ retained runtime-cache entries plus several multi-GB
+    orphaned `.staging-*`/`.stale-*` leftovers under `RUNTIME_CACHE_DIRNAME`
+    alone, ~39 GB total, a material contributor to a real observed Windows
+    host free-space decline (`docs/storage-retention-disk-pressure-recovery-
+    closure-v1-report.md`).
+
+    Two things are removed, from each of the three cache roots (runtime,
+    model, BioCLIP model):
+
+    1. Every entry no release directory *currently on disk* still
+       references (`cleanup_releases` already bounds `releases/` itself;
+       this is its cache-side counterpart -- see that function's own
+       docstring for why it deliberately never did this itself). An
+       already-removed ledger entry's hash is never treated as referenced,
+       so running `--cleanup`/`--keep` in the same invocation before this
+       (as `main` does) reclaims the most.
+    2. Every orphaned `.staging-*`/`.stale-*` entry, unconditionally --
+       these suffixes are never a trusted, reusable path by construction
+       (see `ensure_cache`), so an entry still bearing one is always either
+       an abandoned population attempt or a rename-away that never got
+       cleaned up, most commonly because the process populating or
+       replacing it was killed outright (a real, repeatedly-observed
+       failure mode of the `powershell.exe` interop this tool depends on)
+       rather than raising a catchable Python exception. A bare content
+       hash never contains a literal `.staging-`/`.stale-` substring
+       (hashes are pure hex), so the single "not in the referenced set"
+       check below already catches these without a separate condition.
+
+    Bounded and safe by construction: never touches `releases/` or
+    `userdata/`. A removal failure (a file still locked by a running
+    process) is skipped, not raised -- matching `ensure_cache`'s own
+    "best-effort only" precedent for exactly this situation. Returns
+    `"<cache-dirname>/<entry-name>"` for every directory actually removed,
+    oldest-cache-root-first, for CLI reporting.
+    """
+
+    referenced: dict[str, set[str]] = {
+        RUNTIME_CACHE_DIRNAME: set(),
+        MODEL_CACHE_DIRNAME: set(),
+        BIOCLIP_MODEL_CACHE_DIRNAME: set(),
+    }
+    for record in read_deployments(dev_root):
+        if not release_directory_for(dev_root, record.sha).is_dir():
+            continue
+        referenced[RUNTIME_CACHE_DIRNAME].add(record.runtime_hash)
+        if record.model_hash != NO_MODEL_BUNDLE_HASH:
+            referenced[MODEL_CACHE_DIRNAME].add(record.model_hash)
+        if record.bioclip_model_hash != NO_MODEL_BUNDLE_HASH:
+            referenced[BIOCLIP_MODEL_CACHE_DIRNAME].add(record.bioclip_model_hash)
+
+    removed: list[str] = []
+    for cache_dirname, referenced_hashes in referenced.items():
+        cache_root = dev_root / cache_dirname
+        if not cache_root.is_dir():
+            continue
+        for entry in sorted(cache_root.iterdir()):
+            if not entry.is_dir() or entry.name in referenced_hashes:
+                continue
+            try:
+                windows_host.remove_tree(entry)
+            except Exception:
+                continue
+            removed.append(f"{cache_dirname}/{entry.name}")
+    return removed
+
+
 # ---------------------------------------------------------------------------
 # Deployment ledger: durable history for rollback/cleanup, and the
 # authoritative record process-safety cross-checks a live port occupant
@@ -2748,6 +2822,14 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="keep only this many most recent release directories; implies --cleanup",
     )
     parser.add_argument(
+        "--gc-cache", action="store_true",
+        help="remove runtime/model/BioCLIP-model cache entries no retained release directory "
+        "still references, plus any orphaned .staging-/.stale- leftover from an interrupted "
+        "cache population; safe to combine with --cleanup/--keep (runs after, so a release "
+        "just removed no longer holds its cache entries referenced) -- see "
+        "docs/windows-dev-deployment-design.md's 'Left for follow-up'",
+    )
+    parser.add_argument(
         "--skip-gpu-runtime", action="store_true",
         help="passthrough to build_local_product.py: omit the ~1.1 GB CUDA/cuDNN stack for a faster build",
     )
@@ -2791,10 +2873,23 @@ def main(argv: list[str] | None = None) -> int:
             print(status_report(dev_root=dev_root, host=args.host, port=args.port, windows_host=windows_host))
             return 0
 
-        if args.cleanup or args.keep is not None:
-            keep = args.keep if args.keep is not None else DEFAULT_KEEP
-            removed = cleanup_command(dev_root=dev_root, keep=keep, windows_host=windows_host)
-            print(f"Removed releases: {', '.join(removed)}" if removed else "Nothing to remove.")
+        if args.cleanup or args.keep is not None or args.gc_cache:
+            lines: list[str] = []
+            if args.cleanup or args.keep is not None:
+                keep = args.keep if args.keep is not None else DEFAULT_KEEP
+                removed = cleanup_command(dev_root=dev_root, keep=keep, windows_host=windows_host)
+                lines.append(f"Removed releases: {', '.join(removed)}" if removed else "Nothing to remove.")
+            if args.gc_cache:
+                # Runs after release cleanup above (when both are requested
+                # in one invocation) so a release just removed no longer
+                # holds its own cache entries referenced -- see
+                # `gc_cache_command`'s own docstring.
+                removed_cache = gc_cache_command(dev_root=dev_root, windows_host=windows_host)
+                lines.append(
+                    f"Removed cache entries: {', '.join(removed_cache)}" if removed_cache
+                    else "No cache entries to remove."
+                )
+            print("\n".join(lines))
             return 0
 
         report = deploy(

@@ -63,6 +63,8 @@ compute_runtime_hash = _MODULE["compute_runtime_hash"]
 compute_model_hash = _MODULE["compute_model_hash"]
 compute_bioclip_model_hash = _MODULE["compute_bioclip_model_hash"]
 NO_MODEL_BUNDLE_HASH = _MODULE["NO_MODEL_BUNDLE_HASH"]
+RUNTIME_CACHE_DIRNAME = _MODULE["RUNTIME_CACHE_DIRNAME"]
+MODEL_CACHE_DIRNAME = _MODULE["MODEL_CACHE_DIRNAME"]
 BIOCLIP_MODEL_CACHE_DIRNAME = _MODULE["BIOCLIP_MODEL_CACHE_DIRNAME"]
 BioClipRuntimeVerification = _MODULE["BioClipRuntimeVerification"]
 BIOCLIP_RUNTIME_CHECK_MODULES = _MODULE["BIOCLIP_RUNTIME_CHECK_MODULES"]
@@ -74,6 +76,7 @@ ensure_bioclip_model_cache = _MODULE["ensure_bioclip_model_cache"]
 materialize_release = _MODULE["materialize_release"]
 remove_release_directory = _MODULE["remove_release_directory"]
 cleanup_releases = _MODULE["cleanup_releases"]
+gc_cache_command = _MODULE["gc_cache_command"]
 
 read_deployments = _MODULE["read_deployments"]
 append_deployment = _MODULE["append_deployment"]
@@ -2169,6 +2172,198 @@ def test_cleanup_never_touches_user_data(tmp_path: Path, dev_root: Path, fake_ho
     cleanup_command(dev_root=dev_root, keep=0, windows_host=fake_host)
 
     assert (userdata_dir / "mockingbird.sqlite3").is_file()
+
+
+# ---------------------------------------------------------------------------
+# gc_cache_command: removes cache entries no retained release still
+# references, plus orphaned .staging-/.stale- leftovers -- Storage /
+# Retention / Disk-Pressure & Recovery Closure v1. Real measurement on the
+# project's own dev machine found this exact gap (deliberately deferred by
+# docs/windows-dev-deployment-design.md's "Left for follow-up") had grown to
+# ~39 GB across 21 never-pruned entries -- a material contributor to a real
+# observed Windows host free-space decline.
+# ---------------------------------------------------------------------------
+
+
+def _cache_dir(dev_root: Path, dirname: str, name: str) -> Path:
+    path = dev_root / dirname / name
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "marker.txt").write_text("fake cache content", encoding="utf-8")
+    return path
+
+
+def test_gc_cache_removes_an_entry_no_retained_release_references(dev_root: Path, fake_host: WindowsHost) -> None:
+    append_deployment(
+        dev_root,
+        dataclasses.replace(_record("aaaaaaa", commit="a" * 40, build_id="id-a"), runtime_hash="runtime-keep"),
+        windows_host=fake_host,
+    )
+    release_directory_for(dev_root, "aaaaaaa").mkdir(parents=True)
+    _cache_dir(dev_root, RUNTIME_CACHE_DIRNAME, "runtime-keep")
+    _cache_dir(dev_root, RUNTIME_CACHE_DIRNAME, "runtime-orphan")
+
+    removed = gc_cache_command(dev_root=dev_root, windows_host=fake_host)
+
+    assert removed == [f"{RUNTIME_CACHE_DIRNAME}/runtime-orphan"]
+    assert (dev_root / RUNTIME_CACHE_DIRNAME / "runtime-keep").is_dir()
+    assert not (dev_root / RUNTIME_CACHE_DIRNAME / "runtime-orphan").exists()
+
+
+def test_gc_cache_never_removes_a_hash_still_referenced_by_a_retained_release(
+    dev_root: Path, fake_host: WindowsHost,
+) -> None:
+    record = dataclasses.replace(
+        _record("aaaaaaa", commit="a" * 40, build_id="id-a"),
+        runtime_hash="runtime-keep", model_hash="model-keep", bioclip_model_hash="bioclip-keep",
+    )
+    append_deployment(dev_root, record, windows_host=fake_host)
+    release_directory_for(dev_root, "aaaaaaa").mkdir(parents=True)
+    _cache_dir(dev_root, RUNTIME_CACHE_DIRNAME, "runtime-keep")
+    _cache_dir(dev_root, MODEL_CACHE_DIRNAME, "model-keep")
+    _cache_dir(dev_root, BIOCLIP_MODEL_CACHE_DIRNAME, "bioclip-keep")
+
+    removed = gc_cache_command(dev_root=dev_root, windows_host=fake_host)
+
+    assert removed == []
+    assert (dev_root / RUNTIME_CACHE_DIRNAME / "runtime-keep").is_dir()
+    assert (dev_root / MODEL_CACHE_DIRNAME / "model-keep").is_dir()
+    assert (dev_root / BIOCLIP_MODEL_CACHE_DIRNAME / "bioclip-keep").is_dir()
+
+
+def test_gc_cache_ignores_the_no_model_bundle_sentinel(dev_root: Path, fake_host: WindowsHost) -> None:
+    """A release built with `--skip-bioclip-runtime`/no model bundle records
+    `NO_MODEL_BUNDLE_HASH` -- that sentinel must never be treated as a real,
+    on-disk cache directory name to preserve."""
+
+    record = dataclasses.replace(
+        _record("aaaaaaa", commit="a" * 40, build_id="id-a"),
+        runtime_hash="runtime-keep", model_hash=NO_MODEL_BUNDLE_HASH, bioclip_model_hash=NO_MODEL_BUNDLE_HASH,
+    )
+    append_deployment(dev_root, record, windows_host=fake_host)
+    release_directory_for(dev_root, "aaaaaaa").mkdir(parents=True)
+    _cache_dir(dev_root, RUNTIME_CACHE_DIRNAME, "runtime-keep")
+
+    removed = gc_cache_command(dev_root=dev_root, windows_host=fake_host)
+
+    assert removed == []
+
+
+def test_gc_cache_removes_orphaned_staging_and_stale_directories_even_when_their_hash_prefix_is_referenced(
+    dev_root: Path, fake_host: WindowsHost,
+) -> None:
+    """A `.staging-*`/`.stale-*` entry is never the trusted, reusable path
+    (see `ensure_cache`) -- even when it happens to share a hash prefix with
+    a currently-referenced, validly-populated entry, the suffixed leftover
+    must still go."""
+
+    append_deployment(
+        dev_root,
+        dataclasses.replace(_record("aaaaaaa", commit="a" * 40, build_id="id-a"), runtime_hash="runtime-hash"),
+        windows_host=fake_host,
+    )
+    release_directory_for(dev_root, "aaaaaaa").mkdir(parents=True)
+    _cache_dir(dev_root, RUNTIME_CACHE_DIRNAME, "runtime-hash")
+    _cache_dir(dev_root, RUNTIME_CACHE_DIRNAME, "runtime-hash.stale-aaaa1111")
+    _cache_dir(dev_root, RUNTIME_CACHE_DIRNAME, "otherhash.staging-bbbb2222")
+
+    removed = gc_cache_command(dev_root=dev_root, windows_host=fake_host)
+
+    assert set(removed) == {
+        f"{RUNTIME_CACHE_DIRNAME}/runtime-hash.stale-aaaa1111",
+        f"{RUNTIME_CACHE_DIRNAME}/otherhash.staging-bbbb2222",
+    }
+    assert (dev_root / RUNTIME_CACHE_DIRNAME / "runtime-hash").is_dir()
+
+
+def test_gc_cache_treats_a_removed_release_directorys_hash_as_unreferenced(
+    dev_root: Path, fake_host: WindowsHost,
+) -> None:
+    """A ledger entry alone is not enough -- mirrors `cleanup_releases`'s own
+    `existing = [... if release_directory_for(...).is_dir()]` convention.
+    Simulates running `--cleanup` (which removes the release directory but
+    never touches the cache -- see `cleanup_releases`'s own docstring)
+    immediately before `--gc-cache`."""
+
+    append_deployment(
+        dev_root,
+        dataclasses.replace(_record("aaaaaaa", commit="a" * 40, build_id="id-a"), runtime_hash="runtime-hash"),
+        windows_host=fake_host,
+    )
+    # Note: no release_directory_for(...).mkdir() -- already cleaned up.
+    _cache_dir(dev_root, RUNTIME_CACHE_DIRNAME, "runtime-hash")
+
+    removed = gc_cache_command(dev_root=dev_root, windows_host=fake_host)
+
+    assert removed == [f"{RUNTIME_CACHE_DIRNAME}/runtime-hash"]
+
+
+def test_gc_cache_never_touches_releases_or_user_data(dev_root: Path, fake_host: WindowsHost) -> None:
+    append_deployment(
+        dev_root,
+        dataclasses.replace(_record("aaaaaaa", commit="a" * 40, build_id="id-a"), runtime_hash="runtime-keep"),
+        windows_host=fake_host,
+    )
+    release_directory_for(dev_root, "aaaaaaa").mkdir(parents=True)
+    (release_directory_for(dev_root, "aaaaaaa") / "app.txt").write_text("pretend release", encoding="utf-8")
+    _cache_dir(dev_root, RUNTIME_CACHE_DIRNAME, "runtime-keep")
+    _cache_dir(dev_root, RUNTIME_CACHE_DIRNAME, "runtime-orphan")
+    userdata_dir = dev_root / USERDATA_DIRNAME
+    userdata_dir.mkdir(parents=True, exist_ok=True)
+    (userdata_dir / "mockingbird.sqlite3").write_text("pretend database", encoding="utf-8")
+
+    gc_cache_command(dev_root=dev_root, windows_host=fake_host)
+
+    assert (release_directory_for(dev_root, "aaaaaaa") / "app.txt").is_file()
+    assert (userdata_dir / "mockingbird.sqlite3").is_file()
+
+
+def test_gc_cache_skips_a_removal_failure_without_raising_and_continues(
+    dev_root: Path, fake_host: WindowsHost,
+) -> None:
+    append_deployment(
+        dev_root,
+        dataclasses.replace(_record("aaaaaaa", commit="a" * 40, build_id="id-a"), runtime_hash="runtime-keep"),
+        windows_host=fake_host,
+    )
+    release_directory_for(dev_root, "aaaaaaa").mkdir(parents=True)
+    _cache_dir(dev_root, RUNTIME_CACHE_DIRNAME, "runtime-keep")
+    _cache_dir(dev_root, RUNTIME_CACHE_DIRNAME, "runtime-locked-orphan")
+    _cache_dir(dev_root, RUNTIME_CACHE_DIRNAME, "runtime-removable-orphan")
+
+    def _remove_tree_refusing_one(path: Path) -> None:
+        if path.name == "runtime-locked-orphan":
+            raise OSError("simulated: still open by a running process")
+        if path.is_symlink():
+            path.unlink()
+        elif path.exists():
+            shutil.rmtree(path)
+
+    host = dataclasses.replace(fake_host, remove_tree=_remove_tree_refusing_one)
+
+    removed = gc_cache_command(dev_root=dev_root, windows_host=host)
+
+    assert removed == [f"{RUNTIME_CACHE_DIRNAME}/runtime-removable-orphan"]
+    assert (dev_root / RUNTIME_CACHE_DIRNAME / "runtime-locked-orphan").is_dir()  # left for a future pass
+    assert (dev_root / RUNTIME_CACHE_DIRNAME / "runtime-keep").is_dir()
+
+
+def test_gc_cache_with_nothing_deployed_yet_is_a_safe_no_op(dev_root: Path, fake_host: WindowsHost) -> None:
+    assert gc_cache_command(dev_root=dev_root, windows_host=fake_host) == []
+
+
+@pytest.mark.parametrize("argv", [["--gc-cache"], ["--cleanup", "--gc-cache"]])
+def test_main_dispatches_to_gc_cache(argv: list[str], monkeypatch: pytest.MonkeyPatch, fake_host: WindowsHost) -> None:
+    calls: list[str] = []
+    monkeypatch.setitem(main.__globals__, "real_windows_host", lambda: fake_host)
+    monkeypatch.setitem(main.__globals__, "cleanup_command", lambda **_kwargs: calls.append("cleanup") or [])
+    monkeypatch.setitem(main.__globals__, "gc_cache_command", lambda **_kwargs: calls.append("gc_cache") or [])
+    monkeypatch.setitem(main.__globals__, "deploy", lambda **_kwargs: (_ for _ in ()).throw(AssertionError("must not be called")))
+
+    exit_code = main(argv)
+
+    assert exit_code == 0
+    assert "gc_cache" in calls
+    assert ("cleanup" in calls) == ("--cleanup" in argv)
 
 
 # ---------------------------------------------------------------------------
