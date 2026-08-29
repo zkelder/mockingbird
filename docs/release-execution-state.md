@@ -24,16 +24,103 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `18a0025` -- the implementation commit for
-  Whole-Product UI / Accessibility / Performance Closure v1. One-Release
-  Roadmap & Scheduler Reconciliation v1's own commit (documentation-only,
-  `4312b18`) and Camera Node Upgrade & Compatibility Recovery v1's own
-  three implementation commits sit underneath it in history; this file's
-  own reconciliation commit for the present closure is layered directly on
-  top of `18a0025` and is not cited here as a second, separate code-bearing
-  HEAD, matching this field's established convention.
-- **Schema:** `v57`, unchanged by this milestone.
-- **Latest accepted milestone:** Whole-Product UI / Accessibility /
+- **Accepted HEAD:** `1656f1a` -- the implementation commit for
+  Non-Interactive Field Acceptance Authentication & Session Access v1
+  (its own separate documentation-only report commit, `16ffe1e`, sits
+  directly on top and is not cited here as a second, separate code-bearing
+  HEAD, matching this field's established convention). `18a0025`
+  (Whole-Product UI / Accessibility / Performance Closure v1's own
+  implementation commit), One-Release Roadmap & Scheduler Reconciliation
+  v1's own commit (documentation-only, `4312b18`), and Camera Node Upgrade
+  & Compatibility Recovery v1's own three implementation commits sit
+  underneath it in history; the two intervening reconciliation commits for
+  those closures (`c03d0b1`, `80e1bb3`) are likewise not cited as
+  separate code-bearing HEADs for the identical reason.
+- **Schema:** `v57 -> v58` -- one new additive table,
+  `field_acceptance_credentials` (see below).
+- **Latest accepted milestone:** Non-Interactive Field Acceptance
+  Authentication & Session Access v1 -- see
+  [non-interactive-field-acceptance-authentication-session-access-v1-report.md](non-interactive-field-acceptance-authentication-session-access-v1-report.md)
+  for the complete record. Classification **A**. A bounded, release-critical
+  security/correctness dependency milestone -- not a product capability --
+  closing the recurring field-acceptance authentication blocker three
+  consecutive prior attempts hit (2026-08-25, 2026-08-26, 2026-08-28; see
+  Lane R, §6, below) without an authentication bypass, without the
+  operator's personal credentials, and without weakening production
+  security. Adds one new, narrow, parallel, bearer-token-authenticated
+  identity -- "Field Acceptance Operator" -- mirroring this codebase's own
+  existing Camera Node device-identity-separation precedent rather than
+  extending the linear Viewer/Reviewer/Administrator role ladder (the
+  required permission shape -- broad Viewer-level reads plus exactly two
+  otherwise-Administrator-tier mutations, Observation start/stop, and
+  nothing else Administrator-tier -- is not a contiguous prefix of that
+  ladder, so no single role-rank placement could express it correctly).
+  Checked by the exact same central `install_authorization` gate every
+  other request already passes through -- no parallel/insecure auth stack,
+  no localhost/header bypass, no anonymous fallback, proven by a dedicated
+  negative-test regression suite. Schema `v57 -> v58`: one new additive
+  table, `field_acceptance_credentials` (hash-only token storage,
+  mandatory bounded expiry -- no permanent-credential path exists in v1 at
+  all -- explicit deterministic revocation, auditable creation/revocation/
+  use). Provisioning is a bounded new admin CLI
+  (`scripts/manage_field_acceptance_credential.py`, Administrator-only,
+  never accepts a password as a CLI argument) mirroring the existing
+  `repair_review_label_provenance.py` real-HTTP-instance precedent; the
+  acceptance tooling itself gained a small stdlib-only client
+  (`scripts/field_acceptance_client.py`) reading
+  `MOCKINGBIRD_ACCEPTANCE_TOKEN` and failing clearly (never anonymously)
+  on every required negative case. Real acceptance proof: provisioned and
+  exercised this exact mechanism live against a real running instance of
+  this milestone's own implementation commit (native Windows, real SQLite,
+  real FastAPI/uvicorn process, `--skip-gpu-runtime --skip-bioclip-runtime`
+  since this proof needed the auth/API layer, not detection quality) --
+  the identical three endpoints that blocked the three prior field-
+  acceptance attempts (`GET /api/streams`, `GET /api/visits`, `POST
+  .../observation/start`) all still correctly `401` with no credential,
+  then all succeed with the new credential, including a real Observation
+  start/stop cycle against the auto-seeded demo Stream, with the
+  credential correctly denied (`403`) on unrelated Administrator actions
+  and its use distinguishable from a human Administrator's in the audit
+  trail; revocation was proven immediate (the identical token fails on its
+  very next use). Deployed to an isolated, disposable dev-root -- **not**
+  the operator's real `MockingBirdDev` deployment, confirmed untouched
+  throughout -- with a disposable bootstrapped Administrator, no live
+  operator credentials used anywhere in this milestone's own work,
+  matching this file's own standing decision (see the 2026-08-25 Lane R
+  entry, below) against asking the operator for real credentials or live
+  participation. Environment left in a secure, known, empty state after
+  proof (credential revoked, disposable instance and process fully
+  removed). Tier 1/2: 20 new tests
+  (`tests/test_field_acceptance_authentication.py`) plus 219 across the
+  eight pre-existing files this milestone's schema-literal bump touched,
+  all passing. Tier 3 (full Core): 5187 passed / 2 failed -- the 2
+  failures both the identical, independently-reconfirmed pre-existing
+  `test_place_biodiversity_summary_repository.py` pair (a bird-species
+  historical-status classification defect with zero code-path relationship
+  to this milestone's own changes), confirmed unrelated by a direct
+  `git checkout` bisection against this milestone's own true starting HEAD
+  (`c03d0b1`), not merely inferred from precedent -- zero regressions
+  attributable to this milestone. `ruff check`: zero new findings,
+  confirmed by a direct clean-baseline bisection. e2e not run (zero
+  `web/src/` changes; the existing suite's cookie-session `storageState`
+  bootstrap is untouched and does not intersect this milestone's
+  bearer-token mechanism). Concrete residual risk, both disclosed in full
+  in the milestone's own report: no login rate-limiting exists anywhere in
+  this product (a pre-existing, disclosed gap from Mobile & Remote
+  Experience v1, untouched, out of this milestone's scope) -- a
+  field-acceptance bearer token is a static secret for its bounded
+  lifetime, mitigated by mandatory expiry/hash-only storage/explicit
+  revocation but not by any brute-force protection on the token-lookup
+  path itself; and the real acceptance proof ran against a disposable
+  instance, not the operator's specific long-running real `MockingBirdDev`
+  deployment (deliberately, per standing policy), so that specific
+  instance still needs its own one-time `create` provisioning step before
+  its first non-interactive use -- not a gap in the mechanism, the
+  intended minimal human step. This closure does **not** authorize Lane R, the
+  next Representative Field Acceptance / Gate A session, External
+  Pre-Release Acceptance, or Final Release Hardening, and does **not**
+  select a next development milestone -- see §3, below.
+- **Prior accepted milestone:** Whole-Product UI / Accessibility /
   Performance Closure v1 -- see
   [whole-product-ui-accessibility-performance-closure-v1-report.md](whole-product-ui-accessibility-performance-closure-v1-report.md)
   for the complete record. Classification **A**. Closes Lane Q as an
@@ -485,6 +572,32 @@ preserved here, not relaxed.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+Non-Interactive Field Acceptance Authentication & Session Access v1
+(directly authorized outside this file, as a bounded release-critical
+security/correctness dependency milestone -- not a product capability,
+reconciled here at its own closure) is now accepted at classification
+**A** -- see §1, above, and
+[non-interactive-field-acceptance-authentication-session-access-v1-report.md](non-interactive-field-acceptance-authentication-session-access-v1-report.md)
+for the full record. Closes the recurring field-acceptance authentication
+blocker Lane R's own three most recent attempts (2026-08-25, 2026-08-26,
+2026-08-28, all recorded below) hit, without an authentication bypass,
+without the operator's personal credentials, and without weakening
+production security -- see §1, above, for the complete accounting
+(mechanism, schema change, real live proof against a disposable isolated
+instance, full Tier 1/2/3 validation). This closure does **not** itself
+authorize the next Representative Field Acceptance / Gate A session --
+that session is still gated on the same global product-roadmap
+reconciliation this file's own governing phase label protects (see
+"CURRENT PHASE," above) -- and does **not** authorize External Pre-Release
+Acceptance or Final Release Hardening. The next daylight Gate A session,
+whenever separately authorized, needs exactly one new step before it
+starts: an Administrator (the operator) runs, once, against the real
+instance, `python scripts/manage_field_acceptance_credential.py create`,
+then exports the printed token as `MOCKINGBIRD_ACCEPTANCE_TOKEN` -- no
+further auth archaeology should be needed for that session. `roadmap.md`
+was not edited -- this milestone is a bounded dependency fix, not a
+roadmap-scope change.
 
 Representative Daylight Field Acceptance & Gate A Evidence v2 (directly
 authorized outside this file, reconciled here at its own closure) is now
@@ -1437,6 +1550,29 @@ A's evidence body is unchanged -- still exactly the two real
 attempt, two of the three blocked by the identical authentication
 precondition. No release budgets proposed. See
 [representative-daylight-field-acceptance-gate-a-evidence-v2-report.md](representative-daylight-field-acceptance-gate-a-evidence-v2-report.md).
+
+**Non-Interactive Field Acceptance Authentication & Session Access v1
+(2026-08-28) closed the authentication half of the recurring blocker
+above, at classification A -- see §1/§3, above, and
+[non-interactive-field-acceptance-authentication-session-access-v1-report.md](non-interactive-field-acceptance-authentication-session-access-v1-report.md)
+for the full record.** A narrow, non-interactive, bearer-token "Field
+Acceptance Operator" credential (schema v58) now lets bounded
+field-acceptance tooling authenticate without an operator's personal
+password, proven live against a real running instance of the exact
+mechanism (the identical three previously-blocking endpoints -- `GET
+/api/streams`, `GET /api/visits`, `POST .../observation/start` -- all
+still correctly `401` unauthenticated, then all succeed with the new
+credential, including a real Observation start/stop cycle). This closes
+the *authentication* precondition specifically -- it does **not** by
+itself close Lane R/Gate A, does **not** run the field session, and does
+**not** authorize the next attempt; Gate A's evidence body is unchanged --
+still exactly the two real 2026-08-19/2026-08-20 daylight cohorts. The
+next daylight session still needs its own separate authorization plus
+representative daylight/weather/health conditions (unrelated to
+authentication, and not something this milestone could control), but no
+longer needs to ask the operator for credentials or route around the
+blocker -- see this milestone's own report for the exact one-time
+provisioning command.
 
 ### S. Actual Final Release Hardening
 
