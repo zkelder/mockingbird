@@ -32,7 +32,12 @@ protecting.
   Closure v1's own report commit (`c8016b9`) also sits on top, likewise
   not cited as a separate code-bearing HEAD -- that milestone found zero
   reproduced defects and changed zero production code, so it added only
-  its own report file. `9c52c7f` (Retention Correctness & Bounded Cleanup
+  its own report file. Representative Daylight Gate A Field Acceptance
+  v4's own report commit (`270b6ba`) sits on top next, for the identical
+  reason: a real, live ~112-minute field session that changed zero
+  production code (the real defect it found is disclosed, not fixed --
+  see its own "Latest accepted milestone" entry, immediately below).
+  `9c52c7f` (Retention Correctness & Bounded Cleanup
   Closure v1's own implementation commit), `fe54ac9` (Storage / Retention /
   Disk-Pressure & Recovery Closure v1's own implementation commit),
   `1656f1a` (Non-Interactive Field Acceptance Authentication & Session
@@ -45,12 +50,72 @@ protecting.
   those closures (`7f98e43`, `8572308`, `4581424`, `4aeb658`, `e01e691`,
   `c03d0b1`, `80e1bb3`) are likewise not cited as separate code-bearing
   HEADs for the identical reason.
-- **Schema:** `v58` -- unchanged by this milestone. Native-Windows
-  Packaged Local-Only Acceptance & Privacy Closure v1 changed zero
-  production code (see its own "Latest accepted milestone" entry,
-  immediately below): a real, live, native-Windows acceptance run found
-  zero reproduced defects.
-- **Latest accepted milestone:** Native-Windows Packaged Local-Only
+- **Schema:** `v58` -- unchanged by this milestone. Representative
+  Daylight Gate A Field Acceptance v4 changed zero production code (see
+  its own "Latest accepted milestone" entry, immediately below): a real,
+  live field session found and precisely root-caused a real defect but
+  did not fix it, per the governing brief's own explicit bar for when a
+  fix belongs inside a field-measurement session.
+- **Latest accepted milestone:** Representative Daylight Gate A Field
+  Acceptance v4 -- see
+  [representative-daylight-gate-a-field-acceptance-v4-report.md](representative-daylight-gate-a-field-acceptance-v4-report.md)
+  for the complete record. Classification **A**. A real, live ~112-minute
+  Observation session against the real reference Camera Node, deployed to
+  a genuinely fresh, disposable instance (never the operator's long-lived
+  `MockingBirdDev` identity) -- the first real live daylight session run
+  under the new Field Acceptance Operator credential mechanism, closing
+  the loop that milestone's own report left open. Two real infrastructure
+  conflicts were found and resolved live, both with the user's explicit,
+  specific approval rather than assumed: the reference Camera Node's
+  pairing is single-slot/disk-persisted, so reaching it from a genuinely
+  fresh instance required resetting it via the already-documented,
+  supported recovery flow (`docs/camera-node-install-guide.md`'s "An
+  already-paired Node"), leaving the operator's own `MockingBirdDev`
+  instance needing a one-time re-pair before its own next use; and the
+  packaged launcher's fixed `127.0.0.1:8000` binding required stopping
+  the operator's own instance (confirmed idle first: not monitoring,
+  human idle 1+ day; fully reversible). The independent acceptance
+  recorder ran the whole session (99.78% coverage); a first-pass blind
+  15-second contact-sheet review wrongly concluded zero animal activity,
+  self-caught and corrected by cross-referencing the merged (evicted-
+  entry-recovered) counterfactual ledger's longest-duration confirmed
+  tracks against full-resolution frames at those exact offsets -- real,
+  repeated, multi-bird feeder activity (593 confirmed MDv5 animal-class
+  tracks, 96.6% at one feeder location, near-continuous for effectively
+  the entire session) plus a separate ground-mammal sighting, directly
+  visually confirmed, not inferred. Despite this genuine, sustained
+  activity, `candidates_created` stayed at exactly 0 for the whole
+  session -- a real, previously-undocumented P0 admission-arbitration gap
+  was found and precisely root-caused by direct code reading
+  (`visit_episode_assembler.py`/`candidate_visit_authority.py`):
+  `continuation_pending`/`blocked_ambiguous_boundary` resolution depends
+  on a 45-second gap in that specific chain's own activity that
+  near-continuous multi-subject activity structurally never produces
+  while a session stays live, with session-end finalize as the only
+  design-intended escape -- whose real effectiveness is itself now a
+  disclosed open question, since this session's own real stop did not
+  visibly admit anything either. Zero product code changed: per the
+  governing brief's own explicit bar, a trustworthy fix needs
+  component-aware forced-decision semantics (not a naive per-proposal
+  timeout, which risks reopening the already-fixed transitive-ambiguous-
+  component premature-split defect), a threshold calibrated against real
+  field evidence, and likely a further look at the already-disclosed
+  128-entry evidence-cache bound -- comparable in scope to a full
+  milestone, not a bounded change. A second, real, live-checked product
+  finding shares the identical root cause: `GET /api/dashboard/summary`
+  showed zero signal of any kind after ~112 minutes of real activity --
+  the exact "must never look like MockingBird saw nothing" failure mode
+  `roadmap.md` already names as unacceptable. Persistence-contention log
+  grep: zero occurrences (single Stream, log otherwise completely clean).
+  Species assistance: N/A, moot downstream of the admission failure (zero
+  Visits ever existed to run BioCLIP against). No release budgets
+  proposed -- three real cohorts now span 0% to 68.2% end-to-end Visit
+  recall; per the report's own reasoning, that range does not converge
+  into a budget until the newly-found defect is fixed and re-measured.
+  Does **not** authorize External Pre-Release Acceptance or Final Release
+  Hardening, and does **not** select a next development milestone -- see
+  §3, below.
+- **Prior accepted milestone:** Native-Windows Packaged Local-Only
   Acceptance & Privacy Closure v1 -- see
   [native-windows-packaged-local-only-acceptance-privacy-closure-v1-report.md](native-windows-packaged-local-only-acceptance-privacy-closure-v1-report.md)
   for the complete record. Classification **A**. Closes both material gaps
@@ -881,6 +946,27 @@ preserved here, not relaxed.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+Representative Daylight Gate A Field Acceptance v4 (directly authorized
+outside this file, as a release-critical field-evidence milestone) is
+now accepted at classification **A** -- see §1, above, Lane R, §6,
+below, and
+[representative-daylight-gate-a-field-acceptance-v4-report.md](representative-daylight-gate-a-field-acceptance-v4-report.md)
+for the full record. This closure does **not** authorize External
+Pre-Release Acceptance or Final Release Hardening, and does **not**
+select a next development milestone -- see the bold statement
+immediately above, unchanged by this closure. `roadmap.md` was not
+edited: this milestone is a bounded field-measurement session, not a
+roadmap-scope change, and per its own governing brief only
+`release-execution-state.md` is updated on acceptance (accepted HEAD;
+schema; latest accepted milestone; Lane R/Gate A evidence state;
+candidate-budget state; exact remaining dependency) -- the already-
+closed Lanes M/N/Q are untouched. The real, previously-undocumented P0
+this session found and precisely root-caused (sustained near-continuous
+multi-subject activity can produce zero admitted Visits for an entire
+live session -- see §1, above, and the report itself for the full
+mechanism) is a genuine addition to Gate A's remaining-work picture, not
+a milestone-invalidating problem with this session's own execution.
 
 Native-Windows Packaged Local-Only Acceptance & Privacy Closure v1
 (directly authorized outside this file, as a bounded release-critical
@@ -2097,6 +2183,43 @@ authentication, and not something this milestone could control), but no
 longer needs to ask the operator for credentials or route around the
 blocker -- see this milestone's own report for the exact one-time
 provisioning command.
+
+**Representative Daylight Gate A Field Acceptance v4 (2026-08-29) ran
+the first real live daylight session under the new credential, at
+classification A -- see §1/§3, above, and
+[representative-daylight-gate-a-field-acceptance-v4-report.md](representative-daylight-gate-a-field-acceptance-v4-report.md)
+for the full record.** Deployed to a genuinely fresh, disposable instance
+(never the operator's `MockingBirdDev` identity), resolving a real
+conflict the credential-closure milestone did not anticipate: the
+reference Camera Node's pairing is single-slot/disk-persisted, so a
+truly fresh instance cannot reach it without a reset -- done via the
+already-documented, supported recovery flow, with the user's explicit,
+specific approval (not assumed), leaving the operator's own
+`MockingBirdDev` instance needing a one-time re-pair before its own next
+use. A real ~112-minute Observation session followed against the real
+Stream, with the independent acceptance recorder running throughout
+(99.78% coverage) and real, sustained, near-continuous multi-bird feeder
+activity directly visually confirmed (full-resolution frames, not
+inferred) for effectively the entire session. `candidates_created`
+stayed at exactly 0 the whole time -- a real, previously-undocumented P0
+admission-arbitration gap (sustained near-continuous activity structurally
+starves the `continuation_pending`/`blocked_ambiguous_boundary`
+resolution mechanism, whose only design-intended escape, session-end
+finalize, did not visibly rescue this session's own real stop either --
+left as a precise, disclosed open question) was found and precisely
+root-caused by direct code reading, not fixed -- a trustworthy fix is
+comparable in scope to a full milestone, not a bounded change, per the
+governing brief's own explicit bar. Gate A's evidence body now has a
+**third** real cohort, structurally different from the first two
+(sustained multi-subject activity at a busy feeder, vs. the sparser
+single-subject encounters 2026-08-19/2026-08-20 each captured) -- three
+real cohorts now span 0% to 68.2% end-to-end Visit recall. No release
+budgets proposed; the report's own reasoning is explicit that this range
+does not converge into a budget until the newly-found defect is fixed
+and re-measured. This closure does **not** authorize the next
+Representative Field Acceptance / Gate A session, External Pre-Release
+Acceptance, or Final Release Hardening, and does **not** select a next
+development milestone.
 
 ### S. Actual Final Release Hardening
 
