@@ -24,11 +24,14 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `6a448e3` -- the implementation commit for Login
-  Rate-Limiting & Authentication Abuse Resistance v1 (its own separate
-  report commit, `54b90fa`, sits directly on top and is not cited here as
-  a second, separate code-bearing HEAD, matching this field's established
-  convention). `83b15a5` (the implementation commit for Historical
+- **Accepted HEAD:** `cb2a561` -- the implementation commit for Ongoing
+  Monitoring Failure Diagnostics for RTSP / Local USB / Windows DShow v1
+  (its own separate report commit, `7dd5146`, sits directly on top and is
+  not cited here as a second, separate code-bearing HEAD, matching this
+  field's established convention). `6a448e3` (the implementation commit
+  for Login Rate-Limiting & Authentication Abuse Resistance v1; its own
+  separate report commit, `54b90fa`, sits directly on top, likewise not
+  cited separately). `83b15a5` (the implementation commit for Historical
   Species-Status ("New" vs. "Seen Before") Correctness v1; its own separate
   report commit, `b619546`, sits directly on top and is not cited here as a
   second, separate code-bearing HEAD, matching this field's established
@@ -69,8 +72,14 @@ protecting.
   those closures (`7f98e43`, `8572308`, `4581424`, `4aeb658`, `e01e691`,
   `c03d0b1`, `80e1bb3`) are likewise not cited as separate code-bearing
   HEADs for the identical reason.
-- **Schema:** `v58` -- unchanged by this milestone (Login Rate-Limiting &
-  Authentication Abuse Resistance v1 adds one new file plus bounded edits
+- **Schema:** `v58` -- unchanged by this milestone (Ongoing Monitoring
+  Failure Diagnostics for RTSP / Local USB / Windows DShow v1 adds one new
+  file, a new in-memory session field, and bounded application-code-only
+  edits across the playback/repository/API layers; every new failure code
+  is stored in the pre-existing, already-unbounded-length `StreamRuntime
+  CheckpointModel.failure_code` `String` column, so no new table/column/
+  migration was needed). Also unchanged by Login Rate-Limiting &
+  Authentication Abuse Resistance v1 (adds one new file plus bounded edits
   to `authenticate_user`/`sign_in`; throttle state is deliberately
   in-memory only, never persisted, so it needed no new table/column/
   migration). Also unchanged by Historical Species-
@@ -86,7 +95,91 @@ protecting.
   Activity Visit Admission Starvation & Stop-Finalization Correctness v1
   (see its own "Prior accepted milestone" entry, below) had likewise left
   schema unchanged.
-- **Latest accepted milestone:** Login Rate-Limiting & Authentication
+- **Latest accepted milestone:** Ongoing Monitoring Failure Diagnostics
+  for RTSP / Local USB / Windows DShow v1 -- see
+  [ongoing-monitoring-failure-diagnostics-rtsp-local-usb-windows-dshow-v1-report.md](ongoing-monitoring-failure-diagnostics-rtsp-local-usb-windows-dshow-v1-report.md)
+  for the complete record. Classification **A**. Closes Lane G's
+  remaining disclosed gap (`camera-source-experience-v1-report.md`'s own
+  section 7): once a non-Camera-Node Stream (RTSP, local USB, Windows
+  DirectShow) is armed and running, a concrete failure cause
+  (authentication, network, codec, decode) collapsed to one generic
+  ongoing-monitoring message, even though setup-time validation already
+  distinguished these causes. Confirmed the starting-state premise before
+  starting (branch `main`, accepted HEAD `b1c78dc`, schema v58, the seven
+  preserved untracked files present and untouched, no active worktree
+  writer) -- matched exactly. Root-caused to two independent chokepoints,
+  both confirmed by direct code reading before any fix: the long-running
+  playback processes these three providers start used
+  `stderr=subprocess.DEVNULL` unconditionally (no evidence was ever
+  captured to classify with in the first place -- unlike the bounded
+  one-shot setup-time probe, which already opted into capturing it), and
+  even a correctly classified code would have been discarded by two
+  separate hardcoded Camera-Node-only allowlists (`api.main._managed_
+  camera_status`; `ProductRepository.mark_monitoring_backoff_with_
+  failure_code`) before ever reaching a user. Reproduced against the
+  real, unmodified pre-fix code via a direct `git stash` bisection: a
+  real `"401 Unauthorized"` ffmpeg stderr line was silently discarded,
+  collapsing to `"Camera process ended before the session was stopped."`
+  regardless of cause. Fixed with a new, bounded, continuous
+  `BoundedStderrDrain` (`playback/stderr_drain.py`) -- one dedicated
+  daemon thread per monitored process, never blocking the child (unlike a
+  naive switch to `stderr=PIPE` alone), retaining only a small
+  (4096-byte), credential-redacted tail, owned by exactly one session's
+  lifecycle and stopped from every exit path. Classification reuses the
+  canonical vocabulary rather than building a second one: RTSP's
+  setup-time `_classify_probe_failure` is now public
+  (`classify_rtsp_failure_text`) and called unmodified by both setup
+  validation and ongoing monitoring, proven identical by a dedicated
+  setup/ongoing-agreement regression test; local USB and Windows
+  DirectShow gained new, deliberately narrow classifiers backed only by
+  real, reproducible evidence -- real ffmpeg 6.1.1 V4L2 stderr text
+  gathered against this project's own Linux dev sandbox (device-missing,
+  permission-denied) and real ffmpeg.exe 8.1.2 DirectShow stderr text
+  gathered live against the project's own reference Windows dev host
+  (device-unavailable -- the one category that host's zero attached video
+  devices could actually produce) -- with an honest, provider-scoped
+  generic fallback for every other cause, never a fabricated one. A live,
+  real, end-to-end proof beyond unit tests (zero mocking anywhere in the
+  call chain): a genuine `LiveCameraSessionManager` session against a
+  real, disposable, instantly-refused local port correctly classified
+  `camera_setup_rtsp_unreachable`. No retry/backoff timing logic was
+  touched (`monitoring/durable_supervisor.py` has zero diff); recovery
+  already clears stale failure state unconditionally via the pre-existing,
+  unmodified `mark_monitoring_running`, re-verified correct for the new
+  codes with a real-repository integration test. 26 new tests
+  (`tests/test_ongoing_monitoring_failure_diagnostics.py`), each
+  independently confirmed RED (via a real `ModuleNotFoundError` before
+  implementation, or via the `git stash` bisection above) and GREEN
+  after -- covering RTSP classification, setup/ongoing consistency,
+  local_usb/windows_dshow evidence-backed-only classification, a
+  dedicated Camera-Node-unaffected regression, credential redaction, a
+  real ~4MB-stderr subprocess stress proof (no deadlock, bounded memory,
+  drain keeps up), repeated-cycle thread-leak and concurrent-throughput
+  proofs, multi-Stream isolation, and failure-code plumbing through
+  `ManagedCameraStatus`/`StreamRuntimeStatusResponse`/`CameraHealthSummary`.
+  Two pre-existing `test_stream_playback_contract.py` tests had
+  fixed-signature test doubles that broke on the new `capture_stderr`
+  keyword parameter this milestone adds to the three bridge modules'
+  process-starting functions -- fixed (test-only signature widening, not
+  a product defect). Tier 1: 26/26 passing. Tier 2 (20 files, the
+  established camera/source/monitoring/health subsystem suite plus this
+  milestone's own new file): 503 passed, 11 xfailed, 0 failed. Tier 3
+  (`scripts/verify_core.py`, one full run): 5310 passed, 3 skipped, 23
+  deselected, 11 xfailed, 0 failed -- no bisection needed. `ruff check`:
+  0 new findings on every touched/new file, each individually confirmed
+  via clean-baseline `git stash` bisection. No schema change (see
+  "Schema," above). Local USB/Windows DirectShow hardware acceptance
+  (device-busy, permission-on-real-hardware, unsupported-format) and a
+  real RTSP camera's own live auth/codec failure remain genuinely
+  untested -- honest, disclosed, not claimed; see the report's own
+  "Remaining risks." Lane G moves from `PARTIAL, MATERIALLY CLOSED` to
+  **MATERIALLY CLOSED / VALIDATION REMAINS** (see §6, below). This
+  closure does **not** authorize the next Representative Field
+  Acceptance / Gate A session, Lane C work, External Pre-Release
+  Acceptance, or Final Release Hardening, and does **not** select a next
+  development milestone -- authorization returns to the bold statement in
+  §3, below, unchanged by this closure.
+- **Prior accepted milestone:** Login Rate-Limiting & Authentication
   Abuse Resistance v1 -- see
   [login-rate-limiting-authentication-abuse-resistance-v1-report.md](login-rate-limiting-authentication-abuse-resistance-v1-report.md)
   for the complete record. Classification **A**. A RELEASE-SECURITY
@@ -1356,6 +1449,55 @@ exactly as open as stated.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
+Ongoing Monitoring Failure Diagnostics for RTSP / Local USB / Windows
+DShow v1 (directly authorized outside this file, as a RELEASE-CRITICAL
+milestone closing Lane G's own remaining, previously-disclosed
+ongoing-monitoring generic-collapse gap) is now accepted at
+classification **A** -- see §1, above, Lane G/§6, below, and
+[ongoing-monitoring-failure-diagnostics-rtsp-local-usb-windows-dshow-v1-report.md](ongoing-monitoring-failure-diagnostics-rtsp-local-usb-windows-dshow-v1-report.md)
+for the full record. Confirmed the starting-state premise before starting
+(branch `main`, accepted HEAD `b1c78dc`, schema v58, the seven preserved
+untracked files present and untouched, no active worktree writer) --
+matched exactly, as did Lane G's own stated `PARTIAL, MATERIALLY CLOSED`
+status and the exact gap description. Root-caused against every one of
+the governing brief's own ten stderr/process-lifecycle diagnostic
+questions before any fix. A bounded, continuous `BoundedStderrDrain`
+(new, `playback/stderr_drain.py`) replaces the previously-unconditional
+`stderr=subprocess.DEVNULL` on the three non-Camera-Node providers' own
+long-running monitored processes, proven safe against a real
+~4MB-stderr-flood subprocess (no deadlock, bounded memory, no blocked
+frame delivery) and against ten repeated start/stop cycles (no thread
+leak). RTSP ongoing classification reuses the exact, unmodified,
+already-accepted setup-time vocabulary (`classify_rtsp_failure_text`,
+renamed public from `_classify_probe_failure`); local USB/Windows
+DirectShow gained new classifiers strictly bounded to real, reproducible
+evidence gathered this milestone (real ffmpeg 6.1.1 V4L2 stderr against
+this project's own Linux dev sandbox; real ffmpeg.exe 8.1.2 DirectShow
+stderr gathered live against the project's own reference Windows dev
+host), with an honest generic fallback everywhere real evidence ran out
+-- no false precision invented for either provider, per the brief's own
+explicit bar. Two independent hardcoded Camera-Node-only allowlists
+(`_managed_camera_status`; `mark_monitoring_backoff_with_failure_code`)
+that discarded any other provider's classified code were widened, not
+duplicated; Camera Node's own separate mechanism is completely untouched.
+Recovery-clears-stale-failure was re-verified correct for the new codes
+against a real repository, with zero change to the pre-existing,
+provider-agnostic clearing mechanism itself or to any retry/backoff
+timing. 26 new tests, Tier 1 26/26, Tier 2 (20 files) 503 passed/11
+xfailed/0 failed, Tier 3 (one full `scripts/verify_core.py` run) 5310
+passed/3 skipped/23 deselected/11 xfailed/**0 failed** -- no bisection
+needed. `ruff check`: zero new findings on every touched/new file,
+confirmed via clean-baseline bisection. No schema change. Local USB/
+Windows DirectShow hardware acceptance (device-busy, permission-on-real-
+hardware, unsupported-format) and a real RTSP camera's own live auth/
+codec failure remain genuinely untested -- honestly disclosed, not
+claimed. Lane G moves to **MATERIALLY CLOSED / VALIDATION REMAINS** (§6,
+below). This closure does **not** authorize the next Representative Field
+Acceptance / Gate A session, Lane C work, External Pre-Release
+Acceptance, or Final Release Hardening, and does **not** select a next
+development milestone -- authorization returns to the bold statement
+immediately above, unchanged by this closure.
+
 Login Rate-Limiting & Authentication Abuse Resistance v1 (directly
 authorized outside this file, as a RELEASE-SECURITY milestone closing the
 human-login rate-limiting gap the full remaining-roadmap reconciliation
@@ -2345,36 +2487,58 @@ to this lane's closure.
 
 ### G. Camera / Source Experience
 
-**Status:** PARTIAL, MATERIALLY CLOSED -- RELEASE-CRITICAL. Camera /
-Source Experience & First-Hour Setup Closure v1 (2026-08-25) fixed two
-real P0
-first-hour gaps and two P1s; see
+**Status:** MATERIALLY CLOSED / VALIDATION REMAINS -- RELEASE-CRITICAL.
+Camera / Source Experience & First-Hour Setup Closure v1 (2026-08-25)
+fixed two real P0 first-hour gaps and two P1s; see
 [camera-source-experience-v1-report.md](camera-source-experience-v1-report.md)
-for the full archaeology, gap table, and evidence. Release
-classification: **C** (usable, bounded further closure remains).
+for the full archaeology, gap table, and evidence. Ongoing Monitoring
+Failure Diagnostics for RTSP / Local USB / Windows DShow v1 (2026-08-30)
+then closed that milestone's own disclosed remaining implementation gap;
+see
+[ongoing-monitoring-failure-diagnostics-rtsp-local-usb-windows-dshow-v1-report.md](ongoing-monitoring-failure-diagnostics-rtsp-local-usb-windows-dshow-v1-report.md).
+Release classification: **C** (usable; the remaining gap is real hardware
+validation, not implementation).
 
-Closed by this milestone: manual RTSP setup's separate "Auth username"/
-"Auth password" fields were collected but silently discarded on every
-write and never reached a real connection attempt -- now stored for real
-and merged into the effective connection URL everywhere it's actually
-used. Only Camera Node had a real "Check the picture" setup preview --
-now RTSP/ONVIF/local/Windows-USB have the same bounded, non-persisting
-preview capability, and `CameraSetupValidationResponse.preview_available`
-is computed honestly instead of hardcoded `False`. A healthy camera's own
-detail page had no persistent way back to reconfigure it; a dead,
-unreachable duplicate Add-Camera form was removed.
+Closed by Camera / Source Experience & First-Hour Setup Closure v1:
+manual RTSP setup's separate "Auth username"/"Auth password" fields were
+collected but silently discarded on every write and never reached a real
+connection attempt -- now stored for real and merged into the effective
+connection URL everywhere it's actually used. Only Camera Node had a
+real "Check the picture" setup preview -- now RTSP/ONVIF/local/
+Windows-USB have the same bounded, non-persisting preview capability, and
+`CameraSetupValidationResponse.preview_available` is computed honestly
+instead of hardcoded `False`. A healthy camera's own detail page had no
+persistent way back to reconfigure it; a dead, unreachable duplicate
+Add-Camera form was removed.
 
-Remaining, not closed by this pass: ongoing-monitoring failure-code
-collapse for non-Camera-Node providers (once a Stream is armed and
-running, a dead RTSP/local/Windows process's specific cause -- auth/
-network/codec/decode -- is discarded in favor of a generic code; setup-
-time validation is unaffected and stays fully distinguishing). No real,
-reachable camera/RTSP/ONVIF/local-USB hardware or Camera Node was
-available to prove actual video decode/preview end-to-end this session
-(native-Windows evidence proves the real subprocess/HTTP/taxonomy/
-credential-merge mechanics genuinely work against a real unreachable
-host, not that a specific real camera's picture renders). Full
-integrated multi-camera/whole-product acceptance remains Lane R.
+Closed by Ongoing Monitoring Failure Diagnostics for RTSP / Local USB /
+Windows DShow v1: the ongoing-monitoring failure-code collapse named
+below is fixed -- a new bounded, continuous `BoundedStderrDrain` replaces
+the previously-unconditional `stderr=subprocess.DEVNULL` on RTSP/local
+USB/Windows DirectShow's own long-running monitored processes (proven
+safe: no pipe deadlock, bounded memory, no thread leak, no blocked frame
+delivery); RTSP ongoing monitoring now reuses the exact, unmodified
+setup-time classification vocabulary; local USB/Windows DirectShow gained
+new classifiers strictly bounded to real evidence gathered this
+milestone, with an honest generic fallback wherever that evidence ran
+out; two independent hardcoded Camera-Node-only allowlists that had been
+discarding any other provider's classified code were widened. Camera Node
+itself was out of scope and is untouched.
+
+Remaining, not closed by either pass: real local USB/Windows DirectShow
+hardware acceptance (device-busy, permission-on-real-hardware,
+unsupported-format were not evidence-backed on the hardware available
+this session -- honestly generic behavior for those causes by design, not
+a known defect) and a real RTSP camera's own live auth/codec failure
+(only a real, live, disposable-endpoint *unreachable*-failure proof was
+practical this session, through the completely real, unmodified product
+code path). No real, reachable camera/RTSP/ONVIF/local-USB hardware or
+Camera Node was available to prove actual video decode/preview
+end-to-end in either session (native-Windows evidence proves the real
+subprocess/HTTP/taxonomy/credential-merge mechanics genuinely work
+against a real unreachable host, not that a specific real camera's
+picture renders). Full integrated multi-camera/whole-product acceptance
+remains Lane R.
 
 ### H. Site-Specific Learning
 
