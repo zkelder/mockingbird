@@ -24,11 +24,14 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `893eed5` -- the implementation commit for
-  Platform / Runtime Portability & Support Truth Closure v1 (its own
-  separate report commit, `d5f4a32`, sits directly on top and is not
+- **Accepted HEAD:** `e3c293f` -- the implementation commit for
+  Release Licensing, Distribution & Third-Party Legal Closure v1 (its own
+  separate report commit, `d1a2955`, sits directly on top and is not
   cited here as a second, separate code-bearing HEAD, matching this
-  field's established convention). `6f7bbb6` (the implementation commit
+  field's established convention). `893eed5` (the implementation commit
+  for Platform / Runtime Portability & Support Truth Closure v1; its own
+  separate report commit, `d5f4a32`, sits directly on top, likewise not
+  cited separately). `6f7bbb6` (the implementation commit
   for Sustained-Activity Visit Admission Starvation & Stop-Finalization
   Correctness v1; its own separate report commit, `0638759`, sits
   directly on top, likewise not cited separately).
@@ -58,14 +61,92 @@ protecting.
   those closures (`7f98e43`, `8572308`, `4581424`, `4aeb658`, `e01e691`,
   `c03d0b1`, `80e1bb3`) are likewise not cited as separate code-bearing
   HEADs for the identical reason.
-- **Schema:** `v58` -- unchanged by this milestone (Platform / Runtime
-  Portability & Support Truth Closure v1 is an evidence/documentation
-  closure plus two narrow capability-message fixes in
-  `mockingbird.diagnostics.doctor`; no model/migration change). Sustained-
+- **Schema:** `v58` -- unchanged by this milestone (Release Licensing,
+  Distribution & Third-Party Legal Closure v1 touches only packaging
+  tooling and documentation -- `scripts/build_local_product.py`, a new
+  `THIRD_PARTY_NOTICES.md`, and two doc files -- no model/migration
+  change). Platform / Runtime Portability & Support Truth Closure v1 (an
+  evidence/documentation closure plus two narrow capability-message fixes
+  in `mockingbird.diagnostics.doctor`) had likewise left schema unchanged.
+  Sustained-
   Activity Visit Admission Starvation & Stop-Finalization Correctness v1
   (see its own "Prior accepted milestone" entry, below) had likewise left
   schema unchanged.
-- **Latest accepted milestone:** Platform / Runtime Portability & Support
+- **Latest accepted milestone:** Release Licensing, Distribution &
+  Third-Party Legal Closure v1 -- see
+  [release-licensing-distribution-third-party-legal-closure-v1-report.md](release-licensing-distribution-third-party-legal-closure-v1-report.md)
+  for the complete record. Classification **B**. A pre-release-decision/
+  release-blocking governance milestone (Lane P plus the still-open
+  BirdNET commercial-adjacent posture in §2, below) -- confirmed via the
+  hard sequencing guard as the highest-priority independent milestone
+  available while Gate A's own daylight rerun (Lane R) stays externally
+  blocked. Resolved, with durable machine enforcement rather than prose
+  alone, both engineering-resolvable items Lane P had left deliberately
+  open: **FFmpeg** was traced to every real invocation site
+  (`mockingbird.playback.rtsp_bridge`/`local_camera_bridge`/
+  `windows_camera_bridge`, all `shutil.which("ffmpeg")`-based) and every
+  packaging/build script (zero references anywhere) -- MockingBird never
+  bundles, downloads, or vendors an ffmpeg binary in any official package;
+  it is a pure external system dependency, already honestly documented in
+  `docs/using-mockingbird.md`. A new build-time guard,
+  `verify_no_bundled_ffmpeg_binary`, mirrors the pre-existing
+  `verify_no_nc_licensed_acoustic_model_redistribution`'s role for BirdNET
+  so this posture can never silently reverse; 8 new tests, one of them a
+  real integration proof through the unmodified `assemble_windows_bundle`
+  call path, not only the guard function in isolation. **Third-party
+  notices**: a new `THIRD_PARTY_NOTICES.md` (correct MIT license text and
+  copyright provenance for both production-redistributed models -- MDv5a,
+  copyright Microsoft Corporation per MegaDetector's own repository;
+  BioCLIP-2, per its official model card -- a bounded direct-dependency
+  license table verified against each package's own installed metadata
+  rather than assumed, and an explicit "deliberately not bundled" account
+  of ffmpeg and BirdNET/birdnetlib) now ships inside every official
+  Windows bundle via a new `package_third_party_notices` step, which fails
+  the build outright if its own source file is ever missing -- previously,
+  the redistributed MDv5a/BioCLIP-2 model files carried zero accompanying
+  license text at all, unlike every ordinary pip dependency, whose own
+  license already travels automatically inside its `dist-info/`. Found and
+  fixed one real, previously-undisclosed documentation gap: `docs/using-
+  mockingbird.md`, the canonical user-facing guide, never mentioned the
+  already-shipped, already-accepted BirdNET/acoustic feature at all --
+  added a short, honest "Bird-sound identification (optional)" section
+  (optional, separately obtained, differently licensed, never framed as a
+  defect). Added a factual "License" section to `README.md` (no
+  `LICENSE` file exists; none implied; a pointer to `THIRD_PARTY_NOTICES.md`).
+  The MockingBird source-code license itself was deliberately **not**
+  self-selected -- the roadmap's own evidence (`docs/roadmap.md` Gate F;
+  this file's own prior Lane P text) already states this requires an
+  explicit owner decision, not a bounded engineering milestone's authority
+  -- the report instead delivers a complete decision packet (MIT
+  recommended; Apache-2.0 and a copyleft option named and rejected with
+  reasons; every current dependency's license confirmed compatible with
+  either permissive option; one exact one-sentence question for the
+  owner). Also named, honestly, as neither resolved nor newly blocking:
+  the NVIDIA CUDA/cuDNN redistributable packages bundled with GPU builds
+  use the same well-established EULA-based pattern official PyTorch/
+  TensorFlow GPU wheels already use, but this milestone did not
+  independently re-fetch NVIDIA's current EULA text against exactly what
+  these pinned packages ship (an engineering interpretation, not a
+  repository fact, disclosed as such rather than asserted with false
+  certainty); and BirdNET's genuinely ambiguous commercial-adjacent
+  private-use question (§2, below) remains exactly as unresolved as
+  before, now simply more visibly disclosed to an actual product user
+  rather than only an internal contract doc. `tests/test_local_product_
+  packaging.py`: 74 passed, 0 failed (4 pre-existing `slow`-marked GPU/
+  BioCLIP-dependency-closure tests correctly not re-run -- unrelated to
+  this change, unmodified). `ruff check`: clean (zero findings, not merely
+  zero new findings) on both changed Python files. No schema change; no
+  product/perception/API/frontend code touched -- confined to
+  `scripts/build_local_product.py`, its own dedicated test file, one new
+  root notices file, and two documentation files. Lane P is now
+  reconciled (§6, below) to **one** remaining deliberately-open item
+  (down from two) -- the owner's source-code-license decision -- which
+  remains a real release blocker for the public launch itself, honestly
+  not closed by this milestone. This closure does **not** authorize the
+  next Representative Field Acceptance / Gate A session, External
+  Pre-Release Acceptance, or Final Release Hardening, and does **not**
+  select a next development milestone -- see §3, below.
+- **Prior accepted milestone:** Platform / Runtime Portability & Support
   Truth Closure v1 -- see
   [platform-runtime-portability-support-truth-closure-v1-report.md](platform-runtime-portability-support-truth-closure-v1-report.md)
   for the complete record. Classification **A**. A bounded, release-critical
@@ -1090,11 +1171,47 @@ donations or sells optional paid support remains genuinely **unresolved**;
 the existing acceptance record recommends legal review before any
 commercial-adjacent distribution decision actually touches the acoustic
 feature, and does not resolve the question itself. This caveat is
-preserved here, not relaxed.
+preserved here, not relaxed. Release Licensing, Distribution & Third-Party
+Legal Closure v1 (see §1/§3, above) re-verified the enforcement mechanism
+behind this posture still works (`verify_no_nc_licensed_acoustic_model_
+redistribution`, unchanged) and, for the first time, surfaced this
+boundary to an actual product user (`docs/using-mockingbird.md`'s new
+"Bird-sound identification (optional)" section; `THIRD_PARTY_NOTICES.md`)
+-- it did not resolve the unresolved question above, which remains
+exactly as open as stated.
 
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+Release Licensing, Distribution & Third-Party Legal Closure v1 (directly
+authorized outside this file, as a pre-release-decision/release-blocking
+governance milestone -- Lane P plus the still-open BirdNET
+commercial-adjacent posture in §2, above -- the highest-priority
+independent milestone available while Gate A's own daylight-conditions
+rerun (Lane R) stays separately blocked, confirmed via this milestone's
+own hard sequencing guard before starting) is now accepted at
+classification **B** -- see §1, above, Lane P/§2, and
+[release-licensing-distribution-third-party-legal-closure-v1-report.md](release-licensing-distribution-third-party-legal-closure-v1-report.md)
+for the full record. Resolved both engineering-resolvable items Lane P
+had left open (FFmpeg's distribution posture -- never bundled, now a
+durably-enforced guard, `verify_no_bundled_ffmpeg_binary` -- and a new
+`THIRD_PARTY_NOTICES.md` shipping correct MIT license text for the two
+production-redistributed models, MDv5a and BioCLIP-2, that previously
+carried none), re-verified the pre-existing BirdNET-weight-exclusion
+enforcement still works unchanged, found and fixed one real documentation
+gap (the canonical user guide never mentioned the shipped, accepted
+BirdNET/acoustic feature at all), and produced a complete owner decision
+packet for the one item that genuinely cannot be resolved by engineering
+means alone: MockingBird's own source-code license (MIT recommended, no
+other engineering ambiguity blocking it). Classification **B**, not A,
+because that one owner decision remains outstanding and remains a real
+release blocker for the public launch itself -- see this milestone's own
+report for the complete reasoning against self-selecting it. This closure
+does **not** authorize the next Representative Field Acceptance / Gate A
+session, External Pre-Release Acceptance, or Final Release Hardening, and
+does **not** select a next development milestone -- see the bold
+statement immediately above, unchanged by this closure.
 
 Platform / Runtime Portability & Support Truth Closure v1 (directly
 authorized outside this file, as a bounded, release-critical evidence/
@@ -1787,9 +1904,10 @@ words used to describe them:
   above become credible, External Pre-Release Acceptance and Final
   Release Hardening themselves (Lane S, below; roadmap.md Gates F-G).
 - **B. Pre-release decisions** -- decisions required before launch, not
-  necessarily implementation milestones: the codebase `LICENSE` and full
-  ffmpeg distribution licensing (Lane P); the still-open BirdNET
-  commercial-adjacent legal posture (§2, above); platform-support
+  necessarily implementation milestones: the codebase `LICENSE` (Lane P;
+  full ffmpeg distribution licensing, the item this line previously named
+  alongside it, is now resolved -- see Lane P, below); the still-open
+  BirdNET commercial-adjacent legal posture (§2, above); platform-support
   declarations (Lane O, resolved -- see Lane O, below); Ecosystem/Provider
   Integrations scope (Lane K, "OPEN DECISION"); any other genuine
   unresolved release decision as it surfaces.
@@ -2266,7 +2384,7 @@ was authorized.
 
 ### P. Release Engineering Foundation / Distribution
 
-**Status:** SUBSTANTIALLY CLOSED, two items deliberately left open --
+**Status:** SUBSTANTIALLY CLOSED, one item deliberately left open --
 RELEASE-CRITICAL. Release Engineering Foundation v1 (2026-08-25) closed:
 upgrade procedure (see Lane L); a real, currently-live dependency-closure
 defect found and fixed via genuine native-Windows deployment (`astral`
@@ -2283,17 +2401,33 @@ compatibility (investigated and confirmed adequate, not a gap). See
 for the complete record, including real native-Windows acceptance
 evidence (Decision A).
 
+Release Licensing, Distribution & Third-Party Legal Closure v1
+(2026-08-30, see §1/§3, above) closed the second item this section
+previously named: **full ffmpeg bundling**. Traced to every real
+invocation site and every packaging/build script -- MockingBird never
+bundles, downloads, or vendors an ffmpeg binary in any official package;
+it is a pure external system dependency (`shutil.which("ffmpeg")`),
+already honestly documented, and the recommended Camera Node golden path
+needs no ffmpeg at all. A new build-time guard,
+`verify_no_bundled_ffmpeg_binary`, now makes this posture durable rather
+than merely accidental, mirroring the pre-existing BirdNET-weight-
+exclusion guard's own role. The same milestone also added
+`THIRD_PARTY_NOTICES.md` -- shipped inside every official Windows bundle,
+correcting a real gap where the redistributed MDv5a/BioCLIP-2 model files
+carried zero accompanying license/notice text (unlike an ordinary pip
+dependency, whose own license already travels automatically).
+
 Deliberately still open, not silently dropped: **`LICENSE`** (a
 business/legal decision -- which license, and its interaction with the
 still-unresolved BirdNET commercial-adjacent-distribution question in
 §2, above -- outside a bounded engineering milestone's authority to
-resolve unilaterally); **full ffmpeg bundling** (needs its own licensing
-research, shaped like the already-completed BirdNET work -- today it is
-honestly documented as a separate install step rather than silently
-missing, and the recommended Camera Node golden path does not need it).
-Public-repo hygiene beyond `SECURITY.md`/`CONTRIBUTING.md` (README/site
-polish, brand/trademark review) remains open per "Public release
-readiness" in [roadmap.md](roadmap.md), not release-critical blocking.
+resolve unilaterally; see Release Licensing, Distribution & Third-Party
+Legal Closure v1's own report for the complete decision packet: MIT
+recommended, two alternatives named and reasoned through, one exact
+owner-facing question). Public-repo hygiene beyond `SECURITY.md`/
+`CONTRIBUTING.md`/`THIRD_PARTY_NOTICES.md` (README/site polish,
+brand/trademark review) remains open per "Public release readiness" in
+[roadmap.md](roadmap.md), not release-critical blocking.
 
 Release Engineering Foundation may occur before all product development is
 finished. Release Engineering Foundation is not the same as final Release
