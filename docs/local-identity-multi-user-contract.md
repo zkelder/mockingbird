@@ -540,6 +540,72 @@ Administrator-tier exception (Observation start/stop). See that document
 for the full design; nothing in this document's own Viewer/Reviewer/
 Administrator model changed.
 
+## Later addition: login rate limiting / abuse resistance
+
+Login Rate-Limiting & Authentication Abuse Resistance v1 (see
+[login-rate-limiting-authentication-abuse-resistance-v1-report.md](login-rate-limiting-authentication-abuse-resistance-v1-report.md))
+closed a real, previously-disclosed pre-existing gap (first found by Mobile
+& Remote Experience v1's own security review, re-disclosed by several
+milestones afterward): `POST /api/auth/sign-in` had no attempt counting, no
+delay, and no throttling of any kind. `authenticate_user` was already
+enumeration-safe (unknown user / wrong password / disabled user all
+returned the identical `None`) but a caller could otherwise guess forever
+at full speed, limited only by `hashlib.scrypt`'s own per-guess cost.
+
+**Mechanism:** `mockingbird.security.login_rate_limiter.LoginRateLimiter`
+-- a small, dependency-free, in-process helper (not a general-purpose
+framework), one instance owned by `ProductRepository` for its lifetime,
+consulted at the very start of `authenticate_user` and updated at its every
+exit. Two independent keyed dimensions, both must be clear for an attempt
+to proceed:
+
+- **Account-keyed** (the normalized `login_identity` string itself, real or
+  not -- see "Enumeration safety" below): bounds repeated guessing against
+  one account regardless of source.
+- **Source-keyed** (`request.client.host`, the direct TCP peer address --
+  never a forwarded header; this deployment establishes no trusted-proxy
+  boundary for one): bounds a spray of many usernames from one source.
+
+The first 3 failures against either dimension add no delay at all (typo
+tolerance); every failure after that walks one rung down a short, fixed,
+hand-picked ladder (1s, 2s, 5s, 15s, 30s, 60s) that plateaus at 60 seconds
+forever -- never permanent, never unbounded. A real, verified success
+clears both dimensions' failure state outright (including the *source*
+dimension, a deliberate choice to avoid perpetually penalizing a shared
+household/office address or optional reverse proxy for one account's
+earlier typos -- see the module's own docstring for the accepted,
+disclosed trade-off this implies). Both dimensions are hard-capped at
+10,000 live entries (least-recently-touched eviction beyond the cap) with
+opportunistic stale-entry pruning, both O(1)-amortized -- a high-rate,
+high-cardinality distributed attacker costs this process only a small,
+fixed amount of memory and CPU, never unbounded growth.
+
+**Persistence: in-memory only, resets on restart (and on a backup
+restore's own repository-singleton swap -- see "Backup/restore identity
+semantics" above, the identical existing boundary session state already
+resets on).** A local-first appliance does not need enterprise-grade
+persistent lockout state, and persisting it would itself become a new,
+worse denial-of-service surface (a persistent lock that outlives the very
+restart an owner would use to recover). Anyone with enough access to
+restart the process already has more access than a remote guesser. This is
+also, in effect, the owner's whole recovery path if they are ever the one
+throttled: restart the application (or the systemd/Windows service) and
+throttle state is gone -- no new account-recovery mechanism was built or is
+needed.
+
+**Outward contract unchanged:** every failure reason -- unknown user, wrong
+password, disabled user, or currently throttled -- still produces the
+identical `401 {"detail": "Incorrect login identity or password."}`, and
+still creates no session. Rate limiting is invisible in the response shape;
+only bounded audit events (`auth.login_failed`, `auth.login_throttled`,
+`auth.login_succeeded_after_failures` -- never a password, token, or other
+secret in their metadata) distinguish the cause, visible only to an
+Administrator via the existing `GET /api/admin/audit-log`.
+
+Clock: monotonic (`time.monotonic`-shaped), never wall-clock -- delay math
+cannot be disturbed by an NTP adjustment, DST transition, or a manually
+changed system clock.
+
 ## Known bounded gaps
 
 - `POST /api/review-queue/bulk-correct` accepts an optional per-`target_id`
@@ -569,3 +635,20 @@ Administrator model changed.
 - Camera/RTSP/ONVIF credentials remain stored plaintext at rest, exactly
   as before this milestone -- unchanged and out of scope; user password
   hashes are the first genuinely hashed secret in this schema.
+- Login rate limiting's source dimension is keyed by the direct TCP peer
+  address; a deployment behind an optional reverse proxy (see "Local
+  network security guidance" above) sees every request from the proxy's
+  own address, collapsing every user behind it to one shared source
+  bucket -- deliberate (no trusted-proxy boundary exists for a forwarded
+  header today), and never the *only* protection: the account-keyed
+  dimension still bounds guessing against any one real account
+  regardless. A real success from a source clears that source's failure
+  state too, not only the account that just succeeded -- someone who
+  already holds valid credentials for *some* account could exploit this
+  to keep a source-level spray against *other* accounts perpetually
+  reset; this product has no self-service account creation, so that
+  already requires possessing a real credential first, a materially
+  smaller threat than unauthenticated remote guessing. The evaluate-then-
+  record check is not atomic across two fully concurrent requests -- a
+  narrow, bounded, self-correcting-on-the-next-request imprecision, never
+  a permanent bypass.

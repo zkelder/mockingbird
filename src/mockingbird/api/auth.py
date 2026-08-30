@@ -288,8 +288,21 @@ def build_auth_router(get_repository: Callable[[], "ProductRepository"]) -> APIR
     @router.post("/sign-in", response_model=CurrentUser)
     async def sign_in(payload: SignInRequest, request: Request, response: Response) -> CurrentUser:
         repository = get_repository()
-        result = repository.authenticate_user(payload)
+        # Direct TCP peer address only -- never a forwarded header (see
+        # `LoginRateLimiter`'s own module docstring for why). `None` when a
+        # test transport carries no real client tuple; `authenticate_user`
+        # degrades this to one shared "unknown" source bucket rather than
+        # skipping source-keyed throttling entirely.
+        source_ip = request.client.host if request.client is not None else None
+        result = repository.authenticate_user(payload, source_ip=source_ip)
         if result is None:
+            # Deliberately the exact same status/message for every failure
+            # reason -- unknown user, wrong password, disabled user, or a
+            # currently-throttled account/source (Login Rate-Limiting &
+            # Authentication Abuse Resistance v1) -- see `authenticate_
+            # user`'s own docstring and docs/local-identity-multi-user-
+            # contract.md "Login rate limiting" for the enumeration-safety
+            # reasoning.
             raise HTTPException(status_code=401, detail="Incorrect login identity or password.")
         current_user, token = result
         set_session_cookie(

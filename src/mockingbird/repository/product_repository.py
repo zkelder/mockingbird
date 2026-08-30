@@ -34,6 +34,7 @@ from sqlalchemy import Engine, and_, delete, func, or_, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
+from mockingbird.security.login_rate_limiter import LoginRateLimiter
 from mockingbird.security.passwords import (
     WeakPasswordError,
     generate_session_token,
@@ -3886,6 +3887,7 @@ class ProductRepository:
         ecological_export_root: str | Path | None = None,
         weather_requester: weather_provider.WeatherRequester | None = None,
         inaturalist_taxonomy_requester: inaturalist_taxonomy.TaxonomyLookupRequester | None = None,
+        login_rate_limiter: LoginRateLimiter | None = None,
     ) -> None:
         self.db_url = resolve_database_url(db_url)
         self.media_root = resolve_media_root(media_root)
@@ -3946,6 +3948,13 @@ class ProductRepository:
         self._inaturalist_taxonomy_requester = (
             inaturalist_taxonomy_requester or inaturalist_taxonomy.UrlLibTaxonomyLookupRequester()
         )
+        # Login Rate-Limiting & Authentication Abuse Resistance v1: one
+        # in-process, in-memory instance for this repository's lifetime --
+        # see `LoginRateLimiter`'s own module docstring for the full
+        # in-memory-only persistence reasoning (mirrors the DI seam
+        # immediately above: real clock by default, test-injected
+        # deterministic clock via this constructor parameter).
+        self._login_rate_limiter = login_rate_limiter or LoginRateLimiter()
         self.seed_if_empty()
 
     def close(self) -> None:
@@ -4201,26 +4210,75 @@ class ProductRepository:
                     )
                     return self._current_user(user), token
 
-    def authenticate_user(self, payload: SignInRequest) -> tuple[CurrentUser, str] | None:
+    def authenticate_user(
+        self, payload: SignInRequest, *, source_ip: str | None = None
+    ) -> tuple[CurrentUser, str] | None:
         """Verify credentials and mint a new session. Returns `None` for
-        any failure -- unknown `login_identity`, wrong password, or a
-        disabled user -- deliberately the same generic outcome for all
-        three, so a sign-in attempt cannot be used to tell whether a given
-        `login_identity` exists at all versus merely being disabled.
+        any failure -- unknown `login_identity`, wrong password, a disabled
+        user, or a currently-throttled account/source (see Login
+        Rate-Limiting & Authentication Abuse Resistance v1,
+        docs/local-identity-multi-user-contract.md "Login rate limiting")
+        -- deliberately the same generic outcome for all four, so a sign-in
+        attempt cannot be used to tell whether a given `login_identity`
+        exists at all, versus merely being disabled, versus temporarily
+        throttled.
+
+        `source_ip` should be the caller's direct TCP peer address
+        (`request.client.host` -- never a forwarded header; see
+        `LoginRateLimiter`'s own module docstring for why) and is optional
+        only so pre-existing direct-repository-call test sites and internal
+        callers with no real HTTP request in scope keep working unchanged;
+        every real `POST /api/auth/sign-in` call supplies it.
+
+        Throttled attempts return before touching the database or hashing
+        anything -- see `LoginRateLimiter.evaluate`'s own docstring.
         """
 
         login_identity = payload.login_identity.strip().lower()
+        account_key = login_identity
+        source_key = LoginRateLimiter.normalize_source_key(source_ip)
         now = datetime.now(UTC)
+
+        decision = self._login_rate_limiter.evaluate(account_key=account_key, source_key=source_key)
+        if decision.throttled:
+            return None
+
         with self.session_factory() as session:
             with session.begin():
                 user = session.scalar(select(UserModel).where(UserModel.login_identity == login_identity))
-                if user is None or not user.enabled:
-                    return None
-                if not verify_password(payload.password, user.password_hash):
+                credentials_valid = (
+                    user is not None
+                    and user.enabled
+                    and verify_password(payload.password, user.password_hash)
+                )
+                if not credentials_valid:
+                    outcome = self._login_rate_limiter.record_failure(
+                        account_key=account_key, source_key=source_key
+                    )
+                    self._record_audit_event_in_session(
+                        session, now=now, actor_user_id=None, actor_display_name=None,
+                        action="auth.login_throttled" if outcome.newly_throttled else "auth.login_failed",
+                        target_type="user", target_id=user.id if user is not None else None,
+                        metadata={
+                            "login_identity": login_identity,
+                            "source_ip": source_key,
+                            "account_failure_count": outcome.account_failure_count,
+                            "source_failure_count": outcome.source_failure_count,
+                        },
+                    )
                     return None
                 if needs_rehash(user.password_hash):
                     user.password_hash = hash_password(payload.password)
                     user.updated_at = now
+                cleared_failure_count = self._login_rate_limiter.record_success(
+                    account_key=account_key, source_key=source_key
+                )
+                if cleared_failure_count > 0:
+                    self._record_audit_event_in_session(
+                        session, now=now, actor_user_id=user.id, actor_display_name=user.display_name,
+                        action="auth.login_succeeded_after_failures", target_type="user", target_id=user.id,
+                        metadata={"cleared_failure_count": cleared_failure_count},
+                    )
                 token = self._create_session_in_session(session, user_id=user.id, now=now)
                 return self._current_user(user), token
 
