@@ -105,6 +105,55 @@ Established directly, in order, before starting the Observation session, per the
   visually confirmed wildlife activity, not inferred. Conditions judged clearly suitable; proceeded
   immediately per the brief's own instruction.
 
+## Independent denominator
+
+The accepted acceptance-recorder ran concurrently with Observation the entire session, armed via
+`MOCKINGBIRD_ACCEPTANCE_RECORDING_DIR` (see "Infrastructure decisions made live," above), 1000ms nominal
+interval / 5500 max frames / 4.95GB cap — the same cadence/bound settings the last several real sessions
+have reused, for direct comparability. Real output: **5,147 frames, ~4.0GB**, first frame at offset 0ms,
+last at offset 6,395,953ms of a 6,396,509ms total session span.
+
+**Review methodology**, following the brief's own explicit instruction (full-resolution frames for
+verification; contact sheets only for navigation; ledger/track timestamps only to locate likely intervals;
+never treat sparse blind sampling as proof of absence — the specific mistake v4's own first analysis pass
+made and had to correct):
+
+1. All 19 admitted Visits' own primary evidence images were pulled at full resolution and assembled into a
+   labeled contact sheet for rapid, direct visual review — every one shows a real, clearly visible bird at
+   the seed feeder (see "Evidence"), confirming the admission-side story is genuine, not inferred.
+2. Two ambiguous same-feeder-timing Visit pairs identified from this review were checked at pixel-precise
+   resolution against their *own* real detection/BioCLIP-crop bounding-box coordinates (not a
+   hand-guessed crop region — an early attempt using a guessed box was caught as methodologically unsound
+   mid-review and redone correctly): this resolved one pair as a genuine false-positive-on-background
+   admission (see "Defects") and left the other genuinely ambiguous (see "Visit," above).
+3. The counterfactual ledger's own bounded ring buffers evict their oldest individual records under
+   sustained load exactly as `docs/tracklet-visit-assembly-contract.md` documents; this session's own
+   periodic-summary archiving (22 snapshots every 5 minutes) captured aggregate retained/evicted counts
+   throughout, but — a real methodological limitation of this session's own tooling, disclosed rather than
+   hidden — reused one fixed output filename across every periodic pull, so only the *final* pull's full
+   individual track/proposal records survived (covering the session's last ~60 minutes, offset 2,800,775ms
+   onward). This does not weaken the primary admission-funnel evidence, which comes from the durably
+   -persisted Visit records (never subject to ledger eviction) rather than the ledger itself; it does mean
+   fine-grained spatial clustering across the *entire* session (the kind v4's own report performed) was not
+   reproduced here for the earlier portion.
+4. The one extended, real quiet period this session showed (no new admissions 17:22–17:37 EDT / session
+   offset ~82.9–104.4 min) was independently checked via a dense sweep of the acceptance-recorder's own
+   frames across that exact window (15 frames, ~90 seconds apart) — no bird visible in any of them at
+   either feeder, directly corroborating the pipeline's own "nothing to admit" conclusion with genuinely
+   independent evidence, not circular reasoning from the pipeline's own output.
+5. A broader, whole-session sweep (54 frames, 2-minute intervals) was reviewed for gross scene health
+   (continuous, stable framing; gradually clearing sky consistent with real, continuously-changing weather;
+   no camera glitches/dropouts) and as a coarse cross-check; at this sparse an interval it could not, by
+   itself, reliably catch every genuine encounter (matching the exact lesson v4's own report already
+   established about coarse blind sampling) and was not relied on alone for the recall conclusion below.
+
+**Genuine encounter picture, honestly bounded:** at least **18** distinct genuine wildlife encounters
+directly confirmed via full-resolution evidence review (excluding the 1 likely false positive). No missed
+encounter was found in either the targeted quiet-period sweep or the broader whole-session sweep — this is
+real, positive evidence for high recall, not proof of zero misses, since a full frame-by-frame audit of all
+5,147 frames was not performed (bounded, not exhaustive, per the same discipline every prior cohort's own
+report applied).
+
 ## Sustained-activity fix proof
 
 This is the primary acceptance question this milestone exists to answer: **does sustained genuine activity
