@@ -74,6 +74,8 @@ verify_no_duplicate_site_packages_metadata = _MODULE["verify_no_duplicate_site_p
 verify_no_nc_licensed_acoustic_model_redistribution = _MODULE[
     "verify_no_nc_licensed_acoustic_model_redistribution"
 ]
+package_third_party_notices = _MODULE["package_third_party_notices"]
+verify_no_bundled_ffmpeg_binary = _MODULE["verify_no_bundled_ffmpeg_binary"]
 write_build_identity = _MODULE["write_build_identity"]
 write_deterministic_zip = _MODULE["write_deterministic_zip"]
 write_manifest = _MODULE["write_manifest"]
@@ -476,6 +478,13 @@ def test_assemble_windows_bundle_produces_a_python_and_pip_free_user_experience(
     assert "-m mockingbird" in launcher
     assert ", 0, False" in launcher
     assert (bundle_dir / "README-FIRST.txt").is_file()
+    # Release Licensing, Distribution & Third-Party Legal Closure v1: every
+    # official bundle ships the repository's own third-party notices file,
+    # not only a copy an interested user would have to go find in the
+    # source repository.
+    notices_text = (bundle_dir / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+    assert "BirdNET" in notices_text
+    assert "ffmpeg" in notices_text.lower()
 
     # The interpreter is pre-wired to see the pre-installed packages -- no
     # `site` module, no pip, no venv activation step for the user.
@@ -1431,6 +1440,65 @@ def test_verify_no_nc_licensed_acoustic_model_redistribution_fails_on_the_dist_i
         verify_no_nc_licensed_acoustic_model_redistribution(site_packages=site_packages)
 
 
+def test_package_third_party_notices_copies_the_real_repository_file(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "bundle"
+    bundle_dir.mkdir()
+
+    destination = package_third_party_notices(bundle_dir=bundle_dir)
+
+    assert destination == bundle_dir / "THIRD_PARTY_NOTICES.md"
+    real_source = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+    assert destination.read_text(encoding="utf-8") == real_source
+
+
+def test_package_third_party_notices_fails_the_build_when_source_is_missing(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "bundle"
+    bundle_dir.mkdir()
+    missing_source = tmp_path / "does-not-exist" / "THIRD_PARTY_NOTICES.md"
+
+    # Never optional, never best-effort -- unlike a model bundle, a release
+    # built without this file must fail outright rather than ship silently
+    # without any third-party/model-license disclosure at all.
+    with pytest.raises(LocalProductBuildError, match="THIRD_PARTY_NOTICES.md"):
+        package_third_party_notices(bundle_dir=bundle_dir, notices_source=missing_source)
+
+
+def test_verify_no_bundled_ffmpeg_binary_passes_when_absent(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "bundle"
+    (bundle_dir / "python" / "site-packages" / "mockingbird").mkdir(parents=True)
+    (bundle_dir / "python" / "site-packages" / "mockingbird" / "__init__.py").write_text(
+        "", encoding="utf-8"
+    )
+
+    verify_no_bundled_ffmpeg_binary(bundle_dir=bundle_dir)  # must not raise
+
+
+@pytest.mark.parametrize("ffmpeg_basename", ["ffmpeg", "ffmpeg.exe", "FFmpeg.EXE"])
+def test_verify_no_bundled_ffmpeg_binary_fails_on_a_planted_executable(
+    tmp_path: Path, ffmpeg_basename: str
+) -> None:
+    bundle_dir = tmp_path / "bundle"
+    nested = bundle_dir / "python" / "site-packages" / "some_package" / "bin"
+    nested.mkdir(parents=True)
+    (nested / ffmpeg_basename).write_bytes(b"not a real binary, just a planted name")
+
+    with pytest.raises(LocalProductBuildError, match="ffmpeg"):
+        verify_no_bundled_ffmpeg_binary(bundle_dir=bundle_dir)
+
+
+def test_verify_no_bundled_ffmpeg_binary_ignores_a_directory_merely_named_ffmpeg(
+    tmp_path: Path,
+) -> None:
+    # Only a *file* named ffmpeg/ffmpeg.exe is the redistribution risk this
+    # guards against -- a directory that happens to share the name (for
+    # example, some unrelated package's own internal folder) is not one.
+    bundle_dir = tmp_path / "bundle"
+    (bundle_dir / "ffmpeg").mkdir(parents=True)
+    (bundle_dir / "ffmpeg" / "readme.txt").write_text("unrelated", encoding="utf-8")
+
+    verify_no_bundled_ffmpeg_binary(bundle_dir=bundle_dir)  # must not raise
+
+
 def test_assemble_windows_bundle_fails_the_whole_build_on_a_duplicate_dependency(
     tmp_path: Path,
 ) -> None:
@@ -1451,6 +1519,37 @@ def test_assemble_windows_bundle_fails_the_whole_build_on_a_duplicate_dependency
             wheel_path=wheel_path,
             embed_zip_path=embed_zip,
             install_dependencies=duplicate_leaving_installer,
+            include_gpu_runtime=False,
+            model_bundle_source=None,
+            include_bioclip_runtime=False,
+            bioclip_bundle_source=None,
+        )
+
+
+def test_assemble_windows_bundle_fails_the_whole_build_on_a_bundled_ffmpeg_binary(
+    tmp_path: Path,
+) -> None:
+    """Integration proof this is actually wired into the real build path:
+    a dependency that leaves an `ffmpeg.exe` behind (for example, a future
+    optional-extra installer that vendors one for convenience) fails the
+    whole build, never silently ships it -- see
+    `verify_no_bundled_ffmpeg_binary`'s own docstring for why this posture
+    matters."""
+
+    embed_zip = _fake_embeddable_zip(tmp_path)
+    wheel_path = _fake_wheel(tmp_path, package_name="mockingbird")
+
+    def ffmpeg_vendoring_installer(site_packages: Path) -> None:
+        vendored_bin = site_packages / "some_camera_extra" / "bin"
+        vendored_bin.mkdir(parents=True, exist_ok=True)
+        (vendored_bin / "ffmpeg.exe").write_bytes(b"not a real binary, just a planted name")
+
+    with pytest.raises(LocalProductBuildError, match="ffmpeg"):
+        assemble_windows_bundle(
+            bundle_dir=tmp_path / "bundle",
+            wheel_path=wheel_path,
+            embed_zip_path=embed_zip,
+            install_dependencies=ffmpeg_vendoring_installer,
             include_gpu_runtime=False,
             model_bundle_source=None,
             include_bioclip_runtime=False,

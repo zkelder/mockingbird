@@ -173,6 +173,22 @@ confirmed history -- your Bird Log, your yard's statistics, or an export --
 until you explicitly confirm or correct it. MockingBird's own guesses stay
 labeled as guesses until then.
 
+## Bird-sound identification (optional)
+
+Alongside identifying birds it sees, MockingBird can optionally identify
+birds it *hears*, using a well-known research project called BirdNET. This
+is not included in MockingBird by default -- it needs a microphone and a
+separate, one-time setup step for a developer/technical user (see
+[README.md](../README.md)), because the underlying BirdNET model is
+licensed for non-commercial use only, under different terms than
+MockingBird itself. MockingBird never installs or downloads it for you
+automatically, the same way it never installs `ffmpeg` for you (see "Add a
+camera," above) -- both stay separate, optional programs you obtain
+yourself. See [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) for
+exactly what is and is not included with MockingBird, and why. If it isn't
+set up, everything else works exactly the same; you simply don't get an
+automatic guess for a sound-only detection until you identify it yourself.
+
 ## Use MockingBird on your phone
 
 MockingBird's whole everyday loop -- Today, a Visit's evidence, review,

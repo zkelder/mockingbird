@@ -174,6 +174,14 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 WEB_ROOT = ROOT / "web"
 PACKAGED_WEB_DIST = ROOT / "src" / "mockingbird" / "web_dist"
+# Release Licensing, Distribution & Third-Party Legal Closure v1: the
+# repository's own third-party notice record (MDv5a/BioCLIP-2 model license
+# text, a bounded direct-dependency summary, and an explicit account of what
+# is deliberately never bundled -- ffmpeg, BirdNET/birdnetlib). Every
+# official Windows bundle ships a copy of this exact file -- see
+# `package_third_party_notices`, below -- so an end user never has to find
+# the source repository to answer "what license is this, and what's in it?"
+THIRD_PARTY_NOTICES_SOURCE = ROOT / "THIRD_PARTY_NOTICES.md"
 DEFAULT_BUILD_CACHE_DIR = ROOT / ".build-cache"
 # The verified, already-downloaded win_amd64/cp312 GPU-stack wheel cache (see
 # docs/local-product-packaging-design.md and the accepted-Observation-model-
@@ -1398,6 +1406,35 @@ def write_build_identity(*, site_packages: Path, identity: BuildIdentity) -> Pat
     return destination
 
 
+def package_third_party_notices(
+    *, bundle_dir: Path, notices_source: Path = THIRD_PARTY_NOTICES_SOURCE
+) -> Path:
+    """Copy the repository's own `THIRD_PARTY_NOTICES.md` into the bundle
+    root, alongside `README-FIRST.txt` -- see Release Licensing,
+    Distribution & Third-Party Legal Closure v1.
+
+    Unlike the Observation/BioCLIP model bundles (genuinely optional --
+    "missing model bundle" is an honestly-reported product state), this is
+    never optional and never best-effort: every official build ships one,
+    the same "never silently ship a bundle missing something load-bearing"
+    contract `write_build_identity` already established for
+    `build_info.json`. Raises `LocalProductBuildError` -- failing the whole
+    release build, never a warning -- if the source file cannot be found,
+    since a release built without it would silently ship with no
+    third-party/model-license disclosure at all.
+    """
+
+    if notices_source.is_symlink() or not notices_source.is_file():
+        raise LocalProductBuildError(
+            f"THIRD_PARTY_NOTICES.md not found at {notices_source} -- an official release "
+            "build must not ship without its third-party notices file. If this file was "
+            "intentionally moved or renamed, update THIRD_PARTY_NOTICES_SOURCE to match."
+        )
+    destination = bundle_dir / "THIRD_PARTY_NOTICES.md"
+    shutil.copy2(notices_source, destination)
+    return destination
+
+
 def _iter_installed_dll_entries(site_packages: Path) -> list[tuple[Path, int | None]]:
     """Every `.dll` file actually declared by an installed package's own
     `RECORD`, resolved to an absolute path under `site_packages`, paired with
@@ -1653,6 +1690,59 @@ def verify_no_nc_licensed_acoustic_model_redistribution(*, site_packages: Path) 
         )
 
 
+#: Basenames `verify_no_bundled_ffmpeg_binary` treats as an ffmpeg
+#: executable -- case-insensitive, since a fresh Windows bundle_dir tree can
+#: contain mixed-case filenames from a variety of install steps.
+_FFMPEG_EXECUTABLE_BASENAMES = frozenset({"ffmpeg", "ffmpeg.exe"})
+
+
+def verify_no_bundled_ffmpeg_binary(*, bundle_dir: Path) -> None:
+    """Fail the build outright if an `ffmpeg`/`ffmpeg.exe` executable is
+    ever found anywhere inside the assembled bundle.
+
+    Release Licensing, Distribution & Third-Party Legal Closure v1: today,
+    MockingBird never bundles ffmpeg -- `is_ffmpeg_available`/`shutil.which`
+    (see `mockingbird.playback.rtsp_bridge`/`local_camera_bridge`/
+    `windows_camera_bridge`) only ever look for a copy the *user's own
+    operating system* already provides on PATH, and no packaging/build
+    script (this one, `build_camera_node_artifact.py`, or
+    `install_camera_node.py`) ever downloads, copies, or vendors one --
+    confirmed directly by inspecting every step that writes into
+    `bundle_dir`. That is a materially simpler distribution posture than
+    "bundling an LGPL/GPL binary" (which would require its own licensing
+    research into exactly which codecs/libraries that specific build
+    enables, mirroring the already-completed BirdNET work): mere runtime
+    invocation of a separately-installed, user-provided executable via
+    `subprocess`, with nothing copied or linked, is not redistribution.
+
+    This is the durable, active guard against ever silently reversing that
+    posture -- exactly the same role `verify_no_nc_licensed_acoustic_model_
+    redistribution` plays for BirdNET, immediately above. A pure, cheap
+    directory walk -- no import, no network. If a future packaging change
+    ever does start bundling an ffmpeg binary (for example, a convenience
+    "auto-install ffmpeg" feature), that requires a fresh licensing
+    decision about which ffmpeg build/configuration to ship, not just
+    removing this check.
+    """
+
+    hits = sorted(
+        str(path.relative_to(bundle_dir))
+        for path in bundle_dir.rglob("*")
+        if path.is_file() and path.name.lower() in _FFMPEG_EXECUTABLE_BASENAMES
+    )
+    if hits:
+        raise LocalProductBuildError(
+            "Windows packaging must never bundle an ffmpeg executable (found: "
+            f"{', '.join(hits)}) -- MockingBird's accepted distribution posture is that "
+            "ffmpeg is only ever invoked via subprocess against a copy the user's own "
+            "operating system already provides on PATH, never bundled/downloaded/"
+            "redistributed by MockingBird itself (see THIRD_PARTY_NOTICES.md). Bundling "
+            "an actual ffmpeg binary requires a new licensing decision (which build/"
+            "configuration -- LGPL vs. GPL-enabled -- and how its own notices are "
+            "carried), not just removing this check."
+        )
+
+
 def _patch_pth_file(python_dir: Path) -> None:
     """Point the embeddable interpreter at `site-packages` -- no venv, no pip.
 
@@ -1795,6 +1885,14 @@ def assemble_windows_bundle(
 
     (bundle_dir / "Start MockingBird.vbs").write_text(LAUNCHER_VBS, encoding="utf-8")
     (bundle_dir / "README-FIRST.txt").write_text(README_FIRST, encoding="utf-8")
+    package_third_party_notices(bundle_dir=bundle_dir)
+
+    # Release Licensing, Distribution & Third-Party Legal Closure v1: the
+    # last step, over the fully-assembled bundle (Python runtime,
+    # site-packages, and every generated file above) -- see
+    # `verify_no_bundled_ffmpeg_binary`'s own docstring.
+    verify_no_bundled_ffmpeg_binary(bundle_dir=bundle_dir)
+
     return bundle_dir, model_provenance, native_runtime_verification, bioclip_provenance
 
 

@@ -458,3 +458,16 @@ implementation details; the product is the Stream, Zone, activity, review,
 correction, Bird Log, export, and analytics experience -- see "Detection is
 infrastructure" in [docs/product-doctrine.md](docs/product-doctrine.md) for
 why detection sophistication is not the goal by itself.
+
+## License
+
+MockingBird's own source-code license has not yet been finalized -- this is
+an explicit, open owner decision, not an oversight (see
+`docs/release-execution-state.md`, Lane P, for its current status). No
+`LICENSE` file exists in this repository yet, and none should be assumed.
+
+Third-party components MockingBird redistributes or depends on -- including
+the bundled MDv5a and BioCLIP-2 model weights, and the optional BirdNET
+bird-sound identification feature MockingBird deliberately does **not**
+bundle -- are documented in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
