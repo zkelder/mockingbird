@@ -134,8 +134,9 @@ def score_proposal_evidence(
 
     limits = bounds or EvidenceScoringBounds()
     available_ids = set(proposal.evidence_media_asset_ids)
+    media_lookup = media or {}
     deduplicated: dict[str, EvidenceCandidate] = {}
-    for candidate in sorted(candidates, key=_candidate_order):
+    for candidate in sorted(candidates, key=lambda item: _candidate_selection_order(item, media_lookup)):
         if candidate.media_asset_id not in available_ids:
             continue
         if (
@@ -394,6 +395,45 @@ def _candidate_order(candidate: EvidenceCandidate) -> tuple[int, str, str, str]:
     return (
         _candidate_offset(candidate), candidate.role, candidate.frame_id or "", candidate.media_asset_id,
     )
+
+
+def _candidate_selection_order(
+    candidate: EvidenceCandidate, media: Mapping[str, bytes | str | Path],
+) -> tuple[int, int, str, str, str]:
+    """Sustained-Activity Visit Admission Starvation & Stop-Finalization
+    Correctness v1 (see "Bounded component decision horizon" in
+    docs/tracklet-visit-assembly-contract.md): `score_proposal_evidence`
+    truncates its own candidate pool to `EvidenceScoringBounds.
+    max_candidates` (16) *before* ranking which is "best" -- for a
+    long-lived proposal with far more retained evidence-candidate facts
+    than that (a real, previously-unreachable shape a bounded forced
+    decision can now legitimately produce), the plain offset-first order
+    `_candidate_order` alone provides always prefers the *earliest*
+    candidates -- for a proposal old enough to be force-decided, these are
+    also the ones most likely to have already rotated out of the caller's
+    own bounded, insertion-order evidence-byte cache (`engine_runtime.
+    _harvest_burst_bytes`/`_harvest_same_frame_bytes`), even when plenty of
+    later, still-available evidence exists in the very same proposal.
+    Reproduced directly, deterministically, before this fix: a
+    forced-decision winner with real, byte-backed evidence for 115 of its
+    own 240 constituent generations still reached `blocked_missing_
+    evidence`, because all 16 candidates the truncation kept were from its
+    own oldest, already-evicted generations.
+
+    Fixed narrowly, at candidate *selection priority* only -- never a
+    bound/cache-size change (see docs/candidate-visit-authority-contract.md
+    "Evidence-cache capacity" for why this milestone deliberately does not
+    touch that): a candidate with real, retrievable bytes in `media` is now
+    preferred over one without, before falling back to the original,
+    unmodified `_candidate_order` as the tiebreak. A complete no-op
+    whenever every candidate's bytes are available -- the overwhelming
+    common case, every existing, already-validated short-Visit scenario:
+    the new leading `0`/`1` term is then constant across every candidate,
+    so the original order alone still decides, byte-for-byte identical to
+    before this fix."""
+
+    has_bytes = _media_bytes(media.get(candidate.media_asset_id)) is not None
+    return (0 if has_bytes else 1, *_candidate_order(candidate))
 
 
 def _candidate_offset(candidate: EvidenceCandidate) -> int:

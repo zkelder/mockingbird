@@ -153,6 +153,85 @@ def test_bounds_and_no_useful_evidence_are_explicit() -> None:
     assert "candidate_limit_reached" in result.limitations
 
 
+# -----------------------------------------------------------------------
+# Sustained-Activity Visit Admission Starvation & Stop-Finalization
+# Correctness v1: `score_proposal_evidence` truncates its own candidate
+# pool to `EvidenceScoringBounds.max_candidates` *before* ranking which is
+# "best." A long-lived, force-decided proposal (see "Bounded component
+# decision horizon" in docs/tracklet-visit-assembly-contract.md) can
+# legitimately carry far more retained evidence-candidate facts than that
+# bound, with its own *earliest* candidates -- the ones the old, plain
+# offset-first order always preferred -- the ones most likely to have
+# already rotated out of the caller's own bounded evidence-byte cache,
+# even while plenty of later, still-available evidence exists in the same
+# proposal. Reproduced directly against the real, unmodified scorer.
+# -----------------------------------------------------------------------
+
+
+def test_byte_available_candidates_are_preferred_over_earlier_evicted_ones_under_truncation() -> None:
+    """The earliest 4 (by offset) of 8 candidates have no bytes in `media`
+    (the caller's own bounded cache has already evicted them); the later 4
+    do. `max_candidates=4` alone would keep only the byte-less quartet
+    under the old, plain offset-first order -- producing no useful
+    evidence despite real, usable evidence existing in the very same
+    proposal. The fix must find it anyway."""
+    evicted = tuple(
+        _candidate(f"evicted-{index}", "tracked_best", offset=index, facts=(("track_supported", True),))
+        for index in range(4)
+    )
+    available = tuple(
+        _candidate(f"available-{index}", "tracked_best", offset=1_000 + index, facts=(("track_supported", True),))
+        for index in range(4)
+    )
+    all_candidates = evicted + available
+    result = score_proposal_evidence(
+        _proposal(*(item.media_asset_id for item in all_candidates)), all_candidates,
+        media={item.media_asset_id: _png() for item in available},  # only the later 4 have real bytes
+        bounds=EvidenceScoringBounds(max_candidates=4),
+    )
+    assert result.no_useful_evidence is False
+    assert result.identification_candidate_id is not None
+    assert result.identification_candidate_id.startswith("available-")
+
+
+def test_candidate_order_is_unchanged_when_every_candidate_has_bytes() -> None:
+    """Non-regression: the fix's own leading byte-availability term is
+    constant (every candidate has bytes) whenever nothing has been
+    evicted -- the overwhelming common case, and every other test in this
+    file -- so the original offset/role/frame/id order alone must still
+    decide, byte-for-byte identical to before this fix."""
+    candidates = tuple(
+        _candidate(f"candidate-{index}", "tracked_best", offset=index, facts=(("track_supported", True),))
+        for index in range(6)
+    )
+    result = score_proposal_evidence(
+        _proposal(*(item.media_asset_id for item in candidates)), candidates,
+        media={item.media_asset_id: _png() for item in candidates},
+        bounds=EvidenceScoringBounds(max_candidates=3),
+    )
+    # The 3 kept (by the unmodified offset order) are exactly the 3 earliest.
+    kept_ids = {item.candidate_id for item in result.candidate_scores}
+    assert kept_ids == {"candidate-0", "candidate-1", "candidate-2"}
+
+
+def test_candidate_order_is_unchanged_when_no_media_is_supplied() -> None:
+    """Non-regression: `media=None` (a caller that never passes bytes at
+    all, e.g. an offline/metadata-only scoring pass) must behave exactly
+    as before -- every candidate is equally byte-less, so the fix's own
+    leading term is constant and the original order alone decides."""
+    candidates = tuple(
+        _candidate(f"candidate-{index}", "tracked_best", offset=index, facts=(("track_supported", True),))
+        for index in range(6)
+    )
+    result = score_proposal_evidence(
+        _proposal(*(item.media_asset_id for item in candidates)), candidates,
+        bounds=EvidenceScoringBounds(max_candidates=3),
+    )
+    kept_ids = {item.candidate_id for item in result.candidate_scores}
+    assert kept_ids == {"candidate-0", "candidate-1", "candidate-2"}
+    assert result.no_useful_evidence is True
+
+
 def test_privacy_masked_unavailable_and_too_small_candidates_are_not_selected() -> None:
     masked = _candidate("masked", "tracked_best", facts=(("privacy_masked", True),))
     missing = _candidate("missing", "high_resolution_burst")

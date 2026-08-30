@@ -508,6 +508,96 @@ an arbitration winner from that existing field being non-empty, without a
 new column). See docs/candidate-visit-authority-contract.md's own
 "Ambiguity policy" for the authority-gate side of this fix.
 
+## Bounded component decision horizon (Sustained-Activity Visit Admission Starvation & Stop-Finalization Correctness v1)
+
+Ambiguous boundary arbitration (above) fixed a *resolved* component's own
+winner from being lost to a stale pairwise-only scope. It did not bound
+*how long* a component may keep deferring while it is not yet resolved --
+a real, previously-undocumented defect Representative Daylight Gate A Field
+Acceptance v4 found and precisely root-caused: a real ~112-minute session of
+sustained, near-continuous multi-bird feeder activity produced
+`candidates_created == 0` for the *entire* live session, not merely a longer
+delay than usual.
+
+**Mechanism.** Individual episodes are already correctly bounded:
+`maximum_episode_duration_ms` caps one episode's own span (forcing a new
+chain to start once a single glued sequence gets too long), and
+`ambiguous_gap_ms` caps how long any one proposal's own tail may stay
+`continuation_pending` once it genuinely stops growing (see "Episode
+finality," above). Neither bound, individually, is the gap. The gap is
+structural, one layer up: when sustained real activity keeps producing new
+tracklets, a fresh chain that starts right after a `maximum_episode_
+duration_ms` split reliably becomes `ambiguous_adjacent_proposal_ids`-linked
+to the chain it just superseded -- the identical "genuine multi-way merge
+tie" mechanism `assemble_visit_episodes` already uses for any two
+simultaneously-eligible merge targets (see "Chain scope," above, for the
+transitive-closure traversal this then feeds into). Because a connected
+component's own currently-active tail is, by construction, still growing
+for as long as raw activity continues, `resolve_ambiguous_boundary_
+arbitration`'s own "defer the whole component if any member is still
+growing" rule (correct and necessary for a component that might still
+change shape) never gets a chance to fire for the *entire remaining life of
+the session* -- the component keeps absorbing every subsequent activity
+-driven episode fragment, transitively, all the way back to the start of
+the session, and the single currently-growing tail holds the entire
+historical prefix hostage. This is the third, most severe member of the
+family "Episode finality"/"Ambiguous boundary arbitration" above already
+document (2026-08-10 duplicate; 2026-08-17 permanent block; 2026-08-19
+cache eviction) -- the first case where an entire live session admitted
+zero Visits, and the first where the family's own designed resolution
+mechanism did not fire at all, rather than merely producing a downstream
+side effect.
+
+**Fix: a bounded decision horizon, reusing the existing episode-span bound.**
+`candidate_visit_authority.resolve_ambiguous_boundary_arbitration` accepts
+two new, optional, purely-additive parameters: `known_horizon_ms` (the same
+source-offset-relative "latest point in the stream the caller has actually
+observed" fact `assemble_visit_episodes` already takes) and `maximum_
+component_pending_ms`. Omitted (the default), a still-growing component
+defers *unconditionally* -- the exact pre-fix behavior every prior test/
+caller already relies on, unchanged. When both are supplied, a component
+whose own oldest member (by `start_offset_ms`) has been waiting longer than
+`maximum_component_pending_ms` is force-arbitrated even though some member
+is still `continuation_pending`: the identical `_arbitration_key` ranking
+still selects the single best-evidenced member (by detector confidence,
+then evidence volume, then a deterministic tiebreak) -- forcing *when* a
+component may be decided never changes *how* its winner is chosen, and
+every non-winning member is still attempted normally and still blocks,
+exactly preserving "at most one Visit per ambiguous cluster."
+
+`engine_runtime._EngineSession._run_assembly_tick` is the one real
+production caller: it passes its own live `known_horizon_ms` (unconditionally,
+not gated on `finalize` -- inert there regardless, since every proposal
+already reports `continuation_pending=False` unconditionally once
+`finalize=True`, so no component can ever be "still growing" at that
+point) and `engine_runtime._MAXIMUM_COMPONENT_PENDING_MS`, which reuses
+`VisitAssemblyConfiguration.maximum_episode_duration_ms` (1,200,000ms/20
+minutes) *verbatim* -- the identical, already-calibrated "how long may one
+grouping decision legitimately stay open" bound this codebase already uses
+for one episode's own span, not a newly-invented magic number (see this
+codebase's own established convention against that, cited on
+`VisitAssemblyConfiguration` itself). `candidate_visit_authority_cli.py`'s
+own separate, bounded (10-minute/3-candidate) engineering-trial tick is
+deliberately left passing neither parameter: its own hard cap means it can
+never run long enough to reach a 20-minute decision horizon in the first
+place, so the pre-fix unconditional-defer behavior there is inert, not a
+gap.
+
+**A forced decision loses no evidence.** A member cut off mid-growth by a
+forced decision is not discarded: a tracklet that later continues merging
+onto its own tail produces a new, larger, never-before-attempted proposal
+id on a later tick (a different constituent set, hence a different hash --
+see "Episode finality," above, for why this is already how every
+continuation is re-offered), which is then evaluated, and potentially
+force-decided again, through this identical, unmodified path. This is the
+same "one continuous, biologically-real encounter may legitimately become
+more than one product Visit once it runs long enough" tradeoff `maximum_
+episode_duration_ms` already makes for one episode's own span -- extended
+here to the connected-component level for the identical reason: a bounded,
+understandable grouping policy that never lets sustained real activity
+prevent every admission, without inventing a new Visit model or a
+behavior-analysis research project.
+
 ## VisitProposal lineage
 
 `AssembledVisitProposal`: deterministic `proposal_id` (`sha256` of the

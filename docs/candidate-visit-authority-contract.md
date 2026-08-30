@@ -145,6 +145,63 @@ exercise this). Disabling authority never touches an already-created
 candidate Visit or its evidence; it remains exactly as reviewable as before
 (see "Existing Visit protection").
 
+### Stop-finalization ordering (Sustained-Activity Visit Admission Starvation & Stop-Finalization Correctness v1)
+
+"No candidate can ever be created once a user has pressed Stop" (the kill
+switch's own original framing) and "pending, already-force-decided work
+must survive Stop" (see "Episode finality"/"Bounded component decision
+horizon" in docs/tracklet-visit-assembly-contract.md) are only in tension
+if the kill switch's own revert can run *before* the session's own
+in-flight finalize tick reaches persistence. Before this fix, it could:
+`engine_runtime._EngineSession.stop()` bounded its own `thread.join()` to a
+fixed, generous timeout (originally 20s) purely for HTTP-response
+responsiveness, but then reverted authority to shadow unconditionally the
+instant the join call returned -- on a genuine timeout (the background
+thread still alive, most likely to happen under exactly the sustained
+-activity load "Bounded component decision horizon" describes, since a
+busy session's own finalize tick has more work to do) exactly as much as on
+a real completion. `create_candidate_visit_from_proposal` re-reads
+authority mode fresh from the repository by design (see "Persistence
+adapter boundary," below) -- so a finalize tick that reached it *after*
+this premature external revert saw `shadow` and silently discarded an
+already-force-decided, genuinely valid candidate as `blocked_shadow_mode`.
+This was the real, previously-unresolved "why did stop not rescue the
+pending work" question Representative Daylight Gate A Field Acceptance v4
+disclosed but left open (that session's own real stop happened not to hit
+the race, or hit a different failure entirely -- see that report's own
+"open, disclosed, unresolved question").
+
+Fixed by making the join's own outcome authoritative rather than advisory:
+`stop()` now only performs its own external, defensive revert-and-`_state`
+transition when the background thread has *actually* finished (`not
+thread.is_alive()` after the join, or no thread at all -- the shape an
+early pre-repository failure produces, the one case this external call
+remains the *only* place authority ever reverts). If the join times out
+against a thread that is still genuinely running, `stop()` does nothing
+further: no premature revert, and `_state` stays `"stopping"` (an honest
+signal, not a false claim of success) with `advanced["stop_finalization_
+pending"] = True` for a status poll to see. The background thread's own
+`_run_async` `finally` chain -- tracker teardown, then the forced-decision
+finalize tick, then that same thread's own already-pre-existing revert
+-to-shadow, all on one thread, in the correct order, using the SAME
+repository connection throughout -- is unconditional (a daemon thread is
+never killed by `stop()` returning) and therefore guarantees eventual
+completion; `_run()`'s own outer `finally` normalizes `_state` back to
+`"stopped"` and clears `stop_finalization_pending` once that thread
+genuinely finishes, whether or not the original `stop()` call was still
+around to see it. This satisfies the "force-finalization must complete
+before the stop operation claims success, OR the stop response must
+explicitly indicate pending finalization and guarantee eventual
+completion" bar directly: the common case (finalize completes well within
+the join's own bound, especially now that "Bounded component decision
+horizon" keeps a live session's own backlog small) is still a fully
+synchronous, resolved-before-response stop; the rare, slow-finalize case is
+honestly disclosed rather than silently discarded. Repeated `stop()` calls
+while finalization is still pending remain safe (`set_observation_
+authority_mode` is idempotent; `create_candidate_visit_from_proposal`'s own
+existing idempotency guarantee makes a second finalize attempt for an
+already-decided proposal id a no-op).
+
 ## Persistence adapter boundary
 
 ```
@@ -506,6 +563,63 @@ current-as-of-32 in this section's own historical narration. See
 [roadmap.md](roadmap.md) for why this remains an open item: the raised
 bound is RED/GREEN-verified but still needs one live field proof under real
 busy-session load.
+
+### Selection-priority and generation-scope fixes (Sustained-Activity Visit Admission Starvation & Stop-Finalization Correctness v1)
+
+The 128-entry bound above was field-validated against delays on the order of
+tens of seconds to a few minutes (natural `blocked_continuation_pending`/
+`blocked_ambiguous_boundary` resolution). "Bounded component decision
+horizon" (see [tracklet-visit-assembly-contract.md](tracklet-visit-assembly-contract.md))
+introduces a *forced* decision on the order of tens of *minutes* for a
+sustained-activity component -- a materially longer delay this bound was
+never exercised against. Investigated directly (per this section's own
+governing brief: "if this materially contributes to starvation or poor
+forced-finalization behavior, fix it narrowly"), rather than simply raised
+again (a fourth capacity bump repeating this section's own established
+"capacity fix, not a structural fix" caveat, without addressing why a
+forced-decision winner's evidence keeps being unreachable regardless of the
+bound's exact size):
+
+- **Forced-decision winner selection now prefers recency over confidence**
+  (`candidate_visit_authority._forced_decision_key`, used only for a forced
+  decision -- an ordinary, naturally-stabilized component is unaffected,
+  still ranked by confidence exactly as before). A forced decision exists
+  specifically so a component does not defer forever; crowning a
+  historically-best-scoring member whose own evidence has, by construction,
+  had far longer to rotate out of the bounded cache than any naturally
+  -resolving component ever would just moves the identical "zero Visits"
+  symptom one gate later (`blocked_missing_evidence`, reproduced directly
+  before this fix). The winner-selection pool also now excludes any member
+  that is itself still `continuation_pending` -- such a member would fail
+  `evaluate_candidate_authority`'s own step-6 gate regardless of the
+  step-5 ambiguity bypass a forced decision grants, wasting an attempt.
+- **`evidence_scoring.score_proposal_evidence` now prefers byte-available
+  candidates under its own `max_candidates` (16) truncation**, before
+  falling back to the original offset-first order. A long-lived,
+  forced-decision proposal can carry far more retained evidence-candidate
+  facts than that bound; the old, plain offset-first order always kept the
+  *earliest* (therefore most likely already-evicted) ones, even when
+  byte-backed evidence existed elsewhere in the same proposal. See
+  [multi-frame-evidence-scoring-contract.md](multi-frame-evidence-scoring-contract.md)
+  "Bounds."
+- **A multi-generation-merged proposal's `track_generation_id` is now
+  `None`** (`visit_episode_assembler.project_to_visit_proposal`), not a
+  fabricated single (first-constituent) value -- see
+  [multi-frame-evidence-scoring-contract.md](multi-frame-evidence-scoring-contract.md)
+  "Boundary." This was the dominant mechanism in this milestone's own
+  worst-case reproduction: real evidence is tagged with the *specific*
+  constituent generation active at capture time, almost always not the
+  proposal's own first one, so the scorer's `track_generation_id` guard
+  silently excluded the great majority of a merged proposal's own real,
+  byte-backed evidence regardless of the truncation-order fix above. A
+  genuinely single-generation proposal (the common case) is unaffected.
+
+Together, reproduced directly against the real, unmodified scorer and the
+real, bounded 128-entry cache: a forced-decision winner with real evidence
+for less than half its own constituent generations (115 of 240, in the
+worst-case shape this milestone's own investigation constructed) now
+correctly reaches `create` instead of `blocked_missing_evidence`. See this
+milestone's own report for the full RED/GREEN account.
 
 ## Privacy / Ignore
 

@@ -931,7 +931,37 @@ def project_to_visit_proposal(assembled: AssembledVisitProposal, *, source_id: s
     authoritative lineage record. `track_generation_id` carries only the
     *first* constituent generation for informational continuity with
     existing per-generation tooling; the full set lives on
-    `AssembledVisitProposal.constituent_generation_ids`."""
+    `AssembledVisitProposal.constituent_generation_ids`.
+
+    Sustained-Activity Visit Admission Starvation & Stop-Finalization
+    Correctness v1: for a proposal merged from *more than one* constituent
+    generation, `track_generation_id` is `None` rather than a fabricated
+    single value. Real evidence (this milestone's own investigation, see
+    "Bounded component decision horizon" in docs/tracklet-visit-assembly
+    -contract.md): `evidence_scoring.score_proposal_evidence` uses this
+    field, when non-`None`, to *exclude* any candidate whose own capture
+    -time `track_generation_id` differs -- correct for a genuinely
+    single-generation proposal (the field is then unambiguous), but wrong
+    for a merged one, where real evidence legitimately carries the specific
+    *constituent* generation it was captured during (see `EvidenceCandidate`
+    construction in `camera_node_live.py`/`frame_driven_provider.py`),
+    almost always *not* equal to only the first one. Before this fix, a
+    multi-generation merged proposal's own real evidence from every
+    constituent generation but the first was silently invisible to
+    scoring -- for an ordinary short merge this rarely mattered in
+    practice (the first generation's own evidence was usually enough), but
+    for a long-lived, forced-decision proposal it was fatal: its first
+    generation is also its *oldest* evidence, the most likely to have
+    already rotated out of the caller's own bounded evidence-byte cache,
+    while the proposal's own already-correct `evidence_media_asset_ids`
+    union (below) already includes every constituent generation's real
+    evidence. `None` here simply lets that already-correct, already
+    -complete set decide on its own, exactly as `score_proposal_evidence`'s
+    own `proposal.track_generation_id is not None` guard already intends
+    for "this fact is not meaningfully known/singular." A genuinely
+    single-generation proposal (`len(constituent_generation_ids) == 1`,
+    the common case) is completely unaffected -- see
+    `test_visit_episode_assembler.py`'s own coverage."""
     return VisitProposal(
         proposal_key=assembled.proposal_id,
         source_id=source_id,
@@ -944,7 +974,11 @@ def project_to_visit_proposal(assembled: AssembledVisitProposal, *, source_id: s
         shadow_only=True,
         idempotency_key=assembled.proposal_id,
         broad_subject_class=assembled.broad_class,
-        track_generation_id=assembled.constituent_generation_ids[0],
+        track_generation_id=(
+            assembled.constituent_generation_ids[0]
+            if len(assembled.constituent_generation_ids) == 1
+            else None
+        ),
         detector_provenance=None,
         tracker_provenance=ASSEMBLER_VERSION,
         supporting_frame_ids=assembled.supporting_frame_ids,

@@ -82,6 +82,21 @@ class ProposalArbitrationFacts(Protocol):
     # Only `.max_confidence` is read; any object exposing that attribute
     # (for example `contracts.ConfidenceEvidenceSummary`) satisfies this.
     confidence_evidence: object
+    # Sustained-Activity Visit Admission Starvation & Stop-Finalization
+    # Correctness v1 (see "Bounded component decision horizon" in
+    # docs/tracklet-visit-assembly-contract.md): this proposal's own
+    # earliest/latest constituent tracklet offsets -- `start_offset_ms` is
+    # what `resolve_ambiguous_boundary_arbitration`'s own bounded-decision-
+    # horizon check needs to measure how long a whole connected component
+    # has been waiting for a decision; both are what `_forced_decision_key`
+    # needs to prefer the most recently active member once a decision is
+    # actually forced (see that function's own docstring for why recency,
+    # not confidence, is the right ranking there). Never reconstructed
+    # here (this stays a pure consumer, exactly like every other field on
+    # this Protocol); `AssembledVisitProposal` already carries both
+    # unchanged.
+    start_offset_ms: int
+    end_offset_ms: int
 
 
 @dataclass(frozen=True)
@@ -133,6 +148,46 @@ def _arbitration_key(proposal: ProposalArbitrationFacts) -> tuple[float, int, st
     return (max_confidence if max_confidence is not None else -1.0, len(proposal.constituent_generation_ids), proposal.proposal_id)
 
 
+def _forced_decision_key(proposal: ProposalArbitrationFacts) -> tuple[int, int, float, int, str]:
+    """Ranking used only for a *forced* decision (see
+    `resolve_ambiguous_boundary_arbitration`'s own docstring, "Bounded
+    component decision horizon" in docs/tracklet-visit-assembly-contract.md,
+    and the real defect this closes, disclosed in this milestone's own
+    report): prefers the most recently active member, never the highest-
+    confidence one.
+
+    A forced decision exists specifically so a component does not defer
+    forever. Picking a historically-best-scoring member whose own evidence
+    has, by construction, had far longer to rotate out of the bounded
+    evidence cache than any *naturally*-resolving component ever would (a
+    forced decision only ever fires once a component's oldest member has
+    been pending for `maximum_component_pending_ms` -- an order of
+    magnitude longer than the delay the evidence cache's own capacity was
+    field-validated against, see "Evidence-cache capacity" in
+    docs/candidate-visit-authority-contract.md) accomplishes nothing: it
+    just moves the identical "zero Visits" symptom one gate later
+    (`blocked_missing_evidence` at the quality gate, instead of an
+    unresolved arbitration) -- reproduced directly, deterministically,
+    against the real bounded 128-entry cache before this second fix.
+
+    Recency is the one proposal-level fact this pure module can reason
+    about without any cache awareness of its own: the bounded evidence
+    cache evicts in insertion (therefore capture-time) order, so the most
+    recently active member is the one most likely to still have real,
+    retrievable evidence. `end_offset_ms` first (a proposal's own most
+    recent activity), `start_offset_ms` next (prefers a proposal active for
+    longer, all else equal, as a secondary recency signal), then the
+    unmodified `_arbitration_key` tuple as a final, deterministic tiebreak
+    -- confidence still decides among equally-recent members, so a genuine
+    tie never produces an ambiguous result. Never used for a *naturally*
+    -resolved component (every pre-existing test/behavior for that case is
+    completely unchanged -- see `resolve_ambiguous_boundary_arbitration`'s
+    own call site)."""
+
+    max_confidence, generation_count, proposal_id = _arbitration_key(proposal)
+    return (proposal.end_offset_ms, proposal.start_offset_ms, max_confidence, generation_count, proposal_id)
+
+
 def _ambiguous_component(seed_id: str, by_id: dict[str, ProposalArbitrationFacts]) -> list[str]:
     """Bounded, iterative (never recursive) traversal of every proposal id
     transitively reachable from `seed_id` by following only `ambiguous_
@@ -169,6 +224,9 @@ def _ambiguous_component(seed_id: str, by_id: dict[str, ProposalArbitrationFacts
 
 def resolve_ambiguous_boundary_arbitration(
     proposals: Sequence[ProposalArbitrationFacts],
+    *,
+    known_horizon_ms: int | None = None,
+    maximum_component_pending_ms: int | None = None,
 ) -> AmbiguousBoundaryArbitration:
     """Classify every currently-ambiguous proposal in one tick's full,
     freshly-assembled proposal set (see `visit_episode_assembler.
@@ -203,6 +261,46 @@ def resolve_ambiguous_boundary_arbitration(
     (one tick, one Stream's own session -- see "No cross-session/Stream
     propagation"): this function holds no state between calls, and a
     component can never include a proposal id absent from `proposals`.
+
+    Sustained-Activity Visit Admission Starvation & Stop-Finalization
+    Correctness v1 (see "Bounded component decision horizon" in
+    docs/tracklet-visit-assembly-contract.md): `known_horizon_ms`/
+    `maximum_component_pending_ms` are optional, purely-additive,
+    source-offset-relative facts (never a wall-clock read, matching every
+    other bound in this package) -- omitted (the default), a still-growing
+    component defers *unconditionally*, exactly the pre-existing behavior
+    every caller/test before this fix already relies on. Real field
+    evidence (Representative Daylight Gate A Field Acceptance v4: ~112
+    minutes of real, sustained, near-continuous multi-bird feeder activity
+    producing zero admitted Visits for the entire session) proved this
+    unconditional defer is unbounded in practice: each successive
+    `maximum_episode_duration_ms`-capped episode fragment from one sustained
+    activity source can become transitively ambiguous-linked to the next,
+    and because a component's own currently-active tail is, by definition,
+    still growing for as long as raw activity continues, the *entire*
+    component -- including everything transitively linked to it, all the
+    way back to the start of the session -- stays deferred for the whole
+    remaining life of the session. Individual episodes are already
+    correctly bounded (`maximum_episode_duration_ms` caps one episode's own
+    span; `ambiguous_gap_ms` caps how long any one proposal's own tail may
+    stay `continuation_pending` once it truly stops growing); the gap is
+    structural, not a wrong value: nothing previously bounded how long the
+    *connected component* as a whole may keep deferring while its own tail
+    keeps being refreshed by new activity.
+
+    When both are supplied, a component whose own oldest member (by
+    `start_offset_ms`) has been waiting longer than `maximum_component_
+    pending_ms` (measured against `known_horizon_ms`) is force-arbitrated
+    even though some member is still `continuation_pending` -- the same
+    `_arbitration_key` ranking still picks the single best-evidenced
+    member; forcing *when* a component may be decided never changes *how*
+    its winner is chosen. Every other member (including one that is itself
+    still growing) is still attempted normally and still blocks, exactly
+    preserving "at most one Visit per ambiguous cluster." A member cut off
+    mid-growth by a forced decision is not lost: a tracklet that later
+    continues merging onto its own tail produces a new, larger, never-
+    before-attempted proposal id on a later tick, offered again through
+    this same, unmodified path.
     """
 
     by_id = {proposal.proposal_id: proposal for proposal in proposals}
@@ -216,20 +314,77 @@ def resolve_ambiguous_boundary_arbitration(
         component_ids = _ambiguous_component(proposal.proposal_id, by_id)
         visited.update(component_ids)
         component = [by_id[member_id] for member_id in component_ids]
-        if any(member.continuation_pending for member in component):
+        still_growing = any(member.continuation_pending for member in component)
+        stable_members = [member for member in component if not member.continuation_pending]
+        forced = (
+            still_growing
+            and bool(stable_members)
+            and _component_pending_horizon_exceeded(
+                component,
+                known_horizon_ms=known_horizon_ms,
+                maximum_component_pending_ms=maximum_component_pending_ms,
+            )
+        )
+        # `bool(stable_members)` above matters: a proposal that is itself
+        # still `continuation_pending` fails `evaluate_candidate_authority`'s
+        # own gate 6 unconditionally, regardless of the ambiguous-boundary
+        # bypass a forced decision grants at gate 5 (see "Continuation
+        # -pending policy" in docs/candidate-visit-authority-contract.md --
+        # the two checks are independent). Forcing a decision while *every*
+        # member is still individually growing would only ever crown a
+        # winner that fails on its own merits one gate later -- wasting an
+        # attempt, never producing a Visit. This is a narrow, self
+        # -correcting transitional window (the horizon check is keyed on
+        # the component's own *oldest* member's `start_offset_ms`, which can
+        # cross the bound slightly before that same member's own `end_
+        # offset_ms` naturally clears `ambiguous_gap_ms`): the very next
+        # tick or two, once at least one member has genuinely gone quiet,
+        # `forced` becomes true again automatically -- no new state, no
+        # caller change needed.
+        if still_growing and not forced:
             # Any member of the *whole* component still growing means the
             # component's own shape could still change -- a same-encounter
             # continuation tracklet could still merge into any member,
             # potentially re-linking or absorbing others -- so the entire
             # component defers, never only the growing member's immediate
             # neighbors. Never decide a permanent winner/loser from an
-            # incomplete component.
+            # incomplete component, unless the bounded decision horizon
+            # above has already been exceeded.
             deferred.update(component_ids)
             continue
-        best = max(component, key=_arbitration_key)
+        # `forced` ranks only among `stable_members` (never a still-growing
+        # one, for the reason above) using `_forced_decision_key` (recency
+        # -first -- see its own docstring for why); an ordinary, naturally
+        # -stabilized component (`still_growing` already false for every
+        # member, so `stable_members == component`) ranks the full
+        # component with the unmodified confidence-first `_arbitration_key`
+        # -- every pre-existing test/behavior for that common case is
+        # completely unaffected by this fix.
+        pool = stable_members if forced else component
+        best = max(pool, key=_forced_decision_key if forced else _arbitration_key)
         winners.add(best.proposal_id)
 
     return AmbiguousBoundaryArbitration(resolved_winner_ids=frozenset(winners), deferred_ids=frozenset(deferred))
+
+
+def _component_pending_horizon_exceeded(
+    component: Sequence[ProposalArbitrationFacts],
+    *,
+    known_horizon_ms: int | None,
+    maximum_component_pending_ms: int | None,
+) -> bool:
+    """Bounded-decision-horizon check backing `resolve_ambiguous_boundary_
+    arbitration`'s own forced-decision policy (see that function's
+    docstring for the full field-evidenced rationale): has this component's
+    own oldest member been waiting for a decision longer than the caller's
+    bound allows? `False` whenever either fact is omitted -- preserves the
+    exact prior, unconditional-defer behavior for every pre-existing
+    caller/test."""
+
+    if known_horizon_ms is None or maximum_component_pending_ms is None:
+        return False
+    oldest_start_ms = min(member.start_offset_ms for member in component)
+    return (known_horizon_ms - oldest_start_ms) > maximum_component_pending_ms
 
 
 class ObservationAuthorityMode(str, Enum):

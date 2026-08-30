@@ -16,6 +16,28 @@ The scorer only accepts candidates whose `media_asset_id` is listed in the propo
 generation when both are known, so evidence from a different or stale track generation
 cannot attach even if an identifier were to collide.
 
+Sustained-Activity Visit Admission Starvation & Stop-Finalization Correctness v1: the
+proposal-level `track_generation_id` guard above is meaningful only for a genuinely
+single-generation proposal, where it is unambiguous. `visit_episode_assembler.
+project_to_visit_proposal` now supplies it only in that case (`None` for a proposal
+merged from more than one constituent tracklet generation) -- before this fix, a merged
+proposal's own `track_generation_id` was fabricated as only its *first* constituent
+generation, silently excluding every real, correctly-attached evidence candidate
+captured during any of its *other* constituent generations (see `EvidenceCandidate`
+construction in `camera_node_live.py`/`frame_driven_provider.py`, which always tags
+evidence with the specific generation active at capture time, not a later merge
+outcome). Harmless for an ordinary short merge in practice (the first generation's own
+evidence was usually enough on its own); fatal for a long-lived, forced-decision
+proposal (see "Bounded component decision horizon" in
+docs/tracklet-visit-assembly-contract.md), whose first generation is also its *oldest*
+evidence -- the most likely to have already rotated out of the caller's own bounded
+evidence-byte cache, while later, still-available constituent-generation evidence
+existed in the very same proposal the whole time. `evidence_media_asset_ids` (checked
+first, above) already correctly scopes evidence to every constituent generation's own
+contribution via the assembler's own union -- the `track_generation_id` guard, when it
+applies at all, is now a narrower, correct refinement of that set rather than a second,
+conflicting, single-generation-only restriction of it.
+
 ## Signals
 
 Scoring uses only provider-neutral, measurable facts already carried by
@@ -76,6 +98,23 @@ bound adds a stable limitation code (for example `candidate_limit_reached`,
 `decoded_image_limit_reached`, `burst_frame_limit_reached`) rather than failing; scoring
 always completes and remains deterministic for a given candidate set regardless of input
 ordering.
+
+Sustained-Activity Visit Admission Starvation & Stop-Finalization Correctness v1: which
+candidates survive the `max_candidates` (16) truncation is no longer decided by offset
+order alone. A candidate whose bytes are actually present in the caller-supplied `media`
+mapping is now preferred over one without, before falling back to the original
+offset/role/frame/id order as the tiebreak (`_candidate_selection_order`, wrapping the
+unmodified `_candidate_order`). Before this fix, a proposal with far more retained
+evidence-candidate facts than the 16-candidate bound (again, a long-lived, forced
+-decision proposal) could have its truncated pool land *entirely* on candidates whose
+bytes had already rotated out of the caller's own bounded evidence-byte cache, even when
+byte-backed candidates existed elsewhere in the very same proposal -- reproduced
+directly, deterministically, against the real, unmodified scorer before this fix (see
+this milestone's own report). A complete no-op whenever every candidate's bytes are
+available, or when `media` is omitted entirely -- the overwhelming common case, and
+every pre-existing scoring scenario: the new leading term is then constant across every
+candidate, so the original order alone still decides, byte-for-byte identical to before
+this fix.
 
 ## Reason and limitation codes
 

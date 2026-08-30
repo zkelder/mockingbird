@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
+import threading
 import time
 
 import pytest
@@ -1291,6 +1292,152 @@ def test_stop_is_bounded_while_actively_observing(repository: ProductRepository)
     assert manager.status(STREAM_ID).state == "stopped"
 
 
+# =============================================================================
+# Sustained-Activity Visit Admission Starvation & Stop-Finalization
+# Correctness v1: the "open, disclosed, unresolved question" Representative
+# Daylight Gate A Field Acceptance v4 left open -- stopping the session
+# *should* have force-finalized every pending proposal, yet the real stop
+# response still showed zero admits. Root cause, confirmed here directly:
+# `_EngineSession.stop()`'s own kill-switch revert (see its docstring)
+# always reverted authority to shadow the instant its own bounded
+# `thread.join()` returned, *whether or not the background thread had
+# actually finished* -- including on a bare timeout, while the thread might
+# still be completing its own `finally:` teardown (session.stop()'s tracker
+# finalize, then the forced-decision finalize tick, then that same thread's
+# own later revert). A finalize tick that reaches `create_candidate_visit_
+# from_proposal` *after* this premature external revert reads authority
+# fresh from the repository (by design -- see that method's own docstring)
+# and sees `shadow`, silently discarding a genuine, already-force-decided
+# candidate as `blocked_shadow_mode`. These tests drive the real
+# `ObservationEngineSessionManager.start`/`.stop()` orchestration boundary
+# production uses -- never a bypassed helper -- forcing the exact race
+# deterministically (never a real-time coin flip) via a controllable
+# blocking transport plus a monkeypatched, tiny join timeout.
+# =============================================================================
+
+
+class _BlockingAfterFirstBatchTransport(_FixtureTransport):
+    """Yields one real, bounded batch (enough to confirm and start one
+    track), then blocks -- deterministically, on a caller-controlled
+    `threading.Event`, never a real-time sleep race -- before yielding
+    anything further. `session.run()`'s own receiver thread
+    (`camera_node_live.LiveCameraNodeShadowSession.run`) iterates this
+    generator on its own dedicated thread, so blocking here blocks that one
+    real batch call from ever returning, without blocking the asyncio event
+    loop itself -- exactly the shape needed to force `_EngineSession.stop()`
+    's own bounded `thread.join()` to observe a genuinely still-running
+    background thread, deterministically, rather than only 'usually.'"""
+
+    def __init__(self, *, release_event: threading.Event, frame_count: int = 4) -> None:
+        super().__init__(frame_count=frame_count)
+        self._release_event = release_event
+        self._first_call_done = False
+
+    def iter_analysis_frames(self, *, maximum_frames: int):
+        if not self._first_call_done:
+            self._first_call_done = True
+            return self._paced_frames()
+        return self._blocked_frames()
+
+    def _blocked_frames(self):
+        self._release_event.wait()
+        return
+        yield  # pragma: no cover - unreachable; makes this a generator function
+
+
+def test_stop_does_not_race_the_kill_switch_against_a_still_finalizing_session(
+    repository: ProductRepository, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Direct, deterministic reproduction of the real field mechanism: force
+    `stop()`'s own bounded join to time out while the background thread is
+    still genuinely mid-batch (never yet reached its own finalize tick),
+    then prove the already-confirmed, already-started track's own eventual
+    candidate Visit still gets created once the thread actually finishes --
+    not silently discarded by a premature kill-switch revert."""
+    monkeypatch.setattr(engine_runtime, "_STOP_JOIN_TIMEOUT_SECONDS", 0.05)
+    release_event = threading.Event()
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: _BlockingAfterFirstBatchTransport(release_event=release_event),
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "observing", timeout=10.0)
+    # Let the one real batch actually land (the confirmed track has formed
+    # and is genuinely still open/active) before the second, blocking call
+    # is ever reached.
+    assert _wait_until(lambda: manager.status(STREAM_ID).counts.track_updates_observed > 0, timeout=10.0)
+
+    status = manager.stop(STREAM_ID)
+
+    # The join genuinely timed out against a thread that is still alive
+    # (blocked in the second, deliberately-withheld batch call) -- this
+    # must be reported honestly, never silently claimed as a clean, fully
+    # -finalized stop.
+    assert status is not None
+    assert status.state == "stopping"
+    assert status.advanced.get("stop_finalization_pending") is True
+    # The kill switch's own defensive revert must NOT have fired yet --
+    # this is the exact race: reverting here, before the background
+    # thread's own finalize tick runs, is what silently discarded the real
+    # candidate before this fix.
+    assert repository.get_observation_authority_state(stream_id=STREAM_ID).mode == "candidate_visit"
+
+    # Now let the background thread actually proceed: it notices the
+    # withheld batch, treats it as an empty/no-frames result, sees
+    # `_stop_event` already set, and falls through to its own real teardown
+    # -- tracker finalize, the forced-decision finalize tick, then its own
+    # authority revert -- all on the same thread, in the correct order.
+    release_event.set()
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "stopped", timeout=10.0)
+
+    final_status = manager.status(STREAM_ID)
+    assert final_status is not None
+    assert final_status.advanced.get("stop_finalization_pending") is not True
+    assert final_status.counts.candidates_created == 1, (
+        f"the already-confirmed track's candidate must survive a timed-out stop() join; "
+        f"suppressed={final_status.counts.suppressed_reasons}"
+    )
+    assert repository.get_observation_authority_state(stream_id=STREAM_ID).mode == "shadow"
+
+
+def test_repeated_stop_while_finalization_is_still_pending_is_safe(
+    repository: ProductRepository, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Calling `stop()` again while a prior call's own join already timed
+    out (finalization still pending) must stay safe: no duplicate revert
+    side effect, no exception, no duplicate Visit once finalization
+    actually completes."""
+    monkeypatch.setattr(engine_runtime, "_STOP_JOIN_TIMEOUT_SECONDS", 0.05)
+    release_event = threading.Event()
+    manager = _manager(
+        repository,
+        provider_loader=lambda path: _fixture_provider(),
+        transport_factory=lambda config, stream_id: _BlockingAfterFirstBatchTransport(release_event=release_event),
+    )
+    manager.start(STREAM_ID, _camera_node_config())
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "observing", timeout=10.0)
+    assert _wait_until(lambda: manager.status(STREAM_ID).counts.track_updates_observed > 0, timeout=10.0)
+
+    first = manager.stop(STREAM_ID)
+    second = manager.stop(STREAM_ID)
+    assert first is not None and second is not None
+    assert first.state == "stopping"
+    assert second.state == "stopping"
+
+    release_event.set()
+    assert _wait_until(lambda: manager.status(STREAM_ID).state == "stopped", timeout=10.0)
+    assert manager.status(STREAM_ID).counts.candidates_created == 1
+    assert repository.get_observation_authority_state(stream_id=STREAM_ID).mode == "shadow"
+
+    # A third stop, now that the session has genuinely finished, stays the
+    # existing, already-tested safe no-op.
+    third = manager.stop(STREAM_ID)
+    assert third is not None
+    assert third.state == "stopped"
+    assert manager.status(STREAM_ID).counts.candidates_created == 1
+
+
 # --- Camera session collision fix: pause/resume the legacy live session ----
 #
 # "Fix Observation camera session collision": Observation Engine used to
@@ -1668,6 +1815,41 @@ def test_finalize_tick_admits_a_still_pending_singleton_immediately(repository: 
     assert session._suppressed.get("blocked_continuation_pending") is None
 
 
+def test_finalize_tick_resolves_a_still_ambiguous_pair_to_exactly_one_visit(repository: ProductRepository) -> None:
+    """Test-matrix item (brief §16, "Stop finalization"): stop with a
+    pending *ambiguous* (not merely continuation-pending) episode must
+    still behave according to the existing, unmodified ambiguity contract
+    at the session-ending tick -- arbitration runs, the single
+    best-evidenced sibling is admitted, and the weaker one stays
+    permanently blocked. Never both, never neither, exactly like an
+    ordinary mid-session ambiguous resolution."""
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    gen_strong, gen_weak = "gen-finalize-strong", "gen-finalize-weak"
+    strong_updates = list(_tick_track_updates_with_confidence(gen_strong, 0, 5_000, confidence=0.8))
+    weak_updates = list(_tick_track_updates_with_confidence(gen_weak, 25_000, 30_000, confidence=0.2))
+    all_updates = strong_updates + weak_updates
+
+    evidence_strong, bytes_strong = _tick_evidence(gen_strong, "high_resolution_burst", "hash-finalize-strong")
+    evidence_weak, bytes_weak = _tick_evidence(gen_weak, "high_resolution_burst", "hash-finalize-weak")
+    burst_bytes_cache = {evidence_strong.media_asset_id: bytes_strong, evidence_weak.media_asset_id: bytes_weak}
+    attempted_proposal_ids: set[str] = set()
+
+    # A single session-ending tick, exactly like a real stream that ends
+    # (or is explicitly stopped) shortly after this ambiguous pair formed --
+    # never given the chance to individually stabilize mid-session first.
+    session._run_assembly_tick(
+        all_track_updates=all_updates, all_evidence_candidates=[evidence_strong, evidence_weak],
+        attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        known_horizon_ms=30_100, finalize=True,
+    )
+    assert session._counts.candidates_created == 1
+    assert session._suppressed.get("blocked_ambiguous_boundary") == 1
+    assert len(attempted_proposal_ids) == 2  # both permanently resolved: one create, one block, never deferred
+
+
 # =============================================================================
 # Admission Recall Investigation + Conditional Fix v1 (see "Ambiguous
 # boundary arbitration" in docs/tracklet-visit-assembly-contract.md): a real
@@ -1834,6 +2016,383 @@ def test_ambiguous_boundary_arbitration_does_not_cascade_to_the_next_sibling(
     assert len(attempted_proposal_ids) == 2
     assert session._suppressed.get("blocked_ambiguous_boundary") == 1  # the weaker sibling, unaffected
     assert session._suppressed.get("blocked_missing_evidence") == 1  # the winner, no evidence bytes -- not rescued
+
+
+# =============================================================================
+# Sustained-Activity Visit Admission Starvation & Stop-Finalization
+# Correctness v1: Representative Daylight Gate A Field Acceptance v4's own
+# real ~112-minute field session found sustained, near-continuous multi-bird
+# feeder activity produces `candidates_created == 0` for an *entire live
+# session* -- not merely a longer delay than usual. Root cause: every
+# successive `maximum_episode_duration_ms`-capped episode fragment stays
+# transitively ambiguous-linked to the next one, and because a connected
+# component's own currently-active tail is, by construction, still growing
+# for as long as raw activity continues, the *whole* component stays
+# deferred for the entire remaining life of the session. These tests drive
+# `_EngineSession._run_assembly_tick` directly across many simulated ticks
+# -- the real production code path -- with large, purely-synthetic
+# (never wall-clock) offsets, exactly mirroring how every other multi-tick
+# test above already proves this without a real multi-minute wait.
+# =============================================================================
+
+
+def _sustained_activity_tick_session(repository: ProductRepository) -> tuple[
+    engine_runtime._EngineSession, CandidateVisitAuthorityAdapter,
+]:
+    repository.set_observation_authority_mode(
+        ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW, fresh_session=True,
+    )
+    return _tick_session(repository), _tick_adapter(repository)
+
+
+def _drive_sustained_activity(
+    session: engine_runtime._EngineSession,
+    adapter: CandidateVisitAuthorityAdapter,
+    *,
+    total_simulated_ms: int,
+    spacing_ms: int = 5_000,
+    tracklet_duration_ms: int = 1_000,
+    tick_every_ms: int = 60_000,
+) -> tuple[list[TrackUpdate], list[EvidenceCandidate], dict[str, bytes], set[str], list[int]]:
+    """Feeds one uniform, continuous, always-merge-eligible (gap well under
+    `merge_gap_ms`=15,000ms) sequence of confirmed tracklets -- the same
+    fixed geometry/broad_class `_tick_track_updates` already uses -- through
+    the real `_run_assembly_tick` call site at a coarse, bounded cadence.
+    Uniform spacing well under `maximum_episode_duration_ms`=1,200,000ms
+    reliably produces at least one forced max-duration split once
+    `total_simulated_ms` exceeds it, and the tie between the frozen prior
+    chain and the fresh one immediately after a split reliably produces a
+    real `ambiguous_adjacent_proposal_ids` link between them (the exact
+    mechanism `assemble_visit_episodes` uses for a genuine multi-way merge
+    tie) -- never hand-constructed, always the real assembler's own output.
+    A deliberately *unbounded* local evidence cache (not the real, bounded
+    128-entry one) isolates the arbitration/authority mechanism this test
+    targets from the separate evidence-cache-capacity concern already
+    covered by the tests above.
+
+    Returns the accumulated state plus the list of `candidates_created`
+    counts observed after every tick, so a caller can assert not just the
+    final count but *when* (relative to `total_simulated_ms`) admission
+    first happened."""
+
+    all_updates: list[TrackUpdate] = []
+    all_evidence: list[EvidenceCandidate] = []
+    burst_bytes_cache: dict[str, bytes] = {}
+    attempted_proposal_ids: set[str] = set()
+    candidates_created_after_each_tick: list[int] = []
+
+    generation_index = 0
+    next_start_ms = 0
+    next_tick_at_ms = tick_every_ms
+    while next_start_ms + tracklet_duration_ms <= total_simulated_ms:
+        generation_id = f"gen-sustained-{generation_index}"
+        generation_index += 1
+        all_updates.extend(_tick_track_updates(generation_id, next_start_ms, next_start_ms + tracklet_duration_ms))
+        evidence, payload = _tick_evidence(generation_id, "high_resolution_burst", f"hash-{generation_id}")
+        all_evidence.append(evidence)
+        burst_bytes_cache[evidence.media_asset_id] = payload
+
+        known_horizon_ms = next_start_ms + tracklet_duration_ms
+        if known_horizon_ms >= next_tick_at_ms:
+            session._run_assembly_tick(
+                all_track_updates=all_updates, all_evidence_candidates=all_evidence,
+                attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache,
+                adapter=adapter, known_horizon_ms=known_horizon_ms,
+            )
+            next_tick_at_ms += tick_every_ms
+            candidates_created_after_each_tick.append(session._counts.candidates_created)
+        next_start_ms += spacing_ms
+
+    return all_updates, all_evidence, burst_bytes_cache, attempted_proposal_ids, candidates_created_after_each_tick
+
+
+def test_sustained_activity_does_not_starve_admission_forever(repository: ProductRepository) -> None:
+    """Direct reproduction of the real field defect: simulates 26 minutes of
+    continuous, merge-eligible activity -- comfortably past one
+    `maximum_episode_duration_ms` (20-minute) forced split, with activity
+    still ongoing throughout. Before the fix, the resulting ambiguous
+    component (the frozen pre-split chain plus the still-growing post-split
+    one) defers forever, no matter how long it has been waiting; after it,
+    a bounded Visit is admitted well before the simulated activity itself
+    ever stops -- proving this is a live-session admission fix, not merely
+    a session-end rescue."""
+    session, adapter = _sustained_activity_tick_session(repository)
+    *_, candidates_created_after_each_tick = _drive_sustained_activity(
+        session, adapter, total_simulated_ms=26 * 60_000,
+    )
+    assert candidates_created_after_each_tick, "the drive helper must have run at least one tick"
+    assert max(candidates_created_after_each_tick) > 0, (
+        "expected at least one admitted Visit before 26 simulated minutes of continuous activity ended "
+        f"-- per-tick candidates_created history: {candidates_created_after_each_tick}; "
+        f"final suppressed reasons: {session._suppressed}"
+    )
+    # Non-starvation, not fragmentation: 26 minutes of one continuous
+    # encounter must not explode into dozens of tiny duplicate Visits
+    # either -- bounded, not "every tick creates a new Visit."
+    assert session._counts.candidates_created <= 3
+
+
+def test_sustained_activity_admission_happens_within_the_pending_horizon_not_only_at_the_very_end(
+    repository: ProductRepository,
+) -> None:
+    """Sharper timing assertion than the test above: the very first
+    admission must land at (or shortly after) the bounded decision horizon
+    -- roughly the 20-minute mark -- never only in the session's final
+    minutes, which would just be a smaller-scale version of the same
+    starvation defect."""
+    session, adapter = _sustained_activity_tick_session(repository)
+    _, _, _, _, candidates_created_after_each_tick = _drive_sustained_activity(
+        session, adapter, total_simulated_ms=40 * 60_000,
+    )
+    first_tick_index_with_admission = next(
+        (index for index, count in enumerate(candidates_created_after_each_tick) if count > 0), None,
+    )
+    assert first_tick_index_with_admission is not None
+    first_admission_at_simulated_minute = (first_tick_index_with_admission + 1)  # tick_every_ms=60_000 => 1 tick/min
+    assert first_admission_at_simulated_minute <= 25, (
+        f"first admission landed at simulated minute {first_admission_at_simulated_minute}, expected at or "
+        "shortly after the 20-minute bounded decision horizon, not deferred toward the end of a 40-minute run"
+    )
+
+
+def test_sustained_activity_does_not_duplicate_or_explode_visits_over_a_long_run(
+    repository: ProductRepository,
+) -> None:
+    """Performance/fragmentation guard (see brief §19): a much longer, 65
+    -minute continuous run must still produce a small, bounded number of
+    Visits -- not an explosion, not a duplicate-per-tick runaway -- and
+    must complete in a reasonable amount of real time despite the fully
+    unmodified, from-scratch-every-tick assembler re-running over an
+    ever-growing track-update history."""
+    session, adapter = _sustained_activity_tick_session(repository)
+    started = time.monotonic()
+    *_, candidates_created_after_each_tick = _drive_sustained_activity(
+        session, adapter, total_simulated_ms=65 * 60_000,
+    )
+    elapsed_seconds = time.monotonic() - started
+    assert max(candidates_created_after_each_tick) > 0
+    # ~65 minutes / a ~20-25-minute bounded horizon: a handful of Visits,
+    # nowhere near "one per tick" (65 ticks) or "one per generation" (780).
+    assert 1 <= session._counts.candidates_created <= 6
+    assert elapsed_seconds < 60.0, f"65-minute simulated replay took {elapsed_seconds:.1f}s of real time"
+
+
+def test_field_derived_multi_subject_stress_replay(repository: ProductRepository) -> None:
+    """Field-derived stress replay (brief §18/§10): a product-shaped
+    synthetic sequence approximating the real field pattern -- continuous
+    tracks/proposals, >100 simulated minutes, repeated feeder-region
+    activity, plus a second, distinct, geometrically-separate subject
+    (a different part of the frame) active *throughout*, simultaneously
+    with the first -- one real, joint `_run_assembly_tick` history, never
+    two independent runs stitched together after the fact. Proves the
+    bounded-decision fix does not regress multi-subject/component
+    awareness (§10): the two subjects' own connected components are never
+    conflated by a forced decision, even while both are being force
+    -decided on the same ticks. Measures and asserts every fact §18 asks
+    for: logical Visit-group count, maximum admitted-episode lifetime,
+    duplicate count, and evidence retention -- an invariant (bounded,
+    non-starving, non-contaminating), never an assumed precise count."""
+    repository.set_observation_authority_mode(
+        ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW, fresh_session=True,
+    )
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    feeder_box = (0.47, 0.58, 0.51, 0.63)
+    perch_box = (0.05, 0.05, 0.15, 0.15)  # far corner: never geometry-compatible with the feeder
+    spacing_ms = 5_000
+    tracklet_duration_ms = 1_000
+    tick_every_ms = 60_000
+    total_simulated_ms = 105 * 60_000  # >100 simulated minutes, per brief §18
+
+    def _updates_and_evidence(generation_id: str, start_ms: int, box: tuple[float, float, float, float]):
+        end_ms = start_ms + tracklet_duration_ms
+        updates = (
+            TrackUpdate(
+                track_id=f"{generation_id}-track", generation_id=generation_id,
+                captured_at=NOW + timedelta(milliseconds=start_ms), status="started", lifecycle_state="confirmed",
+                frame_id=f"frame-{generation_id}-start", source_offset_ms=start_ms, broad_class="animal",
+                bounding_box=box, supporting_frame_ids=(f"frame-{generation_id}-start",),
+                support_state="weak_detector_supported", detector_ran=True,
+            ),
+            TrackUpdate(
+                track_id=f"{generation_id}-track", generation_id=generation_id,
+                captured_at=NOW + timedelta(milliseconds=end_ms), status="ended", lifecycle_state="ended",
+                frame_id=f"frame-{generation_id}-end", source_offset_ms=end_ms, broad_class="animal",
+                bounding_box=box, supporting_frame_ids=(f"frame-{generation_id}-end",),
+                support_state="weak_detector_supported", detector_ran=True,
+                terminal_reason="maximum_unsupported_duration",
+            ),
+        )
+        evidence, payload = _tick_evidence(generation_id, "high_resolution_burst", f"hash-{generation_id}")
+        return updates, evidence, payload
+
+    all_updates: list[TrackUpdate] = []
+    all_evidence: list[EvidenceCandidate] = []
+    burst_bytes_cache: dict[str, bytes] = {}  # deliberately unbounded -- isolates arbitration from cache capacity
+    attempted_proposal_ids: set[str] = set()
+    candidates_created_after_each_tick: list[int] = []
+
+    index = 0
+    next_start_ms = 0
+    next_tick_at_ms = tick_every_ms
+    started = time.monotonic()
+    while next_start_ms + tracklet_duration_ms <= total_simulated_ms:
+        # Subject A (feeder), every tick offset; Subject B (perch), offset by
+        # half a spacing so the two are genuinely interleaved/simultaneous in
+        # stream time, never accidentally sequential.
+        updates_a, evidence_a, payload_a = _updates_and_evidence(f"gen-feeder-{index}", next_start_ms, feeder_box)
+        updates_b, evidence_b, payload_b = _updates_and_evidence(
+            f"gen-perch-{index}", next_start_ms + spacing_ms // 2, perch_box,
+        )
+        all_updates.extend(updates_a)
+        all_updates.extend(updates_b)
+        all_evidence.append(evidence_a)
+        all_evidence.append(evidence_b)
+        burst_bytes_cache[evidence_a.media_asset_id] = payload_a
+        burst_bytes_cache[evidence_b.media_asset_id] = payload_b
+        index += 1
+
+        known_horizon_ms = next_start_ms + spacing_ms // 2 + tracklet_duration_ms
+        if known_horizon_ms >= next_tick_at_ms:
+            session._run_assembly_tick(
+                all_track_updates=all_updates, all_evidence_candidates=all_evidence,
+                attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache,
+                adapter=adapter, known_horizon_ms=known_horizon_ms,
+            )
+            next_tick_at_ms += tick_every_ms
+            candidates_created_after_each_tick.append(session._counts.candidates_created)
+        next_start_ms += spacing_ms
+    elapsed_seconds = time.monotonic() - started
+
+    # --- Non-starvation: bounded admission happened, well before the end ---
+    assert max(candidates_created_after_each_tick) > 0
+    first_admission_tick = next(i for i, c in enumerate(candidates_created_after_each_tick) if c > 0)
+    assert (first_admission_tick + 1) <= 25, "first admission must land near the ~20-minute horizon, not the end"
+
+    import json as _json
+
+    from mockingbird.repository.product_repository import ObservationCandidateVisitModel
+
+    with repository.session_factory() as db_session:
+        created_rows = [
+            row for row in (
+                db_session.get(ObservationCandidateVisitModel, proposal_id)
+                for proposal_id in attempted_proposal_ids
+            )
+            if row is not None
+        ]
+
+    # --- Measured facts (brief §18): report, never force an exact count ---
+    logical_visit_groups = len(created_rows)
+    max_episode_lifetime_ms = max((row.end_offset_ms - row.start_offset_ms for row in created_rows), default=0)
+    proposal_ids_seen = [row.proposal_id for row in created_rows]
+    duplicate_count = len(proposal_ids_seen) - len(set(proposal_ids_seen))
+
+    assert logical_visit_groups > 0
+    # Bounded, not starved and not exploded: ~105 min / a ~20-25-min horizon,
+    # times two independently-decided subjects -- comfortably under both a
+    # "zero" floor and a "hundreds of tiny duplicate Visits" ceiling.
+    assert logical_visit_groups <= 20, f"expected a bounded Visit-group count, got {logical_visit_groups}"
+    # No giant infinite episode: every admitted candidate's own span is
+    # bounded by the same `maximum_episode_duration_ms` this milestone
+    # reuses as the forced-decision horizon (a little slack for the
+    # coarse, 60s tick cadence this test itself uses).
+    assert max_episode_lifetime_ms <= engine_runtime._MAXIMUM_COMPONENT_PENDING_MS + tick_every_ms
+    assert duplicate_count == 0
+
+    # --- No cross-subject contamination under forced decisions (brief §10) ---
+    for row in created_rows:
+        generation_ids = _json.loads(row.constituent_generation_ids_json)
+        assert generation_ids, "a created candidate must have real constituent lineage"
+        prefixes = {gen_id.rsplit("-", 1)[0] for gen_id in generation_ids}
+        assert prefixes in ({"gen-feeder"}, {"gen-perch"}), (
+            f"candidate {row.proposal_id} mixed subjects across a forced decision: {generation_ids}"
+        )
+    subjects_represented = {
+        "gen-feeder" if _json.loads(row.constituent_generation_ids_json)[0].startswith("gen-feeder") else "gen-perch"
+        for row in created_rows
+    }
+    assert subjects_represented == {"gen-feeder", "gen-perch"}, (
+        f"expected both simultaneously-active subjects to be independently admitted, got {subjects_represented}"
+    )
+
+    # --- Evidence retention: every created candidate kept real, byte-backed
+    # evidence (never an empty/unsupported Visit) ---
+    for row in created_rows:
+        assert _json.loads(row.persisted_media_asset_ids_json), (
+            f"candidate {row.proposal_id} has no persisted evidence"
+        )
+
+    # --- Performance guard (brief §19) ---
+    assert elapsed_seconds < 90.0, f"105-minute two-subject simulated replay took {elapsed_seconds:.1f}s of real time"
+
+
+def test_forced_decision_winner_survives_the_real_bounded_evidence_cache(repository: ProductRepository) -> None:
+    """Direct, deterministic reproduction of a real defect this milestone's
+    own investigation found and fixed (see "Selection-priority and
+    generation-scope fixes" in docs/candidate-visit-authority-contract.md):
+    the 128-entry evidence-byte cache was field-validated against delays of
+    tens of seconds to a few minutes, not the tens-of-minutes delay a
+    forced decision can now legitimately produce. A single ~26-minute
+    continuous encounter (one real, uniform, merge-eligible tracklet
+    sequence -- the same shape `_drive_sustained_activity` above uses, but
+    against the REAL, bounded `_MAX_CACHED_BURST_BYTES` cache instead of an
+    unbounded local one) forces a decision on its own pre-split (older)
+    chain, whose own earliest evidence is, by construction, the very first
+    ever inserted into the cache -- guaranteed evicted by the time 26
+    minutes' worth of real evidence-candidate insertions have occurred.
+    Before the three fixes this reproduces together (forced-decision
+    recency preference, byte-availability-preferring truncation, and
+    multi-generation `track_generation_id` scope), this proposal correctly
+    won arbitration but still reached `blocked_missing_evidence`, silently
+    discarding a real, evidence-backed encounter -- the identical "zero
+    Visits" symptom the starvation fix itself closes, recurring one gate
+    later. After all three, it reaches `create`."""
+    session, adapter = _sustained_activity_tick_session(repository)
+
+    spacing_ms = 5_000
+    tracklet_duration_ms = 1_000
+    tick_every_ms = 60_000
+    total_simulated_ms = 26 * 60_000
+
+    all_updates: list[TrackUpdate] = []
+    all_evidence: list[EvidenceCandidate] = []
+    burst_bytes_cache: dict[str, bytes] = {}  # the REAL bounded cache, not an unbounded test double
+    attempted_proposal_ids: set[str] = set()
+
+    generation_index = 0
+    next_start_ms = 0
+    next_tick_at_ms = tick_every_ms
+    while next_start_ms + tracklet_duration_ms <= total_simulated_ms:
+        generation_id = f"gen-sustained-{generation_index}"
+        generation_index += 1
+        all_updates.extend(_tick_track_updates(generation_id, next_start_ms, next_start_ms + tracklet_duration_ms))
+        evidence, payload = _tick_evidence(generation_id, "high_resolution_burst", f"hash-{generation_id}")
+        all_evidence.append(evidence)
+        burst_bytes_cache[evidence.media_asset_id] = payload
+        # Real bounded eviction, matching `engine_runtime._harvest_burst_bytes`
+        # exactly -- this is the one thing `_drive_sustained_activity`'s own
+        # local cache deliberately does NOT do, to isolate the
+        # arbitration/authority mechanism from this separate concern.
+        while len(burst_bytes_cache) > engine_runtime._MAX_CACHED_BURST_BYTES:
+            burst_bytes_cache.pop(next(iter(burst_bytes_cache)))
+
+        known_horizon_ms = next_start_ms + tracklet_duration_ms
+        if known_horizon_ms >= next_tick_at_ms:
+            session._run_assembly_tick(
+                all_track_updates=all_updates, all_evidence_candidates=all_evidence,
+                attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache,
+                adapter=adapter, known_horizon_ms=known_horizon_ms,
+            )
+            next_tick_at_ms += tick_every_ms
+        next_start_ms += spacing_ms
+
+    assert session._counts.candidates_created == 1, (
+        f"expected the forced-decision winner to survive the real bounded evidence cache; "
+        f"suppressed={session._suppressed}"
+    )
+    assert "blocked_missing_evidence" not in session._suppressed
 
 
 # =============================================================================

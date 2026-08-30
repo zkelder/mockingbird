@@ -406,6 +406,200 @@ def test_arbitration_defers_when_a_sibling_is_still_growing() -> None:
     assert result.deferred_ids == frozenset({"p-stable", "p-growing"})
 
 
+# -----------------------------------------------------------------------
+# Sustained-Activity Visit Admission Starvation & Stop-Finalization
+# Correctness v1 (see docs/tracklet-visit-assembly-contract.md "Bounded
+# component decision horizon"): Representative Daylight Gate A Field
+# Acceptance v4 found that a component whose own tail keeps growing
+# defers *forever* -- real ~112 minutes of sustained multi-bird feeder
+# activity produced zero admitted Visits, because every successive
+# `maximum_episode_duration_ms`-capped episode fragment stayed
+# transitively ambiguous-linked to the next one, and the connected
+# component's own still-growing tail (always true while raw activity
+# continues) kept the *entire* component -- all the way back to the start
+# of the session -- deferred for the session's entire remaining life.
+# `known_horizon_ms`/`maximum_component_pending_ms` are optional and
+# purely additive: every test above omits them and is unaffected.
+# -----------------------------------------------------------------------
+
+
+def test_arbitration_still_defers_forever_without_a_horizon() -> None:
+    """Pins the exact pre-fix behavior for every caller that omits the new,
+    optional bound (every pre-existing test in this file, and any future
+    caller with no live horizon of its own): a still-growing component
+    defers unconditionally, no matter how old its oldest member is."""
+    old = _arbitration_proposal("p-old", ambiguous_adjacent_proposal_ids=("p-new",), max_confidence=0.9)
+    old = replace(old, start_offset_ms=0, end_offset_ms=1_000)
+    new = _arbitration_proposal(
+        "p-new", ambiguous_adjacent_proposal_ids=("p-old",), max_confidence=0.1, continuation_pending=True,
+    )
+    new = replace(new, start_offset_ms=10_000_000, end_offset_ms=10_000_500)
+    result = resolve_ambiguous_boundary_arbitration([old, new])
+    assert result.resolved_winner_ids == frozenset()
+    assert result.deferred_ids == frozenset({"p-old", "p-new"})
+
+
+def test_arbitration_forces_a_decision_once_a_component_exceeds_the_pending_horizon() -> None:
+    """Direct reproduction of the real field mechanism at the pure
+    `resolve_ambiguous_boundary_arbitration` level: a component must not be
+    able to defer forever merely because *something* in it (its own
+    currently-active tail, for as long as sustained real activity
+    continues) is still `continuation_pending`. Once the component's own
+    oldest member has been waiting longer than `maximum_component_pending_
+    ms`, arbitration must proceed anyway -- forcing *when* a decision
+    happens, never changing *how* the winner is chosen among it."""
+    old = _arbitration_proposal("p-old", ambiguous_adjacent_proposal_ids=("p-new",), max_confidence=0.9)
+    old = replace(old, start_offset_ms=0, end_offset_ms=1_000)
+    new = _arbitration_proposal(
+        "p-new", ambiguous_adjacent_proposal_ids=("p-old",), max_confidence=0.1, continuation_pending=True,
+    )
+    new = replace(new, start_offset_ms=1_100_000, end_offset_ms=1_100_500)
+
+    # Below the bound (measured from the component's own OLDEST member,
+    # `p-old`'s `start_offset_ms=0`): still correctly deferred, exactly the
+    # existing behavior -- not yet time to force a decision.
+    not_yet = resolve_ambiguous_boundary_arbitration(
+        [old, new], known_horizon_ms=1_199_999, maximum_component_pending_ms=1_200_000,
+    )
+    assert not_yet.deferred_ids == frozenset({"p-old", "p-new"})
+    assert not_yet.resolved_winner_ids == frozenset()
+
+    # Past the bound: forced. `p-old` (higher confidence) still wins --
+    # `p-new`, still genuinely growing, is not lost either: it is simply
+    # not the winner *of this exact snapshot*; if further activity keeps
+    # merging onto its own tail, that produces a new, larger, never-before
+    # -attempted proposal id on a later tick, offered again through this
+    # same unmodified path.
+    forced = resolve_ambiguous_boundary_arbitration(
+        [old, new], known_horizon_ms=1_200_001, maximum_component_pending_ms=1_200_000,
+    )
+    assert forced.deferred_ids == frozenset()
+    assert forced.resolved_winner_ids == frozenset({"p-old"})
+
+
+def test_forced_decision_never_crowns_a_still_growing_member() -> None:
+    """A forced decision must never pick a member that is itself still
+    `continuation_pending`: `evaluate_candidate_authority`'s own
+    continuation-pending gate (step 6) is unconditional and independent of
+    the ambiguous-boundary bypass a forced decision grants at step 5 (see
+    "Continuation-pending policy" in docs/candidate-visit-authority-
+    contract.md) -- crowning a still-growing member would just waste an
+    attempt on a proposal guaranteed to fail one gate later. Here the
+    *only* stable (non-growing) member has lower confidence than the
+    still-growing one; it must still be the winner."""
+    stable_low_confidence = _arbitration_proposal(
+        "p-stable", ambiguous_adjacent_proposal_ids=("p-growing",), max_confidence=0.1,
+    )
+    stable_low_confidence = replace(stable_low_confidence, start_offset_ms=0, end_offset_ms=1_000)
+    growing_high_confidence = _arbitration_proposal(
+        "p-growing", ambiguous_adjacent_proposal_ids=("p-stable",), max_confidence=0.9, continuation_pending=True,
+    )
+    growing_high_confidence = replace(growing_high_confidence, start_offset_ms=1_990_000, end_offset_ms=1_999_000)
+
+    result = resolve_ambiguous_boundary_arbitration(
+        [stable_low_confidence, growing_high_confidence],
+        known_horizon_ms=2_000_000, maximum_component_pending_ms=1_200_000,
+    )
+    assert result.deferred_ids == frozenset()
+    assert result.resolved_winner_ids == frozenset({"p-stable"})
+
+
+def test_forced_decision_prefers_recency_over_confidence_among_stable_members() -> None:
+    """Direct reproduction of the real evidence-eviction defect this
+    milestone's own investigation found (see "Bounded component decision
+    horizon" in docs/tracklet-visit-assembly-contract.md): a forced
+    decision must rank its *eligible* (already-stable) candidates by
+    recency, not confidence -- an older, higher-confidence stable member's
+    own evidence has had far longer to rotate out of the bounded evidence
+    cache than a more-recently-stable member's, even though both are
+    equally eligible to win on authority-gate grounds alone. A component
+    with three members -- an ancient, high-confidence stable one; a
+    recently-stabilized, low-confidence one; and a still-growing tail --
+    must pick the recently-stabilized one, never the ancient one."""
+    ancient_high_confidence = _arbitration_proposal(
+        "p-ancient", ambiguous_adjacent_proposal_ids=("p-recent", "p-growing"), max_confidence=0.9,
+    )
+    ancient_high_confidence = replace(ancient_high_confidence, start_offset_ms=0, end_offset_ms=1_000)
+    recent_low_confidence = _arbitration_proposal(
+        "p-recent", ambiguous_adjacent_proposal_ids=("p-ancient", "p-growing"), max_confidence=0.1,
+    )
+    recent_low_confidence = replace(recent_low_confidence, start_offset_ms=1_150_000, end_offset_ms=1_150_500)
+    growing_tail = _arbitration_proposal(
+        "p-growing", ambiguous_adjacent_proposal_ids=("p-ancient", "p-recent"), max_confidence=0.5,
+        continuation_pending=True,
+    )
+    growing_tail = replace(growing_tail, start_offset_ms=1_199_000, end_offset_ms=1_199_500)
+
+    result = resolve_ambiguous_boundary_arbitration(
+        [ancient_high_confidence, recent_low_confidence, growing_tail],
+        known_horizon_ms=1_200_100, maximum_component_pending_ms=1_200_000,
+    )
+    assert result.deferred_ids == frozenset()
+    assert result.resolved_winner_ids == frozenset({"p-recent"})
+
+
+def test_natural_arbitration_still_prefers_confidence_unaffected_by_recency_fix() -> None:
+    """Non-regression: a *naturally*-stabilized component (no member still
+    `continuation_pending` -- the ordinary, pre-existing case, and every
+    already-accepted real field session's own shape) must still rank by
+    confidence first, exactly as before this milestone -- recency-first
+    ranking is used *only* for a genuinely forced decision. Here the older
+    member has higher confidence and must still win, even though the newer
+    one is more recent."""
+    older_higher_confidence = _arbitration_proposal(
+        "p-older", ambiguous_adjacent_proposal_ids=("p-newer",), max_confidence=0.9,
+    )
+    older_higher_confidence = replace(older_higher_confidence, start_offset_ms=0, end_offset_ms=1_000)
+    newer_lower_confidence = _arbitration_proposal(
+        "p-newer", ambiguous_adjacent_proposal_ids=("p-older",), max_confidence=0.1,
+    )
+    newer_lower_confidence = replace(newer_lower_confidence, start_offset_ms=20_000, end_offset_ms=25_000)
+
+    # No `known_horizon_ms`/`maximum_component_pending_ms` supplied at all
+    # -- neither member is `continuation_pending`, so this resolves as an
+    # entirely ordinary, unforced arbitration regardless.
+    result = resolve_ambiguous_boundary_arbitration([older_higher_confidence, newer_lower_confidence])
+    assert result.resolved_winner_ids == frozenset({"p-older"})
+
+
+def test_arbitration_horizon_measures_from_the_components_own_oldest_member() -> None:
+    """The bound must be measured from the *component's* earliest member,
+    not from whichever proposal happens to be passed first -- a component
+    of three, where only the very first fragment is genuinely ancient,
+    must still be forced once that fragment alone crosses the horizon,
+    even though its two more-recent neighbors are individually young."""
+    ancient = _arbitration_proposal("p-ancient", ambiguous_adjacent_proposal_ids=("p-middle",), max_confidence=0.3)
+    ancient = replace(ancient, start_offset_ms=0, end_offset_ms=500)
+    middle = _arbitration_proposal(
+        "p-middle", ambiguous_adjacent_proposal_ids=("p-ancient", "p-recent"), max_confidence=0.9,
+    )
+    middle = replace(middle, start_offset_ms=1_150_000, end_offset_ms=1_150_500)
+    recent = _arbitration_proposal(
+        "p-recent", ambiguous_adjacent_proposal_ids=("p-middle",), max_confidence=0.1, continuation_pending=True,
+    )
+    recent = replace(recent, start_offset_ms=1_199_000, end_offset_ms=1_199_500)
+
+    result = resolve_ambiguous_boundary_arbitration(
+        [ancient, middle, recent], known_horizon_ms=1_200_100, maximum_component_pending_ms=1_200_000,
+    )
+    assert result.deferred_ids == frozenset()
+    assert result.resolved_winner_ids == frozenset({"p-middle"})  # highest confidence of the whole component
+
+
+def test_arbitration_horizon_is_inert_without_known_horizon_ms() -> None:
+    """Supplying only `maximum_component_pending_ms` (never a real caller
+    shape, but must not crash or silently misbehave) leaves the original
+    unconditional-defer behavior intact -- the age check is a no-op without
+    a live horizon to measure age against."""
+    old = _arbitration_proposal("p-old", ambiguous_adjacent_proposal_ids=("p-new",), max_confidence=0.9)
+    old = replace(old, start_offset_ms=0, end_offset_ms=1_000)
+    new = _arbitration_proposal(
+        "p-new", ambiguous_adjacent_proposal_ids=("p-old",), max_confidence=0.1, continuation_pending=True,
+    )
+    result = resolve_ambiguous_boundary_arbitration([old, new], maximum_component_pending_ms=1_200_000)
+    assert result.deferred_ids == frozenset({"p-old", "p-new"})
+
+
 def test_arbitration_never_admits_both_sides_of_a_pair() -> None:
     """The central duplicate-Visit protection this fix must preserve: at
     most one member of a mutually-ambiguous pair is ever a winner,

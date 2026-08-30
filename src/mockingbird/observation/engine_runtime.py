@@ -124,7 +124,11 @@ from mockingbird.observation.frame_driven_provider import (
     FrameDrivenProviderConfiguration,
 )
 from mockingbird.observation.onnx_provider import OnnxCudaObservationProvider, OnnxModelBundle
-from mockingbird.observation.visit_episode_assembler import assemble_visit_episodes, build_tracklets
+from mockingbird.observation.visit_episode_assembler import (
+    VisitAssemblyConfiguration,
+    assemble_visit_episodes,
+    build_tracklets,
+)
 from mockingbird.repository.product_repository import ProductRepository, StreamLivePlaybackConfig
 from mockingbird.source_providers.camera_node import CameraNodeClient, CameraNodeClientError
 from mockingbird.species.automatic_identification import AutomaticReviewIdentificationAssist
@@ -143,6 +147,20 @@ _BATCH_FRAMES = 20
 _ASSEMBLY_TICK_SECONDS = 10.0
 _STOP_JOIN_TIMEOUT_SECONDS = 20.0
 _MAX_SUPPRESSED_REASONS = 8
+# Sustained-Activity Visit Admission Starvation & Stop-Finalization
+# Correctness v1 (see "Bounded component decision horizon" in
+# docs/tracklet-visit-assembly-contract.md): the bounded decision horizon
+# `_run_assembly_tick` gives `candidate_visit_authority.resolve_ambiguous_
+# boundary_arbitration` for a still-growing ambiguous *component* -- reused
+# verbatim, not a new magic number, from `VisitAssemblyConfiguration.
+# maximum_episode_duration_ms`, the identical already-calibrated "how long
+# may one grouping decision legitimately stay open" bound this codebase
+# already uses for one episode's own span. Read once at import time (the
+# assembler's own dataclass default never varies per call in production;
+# `_run_assembly_tick` never constructs a custom `VisitAssemblyConfiguration`
+# itself either) so there is exactly one source of truth for this number,
+# never two independent magic numbers that could quietly drift apart.
+_MAXIMUM_COMPONENT_PENDING_MS = VisitAssemblyConfiguration().maximum_episode_duration_ms
 
 ObservationEngineState = str  # "stopped" | "starting" | "observing" | "stopping" | "error"
 
@@ -657,6 +675,27 @@ class _EngineSession:
         self._thread.start()
 
     def stop(self, *, reason: str = "user_stopped") -> None:
+        """Sustained-Activity Visit Admission Starvation & Stop-Finalization
+        Correctness v1 (see "Stop-finalization ordering" in
+        docs/candidate-visit-authority-contract.md): the bounded `thread.
+        join()` below is a *responsiveness* bound on this call, never
+        license to claim success before the background thread's own
+        teardown has actually run. Before this fix, the block immediately
+        below ran unconditionally the instant the join returned -- on a
+        genuine timeout (thread still alive, most likely to happen under
+        exactly the sustained/busy-session load this milestone's own field
+        evidence showed) exactly as much as on a real completion -- racing
+        the background thread's own `_run_async` `finally` chain (tracker
+        teardown, then the forced-decision finalize tick, then that same
+        thread's own later revert -- see its own docstring). A finalize
+        tick that reached `create_candidate_visit_from_proposal` *after*
+        this premature external revert read authority fresh from the
+        repository (by design) and saw `shadow`, silently discarding an
+        already-force-decided, genuinely valid candidate as `blocked_
+        shadow_mode` -- the real, previously-unresolved "why did stop not
+        rescue the pending work" question Representative Daylight Gate A
+        Field Acceptance v4 left open.
+        """
         with self._state_lock:
             if self._state == "stopped":
                 return
@@ -664,11 +703,38 @@ class _EngineSession:
             self._stopped_reason = reason
         self._stop_event.set()
         thread = self._thread
+        thread_finished = True
         if thread is not None:
             thread.join(timeout=_STOP_JOIN_TIMEOUT_SECONDS)
-        # The kill switch: always return authority to shadow on the way out,
-        # even if the background thread failed to join cleanly in time, so
-        # a stuck thread can never leave candidate authority active.
+            thread_finished = not thread.is_alive()
+        if not thread_finished:
+            # The background thread is still genuinely running -- most
+            # commonly still completing its own bounded finalize tick under
+            # real sustained-activity load. Do NOT revert authority from
+            # here: that is exactly the race described above. `_state`
+            # stays "stopping" (already set above), an honest signal that
+            # finalization is still completing rather than a false claim of
+            # success (see brief's own "OR the stop response must
+            # explicitly indicate pending finalization" bar). The thread's
+            # own `_run()` `finally` (unconditional; this is a daemon
+            # thread, never killed, so it is never abandoned mid-teardown by
+            # this call returning) guarantees eventual completion: it
+            # reverts authority itself, in the correct order, and normalizes
+            # `_state` to "stopped" once truly done -- see `_run_async`'s
+            # own outer `finally` and `_run`'s own `finally` immediately
+            # below it.
+            with self._state_lock:
+                self._advanced["stop_finalization_pending"] = True
+            return
+        # The thread has genuinely finished (or never existed) -- either an
+        # ordinary completed session (this revert is then redundant with,
+        # but harmless alongside, `_run_async`'s own identical revert
+        # already made on that same thread -- `set_observation_authority_
+        # mode` is idempotent), or a session that failed *before* ever
+        # reaching that code at all (for example an early provider-load
+        # failure, which returns directly without opening a repository) --
+        # the only path that ever reverts authority in that specific shape,
+        # so this call must still make it here.
         try:
             repository = self._repository_factory()
             try:
@@ -800,6 +866,12 @@ class _EngineSession:
                     self._state = "stopped"
                     self._stopped_at = self._stopped_at or datetime.now(UTC)
                     self._stopped_reason = self._stopped_reason or "session_ended"
+                # Stop-Finalization Reliability v1: this thread has now
+                # genuinely finished -- whatever `stop()` observed as a
+                # timed-out join earlier is stale. Cleared unconditionally
+                # (not only inside the branch above) so it never survives
+                # this thread's own real completion under any state.
+                self._advanced.pop("stop_finalization_pending", None)
 
     async def _run_async(self) -> None:
         config = self._playback_config
@@ -1550,7 +1622,21 @@ class _EngineSession:
         proposals = assemble_visit_episodes(
             tracklets, known_horizon_ms=None if finalize else known_horizon_ms,
         ).proposals
-        arbitration = resolve_ambiguous_boundary_arbitration(proposals)
+        # Sustained-Activity Visit Admission Starvation & Stop-Finalization
+        # Correctness v1: `known_horizon_ms`/`_MAXIMUM_COMPONENT_PENDING_MS`
+        # let arbitration force a decision on a component whose own oldest
+        # member has been waiting too long, even while its own currently
+        # -active tail is still growing (see that function's own docstring
+        # for the full field-evidenced rationale). Passed unconditionally
+        # (not gated on `finalize`): at `finalize=True` every proposal
+        # already reports `continuation_pending=False` unconditionally (via
+        # `known_horizon_ms=None` just above), so no component can ever be
+        # "still growing" at that point and this bound is already inert
+        # there -- no special-casing needed.
+        arbitration = resolve_ambiguous_boundary_arbitration(
+            proposals, known_horizon_ms=known_horizon_ms,
+            maximum_component_pending_ms=_MAXIMUM_COMPONENT_PENDING_MS,
+        )
         new_proposals = [
             item for item in proposals
             if item.proposal_id not in attempted_proposal_ids and item.proposal_id not in arbitration.deferred_ids
