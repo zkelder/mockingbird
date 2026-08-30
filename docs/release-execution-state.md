@@ -24,8 +24,13 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `81dec47` -- the implementation commit for Local
-  Only / Privacy Closure v1 (its own separate documentation-only report
+- **Accepted HEAD:** `6f7bbb6` -- the implementation commit for
+  Sustained-Activity Visit Admission Starvation & Stop-Finalization
+  Correctness v1 (its own separate report commit, `0638759`, sits
+  directly on top and is not cited here as a second, separate
+  code-bearing HEAD, matching this field's established convention).
+  `81dec47` (the implementation commit for Local
+  Only / Privacy Closure v1; its own separate documentation-only report
   commit, `64f0a4d`, sits directly on top and is not cited here as a
   second, separate code-bearing HEAD, matching this field's established
   convention). Native-Windows Packaged Local-Only Acceptance & Privacy
@@ -36,7 +41,7 @@ protecting.
   v4's own report commit (`270b6ba`) sits on top next, for the identical
   reason: a real, live ~112-minute field session that changed zero
   production code (the real defect it found is disclosed, not fixed --
-  see its own "Latest accepted milestone" entry, immediately below).
+  see its own "Prior accepted milestone" entry, below).
   `9c52c7f` (Retention Correctness & Bounded Cleanup
   Closure v1's own implementation commit), `fe54ac9` (Storage / Retention /
   Disk-Pressure & Recovery Closure v1's own implementation commit),
@@ -50,13 +55,74 @@ protecting.
   those closures (`7f98e43`, `8572308`, `4581424`, `4aeb658`, `e01e691`,
   `c03d0b1`, `80e1bb3`) are likewise not cited as separate code-bearing
   HEADs for the identical reason.
-- **Schema:** `v58` -- unchanged by this milestone. Representative
-  Daylight Gate A Field Acceptance v4 changed zero production code (see
-  its own "Latest accepted milestone" entry, immediately below): a real,
-  live field session found and precisely root-caused a real defect but
-  did not fix it, per the governing brief's own explicit bar for when a
-  fix belongs inside a field-measurement session.
-- **Latest accepted milestone:** Representative Daylight Gate A Field
+- **Schema:** `v58` -- unchanged by this milestone (Sustained-Activity
+  Visit Admission Starvation & Stop-Finalization Correctness v1 is a
+  correctness fix reusing existing columns/state throughout; no
+  model/migration change). Representative Daylight Gate A Field
+  Acceptance v4 (see its own "Prior accepted milestone" entry, below)
+  had likewise changed zero production code.
+- **Latest accepted milestone:** Sustained-Activity Visit Admission
+  Starvation & Stop-Finalization Correctness v1 -- see
+  [sustained-activity-visit-admission-starvation-stop-finalization-correctness-v1-report.md](sustained-activity-visit-admission-starvation-stop-finalization-correctness-v1-report.md)
+  for the complete record. Classification **A**. Fixes the real P0
+  Representative Daylight Gate A Field Acceptance v4 found and disclosed
+  (see the "Prior accepted milestone" entry immediately below): ~112 real
+  minutes of sustained, near-continuous multi-bird feeder activity
+  producing zero admitted Visits for the entire live session, and a real
+  Observation stop that did not visibly rescue anything either. Both
+  questions are independently root-caused, deterministically reproduced
+  RED against the real, unmodified pre-fix code at the real production
+  call site, and fixed: (1) nothing previously bounded how long a whole
+  connected *ambiguous component* could keep deferring while its own
+  currently-active tail kept being refreshed by sustained real activity,
+  even though each individual episode was already correctly bounded --
+  fixed with a bounded decision horizon that reuses the existing,
+  already-calibrated 20-minute episode-span bound verbatim (never a new
+  magic number, never the 45-second gap value itself, per the governing
+  brief's own explicit instruction not to treat that value as the bug);
+  (2) `_EngineSession.stop()`'s own external kill-switch revert ran
+  unconditionally the instant its bounded thread-join returned, racing
+  the background thread's own correctly-ordered teardown and silently
+  discarding an already-force-decided candidate as `blocked_shadow_mode`
+  -- fixed by making the join's own actual outcome (finished vs.
+  genuinely still running) authoritative, with an honest
+  `stop_finalization_pending` status signal for the rare case a caller's
+  own bounded patience is exceeded. Investigating the evidence-cache
+  bound's own possible contribution (per this milestone's own governing
+  brief, not generic cache tuning) found and fixed two further real,
+  narrow, pre-existing defects that would otherwise have kept producing
+  the identical "zero Visits" symptom one gate later
+  (`blocked_missing_evidence`) even after the primary fix: an
+  evidence-candidate truncation order that always kept the *earliest*
+  (most likely already-evicted) candidates over byte-available later
+  ones, and a merged proposal's evidence silently scoped to only its
+  *first* constituent generation. Neither the evidence-cache bound's own
+  size nor the 45-second gap value were changed by either fix. A
+  105-simulated-minute, two-simultaneous-subject stress replay (brief's
+  own §18/§10 field-derived stress replay) confirms bounded, non-starved,
+  non-duplicated, non-cross-subject-contaminated admission end-to-end,
+  with the first admission landing within 25 simulated minutes -- a
+  live-session fix, not merely a session-end rescue. 22 new tests, each
+  independently confirmed RED against the pre-fix code and GREEN after.
+  Tier 2 (the brief's own named subsystem list, 22 files): 505 passed, 0
+  failed. Tier 3 (full Core): 5238 passed, 3 failed -- all 3
+  independently confirmed unrelated, not merely assumed: the two
+  `test_place_biodiversity_summary_repository.py` failures reproduce
+  byte-identically on a direct `git stash` pre-milestone-baseline
+  bisection; the one `test_transport_worker.py` failure is a genuine,
+  pre-existing, timing-sensitive flake, proven directly (three
+  consecutive full-file runs of the identical current code produced
+  three different outcomes; zero import relationship to any file this
+  milestone changed; a direct baseline bisection also passed cleanly) --
+  3 skipped, 23 deselected, 11 xfailed, zero regressions attributable to
+  this milestone. `ruff check`: zero new findings (clean-baseline
+  bisection). No schema change. This closure does **not** itself close
+  Lane R/Gate A (no live field session ran, per this milestone's own
+  explicit non-goal), and does **not** authorize the next Representative
+  Field Acceptance / Gate A session, External Pre-Release Acceptance, or
+  Final Release Hardening, and does **not** select a next development
+  milestone -- see §3, below.
+- **Prior accepted milestone:** Representative Daylight Gate A Field
   Acceptance v4 -- see
   [representative-daylight-gate-a-field-acceptance-v4-report.md](representative-daylight-gate-a-field-acceptance-v4-report.md)
   for the complete record. Classification **A**. A real, live ~112-minute
@@ -946,6 +1012,35 @@ preserved here, not relaxed.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+Sustained-Activity Visit Admission Starvation & Stop-Finalization
+Correctness v1 (directly authorized outside this file, as a
+release-critical correctness milestone closing exactly the defect class
+Representative Daylight Gate A Field Acceptance v4 found and disclosed,
+below) is now accepted at classification **A** -- see §1, above, Lane R,
+§6, below, and
+[sustained-activity-visit-admission-starvation-stop-finalization-correctness-v1-report.md](sustained-activity-visit-admission-starvation-stop-finalization-correctness-v1-report.md)
+for the full record. Both the continuous-activity starvation and the
+stop-finalization questions the prior milestone left open are
+independently root-caused, deterministically reproduced RED against the
+real, unmodified pre-fix code, and fixed -- plus two further real,
+narrow, evidence-cache-adjacent defects this milestone's own required
+investigation found and closed along the way (see the report's own
+"Root cause" section for the complete four-part account). This closure
+does **not** authorize External Pre-Release Acceptance or Final Release
+Hardening, and does **not** select a next development milestone -- see
+the bold statement immediately above, unchanged by this closure.
+`roadmap.md` was not edited: this milestone is a bounded correctness fix
+confined to the Observation Engine admission/evidence-scoring stack, not
+a roadmap-scope change, and per its own governing brief only
+`release-execution-state.md` is updated on acceptance (accepted HEAD;
+schema unchanged; latest accepted milestone; Gate A defect state;
+validation state; exact daylight rerun requirement) -- the already
+-closed Lanes M/N/Q are untouched. This closure does **not** itself close
+Lane R/Gate A (no live field session ran, per this milestone's own
+explicit non-goal) and does **not** authorize the next daylight session
+by itself -- that remains its own separate authorization decision, per
+the bold statement above.
 
 Representative Daylight Gate A Field Acceptance v4 (directly authorized
 outside this file, as a release-critical field-evidence milestone) is
@@ -2220,6 +2315,53 @@ and re-measured. This closure does **not** authorize the next
 Representative Field Acceptance / Gate A session, External Pre-Release
 Acceptance, or Final Release Hardening, and does **not** select a next
 development milestone.
+
+**Sustained-Activity Visit Admission Starvation & Stop-Finalization
+Correctness v1 (2026-08-29) fixes the P0 the field session immediately
+above found, at classification A -- see §1/§3, above, and
+[sustained-activity-visit-admission-starvation-stop-finalization-correctness-v1-report.md](sustained-activity-visit-admission-starvation-stop-finalization-correctness-v1-report.md)
+for the full record.** Root cause confirmed structural, not a
+wrong-value bug: individual episodes were already correctly bounded, but
+nothing bounded how long a whole connected *ambiguous component* could
+keep deferring while its own currently-active tail kept being refreshed
+by sustained real activity -- deterministically reproduced (26 simulated
+minutes of continuous activity, zero admissions, exactly the field
+symptom) against the real, unmodified pre-fix code before being fixed
+with a bounded decision horizon reusing the existing, already-calibrated
+20-minute episode-span bound (never a new magic number, never the 45s
+gap value itself). The field report's own separate, disclosed-open
+"did stop rescue anything" question is independently root-caused (a
+real external/background-thread revert-to-shadow race, deterministically
+reproduced and fixed) and confirmed **not** the same mechanism as the
+starvation defect. Investigating the evidence-cache bound's own possible
+contribution (per this milestone's own governing brief) found and fixed
+two further real, narrow, pre-existing defects that would otherwise have
+kept producing the identical "zero Visits" symptom one gate later
+(`blocked_missing_evidence`) even after the primary fix -- neither the
+128-entry bound's own size nor the 45-second gap value were changed. A
+105-simulated-minute, two-simultaneous-subject stress replay confirms
+bounded, non-starved, non-duplicated, non-contaminated admission
+end-to-end. Tier 2: 505 passed, 0 failed (22 files, the brief's own
+named subsystem list). Tier 3 (full Core): 5238 passed, 3 failed (all 3
+independently confirmed pre-existing/unrelated, not merely assumed --
+see the report for the direct bisection/repeated-run evidence), 3
+skipped, 23 deselected, 11 xfailed. No schema change. This closure does
+**not** itself close Lane R/Gate A -- no live field session ran, per
+this milestone's own explicit non-goal (§20: "do not launch a real
+wildlife Observation tonight... a real daylight field rerun belongs
+AFTER this implementation milestone is accepted") -- and does **not**
+authorize the next Representative Field Acceptance / Gate A session,
+External Pre-Release Acceptance, or Final Release Hardening, and does
+**not** select a next development milestone. The next daylight session
+against a busy, real feeder Stream is what Gate A still needs: proof
+that `candidates_created` is no longer stuck at 0 under real sustained
+activity, that admission happens well before session end (not only at
+stop), that a real stop against genuinely pending work resolves
+honestly, and that multi-subject correctness holds through to real
+admitted Visits under real conditions -- the one dimension the
+motivating field session could not exercise at all, since nothing there
+ever reached admission. See the milestone's own report, "Field-rerun
+requirement," for the complete, precise list.
 
 ### S. Actual Final Release Hardening
 
