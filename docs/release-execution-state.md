@@ -72,8 +72,12 @@ protecting.
   those closures (`7f98e43`, `8572308`, `4581424`, `4aeb658`, `e01e691`,
   `c03d0b1`, `80e1bb3`) are likewise not cited as separate code-bearing
   HEADs for the identical reason.
-- **Schema:** `v58` -- unchanged by this milestone (Ongoing Monitoring
-  Failure Diagnostics for RTSP / Local USB / Windows DShow v1 adds one new
+- **Schema:** `v58` -- unchanged by this milestone (Lane C Sparse-State
+  Honesty & First-Hour Narrative Closure v1 is a single-branch precedence
+  fix in `_dashboard_runtime_by_stream` -- api/main.py -- plus two
+  frontend copy paragraphs; no DTO field, table, or column was added).
+  Also unchanged by Ongoing Monitoring
+  Failure Diagnostics for RTSP / Local USB / Windows DShow v1 (adds one new
   file, a new in-memory session field, and bounded application-code-only
   edits across the playback/repository/API layers; every new failure code
   is stored in the pre-existing, already-unbounded-length `StreamRuntime
@@ -95,7 +99,90 @@ protecting.
   Activity Visit Admission Starvation & Stop-Finalization Correctness v1
   (see its own "Prior accepted milestone" entry, below) had likewise left
   schema unchanged.
-- **Latest accepted milestone:** Ongoing Monitoring Failure Diagnostics
+- **Latest accepted milestone:** Lane C Sparse-State Honesty & First-Hour
+  Narrative Closure v1 -- see
+  [lane-c-sparse-state-honesty-first-hour-narrative-closure-v1-report.md](lane-c-sparse-state-honesty-first-hour-narrative-closure-v1-report.md)
+  for the complete record. Classification **A**. Closes both bounded DEV
+  gaps the accepted read-only Lane C reconciliation left open (§6.C,
+  below): sparse/no-wildlife honesty under primary detector/GPU/model
+  failure, and a coherent first-hour onboarding narrative. Root-caused the
+  first gap to one specific line: `_dashboard_runtime_by_stream`
+  (api/main.py) computed a Camera Node Stream's Dashboard/`ProductHealth`
+  failure text as `engine_status.camera_message or engine_status.message`.
+  `camera_message` ("Camera Node is paired and configured.") is set
+  unconditionally, early -- before the Observation Engine's own detector/
+  GPU/model load is even attempted -- and is never cleared once the camera
+  connects, so it stayed truthy and the `or` always picked it, discarding
+  the real, already-correctly-resolved failure text
+  (`engine_status.message`) whenever the *engine* (not the camera) was
+  what actually failed while the camera stayed perfectly reachable --
+  self-contradicting an already-correct "Camera unavailable"/alert-tone
+  badge with reassuring "paired and configured" wording next to it.
+  Reproduced RED against the real, unmodified pre-fix code first (a fake,
+  side-effect-free `ObservationEngineSessionManager.status()` read mirroring
+  a real `_EngineSession` GPU-failure shape, the same technique
+  `test_dashboard_observation_engine_truth.py` already established): only
+  the message-precedence assertion failed -- `camera_health.state`,
+  `needs_attention_count`, and `ready` were already correct pre-fix,
+  precisely scoping the real defect to message text alone. Fixed by
+  reusing, not re-deriving, the exact camera-connected-wins-only-if-
+  disconnected precedence `_EngineSession.snapshot`'s own "headline
+  whichever subsystem is actually blocking" contract already defines
+  (`engine_message if engine_status.camera_connected else camera_message`)
+  -- no additive `ProductHealthStatus`/`CameraHealthSummary` field needed;
+  the existing `CameraHealthState.camera_unavailable` state (already
+  alert-toned in the frontend) plus a correct message fully express the
+  truth. Zero frontend change needed: `DashboardPage.tsx` already renders
+  `camera.failure_reason ?? camera.message` verbatim. Confirmed
+  independently: a healthy detector stays unaffected; a genuine camera/
+  transport failure keeps its own distinct message, never the detector/GPU
+  wording; acoustic (BirdNET) status stays independent, never implied by
+  or implying the visual detector's own state; BioCLIP failures are
+  structurally incapable of reaching this code path at all
+  (`_schedule_automatic_identification` wraps its entire body in
+  `try/except Exception: return`, "must never break admission" -- it
+  cannot touch `_engine_available`/`_engine_message` under any failure).
+  The onboarding gap: `web/src/components/OnboardingWizard.tsx` had two
+  stale paragraphs (Welcome step, post-camera-setup Observe step) telling
+  first-time users a sighting "appears in"/"lands in" Review Queue,
+  predating the shipped review-optional design
+  (`docs/product-doctrine.md` "Core flow": Observe -> Discover -> Understand
+  -> Confirm -> Remember -> Improve, discovery through Today/Bird Log/Visit
+  detail; "Measured, Inferred, and Reviewed": Inferred output must be
+  useful immediately, never gated on confirmation first). Rewritten to
+  name Today/Bird Log as where sightings actually show up, reusing already-
+  established terminology ("Likely"/"Not yet confirmed" from
+  `BirdLogPage.tsx`) rather than inventing new vocabulary; Review Queue
+  remains named and available for deliberate batch review, just no longer
+  framed as the normal destination. No screens added, no wizard-flow
+  change. 7 new tests: `tests/test_dashboard_detector_health_honesty.py`
+  (4, backend) and `tests/test_onboarding_narrative_copy.py` (3, a
+  lightweight static-source-text regression -- not a new frontend
+  unit-test framework -- covering the Observe-step paragraph the
+  established e2e suite cannot reach without disproportionate new
+  camera-pairing scaffolding); the existing
+  `web/e2e/onboarding.spec.ts` gained two assertions on the Welcome-step
+  paragraph, verified against a real rendered browser DOM
+  (`npm run test:e2e:onboarding`: 6/6 passing). Tier 1: 7/7 passing. Tier
+  2 (30 files, the established health/dashboard/camera/onboarding/setup-
+  adjacent subsystem sweep): 594 passed, 11 xfailed (pre-existing), 0
+  failed. Tier 3 (full Core) deliberately not run -- a single-branch
+  precedence fix confined to one function, zero DTO/schema change, and
+  Tier 2's own 594-test sweep already covers every real consumer of the
+  touched function. `ruff check`: zero new findings on
+  `src/mockingbird/api/main.py` (26 pre-existing findings confirmed
+  unrelated via direct `git stash push -u` bisection -- identical count
+  and finding set, none within ~2,300 lines of the touched function); the
+  two new test files clean. `tsc --noEmit` clean. No schema change (see
+  "Schema," above). `docs/release-execution-state.md` §6.C now reconciled
+  to **MATERIALLY DELIVERED / NO KNOWN DEV REMAINS** (see below). This
+  closure does **not** authorize the next Representative Field Acceptance
+  / Gate A session, Lane G validation, provider integrations, External
+  Pre-Release Acceptance, or Final Release Hardening, and does **not**
+  select a next development milestone -- authorization returns to **NONE
+  -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED** (§3, below),
+  unchanged by this closure.
+- **Prior accepted milestone:** Ongoing Monitoring Failure Diagnostics
   for RTSP / Local USB / Windows DShow v1 -- see
   [ongoing-monitoring-failure-diagnostics-rtsp-local-usb-windows-dshow-v1-report.md](ongoing-monitoring-failure-diagnostics-rtsp-local-usb-windows-dshow-v1-report.md)
   for the complete record. Classification **A**. Closes Lane G's
@@ -1449,6 +1536,21 @@ exactly as open as stated.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
+Lane C Sparse-State Honesty & First-Hour Narrative Closure v1 (directly
+authorized outside this file, as a bounded, HIGH-RELEASE-VALUE
+product-correctness milestone closing the two remaining bounded DEV gaps
+an accepted read-only Lane C reconciliation had left open) is now accepted
+at classification **A** -- see §1, above, Lane C/§6, below, and
+[lane-c-sparse-state-honesty-first-hour-narrative-closure-v1-report.md](lane-c-sparse-state-honesty-first-hour-narrative-closure-v1-report.md)
+for the full record. This closure does not change this section's own
+bottom-line authorization, which remains **NONE -- GLOBAL PRODUCT-ROADMAP
+RECONCILIATION REQUIRED** exactly as it did before Ongoing Monitoring
+Failure Diagnostics for RTSP / Local USB / Windows DShow v1 below --
+neither milestone was self-authorizing, and neither authorizes the next
+Representative Field Acceptance / Gate A session, Lane G validation,
+provider integrations, External Pre-Release Acceptance, or Final Release
+Hardening.
+
 Ongoing Monitoring Failure Diagnostics for RTSP / Local USB / Windows
 DShow v1 (directly authorized outside this file, as a RELEASE-CRITICAL
 milestone closing Lane G's own remaining, previously-disclosed
@@ -2350,14 +2452,38 @@ blocker.
 
 ### C. Everyday Product / Discovery UX
 
-**Status:** PARTIAL -- HIGH RELEASE VALUE.
+**Status:** MATERIALLY DELIVERED / NO KNOWN DEV REMAINS. Lane C Sparse-
+State Honesty & First-Hour Narrative Closure v1 (2026-08-30) closed the
+two remaining bounded DEV gaps a prior accepted read-only Lane C
+reconciliation had left open; see
+[lane-c-sparse-state-honesty-first-hour-narrative-closure-v1-report.md](lane-c-sparse-state-honesty-first-hour-narrative-closure-v1-report.md).
+Classification **A**.
 
-Remaining: Best Moments; calm daily summary; New / Regular presentation;
-unknown/unresolved handling; sparse/no-wildlife states; understandable
-suggestion explanations; mostly-invisible review; coherent first-hour
-product experience; report-first hierarchy.
+Delivered, across the already-accepted milestones behind each (this
+section's own prose had never been reconciled as each landed piecemeal
+under Gate C naming rather than explicit "Lane C" naming -- corrected
+here, not re-implemented): Best Moments and report-first hierarchy (Gate C
+Daily Place Report v1, Gate C Representative Species Evidence v1); calm
+daily summary (Gate C Calm Daily Digest v1); New / Regular presentation
+(Gate C Historical Baseline Maturity v1, Historical Species-Status
+Correctness v1); unknown/unresolved handling (Gate C Per-Species Zone +
+Time Pattern Intelligence v1 and the broader review-optional/unresolved-
+label design); understandable suggestion explanations (Same-Frame Species
+Evidence v1, Visit Same-Frame Classifier Evidence Visibility v1);
+mostly-invisible review (the shipped review-optional design; Whole-Product
+UI / Accessibility / Performance Closure v1's Review Queue fix). Delivered
+by this milestone: sparse/no-wildlife honesty under primary detector/GPU/
+model failure (a Camera Node Stream's Dashboard/`ProductHealth` failure
+text no longer lets a stale "paired and configured" success message mask
+a real detector/GPU/model failure); a coherent first-hour narrative in
+onboarding (`OnboardingWizard.tsx` no longer frames Review Queue as the
+normal destination for ordinary discovery -- Today/Bird Log are, matching
+the shipped review-optional design).
 
-Do not turn this into a giant redesign.
+Not claimed complete by this closure: future taxonomy content, a Dashboard
+layout change, or general UI perfection. Do not turn this lane into a
+giant redesign; do not reopen any of the delivered items above without a
+directly reproduced, same-root-cause dependency.
 
 ### D. Calm Notifications
 
