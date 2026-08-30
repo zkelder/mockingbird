@@ -186,9 +186,9 @@ function WelcomeStep({ onContinue }: { onContinue: () => void }) {
       <h2>What MockingBird does</h2>
       <p>
         MockingBird watches outdoor cameras you choose and quietly notices meaningful visits from
-        birds and other wildlife. When something worth a look happens, it appears in your Review
-        Queue for you to confirm -- MockingBird never claims an identification as certain until
-        you say so.
+        birds and other wildlife. Sightings show up right away in Today and Bird Log, often with a
+        likely species guess -- MockingBird never claims an identification as certain until you
+        confirm or correct it, whenever you'd like.
       </p>
       <ul className="onboarding-promise-list">
         <li>Your video and data stay on this device.</li>
@@ -352,9 +352,10 @@ function ObserveStep({ streamId, onFinish }: { streamId: string; onFinish: () =>
       <section className="panel page-stack">
         <h2>Your camera is ready</h2>
         <p>
-          Start observing when you would like MockingBird to watch this camera. Anything worth a
-          look lands in Review Queue; nothing here is permanent, and you can start or stop any
-          time from Cameras.
+          Start observing when you would like MockingBird to watch this camera. Sightings will
+          show up in Today and Bird Log as they happen; open Review Queue any time you want to
+          work through suggestions in one place. Nothing here is permanent, and you can start or
+          stop observing any time from Cameras.
         </p>
       </section>
       <ObservationControlPanel streamId={streamId} />

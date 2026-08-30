@@ -49,6 +49,13 @@ test("a fresh install creates the first administrator, shows guided setup, persi
   for (const forbidden of ["uvicorn", "venv", "pip install", "npm run", "WSL"]) {
     expect(bodyText).not.toContain(forbidden);
   }
+  // Lane C Sparse-State Honesty & First-Hour Narrative Closure v1: the
+  // review-optional design shipped well before this wizard's own copy was
+  // updated to match it -- this paragraph used to say a sighting "appears
+  // in your Review Queue for you to confirm," implying Review Queue is the
+  // normal destination for ordinary discovery. Today/Bird Log are.
+  expect(bodyText).toContain("Today and Bird Log");
+  expect(bodyText).not.toContain("appears in your Review Queue");
   await page.getByRole("button", { name: "Get started" }).click();
 
   // Account: the new first-run administrator step (Local Identity, Multi-

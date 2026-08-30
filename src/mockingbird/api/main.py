@@ -10803,7 +10803,29 @@ async def _dashboard_runtime_by_stream(
                 or engine_status.stopped_reason == "camera_unavailable"
             ):
                 engine_terminally_unavailable = True
-                engine_unavailable_message = engine_status.camera_message or engine_status.message
+                # Lane C Sparse-State Honesty & First-Hour Narrative Closure
+                # v1: this used to be `engine_status.camera_message or
+                # engine_status.message`. `camera_message` is set
+                # unconditionally, early -- before the engine/detector load
+                # is even attempted -- and is never cleared once the camera
+                # itself connects, so it stays truthy (and the `or` always
+                # picked it) even when the *engine* is what actually failed
+                # (missing model bundle, unsupported GPU) while the camera
+                # stayed perfectly reachable. That silently replaced the
+                # real failure with a stale "Camera Node is paired and
+                # configured." success message. Reuse the exact same
+                # camera-connected-wins-only-if-disconnected precedence
+                # `_EngineSession.snapshot`'s own "headline whichever
+                # subsystem is actually blocking" contract already defines
+                # (engine_runtime.py) instead of re-deriving a second, wrong
+                # one here: current truth for whichever subsystem is really
+                # blocking, never a stale success string for a different
+                # subsystem.
+                engine_unavailable_message = (
+                    engine_status.engine_message
+                    if engine_status.camera_connected
+                    else engine_status.camera_message
+                )
 
         if source_active:
             monitor_control = "source_monitor"
