@@ -50,9 +50,26 @@ from mockingbird.storage.models import (
 SOURCE_ID = "source-biodiversity-summary"
 STREAM_ID = "stream-biodiversity-summary"
 
-# Comfortably far from the schema's own seeded demo content, and from any
-# DST transition, so distinct-day/recency counts stay exact.
-NOW = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
+# Anchored to the real wall clock, not a fixed calendar date. `place_
+# biodiversity_summary`/`wildlife_journal_history` are deliberately "live
+# view" endpoints (see their own docstrings and docs/biodiversity-place-
+# intelligence-v1-contract.md's "a live view, not a fixed report period") --
+# `historical_status`/`new_taxa` reads "new" only while the confirmation's
+# own timestamp still falls on the *current* Place-local day, and neither
+# HTTP route accepts a way to inject a test clock (unlike `place_activity_
+# report`'s explicit `start_at`/`end_at`, used by the sibling `test_
+# historical_baseline_repository.py::test_api_round_trip_...` test for the
+# identical "new" assertion). A fixed past constant here made every
+# HTTP-route assertion of "new"/"seen_before" correct on only the one real
+# calendar day matching that constant, and silently wrong (a genuine
+# first-ever confirmation misread as "seen_before") every day after --
+# reproduced, and independently re-confirmed pre-existing across nine-plus
+# prior full-Core checkpoints in docs/release-execution-state.md, never
+# before given its own dedicated fix. Pinned to noon UTC (not the literal
+# instant) so it stays safely inside one local calendar day regardless of
+# host timezone, preserving the original constant's own "stay exact"
+# discipline while tracking the day the suite actually runs on.
+NOW = datetime.now(UTC).replace(hour=12, minute=0, second=0, microsecond=0)
 
 USABLE_HOURS = USABLE_DAY_MONITORED_SECONDS_THRESHOLD / 3600.0
 
@@ -316,6 +333,50 @@ def test_a_single_confirmation_is_not_yet_regular(repository: ProductRepository)
     assert summary.regular_taxa == []
 
 
+def test_subsequent_confirmation_of_an_already_confirmed_species_reads_seen_before(
+    repository: ProductRepository,
+) -> None:
+    """Historical Species-Status ("New" vs. "Seen Before") Correctness v1
+    -- the required "subsequent occurrence" case (see docs/historical-
+    species-status-new-seen-before-correctness-v1-report.md): a species
+    confirmed once already, then confirmed again later, must read
+    "seen_before" (not "new"/"first_record") for the later confirmation --
+    proven through both live-view endpoints and the real HTTP surface, the
+    same pair the two reproduced defects this milestone closes were found
+    through."""
+
+    _establish_baseline(repository)
+    _add_visit(repository, visit_id="cardinal-first", at=NOW - timedelta(days=2))
+    _confirm(repository, visit_id="cardinal-first", label="northern_cardinal")
+    _add_visit(repository, visit_id="cardinal-second", at=NOW - timedelta(hours=1))
+    _confirm(repository, visit_id="cardinal-second", label="northern_cardinal")
+
+    summary = repository.place_biodiversity_summary(now=NOW)
+
+    [entry] = [e for e in summary.taxa if e.label == "northern_cardinal"]
+    assert entry.historical_status.status == "seen_before"
+    assert {e.label for e in summary.new_taxa} == set()
+    # Only one usable day confirmed (2 days ago) -- not yet enough distinct
+    # usable days to be "regular" either.
+    assert {e.label for e in summary.regular_taxa} == set()
+
+    history = repository.wildlife_journal_history(
+        "northern_cardinal", WildlifeJournalHistoryRequest(), now=NOW
+    )
+    assert history is not None
+    assert history.historical_status == "seen_before"
+
+    # Same proof again through the real HTTP surface, not just the
+    # repository methods directly -- both product endpoints must agree.
+    client = LegacyAuthenticatedSyncTestClient(app)
+    api_body = client.get("/api/place/biodiversity-summary").json()
+    [api_entry] = [t for t in api_body["taxa"] if t["label"] == "northern_cardinal"]
+    assert api_entry["historical_status"]["status"] == "seen_before"
+    assert "northern_cardinal" not in [t["label"] for t in api_body["new_taxa"]]
+    api_history = client.get("/api/bird-log/journal/northern_cardinal").json()
+    assert api_history["historical_status"] == "seen_before"
+
+
 def test_recently_observed_excludes_a_taxon_only_seen_before_the_window(
     repository: ProductRepository,
 ) -> None:
@@ -525,6 +586,66 @@ def test_human_correction_updates_place_biodiversity_intelligence_correctly(
     journal_b = client.get("/api/bird-log/journal/house_finch").json()
     assert journal_b["observation_count"] == 1
     assert journal_b["historical_status"] == "new"
+
+
+# 7b. Human correction to a species this Place has already seen before -----
+#
+# Historical Species-Status ("New" vs. "Seen Before") Correctness v1's
+# required "correction to previously-seen species" case: the mandatory
+# correction test above proves a correction TO a genuinely new species; this
+# proves the opposite direction -- a correction to a species that already
+# has a real, earlier confirmed record must read "seen_before", not "new"
+# just because the row itself was recently (re-)reviewed.
+
+
+def test_human_correction_to_a_previously_confirmed_species_reads_seen_before(
+    repository: ProductRepository,
+) -> None:
+    _establish_baseline(repository)
+    # House Finch already has a genuine, earlier confirmed record.
+    _add_visit(repository, visit_id="finch-established", at=NOW - timedelta(days=2))
+    _confirm(repository, visit_id="finch-established", label="house_finch")
+
+    # A second, later Visit is initially reviewed as a Northern Cardinal...
+    corrected_at = NOW - timedelta(hours=1)
+    _add_visit(repository, visit_id="mystery-2", at=corrected_at)
+    _confirm(repository, visit_id="mystery-2", label="northern_cardinal")
+
+    # ...then corrected: it was actually another House Finch -- a species
+    # this Place has already seen before, not a fresh debut.
+    _revise(repository, visit_id="mystery-2", label="house_finch")
+
+    after = repository.place_biodiversity_summary(now=NOW)
+    [entry] = [e for e in after.taxa if e.label == "house_finch"]
+    assert entry.historical_status.status == "seen_before"
+    assert {e.label for e in after.new_taxa} == set()
+
+    # Two real, distinct House Finch records now exist -- correcting one
+    # Visit must not duplicate or lose either.
+    history = repository.wildlife_journal_history(
+        "house_finch", WildlifeJournalHistoryRequest(), now=NOW
+    )
+    assert history is not None
+    assert history.observation_count == 2
+    assert history.historical_status == "seen_before"
+
+    # No stale Northern Cardinal identity survives the correction.
+    stale_history = repository.wildlife_journal_history(
+        "northern_cardinal", WildlifeJournalHistoryRequest(), now=NOW
+    )
+    assert stale_history is not None
+    assert stale_history.observation_count == 0
+    assert stale_history.historical_status is None
+
+    # Same proof again through the real HTTP surface -- both product
+    # endpoints must agree.
+    client = LegacyAuthenticatedSyncTestClient(app)
+    api_body = client.get("/api/place/biodiversity-summary").json()
+    [api_entry] = [t for t in api_body["taxa"] if t["label"] == "house_finch"]
+    assert api_entry["historical_status"]["status"] == "seen_before"
+    api_history = client.get("/api/bird-log/journal/house_finch").json()
+    assert api_history["observation_count"] == 2
+    assert api_history["historical_status"] == "seen_before"
 
 
 # 8. Broader Wildlife Maturity v1 -------------------------------------------
