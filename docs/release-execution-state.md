@@ -24,7 +24,16 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `cb2a561` -- the implementation commit for Ongoing
+- **Accepted HEAD:** `e203489` -- Representative Daylight Gate A Field
+  Acceptance v5's own report commit, sitting on top of `eeb5f98` (the
+  reconciliation commit accepting Lane C Sparse-State Honesty &
+  First-Hour Narrative Closure v1), for the identical reason v4's own
+  report commit was cited standalone below: a real, live ~106.6-minute
+  field session that changed zero production code (see its own "Prior
+  accepted milestone" entry, below, and
+  [representative-daylight-gate-a-field-acceptance-v5-report.md](representative-daylight-gate-a-field-acceptance-v5-report.md)
+  for the complete record).
+- **Prior accepted HEAD (pre-v5):** `cb2a561` -- the implementation commit for Ongoing
   Monitoring Failure Diagnostics for RTSP / Local USB / Windows DShow v1
   (its own separate report commit, `7dd5146`, sits directly on top and is
   not cited here as a second, separate code-bearing HEAD, matching this
@@ -72,7 +81,9 @@ protecting.
   those closures (`7f98e43`, `8572308`, `4581424`, `4aeb658`, `e01e691`,
   `c03d0b1`, `80e1bb3`) are likewise not cited as separate code-bearing
   HEADs for the identical reason.
-- **Schema:** `v58` -- unchanged by this milestone (Lane C Sparse-State
+- **Schema:** `v58` -- unchanged by Representative Daylight Gate A Field
+  Acceptance v5 (a live field-acceptance session; zero production code
+  touched). Also unchanged by this milestone (Lane C Sparse-State
   Honesty & First-Hour Narrative Closure v1 is a single-branch precedence
   fix in `_dashboard_runtime_by_stream` -- api/main.py -- plus two
   frontend copy paragraphs; no DTO field, table, or column was added).
@@ -99,7 +110,44 @@ protecting.
   Activity Visit Admission Starvation & Stop-Finalization Correctness v1
   (see its own "Prior accepted milestone" entry, below) had likewise left
   schema unchanged.
-- **Latest accepted milestone:** Lane C Sparse-State Honesty & First-Hour
+- **Latest accepted milestone:** Representative Daylight Gate A Field
+  Acceptance v5 -- see
+  [representative-daylight-gate-a-field-acceptance-v5-report.md](representative-daylight-gate-a-field-acceptance-v5-report.md)
+  for the complete record. Classification **A**. A real, live
+  ~106.6-minute Observation session against the real reference Camera
+  Node -- the identical Stream/scene that exposed Representative
+  Daylight Gate A Field Acceptance v4's own admission-starvation defect
+  -- on freshly-deployed accepted HEAD (`eeb5f98`, schema v58 unchanged).
+  Directly, conclusively confirms the accepted Sustained-Activity Visit
+  Admission Starvation & Stop-Finalization Correctness v1 fix works
+  end-to-end under real sustained genuine wildlife activity:
+  `candidates_created` reached its first real admission ~25 seconds into
+  the session (v4 stayed at exactly 0 for its entire ~112-minute
+  session) and climbed steadily throughout (19 real Visits admitted by
+  session end, not only at stop); the new honest `stop_finalization_
+  pending` status was observed live for the first time in a real field
+  session, correctly appearing then clearing while the finalize tick
+  genuinely rescued 2 more pending candidates (17 -> 19); zero
+  `blocked_shadow_mode`, zero persistence-contention, zero duplicate
+  Visits across the whole session -- no recurrence of any of the three
+  defects that milestone fixed. One real defect found and precisely
+  root-caused, not fixed (per the governing brief's own bar): a single
+  false-positive admission (a weak, single-detection, `terminal_reason:
+  maximum_unsupported_duration` localization) received a confident
+  ("Brown Thrasher," 89.9%) but wrong BioCLIP species label on a crop
+  direct pixel-region inspection against its own real bounding box
+  confirms is empty background -- a fresh, concretely-reproduced
+  instance of the already-known Gate B "background evidence -> confident
+  label" regression class `roadmap.md` already names as open work, not a
+  new starvation-family defect and not release-blocking for this
+  milestone's own scope. Gate A/Lane R remains open (see §6.R, below);
+  this closure does not authorize the next Representative Field
+  Acceptance session, External Pre-Release Acceptance, or Final Release
+  Hardening, and does not select a next development milestone --
+  authorization returns to the bold statement in §3, below, unchanged by
+  this closure.
+
+- **Prior accepted milestone:** Lane C Sparse-State Honesty & First-Hour
   Narrative Closure v1 -- see
   [lane-c-sparse-state-honesty-first-hour-narrative-closure-v1-report.md](lane-c-sparse-state-honesty-first-hour-narrative-closure-v1-report.md)
   for the complete record. Classification **A**. Closes both bounded DEV
@@ -1535,6 +1583,23 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+Representative Daylight Gate A Field Acceptance v5 (directly authorized
+outside this file, as the next RELEASE-CRITICAL field-validation session
+for the accepted, frozen Sustained-Activity Visit Admission Starvation &
+Stop-Finalization Correctness v1 fix) is now accepted at classification
+**A** -- see §1, above, §6.R, below, and
+[representative-daylight-gate-a-field-acceptance-v5-report.md](representative-daylight-gate-a-field-acceptance-v5-report.md)
+for the full record. This closure does not change this section's own
+bottom-line authorization, which remains **NONE -- GLOBAL PRODUCT-ROADMAP
+RECONCILIATION REQUIRED** exactly as it did before it -- this milestone
+was not self-authorizing, and does not authorize the next Representative
+Field Acceptance / Gate A session, External Pre-Release Acceptance, or
+Final Release Hardening. Gate A/Lane R remains open; the field session
+this milestone ran real-world-confirms the accepted fix works end-to-end
+under sustained genuine activity (see §6.R for the complete evidence) but
+does not itself declare Gate A passed, propose an accepted numeric
+release budget, or select a next development milestone.
 
 Lane C Sparse-State Honesty & First-Hour Narrative Closure v1 (directly
 authorized outside this file, as a bounded, HIGH-RELEASE-VALUE
@@ -3224,6 +3289,69 @@ admitted Visits under real conditions -- the one dimension the
 motivating field session could not exercise at all, since nothing there
 ever reached admission. See the milestone's own report, "Field-rerun
 requirement," for the complete, precise list.
+
+**Representative Daylight Gate A Field Acceptance v5 (2026-08-30) ran the
+first real daylight session against the corrected build, closing every
+item that milestone's own "Field-rerun requirement" named, at
+classification A -- see §1/§3, above, and
+[representative-daylight-gate-a-field-acceptance-v5-report.md](representative-daylight-gate-a-field-acceptance-v5-report.md)
+for the full record.** Deployed a genuinely fresh, disposable instance
+(not the operator's own identity), re-pairing the reference Camera Node
+via the identical documented recovery flow v4 used, with the user's
+explicit approval. A real ~106.6-minute Observation session followed
+against the same real Stream/scene v4's own busy-feeder session used,
+with the independent acceptance recorder running throughout (~99.99%
+temporal-span coverage, ~5,147 frames). `candidates_created` reached its
+first real admission ~25 seconds into the session and climbed steadily
+throughout -- 19 real Visits admitted by session end, not merely at
+stop, directly confirming the accepted fix under real sustained genuine
+activity. Stopped deliberately into a moment with substantial genuinely
+pending work; the new `stop_finalization_pending` status was observed
+live for the first time in a real field session, correctly appearing
+then clearing while the finalize tick genuinely rescued 2 more pending
+candidates (17 -> 19) -- directly answering v4's own left-open "did stop
+rescue anything" question. Zero `blocked_shadow_mode`, zero persistence-
+contention, zero duplicate Visits across the whole session -- no
+recurrence of any of the three defects that milestone fixed. Multi-
+subject correctness remains only partially advanced: real simultaneous
+multi-bird presence was directly confirmed in-scene, but no two Visits
+this session shared a single Event as genuinely concurrent siblings, so
+that specific mechanism was not exercised end-to-end either. One real
+defect was found and precisely root-caused, not fixed, per the governing
+brief's own bar: a single false-positive admission (a weak, single-
+detection, `terminal_reason: maximum_unsupported_duration` localization)
+received a confident ("Brown Thrasher," 89.9%) but wrong BioCLIP species
+label on a crop that direct pixel-region inspection against its own real
+bounding box confirms is empty background -- a fresh, concretely-
+reproduced instance of the already-known Gate B "background evidence ->
+confident label" regression class `roadmap.md` already names as open
+work (see Gate B, [roadmap.md](roadmap.md)), not a new starvation-family
+defect and not release-blocking for this milestone's own scope. Gate A's
+evidence body now includes a fourth real cohort, and the first
+post-fix one: three prior cohorts spanned 0% to 68.2% end-to-end Visit
+recall; this session found no missed genuine encounter via targeted
+(not exhaustive) independent review, qualitatively far closer to
+complete than either prior busy-feeder or sparse-encounter cohort. Two
+candidate release budgets are proposed for review, from convergent
+evidence across all four real cohorts, not self-accepted: minimum
+monitoring coverage ~99% (all four cohorts measured 99.6%-99.99%) and
+minimum useful-evidence rate ~85% (two independent measurements, 88.2%
+and 94.7%, with no contrary evidence). Recall/false-Visit-rate/
+fragmentation-rate budgets are explicitly *not* proposed -- this
+session's own figures are the first post-fix measurement of each, not
+yet a second, independently-varied confirmation. This closure does
+**not** authorize the next Representative Field Acceptance / Gate A
+session, External Pre-Release Acceptance, or Final Release Hardening,
+and does **not** select a next development milestone. Remaining Gate A
+dependency, in priority order: (1) a second post-fix daylight session
+exercising conditions v5 did not (genuinely simultaneous multi-subject
+admission, and/or a sparser single-subject scene re-run post-fix) to
+convert this session's own single strong data point into the broader
+body of field evidence Gate A budgets require; (2) only then, propose
+numeric release budgets for recall/false-Visit-rate/fragmentation-rate
+with real cross-session convergent support. The one disclosed defect
+this session found remains open Gate B work, not blocking Gate A
+directly.
 
 ### S. Actual Final Release Hardening
 
