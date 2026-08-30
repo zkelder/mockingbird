@@ -24,13 +24,16 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `e203489` -- Representative Daylight Gate A Field
-  Acceptance v5's own report commit, sitting on top of `eeb5f98` (the
-  reconciliation commit accepting Lane C Sparse-State Honesty &
-  First-Hour Narrative Closure v1), for the identical reason v4's own
-  report commit was cited standalone below: a real, live ~106.6-minute
-  field session that changed zero production code (see its own "Prior
-  accepted milestone" entry, below, and
+- **Accepted HEAD:** `65f5ec2` -- Representative Daylight Gate A Field
+  Acceptance v5's own report commit (`e203489`) plus one same-day,
+  self-caught follow-up commit adding a section its own governing
+  template required but the first draft omitted (`65f5ec2`; no field
+  evidence changed, only the report's own completeness), sitting on top
+  of `eeb5f98` (the reconciliation commit accepting Lane C Sparse-State
+  Honesty & First-Hour Narrative Closure v1), for the identical reason
+  v4's own report commit was cited standalone below: a real, live
+  ~106.6-minute field session that changed zero production code (see its
+  own "Prior accepted milestone" entry, below, and
   [representative-daylight-gate-a-field-acceptance-v5-report.md](representative-daylight-gate-a-field-acceptance-v5-report.md)
   for the complete record).
 - **Prior accepted HEAD (pre-v5):** `cb2a561` -- the implementation commit for Ongoing
