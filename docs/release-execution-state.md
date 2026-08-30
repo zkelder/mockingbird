@@ -24,8 +24,12 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `e3c293f` -- the implementation commit for
-  Release Licensing, Distribution & Third-Party Legal Closure v1 (its own
+- **Accepted HEAD:** `83b15a5` -- the implementation commit for Historical
+  Species-Status ("New" vs. "Seen Before") Correctness v1 (its own separate
+  report commit, `b619546`, sits directly on top and is not cited here as a
+  second, separate code-bearing HEAD, matching this field's established
+  convention). `e3c293f` (the implementation commit for
+  Release Licensing, Distribution & Third-Party Legal Closure v1; its own
   separate report commit, `d1a2955`, sits directly on top and is not
   cited here as a second, separate code-bearing HEAD, matching this
   field's established convention). `893eed5` (the implementation commit
@@ -61,7 +65,9 @@ protecting.
   those closures (`7f98e43`, `8572308`, `4581424`, `4aeb658`, `e01e691`,
   `c03d0b1`, `80e1bb3`) are likewise not cited as separate code-bearing
   HEADs for the identical reason.
-- **Schema:** `v58` -- unchanged by this milestone (Release Licensing,
+- **Schema:** `v58` -- unchanged by this milestone (Historical Species-
+  Status ("New" vs. "Seen Before") Correctness v1 touches one test file
+  only; zero production code). Also unchanged by Release Licensing,
   Distribution & Third-Party Legal Closure v1 touches only packaging
   tooling and documentation -- `scripts/build_local_product.py`, a new
   `THIRD_PARTY_NOTICES.md`, and two doc files -- no model/migration
@@ -72,7 +78,71 @@ protecting.
   Activity Visit Admission Starvation & Stop-Finalization Correctness v1
   (see its own "Prior accepted milestone" entry, below) had likewise left
   schema unchanged.
-- **Latest accepted milestone:** Release Licensing, Distribution &
+- **Latest accepted milestone:** Historical Species-Status ("New" vs.
+  "Seen Before") Correctness v1 -- see
+  [historical-species-status-new-seen-before-correctness-v1-report.md](historical-species-status-new-seen-before-correctness-v1-report.md)
+  for the complete record. Classification **A**. A release-correctness
+  milestone closing `tests/test_place_biodiversity_summary_repository.py::
+  test_api_route_returns_the_summary` and `::test_human_correction_
+  updates_place_biodiversity_intelligence_correctly` -- both independently
+  reproduced RED against the real, unmodified pre-fix code, matching the
+  identical `'seen_before' == 'new'`/empty-`new_taxa` symptom this file's
+  own §14 had already independently re-confirmed as pre-existing across at
+  least nine consecutive prior full-Core checkpoints, never before given
+  its own dedicated root-cause investigation. Root cause: a **test-fixture
+  defect, not a product-code defect** -- the test file hardcoded `NOW` to a
+  fixed past instant (2026-08-24) used both as fixture data and, in two
+  assertions, exercised through the real HTTP routes for `place_
+  biodiversity_summary`/`wildlife_journal_history`, both of which are
+  deliberately, doctrine-documented "live view" endpoints (confirmed
+  independently in three governing docs, including their own contract)
+  with no way to inject a test clock -- always anchoring "today" to the
+  real wall clock. Once real time moved six days past 2026-08-24, those two
+  HTTP-only assertions correctly, per the live-view contract, started
+  reading `"seen_before"` instead of `"new"`. The shared canonical
+  computation (`compute_species_historical_statuses`/`ProductRepository.
+  _historical_place_baseline_and_species_statuses`) was never defective --
+  confirmed both by every `now=`-pinned assertion in the same test already
+  passing, and against the endpoints' own governing contract docs
+  (`docs/biodiversity-place-intelligence-v1-contract.md`, `docs/canonical-
+  new-regular-species-contract.md`). Fix: one test file, zero production
+  code -- `NOW` now tracks the real wall clock at collection time (pinned
+  to noon UTC to avoid local-midnight edge cases) instead of a fixed date,
+  plus two new tests closing this endpoint pair's own "subsequent
+  occurrence reads seen_before" and "correction to a previously-seen
+  species reads seen_before" coverage gaps (both semantic cases already
+  proven elsewhere in the shared computation's own test suite, just not
+  yet through this specific endpoint pair). Self-inclusion, future-Visit
+  non-retroactivity, Reviewed-truth precedence, stale-inference exclusion,
+  archived-Stream/Place isolation, and unresolved-label exclusion were each
+  independently re-verified (structurally and/or by an existing or new
+  passing test) during root-causing, per the governing brief's own
+  adversarial-review requirement; one adjacent, unreproduced, out-of-scope
+  observation about `place_story`'s own (separate, untouched) consumption
+  of the same unbounded all-time aggregate was disclosed rather than
+  chased. Tier 1 (23 tests, the implicated file) and Tier 2 (498 tests
+  across every consumer of the shared historical-status path -- canonical
+  new/regular consistency, Bird Log journal, place activity report, change
+  summary, place story/features, regularity/seasonal/temporal patterns,
+  dashboard Today, environmental context, ecological interoperability), run
+  together: zero failures. Tier 3 (one full Core run, run bare with no
+  `slow`-marker deselection): **5277 passed, 0 failed**, 3 skipped, 11
+  xfailed -- the first zero-failure full Core checkpoint in at least nine
+  consecutive prior attempts, definitively retiring the `test_place_
+  biodiversity_summary_repository.py` pair from this section's own
+  recurring "pre-existing" accounting (§14, below). `ruff check` clean on
+  the one touched file. This closure does **not** authorize the next
+  Representative Field Acceptance / Gate A session, External Pre-Release
+  Acceptance, or Final Release Hardening, and does **not** select a next
+  development milestone -- authorization returns to the bold statement in
+  §3, below, unchanged by this closure. `roadmap.md` was not edited -- this
+  milestone is a bounded test-correctness fix, not a roadmap-scope change.
+  Lane C's own remaining "New / Regular presentation" item (§6, below) is a
+  distinct, still-open UX-presentation gap, not touched or closed by this
+  purely computational-truth/test-correctness fix; no evidence surfaced
+  that Lane C itself needs a separate reconciliation pass beyond what §6
+  already records.
+- **Prior accepted milestone:** Release Licensing, Distribution &
   Third-Party Legal Closure v1 -- see
   [release-licensing-distribution-third-party-legal-closure-v1-report.md](release-licensing-distribution-third-party-legal-closure-v1-report.md)
   for the complete record. Classification **B**. A pre-release-decision/
@@ -1183,6 +1253,47 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+Historical Species-Status ("New" vs. "Seen Before") Correctness v1
+(directly authorized outside this file, as a release-critical correctness
+milestone closing two reproduced, multiply-recurring `tests/test_place_
+biodiversity_summary_repository.py` failures the global reconciliation pass
+itself surfaced -- reconciled here at its own closure) is now accepted at
+classification **A** -- see §1, above, and
+[historical-species-status-new-seen-before-correctness-v1-report.md](historical-species-status-new-seen-before-correctness-v1-report.md)
+for the full record. Confirmed the starting-state premise before starting
+(branch `main`, accepted HEAD `98f1138`, schema v58, the seven preserved
+untracked files present and untouched, no active worktree writer) --
+matched exactly. Root-caused before fixing, per the governing brief's own
+ten diagnostic questions: both failures trace to one test-fixture defect
+(a hardcoded past `NOW` constant colliding with two intentionally
+real-wall-clock-anchored "live view" HTTP routes -- `place_biodiversity_
+summary`/`wildlife_journal_history`, neither of which accepts a way to
+inject a test clock, by design), never to the shared canonical
+`compute_species_historical_statuses`/`_historical_place_baseline_and_
+species_statuses` computation itself, which was independently re-verified
+correct against its own governing contracts and against every `now=`
+-pinned assertion in the same test file, all already passing. Fixed with
+the smallest correct change: one test file, zero production code, zero
+schema change. Both reproduced failures independently proven RED pre-fix
+and GREEN after; every required semantic case (first occurrence, subsequent
+occurrence, correction to a new species, correction to a previously-seen
+species, current-Visit self-exclusion, future-Visit non-retroactivity,
+archived-Stream/Place isolation, unresolved-label exclusion, cross-endpoint
+agreement) independently proven, two of them by new tests this milestone
+added. Tier 1/2 (498 tests across every consumer of the shared
+historical-status path): zero failures. Tier 3 (one full Core run): 5277
+passed, **zero failed** -- the first zero-failure full Core checkpoint in
+at least nine consecutive prior attempts (see §14, below). This closure
+does **not** authorize the next Representative Field Acceptance / Gate A
+session, External Pre-Release Acceptance, or Final Release Hardening, and
+does **not** select a next development milestone -- see the bold statement
+immediately above, unchanged by this closure. `roadmap.md` was not edited
+-- this milestone is a bounded test-correctness fix, not a roadmap-scope
+change. No evidence surfaced that Lane C itself requires a separate
+reconciliation pass beyond what §6 already records; its own remaining "New
+/ Regular presentation" item is a distinct UX-presentation gap, untouched
+by this purely computational-truth/test-correctness fix.
 
 Release Licensing, Distribution & Third-Party Legal Closure v1 (directly
 authorized outside this file, as a pre-release-decision/release-blocking
@@ -2859,7 +2970,25 @@ each session that touches this repository.
 
 ## 14. Validation baselines
 
-**Latest accepted Core checkpoint (Whole-Product UI / Accessibility /
+**Latest accepted Core checkpoint (Historical Species-Status ("New" vs.
+"Seen Before") Correctness v1):** 5277 passed / **0 failed** / 3 skipped /
+11 xfailed (37m09s -- run bare, `python3 -m pytest -q`, with no `slow`
+-marker deselection, so a strict superset of every prior checkpoint cited
+below). This is the first zero-failure full Core checkpoint recorded
+anywhere in this section: every checkpoint immediately below, back through
+"Camera / Source Experience & First-Hour Setup Closure v1," reported
+exactly the same 2 failures, the `test_place_biodiversity_summary_
+repository.py` pair (`test_api_route_returns_the_summary`, `test_human_
+correction_updates_place_biodiversity_intelligence_correctly`), each time
+independently re-confirmed pre-existing and each time correctly judged
+unrelated to that session's own changes -- this milestone is the first to
+have actually root-caused and fixed that pair, rather than re-bisecting
+past it again. Root cause and fix: see this milestone's own "Latest
+accepted milestone" entry in §1, above, and its full report. Zero other
+regressions; the 231 warnings are pre-existing, unrelated stdlib/
+SQLAlchemy/FastAPI deprecation notices, not new findings.
+
+**Prior accepted Core checkpoint (Whole-Product UI / Accessibility /
 Performance Closure v1):** 5166 passed / 2 failed / 3 skipped / 23
 deselected (slow-marked) / 11 xfailed (26m50s), run standalone after an
 earlier concurrent-with-e2e attempt produced real, directly observed
