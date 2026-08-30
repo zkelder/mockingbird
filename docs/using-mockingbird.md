@@ -8,6 +8,51 @@ Setting up a development checkout, running the test suite, or working on
 MockingBird's code is a separate audience -- see [README.md](../README.md)
 and [AGENTS.md](../AGENTS.md).
 
+## Platform & hardware support
+
+This is an honest summary of what is actually validated today, not a
+promise that every platform listed here has been tested the same way.
+
+**Computer (Host)**
+
+| Platform | Status |
+|---|---|
+| Windows 10/11 (64-bit) | **Supported and validated.** The packaged download above is built, tested, and released for this platform, including GPU-accelerated wildlife detection. This is MockingBird's primary, release-tested platform today. |
+| Linux | Structurally supported for a development checkout (`./start-mockingbird.sh`), and MockingBird's own automated tests run continuously on Linux. There is no packaged "unpack and run" Linux download yet, and no dedicated Linux hardware acceptance has been performed. |
+| macOS | Not yet verified, and not part of this release. Microphone-based bird-sound identification specifically is known not to work on macOS -- MockingBird says so plainly rather than failing silently. |
+
+**Wildlife detection** (the part that notices something is there)
+
+Live wildlife detection needs a computer with a supported **NVIDIA
+graphics card**. There is deliberately no slower "CPU-only" mode for this
+part: MockingBird would rather tell you plainly that detection isn't
+available than quietly run a degraded version without saying so. If your
+graphics card isn't supported, **Start observing** says so directly instead
+of guessing (see "Start observing," below). Everything else -- reviewing
+history, your Bird Log, importing recorded video, backup and restore, and
+settings -- works the same with or without a supported graphics card.
+
+**Species and sound identification** (the part that guesses what it is)
+
+Species suggestions and bird-sound identification both run on any
+computer's regular processor -- neither needs a graphics card. If either
+isn't set up, or its runtime isn't available, wildlife Visits are still
+created normally; you only lose the automatic guess until you identify it
+yourself.
+
+**Apple Silicon and AMD graphics cards:** not supported today. MockingBird
+does not claim to work on them merely because the underlying open-source
+libraries theoretically could -- no Apple or AMD hardware has been used to
+test this product.
+
+**MockingBird Camera Node:** the validated reference hardware is a
+Raspberry Pi 4 with its camera attached, running Raspberry Pi OS. The
+Camera Node software does not require a Raspberry Pi specifically -- a
+similar Debian-based Linux device with a USB camera can run it too -- but
+only the Raspberry Pi 4 path has actually been tested end to end (install,
+reboot, upgrade, and recovery). A device without a Pi camera reports that
+plainly instead of failing the whole install.
+
 ## Install and start (Windows)
 
 1. Unpack the `MockingBird-windows-x64.zip` folder anywhere you like --
@@ -279,3 +324,5 @@ Linux users with a development checkout can use `./start-mockingbird.sh`
 (or `python -m mockingbird`) the same way Windows users use
 `Start MockingBird.vbs` -- see [README.md](../README.md) for that developer
 setup. The guided first-run experience above is identical on every host.
+See "Platform & hardware support," near the top of this guide, for what is
+and isn't validated on each one.

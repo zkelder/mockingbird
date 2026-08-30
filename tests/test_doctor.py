@@ -1390,6 +1390,26 @@ def test_interpret_species_identification_available_is_pass() -> None:
     assert result.recoverability is None
 
 
+def test_interpret_species_identification_available_discloses_what_pass_does_not_verify() -> None:
+    """PASS must not silently drop `get_bioclip_status()`'s own honest scope
+    caveat -- a corrupted-but-right-sized weights file would still read
+    "available" here, and the underlying status detail already discloses
+    that a real run performs its own further validation."""
+
+    gathered = {
+        "status": "available",
+        "detail": (
+            "Explicit local BioCLIP artifacts are configured. A run still "
+            "validates the precomputed embedding cache before returning "
+            "suggestion evidence."
+        ),
+    }
+    result = doctor._interpret_species_identification(gathered)
+    assert result.status == DoctorStatus.PASS
+    assert result.detail == gathered["detail"]
+    assert "still validates" in result.detail
+
+
 # --------------------------------------------------------------------------
 # GPU / CUDA
 # --------------------------------------------------------------------------
@@ -1411,6 +1431,18 @@ def test_interpret_gpu_cuda_available_is_pass() -> None:
     result = doctor._interpret_gpu_cuda({"cuda_available": True}, camera_node_configured=True)
     assert result.status == DoctorStatus.PASS
     assert result.recoverability is None
+
+
+def test_interpret_gpu_cuda_available_discloses_it_is_not_a_real_session_load() -> None:
+    """`_gather_gpu_cuda` only checks onnxruntime's compiled provider list
+    (`OnnxCudaObservationProvider.unconfigured().probe()`), never attempts a
+    real CUDA session -- a broken/mismatched driver or CUDA/cuDNN install
+    would still PASS here. PASS must disclose that gap rather than imply a
+    session was actually proven to load."""
+
+    result = doctor._interpret_gpu_cuda({"cuda_available": True}, camera_node_configured=True)
+    assert result.detail is not None
+    assert "does not by itself prove a detector session will load" in result.detail
 
 
 def test_interpret_gpu_cuda_unknown_camera_node_state_is_not_alarming() -> None:

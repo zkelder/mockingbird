@@ -1640,6 +1640,15 @@ def _interpret_species_identification(gathered: dict[str, Any]) -> DoctorCheckRe
             component="Species identification",
             status=DoctorStatus.PASS,
             summary="BioCLIP species-suggestion runtime is available.",
+            # `get_bioclip_status()` deliberately checks configuration/labels/
+            # runtime-version readiness without loading the model or hashing
+            # model weights (see its own docstring) -- its `detail` already
+            # discloses that scope honestly ("A run still validates the
+            # precomputed embedding cache before returning suggestion
+            # evidence"). Surface it here too rather than let this PASS read
+            # as a stronger, unconditional guarantee than the underlying
+            # check actually makes.
+            detail=gathered.get("detail"),
         )
     if status == "not_configured":
         return DoctorCheckResult(
@@ -1683,6 +1692,20 @@ def _interpret_gpu_cuda(gathered: dict[str, Any], *, camera_node_configured: boo
             component="GPU / CUDA",
             status=DoctorStatus.PASS,
             summary="CUDA execution provider is available.",
+            # `_gather_gpu_cuda` only checks that onnxruntime's own compiled
+            # provider list includes CUDA -- it never attempts a real
+            # session load, so it cannot by itself prove the driver/CUDA/
+            # cuDNN stack actually initializes. Disclose that scope rather
+            # than let a PASS here read as a stronger guarantee than the
+            # underlying probe makes; a real session-load failure is still
+            # caught and honestly reported by Observation health once a
+            # Camera Node actually starts (see `engine_runtime.py`).
+            detail=(
+                "This confirms onnxruntime detects a CUDA execution provider on "
+                "this host; it does not by itself prove a detector session will "
+                "load. Observation health reports that outcome when a Camera "
+                "Node is actually started."
+            ),
             diagnostic_context=context,
         )
     if camera_node_configured:
