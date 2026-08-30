@@ -24,8 +24,12 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `83b15a5` -- the implementation commit for Historical
-  Species-Status ("New" vs. "Seen Before") Correctness v1 (its own separate
+- **Accepted HEAD:** `6a448e3` -- the implementation commit for Login
+  Rate-Limiting & Authentication Abuse Resistance v1 (its own separate
+  report commit, `54b90fa`, sits directly on top and is not cited here as
+  a second, separate code-bearing HEAD, matching this field's established
+  convention). `83b15a5` (the implementation commit for Historical
+  Species-Status ("New" vs. "Seen Before") Correctness v1; its own separate
   report commit, `b619546`, sits directly on top and is not cited here as a
   second, separate code-bearing HEAD, matching this field's established
   convention). `e3c293f` (the implementation commit for
@@ -65,8 +69,12 @@ protecting.
   those closures (`7f98e43`, `8572308`, `4581424`, `4aeb658`, `e01e691`,
   `c03d0b1`, `80e1bb3`) are likewise not cited as separate code-bearing
   HEADs for the identical reason.
-- **Schema:** `v58` -- unchanged by this milestone (Historical Species-
-  Status ("New" vs. "Seen Before") Correctness v1 touches one test file
+- **Schema:** `v58` -- unchanged by this milestone (Login Rate-Limiting &
+  Authentication Abuse Resistance v1 adds one new file plus bounded edits
+  to `authenticate_user`/`sign_in`; throttle state is deliberately
+  in-memory only, never persisted, so it needed no new table/column/
+  migration). Also unchanged by Historical Species-
+  Status ("New" vs. "Seen Before") Correctness v1 (touches one test file
   only; zero production code). Also unchanged by Release Licensing,
   Distribution & Third-Party Legal Closure v1 touches only packaging
   tooling and documentation -- `scripts/build_local_product.py`, a new
@@ -78,7 +86,101 @@ protecting.
   Activity Visit Admission Starvation & Stop-Finalization Correctness v1
   (see its own "Prior accepted milestone" entry, below) had likewise left
   schema unchanged.
-- **Latest accepted milestone:** Historical Species-Status ("New" vs.
+- **Latest accepted milestone:** Login Rate-Limiting & Authentication
+  Abuse Resistance v1 -- see
+  [login-rate-limiting-authentication-abuse-resistance-v1-report.md](login-rate-limiting-authentication-abuse-resistance-v1-report.md)
+  for the complete record. Classification **A**. A RELEASE-SECURITY
+  milestone, directly authorized outside this file, closing a real,
+  previously-disclosed pre-existing gap: `POST /api/auth/sign-in` had
+  generic, enumeration-safe failure behavior (unknown user/wrong password/
+  disabled user all already returned the identical outcome) but no attempt
+  counting, no delay, and no throttling of any kind -- first found by
+  Mobile & Remote Experience v1's own security review, re-disclosed by
+  several milestones since (most recently Non-Interactive Field Acceptance
+  Authentication & Session Access v1). Root-caused against all ten of the
+  governing brief's own diagnostic questions before any fix, confirming the
+  gap was real and precisely bounded to one endpoint/one repository method.
+  New `mockingbird.security.login_rate_limiter.LoginRateLimiter`: a small,
+  dependency-free, thread-safe, in-process helper (not a general-purpose
+  rate-limiting framework) with two independently-keyed, jointly-evaluated
+  dimensions -- account (`login_identity`, real or not, so a nonexistent
+  username throttles identically to a real one) and source (the direct TCP
+  peer address, never a forwarded header, since this deployment establishes
+  no trusted-proxy boundary for one) -- so neither a username spray (one
+  source, many accounts) nor a distributed spray (many sources, one
+  account) goes unbounded. The first 3 failures add no delay (typo
+  tolerance, matching every pre-existing test that already made up to three
+  wrong sign-in attempts); every failure after that walks a short, fixed,
+  hand-picked ladder (1s/2s/5s/15s/30s/60s) that plateaus at 60 seconds
+  forever -- no permanent lockout anywhere, proven directly by driving well
+  past the ladder's own length and by a real multi-source distributed-spray
+  test confirming ordinary time advancement always restores access. Both
+  dimensions are hard-capped at 10,000 live entries with O(1)-amortized
+  least-recently-touched eviction/pruning (an `OrderedDict`-backed design)
+  -- an earlier plain-`dict`-plus-`min()`-scan version was found, by this
+  milestone's own bounded-state tests, to cost several real seconds at
+  10,000 simulated attempts, and was fixed before being accepted, closing
+  a self-inflicted CPU-cost gap the governing brief's own "high-rate
+  attacker must not cause unlimited memory growth" bar reasonably extends
+  to cover. **Persistence: in-memory only, deliberately** -- weighed
+  explicitly against the brief's own in-memory/persistent/hybrid framework;
+  a local-first appliance does not need enterprise-grade persistent
+  lockout state, and persisting it would itself become a new, worse
+  denial-of-service surface (a throttle row outliving the very restart an
+  owner would use to recover). Restart (or a local backup restore's own
+  process-wide `ProductRepository` singleton swap -- an already-established
+  precedent for resetting this exact class of in-memory session-adjacent
+  state) clears all throttle state, which doubles as the owner's whole
+  recovery lever if ever throttled themselves -- no new account-recovery
+  mechanism was built or is needed. Monotonic clock throughout (never
+  wall-clock, immune to NTP/DST/manual-clock changes), constructor-
+  injected for fully deterministic tests -- zero real sleeps anywhere in
+  either new test file. The outward HTTP contract is unchanged: the
+  identical generic `401` for unknown user, wrong password, disabled user,
+  and now, additionally, a currently-throttled account/source (even with
+  the genuinely correct password) -- verified by a direct response-
+  equality regression test comparing all three cases' real status code,
+  JSON body, and cookie absence. Three new bounded audit events
+  (`auth.login_failed`/`auth.login_throttled`/`auth.login_succeeded_
+  after_failures`) reuse the existing `AuditLogEntryModel` mechanism with
+  zero schema change, verified to never carry a password or token in their
+  metadata; a throttled-while-already-throttled attempt writes no
+  additional audit row at all, since it never reaches the database (bounded
+  by construction, not a separate suppression rule). No session is ever
+  created on a failed or throttled attempt, verified directly against real
+  session-table row counts. 31 new tests: `tests/test_login_rate_
+  limiter.py` (21, pure unit, fake clock, no DB/HTTP) and `tests/test_
+  login_rate_limiting.py` (10, full product integration through real
+  `POST /api/auth/sign-in` calls, including genuinely simulated distinct
+  source addresses via `httpx.ASGITransport`'s own `client` parameter);
+  `tests/test_local_identity_multi_user.py`'s 36 pre-existing tests pass
+  unmodified, direct proof of zero behavior change to bootstrap, session
+  lifecycle, authorization, review attribution, or backup/restore identity
+  semantics. Tier 1 (67 tests across those three files): zero failures.
+  Tier 2 (376 tests across 26 files -- every directly auth/security-adjacent
+  file plus a deliberately broad, diverse cross-subsystem sample of the
+  ~108 pre-existing files whose fixtures depend on the shared lazy
+  bootstrap-then-sign-in test client succeeding): zero failures. Tier 3
+  deliberately not run -- the change is confined to one repository method,
+  one endpoint, and one new, zero-existing-importers file; session
+  resolution, authorization tiers, and every other endpoint are untouched
+  (confirmed by direct diff inspection), and Tier 2's own 376-test result
+  is itself broad empirical confirmation of that narrow blast radius, not
+  only a scoping argument. `ruff check`: zero new findings on every new/
+  touched file; `product_repository.py`'s 57 pre-existing findings
+  confirmed unrelated via a direct `git stash push -u`/`pop` bisection
+  (identical count and finding set before and after, zero findings in the
+  line ranges this milestone actually touched). No schema change (see
+  "Schema," above). `docs/local-identity-multi-user-contract.md` gained a
+  new "Login rate limiting / abuse resistance" section plus a "Known
+  bounded gaps" entry documenting the disclosed reverse-proxy-source-
+  collapse and success-clears-shared-source trade-offs. This closure does
+  **not** authorize the next Representative Field Acceptance / Gate A
+  session, Lane G monitoring diagnostics, Lane C work, External
+  Pre-Release Acceptance, or Final Release Hardening, and does **not**
+  select a next development milestone -- authorization returns to the bold
+  statement in §3, below, unchanged by this closure.
+- **Prior accepted milestone:** Historical Species-Status ("New" vs.
   "Seen Before") Correctness v1 -- see
   [historical-species-status-new-seen-before-correctness-v1-report.md](historical-species-status-new-seen-before-correctness-v1-report.md)
   for the complete record. Classification **A**. A release-correctness
@@ -1253,6 +1355,46 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+Login Rate-Limiting & Authentication Abuse Resistance v1 (directly
+authorized outside this file, as a RELEASE-SECURITY milestone closing the
+human-login rate-limiting gap the full remaining-roadmap reconciliation
+pass itself had verified was still open) is now accepted at classification
+**A** -- see §1, above, and
+[login-rate-limiting-authentication-abuse-resistance-v1-report.md](login-rate-limiting-authentication-abuse-resistance-v1-report.md)
+for the full record. Confirmed the starting-state premise before starting
+(branch `main`, accepted HEAD `a846655`, schema v58, the seven preserved
+untracked files present and untouched, no active worktree writer) --
+matched exactly. `POST /api/auth/sign-in` previously had generic,
+enumeration-safe failure behavior but no attempt counting, no delay, and no
+throttling at all; pairing already had its own rate limiting
+(`mockingbird_node.app`'s `_MAX_PAIR_ATTEMPTS`), human login did not. Fixed
+with a small, dependency-free `LoginRateLimiter` (account- and source-keyed,
+jointly evaluated, a short fixed delay ladder that plateaus at 60 seconds
+forever -- no permanent lockout), deliberately in-memory only (resets on
+restart/backup-restore, matching this codebase's own established precedent
+for that boundary; a local-first appliance does not need persistent
+lockout state, and persisting it would become its own DoS surface). The
+outward HTTP contract is unchanged -- the identical generic `401` for
+unknown user, wrong password, disabled user, and now throttled account/
+source alike, proven by a direct response-equality regression test. No
+session is ever created on a failed or throttled attempt; three new
+bounded audit events reuse the existing audit-log mechanism with zero
+schema change and no secret ever in their metadata. 31 new tests, plus
+36 pre-existing identity tests re-confirmed passing unmodified. Tier 1 (67
+tests): zero failures. Tier 2 (376 tests across 26 files spanning every
+directly auth-adjacent file plus a broad, diverse cross-subsystem sample):
+zero failures. Tier 3 deliberately not run -- the change is confined to
+one repository method, one endpoint, and one new file with zero existing
+importers, and Tier 2's own breadth is itself empirical confirmation of
+that narrow blast radius. `ruff check`: zero new findings (the 57
+pre-existing `product_repository.py` findings confirmed unrelated via a
+direct clean-baseline bisection). No schema change. This closure does
+**not** authorize the next Representative Field Acceptance / Gate A
+session, Lane G monitoring diagnostics, Lane C work, External Pre-Release
+Acceptance, or Final Release Hardening, and does **not** select a next
+development milestone -- authorization returns to the bold statement
+immediately above, unchanged by this closure.
 
 Historical Species-Status ("New" vs. "Seen Before") Correctness v1
 (directly authorized outside this file, as a release-critical correctness
