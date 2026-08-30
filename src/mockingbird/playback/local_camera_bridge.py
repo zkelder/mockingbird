@@ -112,6 +112,7 @@ def start_local_camera_mjpeg_process(
     video_size: str | None = None,
     input_frame_rate: str | int | None = None,
     popen_factory: PopenFactory = subprocess.Popen,
+    capture_stderr: bool = False,
 ) -> subprocess.Popen[bytes]:
     command = build_local_camera_mjpeg_command(
         device,
@@ -123,7 +124,14 @@ def start_local_camera_mjpeg_process(
     return popen_factory(
         command,
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        # `capture_stderr` defaults `False` (unchanged for every other
+        # caller) -- Ongoing Monitoring Failure Diagnostics v1: `_start_
+        # process` (`playback.live_camera_session`) is the one caller that
+        # opts in, pairing the resulting pipe with a `BoundedStderrDrain`
+        # so a long-running local-USB failure can be classified instead of
+        # collapsing to a generic message. Mirrors `rtsp_bridge.start_rtsp_
+        # mjpeg_process`'s identical parameter exactly.
+        stderr=subprocess.PIPE if capture_stderr else subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,
     )
 
@@ -221,12 +229,75 @@ def capture_local_camera_frame(
     return read_one_jpeg_frame(process)
 
 
+# ---------------------------------------------------------------------------
+# Ongoing Monitoring Failure Diagnostics v1 ("local_usb result"): unlike
+# RTSP, this bridge had zero prior text-based failure classification of any
+# kind (`local_camera_status` above is a purely static/config-time check --
+# device path regex, platform, ffmpeg-binary presence -- never runtime
+# process-failure text). Only two categories are backed by real,
+# deterministic evidence (real ffmpeg 6.1.1 stderr against `/dev/video*`
+# paths on this project's own Linux dev sandbox -- see the milestone
+# report's "local_usb result" section for the exact captured text):
+# device-missing (`ENOENT`, "No such file or directory") and permission-
+# denied (`EACCES`, "Permission denied"). Deliberately does NOT attempt to
+# distinguish device-busy, unsupported-format, or a generic decode failure
+# -- no real V4L2 hardware or kernel module (e.g. v4l2loopback) was
+# available to establish those signatures, and inventing them without
+# evidence would violate this milestone's own explicit "no false
+# precision" bar. Everything else -- including the real, reproduced
+# `ioctl(VIDIOC_QUERYCAP): Inappropriate ioctl for device` text a
+# non-V4L2-device path produces -- honestly falls back to the generic
+# `camera_monitoring_local_usb_unavailable` code.
+# ---------------------------------------------------------------------------
+
+
+def classify_local_camera_failure_text(detail: str | None) -> str:
+    """Distinguish a local-USB/V4L2 ongoing-monitoring failure only where
+    real ffmpeg stderr text gives concrete evidence -- see the module-level
+    comment above for exactly which categories are evidence-backed."""
+
+    text = (detail or "").lower()
+    if "no such file or directory" in text:
+        return "camera_monitoring_local_usb_device_missing"
+    if "permission denied" in text:
+        return "camera_monitoring_local_usb_permission_denied"
+    return "camera_monitoring_local_usb_unavailable"
+
+
+#: Every code `classify_local_camera_failure_text` can return.
+LOCAL_USB_ONGOING_FAILURE_CODES = frozenset(
+    {
+        "camera_monitoring_local_usb_device_missing",
+        "camera_monitoring_local_usb_permission_denied",
+        "camera_monitoring_local_usb_unavailable",
+    }
+)
+
+#: Calm, actionable, basic-tier sentences for `_LiveCameraSession.last_
+#: error` -- see `rtsp_bridge.RTSP_ONGOING_FAILURE_MESSAGES`'s docstring
+#: for the same convention.
+LOCAL_USB_ONGOING_FAILURE_MESSAGES: dict[str, str] = {
+    "camera_monitoring_local_usb_device_missing": (
+        "This camera's device could not be found. Check that it's connected."
+    ),
+    "camera_monitoring_local_usb_permission_denied": (
+        "MockingBird doesn't have permission to access this camera device."
+    ),
+    "camera_monitoring_local_usb_unavailable": (
+        "This local camera stopped responding."
+    ),
+}
+
+
 __all__ = [
+    "LOCAL_USB_ONGOING_FAILURE_CODES",
+    "LOCAL_USB_ONGOING_FAILURE_MESSAGES",
     "LOCAL_USB_STREAM_TYPE",
     "MJPEG_BOUNDARY",
     "build_local_camera_frame_capture_command",
     "build_local_camera_mjpeg_command",
     "capture_local_camera_frame",
+    "classify_local_camera_failure_text",
     "is_ffmpeg_available",
     "iter_multipart_mjpeg",
     "local_camera_status",

@@ -3741,7 +3741,7 @@ async def test_rtsp_bridge_endpoint_streams_mocked_mjpeg_without_creating_truth(
     )
     monkeypatch.setattr(
         "mockingbird.api.main.rtsp_bridge.start_rtsp_mjpeg_process",
-        lambda url: started_urls.append(url) or fake_process,
+        lambda url, **kwargs: started_urls.append(url) or fake_process,
     )
     monkeypatch.setattr(
         "mockingbird.api.main.rtsp_bridge.iter_multipart_mjpeg",
@@ -6295,6 +6295,7 @@ async def test_windows_dshow_bridge_endpoint_streams_mocked_mjpeg_without_creati
         input_format: str | None = None,
         video_size: str | None = None,
         framerate: str | None = None,
+        capture_stderr: bool = False,
     ) -> object:
         started.append((camera_name, ffmpeg_binary_path, input_format, video_size, framerate))
         return fake_process

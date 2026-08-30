@@ -411,7 +411,7 @@ def probe_rtsp_stream(
         return RtspProbeResult(True, "ready", None, _elapsed())
 
     detail = _redacted_stderr(process)
-    code = _classify_probe_failure(detail, any_bytes_received=first_byte_event.is_set())
+    code = classify_rtsp_failure_text(detail, any_bytes_received=first_byte_event.is_set())
     return RtspProbeResult(False, code, detail, _elapsed())
 
 
@@ -511,7 +511,7 @@ def capture_rtsp_preview_frame(
         return RtspPreviewCapture(True, "ready", frame_box[0])
 
     detail = _redacted_stderr(process)
-    code = _classify_probe_failure(detail, any_bytes_received=first_byte_event.is_set())
+    code = classify_rtsp_failure_text(detail, any_bytes_received=first_byte_event.is_set())
     return RtspPreviewCapture(False, code, None)
 
 
@@ -554,14 +554,25 @@ def _redacted_stderr(
     return redact_credentials_in_text(text)[:max_bytes]
 
 
-def _classify_probe_failure(detail: str | None, *, any_bytes_received: bool) -> str:
-    """Distinguish a probe failure only where ffmpeg's own stderr text
+def classify_rtsp_failure_text(detail: str | None, *, any_bytes_received: bool) -> str:
+    """Distinguish an RTSP ffmpeg failure only where its own stderr text
     gives real evidence (B4) -- falls back to a deliberately less-specific,
     still-truthful code otherwise, never a guess. `any_bytes_received` is
     the one non-text signal available: real stdout bytes arrived (RTSP
     negotiated and ffmpeg began emitting decoded video), so a failure past
     that point reads as a decode problem, not a negotiation/connection
-    one."""
+    one.
+
+    The single canonical RTSP failure-classification function -- used both
+    by the bounded one-shot setup-time probe/preview above (`probe_rtsp_
+    stream`/`capture_rtsp_preview_frame`) *and*, unchanged, by ongoing
+    monitoring once a Stream is armed and running (`playback.live_camera_
+    session._LiveCameraSession._reader_loop`, via `BoundedStderrDrain`).
+    Ongoing Monitoring Failure Diagnostics v1 deliberately reuses this
+    exact function rather than building a second, drifting vocabulary: the
+    same concrete underlying failure maps to the same product failure code
+    regardless of whether it is seen during setup validation or after
+    monitoring has already started -- see `RTSP_ONGOING_FAILURE_CODES`."""
 
     text = (detail or "").lower()
     if any(marker in text for marker in ("401", "unauthorized", "403", "forbidden")):
@@ -589,3 +600,42 @@ def _classify_probe_failure(detail: str | None, *, any_bytes_received: bool) -> 
     if any_bytes_received:
         return "camera_setup_rtsp_decode_failed"
     return "camera_setup_rtsp_negotiation_failed"
+
+
+#: Every code `classify_rtsp_failure_text` can return -- used to widen the
+#: ongoing-monitoring failure-code plumbing (`ProductRepository.mark_
+#: monitoring_backoff_with_failure_code`) so these codes survive rather
+#: than being clamped back down to the generic `"camera_unavailable"`.
+RTSP_ONGOING_FAILURE_CODES = frozenset(
+    {
+        "camera_setup_rtsp_authentication_failed",
+        "camera_setup_rtsp_unreachable",
+        "camera_setup_rtsp_unsupported_codec",
+        "camera_setup_rtsp_negotiation_failed",
+        "camera_setup_rtsp_decode_failed",
+    }
+)
+
+#: Calm, actionable, basic-tier sentences for `_LiveCameraSession.last_
+#: error` (rendered verbatim by `StreamsPage.tsx`/`StreamDetailPage.tsx`'s
+#: "Last error:" text) -- one per code `classify_rtsp_failure_text` can
+#: return. Deliberately distinct wording from `ProductRepository._camera_
+#: health_reason`'s advanced-tier `failure_reason` text for the same
+#: codes; both are calm and actionable, neither exposes raw ffmpeg output.
+RTSP_ONGOING_FAILURE_MESSAGES: dict[str, str] = {
+    "camera_setup_rtsp_authentication_failed": (
+        "This camera rejected its login credentials. Check the saved username and password."
+    ),
+    "camera_setup_rtsp_unreachable": (
+        "This camera's RTSP stream could not be reached. Check its network connection."
+    ),
+    "camera_setup_rtsp_unsupported_codec": (
+        "This camera's video stream uses an unsupported codec."
+    ),
+    "camera_setup_rtsp_negotiation_failed": (
+        "This camera's RTSP stream stopped responding."
+    ),
+    "camera_setup_rtsp_decode_failed": (
+        "This camera's video stream could not be decoded."
+    ),
+}

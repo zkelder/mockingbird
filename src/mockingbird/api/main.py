@@ -4470,10 +4470,21 @@ def _managed_camera_status(
         healthy_at=snapshot.last_frame_at,
         monitor_running=snapshot.monitor_running,
         failure_code=(
-            snapshot.last_error
-            if snapshot.last_error
-            in CAMERA_NODE_RUNTIME_FAILURE_CODES
-            else None
+            # Ongoing Monitoring Failure Diagnostics v1: `last_failure_code`
+            # is the new, provider-neutral machine code (RTSP/local USB/
+            # Windows DirectShow) `_LiveCameraSession._classify_ongoing_
+            # failure_locked` sets; checked first so it is never discarded
+            # by the older Camera-Node-only allowlist below, which stays
+            # completely unchanged for Camera Node's own separate `last_
+            # error`-is-the-code convention (`safe_failure_code`).
+            snapshot.last_failure_code
+            if snapshot.last_failure_code is not None
+            else (
+                snapshot.last_error
+                if snapshot.last_error
+                in CAMERA_NODE_RUNTIME_FAILURE_CODES
+                else None
+            )
         ),
     )
 

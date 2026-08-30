@@ -521,6 +521,7 @@ def start_windows_dshow_mjpeg_process(
     video_size: str | None = None,
     framerate: str | int | None = None,
     popen_factory: PopenFactory = subprocess.Popen,
+    capture_stderr: bool = False,
 ) -> subprocess.Popen[bytes]:
     command = build_windows_dshow_mjpeg_command(
         camera_name,
@@ -532,7 +533,11 @@ def start_windows_dshow_mjpeg_process(
     return popen_factory(
         command,
         stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
+        # See `local_camera_bridge.start_local_camera_mjpeg_process`'s
+        # identical parameter/comment -- Ongoing Monitoring Failure
+        # Diagnostics v1's one opt-in caller is `_start_process`
+        # (`playback.live_camera_session`).
+        stderr=subprocess.PIPE if capture_stderr else subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,
     )
 
@@ -624,10 +629,65 @@ def capture_windows_dshow_frame(
     return read_one_jpeg_frame(process)
 
 
+# ---------------------------------------------------------------------------
+# Ongoing Monitoring Failure Diagnostics v1 ("windows_dshow result"): real
+# ffmpeg 8.1.2 evidence captured live against the project's own reference
+# Windows dev host (`ffmpeg -f dshow -list_devices true -i dummy`; `ffmpeg
+# -f dshow -i video="<nonexistent name>"`) -- no real webcam is attached to
+# that host (device enumeration returned zero video devices, audio-only),
+# so only one category is backed by real, reproducible evidence: ffmpeg's
+# dshow demuxer reports the identical `Could not enumerate video devices
+# (or none found)` / `I/O error` text both when zero video devices exist at
+# all *and* when the requested name matches none of the devices present --
+# this bridge cannot distinguish those two cases from stderr text alone,
+# and does not claim to. Device-busy, permission/access, unsupported
+# format, and a generic decode failure are NOT evidence-backed (no second
+# real camera or driver-level access-denial scenario was available to
+# reproduce them) and are left to the honest generic fallback below rather
+# than invented. No Windows camera-driver research campaign was performed
+# beyond this bounded, reproducible probe.
+# ---------------------------------------------------------------------------
+
+
+def classify_windows_dshow_failure_text(detail: str | None) -> str:
+    """Distinguish a Windows DirectShow ongoing-monitoring failure only
+    where real ffmpeg stderr text gives concrete evidence -- see the
+    module-level comment above for exactly which category is evidence-
+    backed."""
+
+    text = (detail or "").lower()
+    if "could not enumerate video devices" in text:
+        return "camera_monitoring_windows_dshow_device_unavailable"
+    return "camera_monitoring_windows_dshow_unavailable"
+
+
+#: Every code `classify_windows_dshow_failure_text` can return.
+WINDOWS_DSHOW_ONGOING_FAILURE_CODES = frozenset(
+    {
+        "camera_monitoring_windows_dshow_device_unavailable",
+        "camera_monitoring_windows_dshow_unavailable",
+    }
+)
+
+#: Calm, actionable, basic-tier sentences for `_LiveCameraSession.last_
+#: error` -- see `rtsp_bridge.RTSP_ONGOING_FAILURE_MESSAGES`'s docstring
+#: for the same convention.
+WINDOWS_DSHOW_ONGOING_FAILURE_MESSAGES: dict[str, str] = {
+    "camera_monitoring_windows_dshow_device_unavailable": (
+        "This Windows camera could not be found. Check that it's connected."
+    ),
+    "camera_monitoring_windows_dshow_unavailable": (
+        "This Windows camera stopped responding."
+    ),
+}
+
+
 __all__ = [
     "DEFAULT_WINDOWS_FFMPEG_BINARY",
     "MJPEG_BOUNDARY",
     "WINDOWS_CAMERA_CONTROLS_LAUNCH_TIMEOUT_SECONDS",
+    "WINDOWS_DSHOW_ONGOING_FAILURE_CODES",
+    "WINDOWS_DSHOW_ONGOING_FAILURE_MESSAGES",
     "WINDOWS_DSHOW_STREAM_TYPE",
     "WINDOWS_POWERSHELL_BINARY",
     "build_windows_dshow_frame_capture_command",
@@ -636,6 +696,7 @@ __all__ = [
     "build_windows_dshow_list_devices_command",
     "build_windows_dshow_mjpeg_command",
     "capture_windows_dshow_frame",
+    "classify_windows_dshow_failure_text",
     "is_windows_ffmpeg_available",
     "is_windows_ffmpeg_binary",
     "iter_multipart_mjpeg",

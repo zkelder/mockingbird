@@ -21,6 +21,7 @@ from mockingbird.playback import (
     rtsp_bridge,
     windows_camera_bridge,
 )
+from mockingbird.playback.stderr_drain import BoundedStderrDrain
 from mockingbird.source_providers.camera_node import CAMERA_NODE_RUNTIME_FAILURE_CODES
 
 MJPEG_BOUNDARY = "frame"
@@ -155,6 +156,11 @@ class LiveCameraSessionSnapshot:
     diagnostic_events: list[dict[str, Any]]
     diagnostic_events_truncated: bool
     persistent: bool = False
+    # Ongoing Monitoring Failure Diagnostics v1: the bounded machine code
+    # behind `last_error`, when one is known -- see `_LiveCameraSession.
+    # last_failure_code`'s own docstring for the full plumbing chain.
+    # `None` for Camera Node and for every snapshot predating this field.
+    last_failure_code: str | None = None
 
     @property
     def latest_frame_age_ms(self) -> int | None:
@@ -953,6 +959,18 @@ class _LiveCameraSession:
         self.track_capture_claims: dict[str, dict[str, Any]] = {}
         self._finalizing_activity_session_ids: set[str] = set()
         self.last_error: str | None = None
+        # Ongoing Monitoring Failure Diagnostics v1: `last_error` (above)
+        # stays the existing basic-tier, always-shown sentence (`StreamsPage.
+        # tsx`'s "Last error:" text) -- this new field is the bounded
+        # *machine* code behind it, when one is known, threaded through
+        # `snapshot()` -> `ManagedCameraStatus.failure_code`
+        # (`_managed_camera_status`) -> `StreamRuntimeCheckpointModel.
+        # failure_code` -> `CameraHealthSummary.message`/`failure_reason`.
+        # `None` for Camera Node (untouched -- see `CAMERA_NODE_RUNTIME_
+        # FAILURE_CODES`'s own, separate `last_error`-is-the-code
+        # convention below) and whenever no stderr evidence was ever
+        # captured for this attempt.
+        self.last_failure_code: str | None = None
         self.stop_reason: str | None = None
         self.camera_settings = _camera_settings_from_config(config)
         self.status = "starting"
@@ -966,6 +984,15 @@ class _LiveCameraSession:
         self._monitor_stop_event = threading.Event()
         self._monitor_thread: threading.Thread | None = None
         self._lock = threading.RLock()
+        # Ongoing Monitoring Failure Diagnostics v1: only real for the
+        # three providers `_start_process` opts into `capture_stderr=True`
+        # for (RTSP/local USB/Windows DirectShow) -- `None` for Camera Node
+        # (`camera_node_bridge.CameraNodeSnapshotProcess` never exposes
+        # `.stderr`) and for any fake/test process without one. One drain
+        # per session/process attempt -- never shared, never reused across
+        # a restart (each retry gets a brand-new `_LiveCameraSession`).
+        process_stderr = getattr(process, "stderr", None)
+        self._stderr_drain = BoundedStderrDrain(process_stderr) if process_stderr is not None else None
         self._thread = threading.Thread(
             target=self._reader_loop,
             name=f"mockingbird-live-camera-{self.stream_id}",
@@ -995,6 +1022,8 @@ class _LiveCameraSession:
                 "camera_started",
                 status=self.status,
             )
+        if self._stderr_drain is not None:
+            self._stderr_drain.start()
         self._thread.start()
 
     def stop(self, reason: str) -> None:
@@ -1016,6 +1045,7 @@ class _LiveCameraSession:
         self._stop_event.set()
         self._monitor_stop_event.set()
         _stop_process(self.process)
+        self._stop_stderr_drain()
         monitor_thread = self._monitor_thread
         if monitor_thread is not None and monitor_thread.is_alive():
             monitor_thread.join(timeout=2)
@@ -1029,6 +1059,16 @@ class _LiveCameraSession:
                 status=self.status,
                 reason=reason,
             )
+
+    def _stop_stderr_drain(self) -> None:
+        """Bounded, idempotent -- callers must have already terminated/
+        killed `self.process` (see `BoundedStderrDrain.stop`'s own
+        docstring). Safe to call from `stop()`/`pause()` (which race
+        `_reader_loop`'s own identical call in its `finally` block, below)
+        and safe to call more than once."""
+
+        if self._stderr_drain is not None:
+            self._stderr_drain.stop()
 
     def pause(self, reason: str) -> None:
         """Deliberately release the physical camera without ever reporting
@@ -1053,6 +1093,7 @@ class _LiveCameraSession:
         self._stop_event.set()
         self._monitor_stop_event.set()
         _stop_process(self.process)
+        self._stop_stderr_drain()
         monitor_thread = self._monitor_thread
         if monitor_thread is not None and monitor_thread.is_alive():
             monitor_thread.join(timeout=2)
@@ -2082,6 +2123,7 @@ class _LiveCameraSession:
                     self._diagnostic_sequence > len(self.diagnostic_events)
                 ),
                 persistent=False,
+                last_failure_code=self.last_failure_code,
             )
 
     def _monitor_loop(
@@ -2125,6 +2167,36 @@ class _LiveCameraSession:
             return
         with self._lock:
             self.monitor_running = False
+
+    def _classify_ongoing_failure_locked(self) -> tuple[str | None, str | None]:
+        """Ongoing Monitoring Failure Diagnostics v1: classify this
+        session's own bounded stderr tail into a specific `(code, message)`
+        pair for the three providers `_start_process` gives a real
+        `BoundedStderrDrain` (RTSP/local USB/Windows DirectShow) --
+        `(None, None)` for Camera Node (its own, separate `safe_failure_
+        code` mechanism, untouched) or when no stderr evidence was ever
+        captured for this attempt. `frame_count > 0` stands in for the
+        setup-time probe's own `any_bytes_received` signal: real decoded
+        frames already flowed through `stdout`, so a failure past that
+        point reads as a decode problem, not a negotiation/connection one
+        (RTSP only -- `classify_rtsp_failure_text`'s own distinction).
+        Must be called with `self._lock` already held (mirrors every other
+        `*_locked` helper in this class)."""
+
+        if self._stderr_drain is None:
+            return None, None
+        detail = self._stderr_drain.latest_text()
+        any_healthy_frame = self.frame_count > 0
+        if self.playback_kind == "rtsp":
+            code = rtsp_bridge.classify_rtsp_failure_text(detail, any_bytes_received=any_healthy_frame)
+            return code, rtsp_bridge.RTSP_ONGOING_FAILURE_MESSAGES.get(code)
+        if self.playback_kind == local_camera_bridge.LOCAL_USB_STREAM_TYPE:
+            code = local_camera_bridge.classify_local_camera_failure_text(detail)
+            return code, local_camera_bridge.LOCAL_USB_ONGOING_FAILURE_MESSAGES.get(code)
+        if self.playback_kind == windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE:
+            code = windows_camera_bridge.classify_windows_dshow_failure_text(detail)
+            return code, windows_camera_bridge.WINDOWS_DSHOW_ONGOING_FAILURE_MESSAGES.get(code)
+        return None, None
 
     def _reader_loop(self) -> None:
         buffer = bytearray()
@@ -2172,12 +2244,28 @@ class _LiveCameraSession:
                 self.status = "failed"
                 self.stop_reason = "process_ended"
                 safe_failure_code = getattr(self.process, "safe_failure_code", None)
+                is_camera_node_code = safe_failure_code in CAMERA_NODE_RUNTIME_FAILURE_CODES
+                # Ongoing Monitoring Failure Diagnostics v1: previously this
+                # `else` branch was the *only* outcome for every non-Camera-
+                # Node provider -- RTSP/local USB/Windows DirectShow all
+                # collapsed to the identical generic string regardless of
+                # cause (Lane G's disclosed gap; see `docs/camera-source-
+                # experience-v1-report.md` section 7). `_classify_ongoing_
+                # failure_locked` reuses the exact setup-time classification
+                # vocabulary (RTSP) or evidence-backed new codes (local USB/
+                # Windows DirectShow) via this session's own bounded stderr
+                # drain; falls back to the original generic sentence only
+                # when no drain exists or no code has a known message (never
+                # a fabricated cause).
+                classified_code, classified_message = self._classify_ongoing_failure_locked()
                 if self.last_error is None:
-                    self.last_error = (
-                        safe_failure_code
-                        if safe_failure_code in CAMERA_NODE_RUNTIME_FAILURE_CODES
-                        else "Camera process ended before the session was stopped."
-                    )
+                    if is_camera_node_code:
+                        self.last_error = safe_failure_code
+                    elif classified_message is not None:
+                        self.last_failure_code = classified_code
+                        self.last_error = classified_message
+                    else:
+                        self.last_error = "Camera process ended before the session was stopped."
                 # Pre-Freeze Operability Gap Closure v1 ("A2 frame-decode
                 # failures -- RTSP/live playback/acquisition"): disclosed as
                 # absent in docs/observability-error-taxonomy-contract.md.
@@ -2192,8 +2280,8 @@ class _LiveCameraSession:
                     "live_stream_process_ended",
                     code=(
                         safe_failure_code
-                        if safe_failure_code in CAMERA_NODE_RUNTIME_FAILURE_CODES
-                        else "camera_process_ended"
+                        if is_camera_node_code
+                        else classified_code or "camera_process_ended"
                     ),
                     stream_id=self.stream_id,
                     source_id=self.source_id,
@@ -2227,6 +2315,17 @@ class _LiveCameraSession:
                     status=self.status,
                     reason=self.stop_reason,
                 )
+        finally:
+            # Ongoing Monitoring Failure Diagnostics v1: one monitor
+            # lifecycle owns one drain lifecycle -- this `finally` covers
+            # every exit path above (the early `return` on a clean Stop,
+            # the "process ended on its own" fallthrough, and the
+            # `except Exception` branch) with one bounded, idempotent call,
+            # so the drain thread can never outlive this reader thread.
+            # `stop()`/`pause()` (the manager-thread-driven paths) call the
+            # same idempotent helper themselves too -- whichever side wins
+            # the race, the second call is a cheap no-op.
+            self._stop_stderr_drain()
 
     def _runtime_elapsed(self) -> bool:
         elapsed = (datetime.now(UTC) - self.started_at).total_seconds()
@@ -3114,7 +3213,14 @@ def _start_process(config: Any) -> subprocess.Popen[bytes] | camera_node_bridge.
     if config.live_stream_type == "camera_node":
         return camera_node_bridge.CameraNodeSnapshotProcess(config)
     if config.live_stream_type == "rtsp":
-        return rtsp_bridge.start_rtsp_mjpeg_process(config.live_stream_url or "")
+        # Ongoing Monitoring Failure Diagnostics v1: `capture_stderr=True`
+        # pairs with the `BoundedStderrDrain` `_LiveCameraSession` attaches
+        # in `start()` -- previously `False` (DEVNULL) unconditionally, the
+        # root cause of the ongoing-monitoring generic-collapse gap this
+        # milestone closes. Live playback's *other* caller (browser MJPEG
+        # streaming through this same bridge) is unaffected -- this is the
+        # one call site that owns a long-running monitored process.
+        return rtsp_bridge.start_rtsp_mjpeg_process(config.live_stream_url or "", capture_stderr=True)
     if config.live_stream_type == local_camera_bridge.LOCAL_USB_STREAM_TYPE:
         return local_camera_bridge.start_local_camera_mjpeg_process(
             config.local_camera_device or "",
@@ -3122,6 +3228,7 @@ def _start_process(config: Any) -> subprocess.Popen[bytes] | camera_node_bridge.
             input_format=config.input_format,
             video_size=config.preview_video_size or config.camera_video_size,
             input_frame_rate=config.windows_framerate or config.camera_framerate,
+            capture_stderr=True,
         )
     if config.live_stream_type == windows_camera_bridge.WINDOWS_DSHOW_STREAM_TYPE:
         return windows_camera_bridge.start_windows_dshow_mjpeg_process(
@@ -3130,6 +3237,7 @@ def _start_process(config: Any) -> subprocess.Popen[bytes] | camera_node_bridge.
             input_format=config.input_format,
             video_size=config.windows_video_size,
             framerate=config.windows_framerate,
+            capture_stderr=True,
         )
     raise ValueError("unsupported_live_camera_session_type")
 

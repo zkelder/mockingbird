@@ -947,6 +947,26 @@ CAMERA_HEALTH_CHECKPOINT_INTERVAL = timedelta(seconds=30)
 CAMERA_HEALTH_HISTORY_LIMIT = 20
 CAMERA_HEALTH_MAX_OCCURRENCES = 100
 
+# Ongoing Monitoring Failure Diagnostics v1: every `failure_code`
+# `mark_monitoring_backoff_with_failure_code` is willing to persist onto
+# `StreamRuntimeCheckpointModel.failure_code` -- Camera Node's own codes
+# (unchanged), the pre-existing `"fresh_frame_stale"` runtime-code, and the
+# three non-Camera-Node providers' own evidence-backed ongoing-monitoring
+# vocabularies (RTSP reuses the identical setup-time codes; local USB/
+# Windows DirectShow are new, narrowly evidence-backed codes -- see each
+# bridge module's own "ongoing result" comment for exactly what evidence
+# backs them). Anything else is clamped to the generic `"camera_
+# unavailable"` -- this function's own docstring's "small approved runtime
+# code" contract, deliberately never widened to accept arbitrary provider
+# error text.
+_ONGOING_MONITORING_APPROVED_FAILURE_CODES = (
+    CAMERA_NODE_RUNTIME_FAILURE_CODES
+    | {"fresh_frame_stale"}
+    | rtsp_bridge.RTSP_ONGOING_FAILURE_CODES
+    | local_camera_bridge.LOCAL_USB_ONGOING_FAILURE_CODES
+    | windows_camera_bridge.WINDOWS_DSHOW_ONGOING_FAILURE_CODES
+)
+
 
 @dataclass(frozen=True)
 class _ZoneExposure:
@@ -13454,6 +13474,44 @@ class ProductRepository:
             "evidence_persistence_failed": "MockingBird could not safely persist required evidence.",
             "configuration_invalid": "Camera setup needs review before monitoring can start.",
             "previous_process_ended": "Monitoring will resume when the local supervisor is ready.",
+            # Ongoing Monitoring Failure Diagnostics v1: RTSP reuses the
+            # identical codes/underlying-cause meaning `rtsp_bridge.
+            # classify_rtsp_failure_text` already uses at setup time (see
+            # `docs/ongoing-monitoring-failure-diagnostics-rtsp-local-usb-
+            # windows-dshow-v1-report.md`'s "Setup/ongoing consistency"
+            # section); local USB/Windows DirectShow are new, narrowly
+            # evidence-backed codes (see each bridge module's own "ongoing
+            # result" comment).
+            "camera_setup_rtsp_authentication_failed": (
+                "This camera rejected its login credentials."
+            ),
+            "camera_setup_rtsp_unreachable": (
+                "This camera's RTSP stream could not be reached."
+            ),
+            "camera_setup_rtsp_unsupported_codec": (
+                "This camera's video stream uses an unsupported codec."
+            ),
+            "camera_setup_rtsp_negotiation_failed": (
+                "This camera's RTSP stream stopped responding."
+            ),
+            "camera_setup_rtsp_decode_failed": (
+                "This camera's video stream could not be decoded."
+            ),
+            "camera_monitoring_local_usb_device_missing": (
+                "This camera's device could not be found."
+            ),
+            "camera_monitoring_local_usb_permission_denied": (
+                "MockingBird doesn't have permission to access this camera device."
+            ),
+            "camera_monitoring_local_usb_unavailable": (
+                "This local camera stopped responding."
+            ),
+            "camera_monitoring_windows_dshow_device_unavailable": (
+                "This Windows camera could not be found."
+            ),
+            "camera_monitoring_windows_dshow_unavailable": (
+                "This Windows camera stopped responding."
+            ),
         }.get(code)
 
     def _camera_node_transport_backlog_facts(
@@ -13619,6 +13677,19 @@ class ProductRepository:
                 "node_snapshot_invalid": "The paired Camera Node did not provide a usable image; bounded local recovery is scheduled.",
                 "node_snapshot_timeout": "The paired Camera Node did not provide a frame within the bounded snapshot window; recovery is scheduled.",
                 "provider_reset_required": "The paired Camera Node is resetting its local camera provider before bounded recovery.",
+                # Ongoing Monitoring Failure Diagnostics v1 -- see
+                # `_camera_health_reason`'s identical new entries for the
+                # provenance/evidence note; recovering-state wording here.
+                "camera_setup_rtsp_authentication_failed": "This camera rejected its login credentials; bounded local recovery is scheduled.",
+                "camera_setup_rtsp_unreachable": "This camera's RTSP stream could not be reached; bounded local recovery is scheduled.",
+                "camera_setup_rtsp_unsupported_codec": "This camera's video stream uses an unsupported codec; bounded local recovery is scheduled.",
+                "camera_setup_rtsp_negotiation_failed": "This camera's RTSP stream stopped responding; bounded local recovery is scheduled.",
+                "camera_setup_rtsp_decode_failed": "This camera's video stream could not be decoded; bounded local recovery is scheduled.",
+                "camera_monitoring_local_usb_device_missing": "This camera's device could not be found; bounded local recovery is scheduled.",
+                "camera_monitoring_local_usb_permission_denied": "MockingBird doesn't have permission to access this camera device; bounded local recovery is scheduled.",
+                "camera_monitoring_local_usb_unavailable": "This local camera stopped responding; bounded local recovery is scheduled.",
+                "camera_monitoring_windows_dshow_device_unavailable": "This Windows camera could not be found; bounded local recovery is scheduled.",
+                "camera_monitoring_windows_dshow_unavailable": "This Windows camera stopped responding; bounded local recovery is scheduled.",
             }.get(failure_code)
             if checkpoint is not None and checkpoint.consecutive_failure_count >= 3:
                 state = CameraHealthState.camera_unavailable
@@ -13674,6 +13745,19 @@ class ProductRepository:
                 "node_snapshot_invalid": "The paired Camera Node did not provide a usable image. Check the Node before retrying.",
                 "node_snapshot_timeout": "The paired Camera Node did not provide a frame within the bounded snapshot window. Try again shortly.",
                 "provider_reset_required": "The paired Camera Node needs to reset its local camera provider before retrying.",
+                # Ongoing Monitoring Failure Diagnostics v1 -- see
+                # `_camera_health_reason`'s identical new entries for the
+                # provenance/evidence note; needs-attention wording here.
+                "camera_setup_rtsp_authentication_failed": "This camera rejected its login credentials. Check the saved username and password before retrying.",
+                "camera_setup_rtsp_unreachable": "This camera's RTSP stream could not be reached. Check its network connection before retrying.",
+                "camera_setup_rtsp_unsupported_codec": "This camera's video stream uses an unsupported codec.",
+                "camera_setup_rtsp_negotiation_failed": "This camera's RTSP stream stopped responding.",
+                "camera_setup_rtsp_decode_failed": "This camera's video stream could not be decoded.",
+                "camera_monitoring_local_usb_device_missing": "This camera's device could not be found. Check that it's connected before retrying.",
+                "camera_monitoring_local_usb_permission_denied": "MockingBird doesn't have permission to access this camera device.",
+                "camera_monitoring_local_usb_unavailable": "This local camera stopped responding.",
+                "camera_monitoring_windows_dshow_device_unavailable": "This Windows camera could not be found. Check that it's connected before retrying.",
+                "camera_monitoring_windows_dshow_unavailable": "This Windows camera stopped responding.",
             }.get(failure_code, "Monitoring needs attention before the camera can restart.")
         elif checkpoint is not None and (
             checkpoint.next_retry_at is not None
@@ -13691,6 +13775,19 @@ class ProductRepository:
                 "node_snapshot_invalid": "The paired Camera Node did not provide a usable image.",
                 "node_snapshot_timeout": "The paired Camera Node did not provide a frame within the bounded snapshot window.",
                 "provider_reset_required": "The paired Camera Node needs to reset its local camera provider.",
+                # Ongoing Monitoring Failure Diagnostics v1 -- see
+                # `_camera_health_reason`'s identical new entries for the
+                # provenance/evidence note.
+                "camera_setup_rtsp_authentication_failed": "This camera rejected its login credentials.",
+                "camera_setup_rtsp_unreachable": "This camera's RTSP stream could not be reached.",
+                "camera_setup_rtsp_unsupported_codec": "This camera's video stream uses an unsupported codec.",
+                "camera_setup_rtsp_negotiation_failed": "This camera's RTSP stream stopped responding.",
+                "camera_setup_rtsp_decode_failed": "This camera's video stream could not be decoded.",
+                "camera_monitoring_local_usb_device_missing": "This camera's device could not be found.",
+                "camera_monitoring_local_usb_permission_denied": "MockingBird doesn't have permission to access this camera device.",
+                "camera_monitoring_local_usb_unavailable": "This local camera stopped responding.",
+                "camera_monitoring_windows_dshow_device_unavailable": "This Windows camera could not be found.",
+                "camera_monitoring_windows_dshow_unavailable": "This Windows camera stopped responding.",
             }.get(failure_code, "The camera is unavailable and needs attention before it can restart.")
         else:
             state = CameraHealthState.starting
@@ -15312,7 +15409,7 @@ class ProductRepository:
     ) -> None:
         """Persist a small approved runtime code without retaining provider errors."""
 
-        if failure_code not in CAMERA_NODE_RUNTIME_FAILURE_CODES | {"fresh_frame_stale"}:
+        if failure_code not in _ONGOING_MONITORING_APPROVED_FAILURE_CODES:
             failure_code = "camera_unavailable"
         self.mark_monitoring_backoff(
             candidate,
