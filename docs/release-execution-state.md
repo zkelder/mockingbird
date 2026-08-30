@@ -24,11 +24,14 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `6f7bbb6` -- the implementation commit for
-  Sustained-Activity Visit Admission Starvation & Stop-Finalization
-  Correctness v1 (its own separate report commit, `0638759`, sits
-  directly on top and is not cited here as a second, separate
-  code-bearing HEAD, matching this field's established convention).
+- **Accepted HEAD:** `893eed5` -- the implementation commit for
+  Platform / Runtime Portability & Support Truth Closure v1 (its own
+  separate report commit, `d5f4a32`, sits directly on top and is not
+  cited here as a second, separate code-bearing HEAD, matching this
+  field's established convention). `6f7bbb6` (the implementation commit
+  for Sustained-Activity Visit Admission Starvation & Stop-Finalization
+  Correctness v1; its own separate report commit, `0638759`, sits
+  directly on top, likewise not cited separately).
   `81dec47` (the implementation commit for Local
   Only / Privacy Closure v1; its own separate documentation-only report
   commit, `64f0a4d`, sits directly on top and is not cited here as a
@@ -55,13 +58,93 @@ protecting.
   those closures (`7f98e43`, `8572308`, `4581424`, `4aeb658`, `e01e691`,
   `c03d0b1`, `80e1bb3`) are likewise not cited as separate code-bearing
   HEADs for the identical reason.
-- **Schema:** `v58` -- unchanged by this milestone (Sustained-Activity
-  Visit Admission Starvation & Stop-Finalization Correctness v1 is a
-  correctness fix reusing existing columns/state throughout; no
-  model/migration change). Representative Daylight Gate A Field
-  Acceptance v4 (see its own "Prior accepted milestone" entry, below)
-  had likewise changed zero production code.
-- **Latest accepted milestone:** Sustained-Activity Visit Admission
+- **Schema:** `v58` -- unchanged by this milestone (Platform / Runtime
+  Portability & Support Truth Closure v1 is an evidence/documentation
+  closure plus two narrow capability-message fixes in
+  `mockingbird.diagnostics.doctor`; no model/migration change). Sustained-
+  Activity Visit Admission Starvation & Stop-Finalization Correctness v1
+  (see its own "Prior accepted milestone" entry, below) had likewise left
+  schema unchanged.
+- **Latest accepted milestone:** Platform / Runtime Portability & Support
+  Truth Closure v1 -- see
+  [platform-runtime-portability-support-truth-closure-v1-report.md](platform-runtime-portability-support-truth-closure-v1-report.md)
+  for the complete record. Classification **A**. A bounded, release-critical
+  evidence/documentation closure (Lane O) establishing MockingBird's
+  truthful release support matrix across Host operating systems and
+  inference runtimes -- not a portability expansion campaign; no new
+  platform support was added. Reused rather than re-verified the extensive
+  already-accepted native-Windows evidence (Native-Windows Packaged
+  Local-Only Acceptance & Privacy Closure v1, Release Engineering
+  Foundation v1) to confirm Windows 10/11 x64 as **Validated**: the only
+  Host with a packaged, dependency-bundled, no-Python-required end-user
+  distributable, with real CUDA execution-provider selection, real
+  BioCLIP-2 inference, and a real 18-schema-version organic migration all
+  proven at the production code path. Established, for the first time as
+  one explicit, coherent, tested story, that MockingBird's accepted
+  detector provider (`onnx-cuda`, backing the production `frame-driven-
+  onnx-cuda` path) structurally forbids CPU execution by deliberate,
+  regression-tested design (`session.disable_cpu_ep_fallback`, a
+  CUDA-only provider list, `onnx_cuda_unavailable`/`onnx_cuda_no_fallback`
+  raised rather than silently degrading) -- live wildlife detection
+  requires a working NVIDIA CUDA GPU with zero fallback -- while both
+  optional assistance models (BioCLIP-2 species suggestions, BirdNET
+  acoustic identification) are CPU-only by the identical deliberate
+  design, already validated, and never block Visit creation when
+  unavailable. Classified Linux **structurally supported** at the
+  source/dev level (continuously CI-validated on real, non-WSL
+  `ubuntu-latest` for the full Core suite, frontend build, and the
+  Windows-packaging pipeline's own structural smoke test; a genuine,
+  first-class Linux-only feature already exists, the V4L2 local-USB-camera
+  bridge) but explicitly **not** promoted to "validated release Host" --
+  no packaged end-user Linux distribution exists and no dedicated native-
+  Linux hardware acceptance has ever been performed, correcting a prior
+  report's own looser use of "Validated" for the identical underlying
+  fact. Classified macOS **unverified** overall, with one path
+  (microphone capture) already **unsupported** and honestly disclosed
+  (fixed in a prior accepted milestone, confirmed still in effect), and
+  Apple Silicon acceleration **deferred**, extending rather than
+  re-deriving `docs/species-classification-reevaluation-promotion-v2-report.md`'s
+  own already-correct "no hardware, not assumed to work" precedent. AMD
+  GPU acceleration confirmed **unsupported** -- zero ROCm/DirectML code
+  anywhere in the stack. The Camera Node's reference-hardware-vs-hardware-
+  agnostic-protocol distinction was verified against real provider code,
+  not merely asserted: Raspberry Pi 4/Raspberry Pi OS is the real,
+  repeatedly-validated reference device, while a genuine, independent
+  `V4L2CameraProvider` (generic Linux/USB via OpenCV) sits behind the same
+  `CameraNodeProvider` protocol alongside the Pi-specific backend, each
+  degrading gracefully if its own runtime is absent -- no non-Pi hardware
+  has ever been release-tested, and none was added this milestone. Found
+  two real, reproduced, narrow capability-overclaim defects in `python -m
+  mockingbird doctor` (its `SPECIES_IDENTIFICATION` and `GPU_CUDA` checks'
+  own PASS branches each silently omitted an honest scope caveat the
+  underlying probe already had available, understating how much a PASS
+  there actually proves) and fixed both with the minimal truthful
+  correction rather than a heavier, costlier re-architecture of either
+  check -- each independently reproduced RED via `git stash` against the
+  real pre-fix code and confirmed GREEN after, with a new dedicated
+  regression test. Two further gaps (the Camera Node's
+  `pairing_state_path` retaining a `Path.home()` fallback masked only by
+  installer convention; `GET /api/observation-engine/status`'s name
+  mismatching the legacy provider it actually wires to, confirmed to have
+  zero frontend consumption) were found and precisely disclosed,
+  deliberately not fixed, since neither is reproduced against any real or
+  currently-shipping path. Published the canonical, plain-language,
+  user-facing support matrix in a new "Platform & hardware support"
+  section of `docs/using-mockingbird.md`, cross-checked line-by-line
+  against the implementation evidence above. `tests/test_doctor.py` (107
+  passed) and the directly adjacent `tests/test_doctor_cli.py` (8 passed)
+  confirmed via direct grep to be the complete blast radius of the two
+  changed functions; `ruff check` clean; full Core correctly not run,
+  per the governing brief's own "primarily evidence/documentation"
+  validation guidance for a Tier-1/focused change. No schema change. Lane
+  O is now reconciled to **closed** (§6, below), resolving its own
+  "RELEASE DECISION REQUIRED" status by making support truth explicit
+  rather than by claiming any unsupported hardware is supported. This
+  closure does **not** authorize the next Representative Field Acceptance
+  / Gate A session, External Pre-Release Acceptance, or Final Release
+  Hardening, and does **not** select a next development milestone -- see
+  §3, below.
+- **Prior accepted milestone:** Sustained-Activity Visit Admission
   Starvation & Stop-Finalization Correctness v1 -- see
   [sustained-activity-visit-admission-starvation-stop-finalization-correctness-v1-report.md](sustained-activity-visit-admission-starvation-stop-finalization-correctness-v1-report.md)
   for the complete record. Classification **A**. Fixes the real P0
@@ -1013,6 +1096,52 @@ preserved here, not relaxed.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
+Platform / Runtime Portability & Support Truth Closure v1 (directly
+authorized outside this file, as a bounded, release-critical evidence/
+documentation closure of Lane O -- the highest-priority independent
+task available while Gate A's own daylight-conditions rerun stays
+separately blocked) is now accepted at classification **A** -- see §1,
+above, Lane O, §6, below, and
+[platform-runtime-portability-support-truth-closure-v1-report.md](platform-runtime-portability-support-truth-closure-v1-report.md)
+for the full record. Confirmed the sequencing premise before starting:
+Lane O read as `PARTIAL -- RELEASE DECISION REQUIRED` and release-critical,
+Lane R correctly still gated on daylight field conditions and unrelated,
+and no higher-priority independent release-critical dependency blocked
+Lane O -- the premise held, so the milestone proceeded rather than
+stopping. Built a truthful, explicit support matrix across Host OS
+(Windows validated; Linux structurally supported at the source/dev level,
+no packaged release; macOS unverified, one path already honestly
+unsupported), inference runtime (CPU: the accepted detector forbids it by
+deliberate, tested design, zero fallback; NVIDIA CUDA validated on
+Windows; Apple Silicon deferred; AMD unsupported), and Camera Node
+(Raspberry Pi 4 validated reference hardware; genuinely hardware-agnostic
+provider protocol; no non-Pi hardware release-tested) -- entirely by
+reusing already-accepted evidence plus bounded, targeted code/doc
+archaeology, with zero new platform support added, per the milestone's own
+explicit non-goals. Found and fixed two narrow, reproduced capability-
+overclaim defects in `python -m mockingbird doctor` (its
+`SPECIES_IDENTIFICATION` and `GPU_CUDA` checks each silently omitted an
+honest scope caveat their own underlying probes already had available),
+each independently proven RED via `git stash` against the real pre-fix
+code and GREEN after, with a new dedicated regression test;
+`tests/test_doctor.py` (107 passed) and `tests/test_doctor_cli.py` (8
+passed) confirmed via direct grep to be the complete blast radius; `ruff
+check` clean; full Core correctly not run for this primarily evidence/
+documentation closure, per the governing brief's own validation guidance.
+Two further gaps were found and precisely disclosed rather than fixed,
+since neither is reproduced against any real or currently-shipping path
+(a Camera Node `Path.home()` fallback masked by installer convention; a
+dead-code API-endpoint naming mismatch with zero frontend consumption).
+Published the canonical, plain-language user-facing support matrix as a
+new "Platform & hardware support" section in `docs/using-mockingbird.md`.
+No schema change. Lane O is now reconciled to **closed** (§6, below) --
+resolved by making support truth explicit, not by claiming any
+unsupported hardware is supported. This closure does **not** authorize
+the next Representative Field Acceptance / Gate A session, External
+Pre-Release Acceptance, or Final Release Hardening, and does **not**
+select a next development milestone -- see the bold statement immediately
+above, unchanged by this closure.
+
 Sustained-Activity Visit Admission Starvation & Stop-Finalization
 Correctness v1 (directly authorized outside this file, as a
 release-critical correctness milestone closing exactly the defect class
@@ -1661,7 +1790,7 @@ words used to describe them:
   necessarily implementation milestones: the codebase `LICENSE` and full
   ffmpeg distribution licensing (Lane P); the still-open BirdNET
   commercial-adjacent legal posture (§2, above); platform-support
-  declarations (Lane O, "RELEASE DECISION REQUIRED"); Ecosystem/Provider
+  declarations (Lane O, resolved -- see Lane O, below); Ecosystem/Provider
   Integrations scope (Lane K, "OPEN DECISION"); any other genuine
   unresolved release decision as it surfaces.
 - **C. After release** -- real product development explicitly not
@@ -2070,14 +2199,70 @@ must never become required for core operation.
 
 ### O. Platform / Runtime Portability
 
-**Status:** PARTIAL -- RELEASE DECISION REQUIRED.
+**Status:** CLOSED -- Platform / Runtime Portability & Support Truth
+Closure v1 (2026-08-30) closed this lane at classification **A**; see
+[platform-runtime-portability-support-truth-closure-v1-report.md](platform-runtime-portability-support-truth-closure-v1-report.md).
 
-Track honestly: native Windows; Linux; macOS; CPU; NVIDIA CUDA; Apple
-Silicon; AMD. Use capability states: directly validated; structurally
-supported; hardware-unverified; unsupported; deferred. Native Windows
-remains the first end-user Host acceptance target. Do not claim
-Apple/AMD support merely because an underlying ML framework theoretically
-supports it.
+The canonical vocabulary is now: **Validated** (real release acceptance
+on the real platform/runtime); **Structurally supported** (the stack
+intentionally supports it, no unguarded defect known, hardware acceptance
+incomplete); **Degraded / fallback** (an explicit, honestly-reported
+limitation, never silent); **Unverified** (no current claim, genuinely
+untested); **Unsupported** (known not to work, or excluded, and says so);
+**Deferred** (potential future support, not part of this release). This
+reuses this lane's own five terms verbatim plus folds in "Degraded /
+fallback," which already existed as a real status value in the product's
+own health model before this closure.
+
+**Host:** native Windows -- **Validated** (the only Host with a packaged,
+no-Python-required end-user distributable; real CUDA/BioCLIP/migration
+evidence at the production code path, entirely reused from already-
+accepted milestones). Linux -- **Structurally supported** at the source/
+dev level only (continuously CI-validated on real `ubuntu-latest` for the
+full Core suite, frontend build, and the Windows-packaging pipeline's own
+structural smoke test; a genuine first-class Linux-only feature, the V4L2
+local-USB-camera bridge, already exists) -- explicitly **not** "validated
+release Host": no packaged end-user Linux distribution exists, and no
+dedicated native-Linux hardware acceptance has ever been performed. macOS
+-- **Unverified** overall; microphone capture specifically **Unsupported**
+and already honestly disclosed (fixed in a prior accepted milestone).
+
+**Runtime:** CPU -- the accepted detector (`onnx-cuda`, backing the
+production `frame-driven-onnx-cuda` path) is **Unsupported** on CPU by
+deliberate, regression-tested design (`session.disable_cpu_ep_fallback`,
+CUDA-only provider list, `onnx_cuda_unavailable`/`onnx_cuda_no_fallback`
+raised rather than silently degrading) -- there is no fallback, and this
+is a tested guardrail, not a gap. Species (BioCLIP-2) and acoustic
+(BirdNET) assistance are **Validated**, CPU-only by the identical
+deliberate design, and never block Visit creation when unavailable.
+NVIDIA CUDA -- **Validated** on native Windows (the strongest currently-
+evidenced accelerated path); **structurally supported, hardware-
+unverified** on native Linux specifically (identical code, zero OS
+branch in the CUDA path itself, never separately proven on real Linux
+hardware). Apple Silicon -- **Deferred** (zero active MPS selection code
+in the accepted production path; no hardware available; extends
+`docs/species-classification-reevaluation-promotion-v2-report.md`'s own
+precedent rather than re-deriving it). AMD -- **Unsupported** (zero
+ROCm/DirectML code anywhere in the stack).
+
+**Camera Node:** Raspberry Pi 4 / Raspberry Pi OS remains the real,
+repeatedly-validated reference hardware. The Camera Node's own software is
+genuinely hardware-agnostic by protocol, verified against real code, not
+merely asserted: a `CameraNodeProvider` abstraction backs both the
+Pi-specific `PiCamera2Provider` and a real, independent
+`V4L2CameraProvider` (generic Linux/USB via OpenCV), each degrading
+gracefully (`setup_required`, never a crash) if its own runtime is
+absent. No non-Pi hardware has ever been release-tested, and the matrix
+does not claim otherwise.
+
+Two narrow, reproduced capability-overclaim defects were found and fixed
+in `python -m mockingbird doctor` (see §1/§3, above, for the full
+account); two further gaps were found and precisely disclosed, not fixed,
+since neither is reproduced against any real or currently-shipping path.
+No new platform support was added; do not schedule a macOS port, an
+Apple Silicon model-conversion campaign, or ROCm/DirectML implementation
+as a consequence of this closure -- none is a release blocker, and none
+was authorized.
 
 ### P. Release Engineering Foundation / Distribution
 
