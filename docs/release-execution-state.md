@@ -24,7 +24,19 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `b35b2d4` -- the deploy-tooling-fix commit for
+- **Accepted HEAD:** `42d6075` -- the report commit for Pending-Proposal
+  Evidence Preservation & Arbitration Fallback Correctness v1 (see its own
+  "Latest accepted milestone" entry, below, and
+  [pending-proposal-evidence-preservation-arbitration-fallback-correctness-v1-report.md](pending-proposal-evidence-preservation-arbitration-fallback-correctness-v1-report.md)
+  for the complete record), sitting directly on top of `1b8dd47` (this
+  milestone's own implementation commit -- production code
+  `candidate_visit_authority.py`/`candidate_visit_adapter.py`/
+  `engine_runtime.py`, their test files, and `docs/candidate-visit-
+  authority-contract.md`), which sits on top of `b37656d` (the
+  reconciliation commit accepting Representative Daylight Gate A Field
+  Acceptance v6 at Classification B).
+- **Prior accepted HEAD (pre-Pending-Proposal Evidence Preservation &
+  Arbitration Fallback Correctness v1):** `b35b2d4` -- the deploy-tooling-fix commit for
   Representative Daylight Gate A Field Acceptance v6 (see its own "Latest
   accepted milestone" entry, below, and
   [representative-daylight-gate-a-field-acceptance-v6-report.md](representative-daylight-gate-a-field-acceptance-v6-report.md)
@@ -142,7 +154,85 @@ protecting.
   schema unchanged. Representative Daylight Gate A Field Acceptance v6 also
   left schema unchanged -- its own deploy-tooling fix touches only
   `scripts/deploy_windows_dev.py`/its test file, no model/migration.
-- **Latest accepted milestone:** Representative Daylight Gate A Field
+  Pending-Proposal Evidence Preservation & Arbitration Fallback
+  Correctness v1 also leaves schema unchanged -- a new arbitration field
+  (`AmbiguousBoundaryArbitration.fallback_order_by_winner_id`), two new
+  adapter functions, and bounded in-memory engine-runtime state
+  (`_MAX_PROTECTED_EVIDENCE_IDS`, four new session-lifetime counters
+  surfaced through the existing `advanced` diagnostics dict); no new
+  table/column/migration.
+- **Latest accepted milestone:** Pending-Proposal Evidence Preservation &
+  Arbitration Fallback Correctness v1 -- see
+  [pending-proposal-evidence-preservation-arbitration-fallback-correctness-v1-report.md](pending-proposal-evidence-preservation-arbitration-fallback-correctness-v1-report.md)
+  for the complete record. Classification **A**. Fixes the exact defect
+  Representative Daylight Gate A Field Acceptance v6 measured (see its own
+  entry, below): a real arbitration winner permanently failing at the
+  downstream evidence-availability gate (the bounded, insertion-order-only
+  128-entry evidence-byte cache) with no fallback to a runner-up, losing
+  48/263 distinct proposals (18.3%) in that real session. Root cause:
+  `evaluate_candidate_authority` has no evidence-availability gate at all;
+  `blocked_missing_evidence` is not retryable; `_run_assembly_tick`
+  attempted every ambiguous-component member exactly once with no code
+  path reconsidering a component once its chosen winner failed downstream.
+  Two mechanisms, both implemented and independently tested, per this
+  milestone's own governing brief's explicit requirement for both:
+  **preservation** (`engine_runtime._compute_protected_evidence_ids`, a
+  bounded (`_MAX_PROTECTED_EVIDENCE_IDS=64`), per-tick-recomputed set of
+  still-actionable proposals' priority evidence, consulted by the shared
+  cache's own real eviction policy so it prefers evicting something
+  unprotected first) and **fallback**
+  (`candidate_visit_authority.AmbiguousBoundaryArbitration.fallback_
+  order_by_winner_id` plus `_EngineSession._attempt_resolved_component`,
+  which walks a resolved component's winner then its own remaining stable
+  members, in the identical rank order arbitration already computed,
+  stopping at the first admissible member or once the component's members
+  are exhausted -- never rerunning arbitration, never crossing components).
+  The unchanged 128-entry cache bound itself was deliberately *not* raised
+  again, per the milestone's own explicit instruction. Two real design
+  corrections were found and fixed during this milestone's own
+  implementation and adversarial self-review (both fully documented in the
+  report and in `docs/candidate-visit-authority-contract.md`): the
+  priority-evidence preview must use currently-cached bytes, not `media=
+  None` (real, live-captured evidence never declares `decodable=True`
+  upfront, so a bytes-free preview would hard-reject every real candidate
+  and protect nothing); and every resolved component must be walked as one
+  atomic unit before any ordinary proposal is attempted at all, since
+  `new_proposals`' own emission order has no guaranteed relationship to
+  arbitration rank (a losing sibling reached first was being double-
+  attempted once its own winner's chain later reached it, corrupting
+  `proposals_observed`/the ledger -- found before it reached a committed
+  test, fixed, and locked in by a dedicated permanent regression test).
+  19 new/updated tests, all confirmed RED on accepted `b37656d` (via
+  `git stash` isolating the three production files) and GREEN after the
+  fix, including a 105-simulated-minute v6-shaped replay against the real
+  bounded cache (two simultaneous subjects, real eviction, real
+  protection) whose own pre-fix failure was independently confirmed
+  genuinely RED via direct reproduction of the real mechanism (zero
+  admissions, real `blocked_missing_evidence`/`blocked_ambiguous_boundary`
+  mix), and dedicated exactly-once, fragmentation, multi-subject-isolation,
+  and stop-finalization proofs. Tier 1 187/187, Tier 2 279/279, Tier 3 (one
+  full Core run, `pytest -m "not slow"`, 5372 tests) 5357 passed, 3
+  skipped, 11 xfailed, 1 failed -- the one failure
+  (`test_temporal_capture_cli.py::test_run_capture_end_to_end_reconnect_
+  produces_a_native_session_timeline`) independently confirmed unrelated
+  (zero code-dependency relationship to any file this milestone touched;
+  passes on the exact pre-fix baseline; passes 5/5 consecutive runs in
+  isolation with the fix in place; only failed once, inside this
+  investigation's own necessary four-way concurrent chunked Core
+  execution -- an artifact of working around this environment's own
+  10-minute background-task cap on a single `pytest -m "not slow"`
+  invocation, not a product defect). No schema change. This closure does
+  **not** authorize the next Representative Field Acceptance / Gate A
+  session, External Pre-Release Acceptance, or Final Release Hardening,
+  and does **not** select a next development milestone -- authorization
+  returns to the bold statement in §3, below, unchanged by this closure.
+  This is nighttime/implementation correctness work only, per this
+  milestone's own explicit non-goal: no field session was run. See §6.R,
+  below, for the updated "Remaining Gate A dependency" this closure leaves,
+  and this milestone's own report, "Next field proof required," for
+  exactly what the next daylight cohort must prove.
+
+- **Prior accepted milestone:** Representative Daylight Gate A Field
   Acceptance v6 -- Post-Fix Replication & Multi-Subject Tranche -- see
   [representative-daylight-gate-a-field-acceptance-v6-report.md](representative-daylight-gate-a-field-acceptance-v6-report.md)
   for the complete record. Classification **B**. A real, live
@@ -1836,6 +1926,50 @@ candidate. Gate A/Lane R remains open, and this update reopens rather than
 narrows the "Remaining Gate A dependency" picture -- see §6.R, below, for
 the complete account, now led by the evidence-cache-exhaustion/no-fallback
 mechanism this session concretely measured.
+
+**2026-08-31 update (Pending-Proposal Evidence Preservation & Arbitration
+Fallback Correctness v1, see §1/§6.R):** the evidence-cache-exhaustion/
+no-fallback mechanism v6 concretely measured immediately above is now
+fixed, at classification **A** -- see
+[pending-proposal-evidence-preservation-arbitration-fallback-correctness-v1-report.md](pending-proposal-evidence-preservation-arbitration-fallback-correctness-v1-report.md)
+for the complete record. Bounded, pending-proposal-aware preservation
+(protects a bounded, per-tick-recomputed set of still-actionable
+proposals' priority evidence from the shared cache's own eviction) and
+deterministic same-component fallback (walks a resolved component's
+winner then its own remaining stable members, in arbitration's own
+existing rank order, if the winner cannot actually be admitted) were both
+implemented and independently tested, per this milestone's own governing
+brief's explicit requirement for both mechanisms. The unchanged 128-entry
+cache bound was deliberately *not* raised a fourth time. Two real design
+corrections were found and fixed during implementation and this
+milestone's own adversarial self-review -- see the report's own
+"Preservation contract"/"Fallback contract" sections for the complete
+account, including one (an iteration-order-dependent double-attempt bug)
+found only by self-review, after tests were already passing, and locked
+in by a dedicated permanent regression test before this milestone
+concluded. Deterministically reproduced against real production logic
+(both required RED reproducers, plus a 105-simulated-minute v6-shaped
+replay against the real bounded cache, all confirmed genuinely RED on
+accepted `b37656d` and GREEN after the fix). Tier 1 187/187, Tier 2
+279/279, Tier 3 (one full Core run) 5357/5372 passed (3 skipped, 11
+xfailed), 1 failed and independently confirmed unrelated (a pre-existing
+timing-sensitive flake in `test_temporal_capture_cli.py`, made visible
+only by this investigation's own necessary four-way concurrent chunked
+Core execution -- zero code-dependency relationship to any file this
+milestone touched, passes on baseline, passes 5/5 in isolation with the
+fix in place). No schema change. This is nighttime/implementation
+correctness work only, per this milestone's own explicit non-goal -- no
+field session was run, and this closure does **not** authorize the next
+Representative Field Acceptance / Gate A session, External Pre-Release
+Acceptance, or Final Release Hardening, and does **not** select a next
+development milestone. Authorization remains **NONE -- GLOBAL
+PRODUCT-ROADMAP RECONCILIATION REQUIRED**, unchanged. Gate A/Lane R
+remains open -- see §6.R, below, for the updated "Remaining Gate A
+dependency" account and this milestone's own report, "Next field proof
+required," for exactly what the next daylight cohort must prove (chiefly:
+non-zero in-session admissions under sustained activity that this fix's
+own deterministic proof cannot itself provide -- field confirmation
+remains outstanding).
 
 Representative Daylight Gate A Field Acceptance v5 (directly authorized
 outside this file, as the next RELEASE-CRITICAL field-validation session
@@ -3729,6 +3863,44 @@ existing ~99% candidate; useful-evidence rate is neither confirmed nor
 refuted (no admitted Visits to measure it over) and its existing ~85%
 candidate is unchanged.
 
+**Pending-Proposal Evidence Preservation & Arbitration Fallback
+Correctness v1 (2026-08-31) closes dependency (1) immediately above, at
+classification A -- see §1/§3, above, and
+[pending-proposal-evidence-preservation-arbitration-fallback-correctness-v1-report.md](pending-proposal-evidence-preservation-arbitration-fallback-correctness-v1-report.md)
+for the complete record.** The evidence-cache-exhaustion/no-runner-up-
+fallback mechanism v6 concretely measured is fixed: bounded, pending-
+proposal-aware preservation and deterministic same-component fallback,
+both implemented and independently tested, deterministically reproduced
+(both required RED reproducers plus a 105-simulated-minute v6-shaped
+replay against the real bounded cache, all RED on `b37656d`/GREEN after
+the fix). This is a deterministic, implementation-level closure only --
+per this milestone's own explicit non-goal, no field session ran, so
+dependency (1)'s own second half ("...then field-re-prove") remains
+genuinely outstanding, now promoted to the single most important
+remaining item below. **Remaining Gate A dependency, in priority order,
+superseding the priority order immediately above:** (1) a daylight
+session that actually achieves non-zero in-session `candidates_created`
+under sustained real activity -- the field proof this fix's own
+deterministic reproduction cannot itself provide, and the core open
+question three consecutive real cohorts (v4, v5's own partial success,
+v6) have now circled around for three different underlying reasons; (2)
+that same session, or a later one, jointly observing real in-session
+admissions *and* genuine concurrent multi-subject siblings, still never
+jointly observed across any real cohort to date; (3) background/
+empty-evidence eligibility remains field-unproven a second time (not
+urgent -- unchanged from the prior reconciliation's own reasoning); (4)
+the four still-immature numeric budgets (recall, false-Visit rate,
+fragmentation/duplicate rate, capture-to-visible latency) remain resting
+on v5's own single post-fix data point, unchanged by this closure (a pure
+implementation-correctness milestone with no field session provides no
+new data point for any of the four). No numeric budget is withdrawn or
+newly proposed by this reconciliation. Gate A/Lane R remains open. This
+closure does **not** authorize the next Representative Field Acceptance /
+Gate A session, External Pre-Release Acceptance, or Final Release
+Hardening, and does **not** select a next development milestone --
+authorization remains **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION
+REQUIRED**, unchanged, per §3, above.
+
 ### S. Actual Final Release Hardening
 
 **Status:** LAST.
@@ -3906,7 +4078,38 @@ each session that touches this repository.
 
 ## 14. Validation baselines
 
-**Latest accepted Core checkpoint (Historical Species-Status ("New" vs.
+**Latest accepted Core checkpoint (Pending-Proposal Evidence Preservation
+& Arbitration Fallback Correctness v1):** 5357 passed / 1 failed / 3
+skipped / 11 xfailed / 23 deselected (slow-marked) -- 5372 collected via
+`scripts/verify_core.py`'s own `pytest -m "not slow"` convention, **not**
+a bare run (unlike the immediately-prior checkpoint below, noted
+honestly: this run is not a strict superset of that one -- it deliberately
+excludes the 23 `slow`-marked tests `verify_core.py` itself always
+excludes). Run as four sequential-file, concurrently-executed chunks
+covering the complete alphabetical test-file list with no overlap or gap
+(this environment's own background-task tooling caps a single foreground
+run below this suite's real ~19-minute runtime; the four chunks' own
+collected-test counts sum to exactly 5372, confirming complete,
+non-duplicated coverage). The one failure
+(`test_temporal_capture_cli.py::test_run_capture_end_to_end_reconnect_
+produces_a_native_session_timeline`) is independently confirmed unrelated,
+not merely assumed: zero code-dependency relationship to any file this
+milestone touched; passes cleanly on the exact pre-fix baseline (`git
+stash`-isolated); passes 5/5 consecutive runs in isolation with the fix in
+place; only failed once, inside the one chunk running 80 other test files
+concurrently alongside three sibling chunks (12 real CPU cores, all four
+chunks together saturating them) -- a genuine, pre-existing, real-wall-
+clock-timing-sensitive test (its own docstring already names "Bounded
+latest-frame coalescing under host backpressure," a `--duration 5`
+real-time capture window) made visible only by this investigation's own
+necessary concurrent chunked execution, not a product defect. See this
+milestone's own "Latest accepted milestone" entry in §1, above, and its
+full report's own "Validation" section for the complete account. Zero new
+`ruff` findings on any touched file (2 pre-existing, unrelated findings in
+`tests/test_engine_runtime.py` independently confirmed present on baseline
+`b37656d` via clean-checkout bisection, left untouched). No schema change.
+
+**Prior accepted Core checkpoint (Historical Species-Status ("New" vs.
 "Seen Before") Correctness v1):** 5277 passed / **0 failed** / 3 skipped /
 11 xfailed (37m09s -- run bare, `python3 -m pytest -q`, with no `slow`
 -marker deselection, so a strict superset of every prior checkpoint cited
