@@ -24,7 +24,17 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `42d6075` -- the report commit for Pending-Proposal
+- **Accepted HEAD:** `5351e08` -- the report commit for Representative
+  Daylight Gate A Field Acceptance v7 (see §3/§6.R, below, and
+  [representative-daylight-gate-a-field-acceptance-v7-report.md](representative-daylight-gate-a-field-acceptance-v7-report.md)
+  for the complete record), sitting directly on top of `d192a0b` (this
+  milestone's own deploy-tooling-fix commit -- `scripts/deploy_windows_dev.py`/
+  its own test file only, zero product/perception/admission/Visit/evidence/
+  classification code, the same bounded shape as v6's own deploy-tooling
+  fix), which sits on top of `5b1c540` (the reconciliation commit accepting
+  Pending-Proposal Evidence Preservation & Arbitration Fallback Correctness
+  v1).
+- **Prior accepted HEAD (pre-v7):** `42d6075` -- the report commit for Pending-Proposal
   Evidence Preservation & Arbitration Fallback Correctness v1 (see its own
   "Latest accepted milestone" entry, below, and
   [pending-proposal-evidence-preservation-arbitration-fallback-correctness-v1-report.md](pending-proposal-evidence-preservation-arbitration-fallback-correctness-v1-report.md)
@@ -118,7 +128,16 @@ protecting.
   those closures (`7f98e43`, `8572308`, `4581424`, `4aeb658`, `e01e691`,
   `c03d0b1`, `80e1bb3`) are likewise not cited as separate code-bearing
   HEADs for the identical reason.
-- **Schema:** `v58` -- unchanged by Background / Empty Evidence Species-
+- **Schema:** `v58` -- unchanged by Representative Daylight Gate A Field
+  Acceptance v7 (a live field-acceptance session plus one bounded deploy-
+  tooling fix; zero product/perception/admission/Visit/evidence/
+  classification code touched, zero schema-bearing code touched). Also
+  unchanged by Pending-Proposal Evidence Preservation & Arbitration Fallback
+  Correctness v1 (bounded, pending-proposal-aware preservation and
+  deterministic same-component fallback added entirely within existing
+  in-memory session state; no new/changed table). Also unchanged by
+  Representative Daylight Gate A Field Acceptance v6. Also unchanged by
+  Background / Empty Evidence Species-
   Confidence Correctness v1 (reads the already-existing, already-migrated
   `MediaAssetModel.geometry_attribution_json` column, schema 33; adds one
   new optional function parameter and one new pure-decision-function
@@ -1970,6 +1989,59 @@ required," for exactly what the next daylight cohort must prove (chiefly:
 non-zero in-session admissions under sustained activity that this fix's
 own deterministic proof cannot itself provide -- field confirmation
 remains outstanding).
+
+**2026-08-31 update (Representative Daylight Gate A Field Acceptance v7 --
+Evidence-Preservation / Arbitration-Fallback Re-Proof, see §1/§6.R):** the
+field confirmation the pending-proposal fix's own report named as
+outstanding immediately above is now provided, at classification **A** --
+see
+[representative-daylight-gate-a-field-acceptance-v7-report.md](representative-daylight-gate-a-field-acceptance-v7-report.md)
+for the complete record. A real, live 89.4-minute Observation session
+against the real reference Camera Node (the identical physical camera
+v4/v5/v6 used) directly confirms the fix under genuine field conditions:
+`candidates_created` reached 25 in-session (first admission ~6.6 minutes in,
+growth throughout, not concentrated at stop) -- reversing v6's own zero and
+exceeding v5's own 19. Six real, natural fallback attempts occurred (five
+admitted, one honestly exhausted), three fully reconstructed end to end
+(component members, canonical ranking, why the winner failed, fallback
+position, admitted evidence, species outcome); zero instances of the
+unacceptable "component silently discarded while a viable member exists"
+outcome were found anywhere directly traced. `blocked_missing_evidence`
+materially reduced (18.3% -> 9.4%, roughly halved). Genuine concurrent
+multi-subject admission was directly visually confirmed for the first time
+across any Gate A cohort (two independent sibling-Event pairs, one requiring
+the fallback mechanism simultaneously) -- the other dimension the prior
+reconciliation's own "Remaining Gate A dependency" named as still open. One
+bounded, tested, own-commit deploy-tooling defect was found and fixed along
+the way (a WSL/Windows path-conversion bug that left the independent
+acceptance recorder silently unarmed for a discarded ~2m26s preliminary
+session, before the formal session this report measures) -- zero product/
+perception/admission/Visit/evidence/classification code touched. All 25
+admitted Visits individually reviewed against real recorder frames: 96.0%
+useful-evidence rate, one confirmed real false Visit (empty background,
+correctly given no species label), zero genuine duplicate Visits (zero
+shared tracker evidence across all 25 admissions -- the strongest test
+applied to date). Honestly disclosed, not blocking: a concrete field
+instance of the already-named, not-yet-benchmarked crowded-feeder/NMS gap (a
+third simultaneous bird the detector never separately perceived); ~13
+`blocked_missing_evidence` records outside this session's own two
+exhaustive-denominator windows remain individually untraced; fragmentation-
+rate and true user-visible latency remain evidence-accumulated only. Two
+further budget dimensions move to **READY FOR FORMAL BUDGET REVIEW**
+(maximum false-Visit rate, candidate ~5-10%; maximum duplicate-Visit rate,
+candidate ~0%/low single digits), alongside the two already-proposed
+dimensions this session's own measurements strengthen (monitoring coverage,
+useful-evidence rate) -- see "Numeric release budgets" in
+[roadmap.md](roadmap.md) for the still-current reconciled accounting, not
+itself updated by this milestone per its own governing brief's explicit
+scope (release-execution-state.md only). This closure does **not** authorize
+External Pre-Release Acceptance or Final Release Hardening, and does **not**
+select a next development milestone -- authorization remains **NONE --
+GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, unchanged. Per the
+milestone's own explicit instruction, Gate A is **not** self-closed by this
+report -- closure requires external (ChatGPT) review of the accumulated
+evidence; see §6.R, below, for the complete, updated "Remaining Gate A
+dependency" account.
 
 Representative Daylight Gate A Field Acceptance v5 (directly authorized
 outside this file, as the next RELEASE-CRITICAL field-validation session
@@ -3900,6 +3972,106 @@ Gate A session, External Pre-Release Acceptance, or Final Release
 Hardening, and does **not** select a next development milestone --
 authorization remains **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION
 REQUIRED**, unchanged, per §3, above.
+
+**Representative Daylight Gate A Field Acceptance v7 -- Evidence-Preservation
+/ Arbitration-Fallback Re-Proof (2026-08-31) ran the field session the
+pending-proposal fix's own report named as outstanding, at classification
+**A** -- see §1/§3, above, and
+[representative-daylight-gate-a-field-acceptance-v7-report.md](representative-daylight-gate-a-field-acceptance-v7-report.md)
+for the complete record.** Deployed a genuinely fresh, disposable instance
+(not the operator's own identity), re-pairing the reference Camera Node via
+the identical documented recovery flow v4/v5/v6 each used, with the user's
+explicit approval. A real ~89.4-minute Observation session followed against
+the same real Stream/scene, with the independent acceptance recorder running
+throughout (99.989% temporal-span coverage, 3,848 frames) after a real
+deploy-tooling defect (found and fixed in its own commit, zero product code
+touched) that had left it silently unarmed for a discarded ~2m26s preliminary
+session. `candidates_created` reached its first real admission ~6.6 minutes
+into the session and climbed steadily throughout to **25** by session end
+(24 in-session, 1 rescued by stop-finalization) -- directly reversing v6's
+own zero and exceeding v5's own 19. Six real, natural fallback attempts
+occurred (five admitted, one honestly exhausted), three fully reconstructed
+end to end against the real counterfactual ledger (merged losslessly across
+11 periodic snapshots to survive the ledger's own 60-minute eviction window
+over an 89-minute session): in each of the two successes, the highest-
+confidence component member failed at the evidence-availability gate exactly
+as v6 diagnosed, and the runtime's own next-ranked member was admitted
+within tens of milliseconds, in the same tick; in the one exhaustion, both
+members of a two-member component carried extremely weak evidence
+(confirmed, on direct visual review, to be genuine noise, not a real
+missed animal), and the mechanism correctly gave up rather than fabricate an
+admission. **Zero instances of the unacceptable "component silently
+discarded while a viable member exists" outcome were found anywhere directly
+traced.** `blocked_missing_evidence` fell from v6's own 18.3% to **9.4%** (18
+of 192 distinct proposals), roughly halved. Genuine concurrent multi-subject
+admission was directly visually confirmed for the first time across any Gate
+A cohort -- two independent sibling-Event pairs, each with disjoint
+underlying tracker evidence, one pair's own admission additionally requiring
+the fallback mechanism at the same time (the first observed interaction
+between the two previously-separately-proved mechanisms) -- closing the
+other half of the "Remaining Gate A dependency" the prior reconciliation
+named. A real, first-ever exercise of the pre-existing
+`max_candidates_per_hour: 20` rolling budget occurred (no prior cohort ever
+produced enough real admissions to reach it) and was confirmed to
+self-clear correctly, not stick. All 25 admitted Visits were individually
+reviewed against real, native-resolution recorder frames (not a sample):
+96.0% useful-evidence rate (24/25), and one real, confirmed false Visit
+(empty background, correctly receiving no automatic species label under the
+already-accepted geometry-corroboration fix -- the false *admission* itself,
+not a false *label*, is the still-open, unaffected-by-this-milestone Gate B/
+admission-precision residual `roadmap.md` already names). Zero genuine
+duplicate Visits across all 25 admissions, verified by the strongest test
+applied to any cohort to date (zero tracker evidence shared between any two
+admitted Visits). Two exhaustive-denominator windows (6.5 minutes and 70
+seconds, deliberately this session's own hardest moments -- both fallback
+events, the exhaustion, and the multi-subject admission, not a favorable
+sample) found 3 of 3 real encounters represented by a useful admitted Visit.
+Zero persistence contention, zero `blocked_shadow_mode`, zero ERROR/
+CRITICAL/WARNING lines across the full session log. Honestly disclosed, not
+treated as a regression: a concrete field instance of the already-named,
+not-yet-benchmarked crowded-feeder/NMS gap (a third real, simultaneous bird,
+directly visually confirmed, that the detector itself never separately
+perceived -- most plausibly NMS suppression at close range, per `roadmap.md`
+Gate A's own already-recorded open dimension). This closure does **not**
+authorize the next Representative Field Acceptance / Gate A session,
+External Pre-Release Acceptance, or Final Release Hardening, and does
+**not** select a next development milestone. **Two further numeric budget
+dimensions move to READY FOR FORMAL BUDGET REVIEW** (maximum false-Visit
+rate, candidate ~5-10%, from two convergent post-fix measurements: v5's 5.3%
+and this session's own 4.0%; maximum duplicate-Visit rate, candidate ~0%/low
+single digits, from two convergent zero measurements), alongside the two
+already-proposed dimensions this session's own measurements strengthen
+(monitoring coverage ~99%, now a 5th convergent cohort at 99.989%;
+useful-evidence rate ~85%, now a 3rd convergent post-fix cohort at 96.0%) --
+`roadmap.md` "Numeric release budgets" itself is not updated by this
+reconciliation, per this milestone's own explicit scope. Minimum end-to-end
+Visit recall and maximum fragmentation rate remain evidence-accumulated
+only -- this session's own 3/3 exhaustive-window recall and its own
+zero-shared-evidence duplicate/fragmentation test are real, positive,
+convergent-direction data points, but methodologically distinct from v5's
+own full-session-review recall figure and its own `cluster_encounters`-based
+fragmentation figure respectively, so neither is yet a second directly
+comparable number. Maximum capture-to-visible-Visit latency remains
+unmeasured by any cohort to date. **Remaining Gate A dependency, in priority
+order, superseding the priority order immediately above:** (1) a
+directly-comparable second fragmentation-rate measurement (an offline pass
+over this session's own already-preserved merged ledger, not a new field
+session, could close this); (2) a second live cohort producing a genuinely
+crowded, 3+-simultaneous-subject moment, to stress-test whether the
+disclosed crowded-feeder/NMS gap recurs, worsens, or is scene-specific; (3)
+true user-visible (capture-to-browser) latency instrumentation (a frontend-
+side addition, not a field-session-only fix); (4) the ~13
+`blocked_missing_evidence` records outside this session's own two
+exhaustive windows remain individually untraced to their own component/
+rescue context (also closeable via an offline pass over the already-
+preserved merged ledger); (5) the already-known, unaffected-by-this-
+milestone Gate B/admission-precision residual (a background/empty crop can
+still become a real, if unlabeled, false Visit) remains open exactly as
+`roadmap.md` already frames it. **Per this milestone's own explicit
+instruction, Gate A is not self-closed by this session -- closure requires
+external (ChatGPT) review of the accumulated evidence across all real
+cohorts to date.** Authorization remains **NONE -- GLOBAL PRODUCT-ROADMAP
+RECONCILIATION REQUIRED**, unchanged.
 
 ### S. Actual Final Release Hardening
 
