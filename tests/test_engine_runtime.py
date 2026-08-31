@@ -54,6 +54,7 @@ from mockingbird.source_providers.camera_node import (
     CameraNodeClientError,
 )
 from mockingbird.storage.models import MonitoringExposureIntervalModel
+from mockingbird.time_utils import normalize_utc
 
 STREAM_ID = "stream-backyard-feeder"
 NOW = datetime(2026, 8, 8, 12, 0, 0, tzinfo=UTC)
@@ -2293,6 +2294,83 @@ def test_fallback_never_mixes_evidence_across_two_independent_simultaneous_compo
                 media = db_session.get(MediaAssetModel, media_id)
                 assert media is not None
                 assert media.trigger_id == row.proposal_id
+
+
+def test_fallback_admission_persists_the_admitted_members_own_capture_time_not_the_failed_winners(
+    repository: ProductRepository,
+) -> None:
+    """Gate A Measurement Closure v1 §21 regression: when fallback admits a
+    lower-ranked component member, every persisted evidence timestamp must
+    trace to *that* member's own evidence, never the failed winner's --
+    the exact property Gate A Measurement Closure v1's own new latency
+    instrumentation (`capture_to_visible_latency.py`) depends on being
+    true. Not a new behavior: `_attempt_resolved_component` already looks
+    up each chain member's own `AssembledVisitProposal`/evidence fresh by
+    id (`engine_runtime.py`) -- this pins that existing, correct behavior
+    down at the actual persistence boundary so a future change cannot
+    silently regress it."""
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    gen_strong, gen_weak = "gen-strong-no-evidence", "gen-weak-with-evidence"
+    strong_updates = list(_tick_track_updates_with_confidence(gen_strong, 0, 5_000, confidence=0.9))
+    weak_updates = list(_tick_track_updates_with_confidence(gen_weak, 25_000, 30_000, confidence=0.1))
+    all_updates = strong_updates + weak_updates
+
+    # Two evidence candidates whose own `captured_at` values are far apart
+    # and unmistakable -- if the fallback admission ever persisted the
+    # winner's own evidence/timestamp by mistake, this test would catch it
+    # directly, not merely infer it from generation ids as the sibling
+    # test above does.
+    winner_captured_at = NOW
+    fallback_captured_at = NOW + timedelta(minutes=5)
+    evidence_strong, _unused_bytes = _tick_evidence(gen_strong, "high_resolution_burst", "hash-strong-empty")
+    evidence_strong = replace(evidence_strong, captured_at=winner_captured_at)
+    evidence_weak, bytes_weak = _tick_evidence(gen_weak, "high_resolution_burst", "hash-weak-real")
+    evidence_weak = replace(evidence_weak, captured_at=fallback_captured_at)
+    burst_bytes_cache = {evidence_weak.media_asset_id: bytes_weak}  # no bytes for the winner -- it must fail
+    all_evidence = [evidence_strong, evidence_weak]
+    attempted_proposal_ids: set[str] = set()
+
+    session._run_assembly_tick(
+        all_track_updates=all_updates, all_evidence_candidates=all_evidence,
+        attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        known_horizon_ms=30_000 + 45_000 + 1,
+    )
+    assert session._fallback_admitted_count == 1
+
+    import json as _json
+
+    from mockingbird.repository.product_repository import MediaAssetModel, ObservationCandidateVisitModel
+
+    with repository.session_factory() as db_session:
+        created_rows = [
+            row for row in (
+                db_session.get(ObservationCandidateVisitModel, proposal_id)
+                for proposal_id in attempted_proposal_ids
+            )
+            if row is not None
+        ]
+    assert len(created_rows) == 1
+    with repository.session_factory() as db_session:
+        persisted_ids = _json.loads(created_rows[0].persisted_media_asset_ids_json)
+        assert persisted_ids
+        # `normalize_utc`, not a raw `==`: SQLite round-trips a `DateTime
+        # (timezone=True)` column back as a naive `datetime` (a pre-existing,
+        # unrelated storage-layer fact, not something this milestone
+        # changes) -- the *wall-clock value* is still what is being proven
+        # correct here, exactly the "legacy naive persisted values" case
+        # `time_utils.normalize_utc` already exists to handle.
+        captured_at_values = [
+            normalize_utc(db_session.get(MediaAssetModel, media_id).captured_at) for media_id in persisted_ids
+        ]
+    # Every persisted evidence item's own capture time is the *admitted*
+    # (fallback) member's, never the failed winner's, and never a mix of
+    # both.
+    assert captured_at_values
+    assert all(value == fallback_captured_at for value in captured_at_values)
+    assert winner_captured_at not in captured_at_values
 
 
 def test_fallback_works_during_stop_finalization(repository: ProductRepository) -> None:

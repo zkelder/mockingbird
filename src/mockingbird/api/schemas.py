@@ -1616,6 +1616,13 @@ class CounterfactualTrackGenerationResponse(BaseModel):
     terminal_reason: str | None = None
     terminal_geometry_source: Literal["detector", "tracker", "carried_forward"] | None = None
     confidence_evidence: CounterfactualConfidenceSummaryResponse
+    # Gate A Measurement Closure v1: wall-clock twins of start_offset_ms/
+    # end_offset_ms, Node-domain (see docs/camera-node-live-shadow-
+    # contract.md "Clock-drift disposition") -- diagnostic only, never
+    # itself observational authority. `None` only when the underlying
+    # `TrackGenerationRecord` predates this field.
+    start_captured_at: datetime | None = None
+    end_captured_at: datetime | None = None
 
 
 class CounterfactualProposalOutcomeResponse(BaseModel):

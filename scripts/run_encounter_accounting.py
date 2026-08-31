@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict
+from datetime import datetime
 import json
 from pathlib import Path
 import sys
@@ -99,6 +100,14 @@ def _confidence_evidence_from_dict(data: dict | None) -> ConfidenceEvidenceSumma
     )
 
 
+def _optional_datetime(value: str | None) -> datetime | None:
+    """`None` for a missing/absent key (a saved ledger snapshot from before
+    Gate A Measurement Closure v1 added this field) -- never fabricated;
+    never raises on a well-formed ISO-8601 string, matching every other
+    tolerant-parse helper in this script."""
+    return datetime.fromisoformat(value) if value else None
+
+
 def _track_generation_from_dict(data: dict) -> TrackGenerationRecord:
     return TrackGenerationRecord(
         generation_id=data["generation_id"],
@@ -115,6 +124,8 @@ def _track_generation_from_dict(data: dict) -> TrackGenerationRecord:
         terminal_support_state=None,
         terminal_bounding_box_source_offset_ms=None,
         confidence_evidence=_confidence_evidence_from_dict(data.get("confidence_evidence")),
+        start_captured_at=_optional_datetime(data.get("start_captured_at")),
+        end_captured_at=_optional_datetime(data.get("end_captured_at")),
     )
 
 
@@ -133,7 +144,18 @@ def _proposal_outcome_from_dict(data: dict) -> ProposalOutcomeRecord:
         admitted=data["admitted"],
         visit_id=data.get("visit_id"),
         confidence_evidence=None,
-        decided_at=data.get("decided_at"),
+        # Gate A Measurement Closure v1: pre-existing bug fix, exposed (not
+        # introduced) by this milestone's own new latency accounting --
+        # `cluster_encounters` never itself does datetime arithmetic on
+        # `decided_at` (only `decided_at_offset_ms`, an int), so a bare
+        # ISO-8601 *string* silently round-tripped as "close enough" for
+        # every prior use of this parser. `capture_to_visible_latency.py`
+        # is the first real consumer that subtracts `decided_at` from
+        # another datetime, and a raw string there raises `TypeError`
+        # rather than silently producing a wrong number -- still worth
+        # fixing at the source rather than relying on that to always be
+        # true downstream.
+        decided_at=_optional_datetime(data.get("decided_at")),
         decided_at_offset_ms=data.get("end_offset_ms"),
     )
 

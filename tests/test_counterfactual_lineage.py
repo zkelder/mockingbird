@@ -23,6 +23,7 @@ from mockingbird.observation.counterfactual_lineage import (
     CounterfactualLedger,
     CounterfactualRetentionConfig,
     RawDetectionRecord,
+    TrackGenerationRecord,
     classify_rejection_attribution,
 )
 from mockingbird.observation.visit_episode_assembler import AssembledVisitProposal
@@ -434,3 +435,45 @@ def test_detector_skipped_frame_records_nothing_at_all() -> None:
     ledger.observe_result(_result(1_000, detections=(), detector_ran=False))
     window = ledger.query(start_offset_ms=0, end_offset_ms=2_000)
     assert window.raw_detections == ()
+
+
+# --- Gate A Measurement Closure v1: generation-level wall-clock capture ----
+
+
+def test_track_generation_record_carries_its_own_start_and_end_capture_wall_clock() -> None:
+    """`start_captured_at`/`end_captured_at` are read straight off the
+    generation's own first/terminal `TrackUpdate.captured_at` -- already a
+    required field on every `TrackUpdate`, never a new wall-clock read --
+    so a consumer (`fragmentation_accounting.py`, `capture_to_visible_
+    latency.py`) finally has a genuine capture-time anchor for a generation,
+    not only its source-relative `start_offset_ms`/`end_offset_ms`."""
+    start_ms, end_ms = 1_000, 3_000
+    ledger = _confirmed_generation_ledger(generation_id="gen-timed", start_ms=start_ms, end_ms=end_ms)
+
+    window = ledger.query(start_offset_ms=0, end_offset_ms=4_000, roi=ROI)
+    generation = next(item for item in window.track_generations if item.generation_id == "gen-timed")
+
+    assert generation.start_captured_at == NOW + timedelta(milliseconds=start_ms)
+    assert generation.end_captured_at == NOW + timedelta(milliseconds=end_ms)
+    # Internally consistent with the offset domain (same live session, same
+    # continuous clock) -- exactly the invariant a real Node/Host clock
+    # split could violate; see `capture_to_visible_latency.py`'s own
+    # clock-domain safety tests for the cross-domain case this does *not*
+    # cover.
+    assert generation.end_captured_at > generation.start_captured_at
+    wall_clock_span_ms = (generation.end_captured_at - generation.start_captured_at).total_seconds() * 1000
+    assert wall_clock_span_ms == end_ms - start_ms
+
+
+def test_track_generation_from_saved_snapshot_without_the_new_field_is_none_not_fabricated() -> None:
+    """A ledger snapshot saved before this field existed has no
+    `start_captured_at`/`end_captured_at` key at all -- must decode as
+    `None`, never crash, never silently invent a value."""
+    record = TrackGenerationRecord(
+        generation_id="gen-pre-existing", stream_id=STREAM_ID, broad_class="animal", track_ids=("t1",),
+        start_offset_ms=0, end_offset_ms=1_000, start_bounding_box=BOX, end_bounding_box=BOX,
+        geometry_envelope=BOX, confirmed=True, terminal_reason=None, terminal_support_state=None,
+        terminal_bounding_box_source_offset_ms=None, confidence_evidence=EMPTY_CONFIDENCE_EVIDENCE,
+    )
+    assert record.start_captured_at is None
+    assert record.end_captured_at is None

@@ -496,6 +496,32 @@ def test_candidate_authority_creates_one_candidate_visit(repository: ProductRepo
         assert event.review_status == "needs_review"
 
 
+def test_a_freshly_created_candidate_visit_is_immediately_query_visible_through_the_same_repository_read_path(
+    repository: ProductRepository,
+) -> None:
+    """Gate A Measurement Closure v1 ("Visibility boundary" -- T4/T5):
+    proves persistence-commit and query-visibility are transactionally
+    equivalent in this codebase's current design -- no cache, materialized
+    view, poll cycle, or async index sits between
+    `create_candidate_visit_from_proposal` returning and the very next
+    `list_visits()` call (the same repository read `GET /api/visits`
+    itself calls, see `mockingbird.api.main.list_visits`) seeing the new
+    Visit. This is why `capture_to_visible_latency.py` treats T4
+    (persistence) and T5 (query-visible) as one already-existing value
+    rather than adding a second, separate wall-clock read for T5 -- a
+    future change that introduced a real gap here (a cache, a background
+    indexer, a poll-only read) would need this test updated, which is the
+    point: it is a live, checked assumption, not a one-time claim."""
+    _activate(repository)
+    outcome = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(proposal=_facts(), observed_at=NOW, evidence_items=(_evidence(),)),
+    )
+    assert outcome.outcome == "created"
+
+    visits = repository.list_visits()
+    assert any(visit.id == outcome.visit_id for visit in visits)
+
+
 # --- 4 / 5. Idempotent replay + restart/retry -------------------------------
 
 

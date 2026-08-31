@@ -176,6 +176,21 @@ class TrackGenerationRecord:
     enough"); `confidence_evidence` alone already carries the generation's
     own bounded per-detection sample history (Detection Quality Accounting
     v1), reused verbatim rather than duplicated here.
+
+    Gate A Measurement Closure v1: `start_captured_at`/`end_captured_at` are
+    the *wall-clock* twins of `start_offset_ms`/`end_offset_ms` -- always
+    already available (`TrackUpdate.captured_at` is a required field, never
+    itself a new capture-time read; see `_track_generation_record`), simply
+    never previously copied onto this record. Node-domain (the Camera
+    Node's own clock -- see "Clock-drift disposition" in
+    docs/camera-node-live-shadow-contract.md): safe to compare against
+    another Node-domain timestamp, *not* proven safe to subtract directly
+    from a Host-domain timestamp (`ProposalOutcomeRecord.decided_at`)
+    without disclosing that cross-domain uncertainty -- see
+    `capture_to_visible_latency.py`. `None` only for a caller-constructed
+    record that predates this field (for example a saved pre-existing
+    ledger JSON snapshot replayed through `run_encounter_accounting.py`) --
+    never fabricated.
     """
 
     generation_id: str
@@ -192,6 +207,8 @@ class TrackGenerationRecord:
     terminal_support_state: str | None
     terminal_bounding_box_source_offset_ms: int | None
     confidence_evidence: ConfidenceEvidenceSummary
+    start_captured_at: datetime | None = None
+    end_captured_at: datetime | None = None
 
     @property
     def terminal_geometry_source(self) -> Literal["detector", "tracker", "carried_forward"] | None:
@@ -471,6 +488,12 @@ def _track_generation_record(
         confidence_evidence=confidence_evidence_from_terminal_update(
             terminal, max_confidence=terminal.confidence, broad_class=broad_class,
         ),
+        # Gate A Measurement Closure v1: both already in scope on the two
+        # `TrackUpdate`s this function already reads -- never a new wall
+        # -clock read, never new I/O, never a behavior change for any
+        # existing caller (see `TrackGenerationRecord`'s own docstring).
+        start_captured_at=first.captured_at,
+        end_captured_at=terminal.captured_at,
     )
 
 

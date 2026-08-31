@@ -11863,6 +11863,8 @@ def _counterfactual_window_response(window, attribution) -> CounterfactualWindow
                 terminal_reason=item.terminal_reason,
                 terminal_geometry_source=item.terminal_geometry_source,
                 confidence_evidence=_counterfactual_confidence_response(item.confidence_evidence),
+                start_captured_at=item.start_captured_at,
+                end_captured_at=item.end_captured_at,
             )
             for item in window.track_generations
         ],
