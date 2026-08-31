@@ -101,6 +101,7 @@ build_argument_parser = _MODULE["build_argument_parser"]
 main = _MODULE["main"]
 _retrying_rmdir_powershell = _MODULE["_retrying_rmdir_powershell"]
 _ps_quote = _MODULE["_ps_quote"]
+_run_powershell = _MODULE["_run_powershell"]
 
 DEV_ROOT_DIRNAME = _MODULE["DEV_ROOT_DIRNAME"]
 USERDATA_DIRNAME = _MODULE["USERDATA_DIRNAME"]
@@ -2449,6 +2450,44 @@ def test_retrying_rmdir_powershell_script_shape() -> None:
 
     recursive_script = _retrying_rmdir_powershell(_ps_quote("C:\\a"), recursive=True)
     assert "/s /q" in recursive_script
+
+
+def test_run_powershell_survives_non_utf8_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """RED before this fix: a real deploy hit `UnicodeDecodeError: 'utf-8'
+    codec can't decode byte 0x8b in position 94` from inside `subprocess.
+    run(..., text=True)` while `_run_powershell` was trying to *report* a
+    real, unrelated `New-Item -ItemType Junction` failure -- masking the
+    actual PowerShell error behind a crash in the error-reporting path
+    itself (a real Windows console codepage, e.g. cp1252, is not always
+    valid UTF-8). This proves the decode never raises regardless of byte
+    content, on both the success and the failure path, and that a real
+    failure message still reaches the caller (perhaps with a replacement
+    character in it) rather than being swallowed."""
+
+    monkeypatch.setitem(_run_powershell.__globals__, "_windows_temp_root", lambda: tmp_path)
+    monkeypatch.setitem(_run_powershell.__globals__, "_wslpath", lambda args: r"C:\fake\run.ps1")
+
+    non_utf8 = b"before \x8b after"  # 0x8b alone is never a valid UTF-8 start byte
+
+    class _FakeCompleted:
+        def __init__(self, returncode: int, stdout: bytes, stderr: bytes) -> None:
+            self.returncode = returncode
+            self.stdout = stdout
+            self.stderr = stderr
+
+    # Success path: non-UTF-8 stdout must decode (lossily) rather than raise.
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _FakeCompleted(0, non_utf8, b""))
+    result = _run_powershell("Write-Output 'x'\n")
+    assert "before " in result and " after" in result
+    assert "\ufffd" in result  # the invalid byte was replaced, not silently dropped or fatal
+
+    # Failure path: non-UTF-8 stderr must still surface as a DeploymentError
+    # message (this is the exact real-world case -- PowerShell's own error
+    # record text triggered the crash), never a second, unrelated traceback.
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _FakeCompleted(1, b"", non_utf8))
+    with pytest.raises(DeploymentError) as excinfo:
+        _run_powershell("New-Item -ItemType Junction ...\n")
+    assert "before " in str(excinfo.value) and " after" in str(excinfo.value)
 
 
 def test_ps_quote_escapes_embedded_single_quotes() -> None:

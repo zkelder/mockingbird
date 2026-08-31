@@ -2358,13 +2358,15 @@ def _windows_temp_root() -> Path:
     if _windows_temp_root_cache is None:
         completed = subprocess.run(
             ["powershell.exe", "-NoProfile", "-Command", "[Environment]::GetEnvironmentVariable('TEMP')"],
-            capture_output=True, text=True, check=False,
+            capture_output=True, check=False,
         )
-        if completed.returncode != 0 or not completed.stdout.strip():
+        stdout = completed.stdout.decode("utf-8", errors="replace")
+        stderr = completed.stderr.decode("utf-8", errors="replace")
+        if completed.returncode != 0 or not stdout.strip():
             raise DeploymentError(
-                f"Could not resolve the Windows TEMP directory via powershell.exe: {completed.stderr.strip()}"
+                f"Could not resolve the Windows TEMP directory via powershell.exe: {stderr.strip()}"
             )
-        _windows_temp_root_cache = Path(_wslpath(["-u", completed.stdout.strip()]))
+        _windows_temp_root_cache = Path(_wslpath(["-u", stdout.strip()]))
     return _windows_temp_root_cache
 
 
@@ -2381,9 +2383,21 @@ def _run_powershell(script: str, *, timeout: float | None = None) -> str:
         script_path.write_text(script, encoding="utf-8")
         windows_script_path = _wslpath(["-w", str(script_path)])
         try:
+            # Bytes, not `text=True`: a real `powershell.exe` process does
+            # not reliably emit UTF-8 on stdout/stderr (the legacy console
+            # codepage -- cp1252 on a US-English Windows host -- surfaces
+            # for at least some error-record text; a real deploy hit this
+            # directly, `UnicodeDecodeError: 'utf-8' codec can't decode
+            # byte 0x8b in position 94: invalid start byte`, while this
+            # function was trying to report a *different*, real
+            # `New-Item -ItemType Junction` failure -- masking the actual
+            # error behind a crash in the error-reporting path itself).
+            # `errors="replace"` below never raises, so a real failure is
+            # always reported (perhaps with a stray U+FFFD in it) rather
+            # than swallowed by a second, unrelated crash.
             completed = subprocess.run(
                 ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", windows_script_path],
-                capture_output=True, text=True, timeout=timeout, check=False,
+                capture_output=True, timeout=timeout, check=False,
             )
         except subprocess.TimeoutExpired as error:
             # A named, actionable `DeploymentError` -- never a bare
@@ -2405,11 +2419,13 @@ def _run_powershell(script: str, *, timeout: float | None = None) -> str:
             ) from error
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
+    stdout = completed.stdout.decode("utf-8", errors="replace")
+    stderr = completed.stderr.decode("utf-8", errors="replace")
     if completed.returncode != 0:
         raise DeploymentError(
-            f"powershell.exe failed ({completed.returncode}): {(completed.stderr or completed.stdout).strip()}"
+            f"powershell.exe failed ({completed.returncode}): {(stderr or stdout).strip()}"
         )
-    return completed.stdout
+    return stdout
 
 
 def _local_appdata_real() -> Path:
