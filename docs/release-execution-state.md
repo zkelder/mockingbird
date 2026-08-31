@@ -24,14 +24,27 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `26edddf` -- the implementation commit for Background /
-  Empty Evidence Species-Confidence Correctness v1 (see its own "Latest
+- **Accepted HEAD:** `b35b2d4` -- the deploy-tooling-fix commit for
+  Representative Daylight Gate A Field Acceptance v6 (see its own "Latest
+  accepted milestone" entry, below, and
+  [representative-daylight-gate-a-field-acceptance-v6-report.md](representative-daylight-gate-a-field-acceptance-v6-report.md)
+  for the complete record), sitting on top of `26edddf` (the implementation
+  commit for Background / Empty Evidence Species-Confidence Correctness v1,
+  unchanged, not itself re-run, by this milestone). This milestone's own
+  report commit (`40e4f5e`) sits directly on top and is not cited here as a
+  second, separate code-bearing HEAD, matching this field's established
+  convention -- the deploy-tooling fix itself (bounded to `scripts/deploy_
+  windows_dev.py`/its own test file, zero product/perception/admission/
+  Visit/evidence/classification code) is the only code this milestone
+  actually changed; see "Latest accepted milestone," below, for why a
+  Classification B field session still cites a real code-bearing HEAD.
+- **Prior accepted HEAD (pre-v6):** `26edddf` -- the implementation commit for Background /
+  Empty Evidence Species-Confidence Correctness v1 (see its own "Prior
   accepted milestone" entry, below, and
   [background-empty-evidence-species-confidence-correctness-v1-report.md](background-empty-evidence-species-confidence-correctness-v1-report.md)
   for the complete record), sitting on top of `428fcb3` (the reconciliation
   commit that authorized Representative Daylight Gate A Field Acceptance v6
-  as the next Lane R milestone -- unchanged, not itself run, by this
-  milestone).
+  as the next Lane R milestone).
 - **Prior accepted HEAD (pre-Background/Empty Evidence Species-Confidence
   Correctness v1):** `65f5ec2` -- Representative Daylight Gate A Field
   Acceptance v5's own report commit (`e203489`) plus one same-day,
@@ -126,8 +139,75 @@ protecting.
   Sustained-
   Activity Visit Admission Starvation & Stop-Finalization Correctness v1
   (see its own "Prior accepted milestone" entry, below) had likewise left
-  schema unchanged.
-- **Latest accepted milestone:** Background / Empty Evidence Species-
+  schema unchanged. Representative Daylight Gate A Field Acceptance v6 also
+  left schema unchanged -- its own deploy-tooling fix touches only
+  `scripts/deploy_windows_dev.py`/its test file, no model/migration.
+- **Latest accepted milestone:** Representative Daylight Gate A Field
+  Acceptance v6 -- Post-Fix Replication & Multi-Subject Tranche -- see
+  [representative-daylight-gate-a-field-acceptance-v6-report.md](representative-daylight-gate-a-field-acceptance-v6-report.md)
+  for the complete record. Classification **B**. A real, live
+  106.63-minute Observation session against the real reference Camera
+  Node, on the accepted, unmodified build, directly confirmed the
+  *specific* Sustained-Activity Visit Admission Starvation mechanism v4
+  found (arbitration deferring a whole connected component forever) does
+  **not** recur -- arbitration reached a decision for every ambiguous
+  component on schedule throughout. But `candidates_created` ended the
+  session at **zero** despite substantial, independently-confirmed,
+  sometimes-simultaneous real wildlife activity (two exhaustively-reviewed
+  real activity segments, each directly confirmed via full-resolution
+  independent-recorder frames and containing genuine multi-bird moments,
+  0/2 represented by any admitted Visit) -- the same practical symptom v4
+  produced, now root-caused to a *different*, precisely source-traced
+  mechanism: the sole arbitration winner for a real, resolved component can
+  fail at the downstream evidence-availability gate (the bounded 128-entry
+  evidence-byte cache, evicted purely by insertion order with no awareness
+  of which pending proposal still needs which bytes), and because that
+  outcome is not retryable and no fallback to a runner-up exists, the
+  component's real activity is permanently lost. This is a concrete,
+  real-field instance of an already-disclosed residual risk -- named,
+  explicitly not fixed, when the evidence-cache bound was last raised
+  32->128 ("a pending-proposal-aware eviction policy... is a materially
+  larger change... left as a disclosed follow-up, not undertaken here") --
+  not a new defect class, but a materially sharper session-wide measurement
+  of its real consequence (48/263 distinct proposals, 18.3%, spread across
+  the full session, versus v5's own 2.8%) than existed before, and shown
+  for the first time to also reach the *ordinary* (non-forced) arbitration
+  path, not only the recency-forced path the original disclosure discussed.
+  Stop-finalization behaved correctly (the honest `stopping`/`stopped`
+  cycle was observed live, rescuing 0 -- consistent with root cause, not a
+  regression, since nothing cleanly resolvable remained pending at stop).
+  Zero `blocked_shadow_mode`, zero persistence contention, zero
+  ERROR/CRITICAL/WARNING lines in the full structured session log.
+  Background/empty-evidence eligibility and species assistance were not
+  exercisable this session (zero admitted Visits ever reached either
+  layer) -- disclosed as honest measurement gaps, not fabricated proof.
+  Real, directly-confirmed simultaneous multi-subject activity occurred
+  (not manufactured) but, exactly like v5's own session for a different
+  reason, never reached an admitted Visit, so multi-subject Visit-grouping
+  correctness remains completely unexercised end-to-end across two
+  consecutive post-fix cohorts now. Two bounded, tested, own-session
+  deploy-tooling defects were found and fixed along the way (a
+  `UnicodeDecodeError` crash in `_run_powershell`'s non-UTF-8 output
+  handling that was masking a real, unrelated failure, RED->GREEN proven
+  with a new regression test; a separate, disclosed-not-fixed `--dev-root`
+  WSL-path usability gap) -- zero product/perception/admission/Visit/
+  evidence/classification code touched. Per the milestone's own explicit
+  §14 failure conditions and §35 acceptance bar, this is deliberately
+  **not** rounded up to Classification A on the strength of the
+  investigation's own rigor alone: `candidates_created` remaining at zero
+  for a prolonged real sustained-activity session is one of this
+  milestone's own five explicit failure conditions, and "post-fix admission
+  behavior replicates"/"in-session admissions occur" are both explicit
+  Classification A requirements that did not hold this session. This
+  closure does **not** authorize the next Representative Field Acceptance /
+  Gate A session, External Pre-Release Acceptance, or Final Release
+  Hardening, and does **not** select a next development milestone --
+  authorization returns to the bold statement in §3, below, unchanged by
+  this closure. This reopens, rather than closes, a specific Gate A
+  correctness question -- see §6.R, below, for the complete "Remaining Gate
+  A dependency" account.
+
+- **Prior accepted milestone:** Background / Empty Evidence Species-
   Confidence Correctness v1 -- see
   [background-empty-evidence-species-confidence-correctness-v1-report.md](background-empty-evidence-species-confidence-correctness-v1-report.md)
   for the complete record. Classification **A**. Fixes the exact v5-
@@ -1720,6 +1800,42 @@ not yet run, exactly as already stated -- and does not itself authorize
 Gate A v6 execution, External Pre-Release Acceptance, or Final Release
 Hardening. Authorization remains **NONE -- GLOBAL PRODUCT-ROADMAP
 RECONCILIATION REQUIRED**, unchanged.
+
+**2026-08-31 update (Representative Daylight Gate A Field Acceptance v6 --
+Post-Fix Replication & Multi-Subject Tranche, see §1/§6.R):** v6 has now
+run, at classification **B**, not A. A real, live 106.63-minute
+Observation session against the real reference Camera Node directly
+confirmed the *specific* Sustained-Activity starvation mechanism v4 found
+does not recur -- arbitration reached a decision for every ambiguous
+component on schedule throughout -- but `candidates_created` ended the
+session at zero anyway, despite two independently-confirmed, real,
+sometimes-simultaneous-multi-subject activity segments, root-caused to a
+different, precisely source-traced mechanism: an arbitration winner can
+still fail at the downstream evidence-availability gate (the bounded
+128-entry evidence-byte cache), with no retry/fallback to a runner-up, so
+the component's real activity is permanently lost. This is a concrete
+field measurement of a risk already named (not fixed) when that cache
+bound was last raised, not a new defect class -- but a materially sharper
+one than existed before (48/263 distinct proposals, 18.3%, this session,
+versus v5's own 2.8%). See the milestone's own report for the complete
+account, including two bounded, tested, own-session deploy-tooling fixes
+(zero product/perception code touched) and the full honest-gap accounting
+for the dimensions zero admissions made unexercisable this session
+(background/empty-evidence eligibility, species assistance, useful-
+evidence rate, false-Visit rate, fragmentation). This closure does **not**
+authorize the next Representative Field Acceptance / Gate A session,
+External Pre-Release Acceptance, or Final Release Hardening, and does
+**not** select a next development milestone. Authorization remains **NONE
+-- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, unchanged. No budget
+dimension moves to READY FOR FORMAL BUDGET REVIEW this update, and no
+existing candidate (monitoring coverage, useful-evidence rate) is
+withdrawn -- this session neither confirms nor refutes either, having
+produced zero admitted Visits to measure a useful-evidence rate over, and
+having measured monitoring coverage (~99.4%) consistent with the existing
+candidate. Gate A/Lane R remains open, and this update reopens rather than
+narrows the "Remaining Gate A dependency" picture -- see §6.R, below, for
+the complete account, now led by the evidence-cache-exhaustion/no-fallback
+mechanism this session concretely measured.
 
 Representative Daylight Gate A Field Acceptance v5 (directly authorized
 outside this file, as the next RELEASE-CRITICAL field-validation session
@@ -3509,6 +3625,109 @@ exhaustive, review" conclusion is preserved exactly as reported, not
 converted into a recall percentage. Gate A/Lane R remains open. This
 reconciliation does not authorize External Pre-Release Acceptance or
 Final Release Hardening, and does not itself run the next field session.
+
+**Representative Daylight Gate A Field Acceptance v6 -- Post-Fix
+Replication & Multi-Subject Tranche (2026-08-31) ran the second real
+daylight session against the corrected build, at classification **B**,
+not A -- see §1/§3, above, and
+[representative-daylight-gate-a-field-acceptance-v6-report.md](representative-daylight-gate-a-field-acceptance-v6-report.md)
+for the full record.** Deployed a genuinely fresh, disposable instance
+(not the operator's own identity), re-pairing the reference Camera Node
+via the identical documented recovery flow v4/v5 used, with the user's
+explicit approval. A real 106.63-minute Observation session followed
+against the same real Stream/scene, a genuinely different daylight window
+(09:19:59-11:06:37 EDT, mid-morning) than v4's or v5's own, with the
+independent acceptance recorder running throughout (~99.4% temporal-span
+coverage, 5,214 frames). Two exhaustively-reviewed real activity windows
+(directly confirmed via full-resolution independent-recorder frames, not
+inferred, each containing genuine simultaneous multi-bird moments -- 2
+birds at 25.79min, 2-3 birds in an active flurry at 90.50min) together
+produced **zero** admitted Visits: `candidates_created` stayed at exactly
+0 for the entire session, despite `track_updates_observed` reaching
+11,078 and `proposals_observed` reaching 521. Directly root-caused by
+reading the real arbitration source (`candidate_visit_authority.py`,
+`engine_runtime.py`) against the real, fully-reconstructed counterfactual
+ledger (521 records, cross-verified lossless): this is **not** a
+recurrence of v4's own starvation mechanism -- `resolve_ambiguous_
+boundary_arbitration` reached a decision for every real ambiguous
+component on schedule throughout (164 proposals correctly, permanently
+`blocked_ambiguous_boundary` as non-winning cluster members; the intended
+"at most one Visit per cluster" behavior working exactly as designed). The
+actual loss mechanism is one gate later: 48 of 263 distinct proposals
+(18.3%, spread across the *entire* session, not one isolated cluster)
+reached a genuine arbitration win and then permanently failed at the
+evidence-availability gate (`blocked_missing_evidence`/`no_persistable_
+evidence_bytes`), because the shared, session-global, insertion-order-only
+128-entry evidence-byte cache had already evicted that specific winner's
+own bytes by the time its own (correctly, if belatedly, computed)
+arbitration turn arrived -- and because that outcome is not in
+`RETRYABLE_OUTCOMES`, no code path ever re-attempts the same resolved
+component with its own second-best member. This is not a new defect
+class: `engine_runtime.py`'s own `_MAX_CACHED_BURST_BYTES` history
+comment already named almost exactly this mechanism when the bound was
+last raised 32->128 and explicitly declined to fix it structurally ("a
+pending-proposal-aware eviction policy... is a materially larger
+change... left as a disclosed follow-up, not undertaken here"); v5's own
+report separately named the same residual in the abstract. v6 is the
+first real, concrete, session-wide *measurement* that this is not a rare
+edge case (18.3% of distinct proposals this session, versus v5's own
+2.8%), and the first evidence that it also reaches the *ordinary*
+(non-forced, confidence-ranked) arbitration path, not only the
+recency-forced path the original disclosure discussed. Stop-finalization
+itself behaved correctly (the honest `stopping`/`stopped` cycle with
+`stop_finalization_pending` was observed live exactly as the accepted
+contract specifies, rescuing 0 -- consistent with, not a regression of,
+the root cause: nothing cleanly resolvable remained pending at stop,
+since every real activity window's own fate had already been permanently
+decided earlier in the session). Zero `blocked_shadow_mode`, zero
+persistence contention, zero ERROR/CRITICAL/WARNING lines across the full
+164-line structured session log. Background/empty-evidence eligibility
+and species assistance were not exercisable this session at all (zero
+admitted Visits ever reached either layer) -- disclosed as honest
+measurement gaps, not fabricated proof; the accepted `26edddf` fix's own
+two files are confirmed byte-for-byte unmodified this session. Real,
+directly-confirmed simultaneous multi-subject activity occurred (not
+manufactured) but never reached an admitted Visit either, so multi-subject
+Visit-grouping correctness remains completely unexercised end-to-end
+across two consecutive post-fix cohorts now, for two different reasons (v5:
+nothing happened to be concurrent among what *was* admitted; v6: nothing
+was admitted at all). Two bounded, tested, own-session deploy-tooling
+defects were found and fixed along the way (a real `UnicodeDecodeError`
+crash in `_run_powershell`'s non-UTF-8 PowerShell-output handling that was
+masking a real, unrelated failure, proven RED->GREEN with a new hermetic
+regression test; a separate, disclosed-not-fixed `--dev-root` WSL-path
+usability gap that caused the underlying masked failure) -- zero product/
+perception/admission/Visit/evidence/classification code touched; full
+`tests/test_deploy_windows_dev.py` 124/124 passed, `ruff` clean. Per the
+milestone's own explicit §14 failure conditions ("prolonged real sustained
+activity + `candidates_created` remains zero" is explicitly met) and its
+own §35 acceptance bar ("post-fix admission behavior replicates"/
+"in-session admissions occur" are both explicit Classification A
+requirements that did not hold), this report deliberately does not round
+up to Classification A on the strength of the investigation's own rigor
+alone -- see the report's own "Decision" section for the complete
+reasoning. This closure does **not** authorize the next Representative
+Field Acceptance / Gate A session, External Pre-Release Acceptance, or
+Final Release Hardening, and does **not** select a next development
+milestone. **Remaining Gate A dependency, in priority order, superseding
+the priority order the prior reconciliation above named:** (1) fix and
+then field-re-prove the evidence-cache-exhaustion/no-runner-up-fallback
+mechanism this session concretely measured -- now the single most
+consequential open Gate A correctness question; (2) a daylight session
+that actually achieves real in-session admissions *and* genuine concurrent
+multi-subject siblings, still never jointly observed; (3) background/
+empty-evidence eligibility remains field-unproven a second time (not
+urgent -- the fix's own dedicated milestone already validated it
+thoroughly via reproducer plus real-cohort benchmark; still open as live
+confirmation); (4) the four still-immature numeric budgets (recall,
+false-Visit rate, fragmentation/duplicate rate, capture-to-visible
+latency) remain resting on v5's own single post-fix data point --
+unchanged, not converged, by this session's own zero-admission result.
+No numeric budget is withdrawn or newly proposed by this reconciliation --
+monitoring coverage (~99.4% this session) remains consistent with its
+existing ~99% candidate; useful-evidence rate is neither confirmed nor
+refuted (no admitted Visits to measure it over) and its existing ~85%
+candidate is unchanged.
 
 ### S. Actual Final Release Hardening
 
