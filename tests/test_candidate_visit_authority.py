@@ -772,6 +772,92 @@ def test_arbitration_winner_creates_losers_stay_blocked_in_authority_gate() -> N
     assert outcomes["p-c"].outcome == "blocked_ambiguous_boundary"
 
 
+# --- Pending-Proposal Evidence Preservation & Arbitration Fallback
+# Correctness v1: `fallback_order_by_winner_id` (see "Fallback contract" in
+# docs/candidate-visit-authority-contract.md). Representative Daylight Gate
+# A Field Acceptance v6's own concrete finding: a real arbitration winner
+# permanently failed the downstream evidence-availability gate with no
+# runner-up ever attempted, silently losing an entire real, confirmed
+# activity component. This module still never knows *why* a winner might
+# fail evidence -- these tests only prove it exposes the correct,
+# deterministic *order* a caller may safely walk if it cannot admit the
+# winner it already chose.
+
+
+def test_arbitration_fallback_order_names_the_only_other_member_of_a_pair() -> None:
+    strong = _arbitration_proposal("p-strong", ambiguous_adjacent_proposal_ids=("p-weak",), max_confidence=0.8)
+    weak = _arbitration_proposal("p-weak", ambiguous_adjacent_proposal_ids=("p-strong",), max_confidence=0.2)
+    result = resolve_ambiguous_boundary_arbitration([strong, weak])
+    assert result.resolved_winner_ids == frozenset({"p-strong"})
+    assert result.fallback_order_by_winner_id == {"p-strong": ("p-weak",)}
+
+
+def test_arbitration_fallback_order_ranks_every_other_member_best_first() -> None:
+    """A 4-node component: the winner's own fallback order must rank the
+    *other three* members in exactly the same confidence-first order
+    `_arbitration_key` already uses to pick the winner itself -- never
+    arrival order, never id order, never graph-traversal order."""
+    a = _arbitration_proposal("p-a", ambiguous_adjacent_proposal_ids=("p-b",), max_confidence=0.9)
+    b = _arbitration_proposal("p-b", ambiguous_adjacent_proposal_ids=("p-a", "p-c"), max_confidence=0.3)
+    c = _arbitration_proposal("p-c", ambiguous_adjacent_proposal_ids=("p-b", "p-d"), max_confidence=0.6)
+    d = _arbitration_proposal("p-d", ambiguous_adjacent_proposal_ids=("p-c",), max_confidence=0.1)
+    result = resolve_ambiguous_boundary_arbitration([a, b, c, d])
+    assert result.resolved_winner_ids == frozenset({"p-a"})
+    assert result.fallback_order_by_winner_id["p-a"] == ("p-c", "p-b", "p-d")
+
+
+def test_arbitration_fallback_order_never_names_a_still_growing_member() -> None:
+    """A forced decision ranks only the *stable* members (unchanged,
+    pre-existing contract -- see `resolve_ambiguous_boundary_arbitration`'s
+    own "forced ranks only among stable_members" reasoning): a member still
+    `continuation_pending` when the decision is forced must never appear in
+    the winner's own fallback order either."""
+    stable_member = replace(
+        _arbitration_proposal("p-old", ambiguous_adjacent_proposal_ids=("p-new",), max_confidence=0.5),
+        start_offset_ms=0, end_offset_ms=1_000,
+    )
+    growing_member = replace(
+        _arbitration_proposal(
+            "p-new", ambiguous_adjacent_proposal_ids=("p-old",), max_confidence=0.9, continuation_pending=True,
+        ),
+        start_offset_ms=2_000, end_offset_ms=3_000,
+    )
+    forced = resolve_ambiguous_boundary_arbitration(
+        [stable_member, growing_member], known_horizon_ms=10_000_000, maximum_component_pending_ms=1_000,
+    )
+    assert forced.resolved_winner_ids == frozenset({"p-old"})
+    assert forced.fallback_order_by_winner_id["p-old"] == ()
+
+
+def test_arbitration_fallback_order_is_empty_when_the_only_sibling_is_missing_this_tick() -> None:
+    lone = _arbitration_proposal("p-lone", ambiguous_adjacent_proposal_ids=("p-vanished",), max_confidence=0.1)
+    result = resolve_ambiguous_boundary_arbitration([lone])
+    assert result.fallback_order_by_winner_id == {"p-lone": ()}
+
+
+def test_arbitration_fallback_order_never_crosses_independent_components() -> None:
+    """Two entirely separate ambiguous pairs resolved in the same call:
+    each winner's own fallback order must only ever name its *own*
+    component's other member, never the unrelated pair's."""
+    a = _arbitration_proposal("p-a", ambiguous_adjacent_proposal_ids=("p-b",), max_confidence=0.9)
+    b = _arbitration_proposal("p-b", ambiguous_adjacent_proposal_ids=("p-a",), max_confidence=0.1)
+    c = _arbitration_proposal("p-c", ambiguous_adjacent_proposal_ids=("p-d",), max_confidence=0.8)
+    d = _arbitration_proposal("p-d", ambiguous_adjacent_proposal_ids=("p-c",), max_confidence=0.2)
+    result = resolve_ambiguous_boundary_arbitration([a, b, c, d])
+    assert result.resolved_winner_ids == frozenset({"p-a", "p-c"})
+    assert result.fallback_order_by_winner_id == {"p-a": ("p-b",), "p-c": ("p-d",)}
+
+
+def test_arbitration_fallback_order_construction_default_is_empty_mapping() -> None:
+    """Every pre-existing direct `AmbiguousBoundaryArbitration(...)`
+    construction (for example `perception_regression_cli.py`'s own
+    placeholder "no arbitration ran" value) remains valid unchanged."""
+    from mockingbird.observation.candidate_visit_authority import AmbiguousBoundaryArbitration
+
+    placeholder = AmbiguousBoundaryArbitration(frozenset(), frozenset())
+    assert placeholder.fallback_order_by_winner_id == {}
+
+
 def test_arbitration_result_does_not_depend_on_a_previous_call() -> None:
     """Pure function, no module-level cache/state (see "No cross-session/
     Stream propagation," Ambiguous-Boundary Transitive Fragmentation

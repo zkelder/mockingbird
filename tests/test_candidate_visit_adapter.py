@@ -228,6 +228,92 @@ def test_partial_evidence_bytes_still_creates_a_candidate(repository: ProductRep
         assert ledger.selected_context_media_asset_id is None
 
 
+# =============================================================================
+# Pending-Proposal Evidence Preservation & Arbitration Fallback Correctness
+# v1: `priority_evidence_ids_for_proposal`/`CandidateVisitAuthorityAdapter.
+# priority_evidence_ids` -- the bounded preview `engine_runtime._compute_
+# protected_evidence_ids` uses to decide which handful of a still-pending
+# proposal's own evidence is worth protecting.
+# =============================================================================
+
+
+def test_priority_evidence_ids_picks_the_real_identification_candidate() -> None:
+    from mockingbird.observation.candidate_visit_adapter import priority_evidence_ids_for_proposal
+
+    tracklet = _tracklet("gen-1", 0, 4500)
+    proposal = assemble_visit_episodes((tracklet,)).proposals[0]
+    picks = priority_evidence_ids_for_proposal(
+        proposal, evidence_candidates=_evidence_candidates(), media={"shadow-burst:hash-id": JPEG_BYTES},
+    )
+    assert "shadow-burst:hash-id" in picks
+
+
+def test_priority_evidence_ids_is_empty_with_no_media_at_all() -> None:
+    """Without any real bytes, `evidence_scoring._score` hard-rejects every
+    candidate (`candidate_unavailable`) unless metadata already declares
+    `decodable=True` (this file's own `_evidence_candidates()` fixture
+    does; a real, live-captured `high_resolution_burst` candidate this
+    project actually constructs never does -- see `camera_node_live.py`).
+    This is deliberate, honest behavior, not a bug: a preview with nothing
+    real to preview correctly protects nothing, rather than fabricating a
+    pick for bytes that do not exist."""
+    from mockingbird.observation.candidate_visit_adapter import priority_evidence_ids_for_proposal
+    from mockingbird.observation.contracts import EvidenceCandidate
+
+    tracklet = _tracklet("gen-1", 0, 4500)
+    proposal = assemble_visit_episodes((tracklet,)).proposals[0]
+    undeclared = EvidenceCandidate(
+        media_asset_id="shadow-burst:hash-id", stream_id=STREAM_ID, role="high_resolution_burst",
+        captured_at=NOW, frame_id="gen-1-frame-1", track_generation_id="gen-1",
+        subject_geometry=(0.4, 0.4, 0.5, 0.5), width=1920, height=1080,
+    )
+    picks = priority_evidence_ids_for_proposal(proposal, evidence_candidates=(undeclared,), media=None)
+    assert picks == ()
+
+
+def test_priority_evidence_ids_only_considers_this_proposals_own_evidence() -> None:
+    """A candidate belonging to a *different* proposal's own generation
+    must never be picked, even if real bytes exist for it -- mirrors
+    `score_proposal_evidence`'s own existing `available_ids`/`track_
+    generation_id` scoping exactly, never a new filter invented here."""
+    from mockingbird.observation.candidate_visit_adapter import priority_evidence_ids_for_proposal
+    from mockingbird.observation.contracts import EvidenceCandidate
+
+    tracklet = _tracklet("gen-1", 0, 4500)
+    proposal = assemble_visit_episodes((tracklet,)).proposals[0]
+    unrelated = EvidenceCandidate(
+        media_asset_id="shadow-burst:unrelated", stream_id=STREAM_ID, role="high_resolution_burst",
+        captured_at=NOW, frame_id="gen-2-frame-1", track_generation_id="gen-2",
+        subject_geometry=(0.4, 0.4, 0.5, 0.5), width=1920, height=1080,
+    )
+    picks = priority_evidence_ids_for_proposal(
+        proposal, evidence_candidates=(*_evidence_candidates(), unrelated),
+        media={"shadow-burst:hash-id": JPEG_BYTES, "shadow-burst:unrelated": JPEG_BYTES},
+    )
+    assert "shadow-burst:unrelated" not in picks
+
+
+def test_adapter_priority_evidence_ids_uses_its_own_configured_scoring_bounds() -> None:
+    """`CandidateVisitAuthorityAdapter.priority_evidence_ids` threads its
+    own `scoring_bounds` through exactly like `attempt_candidate` does --
+    a caller with a tighter/looser configured bound sees it reflected in
+    the preview, never a hardcoded default silently substituted."""
+    from mockingbird.observation.evidence_scoring import EvidenceScoringBounds
+
+    tracklet = _tracklet("gen-1", 0, 4500)
+    proposal = assemble_visit_episodes((tracklet,)).proposals[0]
+    adapter = CandidateVisitAuthorityAdapter(
+        None, scoring_bounds=EvidenceScoringBounds(max_candidates=1),  # repository unused by this call
+    )
+    picks = adapter.priority_evidence_ids(
+        proposal, evidence_candidates=_evidence_candidates(), media={"shadow-burst:hash-id": JPEG_BYTES},
+    )
+    # With `max_candidates=1`, only one of the two real candidates is even
+    # considered at all -- proving the bound actually reached the
+    # underlying scorer, not merely accepted and ignored.
+    assert len(picks) <= 1
+
+
 def test_multi_tracklet_merged_episode_creates_one_candidate_with_full_lineage(repository: ProductRepository) -> None:
     """Two tracklets the assembler merges into one Visit episode must
     produce exactly one candidate Visit whose ledger lineage spans both

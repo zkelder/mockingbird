@@ -99,6 +99,21 @@ class CandidateVisitAuthorityAdapter:
         self._provider_key = provider_key
         self._scoring_bounds = scoring_bounds
 
+    def priority_evidence_ids(
+        self,
+        proposal: AssembledVisitProposal,
+        *,
+        evidence_candidates: tuple[EvidenceCandidate, ...],
+        media: Mapping[str, bytes] | None = None,
+    ) -> tuple[str, ...]:
+        """`priority_evidence_ids_for_proposal`, using this adapter's own
+        configured `scoring_bounds` -- see that function's own docstring
+        (in particular, why `media` is not merely an optional nicety)."""
+
+        return priority_evidence_ids_for_proposal(
+            proposal, evidence_candidates=evidence_candidates, media=media, bounds=self._scoring_bounds,
+        )
+
     def attempt_candidate(
         self,
         proposal: AssembledVisitProposal,
@@ -231,6 +246,72 @@ class CandidateVisitAuthorityAdapter:
                 return CandidateAttemptResult(
                     outcome.proposal_id, outcome.outcome, outcome.reason, outcome.visit_id, outcome.event_id,
                 )
+
+
+def priority_evidence_ids_for_proposal(
+    proposal: AssembledVisitProposal,
+    *,
+    evidence_candidates: tuple[EvidenceCandidate, ...],
+    media: Mapping[str, bytes] | None = None,
+    bounds: EvidenceScoringBounds | None = None,
+) -> tuple[str, ...]:
+    """Pending-Proposal Evidence Preservation & Arbitration Fallback
+    Correctness v1 (see "Preservation contract" in docs/candidate-visit-
+    authority-contract.md): a bounded preview of which of `proposal`'s own
+    evidence candidates would actually be selected (identification,
+    context, same-frame, alternates) if it were scored right now, using
+    whatever bytes the caller's own shared evidence-byte cache(s) *already
+    hold* for it -- reuses `evidence_scoring.score_proposal_evidence`
+    exactly like `CandidateVisitAuthorityAdapter.attempt_candidate` does.
+
+    `media` matters here, deliberately, not merely as a nicety:
+    `evidence_scoring._score`'s own hard-rejection set includes
+    `candidate_unavailable` (no image, and metadata does not already
+    declare `decodable=True`) -- and no real, live-captured
+    `EvidenceCandidate` this project constructs ever declares that fact
+    upfront (see `camera_node_live.py`), so calling this with no media at
+    all would hard-reject *every* real candidate and always return an
+    empty preview, silently defeating protection entirely. Passing the
+    caller's own currently-cached bytes (which may already be a genuine,
+    honest miss for a candidate whose bytes were never harvested, or lost
+    before harvest -- see `_EngineSession._evidence_harvest_misses`) is
+    what makes this preview accurate: it answers "of the bytes I can
+    *actually* still protect right now, which handful are worth it," never
+    "which would be worth it if bytes existed that do not."
+
+    Used by the live engine runtime
+    (`engine_runtime._compute_protected_evidence_ids`) to decide which
+    bounded handful of a still-*pending* (not yet permanently resolved)
+    proposal's own evidence bytes are worth shielding from the shared,
+    bounded evidence-byte cache's ordinary eviction -- never the proposal's
+    *entire* accumulated evidence set, which could span dozens of
+    constituent track generations for a long-lived, forced-decision
+    episode. Never itself an authority/admission decision, and never the
+    authoritative selection either: that still happens for real, with the
+    caller's actually-configured `bounds` and whatever bytes are still
+    cached at that later moment, only when `attempt_candidate` is actually
+    called."""
+
+    visit_proposal = project_to_visit_proposal(proposal)
+    scoring_candidates = tuple(
+        candidate for candidate in evidence_candidates if candidate.role != CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE
+    )
+    selection = score_proposal_evidence(visit_proposal, scoring_candidates, media=media, bounds=bounds)
+    same_frame_candidate_id = next(
+        (
+            candidate.media_asset_id
+            for candidate in evidence_candidates
+            if candidate.role == CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE
+        ),
+        None,
+    )
+    picks = (
+        selection.identification_candidate_id,
+        selection.context_candidate_id,
+        same_frame_candidate_id,
+        *selection.alternate_candidate_ids,
+    )
+    return tuple(dict.fromkeys(candidate_id for candidate_id in picks if candidate_id))
 
 
 def _build_evidence_items(

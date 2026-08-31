@@ -30,10 +30,10 @@ doc.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Literal, Protocol, Sequence, runtime_checkable
+from typing import Literal, Mapping, Protocol, Sequence, runtime_checkable
 
 AUTHORITY_GATE_VERSION = "candidate-visit-authority-v1"
 
@@ -129,10 +129,34 @@ class AmbiguousBoundaryArbitration:
     the stream has been observed -- identical in spirit to how an ordinary
     `continuation_pending` proposal is already retried, without needing a
     new outcome code for this case.
+
+    `fallback_order_by_winner_id`: Pending-Proposal Evidence Preservation &
+    Arbitration Fallback Correctness v1 (see "Fallback contract" in
+    docs/candidate-visit-authority-contract.md). For each id in
+    `resolved_winner_ids`, the *other* stable members of that exact same
+    connected component -- never a different component, never a still-
+    growing member -- ranked best-first by the identical deterministic key
+    that chose the winner itself (`_forced_decision_key` for a forced
+    decision, `_arbitration_key` otherwise; see each key's own docstring).
+    This is real field evidence's own answer to "what should authority try
+    next if the chosen winner cannot actually produce an admissible
+    Visit": Representative Daylight Gate A Field Acceptance v6 found a real
+    arbitration winner permanently fail at the downstream evidence-
+    availability gate, with no runner-up ever attempted, silently losing an
+    entire real, confirmed activity component. This module still never
+    knows *why* a winner might fail (it has no evidence-byte awareness at
+    all, by design) -- it only ever exposes the deterministic order a
+    caller (`engine_runtime._run_assembly_tick`) may safely walk if the
+    winner cannot be admitted. A winner id absent here (or mapped to an
+    empty tuple) has no other stable component member -- ordinary for a
+    two-member pair once the loser is excluded, and always the case for a
+    winner with an otherwise-empty `ambiguous_adjacent_proposal_ids`,
+    though such a proposal is never a key in `resolved_winner_ids` at all.
     """
 
     resolved_winner_ids: frozenset[str]
     deferred_ids: frozenset[str]
+    fallback_order_by_winner_id: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 def _arbitration_key(proposal: ProposalArbitrationFacts) -> tuple[float, int, str]:
@@ -307,6 +331,7 @@ def resolve_ambiguous_boundary_arbitration(
     winners: set[str] = set()
     deferred: set[str] = set()
     visited: set[str] = set()
+    fallback_order: dict[str, tuple[str, ...]] = {}
 
     for proposal in proposals:
         if not proposal.ambiguous_adjacent_proposal_ids or proposal.proposal_id in visited:
@@ -361,10 +386,21 @@ def resolve_ambiguous_boundary_arbitration(
         # -- every pre-existing test/behavior for that common case is
         # completely unaffected by this fix.
         pool = stable_members if forced else component
-        best = max(pool, key=_forced_decision_key if forced else _arbitration_key)
+        # `sorted(..., reverse=True)[0]` rather than a separate `max(...)`
+        # call: both `_arbitration_key`/`_forced_decision_key` end in a
+        # unique `proposal_id` tiebreak, so no two distinct proposals can
+        # ever tie -- the ranked order below always agrees with `max()`'s
+        # own "first maximal item" pick, while also giving the *rest* of
+        # the ranking for free, which `max()` alone would discard.
+        ranked = sorted(pool, key=_forced_decision_key if forced else _arbitration_key, reverse=True)
+        best = ranked[0]
         winners.add(best.proposal_id)
+        fallback_order[best.proposal_id] = tuple(member.proposal_id for member in ranked[1:])
 
-    return AmbiguousBoundaryArbitration(resolved_winner_ids=frozenset(winners), deferred_ids=frozenset(deferred))
+    return AmbiguousBoundaryArbitration(
+        resolved_winner_ids=frozenset(winners), deferred_ids=frozenset(deferred),
+        fallback_order_by_winner_id=fallback_order,
+    )
 
 
 def _component_pending_horizon_exceeded(

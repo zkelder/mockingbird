@@ -105,6 +105,7 @@ from mockingbird.observation.candidate_visit_adapter import CandidateVisitAuthor
 from mockingbird.observation.candidate_visit_authority import (
     BLOCKED_OUTCOMES,
     RETRYABLE_OUTCOMES,
+    AmbiguousBoundaryArbitration,
     ObservationAuthorityMode,
     resolve_ambiguous_boundary_arbitration,
 )
@@ -125,6 +126,7 @@ from mockingbird.observation.frame_driven_provider import (
 )
 from mockingbird.observation.onnx_provider import OnnxCudaObservationProvider, OnnxModelBundle
 from mockingbird.observation.visit_episode_assembler import (
+    AssembledVisitProposal,
     VisitAssemblyConfiguration,
     assemble_visit_episodes,
     build_tracklets,
@@ -161,6 +163,46 @@ _MAX_SUPPRESSED_REASONS = 8
 # itself either) so there is exactly one source of truth for this number,
 # never two independent magic numbers that could quietly drift apart.
 _MAXIMUM_COMPONENT_PENDING_MS = VisitAssemblyConfiguration().maximum_episode_duration_ms
+
+# Pending-Proposal Evidence Preservation & Arbitration Fallback Correctness
+# v1 (see "Fallback contract" in docs/candidate-visit-authority-
+# contract.md): the bounded set of `CandidateAttemptResult.outcome` codes
+# for which trying the *next* stable member of the same already-resolved
+# ambiguous component (see `candidate_visit_authority.AmbiguousBoundary
+# Arbitration.fallback_order_by_winner_id`) is semantically safe -- a fact
+# genuinely about *this* proposal's own evidence, never one that would
+# apply identically to every sibling in the same component regardless of
+# which one won:
+#
+# - `blocked_missing_evidence` -- the real v6 mechanism: this proposal's
+#   own evidence bytes are gone (evicted, never captured, or over the byte
+#   budget). A different component member has its own, independent
+#   evidence -- trying it is exactly "does anyone in this real, resolved
+#   encounter still have usable evidence," never a guess.
+# - `reject_no_identification_or_context` / `reject_subject_geometry_
+#   invalid` (from `REJECTED_OUTCOMES`, `candidate_quality_gate.py`) --
+#   evidence bytes exist but this proposal's own selected candidate did
+#   not clear the reviewability bar. Also a per-proposal fact (each
+#   component member carries its own distinct evidence, captured from its
+#   own distinct constituent generations) -- a sibling's own evidence can
+#   honestly be better.
+#
+# Deliberately excludes `reject_insufficient_proposal_support` (a
+# structural fact about *this* proposal object itself, not its evidence --
+# should never fire for a real assembled proposal, per that gate's own
+# docstring, so treated conservatively as terminal, not fallback-eligible),
+# `blocked_privacy_zone`/`blocked_scene_confusor_suspected` (both keyed on
+# physical geometry/location shared by the whole encounter -- every
+# sibling would almost certainly hit the identical block, so a "fallback"
+# there would not meaningfully retry anything and could mask a genuine
+# suspicion/privacy signal), and `"failed"` (a repository/persistence
+# exception -- see "Retryability" in docs/candidate-visit-authority-
+# contract.md: fallback belongs strictly before persistence, at the
+# evidence/admission decision boundary; a transient infrastructure failure
+# must never be reinterpreted as "try a different semantic winner").
+_FALLBACK_ELIGIBLE_OUTCOMES: frozenset[str] = frozenset(
+    {"blocked_missing_evidence"} | (REJECTED_OUTCOMES - {"reject_insufficient_proposal_support"})
+)
 
 ObservationEngineState = str  # "stopped" | "starting" | "observing" | "stopping" | "error"
 
@@ -638,6 +680,26 @@ class _EngineSession:
         # category is recurring, without needing another forensic
         # reconstruction from the counterfactual ledger.
         self._evidence_harvest_misses = 0
+        # Pending-Proposal Evidence Preservation & Arbitration Fallback
+        # Correctness v1 (see docs/candidate-visit-authority-contract.md
+        # "Diagnostics"): bounded, session-lifetime counters distinguishing
+        # the new mechanisms from ordinary admission/suppression. `_fallback_
+        # attempted_count` increments once per *resolved component* whose
+        # own winner could not be admitted and at least one other member was
+        # therefore tried (never once per member attempt); `_fallback_
+        # admitted_count` is the subset of those where a non-winner member
+        # was the one actually admitted; `_fallback_exhausted_count` is the
+        # subset where fallback was invoked but no component member was ever
+        # admitted (see `_EngineSession._attempt_resolved_component`).
+        # `_protected_evidence_capacity_exhausted_count` counts assembly
+        # ticks where `_compute_protected_evidence_ids`'s own bounded total
+        # (`_MAX_PROTECTED_EVIDENCE_IDS`) was insufficient to protect every
+        # still-actionable proposal's own priority evidence -- a real,
+        # diagnosable capacity signal, never a silent, unbounded cache.
+        self._fallback_attempted_count = 0
+        self._fallback_admitted_count = 0
+        self._fallback_exhausted_count = 0
+        self._protected_evidence_capacity_exhausted_count = 0
         self._last_candidate_visit_id: str | None = None
         # Visit Authority Budget + Ambiguous-Boundary Recall Closure v1: a
         # candidate budget legitimately running out mid-session must be
@@ -784,6 +846,15 @@ class _EngineSession:
             # Harvested Evidence Issuance / Missing-Evidence Closure v1: see
             # `self._evidence_harvest_misses`'s own docstring at assignment.
             advanced["evidence_harvest_misses"] = self._evidence_harvest_misses
+            # Pending-Proposal Evidence Preservation & Arbitration Fallback
+            # Correctness v1: see the four counters' own docstring at
+            # assignment (`__init__`).
+            advanced["fallback_attempted_count"] = self._fallback_attempted_count
+            advanced["fallback_admitted_count"] = self._fallback_admitted_count
+            advanced["fallback_exhausted_count"] = self._fallback_exhausted_count
+            advanced["protected_evidence_capacity_exhausted_count"] = (
+                self._protected_evidence_capacity_exhausted_count
+            )
             # Camera Node Connectivity & Recovery Diagnosis v1: the best
             # in-memory known-good frame time (see `_checkpoint_observation_
             # exposure`), so a caller diagnosing a stalled/degraded session
@@ -1031,6 +1102,17 @@ class _EngineSession:
             # moment each `classifier_same_frame` candidate is first
             # observed, not lazily at assembly-tick time.
             same_frame_bytes_cache: dict[str, bytes] = {}
+            # Pending-Proposal Evidence Preservation & Arbitration Fallback
+            # Correctness v1: recomputed fresh every assembly tick (see
+            # `_run_assembly_tick`'s own `protected_evidence_ids` parameter/
+            # `_compute_protected_evidence_ids`), then consulted by every
+            # harvest call below in between ticks so the two caches' own
+            # ordinary eviction prefers to evict something not currently
+            # needed by a still-actionable pending proposal. Empty until
+            # the first tick runs -- harvesting before that point behaves
+            # exactly like the pre-existing unprotected policy, which is
+            # correct: nothing is yet known to be "still actionable."
+            protected_evidence_ids: set[str] = set()
 
             def _harvest_immediately(result: ObservationResult) -> None:
                 # Harvested Evidence Issuance / Missing-Evidence Closure v1:
@@ -1057,8 +1139,13 @@ class _EngineSession:
                 # See docs/candidate-visit-authority-contract.md "Evidence-
                 # cache capacity" and `LiveCameraNodeShadowSession.run`'s own
                 # `on_result` docstring.
-                misses = _harvest_burst_bytes(session, result.evidence_candidates, burst_bytes_cache)
-                misses += _harvest_same_frame_bytes(session, result.evidence_candidates, same_frame_bytes_cache)
+                misses = _harvest_burst_bytes(
+                    session, result.evidence_candidates, burst_bytes_cache, protected_ids=protected_evidence_ids,
+                )
+                misses += _harvest_same_frame_bytes(
+                    session, result.evidence_candidates, same_frame_bytes_cache,
+                    protected_ids=protected_evidence_ids,
+                )
                 if misses:
                     with self._state_lock:
                         self._evidence_harvest_misses += misses
@@ -1188,9 +1275,13 @@ class _EngineSession:
                         # (idempotent -- `in cache: continue` -- and cheap)
                         # rather than removed, in case a future caller of
                         # `session.run()` ever omits `on_result`.
-                        misses = _harvest_burst_bytes(session, result.evidence_candidates, burst_bytes_cache)
+                        misses = _harvest_burst_bytes(
+                            session, result.evidence_candidates, burst_bytes_cache,
+                            protected_ids=protected_evidence_ids,
+                        )
                         misses += _harvest_same_frame_bytes(
                             session, result.evidence_candidates, same_frame_bytes_cache,
+                            protected_ids=protected_evidence_ids,
                         )
                         if misses:
                             with self._state_lock:
@@ -1234,6 +1325,7 @@ class _EngineSession:
                             same_frame_bytes_cache=same_frame_bytes_cache,
                             adapter=adapter,
                             known_horizon_ms=latest_known_offset_ms,
+                            protected_evidence_ids=protected_evidence_ids,
                         )
             finally:
                 final_results: tuple[ObservationResult, ...] = ()
@@ -1283,9 +1375,13 @@ class _EngineSession:
                 for result in final_results:
                     all_track_updates.extend(result.track_updates)
                     all_evidence_candidates.extend(result.evidence_candidates)
-                    misses = _harvest_burst_bytes(session, result.evidence_candidates, burst_bytes_cache)
+                    misses = _harvest_burst_bytes(
+                        session, result.evidence_candidates, burst_bytes_cache,
+                        protected_ids=protected_evidence_ids,
+                    )
                     misses += _harvest_same_frame_bytes(
                         session, result.evidence_candidates, same_frame_bytes_cache,
+                        protected_ids=protected_evidence_ids,
                     )
                     if misses:
                         with self._state_lock:
@@ -1310,6 +1406,7 @@ class _EngineSession:
                     adapter=adapter,
                     known_horizon_ms=latest_known_offset_ms,
                     finalize=True,
+                    protected_evidence_ids=protected_evidence_ids,
                 )
                 with self._state_lock:
                     self._camera_connected = False
@@ -1575,6 +1672,7 @@ class _EngineSession:
         adapter: CandidateVisitAuthorityAdapter,
         known_horizon_ms: int | None = None,
         finalize: bool = False,
+        protected_evidence_ids: set[str] | None = None,
     ) -> None:
         """Reruns the unmodified, bounded, post-hoc Stage 6.19 assembler over
         every track update observed so far -- exactly
@@ -1607,6 +1705,35 @@ class _EngineSession:
         already resolved in its favor. Every other proposal (empty
         `ambiguous_adjacent_proposal_ids`, or a non-winning, now-stable
         cluster member) is attempted exactly as before this fix.
+
+        Pending-Proposal Evidence Preservation & Arbitration Fallback
+        Correctness v1 (see docs/candidate-visit-authority-contract.md
+        "Preservation contract" / "Fallback contract"):
+
+        `protected_evidence_ids` is an optional, caller-owned `set[str]`
+        (mirroring `attempted_proposal_ids`'s own by-reference-mutation
+        convention) that this call clears and repopulates, every tick, with
+        the bounded handful of evidence-byte ids every currently-
+        still-actionable proposal actually needs -- see
+        `_compute_protected_evidence_ids`. `None` (every pre-existing
+        caller/test) disables protection entirely, reproducing the exact
+        prior behavior. The real caller (`_run_async`) passes the same
+        `set[str]` object into `_harvest_burst_bytes`/`_harvest_same_frame_
+        bytes` between ticks, so the shared cache's own ordinary eviction
+        prefers to evict something *not* currently protected.
+
+        If a resolved component's own winner cannot actually be admitted
+        (an outcome in `_FALLBACK_ELIGIBLE_OUTCOMES` -- genuinely about
+        *this* proposal's own evidence, never a fact that would apply
+        identically to every sibling), the next-best *other* stable member
+        of that same component (`arbitration.fallback_order_by_winner_id`)
+        is tried next, in deterministic rank order, stopping at the first
+        admissible member or once the component's own members are
+        exhausted. This never reruns arbitration and never attempts a
+        member of a *different* component; every member of a resolved
+        component still gets exactly one recorded outcome, and at most one
+        of them is ever admitted -- see `_attempt_resolved_component` for
+        the exact bounded walk.
         """
 
         evidence_by_generation: dict[str, list[str]] = {}
@@ -1622,6 +1749,25 @@ class _EngineSession:
         proposals = assemble_visit_episodes(
             tracklets, known_horizon_ms=None if finalize else known_horizon_ms,
         ).proposals
+        candidates_by_id = {item.media_asset_id: item for item in all_evidence_candidates}
+        if protected_evidence_ids is not None:
+            # Whatever bytes the two shared caches *currently* hold, unioned
+            # once per tick (not per proposal) -- see `_compute_protected_
+            # evidence_ids`'s own docstring for why a real, currently-cached
+            # byte (when one exists) must back this preview, never `media=
+            # None`. A candidate genuinely already evicted or never
+            # harvested is an honest miss here too, exactly like it would be
+            # at real attempt time -- never fabricated.
+            current_media = {**burst_bytes_cache, **(same_frame_bytes_cache or {})}
+            protected, capacity_exhausted = _compute_protected_evidence_ids(
+                proposals, attempted_proposal_ids=attempted_proposal_ids,
+                candidates_by_id=candidates_by_id, media_lookup=current_media, adapter=adapter,
+            )
+            protected_evidence_ids.clear()
+            protected_evidence_ids.update(protected)
+            if capacity_exhausted:
+                with self._state_lock:
+                    self._protected_evidence_capacity_exhausted_count += 1
         # Sustained-Activity Visit Admission Starvation & Stop-Finalization
         # Correctness v1: `known_horizon_ms`/`_MAXIMUM_COMPONENT_PENDING_MS`
         # let arbitration force a decision on a component whose own oldest
@@ -1644,9 +1790,10 @@ class _EngineSession:
         if not new_proposals:
             return
 
-        candidates_by_id = {item.media_asset_id: item for item in all_evidence_candidates}
+        new_proposals_by_id = {item.proposal_id: item for item in new_proposals}
         same_frame_cache = same_frame_bytes_cache or {}
-        for proposal in new_proposals:
+
+        def _attempt(proposal: AssembledVisitProposal, *, ambiguous_boundary_resolved: bool):
             relevant = tuple(
                 candidates_by_id[media_id]
                 for media_id in proposal.evidence_candidate_ids
@@ -1669,9 +1816,11 @@ class _EngineSession:
             decided_at = datetime.now(UTC)
             outcome = adapter.attempt_candidate(
                 proposal, evidence_candidates=relevant, evidence_bytes=evidence_bytes,
-                observed_at=decided_at,
-                ambiguous_boundary_resolved=proposal.proposal_id in arbitration.resolved_winner_ids,
+                observed_at=decided_at, ambiguous_boundary_resolved=ambiguous_boundary_resolved,
             )
+            return outcome, decided_at
+
+        def _record_and_count(proposal: AssembledVisitProposal, outcome, decided_at, *, ledger_reason: str) -> None:
             # Rejected / Suppressed Detection Attribution v1: recorded
             # regardless of outcome (including a genuine "created"), so
             # both "why was this Visit created" and "why was this potential
@@ -1682,9 +1831,12 @@ class _EngineSession:
             # is the exact proposal/geometry/confidence detail a retried
             # `blocked_continuation_pending` re-evaluation on a later tick
             # previously discarded completely on every attempt but the
-            # last.
+            # last. `ledger_reason` may carry an additive `:fallback_
+            # position_N` suffix (see `_attempt_resolved_component`) --
+            # `outcome.reason` itself is never mutated, only what reaches
+            # the ledger for this one record.
             self._counterfactual.record_proposal_outcome(
-                proposal, outcome=outcome.outcome, reason=outcome.reason, visit_id=outcome.visit_id,
+                proposal, outcome=outcome.outcome, reason=ledger_reason, visit_id=outcome.visit_id,
                 decided_at=decided_at, known_horizon_ms=known_horizon_ms,
             )
             # A proposal blocked only because its own episode boundary is
@@ -1741,6 +1893,117 @@ class _EngineSession:
             if outcome.created and outcome.visit_id:
                 self._schedule_automatic_identification(outcome.visit_id)
 
+        # Every resolved component is walked as one atomic unit -- winner
+        # first, then its own fallback chain -- *before* any ordinary
+        # (non-component) proposal is attempted at all. This must not be
+        # folded into a single pass over `new_proposals` in whatever order
+        # the assembler happens to emit it: `new_proposals`' own order has
+        # no guaranteed relationship to arbitration rank (a temporally-
+        # earlier, *losing* member frequently appears before the winner --
+        # `assemble_visit_episodes` orders episodes close to tracklet
+        # arrival order, not confidence order). Iterating `new_proposals`
+        # directly and branching per-proposal on "is this a winner" would
+        # let a losing sibling reached first take the ordinary path
+        # (`blocked_ambiguous_boundary`, permanently attempted) *before*
+        # its own winner's chain ever runs -- then `_attempt_resolved_
+        # component` would attempt that same proposal id a second time
+        # once it reached it via the chain, corrupting `proposals_
+        # observed`/the ledger with a duplicate record for one real
+        # proposal (confirmed via direct reproduction during this
+        # milestone's own self-review, fixed here before it ever reached a
+        # committed test). Processing every resolved component fully,
+        # first, guarantees no member of it is ever reachable by the
+        # second, ordinary-only pass below.
+        handled: set[str] = set()
+        for winner_id in arbitration.resolved_winner_ids:
+            winner = new_proposals_by_id.get(winner_id)
+            if winner is None or winner_id in handled:
+                # Not present this tick (already permanently resolved on a
+                # prior tick -- a pre-existing, rare edge case unrelated to
+                # this fix) or already handled as part of another
+                # component's own chain (should not happen -- components
+                # are disjoint -- kept as defense in depth only).
+                continue
+            self._attempt_resolved_component(
+                winner, arbitration=arbitration, new_proposals_by_id=new_proposals_by_id,
+                handled=handled, attempt=_attempt, record_and_count=_record_and_count,
+            )
+        for proposal in new_proposals:
+            if proposal.proposal_id in handled:
+                continue
+            handled.add(proposal.proposal_id)
+            outcome, decided_at = _attempt(proposal, ambiguous_boundary_resolved=False)
+            _record_and_count(proposal, outcome, decided_at, ledger_reason=outcome.reason)
+
+    def _attempt_resolved_component(
+        self,
+        winner: AssembledVisitProposal,
+        *,
+        arbitration: AmbiguousBoundaryArbitration,
+        new_proposals_by_id: dict[str, AssembledVisitProposal],
+        handled: set[str],
+        attempt: Callable[..., tuple],
+        record_and_count: Callable[..., None],
+    ) -> None:
+        """Fallback contract (Pending-Proposal Evidence Preservation &
+        Arbitration Fallback Correctness v1, see docs/candidate-visit-
+        authority-contract.md "Fallback contract"/"Fallback order"): walk
+        `winner`'s own resolved component -- `winner` itself, then every
+        other stable member `arbitration.fallback_order_by_winner_id`
+        already ranks best-first -- attempting each with `ambiguous_
+        boundary_resolved=True` only while the chain is still genuinely "in
+        contention" (nothing tried so far has succeeded or hit a
+        non-fallback-eligible, whole-component-ending failure). The moment
+        the chain settles (a success, or a failure outside
+        `_FALLBACK_ELIGIBLE_OUTCOMES`), every remaining member is attempted
+        exactly as it always was before this fix (`ambiguous_boundary_
+        resolved=False`, permanently `blocked_ambiguous_boundary`) --
+        preserving "at most one Visit per component" unchanged and never
+        rerunning arbitration itself. A component with no other stable
+        member (a resolved pair whose loser is not in this tick's own
+        `new_proposals`, or a winner whose `ambiguous_adjacent_proposal_ids`
+        had exactly one other member already permanently resolved earlier)
+        is simply a chain of length one -- an ordinary, unaffected loss if
+        the winner itself fails, exactly like before this fix; only a
+        chain of length two or more can ever count as a genuine fallback
+        attempt below."""
+
+        chain = (winner.proposal_id,) + tuple(
+            candidate_id
+            for candidate_id in arbitration.fallback_order_by_winner_id.get(winner.proposal_id, ())
+            if candidate_id in new_proposals_by_id
+        )
+        chain_settled = False
+        fallback_invoked = False
+        fallback_admitted = False
+        for position, candidate_id in enumerate(chain):
+            member = new_proposals_by_id[candidate_id]
+            attempt_as_bypassed = not chain_settled
+            if position > 0 and attempt_as_bypassed:
+                fallback_invoked = True
+            outcome, decided_at = attempt(member, ambiguous_boundary_resolved=attempt_as_bypassed)
+            handled.add(candidate_id)
+            ledger_reason = (
+                f"{outcome.reason}:fallback_position_{position}" if position > 0 and attempt_as_bypassed
+                else outcome.reason
+            )
+            record_and_count(member, outcome, decided_at, ledger_reason=ledger_reason)
+            if chain_settled:
+                continue
+            if outcome.created or outcome.outcome == "idempotent_repeat":
+                chain_settled = True
+                if position > 0:
+                    fallback_admitted = True
+            elif outcome.outcome not in _FALLBACK_ELIGIBLE_OUTCOMES:
+                chain_settled = True
+        if fallback_invoked:
+            with self._state_lock:
+                self._fallback_attempted_count += 1
+                if fallback_admitted:
+                    self._fallback_admitted_count += 1
+                else:
+                    self._fallback_exhausted_count += 1
+
 
 # Visit Authority Budget + Ambiguous-Boundary Recall Closure v1: raised from
 # the original 8 to 32. Real, evidenced 2026-08-19 field defect: reconstructing
@@ -1790,12 +2053,143 @@ class _EngineSession:
 # capacity bump and is left as a disclosed follow-up, not undertaken here.
 _MAX_CACHED_BURST_BYTES = 128
 _MAX_CACHED_SAME_FRAME_BYTES = 128
+# Pending-Proposal Evidence Preservation & Arbitration Fallback Correctness
+# v1 (see "Preservation contract" in docs/candidate-visit-authority-
+# contract.md): a real, live-field-measured instance of exactly the risk
+# the comment above already named unfixed -- Representative Daylight Gate A
+# Field Acceptance v6 found a real arbitration winner's own evidence
+# evicted by unrelated activity elsewhere in the same session before its
+# own (correctly, if belatedly, computed) admission attempt ever ran
+# (48/263 distinct proposals, 18.3%, one real session). `_select_eviction_
+# victim` below now prefers evicting an *unprotected* entry first --
+# `_compute_protected_evidence_ids` decides, once per assembly tick, which
+# bounded handful of ids belong to a proposal that is still actionable
+# (not yet permanently attempted) and therefore still needs its bytes.
+# `_MAX_PROTECTED_EVIDENCE_IDS` is a hard ceiling on how many ids may be
+# protected at once, deliberately kept below either cache's own bound: a
+# fully bounded cache, none of it protected, must still behave exactly
+# like the pre-existing plain insertion-order FIFO policy (every prior
+# test/behavior unaffected), and even a pathological number of genuinely
+# simultaneous pending proposals can never make eviction impossible --
+# `_compute_protected_evidence_ids` degrades deterministically (oldest
+# pending proposals protected first -- they are the ones actually at risk;
+# a proposal's own most recently captured evidence is, by construction,
+# still the most recent insertion into the cache regardless of protection)
+# rather than leave the cache unboundedly full or eviction undefined.
+_MAX_PROTECTED_EVIDENCE_IDS = 64
+
+
+def _select_eviction_victim(cache: dict[str, bytes], protected_ids: frozenset[str]) -> str:
+    """The one key `_harvest_burst_bytes`/`_harvest_same_frame_bytes` should
+    evict next: the oldest-inserted key (dict iteration order) that is not
+    currently in `protected_ids`. Reproduces the exact prior, unconditional
+    "oldest inserted" policy whenever nothing is protected (`protected_ids`
+    empty is the default for every pre-existing caller/test -- see
+    `_run_assembly_tick`'s own `protected_evidence_ids` parameter). Falls
+    back to the literal oldest key if every current entry happens to be
+    protected -- deterministic, always evicts something (a cache must
+    never grow past its own bound), and should not normally be reachable
+    at all given `_MAX_PROTECTED_EVIDENCE_IDS` is kept below either cache's
+    own capacity."""
+
+    for key in cache:
+        if key not in protected_ids:
+            return key
+    return next(iter(cache))
+
+
+def _compute_protected_evidence_ids(
+    proposals: tuple[AssembledVisitProposal, ...],
+    *,
+    attempted_proposal_ids: set[str],
+    candidates_by_id: dict[str, EvidenceCandidate],
+    media_lookup: dict[str, bytes],
+    adapter: CandidateVisitAuthorityAdapter,
+) -> tuple[frozenset[str], bool]:
+    """Pending-Proposal Evidence Preservation & Arbitration Fallback
+    Correctness v1 (see "Preservation contract" in docs/candidate-visit-
+    authority-contract.md): the bounded set of evidence-byte ids worth
+    shielding from the shared cache's ordinary eviction *right now* --
+    recomputed fresh from this tick's own freshly-reassembled `proposals`,
+    never a running/accumulated union, so a proposal that becomes
+    permanently resolved this tick, or is superseded by a larger
+    continuation proposal and simply stops appearing, loses its own
+    protection the very next tick automatically -- no separate "release"
+    step, no leak after resolution, no leak after stop (the caller-owned
+    set this feeds is simply cleared and repopulated every call, including
+    the session-ending `finalize=True` tick).
+
+    Every proposal not yet in `attempted_proposal_ids` is "still
+    actionable" and gets considered: an ordinary proposal about to be
+    attempted this same tick, a `deferred_ids` member of a still-growing
+    ambiguous component (needs protection for however many further ticks
+    its own component keeps growing before it can resolve), and every
+    *other* stable member of a component that resolves this tick (needs
+    protection so a same-tick fallback attempt, if the winner fails, can
+    still find real bytes -- see `_EngineSession._attempt_resolved_
+    component`).
+
+    `media_lookup` is the union of the caller's own `burst_bytes_cache`/
+    `same_frame_bytes_cache` *as they currently stand* (computed once per
+    tick, before this call, never mutated by it) -- see
+    `CandidateVisitAuthorityAdapter.priority_evidence_ids`'s own docstring
+    for why a real, currently-cached byte must back this preview rather
+    than `media=None`: without it, every real candidate would be scored
+    `candidate_unavailable` (a hard rejection) and this function would
+    always return nothing to protect, silently defeating the whole
+    mechanism. A candidate with no entry in `media_lookup` is an honest,
+    already-realized miss (never captured, or already evicted/lost before
+    harvest) -- nothing this function can retroactively protect.
+
+    Bounded two ways: per-proposal, via `CandidateVisitAuthorityAdapter.
+    priority_evidence_ids` (identification/context/same-frame/alternates
+    only -- a handful of ids, never a proposal's entire accumulated
+    evidence set, which could span dozens of constituent track generations
+    for a long-lived, forced-decision episode); and in total, via
+    `_MAX_PROTECTED_EVIDENCE_IDS`, processed oldest-`start_offset_ms`-first.
+    Oldest-first is deliberate, not arbitrary: the oldest still-pending
+    proposals are the ones actually at risk of eviction (a proposal's own
+    most recent capture is, by construction, also the shared cache's own
+    most recent insertion, safe from ordinary FIFO eviction regardless of
+    protection) -- so if the total bound is reached, the remaining,
+    necessarily more recent, proposals simply receive no *additional*
+    protection this tick. This is a deterministic, diagnosable degradation
+    (the returned `capacity_exhausted` flag; see `_EngineSession.
+    _protected_evidence_capacity_exhausted_count`), never an unbounded
+    protected set and never a silently-wrong protection choice."""
+
+    pending = sorted(
+        (proposal for proposal in proposals if proposal.proposal_id not in attempted_proposal_ids),
+        key=lambda proposal: proposal.start_offset_ms,
+    )
+    protected: set[str] = set()
+    capacity_exhausted = False
+    for proposal in pending:
+        relevant = tuple(
+            candidates_by_id[media_id] for media_id in proposal.evidence_candidate_ids if media_id in candidates_by_id
+        )
+        if not relevant:
+            continue
+        picks = adapter.priority_evidence_ids(proposal, evidence_candidates=relevant, media=media_lookup)
+        new_ids = [media_id for media_id in picks if media_id not in protected]
+        if not new_ids:
+            continue
+        remaining_budget = _MAX_PROTECTED_EVIDENCE_IDS - len(protected)
+        if remaining_budget <= 0:
+            capacity_exhausted = True
+            continue
+        if len(new_ids) > remaining_budget:
+            capacity_exhausted = True
+        protected.update(new_ids[:remaining_budget])
+    return frozenset(protected), capacity_exhausted
 
 
 def _harvest_burst_bytes(
     session: LiveCameraNodeShadowSession,
     candidates: tuple[EvidenceCandidate, ...],
     cache: dict[str, bytes],
+    *,
+    protected_ids: frozenset[str] | set[str] = frozenset(),
 ) -> int:
     """Copy any new burst-role candidate's bytes out of the session's own
     temporary payload cache immediately, while the session is still live --
@@ -1804,6 +2198,11 @@ def _harvest_burst_bytes(
     `on_result` docstring for why it also cannot wait for a whole batch.
     Bounded the same way the session's own `temporary_burst_payload` cache
     already is.
+
+    `protected_ids` (Pending-Proposal Evidence Preservation & Arbitration
+    Fallback Correctness v1): see `_select_eviction_victim`. Optional and
+    additive -- omitted, eviction is the exact prior insertion-order-only
+    policy.
 
     Returns the count of candidates in this call whose content hash was not
     found in the session's own cache. This is always a genuine "captured,
@@ -1827,7 +2226,7 @@ def _harvest_burst_bytes(
             continue
         cache[candidate.media_asset_id] = payload
         while len(cache) > _MAX_CACHED_BURST_BYTES:
-            cache.pop(next(iter(cache)))
+            cache.pop(_select_eviction_victim(cache, protected_ids))
     return misses
 
 
@@ -1835,11 +2234,13 @@ def _harvest_same_frame_bytes(
     session: LiveCameraNodeShadowSession,
     candidates: tuple[EvidenceCandidate, ...],
     cache: dict[str, bytes],
+    *,
+    protected_ids: frozenset[str] | set[str] = frozenset(),
 ) -> int:
     """Same-Frame Species Evidence v1: mirrors `_harvest_burst_bytes` exactly
     for the `classifier_same_frame` role and `session.
     temporary_same_frame_payload`'s own independently-bounded cache,
-    including its return-value meaning."""
+    including its return-value meaning and its `protected_ids` behavior."""
 
     misses = 0
     for candidate in candidates:
@@ -1854,7 +2255,7 @@ def _harvest_same_frame_bytes(
             continue
         cache[candidate.media_asset_id] = payload
         while len(cache) > _MAX_CACHED_SAME_FRAME_BYTES:
-            cache.pop(next(iter(cache)))
+            cache.pop(_select_eviction_victim(cache, protected_ids))
     return misses
 
 

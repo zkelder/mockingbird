@@ -433,6 +433,48 @@ for the complete mechanism and prior history. Contained entirely within
 `candidate_visit_authority.resolve_ambiguous_boundary_arbitration`; this
 gate's own decision order and every other check are unchanged.
 
+**Fallback contract (Pending-Proposal Evidence Preservation & Arbitration
+Fallback Correctness v1):** Representative Daylight Gate A Field
+Acceptance v6 found a real, concrete instance of a risk the "Evidence-cache
+capacity" section below had already named but left unaddressed: a real
+arbitration winner reached `ambiguous_boundary_resolved=True` correctly,
+then permanently failed one gate later at evidence availability
+(`blocked_missing_evidence`), with no code path ever reconsidering the
+same resolved component -- 48/263 distinct proposals (18.3%) lost this way
+in one real session. `resolve_ambiguous_boundary_arbitration` now also
+returns `fallback_order_by_winner_id: Mapping[str, tuple[str, ...]]`: for
+each winner, every *other* stable member of that exact same connected
+component, ranked best-first by the identical key that chose the winner
+(`_forced_decision_key` for a forced decision, `_arbitration_key`
+otherwise -- never a new heuristic). This module still computes no new
+policy and remains unaware of evidence bytes entirely; it only exposes the
+order a caller may safely walk.
+
+`engine_runtime._EngineSession._attempt_resolved_component` is that
+caller: it attempts the winner, then -- only if the winner's own outcome
+is genuinely about *this proposal's* evidence (`blocked_missing_evidence`,
+`reject_no_identification_or_context`, `reject_subject_geometry_invalid`)
+rather than a component-wide or infrastructure fact
+(`blocked_privacy_zone`, `blocked_scene_confusor_suspected`,
+`reject_insufficient_proposal_support`, a repository `"failed"`) -- the
+next-ranked member, and so on, stopping at the first admissible member or
+once the component is exhausted. Every member still attempted with the
+default `ambiguous_boundary_resolved=False` once the chain settles blocks
+exactly as before: at most one Visit is ever admitted per component,
+unchanged. Every resolved component is walked as one atomic unit, in a
+pass over `resolved_winner_ids` that completes *before* any ordinary,
+non-component proposal is attempted at all -- `new_proposals`' own
+emission order has no guaranteed relationship to arbitration rank, so
+branching per-proposal on "is this a winner" while iterating that list
+directly let a losing-but-fallback-eligible sibling reached first take the
+ordinary path (and get marked permanently attempted) before its own
+winner's chain ever ran, corrupting bookkeeping with a duplicate attempt
+once the chain later reached it -- found by this milestone's own
+adversarial self-review, fixed before it reached a committed test. See
+this milestone's own report for the full RED/GREEN account, the exactly-
+once/multi-subject/stop-finalization proofs, and the 105-simulated-minute
+v6-shaped replay against the real bounded cache.
+
 ## Continuation-pending policy (Visit Continuity / Provisional Admission Fix v1)
 
 A proposal whose own `continuation_pending` is `True` -- the assembler
@@ -620,6 +662,56 @@ for less than half its own constituent generations (115 of 240, in the
 worst-case shape this milestone's own investigation constructed) now
 correctly reaches `create` instead of `blocked_missing_evidence`. See this
 milestone's own report for the full RED/GREEN account.
+
+### Preservation contract (Pending-Proposal Evidence Preservation & Arbitration Fallback Correctness v1)
+
+Representative Daylight Gate A Field Acceptance v6 field-measured that the
+128-entry bound above, raised twice already, is still a bound, not a
+structural fix: `_harvest_burst_bytes`/`_harvest_same_frame_bytes` evict
+the single oldest-inserted key the instant a new one arrives, with zero
+awareness of whether that key belongs to a still-actionable pending
+proposal. Rather than a fourth capacity bump (explicitly rejected --
+representative field evidence does not support treating a numeric bound as
+the intended contract), eviction is now pending-proposal-aware:
+
+- `engine_runtime._compute_protected_evidence_ids`, called once per
+  assembly tick, considers every proposal not yet in `attempted_proposal_
+  ids` "still actionable" (an ordinary about-to-be-attempted proposal, a
+  still-growing ambiguous component's own deferred member, or another
+  stable member of a component resolving this same tick, needed for a
+  same-tick fallback attempt -- see below). For each, `CandidateVisitAuthorityAdapter.
+  priority_evidence_ids` previews -- via the unmodified `evidence_scoring.
+  score_proposal_evidence`, using whatever bytes the caller's own caches
+  *currently* hold, never `media=None` (real, live-captured evidence never
+  declares `decodable=True` upfront, so a bytes-free preview would hard-
+  reject every real candidate and protect nothing) -- which small handful
+  of ids would actually be selected right now.
+- The resulting ids are unioned, oldest-`start_offset_ms`-first (the
+  proposals genuinely at risk; a proposal's own most recent capture is,
+  by construction, also the cache's own most recent insertion, safe
+  regardless of protection), into a bounded `set[str]`
+  (`_MAX_PROTECTED_EVIDENCE_IDS = 64`, half of either cache's own
+  capacity -- protection can never consume an entire cache) -- cleared and
+  recomputed fresh every tick, never accumulated, so a resolved or
+  superseded proposal loses its own protection automatically the very
+  next tick.
+- `_harvest_burst_bytes`/`_harvest_same_frame_bytes` now evict via
+  `_select_eviction_victim`: the oldest-inserted key *not* currently
+  protected (falling back to the literal oldest key only if every entry
+  happens to be protected -- deterministic, always evicts something,
+  should not normally be reachable given the 64/128 headroom). Capacity
+  exhaustion (more still-actionable priority evidence than the 64-id
+  budget allows) is counted, never silent.
+
+Both mechanisms -- preservation here, and "Fallback contract" above --
+were implemented together and are independently tested; the v6-shaped
+105-simulated-minute replay (real bounded cache, real eviction, two
+simultaneous subjects) confirms bounded, non-zero admission survives real
+cache pressure. See this milestone's own report for the complete account,
+including a design correction found before any test run relied on it
+(the `media`-mapping requirement above) and one found by adversarial
+self-review after initial tests passed (the fallback-ordering fix
+described in "Fallback contract").
 
 ## Privacy / Ignore
 

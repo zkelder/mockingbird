@@ -9,7 +9,7 @@ intentionally never exercised here (see docs/candidate-visit-authority
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from io import BytesIO
@@ -35,6 +35,7 @@ from mockingbird.observation.engine_runtime import (
     resolve_provider_config_path,
 )
 from mockingbird.observation.frame_driven_provider import FrameDrivenObservationProvider, FrameDrivenSettings
+from mockingbird.observation.visit_episode_assembler import AssembledVisitProposal
 from mockingbird.observation.media_contracts import (
     AnalysisFrameEnvelope,
     EvidenceBurstFrame,
@@ -1974,19 +1975,28 @@ def test_ambiguous_boundary_arbitration_admits_the_stronger_of_two_stable_siblin
     assert session._counts.candidates_created == 1
 
 
-def test_ambiguous_boundary_arbitration_does_not_cascade_to_the_next_sibling(
+def test_resolved_component_falls_back_when_top_member_evidence_was_evicted(
     repository: ProductRepository,
 ) -> None:
-    """Arbitration is single-shot, not a retry chain: if the single
-    best-evidenced member of a stabilized ambiguous cluster fails a *later*
-    gate (here, `blocked_missing_evidence` -- no persistable evidence bytes
-    at all for the winner), the weaker sibling is not automatically
-    promoted as a fallback. This is a deliberate, disclosed scope boundary
-    (see "Ambiguous boundary arbitration" in docs/tracklet-visit-assembly
-    -contract.md), not an oversight -- cascading arbitration would let
-    progressively weaker evidence keep trying until *something* is
-    admitted, which is exactly the "meaningless dark patch" the evidence
-    -quality boundary exists to prevent."""
+    """Pending-Proposal Evidence Preservation & Arbitration Fallback
+    Correctness v1 -- permanent regression test for the Representative
+    Daylight Gate A Field Acceptance v6 loss class (real, live, 106.63-
+    minute session: a real arbitration winner permanently failed the
+    downstream evidence-availability gate, 48/263 distinct proposals,
+    18.3%, with no runner-up ever attempted, silently losing entire real
+    activity components). Before this fix (RED on accepted `b37656d`):
+    arbitration was single-shot, not a retry chain -- if the single
+    best-evidenced member of a stabilized ambiguous cluster failed a
+    *later* gate (here, `blocked_missing_evidence` -- no persistable
+    evidence bytes at all for the winner), the weaker sibling was never
+    promoted, and the entire real, confirmed encounter was lost. After this
+    fix: the next-best *other* stable member of the exact same resolved
+    component -- which does have real, usable evidence -- is tried next,
+    in the deterministic order `resolve_ambiguous_boundary_arbitration`
+    already ranks, and is admitted. Never "try everything until something
+    passes" -- exactly one other member exists here, and it succeeds on
+    its own genuine merits (real evidence bytes, same quality bar as
+    always), not because the bar was lowered."""
     repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
     session = _tick_session(repository)
     adapter = _tick_adapter(repository)
@@ -1998,9 +2008,10 @@ def test_ambiguous_boundary_arbitration_does_not_cascade_to_the_next_sibling(
 
     # Only the *weaker* generation has real, byte-backed evidence; the
     # stronger one's evidence candidate exists (so it is still a
-    # structurally valid proposal) but no bytes are cached for it, so the
-    # quality gate correctly rejects it once authority stops blocking it
-    # on ambiguity alone.
+    # structurally valid proposal) but no bytes are cached for it -- exactly
+    # the real v6 shape: evidence genuinely captured, then evicted (or, as
+    # here, never harvested at all) before this specific winner's own
+    # delayed admission attempt ever ran.
     evidence_strong, _unused_bytes = _tick_evidence(gen_strong, "high_resolution_burst", "hash-strong-empty")
     evidence_weak, bytes_weak = _tick_evidence(gen_weak, "high_resolution_burst", "hash-weak-real")
     burst_bytes_cache = {evidence_weak.media_asset_id: bytes_weak}  # deliberately no entry for evidence_strong
@@ -2012,10 +2023,335 @@ def test_ambiguous_boundary_arbitration_does_not_cascade_to_the_next_sibling(
         attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
         known_horizon_ms=30_000 + 45_000 + 1,
     )
-    assert session._counts.candidates_created == 0
+    # The real activity is no longer lost: the component still yields
+    # exactly one Visit (never both, never a duplicate), and both members
+    # are still permanently, individually resolved -- fallback changes
+    # *which* member wins, never the "at most one Visit per component"
+    # invariant itself.
+    assert session._counts.candidates_created == 1
     assert len(attempted_proposal_ids) == 2
-    assert session._suppressed.get("blocked_ambiguous_boundary") == 1  # the weaker sibling, unaffected
-    assert session._suppressed.get("blocked_missing_evidence") == 1  # the winner, no evidence bytes -- not rescued
+    # The stronger member's own true reason is preserved verbatim -- it
+    # genuinely had no evidence, and that fact is not hidden by the
+    # fallback that rescued its sibling.
+    assert session._suppressed.get("blocked_missing_evidence") == 1
+    # Neither member is a "loser" of an ordinary, un-rescued ambiguous
+    # comparison anymore -- the old contract's own diagnostic signature is
+    # gone.
+    assert "blocked_ambiguous_boundary" not in session._suppressed
+    # Diagnostics (brief §19): exactly one component needed fallback, and it
+    # succeeded -- never "exhausted", never counted more than once.
+    assert session._fallback_attempted_count == 1
+    assert session._fallback_admitted_count == 1
+    assert session._fallback_exhausted_count == 0
+
+    import json as _json
+
+    from mockingbird.repository.product_repository import ObservationCandidateVisitModel
+
+    with repository.session_factory() as db_session:
+        created_rows = [
+            row for row in (
+                db_session.get(ObservationCandidateVisitModel, proposal_id)
+                for proposal_id in attempted_proposal_ids
+            )
+            if row is not None
+        ]
+    assert len(created_rows) == 1
+    # The *weaker* generation -- the one with real evidence -- is the one
+    # actually admitted, never the evidence-less "winner" and never a
+    # fabricated mix of both.
+    assert _json.loads(created_rows[0].constituent_generation_ids_json) == [gen_weak]
+
+    # The ledger's own record for the admitted fallback member is honestly
+    # marked as such -- a reviewer/auditor can tell "this was admitted via
+    # fallback, at position 1" apart from an ordinary direct win, without a
+    # new schema field (reuses the existing free-form `reason` string, the
+    # same additive-suffix convention `candidate_visit_adapter.py` already
+    # uses for a retry-exhausted persistence failure).
+    window = session.counterfactual_query(start_offset_ms=0, end_offset_ms=10_000_000)
+    outcomes_by_generation = {
+        tuple(record.constituent_generation_ids): record for record in window.proposal_outcomes
+    }
+    assert outcomes_by_generation[(gen_weak,)].reason.endswith(":fallback_position_1")
+    assert outcomes_by_generation[(gen_weak,)].outcome == "created"
+    # The strong (evidence-less) member's own record is never suffixed --
+    # it was the primary attempt, not a fallback attempt.
+    assert outcomes_by_generation[(gen_strong,)].reason == "no_persistable_evidence_bytes"
+
+
+def test_fallback_is_correct_regardless_of_which_component_member_the_assembler_lists_first(
+    repository: ProductRepository,
+) -> None:
+    """Adversarial self-review finding (brief §31), fixed before it ever
+    reached a committed test: `new_proposals`' own list order (the
+    assembler's own emission order, close to tracklet arrival/temporal
+    order) has no guaranteed relationship to arbitration rank. Every other
+    fallback test in this file happens to construct the *winner* as the
+    temporally-earliest member, which also makes it first in `assemble_
+    visit_episodes`'s own output -- silently masking a real bug where a
+    losing sibling reached first took the ordinary path (permanently
+    `blocked_ambiguous_boundary`) *before* its own winner's chain ever
+    ran, then was attempted a second time once the chain reached it,
+    corrupting `proposals_observed`/the ledger with a duplicate record.
+    Reversed here on purpose: the weaker (fallback-admitted) member is
+    temporally *first*; the stronger (evidence-less) winner is temporally
+    *second*, and therefore last in the assembler's own emission order."""
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    gen_weak, gen_strong = "gen-weak-first-in-list", "gen-strong-second-in-list"
+    weak_updates = list(_tick_track_updates_with_confidence(gen_weak, 0, 5_000, confidence=0.1))
+    strong_updates = list(_tick_track_updates_with_confidence(gen_strong, 25_000, 30_000, confidence=0.9))
+    all_updates = weak_updates + strong_updates  # weak's own tracklet is fed to the assembler first
+
+    evidence_strong, _unused_bytes = _tick_evidence(gen_strong, "high_resolution_burst", "hash-strong-empty-order")
+    evidence_weak, bytes_weak = _tick_evidence(gen_weak, "high_resolution_burst", "hash-weak-real-order")
+    burst_bytes_cache = {evidence_weak.media_asset_id: bytes_weak}
+    all_evidence = [evidence_strong, evidence_weak]
+    attempted_proposal_ids: set[str] = set()
+
+    session._run_assembly_tick(
+        all_track_updates=all_updates, all_evidence_candidates=all_evidence,
+        attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        known_horizon_ms=30_000 + 45_000 + 1,
+    )
+    assert session._counts.candidates_created == 1
+    # Exactly two real proposals exist in this component -- exactly two
+    # must be observed, never three from a spurious re-attempt.
+    assert session._counts.proposals_observed == 2
+    assert len(attempted_proposal_ids) == 2
+    assert "blocked_ambiguous_boundary" not in session._suppressed
+    assert session._suppressed.get("blocked_missing_evidence") == 1
+
+    window = session.counterfactual_query(start_offset_ms=0, end_offset_ms=10_000_000)
+    # Exactly one ledger record per real proposal -- never two for the
+    # fallback-admitted one (one premature `blocked_ambiguous_boundary`,
+    # one later `created`).
+    assert len(window.proposal_outcomes) == 2
+    outcomes_by_generation = {
+        tuple(record.constituent_generation_ids): record for record in window.proposal_outcomes
+    }
+    assert outcomes_by_generation[(gen_weak,)].outcome == "created"
+    assert outcomes_by_generation[(gen_weak,)].reason.endswith(":fallback_position_1")
+    assert outcomes_by_generation[(gen_strong,)].reason == "no_persistable_evidence_bytes"
+
+
+def test_component_with_no_viable_member_admits_nothing_and_diagnoses_honestly(
+    repository: ProductRepository,
+) -> None:
+    """Tier 1 matrix (brief §28): "winner missing + all alternatives missing
+    -> no admission, honest diagnostic." Fallback tries every stable member
+    of a resolved component, in order -- it must never fabricate an
+    admission when *none* of them can actually produce one. Every member
+    still gets its own true, individually-recorded outcome; the session's
+    own diagnostics honestly show fallback was invoked and exhausted,
+    never silently swallowed into an ordinary, unremarkable loss."""
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    gen_a, gen_b, gen_c = "gen-a-no-evidence", "gen-b-no-evidence", "gen-c-no-evidence"
+    updates_a = list(_tick_track_updates_with_confidence(gen_a, 0, 5_000, confidence=0.9))
+    updates_b = list(_tick_track_updates_with_confidence(gen_b, 25_000, 30_000, confidence=0.5))
+    updates_c = list(_tick_track_updates_with_confidence(gen_c, 50_000, 55_000, confidence=0.1))
+    all_updates = updates_a + updates_b + updates_c
+
+    # Every member's evidence candidate exists (structurally valid
+    # proposals), but not one of them has real bytes anywhere -- the
+    # component is genuinely, honestly unrepresentable.
+    evidence_a, _ = _tick_evidence(gen_a, "high_resolution_burst", "hash-a-empty")
+    evidence_b, _ = _tick_evidence(gen_b, "high_resolution_burst", "hash-b-empty")
+    evidence_c, _ = _tick_evidence(gen_c, "high_resolution_burst", "hash-c-empty")
+    burst_bytes_cache: dict[str, bytes] = {}
+    all_evidence = [evidence_a, evidence_b, evidence_c]
+    attempted_proposal_ids: set[str] = set()
+
+    session._run_assembly_tick(
+        all_track_updates=all_updates, all_evidence_candidates=all_evidence,
+        attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        known_horizon_ms=55_000 + 45_000 + 1,
+    )
+    assert session._counts.candidates_created == 0
+    assert len(attempted_proposal_ids) == 3
+    # All three members honestly, individually record `blocked_missing_
+    # evidence` -- fallback tried every one of them, it did not skip any
+    # or merge them into one generic verdict.
+    assert session._suppressed.get("blocked_missing_evidence") == 3
+    assert "blocked_ambiguous_boundary" not in session._suppressed
+
+    assert session._fallback_attempted_count == 1
+    assert session._fallback_admitted_count == 0
+    assert session._fallback_exhausted_count == 1
+
+    window = session.counterfactual_query(start_offset_ms=0, end_offset_ms=10_000_000)
+    outcomes_by_generation = {
+        tuple(record.constituent_generation_ids): record for record in window.proposal_outcomes
+    }
+    # The winner (highest confidence, gen_a) is the primary attempt, never
+    # suffixed; the two fallback attempts are honestly marked with their
+    # own chain position.
+    assert outcomes_by_generation[(gen_a,)].reason == "no_persistable_evidence_bytes"
+    assert outcomes_by_generation[(gen_b,)].reason == "no_persistable_evidence_bytes:fallback_position_1"
+    assert outcomes_by_generation[(gen_c,)].reason == "no_persistable_evidence_bytes:fallback_position_2"
+
+    from mockingbird.repository.product_repository import ObservationCandidateVisitModel
+
+    with repository.session_factory() as db_session:
+        created_rows = [
+            row for row in (
+                db_session.get(ObservationCandidateVisitModel, proposal_id)
+                for proposal_id in attempted_proposal_ids
+            )
+            if row is not None
+        ]
+    assert created_rows == []
+
+
+def test_fallback_never_mixes_evidence_across_two_independent_simultaneous_components(
+    repository: ProductRepository,
+) -> None:
+    """Multi-subject safety (brief §17): two entirely separate, genuinely
+    simultaneous ambiguous components -- two different real subjects at
+    two different places in frame -- both resolve on the same tick, and
+    both winners lack evidence. Each must independently fall back to its
+    *own* other member and nowhere else: no cross-subject evidence reuse,
+    no collapsing the two sibling candidates into one, no cross-track
+    contamination."""
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    feeder_box = (0.47, 0.58, 0.51, 0.63)
+    perch_box = (0.05, 0.05, 0.15, 0.15)  # geometrically incompatible with feeder_box -- a distinct subject
+
+    def _pair_updates(prefix: str, box: tuple[float, float, float, float]):
+        strong = _tick_track_updates_with_confidence(f"gen-{prefix}-strong", 0, 5_000, confidence=0.9)
+        weak = _tick_track_updates_with_confidence(f"gen-{prefix}-weak", 25_000, 30_000, confidence=0.1)
+        return [
+            replace(update, bounding_box=box) for update in (*strong, *weak)
+        ]
+
+    all_updates = _pair_updates("feeder", feeder_box) + _pair_updates("perch", perch_box)
+
+    evidence_feeder_strong, _ = _tick_evidence("gen-feeder-strong", "high_resolution_burst", "hash-feeder-strong-empty")
+    evidence_feeder_weak, bytes_feeder_weak = _tick_evidence(
+        "gen-feeder-weak", "high_resolution_burst", "hash-feeder-weak-real",
+    )
+    evidence_perch_strong, _ = _tick_evidence("gen-perch-strong", "high_resolution_burst", "hash-perch-strong-empty")
+    evidence_perch_weak, bytes_perch_weak = _tick_evidence(
+        "gen-perch-weak", "high_resolution_burst", "hash-perch-weak-real",
+    )
+    all_evidence = [evidence_feeder_strong, evidence_feeder_weak, evidence_perch_strong, evidence_perch_weak]
+    burst_bytes_cache = {
+        evidence_feeder_weak.media_asset_id: bytes_feeder_weak,
+        evidence_perch_weak.media_asset_id: bytes_perch_weak,
+    }
+    attempted_proposal_ids: set[str] = set()
+
+    session._run_assembly_tick(
+        all_track_updates=all_updates, all_evidence_candidates=all_evidence,
+        attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        known_horizon_ms=30_000 + 45_000 + 1,
+    )
+    # Both components independently rescued -- never merged into one, never
+    # only one of the two.
+    assert session._counts.candidates_created == 2
+    assert len(attempted_proposal_ids) == 4
+    assert session._fallback_attempted_count == 2
+    assert session._fallback_admitted_count == 2
+    assert session._fallback_exhausted_count == 0
+
+    import json as _json
+
+    from mockingbird.repository.product_repository import MediaAssetModel, ObservationCandidateVisitModel
+
+    with repository.session_factory() as db_session:
+        created_rows = [
+            row for row in (
+                db_session.get(ObservationCandidateVisitModel, proposal_id)
+                for proposal_id in attempted_proposal_ids
+            )
+            if row is not None
+        ]
+    created_generations = {
+        tuple(_json.loads(row.constituent_generation_ids_json))[0] for row in created_rows
+    }
+    # Exactly the two *weak* (real-evidence) members were admitted, one per
+    # subject -- never the evidence-less strong ones, never a mix, never a
+    # duplicate of either.
+    assert created_generations == {"gen-feeder-weak", "gen-perch-weak"}
+    # Every persisted evidence row's own `trigger_id` (the engine-side
+    # proposal id it was actually built from) matches the Visit it is
+    # attached to -- proof, at the persistence boundary, that neither
+    # subject's own fallback attempt could have reused the other's bytes.
+    with repository.session_factory() as db_session:
+        for row in created_rows:
+            persisted_ids = _json.loads(row.persisted_media_asset_ids_json)
+            assert persisted_ids, f"Visit {row.visit_id} has no persisted evidence"
+            for media_id in persisted_ids:
+                media = db_session.get(MediaAssetModel, media_id)
+                assert media is not None
+                assert media.trigger_id == row.proposal_id
+
+
+def test_fallback_works_during_stop_finalization(repository: ProductRepository) -> None:
+    """Stop-finalization (brief §20): the exact `test_finalize_tick_
+    resolves_a_still_ambiguous_pair_to_exactly_one_visit` scenario above,
+    except the naturally-stronger member now has no evidence -- fallback
+    must work identically at the session-ending `finalize=True` tick as it
+    does mid-session."""
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    gen_strong, gen_weak = "gen-finalize-strong-no-evidence", "gen-finalize-weak-with-evidence"
+    strong_updates = list(_tick_track_updates_with_confidence(gen_strong, 0, 5_000, confidence=0.8))
+    weak_updates = list(_tick_track_updates_with_confidence(gen_weak, 25_000, 30_000, confidence=0.2))
+    all_updates = strong_updates + weak_updates
+
+    evidence_strong, _unused_bytes = _tick_evidence(gen_strong, "high_resolution_burst", "hash-finalize-strong-empty")
+    evidence_weak, bytes_weak = _tick_evidence(gen_weak, "high_resolution_burst", "hash-finalize-weak-real")
+    burst_bytes_cache = {evidence_weak.media_asset_id: bytes_weak}  # deliberately no entry for evidence_strong
+    attempted_proposal_ids: set[str] = set()
+
+    # A single session-ending tick -- stop is called shortly after this
+    # ambiguous pair formed, never given the chance to individually
+    # stabilize mid-session first.
+    session._run_assembly_tick(
+        all_track_updates=all_updates, all_evidence_candidates=[evidence_strong, evidence_weak],
+        attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        known_horizon_ms=30_100, finalize=True,
+    )
+    assert session._counts.candidates_created == 1
+    assert len(attempted_proposal_ids) == 2
+    assert session._fallback_attempted_count == 1
+    assert session._fallback_admitted_count == 1
+
+    import json as _json
+
+    from mockingbird.repository.product_repository import ObservationCandidateVisitModel
+
+    with repository.session_factory() as db_session:
+        created_rows = [
+            row for row in (
+                db_session.get(ObservationCandidateVisitModel, proposal_id)
+                for proposal_id in attempted_proposal_ids
+            )
+            if row is not None
+        ]
+    assert len(created_rows) == 1
+    assert _json.loads(created_rows[0].constituent_generation_ids_json) == [gen_weak]
+
+    # Repeated stop/finalize does not duplicate (brief §15/§20): a second,
+    # identical finalize tick over the same unchanged state must not admit
+    # a second Visit -- both proposal ids are already permanently resolved.
+    session._run_assembly_tick(
+        all_track_updates=all_updates, all_evidence_candidates=[evidence_strong, evidence_weak],
+        attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        known_horizon_ms=30_100, finalize=True,
+    )
+    assert session._counts.candidates_created == 1
 
 
 # =============================================================================
@@ -2328,6 +2664,170 @@ def test_field_derived_multi_subject_stress_replay(repository: ProductRepository
     assert elapsed_seconds < 90.0, f"105-minute two-subject simulated replay took {elapsed_seconds:.1f}s of real time"
 
 
+# =============================================================================
+# Pending-Proposal Evidence Preservation & Arbitration Fallback Correctness
+# v1: the v6-shaped long-run replay (brief §7/§22). The stress test
+# immediately above already proves multi-subject/forced-decision correctness
+# against a deliberately *unbounded* local cache -- isolating arbitration
+# from cache-capacity concerns, exactly as its own docstring says. This one
+# restores the one dimension that isolation deliberately removed: the REAL,
+# bounded 128-entry evidence-byte cache, with real eviction pressure and real
+# protection, over the same >100-simulated-minute, two-simultaneous-subject
+# shape -- approximating Representative Daylight Gate A Field Acceptance v6
+# itself (long sustained activity, hundreds of proposals, natural component
+# resolution, evidence churn, real viable proposals later in the component).
+# =============================================================================
+
+
+def test_v6_shaped_replay_does_not_lose_viable_activity_to_cache_exhaustion(
+    repository: ProductRepository,
+) -> None:
+    """Pre-fix (RED on accepted `b37656d`): the real, bounded, insertion
+    -order-only 128-entry cache, churned by two simultaneously-active
+    subjects over a long run, evicts a real, resolved arbitration winner's
+    own evidence before its own (correctly, if belatedly, computed)
+    admission attempt ever runs -- the precise v6 mechanism -- permanently
+    losing real, viable activity with no fallback and no protection.
+    Post-fix (GREEN): bounded, non-zero, non-duplicated Visit admission
+    from both subjects survives real cache pressure. Never an exact
+    asserted Visit count (brief §7's own explicit instruction) -- only the
+    core invariant this whole milestone exists to prove: real viable
+    activity is not permanently lost merely because one arbitration
+    member's own bytes expired first."""
+    repository.set_observation_authority_mode(
+        ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW, fresh_session=True,
+    )
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    feeder_box = (0.47, 0.58, 0.51, 0.63)
+    perch_box = (0.05, 0.05, 0.15, 0.15)
+    spacing_ms = 5_000
+    tracklet_duration_ms = 1_000
+    tick_every_ms = 60_000
+    total_simulated_ms = 105 * 60_000
+
+    def _updates_and_evidence(generation_id: str, start_ms: int, box: tuple[float, float, float, float]):
+        end_ms = start_ms + tracklet_duration_ms
+        updates = (
+            TrackUpdate(
+                track_id=f"{generation_id}-track", generation_id=generation_id,
+                captured_at=NOW + timedelta(milliseconds=start_ms), status="started", lifecycle_state="confirmed",
+                frame_id=f"frame-{generation_id}-start", source_offset_ms=start_ms, broad_class="animal",
+                bounding_box=box, supporting_frame_ids=(f"frame-{generation_id}-start",),
+                support_state="weak_detector_supported", detector_ran=True,
+            ),
+            TrackUpdate(
+                track_id=f"{generation_id}-track", generation_id=generation_id,
+                captured_at=NOW + timedelta(milliseconds=end_ms), status="ended", lifecycle_state="ended",
+                frame_id=f"frame-{generation_id}-end", source_offset_ms=end_ms, broad_class="animal",
+                bounding_box=box, supporting_frame_ids=(f"frame-{generation_id}-end",),
+                support_state="weak_detector_supported", detector_ran=True,
+                terminal_reason="maximum_unsupported_duration",
+            ),
+        )
+        evidence, payload = _tick_evidence(generation_id, "high_resolution_burst", f"hash-{generation_id}")
+        return updates, evidence, payload
+
+    all_updates: list[TrackUpdate] = []
+    all_evidence: list[EvidenceCandidate] = []
+    burst_bytes_cache: dict[str, bytes] = {}  # the REAL bounded cache, not an unbounded test double
+    attempted_proposal_ids: set[str] = set()
+    protected_evidence_ids: set[str] = set()
+    candidates_created_after_each_tick: list[int] = []
+    max_cache_size = 0
+    max_protected_size = 0
+
+    index = 0
+    next_start_ms = 0
+    next_tick_at_ms = tick_every_ms
+    started = time.monotonic()
+    while next_start_ms + tracklet_duration_ms <= total_simulated_ms:
+        updates_a, evidence_a, payload_a = _updates_and_evidence(f"gen-feeder-{index}", next_start_ms, feeder_box)
+        updates_b, evidence_b, payload_b = _updates_and_evidence(
+            f"gen-perch-{index}", next_start_ms + spacing_ms // 2, perch_box,
+        )
+        all_updates.extend(updates_a)
+        all_updates.extend(updates_b)
+        all_evidence.append(evidence_a)
+        all_evidence.append(evidence_b)
+        # Real bounded eviction with real protection, matching
+        # `engine_runtime._harvest_burst_bytes` exactly -- the one thing the
+        # stress test above deliberately does not do.
+        for evidence, payload in ((evidence_a, payload_a), (evidence_b, payload_b)):
+            burst_bytes_cache[evidence.media_asset_id] = payload
+            while len(burst_bytes_cache) > engine_runtime._MAX_CACHED_BURST_BYTES:
+                burst_bytes_cache.pop(
+                    engine_runtime._select_eviction_victim(burst_bytes_cache, protected_evidence_ids)
+                )
+        max_cache_size = max(max_cache_size, len(burst_bytes_cache))
+        index += 1
+
+        known_horizon_ms = next_start_ms + spacing_ms // 2 + tracklet_duration_ms
+        if known_horizon_ms >= next_tick_at_ms:
+            session._run_assembly_tick(
+                all_track_updates=all_updates, all_evidence_candidates=all_evidence,
+                attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache,
+                adapter=adapter, known_horizon_ms=known_horizon_ms, protected_evidence_ids=protected_evidence_ids,
+            )
+            max_protected_size = max(max_protected_size, len(protected_evidence_ids))
+            next_tick_at_ms += tick_every_ms
+            candidates_created_after_each_tick.append(session._counts.candidates_created)
+        next_start_ms += spacing_ms
+    elapsed_seconds = time.monotonic() - started
+
+    # --- Core invariant: real activity is not permanently lost ---
+    assert max(candidates_created_after_each_tick) > 0, (
+        f"real, sustained, multi-subject activity under real cache pressure produced zero admissions -- "
+        f"suppressed={session._suppressed}; fallback_attempted={session._fallback_attempted_count}; "
+        f"fallback_admitted={session._fallback_admitted_count}; fallback_exhausted={session._fallback_exhausted_count}"
+    )
+
+    import json as _json
+
+    from mockingbird.repository.product_repository import ObservationCandidateVisitModel
+
+    with repository.session_factory() as db_session:
+        created_rows = [
+            row for row in (
+                db_session.get(ObservationCandidateVisitModel, proposal_id)
+                for proposal_id in attempted_proposal_ids
+            )
+            if row is not None
+        ]
+
+    # --- Bounded, not exploded; no duplicates (brief §16) ---
+    logical_visit_groups = len(created_rows)
+    assert 0 < logical_visit_groups <= 20, f"expected a bounded Visit-group count, got {logical_visit_groups}"
+    proposal_ids_seen = [row.proposal_id for row in created_rows]
+    assert len(proposal_ids_seen) == len(set(proposal_ids_seen))
+
+    # --- No cross-subject contamination, even via fallback (brief §17) ---
+    for row in created_rows:
+        generation_ids = _json.loads(row.constituent_generation_ids_json)
+        prefixes = {gen_id.rsplit("-", 1)[0] for gen_id in generation_ids}
+        assert prefixes in ({"gen-feeder"}, {"gen-perch"}), (
+            f"candidate {row.proposal_id} mixed subjects: {generation_ids}"
+        )
+        assert _json.loads(row.persisted_media_asset_ids_json), f"candidate {row.proposal_id} has no persisted evidence"
+
+    # --- Cache/protection bounds (brief §18/§26): always bounded, never
+    # growing without limit regardless of how long the run continues ---
+    assert max_cache_size <= engine_runtime._MAX_CACHED_BURST_BYTES
+    assert max_protected_size <= engine_runtime._MAX_PROTECTED_EVIDENCE_IDS
+
+    # --- Diagnostics (brief §19): report what actually happened, whatever
+    # it was -- this replay does not assert fallback *must* have fired
+    # (whether it does depends on the exact churn/timing this synthetic
+    # shape produces), only that whatever happened is internally consistent
+    # and bounded. ---
+    assert session._fallback_admitted_count <= session._fallback_attempted_count
+    assert (session._fallback_attempted_count - session._fallback_admitted_count) == session._fallback_exhausted_count
+
+    # --- Performance guard (brief §26/§19) ---
+    assert elapsed_seconds < 90.0, f"105-minute v6-shaped replay took {elapsed_seconds:.1f}s of real time"
+
+
 def test_forced_decision_winner_survives_the_real_bounded_evidence_cache(repository: ProductRepository) -> None:
     """Direct, deterministic reproduction of a real defect this milestone's
     own investigation found and fixed (see "Selection-priority and
@@ -2488,6 +2988,237 @@ def test_delayed_proposal_still_finds_its_evidence_after_unrelated_cache_churn(
     assert session._counts.candidates_created == 1
     assert "reject_no_identification_or_context" not in session._suppressed
     assert "blocked_missing_evidence" not in session._suppressed
+
+
+# =============================================================================
+# Pending-Proposal Evidence Preservation & Arbitration Fallback Correctness
+# v1: RED reproducer A (see the milestone's own governing brief §6). The test
+# immediately above already proves the *raw* 128-entry bound survives a
+# realistic amount of unrelated churn (20 insertions). This section proves
+# the fix is genuinely lifecycle-aware *preservation*, not merely a bigger
+# number: churn well past 128 -- more than any single generous bump the
+# milestone's own brief would accept -- still must not evict a proposal that
+# is legitimately still pending, because that proposal's own priority
+# evidence is now explicitly protected while it waits, not merely lucky to
+# still be near the front of an oversized queue.
+# =============================================================================
+
+
+def test_pending_component_preserves_minimum_viable_evidence_under_cache_pressure(
+    repository: ProductRepository,
+) -> None:
+    """RED on accepted `b37656d`: a proposal that is legitimately still
+    pending (`blocked_continuation_pending` -- a real, honest delay, never
+    a bug) loses its own already-captured evidence the moment *unrelated*
+    activity elsewhere in the same session churns the shared, bounded
+    128-entry evidence-byte cache past its own numeric capacity while it
+    waits -- eviction is purely insertion-order, with zero awareness of
+    which pending proposal still needs which bytes, so 200 unrelated
+    insertions guarantee this proposal's own real evidence (inserted
+    first) is long gone by the time its continuation window finally
+    closes. This is proven through the exact real eviction policy
+    (`_select_eviction_victim`, the same function `_harvest_burst_bytes`
+    calls live) -- never by deleting bytes directly after the fact.
+
+    GREEN after this fix: `_run_assembly_tick`'s own `protected_evidence_
+    ids` parameter marks this proposal's own priority evidence as
+    still-actionable every tick it remains pending, so the real eviction
+    policy skips it in favor of the (truly disposable) unrelated churn --
+    surviving even 200 unrelated insertions, comfortably more than *any*
+    single numeric bump this milestone's own governing brief would accept
+    in place of a real fix (see "Do not just increase 128")."""
+    repository.set_observation_authority_mode(
+        ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW, fresh_session=True,
+    )
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    subject_updates = list(_tick_track_updates("gen-subject", 0, 1_000))
+    subject_evidence, subject_bytes = _tick_evidence("gen-subject", "high_resolution_burst", "hash-subject")
+    burst_bytes_cache: dict[str, bytes] = {}
+    attempted_proposal_ids: set[str] = set()
+    protected_evidence_ids: set[str] = set()
+
+    # Tick 1: still inside the continuation window -- correctly deferred,
+    # never permanently attempted. This is the exact real moment a live
+    # session's own `_harvest_burst_bytes` would already have copied this
+    # subject's evidence into the shared cache, and the exact moment this
+    # tick's own protection computation must mark it as still-actionable.
+    burst_bytes_cache[subject_evidence.media_asset_id] = subject_bytes
+    session._run_assembly_tick(
+        all_track_updates=subject_updates, all_evidence_candidates=[subject_evidence],
+        attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        known_horizon_ms=1_100, protected_evidence_ids=protected_evidence_ids,
+    )
+    assert session._counts.candidates_created == 0
+    assert attempted_proposal_ids == set()
+    assert session._suppressed.get("blocked_continuation_pending") == 1
+    assert subject_evidence.media_asset_id in protected_evidence_ids, (
+        "the still-pending proposal's own priority evidence must be protected the moment it is known pending"
+    )
+
+    # Meanwhile: unrelated real activity elsewhere in the stream keeps
+    # capturing bursts -- 200 insertions, not merely the 20 the test above
+    # uses, deliberately past the raw 128-entry bound many times over --
+    # through the real eviction policy, exactly as `_harvest_burst_bytes`
+    # calls it live.
+    for index in range(200):
+        candidate, payload = _tick_evidence(
+            f"gen-unrelated-{index}", "high_resolution_burst", f"hash-unrelated-{index}",
+        )
+        burst_bytes_cache[candidate.media_asset_id] = payload
+        while len(burst_bytes_cache) > engine_runtime._MAX_CACHED_BURST_BYTES:
+            burst_bytes_cache.pop(engine_runtime._select_eviction_victim(burst_bytes_cache, protected_evidence_ids))
+
+    assert subject_evidence.media_asset_id in burst_bytes_cache, (
+        "the pending proposal's own protected evidence must survive unrelated churn that would otherwise "
+        "exceed the raw 128-entry bound many times over"
+    )
+    # The cache itself never grew past its own bound to accomplish this --
+    # protection changes *which* entry is evicted, never *whether* one is.
+    assert len(burst_bytes_cache) == engine_runtime._MAX_CACHED_BURST_BYTES
+
+    # Tick 2: the continuation window has now closed -- the subject's own
+    # already-captured evidence must still be retrievable.
+    session._run_assembly_tick(
+        all_track_updates=subject_updates, all_evidence_candidates=[subject_evidence],
+        attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        finalize=True, protected_evidence_ids=protected_evidence_ids,
+    )
+    assert session._counts.candidates_created == 1
+    assert "reject_no_identification_or_context" not in session._suppressed
+    assert "blocked_missing_evidence" not in session._suppressed
+    # Resolution/release timing (protection is recomputed at the *start* of
+    # each tick, so a proposal resolved by *this* tick's own attempt loop is
+    # still reflected as protected in this same call's own snapshot) is
+    # covered precisely by the dedicated release test below -- this test's
+    # own scope is survival under pressure, not release timing.
+
+
+def test_protection_releases_automatically_once_a_proposal_is_permanently_blocked(
+    repository: ProductRepository,
+) -> None:
+    """No leak after a proposal becomes permanently *ineligible* either
+    (never resolved into a Visit at all): once a proposal is durably
+    resolved -- created, or permanently blocked -- it drops out of the very
+    next tick's own protected set with no separate release step, exactly
+    like the created case above."""
+    repository.set_observation_authority_mode(
+        ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW, fresh_session=True,
+    )
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    # No `source_capture_frame_ids`/`supporting_frame_ids` at all -- fails
+    # gate 4 (`blocked_invalid_lineage`), a permanent, non-retryable outcome,
+    # deliberately chosen so protection release can be observed on an
+    # *ordinary* tick rather than only at `finalize=True`.
+    updates = list(_tick_track_updates("gen-invalid-lineage", 0, 1_000))
+    updates = tuple(replace(update, supporting_frame_ids=()) for update in updates)
+    evidence, payload = _tick_evidence("gen-invalid-lineage", "high_resolution_burst", "hash-invalid-lineage")
+    burst_bytes_cache = {evidence.media_asset_id: payload}
+    attempted_proposal_ids: set[str] = set()
+    protected_evidence_ids: set[str] = set()
+
+    session._run_assembly_tick(
+        all_track_updates=updates, all_evidence_candidates=[evidence],
+        attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        known_horizon_ms=45_100, protected_evidence_ids=protected_evidence_ids,
+    )
+    assert session._suppressed.get("blocked_invalid_lineage") == 1
+    assert len(attempted_proposal_ids) == 1
+    # Protection is recomputed at the *start* of every tick, so this same
+    # tick's own snapshot still reflects the proposal as protected -- it
+    # was still-actionable when this call began. The next tick, with
+    # nothing else changed, is what actually proves release: `attempted_
+    # proposal_ids` already names this proposal permanently resolved
+    # before protection is (re)computed this time.
+    assert evidence.media_asset_id in protected_evidence_ids
+
+    session._run_assembly_tick(
+        all_track_updates=updates, all_evidence_candidates=[evidence],
+        attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        known_horizon_ms=45_200, protected_evidence_ids=protected_evidence_ids,
+    )
+    assert protected_evidence_ids == set(), "a permanently-resolved (even if blocked) proposal must not stay protected"
+
+
+def _pending_proposal_with_evidence(
+    index: int, *, adapter: CandidateVisitAuthorityAdapter,
+) -> tuple[AssembledVisitProposal, EvidenceCandidate, bytes]:
+    """One independently-constructed, still-pending proposal plus its own
+    single real evidence candidate/bytes -- bypasses `build_tracklets`/
+    `assemble_visit_episodes` entirely (unlike every other test in this
+    file) so `test_protected_capacity_is_bounded_and_degrades_
+    deterministically` can drive `_compute_protected_evidence_ids` directly
+    with an exact, controlled number of genuinely simultaneous pending
+    proposals -- constructing this many truly-simultaneous, mutually-
+    non-ambiguous proposals through the real assembler would require
+    either widely-separated (and therefore *not* simultaneously pending)
+    or geometrically-adjacent (and therefore merged/ambiguous, collapsing
+    back to a handful of proposals) tracklets; this helper isolates the
+    one unit under test (the bounding/degradation policy itself) from
+    that unrelated assembly concern, the same way `test_candidate_visit_
+    authority.py`'s own `_arbitration_proposal` helper isolates arbitration
+    from assembly."""
+    generation_id = f"gen-pending-{index}"
+    evidence, payload = _tick_evidence(generation_id, "high_resolution_burst", f"hash-pending-{index}")
+    proposal = AssembledVisitProposal(
+        proposal_id=f"visit-episode:pending-{index}",
+        stream_id=STREAM_ID,
+        broad_class="animal",
+        start_offset_ms=index * 1_000,
+        end_offset_ms=index * 1_000 + 500,
+        constituent_generation_ids=(generation_id,),
+        constituent_track_ids=(f"{generation_id}-track",),
+        supporting_frame_ids=(f"frame-{generation_id}-start",),
+        source_capture_frame_ids=(),
+        evidence_candidate_ids=(evidence.media_asset_id,),
+        assembly_decisions=(),
+        continuation_pending=True,
+    )
+    return proposal, evidence, payload
+
+
+def test_protected_capacity_is_bounded_and_degrades_deterministically(
+    repository: ProductRepository,
+) -> None:
+    """Cache bounds (brief §18): a pathological number of *simultaneously*
+    pending proposals must not make the protected set itself unbounded --
+    `_MAX_PROTECTED_EVIDENCE_IDS` caps the total, and exceeding it is
+    diagnosed (a returned `capacity_exhausted` flag; see `_EngineSession.
+    _protected_evidence_capacity_exhausted_count` for the live counter this
+    same fact feeds), never a silent, unbounded grant. Direct unit test of
+    `_compute_protected_evidence_ids` itself (see `_pending_proposal_with_
+    evidence`'s own docstring for why): the oldest pending proposals -- the
+    ones genuinely at risk of eviction -- are protected first; the newest
+    simply receive no *additional* protection this round, which is safe
+    precisely because their own evidence is, by construction, also the
+    cache's own most recent insertion."""
+    adapter = _tick_adapter(repository)
+
+    # 80 independent, simultaneously-pending proposals, each with exactly
+    # one evidence candidate of its own (so each can contribute at most one
+    # id to the protected set) -- still comfortably more than `_MAX_
+    # PROTECTED_EVIDENCE_IDS` (64), so exhaustion is guaranteed regardless
+    # of how many ids any single proposal's own priority preview picks.
+    built = [_pending_proposal_with_evidence(index, adapter=adapter) for index in range(80)]
+    proposals = tuple(item[0] for item in built)
+    candidates_by_id = {item[1].media_asset_id: item[1] for item in built}
+    media_lookup = {item[1].media_asset_id: item[2] for item in built}
+
+    protected, capacity_exhausted = engine_runtime._compute_protected_evidence_ids(
+        proposals, attempted_proposal_ids=set(), candidates_by_id=candidates_by_id,
+        media_lookup=media_lookup, adapter=adapter,
+    )
+    assert len(protected) <= engine_runtime._MAX_PROTECTED_EVIDENCE_IDS
+    assert capacity_exhausted is True
+
+    # The *oldest* pending proposal's own evidence is protected -- it is the
+    # one actually at risk (its own `start_offset_ms` is earliest, so
+    # `_compute_protected_evidence_ids`'s own oldest-first processing order
+    # reaches it before the budget could possibly already be exhausted).
+    assert built[0][1].media_asset_id in protected
 
 
 def test_delayed_proposal_survives_a_busier_real_session_shape_than_the_32_bound_covers(
