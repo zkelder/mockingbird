@@ -24,7 +24,16 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `65f5ec2` -- Representative Daylight Gate A Field
+- **Accepted HEAD:** `26edddf` -- the implementation commit for Background /
+  Empty Evidence Species-Confidence Correctness v1 (see its own "Latest
+  accepted milestone" entry, below, and
+  [background-empty-evidence-species-confidence-correctness-v1-report.md](background-empty-evidence-species-confidence-correctness-v1-report.md)
+  for the complete record), sitting on top of `428fcb3` (the reconciliation
+  commit that authorized Representative Daylight Gate A Field Acceptance v6
+  as the next Lane R milestone -- unchanged, not itself run, by this
+  milestone).
+- **Prior accepted HEAD (pre-Background/Empty Evidence Species-Confidence
+  Correctness v1):** `65f5ec2` -- Representative Daylight Gate A Field
   Acceptance v5's own report commit (`e203489`) plus one same-day,
   self-caught follow-up commit adding a section its own governing
   template required but the first draft omitted (`65f5ec2`; no field
@@ -84,7 +93,12 @@ protecting.
   those closures (`7f98e43`, `8572308`, `4581424`, `4aeb658`, `e01e691`,
   `c03d0b1`, `80e1bb3`) are likewise not cited as separate code-bearing
   HEADs for the identical reason.
-- **Schema:** `v58` -- unchanged by Representative Daylight Gate A Field
+- **Schema:** `v58` -- unchanged by Background / Empty Evidence Species-
+  Confidence Correctness v1 (reads the already-existing, already-migrated
+  `MediaAssetModel.geometry_attribution_json` column, schema 33; adds one
+  new optional function parameter and one new pure-decision-function
+  reason code, no new table/column/migration). Also unchanged by
+  Representative Daylight Gate A Field
   Acceptance v5 (a live field-acceptance session; zero production code
   touched). Also unchanged by this milestone (Lane C Sparse-State
   Honesty & First-Hour Narrative Closure v1 is a single-branch precedence
@@ -113,7 +127,40 @@ protecting.
   Activity Visit Admission Starvation & Stop-Finalization Correctness v1
   (see its own "Prior accepted milestone" entry, below) had likewise left
   schema unchanged.
-- **Latest accepted milestone:** Representative Daylight Gate A Field
+- **Latest accepted milestone:** Background / Empty Evidence Species-
+  Confidence Correctness v1 -- see
+  [background-empty-evidence-species-confidence-correctness-v1-report.md](background-empty-evidence-species-confidence-correctness-v1-report.md)
+  for the complete record. Classification **A**. Fixes the exact v5-
+  disclosed Gate B defect class below: a weak, single-detection,
+  `terminal_reason: maximum_unsupported_duration` localization's crop --
+  real bytes, ordinary size, subject-focused tier -- received a confident
+  ("Brown Thrasher," 89.9% score, 0.857 margin) wrong BioCLIP species
+  label, clearing even the strictest existing abstention floor (proving no
+  score/margin/tier change could ever catch it). Root cause: `evaluate_
+  identification_eligibility` had no signal independent of BioCLIP's own
+  output to ask whether a crop's box corresponds to a real, contemporaneous
+  detector observation. Fix reads the already-persisted (schema 33)
+  `MediaAssetModel.geometry_attribution_json`; a crop backed by tracker-only
+  extrapolation or a stale carried-forward box, at the two crop tiers with
+  no other same-moment-correspondence guarantee, is now ineligible --
+  proven RED->GREEN against the real production `identify_review_queue_
+  item` path, real-cohort validated (11/40 real background Visits newly
+  abstain, 0/7 mandatory real positive controls regress). Several
+  alternative signals (detection count, bbox size/coverage, padding ratio)
+  were tested against real data and rejected as non-discriminating before
+  this fix was chosen. Tier 1 82/82, Tier 2 456/456, Tier 3 clean apart from
+  2 independently-verified pre-existing, unrelated failures. Honestly
+  bounded, not oversold: a detector-sourced-but-still-wrong background
+  crop (a genuine, contemporaneous, but recurring/confident false read)
+  remains an open, disclosed Gate B residual -- not solved by this
+  milestone, unchanged from before it. No schema change. No BioCLIP/
+  detector/admission/Visit-assembly change. Does not authorize the next
+  Representative Field Acceptance / Gate A session, External Pre-Release
+  Acceptance, or Final Release Hardening, and does not select a next
+  development milestone -- authorization returns to the bold statement in
+  §3, below, unchanged by this closure.
+
+- **Prior accepted milestone:** Representative Daylight Gate A Field
   Acceptance v5 -- see
   [representative-daylight-gate-a-field-acceptance-v5-report.md](representative-daylight-gate-a-field-acceptance-v5-report.md)
   for the complete record. Classification **A**. A real, live
@@ -1654,6 +1701,25 @@ reproduced fresh by v5 (a "Brown Thrasher," 89.9%, on confirmed empty
 lawn/background) -- a known, already-`roadmap.md`-named regression class,
 not a new v5 blocker, not release-blocking for Gate A directly, and
 explicitly not to be fixed opportunistically inside v6.
+
+**2026-08-30 update (Background / Empty Evidence Species-Confidence
+Correctness v1, see §1, above):** the specific v5 instance of this
+liability named directly above is now fixed -- a new geometry-
+corroboration eligibility check (reading already-persisted Localization
+Attribution / Detection Geometry Lineage v1 facts, schema unchanged)
+withholds an automatic species claim on a crop whose own box does not
+correspond to a real, contemporaneous detector observation, proven
+RED->GREEN against the real production path and real-cohort validated.
+Honestly bounded, not a full close: a detector-sourced-but-still-wrong
+background crop (a genuinely confident, contemporaneous, but recurring or
+otherwise misleading detector hit) remains an open, disclosed Gate B
+residual, unchanged by this fix -- see the milestone's own report and
+`roadmap.md` Gate B for the complete accounting. This closure does not
+alter the Gate A v6 contract above in any way -- v6 remains authorized,
+not yet run, exactly as already stated -- and does not itself authorize
+Gate A v6 execution, External Pre-Release Acceptance, or Final Release
+Hardening. Authorization remains **NONE -- GLOBAL PRODUCT-ROADMAP
+RECONCILIATION REQUIRED**, unchanged.
 
 Representative Daylight Gate A Field Acceptance v5 (directly authorized
 outside this file, as the next RELEASE-CRITICAL field-validation session
