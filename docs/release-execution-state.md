@@ -1587,6 +1587,74 @@ exactly as open as stated.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
+**Representative Daylight Gate A Field Acceptance v6 -- Post-Fix
+Replication & Multi-Subject Tranche** is, as of this Post-v5 Global
+Product-Roadmap Reconciliation & Gate A Next-Step Authorization milestone
+(2026-08-30), the next RELEASE-CRITICAL milestone -- directly authorized
+outside this file, as a bounded Lane R field-validation session, exactly
+the same standing this file has already recorded for v4 and v5 each in
+turn without ever changing this section's own bold statement above (see
+[roadmap.md](roadmap.md) "Gate A," 2026-08-30 update, and "Numeric release
+budgets" for the complete reconciled evidence state this authorization
+rests on). **Not yet run.** Purpose: exactly the "Remaining Gate A
+dependency" Representative Daylight Gate A Field Acceptance v5's own
+report named -- a second post-fix daylight cohort, for replication and
+closure evidence, not product tuning. Prefer a cohort that exercises
+genuinely simultaneous multi-subject activity (the one dimension v5 could
+not exercise at all: real simultaneous presence was confirmed in-scene,
+but no two Visits shared an Event as concurrent siblings), because that
+remains materially under-evidenced; a sparser single-subject replication
+is also useful and an acceptable substitute if multi-subject conditions
+do not naturally occur. Contract:
+
+- no product/perception/admission/Visit/evidence/classification tuning
+  while measuring -- the accepted build is measured unchanged, exactly as
+  v4/v5 measured it;
+- representative real daylight conditions required, directly checked (a
+  dedicated pre-flight scene check, matching v5's own method) before
+  committing to a long session -- if conditions are not representative,
+  stop rather than contaminate the evidence body; no requirement to force
+  unsuitable conditions merely to complete the cohort;
+- genuinely simultaneous multi-subject admission/arbitration is a
+  priority evidence target, sought, not artificially manufactured;
+- sustained-activity admission behavior and stop-finalization behavior
+  remain under observation -- confirm no regression, not merely re-prove
+  the fix once more;
+- duplicate-Visit and fragmentation checks remain required, matching
+  every prior cohort's own accounting;
+- an independently retained denominator/evidence accounting (the
+  established acceptance-recorder + counterfactual-ledger method) is
+  required, matching v4/v5's own methodology;
+- honest abstention remains acceptable -- no requirement to produce a
+  specific species count or a specific outcome;
+- this milestone measures; it does not fix. Per this project's own
+  established field-acceptance bar, any defect found (including a further
+  instance of the already-disclosed Gate B background-evidence/
+  confident-label liability, below) is root-caused and disclosed, not
+  necessarily fixed in the same milestone.
+
+This reconciliation does **not** authorize External Pre-Release
+Acceptance or Final Release Hardening -- current evidence does not yet
+support either. It does not itself run the field session, and does not
+select any other next development milestone. Gate A/Lane R remains open
+(§6.R, below). Two budget dimensions -- minimum monitoring coverage
+(~99%) and minimum useful-evidence rate (~85%) -- are reconciled to
+**READY FOR FORMAL BUDGET REVIEW** (candidate values proposed across all
+four real cohorts to date, not yet formally accepted release budgets --
+see [roadmap.md](roadmap.md) "Numeric release budgets"); recall,
+false-Visit rate, fragmentation rate, and capture-to-visible latency
+remain evidence-accumulated only, with no candidate value yet proposed.
+No numeric recall budget or claim is introduced by this reconciliation --
+v5's own qualitative "no missed genuine encounter found via targeted, not
+exhaustive, review" conclusion is preserved exactly as reported, not
+converted into a recall percentage. The known Gate B liability carried
+forward unresolved: weak/spurious detections can still yield background
+evidence that BioCLIP labels with a confident (wrong) species name,
+reproduced fresh by v5 (a "Brown Thrasher," 89.9%, on confirmed empty
+lawn/background) -- a known, already-`roadmap.md`-named regression class,
+not a new v5 blocker, not release-blocking for Gate A directly, and
+explicitly not to be fixed opportunistically inside v6.
+
 Representative Daylight Gate A Field Acceptance v5 (directly authorized
 outside this file, as the next RELEASE-CRITICAL field-validation session
 for the accepted, frozen Sustained-Activity Visit Admission Starvation &
@@ -3355,6 +3423,26 @@ numeric release budgets for recall/false-Visit-rate/fragmentation-rate
 with real cross-session convergent support. The one disclosed defect
 this session found remains open Gate B work, not blocking Gate A
 directly.
+
+**Post-v5 Global Product-Roadmap Reconciliation & Gate A Next-Step
+Authorization (2026-08-30).** Documentation/governance-only -- reconciles
+this file and `roadmap.md` to agree on the v5 result above and names the
+exact next Lane R milestone: see §3, above, for the full authorized
+contract (**Representative Daylight Gate A Field Acceptance v6 -- Post-Fix
+Replication & Multi-Subject Tranche**, not yet run). Two budget
+dimensions -- minimum monitoring coverage (~99%) and minimum
+useful-evidence rate (~85%) -- move to **READY FOR FORMAL BUDGET REVIEW**
+(candidate values proposed across all four real cohorts to date, not yet
+formally accepted release budgets); recall, false-Visit rate,
+fragmentation rate, and capture-to-visible latency remain
+evidence-accumulated only, with no candidate value proposed -- see
+`roadmap.md` "Numeric release budgets" for the complete reconciled
+accounting. No numeric recall budget is introduced by this reconciliation;
+v5's own qualitative "no missed genuine encounter found via targeted, not
+exhaustive, review" conclusion is preserved exactly as reported, not
+converted into a recall percentage. Gate A/Lane R remains open. This
+reconciliation does not authorize External Pre-Release Acceptance or
+Final Release Hardening, and does not itself run the next field session.
 
 ### S. Actual Final Release Hardening
 

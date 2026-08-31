@@ -629,14 +629,30 @@ looks indistinguishable from a detection miss. See Gate A and Gate B in
   latest milestone) found the detector was not this session's material loss
   stage (one clean miss, n=1, of 22 real encounters) and performed no
   detector-comparison work, so this is not queued ahead of the action below.
-- **Current recommended next action:** one more real field session, now with
-  the raised 128-entry evidence-cache bound in place, specifically to obtain
-  a live (not only RED/GREEN-synthetic) proof point that the raised bound
-  holds under real busy-session load -- mirroring exactly how the 2026-08-19
-  session was itself the live-proof follow-up for the fix that preceded it.
-  See "Release gates" (Gate A) below and
-  [end-to-end-bird-encounter-recall-closure-v1-report.md](end-to-end-bird-encounter-recall-closure-v1-report.md)'s
-  own "Recommended next bounded step."
+- **Current recommended next action (updated 2026-08-30, Post-v5 Global
+  Product-Roadmap Reconciliation & Gate A Next-Step Authorization):** the
+  evidence-cache live-proof action described below is superseded and
+  closed, not merely stale. Representative Daylight Gate A Field
+  Acceptance v4 (2026-08-29) ran that exact live-proof session against
+  real sustained near-continuous multi-bird feeder activity and found a
+  more severe, previously-undocumented defect instead: `candidates_
+  created` stuck at exactly 0 for the entire ~112-minute session -- a
+  structural admission-arbitration starvation, not an evidence-cache-
+  capacity problem. Sustained-Activity Visit Admission Starvation &
+  Stop-Finalization Correctness v1 (2026-08-29) root-caused and fixed it;
+  Representative Daylight Gate A Field Acceptance v5 (2026-08-30)
+  field-proved the fix end-to-end against the identical busy-feeder
+  Stream/scene (first admission ~25s into the session, 19 Visits admitted
+  by session end, zero recurrence of starvation/stop-race/missing-
+  evidence-as-blocker). See "Gate A" and "Numeric release budgets," below,
+  for the complete reconciled evidence state, and
+  [release-execution-state.md](release-execution-state.md) §3/§6.R for the
+  exact authorized next contract: a **second post-fix daylight session**
+  (Representative Daylight Gate A Field Acceptance v6 or equivalent),
+  ideally exercising genuinely simultaneous multi-subject admission --
+  sought, not manufactured -- and/or a sparser single-subject re-run, to
+  convert v5's own single strong post-fix data point into the broader
+  cross-session evidence body Gate A's remaining budgets require.
 - **Camera Node Connectivity & Recovery Diagnosis v1** (2026-08-20) answered
   why the second (2026-08-20 daylight) cache-128 live-proof attempt above
   also failed: a real, external Camera Node/network outage (`analysis_
@@ -1129,7 +1145,45 @@ genuine encounter recall 15/22 = 68.2% (a disclosed ceiling), detector
 localization 17/19 = 89.5%, evidence-survival-to-admission 15/17 = 88.2%,
 false-Visit rate 2/21 = 9.5%. Precision is now strong; recall and Visit-shape
 correctness are the open work. Gate A is not passed. Three concrete,
-evidenced gaps remain (none of them "the detector is bad"):
+evidenced gaps remain (none of them "the detector is bad"), gap #1 now
+closed (see the 2026-08-30 update immediately below):
+
+**2026-08-30 update (post-v4 / Sustained-Activity fix / v5 -- see
+[release-execution-state.md](release-execution-state.md) §1/§3/§6.R for
+the complete reconciled record):** Representative Daylight Gate A Field
+Acceptance v4 (2026-08-29) ran the evidence-cache live-proof session gap
+#1 (below) called for, against real sustained near-continuous multi-bird
+feeder activity, and found a more severe, previously-undocumented P0
+instead: `candidates_created` stayed at exactly 0 for the entire
+~112-minute session -- a structural admission-arbitration starvation, not
+an evidence-cache-capacity problem. Sustained-Activity Visit Admission
+Starvation & Stop-Finalization Correctness v1 (2026-08-29) root-caused and
+fixed it (a bounded decision horizon for a whole connected ambiguous
+component, plus an honest `stop_finalization_pending` signal replacing a
+silent stop-time race), and Representative Daylight Gate A Field
+Acceptance v5 (2026-08-30) field-proved the fix end-to-end against the
+identical busy-feeder Stream/scene: first admission ~25 seconds into the
+session, 19 Visits admitted by session end (not only at stop), the new
+stop-finalization status observed live and correctly rescuing genuinely
+pending work (17 -> 19), zero recurrence of starvation/stop-race/
+missing-evidence-as-blocker. This is the single most significant Gate A
+correctness finding to date -- see the updated gap #1 entry, below. This
+does **not** establish a new numeric recall figure: v5's own independent
+review found no missed genuine encounter, but that review was targeted,
+not exhaustive, so this remains a qualitative "far closer to complete"
+result, not a measured recall percentage superseding the pre-fix 68.2%
+figure above (not directly comparable to a post-fix session in any case).
+Two candidate release budgets are proposed (not yet accepted) from
+convergent evidence across all four real cohorts to date: minimum
+monitoring coverage ~99%, minimum useful-evidence rate ~85% -- see
+"Numeric release budgets," below. Remaining Gate A dependency, in
+priority order: (1) a second post-fix daylight cohort, ideally exercising
+genuinely simultaneous multi-subject admission and/or a sparser
+single-subject re-run, to convert v5's single post-fix data point into a
+broader cross-session evidence body; (2) only then, numeric recall/
+false-Visit-rate/fragmentation-rate budgets. See Representative Daylight
+Gate A Field Acceptance v6 (or equivalent) in
+[release-execution-state.md](release-execution-state.md) §3.
 
 1. **Evidence-cache capacity fix (32→128) needs one more live field proof.**
    RED/GREEN-verified against the exact real failure shape that motivated
@@ -1150,6 +1204,17 @@ evidenced gaps remain (none of them "the detector is bad"):
    real churn. The live proof itself remains outstanding; the deployed
    build (`c5278cb`, includes the fix) is healthy and ready for the next
    daylight attempt without a rebuild.
+
+   **Closed 2026-08-30.** Superseded by the 2026-08-30 update above,
+   immediately following "Current disposition": the live daylight proof
+   this item called for ran (Representative Daylight Gate A Field
+   Acceptance v4, 2026-08-29) and found a more severe admission-starvation
+   defect instead of simply confirming cache-capacity adequacy; that
+   defect is now fixed (Sustained-Activity Visit Admission Starvation &
+   Stop-Finalization Correctness v1) and separately field-proved
+   (Representative Daylight Gate A Field Acceptance v5, 2026-08-30, zero
+   `blocked_missing_evidence` recurrence). No further evidence-cache-
+   capacity-specific action is outstanding.
 2. **Multi-subject Visit correctness** -- see the dedicated subsection
    immediately below. A concrete, repository-grounded implementation design
    exists:
@@ -1185,6 +1250,18 @@ evidenced gaps remain (none of them "the detector is bad"):
    credible-animal-gating half of the fix is not achievable with existing
    signals -- the fix is Gate B (abstention), not a split. Recommended next
    milestone: **Identification Eligibility + Abstention v1**.
+
+   **2026-08-30 update:** a further concrete instance, from Representative
+   Daylight Gate A Field Acceptance v5 -- a weak, single-detection,
+   `terminal_reason: maximum_unsupported_duration` localization
+   (`max_confidence: 0.704`) received a confident ("Brown Thrasher,"
+   89.9%) BioCLIP species label on a crop that direct pixel-region
+   inspection against its own real bounding box confirms is empty
+   lawn/background (see
+   [representative-daylight-gate-a-field-acceptance-v5-report.md](representative-daylight-gate-a-field-acceptance-v5-report.md)
+   "Defects"). Root cause and disposition unchanged from the analysis
+   above: not release-blocking for any individual field-acceptance
+   milestone's own scope, remains open Gate B work, not yet fixed.
 
 Gate A also owns **observation freshness / capture-to-visible latency** as a
 first-class quality concern, not merely an implementation detail: a user
@@ -2481,17 +2558,39 @@ than reinvented:
 What does **not** yet exist, and must be established from representative
 field evidence -- not invented -- before Gate A can be declared passed: an
 accepted minimum end-to-end Visit recall; a maximum false-Visit rate; a
-maximum fragmentation/duplicate-Visit rate; a minimum evidence-survival/
-useful-evidence rate; a maximum capture-to-visible-Visit latency; a minimum
-monitoring-coverage figure. The most recent single session (68.2% recall
-ceiling, 9.5% false-Visit rate, 88.2% evidence survival) is a
-*measurement*, not yet an *accepted budget* -- one session, however
-carefully independently validated, is not a representative body of evidence
-on its own. Do not adopt "looks pretty good" as a substitute for a stated
-number, and do not invent a precise-sounding target (such as 99.9%) that no
-field cohort has actually justified. Establishing these budgets, from a
-broader body of field evidence than any single session, is itself part of
-what closes Gate A.
+maximum fragmentation/duplicate-Visit rate; a maximum capture-to-visible-
+Visit latency. Four real cohorts now exist (2026-08-19, 2026-08-20,
+2026-08-29/v4, 2026-08-30/v5 -- see
+[release-execution-state.md](release-execution-state.md) §6.R for the
+complete reconciled record); each remains a *measurement*, not yet an
+*accepted budget*, and the four do not converge on a single number for any
+of these four dimensions -- v4 and v5 in particular are not directly
+comparable to the 2026-08-19/08-20 figures, since v4 predates and v5
+postdates the Sustained-Activity Visit Admission Starvation &
+Stop-Finalization Correctness v1 fix. The 2026-08-19 session (68.2% recall
+ceiling, 9.5% false-Visit rate) remains the most recent *pre-fix* recall
+measurement; v5 (2026-08-30, post-fix) found no missed genuine encounter
+via independent review, but that review was targeted, not exhaustive, so
+it is a qualitative result, not a superseding recall percentage. Do not
+adopt "looks pretty good," "no missed encounter found," or a single
+post-fix session's own strong result as a substitute for a stated,
+cross-session number, and do not invent a precise-sounding target (such as
+99.9%) that no field cohort has actually justified.
+
+**Two dimensions are, as of 2026-08-30, proposed (not yet accepted) as
+READY FOR FORMAL BUDGET REVIEW**, per
+[representative-daylight-gate-a-field-acceptance-v5-report.md](representative-daylight-gate-a-field-acceptance-v5-report.md)
+"Candidate release budgets": minimum monitoring coverage ~99% (all four
+real cohorts independently measured 99.6%-99.99%, no cohort falling
+meaningfully short) and minimum useful-evidence rate ~85% (two independent
+measurements, 88.2% and 94.7%, no contrary evidence). These are candidate
+figures only -- proposed for external review, not self-accepted by the
+milestone that proposed them, and not yet promoted to accepted release
+budgets in this file. Establishing the remaining four budgets (recall,
+false-Visit rate, fragmentation/duplicate rate, latency), from a broader
+cross-session body of field evidence than any single session -- see
+"Remaining Gate A dependency" in the v5 report -- is itself part of what
+closes Gate A.
 
 ## Public release readiness
 
