@@ -1195,9 +1195,17 @@ def test_launch_release_forwards_acceptance_recording_dir_when_explicitly_opted_
     launched process's own environment, exactly like `MOCKINGBIRD_HOME`
     already does -- the one supported way to enable the diagnostic recorder
     for a real field-validation session without hand-editing a running
-    Windows process."""
+    Windows process. The input is deliberately WSL-visible (`/mnt/c/...`),
+    matching how a real invoking dev shell actually holds this value (see
+    `--dev-root`, `MOCKINGBIRD_HOME`) -- a Windows-style literal here would
+    pass both before and after a real `to_windows_path` conversion bug,
+    exactly the gap that let this variable's own missing conversion ship
+    unnoticed; see `test_launch_release_sends_acceptance_recording_dir_
+    through_to_windows_path` below for the dedicated non-identity proof."""
 
-    monkeypatch.setenv("MOCKINGBIRD_DEV_ACCEPTANCE_RECORDING_DIR", r"C:\MockingBirdDev\acceptance-recordings")
+    monkeypatch.setenv(
+        "MOCKINGBIRD_DEV_ACCEPTANCE_RECORDING_DIR", "/mnt/c/MockingBirdDev/acceptance-recordings"
+    )
     bundle = make_bundle(tmp_path / "build", git_commit="a" * 40, build_id="id1")
     release_dir = tmp_path / "releases" / "aaaaaaa"
     shutil.copytree(bundle, release_dir)
@@ -1206,7 +1214,43 @@ def test_launch_release_forwards_acceptance_recording_dir_when_explicitly_opted_
     launch_release(release_dir, host=DEFAULT_HOST, port=DEFAULT_PORT, userdata_dir=userdata_dir, windows_host=fake_host)
 
     calls = fake_host.launch_release.calls  # type: ignore[attr-defined]
-    assert calls[0]["extra_env"]["MOCKINGBIRD_ACCEPTANCE_RECORDING_DIR"] == r"C:\MockingBirdDev\acceptance-recordings"
+    assert calls[0]["extra_env"]["MOCKINGBIRD_ACCEPTANCE_RECORDING_DIR"] == "/mnt/c/MockingBirdDev/acceptance-recordings"
+
+
+def test_launch_release_sends_acceptance_recording_dir_through_to_windows_path(
+    tmp_path: Path, fake_host: WindowsHost, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test (Representative Daylight Gate A Field Acceptance v7):
+    `MOCKINGBIRD_ACCEPTANCE_RECORDING_DIR` becomes a real Windows process's
+    own environment variable, read back by `acceptance_recorder`'s native
+    Windows `pathlib`/`open()` calls -- so it must be built via
+    `to_windows_path`, never a bare passthrough of the invoking dev shell's
+    own WSL-visible value, exactly like `MOCKINGBIRD_HOME` two lines above
+    it already is (`test_launch_release_sends_mockingbird_home_through_to_
+    windows_path`). Found live during a real field-acceptance session: a
+    real WSL-path value was set, the launched process never created its
+    recording directory, and nothing raised anywhere -- `BoundedFrameSample
+    Recorder` only distinguishes "opted in" from "not opted in" by whether
+    the env var is set at all, so a wrong-drive/unwritable path silently
+    recorded nothing instead of failing loudly. The sibling test above
+    never caught this because the shared `fake_host`'s `to_windows_path` is
+    the identity function; this test swaps in a non-identity one
+    specifically to prove `launch_release` actually routes the value
+    through the seam rather than forwarding it raw."""
+
+    monkeypatch.setenv(
+        "MOCKINGBIRD_DEV_ACCEPTANCE_RECORDING_DIR", "/mnt/c/MockingBirdDev/acceptance-recordings"
+    )
+    bundle = make_bundle(tmp_path / "build", git_commit="a" * 40, build_id="id1")
+    release_dir = tmp_path / "releases" / "aaaaaaa"
+    shutil.copytree(bundle, release_dir)
+    userdata_dir = tmp_path / "LOCALAPPDATA" / DEV_ROOT_DIRNAME / USERDATA_DIRNAME
+    host = dataclasses.replace(fake_host, to_windows_path=lambda path: f"WIN:{path}")
+
+    launch_release(release_dir, host=DEFAULT_HOST, port=DEFAULT_PORT, userdata_dir=userdata_dir, windows_host=host)
+
+    calls = host.launch_release.calls  # type: ignore[attr-defined]
+    assert calls[0]["extra_env"]["MOCKINGBIRD_ACCEPTANCE_RECORDING_DIR"] == "WIN:/mnt/c/MockingBirdDev/acceptance-recordings"
 
 
 def test_launch_release_suppresses_bytecode_writes_into_the_shared_runtime_cache(

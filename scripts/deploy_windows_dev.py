@@ -1506,7 +1506,21 @@ def launch_release(release_dir: Path, *, host: str, port: int, userdata_dir: Pat
     # without hand-editing a running Windows process's environment.
     recording_dir = os.environ.get("MOCKINGBIRD_DEV_ACCEPTANCE_RECORDING_DIR")
     if recording_dir:
-        extra_env["MOCKINGBIRD_ACCEPTANCE_RECORDING_DIR"] = recording_dir
+        # Same reasoning as `MOCKINGBIRD_HOME` two lines below: this dev
+        # shell's own value is WSL-visible (typically `/mnt/c/...`), but it
+        # becomes a real Windows process's own environment variable, read
+        # back by `acceptance_recorder`'s native Windows `pathlib`/`open()`
+        # calls. A bare passthrough silently resolves relative to whatever
+        # drive the launched process's own current directory happens to be
+        # on instead of raising -- found live, the same way the
+        # `MOCKINGBIRD_HOME` defect above was found: a real field-acceptance
+        # session set this to a WSL path, the recorder's own output
+        # directory was never created, and no error surfaced anywhere
+        # (`BoundedFrameSampleRecorder` only skips recording when the
+        # env var is unset entirely -- an unwritable/wrong-drive path is
+        # indistinguishable from "not opted in" without directly checking
+        # the filesystem, exactly what caught this).
+        extra_env["MOCKINGBIRD_ACCEPTANCE_RECORDING_DIR"] = windows_host.to_windows_path(Path(recording_dir))
     # End-to-End Bird Encounter Recall Closure v1: same dev-shell-opt-in
     # forwarding shape as the directory var above, for the three further
     # optional cadence/bound overrides `acceptance_recorder.
