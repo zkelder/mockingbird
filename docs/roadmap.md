@@ -1263,6 +1263,14 @@ Gate A Field Acceptance v6 (or equivalent) in
    above: not release-blocking for any individual field-acceptance
    milestone's own scope, remains open Gate B work, not yet fixed.
 
+   **2026-08-30 update:** Background / Empty Evidence Species-Confidence
+   Correctness v1 fixed this specific instance's own defect class (see
+   "Gate B" below for the full account) -- this exact case's own numbers
+   (0.704 confidence, `maximum_unsupported_duration`, 89.9%/0.857
+   score/margin) now abstain via a new geometry-corroboration eligibility
+   check, not a score/margin/threshold change. A related, detector-sourced-
+   but-still-wrong residual remains open, disclosed, not newly discovered.
+
 Gate A also owns **observation freshness / capture-to-visible latency** as a
 first-class quality concern, not merely an implementation detail: a user
 must be able to tell "missed" apart from "queued," "admitted but not yet
@@ -1557,6 +1565,30 @@ The raw MDv5 detector still genuinely misclassifies a person as `animal`-
 class at real, non-marginal confidence -- that root cause is untouched and
 remains a future detector-model precision tranche, not solved by species-
 layer abstention.
+
+**2026-08-30 update (Background / Empty Evidence Species-Confidence
+Correctness v1):** closed the specific v5 defect class -- a real, ordinary-
+sized, subject-focused crop whose own geometry never corresponds to a real,
+contemporaneous detector observation (89.9% score, 0.857 margin, both
+clearing even the strictest existing `full_frame` floor, proving no
+score/margin/tier change of any kind could have caught it). `evaluate_
+identification_eligibility` now also reads the already-persisted,
+BioCLIP-independent `MediaAssetModel.geometry_attribution_json`
+(Localization Attribution / Detection Geometry Lineage v1, schema 33) and
+withholds an automatic claim when a MegaDetector-proposal or legacy
+activity-focus crop's own box is tracker-only extrapolation or a stale
+carried-forward position rather than a genuine detector hit. Real-cohort
+validated (not asserted from nothing): 11/40 real `GROUND_TRUTH=False`
+Visits in the independently-adjudicated 70-Visit cohort newly abstain, 0/7
+mandatory real positive controls regress (2/30 in the wider, non-mandatory
+cohort are a disclosed, bounded cost). **Honestly still open:** a detector-
+sourced-but-still-wrong crop -- a genuinely confident, contemporaneous
+detector hit on a static background region, e.g. idx=36 in the same real
+cohort (`mourning_dove`, 99.5%) -- is not caught by this mechanism, exactly
+as before; this is the same disclosed residual Identification Eligibility +
+Abstention v1 already named and deferred, only partially, not fully, closed
+by this milestone. See
+[background-empty-evidence-species-confidence-correctness-v1-report.md](background-empty-evidence-species-confidence-correctness-v1-report.md).
 
 #### SpeciesNet / BioCLIP history (accurate record, preserved)
 

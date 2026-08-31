@@ -28776,9 +28776,35 @@ class ProductRepository:
         classifier_input_width, classifier_input_height = (
             _classifier_input_pixel_dimensions(crop, media_asset)
         )
+        # Background / Empty Evidence Species-Confidence Correctness v1
+        # (docs/background-empty-evidence-species-confidence-correctness-v1-
+        # report.md): scoped to the two crop tiers with no other same-moment-
+        # correspondence guarantee of their own -- the MegaDetector-proposal
+        # tier (`source="megadetector"`) and the legacy activity-focus tier
+        # (`source="activity"`, `classifier_input_type is None`) -- see
+        # `evaluate_identification_eligibility`'s own module-level comment.
+        # Deliberately mirrors `classifier_input_tier`'s own `classifier_
+        # input_type`-first check: `source="activity"` is ambiguously reused
+        # for both this legacy tier *and* the Same-Frame/Persisted-Crop/
+        # Native-Resolution override tiers (`_ReviewSpeciesCropContext`'s own
+        # field comment), which set `classifier_input_type` and already carry
+        # their own, stronger, separately-validated correspondence guarantee
+        # (`classifier_input_same_frame`/`resolution_provenance`) -- this
+        # check must not second-guess those. `media_asset` is the Visit's
+        # representative frame -- the same asset `candidate_visit_adapter.py`
+        # already stamps with `geometry_attribution_json` for the
+        # "identification"-role pick when it was assembled through the
+        # Observation Engine v2 path (the path both tiers in scope here
+        # ultimately crop from), so no new query/persistence is needed.
+        geometry_source = None
+        if crop.classifier_input_type is None and crop.source in {"megadetector", "activity"}:
+            attribution = geometry_attribution_from_json(media_asset.geometry_attribution_json)
+            if attribution is not None:
+                geometry_source = attribution.geometry_source
         eligibility = evaluate_identification_eligibility(
             classifier_input_width=classifier_input_width,
             classifier_input_height=classifier_input_height,
+            geometry_source=geometry_source,
         )
         if not eligibility.eligible:
             raise ValueError("bioclip_identification_evidence_ineligible")

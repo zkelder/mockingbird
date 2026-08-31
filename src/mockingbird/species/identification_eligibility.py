@@ -83,7 +83,73 @@ IDENTIFICATION_ELIGIBILITY_POLICY_VERSION = "identification-eligibility-v1"
 # the resulting low/ambiguous score), not an evidence-eligibility one.
 MINIMUM_CLASSIFIER_INPUT_DIMENSION_PX = 32
 
-EligibilityReasonCode = Literal["evidence_below_resolution_floor"]
+# Background / Empty Evidence Species-Confidence Correctness v1: the
+# resolution floor above answers "is this crop big enough to carry real
+# signal," never "does this crop's own geometry still correspond to a real,
+# contemporaneous subject observation." Representative Daylight Gate A Field
+# Acceptance v5 (docs/representative-daylight-gate-a-field-acceptance-v5-
+# report.md, "Defects") reproduced a case neither the resolution floor nor
+# `evaluate_classification_abstention` below can catch: a single weak,
+# `terminal_reason: maximum_unsupported_duration` MDv5 detection -- a track
+# the tracker kept alive on tracker-only support past its last real detector
+# confirmation, per `frame_tracker.py` -- localized to empty background, then
+# padded to an ordinary-sized "subject-focused" crop (the exact source tier
+# -- the `DetectionProposal`-backed `"megadetector"` pick or the legacy
+# `"activity"` focus-crop pick -- is not recoverable from the field report
+# alone; both map to this same tier and both lack any other same-moment-
+# correspondence guarantee, see below) that cleared every existing floor
+# (89.9% score, 0.857 margin -- both well clear of even the *stricter*
+# `full_frame` floor below, so no score/margin/tier change of any kind can
+# catch this case; see the milestone report's "Root cause").
+# `MediaAssetModel.geometry_attribution_json` (Localization Attribution /
+# Detection Geometry Lineage v1, schema 33) already, independently of
+# BioCLIP, records whether the box a classifier-input crop is built from came
+# from a genuine matched detector observation this exact moment
+# (`geometry_source == "detector"`) or from tracker-only extrapolation/a
+# stale carried-forward position (`"tracker"`/`"carried_forward"`) -- exactly
+# the "evidence captured after, not at, the triggering detection" mechanism
+# `roadmap.md`'s Gate A section already documents. `classifier_input_tier`
+# below already treats a sibling field on the same `GeometryAttribution`
+# object (`resolution_provenance == "synchronized"`) as informing how much a
+# crop should be trusted; this is the same precedent, extended to the two
+# crop tiers (`"megadetector"`, and the legacy `"activity"` focus-crop pick
+# -- never the Same-Frame/Persisted-Crop/Native-Resolution *override* tiers,
+# which are also reported as `source="activity"` but already carry their own
+# stronger guarantee; the caller distinguishes by `classifier_input_type`)
+# that have no other same-moment-correspondence guarantee at all.
+# `docs/localization-attribution-contract.md` is explicit
+# that this lineage is "diagnostic, never observational truth" and must never
+# be treated as "proof" an animal was or was not present -- this check
+# honors that: it never asserts the evidence *is* background, only that the
+# system's own basis for trusting this specific crop's correspondence to a
+# real moment is too thin to *automatically* claim a species, exactly the
+# same revisable, human-overridable abstention this module already applies
+# for other reasons. Empirically bounded, not asserted from nothing: measured
+# against the real, independently-adjudicated 70-Visit cohort (`data/
+# evaluations/scene-confusor-suspicion-v1/`), non-`"detector"` geometry
+# sources correctly separate 11/40 real `GROUND_TRUTH=False` Visits (idx 24,
+# 39, 41, 43, 44, 45, 49, 65, 68, 81, 85) while wrongly withholding only 2/30
+# real `GROUND_TRUTH=True` Visits (idx 57, 73) -- a real, bounded,
+# abstention-friendly-doctrine-consistent trade, not a clean discriminator
+# (see the milestone report for the full accounting, including the disclosed
+# residual this does *not* close: a detector-sourced-but-still-wrong crop,
+# e.g. idx=36 in the same cohort, `TestBackgroundEmptyEvidence.
+# test_a_high_scoring_real_background_visit_is_a_disclosed_residual`, remains
+# exactly as unclosed as before). The real-cohort validation numbers above
+# are about `MediaAssetModel.geometry_attribution_json` itself, independent
+# of which crop tier read it -- the caller (`product_repository._review_
+# species_run_context`) is the one place that decides which crop tiers are
+# in scope; see its own comment for exactly why (`"megadetector"` and the
+# legacy `"activity"` focus-crop tier, never the same-frame/persisted/
+# native-resolution *override* tiers, which already carry their own,
+# stronger, separately-validated correspondence guarantees --
+# `fov_alignment_proven`/`resolution_provenance` -- that this check must not
+# second-guess).
+GeometrySource = Literal["detector", "tracker", "carried_forward"]
+
+EligibilityReasonCode = Literal[
+    "evidence_below_resolution_floor", "evidence_geometry_uncorroborated"
+]
 
 
 @dataclass(frozen=True)
@@ -94,6 +160,7 @@ class EligibilityDecision:
     reason_code: EligibilityReasonCode | None
     classifier_input_width: int | None
     classifier_input_height: int | None
+    geometry_source: GeometrySource | None = None
     policy_version: str = IDENTIFICATION_ELIGIBILITY_POLICY_VERSION
 
     def __post_init__(self) -> None:
@@ -107,6 +174,7 @@ def evaluate_identification_eligibility(
     *,
     classifier_input_width: int | None,
     classifier_input_height: int | None,
+    geometry_source: GeometrySource | None = None,
 ) -> EligibilityDecision:
     """Is the selected classifier input worth running a model on at all?
 
@@ -127,6 +195,14 @@ def evaluate_identification_eligibility(
     never block on an absent fact" convention `classifier_input.py`'s
     resolver already follows. Only a *known*, positive size below the
     floor is treated as ineligible.
+
+    `geometry_source` (see the module-level comment above this function,
+    Background / Empty Evidence Species-Confidence Correctness v1): only a
+    *known*, non-`"detector"` source is treated as ineligible -- `None`
+    (the caller has no geometry-lineage fact for this crop, or deliberately
+    did not pass one for a tier this signal was not validated against)
+    degrades safely to "no opinion," the same convention the size check
+    above already establishes, never a guessed positive.
     """
 
     known_and_too_small = (
@@ -143,12 +219,22 @@ def evaluate_identification_eligibility(
             reason_code="evidence_below_resolution_floor",
             classifier_input_width=classifier_input_width,
             classifier_input_height=classifier_input_height,
+            geometry_source=geometry_source,
+        )
+    if geometry_source is not None and geometry_source != "detector":
+        return EligibilityDecision(
+            eligible=False,
+            reason_code="evidence_geometry_uncorroborated",
+            classifier_input_width=classifier_input_width,
+            classifier_input_height=classifier_input_height,
+            geometry_source=geometry_source,
         )
     return EligibilityDecision(
         eligible=True,
         reason_code=None,
         classifier_input_width=classifier_input_width,
         classifier_input_height=classifier_input_height,
+        geometry_source=geometry_source,
     )
 
 
@@ -482,6 +568,7 @@ __all__ = [
     "FrameClassificationResult",
     "FULL_FRAME_MARGIN_FLOOR",
     "FULL_FRAME_SCORE_FLOOR",
+    "GeometrySource",
     "IDENTIFICATION_ELIGIBILITY_POLICY_VERSION",
     "MINIMUM_CLASSIFIER_INPUT_DIMENSION_PX",
     "MULTI_FRAME_CONSENSUS_POLICY_VERSION",

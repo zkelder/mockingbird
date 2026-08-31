@@ -130,6 +130,93 @@ class TestEvidenceEligibility:
             )
 
 
+# --- Background / Empty Evidence Species-Confidence Correctness v1 ---------
+# --- geometry-corroboration eligibility -------------------------------------
+
+
+class TestGeometryCorroborationEligibility:
+    """Representative Daylight Gate A Field Acceptance v5 (docs/
+    representative-daylight-gate-a-field-acceptance-v5-report.md,
+    "Defects"): a crop well above the resolution floor, from a weak
+    (`max_confidence: 0.704`), single-detection, `terminal_reason:
+    maximum_unsupported_duration` track -- localized to empty background --
+    cleared the resolution floor and (per TestBackgroundEmptyEvidence's own
+    sibling class below) would clear classification abstention too (89.9%
+    score, 0.857 margin, both above even the full_frame floor). Neither
+    existing check has any basis to catch it. `geometry_source` is a fact
+    independent of both: does this crop's own box come from a genuine
+    contemporaneous detector observation, or tracker-only extrapolation/a
+    stale carried-forward position (Localization Attribution / Detection
+    Geometry Lineage v1)."""
+
+    def test_tracker_sourced_geometry_is_ineligible(self) -> None:
+        decision = evaluate_identification_eligibility(
+            classifier_input_width=576,
+            classifier_input_height=340,
+            geometry_source="tracker",
+        )
+        assert decision.eligible is False
+        assert decision.reason_code == "evidence_geometry_uncorroborated"
+        assert decision.geometry_source == "tracker"
+
+    def test_carried_forward_geometry_is_ineligible(self) -> None:
+        decision = evaluate_identification_eligibility(
+            classifier_input_width=576,
+            classifier_input_height=340,
+            geometry_source="carried_forward",
+        )
+        assert decision.eligible is False
+        assert decision.reason_code == "evidence_geometry_uncorroborated"
+
+    def test_detector_sourced_geometry_is_eligible(self) -> None:
+        """Non-regression: a genuine, contemporaneous detector observation
+        remains eligible -- this check must not suppress good evidence."""
+
+        decision = evaluate_identification_eligibility(
+            classifier_input_width=576,
+            classifier_input_height=340,
+            geometry_source="detector",
+        )
+        assert decision.eligible is True
+        assert decision.reason_code is None
+
+    def test_unknown_geometry_source_does_not_block_eligibility(self) -> None:
+        """Mirrors the established `classifier_input_width`/`height` `None`
+        convention: an absent fact is a data-completeness gap (a tier this
+        signal is not wired for, or a crop that predates schema 33), never
+        positive evidence of an uncorroborated box."""
+
+        decision = evaluate_identification_eligibility(
+            classifier_input_width=576, classifier_input_height=340,
+        )
+        assert decision.eligible is True
+        assert decision.reason_code is None
+        assert decision.geometry_source is None
+
+    def test_resolution_floor_is_still_checked_first(self) -> None:
+        """The two ineligibility reasons are independent, but a genuinely
+        tiny crop still reports its own real reason, not the geometry one,
+        even when both facts are unfavorable."""
+
+        decision = evaluate_identification_eligibility(
+            classifier_input_width=10, classifier_input_height=10,
+            geometry_source="tracker",
+        )
+        assert decision.eligible is False
+        assert decision.reason_code == "evidence_below_resolution_floor"
+
+    def test_geometry_field_is_exposed_on_an_eligible_decision_too(self) -> None:
+        """Diagnostics: `geometry_source` is recorded even when it does not
+        change the outcome, so a report can distinguish "known-good" from
+        "not evaluated" -- never silently discarded once known."""
+
+        decision = evaluate_identification_eligibility(
+            classifier_input_width=576, classifier_input_height=340,
+            geometry_source="detector",
+        )
+        assert decision.geometry_source == "detector"
+
+
 # --- Classifier-input tier mapping ------------------------------------------
 
 
