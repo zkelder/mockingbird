@@ -24,9 +24,23 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `5351e08` -- the report commit for Representative
-  Daylight Gate A Field Acceptance v7 (see §3/§6.R, below, and
-  [representative-daylight-gate-a-field-acceptance-v7-report.md](representative-daylight-gate-a-field-acceptance-v7-report.md)
+- **Accepted HEAD:** `86955ab` -- the report commit for Gate A Measurement
+  Closure v1 (see §3/§6.R, below, and
+  [gate-a-measurement-closure-fragmentation-latency-v1-report.md](gate-a-measurement-closure-fragmentation-latency-v1-report.md)
+  for the complete record), sitting directly on top of `211a368` (this
+  milestone's own implementation commit -- new `fragmentation_accounting.py`/
+  `capture_to_visible_latency.py`/`scripts/run_gate_a_measurement_accounting.py`
+  plus their test files, an additive `TrackGenerationRecord.start_captured_at`/
+  `end_captured_at` field pair on `counterfactual_lineage.py` and its API
+  -schema/route projection, one pre-existing `run_encounter_accounting.py`
+  bug fix, and two new regression tests on already-accepted files
+  `engine_runtime.py`/`candidate_visit_repository.py` -- zero Visit-grouping/
+  admission/model/schema change), which sits on top of `a5cf039` (the
+  reconciliation commit accepting Representative Daylight Gate A Field
+  Acceptance v7).
+- **Prior accepted HEAD (pre-Gate-A-Measurement-Closure-v1):** `5351e08` --
+  the report commit for Representative Daylight Gate A Field Acceptance v7
+  (see [representative-daylight-gate-a-field-acceptance-v7-report.md](representative-daylight-gate-a-field-acceptance-v7-report.md)
   for the complete record), sitting directly on top of `d192a0b` (this
   milestone's own deploy-tooling-fix commit -- `scripts/deploy_windows_dev.py`/
   its own test file only, zero product/perception/admission/Visit/evidence/
@@ -1822,6 +1836,76 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-08-31 update (Gate A Measurement Closure v1 -- Fragmentation
+Accounting & True User-Visible Latency Instrumentation, see §1/§6.R):**
+directly closes the two measurement gaps the prior reconciliation's own
+"Remaining Gate A dependency" named as items 1 and 3 -- see
+[gate-a-measurement-closure-fragmentation-latency-v1-report.md](gate-a-measurement-closure-fragmentation-latency-v1-report.md)
+for the complete record. Classification **A**. A new, explicit,
+human-correctable fragmentation-disposition layer
+(`fragmentation_accounting.py`) reproduces (RED) and corrects (GREEN) the
+real methodology problem v7 disclosed: `cluster_encounters`'s own raw
+`duplicate_visit_cluster_count` signal misreads sustained-activity
+mega-clusters as fragmentation/duplication defects when every admitted
+Visit inside them is a genuinely separate real encounter -- the corrected
+accounting never promotes that raw signal to a disposition on its own,
+staying honestly `ambiguous` absent a shared-evidence (`duplicate`) or
+shared-Event-concurrent-sibling (`correctly_represented`) structural
+signal or an explicit, non-empty-note-bearing reviewer override. Reran
+this corrected accounting against every cohort with recoverable raw
+ledger evidence -- the 2026-08-19 primary full-funnel cohort (from its own
+already-tracked `data/field-acceptance/` evidence) and v6/v7 (whose own
+raw counterfactual-ledger snapshots were never archived there, a disclosed
+tooling-hygiene gap; recovered from the original field sessions' own
+still-present local scratchpad directories, verified lossless against
+each accepted report's own published counts, and archived under
+`data/field-acceptance/2026-08-31-gate-a-{v6,v7}-measurement-closure-
+reanalysis/` for future reproducibility). All three reanalyzable/reported
+cohorts (2026-08-19, v5, v7) now converge on **0% confirmed
+fragmentation** under one consistent methodology, most residual ambiguity
+resolved via each cohort's own already-existing independent review (the
+2026-08-19 cohort's own `independent-encounter-table.md`; v7's own
+already-accepted "Multi-subject" section) rather than fresh guessing --
+**fragmentation moves to READY FOR FORMAL BUDGET REVIEW**, candidate
+~0%/low single digits. Separately, a full T0 (source capture) -> T5
+(query-visible) production timeline was traced directly in code: T2/T3/T4/
+T5 already collapse into one existing Host-domain value
+(`ProposalOutcomeRecord.decided_at`) in this codebase's current
+synchronous design, and T4/T5 equivalence is now *proven*, not assumed, by
+a new repository-level read-after-write test; the one genuine missing
+piece, T0, is now instrumented via one small, additive
+`TrackGenerationRecord.start_captured_at`/`end_captured_at` field pair
+(values already in scope on every `TrackUpdate`, never a new wall-clock
+read), propagated through to the counterfactual-ledger API response so
+future field-acceptance tooling actually receives it. Fallback timestamp
+correctness (a genuine risk after the accepted v6/v7 fallback work) was
+independently proven at two layers -- the new latency module and a new
+persistence-boundary test on `engine_runtime.py` -- and a real ~39-second
+offset-vs-wall-clock drift was found in v7's own preserved data, directly
+justifying the module's explicit clock-domain-caveat design. **Capture-to
+-visible latency remains MEASUREMENT CONTRACT CLOSED / MORE FIELD EVIDENCE
+REQUIRED**: every historical cohort checked (2026-08-19, v6, v7) predates
+the new field and honestly reports every sample `unavailable_capture_time`
+-- confirmed directly, never inferred around. Schema unchanged (`v58`,
+every change additive or a brand-new zero-existing-caller pure module).
+Tier 1 (218) + Tier 2 (222) = 440 tests passed, 0 failed; zero new ruff
+findings (verified against a stashed baseline); Tier 3 explicitly not run,
+decision documented in the report (additive/narrow production-code
+footprint, not warranted "solely because this is called Gate A," per this
+milestone's own explicit instruction). One pre-existing, latent bug fixed
+(`run_encounter_accounting.py`'s own `decided_at` was never parsed into a
+`datetime` -- harmless until this milestone's own new consumer needed real
+arithmetic on it), confined to an offline analysis script, never the live
+admission/persistence path. Does not tune models, does not change Visit
+grouping semantics, does not run a field cohort. Neither budget is
+accepted here -- both are proposed for external review only. Authorization
+remains **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**,
+unchanged; this closure does not authorize the next Representative Field
+Acceptance / Gate A session, External Pre-Release Acceptance, or Final
+Release Hardening, and does not select a next development milestone. See
+§6.R, below, for the complete, updated "Remaining Gate A dependency"
+account.
 
 **Representative Daylight Gate A Field Acceptance v6 -- Post-Fix
 Replication & Multi-Subject Tranche** is, as of this Post-v5 Global
@@ -4073,6 +4157,67 @@ external (ChatGPT) review of the accumulated evidence across all real
 cohorts to date.** Authorization remains **NONE -- GLOBAL PRODUCT-ROADMAP
 RECONCILIATION REQUIRED**, unchanged.
 
+**Gate A Measurement Closure v1 -- Fragmentation Accounting & True
+User-Visible Latency Instrumentation (2026-08-31)** directly closes
+dependency items (1) and (3) named immediately above -- see §1/§3, above,
+and
+[gate-a-measurement-closure-fragmentation-latency-v1-report.md](gate-a-measurement-closure-fragmentation-latency-v1-report.md)
+for the complete record. Classification **A**. A dedicated offline pass
+reapplying corrected, human-reviewable fragmentation accounting
+(`fragmentation_accounting.py`, new) against v7's own already-preserved
+merged ledger -- recovered from the original field session's own local
+scratchpad directory and archived under `data/field-acceptance/2026-08-31-
+gate-a-v7-measurement-closure-reanalysis/` for future reproducibility,
+exactly as item (1) itself proposed -- resolves 7 of v7's own 10
+denominator units (5 auto-confident, plus the two directly-visually
+-confirmed multi-subject sibling pairs already named above, applied here
+as sourced reviewer overrides) with **zero confirmed fragmentation**,
+leaving 3 genuinely ambiguous (one of them the same sustained mega-cluster
+this reconciliation's own "duplicate_visit_cluster_count: 5 and
+fragmented_cluster_count: 17 (of 27 total encounter clusters)" raw-signal
+caveat, above, already named as a methodology problem, not a defect). The
+2026-08-19 primary cohort and v5 (as-previously-published) independently
+show the identical zero-confirmed-fragmentation result under the same now
+-consistent methodology -- three convergent cohorts move fragmentation to
+**READY FOR FORMAL BUDGET REVIEW**, candidate ~0%/low single digits.
+Item (3) (true user-visible latency instrumentation) is now fully defined
+and implemented (T0 -> `decided_at`, T2-T5's own collapse into one
+existing Host-domain value proven, not assumed, by a new repository-level
+test; fallback-timestamp correctness independently proven at two layers,
+including a new `engine_runtime.py` persistence-boundary test) -- but
+**remains MEASUREMENT CONTRACT CLOSED / MORE FIELD EVIDENCE REQUIRED**:
+v7's own preserved ledger predates the new field entirely, so every one of
+its 25 admitted proposals' latency samples honestly reports
+`unavailable_capture_time` when run through the new tooling, confirmed
+directly rather than inferred -- the same true of the 2026-08-19 and v6
+cohorts. A next field session run against post-this-milestone accepted
+HEAD would be the first to produce real measured samples. Item (2) (a
+second live cohort producing genuinely crowded 3+-simultaneous-subject
+activity, to stress-test the disclosed crowded-feeder/NMS gap) and item
+(5) (the already-known Gate B admission-precision residual) remain open,
+unaffected by this milestone's own explicit scope; item (4) (~13 untraced
+`blocked_missing_evidence` records) remains open, not attempted here.
+Per this milestone's own explicit instruction, neither budget is accepted,
+and Gate A is not self-closed by this closure -- closure requires external
+(ChatGPT) review of the accumulated evidence, exactly as before. Schema
+unchanged (`v58`). Authorization remains **NONE -- GLOBAL PRODUCT-ROADMAP
+RECONCILIATION REQUIRED**, unchanged; this closure does not authorize the
+next Representative Field Acceptance / Gate A session, External
+Pre-Release Acceptance, or Final Release Hardening. **Remaining Gate A
+dependency, in priority order, superseding the priority order immediately
+above:** (1) real capture-to-visible latency field samples -- the single
+item this milestone's own new instrumentation cannot retroactively
+supply; any ordinary daylight session run against accepted HEAD after this
+milestone closes it; (2) a second live cohort producing genuinely crowded
+3+-simultaneous-subject activity (unchanged from above); (3) a bounded
+visual-review pass against v7's own two remaining genuinely-unreviewed
+ambiguous fragmentation units (`visit-observation-candidate-015/-016/-
+017` and `-027/-028`) -- recorder frames already archived, not attempted
+here as out of this milestone's own measurement-contract scope; (4) the
+~13 untraced `blocked_missing_evidence` records (unchanged from above);
+(5) the already-known Gate B admission-precision residual (unchanged from
+above).
+
 ### S. Actual Final Release Hardening
 
 **Status:** LAST.
@@ -4280,6 +4425,20 @@ full report's own "Validation" section for the complete account. Zero new
 `ruff` findings on any touched file (2 pre-existing, unrelated findings in
 `tests/test_engine_runtime.py` independently confirmed present on baseline
 `b37656d` via clean-checkout bisection, left untouched). No schema change.
+
+**Gate A Measurement Closure v1 did not run a full Core checkpoint** --
+disclosed explicitly here so this is never mistaken for one. Per its own
+documented Tier 3 decision (additive/narrow production-code footprint;
+not warranted "solely because this is called Gate A," per its own explicit
+governing instruction), it ran Tier 1 (every directly touched/new file,
+including two brand-new pure modules and their own test files) + Tier 2
+(every immediately affected subsystem -- candidate authority, evidence/
+fallback, persistence, repository reads, API visibility, acceptance
+recorder, time utilities): **440 passed, 0 failed, across 18 test files**,
+zero new `ruff` findings (verified against a stashed baseline covering the
+exact same file set). See its own report's "Validation"/"Tier 3" sections
+for the complete file list and reasoning. The "Latest accepted Core
+checkpoint" above remains the most recent actual full-suite number.
 
 **Prior accepted Core checkpoint (Historical Species-Status ("New" vs.
 "Seen Before") Correctness v1):** 5277 passed / **0 failed** / 3 skipped /
