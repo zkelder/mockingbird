@@ -1641,6 +1641,28 @@ class CounterfactualProposalOutcomeResponse(BaseModel):
     decided_at: datetime
 
 
+class CounterfactualClockCalibrationResponse(BaseModel):
+    """Camera Node -> Host Clock Normalization v1 (additive; see
+    docs/camera-node-host-clock-normalization-latency-v1-report.md): one
+    calibration attempt for this stream, anchored to `source_offset_ms`
+    (the Node-session-relative coordinate every other record here already
+    keys off). `state == "insufficient_samples"` is a real, auditable
+    outcome, not an error -- `offset_ms`/`uncertainty_ms` stay `None` in
+    that case, never a fabricated number. `clock_jump_detected` marks a
+    sample whose own offset moved by more than the module's disclosed
+    jump threshold relative to the immediately-preceding calibrated
+    sample -- everything before it may no longer govern an offset at or
+    after this one (see `clock_calibration.active_calibration_for_offset`)."""
+
+    source_offset_ms: int
+    calibrated_at: datetime
+    sample_count: int
+    state: Literal["calibrated", "insufficient_samples"]
+    offset_ms: float | None = None
+    uncertainty_ms: float | None = None
+    clock_jump_detected: bool = False
+
+
 class CounterfactualLedgerAccountingResponse(BaseModel):
     """Clear eviction accounting: how much of this ledger's own bounded
     history is still retained versus already evicted."""
@@ -1683,6 +1705,14 @@ class CounterfactualWindowResponse(BaseModel):
     coverage: CounterfactualCoverageResponse
     attribution: str
     attribution_reason: str
+    # Camera Node -> Host Clock Normalization v1 (additive). `clock_
+    # calibration_required` is `False` for a same-clock-domain session
+    # (RTSP/local/USB/replay -- no Camera Node ever in this Stream's own
+    # capture path) and every ledger snapshot saved before this field
+    # existed; `clock_calibrations` is empty in both of those cases, never
+    # fabricated.
+    clock_calibrations: list[CounterfactualClockCalibrationResponse] = Field(default_factory=list)
+    clock_calibration_required: bool = False
 
 
 class SceneConfusorLearningStatusResponse(BaseModel):

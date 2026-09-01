@@ -135,3 +135,67 @@ def test_dispositions_override_is_applied_and_visits_export_enables_sibling_clas
     assert fragmentation_reviewed["report"]["fragmented_count"] == 1
     assert fragmentation_reviewed["report"]["ambiguous_count"] == 0
     assert fragmentation_reviewed["report"]["fragmentation_rate"] == {"state": "evaluated", "value": 1.0}
+
+
+def test_clock_calibration_wiring_end_to_end_through_the_cli(tmp_path: Path) -> None:
+    """Camera Node -> Host Clock Normalization v1: a saved ledger snapshot
+    that says `clock_calibration_required: true` and carries one calibrated
+    `clock_calibrations` entry must normalize T0 before computing latency --
+    proven through the real CLI subprocess, not only the in-process pure
+    functions (those have their own dedicated test files)."""
+    ledger_path = tmp_path / "counterfactual.json"
+    window = {
+        "stream_id": STREAM_ID, "start_offset_ms": 0, "end_offset_ms": 10_000,
+        "track_generations": [
+            _generation("gen-1", start_ms=0, end_ms=2_000, start_captured_at="2026-08-31T19:45:00Z"),
+        ],
+        "proposal_outcomes": [
+            _outcome("p-1", generation_ids=["gen-1"], visit_id="visit-1", decided_at="2026-08-31T19:45:12Z"),
+        ],
+        "coverage": {},
+        "clock_calibration_required": True,
+        "clock_calibrations": [{
+            "stream_id": STREAM_ID, "source_offset_ms": 0, "calibrated_at": "2026-08-31T19:45:00Z",
+            "sample_count": 5, "state": "calibrated", "offset_ms": 2_000.0, "uncertainty_ms": 15.0,
+            "clock_jump_detected": False,
+        }],
+    }
+    ledger_path.write_text(json.dumps(window), encoding="utf-8")
+    output_dir = tmp_path / "out"
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--input", str(ledger_path), "--output", str(output_dir)],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Clock calibration: required=True, 1 attempts recorded (1 calibrated, 0 clock jump(s) detected)" in result.stdout
+
+    latency = json.loads((output_dir / "latency-report.json").read_text(encoding="utf-8"))
+    sample = latency["samples"][0]
+    assert sample["clock_calibration_state"] == "normalized"
+    assert sample["clock_offset_ms"] == 2_000.0
+    assert sample["state"] == "measured"
+    # Raw gap is 12s (19:45:00 -> 19:45:12); the 2s calibrated offset is
+    # subtracted, leaving 10s -- proof the CLI actually normalized T0
+    # rather than falling back to the raw subtraction.
+    assert sample["latency_ms"] == 10_000.0
+
+
+def test_old_ledger_snapshot_without_clock_calibration_metadata_still_runs_cleanly(tmp_path: Path) -> None:
+    """Compatibility: a snapshot saved before this milestone has neither
+    `clock_calibrations` nor `clock_calibration_required` at all -- the CLI
+    must not crash, and must fall back to this module's own pre-existing,
+    unaffected default (`clock_calibration_required=False`)."""
+    ledger_path = tmp_path / "counterfactual.json"
+    _write_ledger(ledger_path)  # no clock_calibration* keys at all
+    output_dir = tmp_path / "out"
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "--input", str(ledger_path), "--output", str(output_dir)],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Clock calibration: required=False, 0 attempts recorded" in result.stdout
+    latency = json.loads((output_dir / "latency-report.json").read_text(encoding="utf-8"))
+    assert latency["samples"][0]["clock_calibration_state"] == "not_required"
+    assert latency["samples"][0]["state"] == "measured"

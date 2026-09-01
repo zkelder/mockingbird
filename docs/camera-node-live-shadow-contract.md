@@ -86,6 +86,45 @@ offset in `ObservationSessionStatusResponse.advanced` for an operator who
 suspects a clock problem -- is reasonable future work if a real case is
 ever reported, not a v0.1 release blocker.
 
+## Clock normalization (Camera Node -> Host Clock Normalization v1)
+
+Supersedes the "computed but never read anywhere else" finding above for
+one specific, bounded purpose: true capture-to-visible latency (Gate A).
+See docs/camera-node-host-clock-normalization-latency-v1-report.md for the
+complete record; summarized here because this is the doc that already
+owned "Clock-drift disposition."
+
+`node_to_host_clock_offset_ms` (`host_receive_time - node_capture_time`,
+still computed exactly as described above, per delivered frame) is now
+also fed, as `(captured_at, received_at)` pairs, into
+`clock_calibration.py` -- a new pure module that aggregates a bounded
+window of these one-way samples into a `ClockCalibrationRecord` (point
+estimate: the *minimum* observed delta, since transit delay only ever adds
+a positive bias; uncertainty: the observed min/max spread) once per
+assembly tick (`engine_runtime._EngineSession._refresh_clock_calibration`,
+~every 10s), retained in `counterfactual_lineage.CounterfactualLedger`
+alongside the other bounded ledgers and exposed via `GET .../observation/
+counterfactual`'s own `clock_calibrations`. `capture_to_visible_latency.py`
+now normalizes a Node-domain T0 through the calibration governing its own
+`source_offset_ms` before subtracting `decided_at` -- `state=
+"invalid_clock_mapping"` (never a silent, unnormalized subtraction) when no
+trustworthy calibration covers it.
+
+This is still not a general clock-synchronization mechanism, and does not
+change anything traced above: Visit/tracklet assembly, cross-reconnect
+stitching, burst latency, coverage accounting, and Visit-to-Visit ordering
+all remain exactly as described (never comparing a Node timestamp against a
+Host timestamp). Clock normalization is scoped narrowly to true
+capture-to-visible latency *measurement*, is session/stream-local (a new
+session recalibrates from zero, never reusing a prior session's offset),
+detects a clock jump (an offset change larger than a disclosed 5-second
+threshold between consecutive calibrations) and refuses to bridge across
+one, and requires no external NTP/cloud reachability (Local Only). The one
+narrower limitation named directly above (raw Node `captured_at` persisted
+verbatim onto `MediaAsset.captured_at`/`VisitEvidenceLink.captured_at`)
+remains open, unaffected -- this milestone's own scope was latency
+*measurement*, not persisted-evidence display.
+
 ## Health and limitations
 
 Read-only status starts nothing. It reports source state, received FPS, gaps/drops/coalescing, frame age, current generation, supplied/inferred frames, detector observations and inferred cadence, active tracks, pending inference (bounded at zero or one), burst attempts/success/failure/stale results, median burst latency, and shadow-only authority. CUDA provider health and execution facts remain supplied by the Stage 3 detector adapter.

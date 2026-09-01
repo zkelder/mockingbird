@@ -722,7 +722,24 @@ class _EngineSession:
         # already-stopped session's (see "session reset/restart" in the
         # contract doc). `_suppressed` above is left unmodified/unremoved --
         # this ledger is an addition, not a replacement.
-        self._counterfactual = CounterfactualLedger(stream_id=stream_id)
+        #
+        # Camera Node -> Host Clock Normalization v1: only a real Camera
+        # Node source ever populates `FramePacket.received_at` (see
+        # `camera_node_live.CameraNodeAnalysisSource._pop_latest`) -- an
+        # RTSP/local/USB/replay provider's `captured_at` is already
+        # Host-domain, so `clock_calibration_expected=False` for one
+        # (the ledger's own safe default) correctly tells `capture_to_
+        # visible_latency.build_latency_samples` no mapping is needed.
+        self._counterfactual = CounterfactualLedger(
+            stream_id=stream_id, clock_calibration_expected=(playback_config.provider_key == "camera_node"),
+        )
+        # Buffered (node_captured_at, host_received_at) pairs awaiting the
+        # next `_refresh_clock_calibration` drain -- only ever populated for
+        # a real Camera Node source (see the per-packet loop in
+        # `_run_async`); stays empty, and therefore never calibrated, for
+        # every other provider, exactly matching `clock_calibration_
+        # expected` above.
+        self._clock_calibration_buffer: list[tuple[datetime, datetime]] = []
 
     @property
     def is_active(self) -> bool:
@@ -1297,6 +1314,15 @@ class _EngineSession:
                         for packet in result.frame_packets:
                             if packet.source_offset_ms is not None:
                                 latest_known_offset_ms = max(latest_known_offset_ms, packet.source_offset_ms)
+                            if packet.captured_at is not None and packet.received_at is not None:
+                                # Camera Node -> Host Clock Normalization v1:
+                                # `received_at` is only ever populated by a
+                                # real Camera Node source -- see this
+                                # session's own `__init__` comment. Buffered
+                                # here, drained by `_refresh_clock_
+                                # calibration` once per assembly tick, never
+                                # read directly off the live queue itself.
+                                self._clock_calibration_buffer.append((packet.captured_at, packet.received_at))
                             if self._acceptance_recorder is not None:
                                 # Independent biological-encounter denominator
                                 # (see docs/independent-encounter-denominator-
@@ -1317,6 +1343,7 @@ class _EngineSession:
                     now = loop.time()
                     if now - last_tick >= _ASSEMBLY_TICK_SECONDS:
                         last_tick = now
+                        self._refresh_clock_calibration(source_offset_ms=latest_known_offset_ms)
                         self._run_assembly_tick(
                             all_track_updates=all_track_updates,
                             all_evidence_candidates=all_evidence_candidates,
@@ -1660,6 +1687,29 @@ class _EngineSession:
             return
         with self._state_lock:
             self._advanced["automatic_identification"] = as_dict
+
+    def _refresh_clock_calibration(self, *, source_offset_ms: int) -> None:
+        """Camera Node -> Host Clock Normalization v1: drain whatever
+        `(node_captured_at, host_received_at)` pairs accumulated since the
+        last tick into one new `counterfactual_lineage.CounterfactualLedger.
+        record_clock_calibration` attempt, anchored to this tick's own
+        `source_offset_ms` (`latest_known_offset_ms` -- the same value
+        `_run_assembly_tick` is about to receive as `known_horizon_ms`,
+        reused rather than re-derived). A no-op for a same-clock-domain
+        source (the buffer stays permanently empty -- see `__init__`'s own
+        comment) and for a tick where zero packets happened to arrive.
+        Never called from the stop-finalization drain (`_run_async`'s own
+        `final_results` loop) -- mirrors that loop's own existing asymmetry
+        with the acceptance recorder, which likewise only records during
+        ordinary live operation."""
+
+        if not self._clock_calibration_buffer:
+            return
+        pairs = tuple(self._clock_calibration_buffer)
+        self._clock_calibration_buffer.clear()
+        self._counterfactual.record_clock_calibration(
+            pairs, source_offset_ms=source_offset_ms, calibrated_at=self._clock(),
+        )
 
     def _run_assembly_tick(
         self,

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from mockingbird.observation.clock_calibration import DEFAULT_CLOCK_JUMP_THRESHOLD_MS
 from mockingbird.observation.contracts import (
     EMPTY_CONFIDENCE_EVIDENCE,
     DetectionObservation,
@@ -356,7 +357,9 @@ def test_ledger_and_records_expose_no_review_or_visit_creation_surface() -> None
         name for name, value in inspect.getmembers(CounterfactualLedger)
         if not name.startswith("_") and inspect.isfunction(value)
     }
-    assert public_methods == {"observe_result", "record_proposal_outcome", "coverage", "query"}
+    assert public_methods == {
+        "observe_result", "record_proposal_outcome", "record_clock_calibration", "coverage", "query",
+    }
     assert not hasattr(module, "create_visit")
     assert not hasattr(module, "create_review_label")
 
@@ -477,3 +480,75 @@ def test_track_generation_from_saved_snapshot_without_the_new_field_is_none_not_
     )
     assert record.start_captured_at is None
     assert record.end_captured_at is None
+
+
+# --- Camera Node -> Host Clock Normalization v1: ledger-level calibration --
+
+
+def test_record_clock_calibration_appends_and_is_exposed_by_query() -> None:
+    ledger = CounterfactualLedger(stream_id=STREAM_ID, clock_calibration_expected=True)
+    pairs = [(NOW, NOW + timedelta(milliseconds=100 + i)) for i in range(5)]
+    record = ledger.record_clock_calibration(pairs, source_offset_ms=1_000, calibrated_at=NOW + timedelta(seconds=1))
+
+    assert record.state == "calibrated"
+    assert record.stream_id == STREAM_ID
+    assert record.clock_jump_detected is False
+
+    window = ledger.query(start_offset_ms=0, end_offset_ms=2_000)
+    assert window.clock_calibrations == (record,)
+    assert window.clock_calibration_required is True
+
+
+def test_window_result_clock_calibration_required_defaults_to_false_for_non_camera_node_sessions() -> None:
+    ledger = CounterfactualLedger(stream_id=STREAM_ID)  # clock_calibration_expected defaults to False
+    window = ledger.query(start_offset_ms=0, end_offset_ms=1_000)
+    assert window.clock_calibration_required is False
+    assert window.clock_calibrations == ()
+
+
+def test_record_clock_calibration_flags_a_detected_jump_relative_to_the_previous_sample() -> None:
+    ledger = CounterfactualLedger(stream_id=STREAM_ID, clock_calibration_expected=True)
+    first = ledger.record_clock_calibration(
+        [(NOW, NOW + timedelta(milliseconds=50 + i)) for i in range(5)],
+        source_offset_ms=0, calibrated_at=NOW,
+    )
+    assert first.clock_jump_detected is False
+
+    jump_offset_ms = DEFAULT_CLOCK_JUMP_THRESHOLD_MS + 1_000
+    later = NOW + timedelta(seconds=10)
+    second = ledger.record_clock_calibration(
+        [(later, later + timedelta(milliseconds=jump_offset_ms + i)) for i in range(5)],
+        source_offset_ms=10_000, calibrated_at=later,
+    )
+    assert second.clock_jump_detected is True
+
+    window = ledger.query(start_offset_ms=0, end_offset_ms=20_000)
+    assert window.clock_calibrations == (first, second)
+
+
+def test_record_clock_calibration_insufficient_samples_never_flagged_as_a_jump() -> None:
+    ledger = CounterfactualLedger(stream_id=STREAM_ID, clock_calibration_expected=True)
+    ledger.record_clock_calibration(
+        [(NOW, NOW + timedelta(milliseconds=50 + i)) for i in range(5)], source_offset_ms=0, calibrated_at=NOW,
+    )
+    later = NOW + timedelta(seconds=10)
+    # Too few samples this tick -- an honest `insufficient_samples` attempt,
+    # never compared against the previous calibrated sample as if it could
+    # itself constitute (or hide) a jump.
+    insufficient = ledger.record_clock_calibration([(later, later + timedelta(seconds=100))], source_offset_ms=10_000, calibrated_at=later)
+    assert insufficient.state == "insufficient_samples"
+    assert insufficient.clock_jump_detected is False
+
+
+def test_clock_calibration_retention_is_bounded() -> None:
+    config = CounterfactualRetentionConfig(max_clock_calibration_records=3, max_age_ms=10_000_000)
+    ledger = CounterfactualLedger(stream_id=STREAM_ID, config=config, clock_calibration_expected=True)
+    for tick in range(7):
+        moment = NOW + timedelta(seconds=tick * 10)
+        ledger.record_clock_calibration(
+            [(moment, moment + timedelta(milliseconds=10 + i)) for i in range(5)],
+            source_offset_ms=tick * 10_000, calibrated_at=moment,
+        )
+    window = ledger.query(start_offset_ms=0, end_offset_ms=100_000)
+    assert len(window.clock_calibrations) == 3  # bounded, oldest evicted first
+    assert window.clock_calibrations[-1].source_offset_ms == 60_000

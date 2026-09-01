@@ -41,6 +41,7 @@ import sys
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
+from mockingbird.observation.clock_calibration import ClockCalibrationRecord  # noqa: E402
 from mockingbird.observation.contracts import ConfidenceEvidenceSummary  # noqa: E402
 from mockingbird.observation.counterfactual_lineage import (  # noqa: E402
     ProposalOutcomeRecord,
@@ -157,6 +158,27 @@ def _proposal_outcome_from_dict(data: dict) -> ProposalOutcomeRecord:
         # true downstream.
         decided_at=_optional_datetime(data.get("decided_at")),
         decided_at_offset_ms=data.get("end_offset_ms"),
+    )
+
+
+def _clock_calibration_from_dict(data: dict) -> ClockCalibrationRecord:
+    """Camera Node -> Host Clock Normalization v1: parses one
+    `CounterfactualClockCalibrationResponse`-shaped dict. `calibrated_at` is
+    always present (unlike `start_captured_at`/`end_captured_at`, no saved
+    snapshot ever predates this field's own *record type* -- it either has
+    no `clock_calibrations` key at all, handled by the caller defaulting to
+    `()`, or every entry it does have is well-formed)."""
+    return ClockCalibrationRecord(
+        stream_id=data.get("stream_id", "unknown-stream"),
+        source_offset_ms=data["source_offset_ms"],
+        calibrated_at=datetime.fromisoformat(data["calibrated_at"]),
+        sample_count=data["sample_count"],
+        state=data["state"],
+        offset_ms=data.get("offset_ms"),
+        uncertainty_ms=data.get("uncertainty_ms"),
+        min_delta_ms=data.get("min_delta_ms"),
+        max_delta_ms=data.get("max_delta_ms"),
+        clock_jump_detected=data.get("clock_jump_detected", False),
     )
 
 

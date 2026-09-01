@@ -47,12 +47,13 @@ from __future__ import annotations
 
 import threading
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Literal, Protocol, Sequence, runtime_checkable
 
 from mockingbird.observation.candidate_quality_gate import REJECTED_OUTCOMES as _QUALITY_REJECTED_OUTCOMES
 from mockingbird.observation.candidate_visit_authority import BLOCKED_OUTCOMES as _AUTHORITY_BLOCKED_OUTCOMES
+from mockingbird.observation.clock_calibration import ClockCalibrationRecord, detect_clock_jump, estimate_clock_calibration
 from mockingbird.observation.contracts import ConfidenceEvidenceSummary, DetectionObservation, FramePacket, ObservationResult, TrackUpdate
 from mockingbird.observation.localization_attribution import geometry_source_from_support_state
 from mockingbird.observation.visit_episode_assembler import confidence_evidence_from_terminal_update
@@ -326,6 +327,14 @@ class CounterfactualRetentionConfig:
     max_raw_detection_records: int = 12_000
     max_track_generation_records: int = 2_000
     max_proposal_outcome_records: int = 1_000
+    # Camera Node -> Host Clock Normalization v1: one calibration attempt
+    # per assembly tick (`engine_runtime._EngineSession._refresh_clock_
+    # calibration`, ~every 10s) -- 200 comfortably exceeds any real bounded
+    # session's own tick count (a 60-minute session, this ledger's own
+    # `max_age_ms` ceiling, produces well under 400 ticks), mirroring how
+    # every other cap above is sized with generous headroom over real
+    # measured sessions, not tuned to a specific one.
+    max_clock_calibration_records: int = 200
     max_age_ms: int = 60 * 60 * 1000
 
     def __post_init__(self) -> None:
@@ -333,6 +342,7 @@ class CounterfactualRetentionConfig:
             self.max_raw_detection_records < 1
             or self.max_track_generation_records < 1
             or self.max_proposal_outcome_records < 1
+            or self.max_clock_calibration_records < 1
             or self.max_age_ms < 1
         ):
             raise ValueError("invalid_counterfactual_retention_config")
@@ -448,6 +458,18 @@ class CounterfactualWindowResult:
     raw_detections_in_roi: tuple[RawDetectionRecord, ...]
     track_generations_in_roi: tuple[TrackGenerationRecord, ...]
     coverage: CounterfactualCoverage
+    # Camera Node -> Host Clock Normalization v1 (additive). `clock_
+    # calibration_required` mirrors this ledger's own `clock_calibration_
+    # expected` (set once, at session construction, from `provider_key ==
+    # "camera_node"` -- see `engine_runtime._EngineSession.__init__`):
+    # `False` for a same-clock-domain source (RTSP/local/USB/replay), where
+    # `capture_to_visible_latency.build_latency_samples` should use its own
+    # default (no mapping needed); `True` for a real Camera Node, where a
+    # caller should pass this window's own `clock_calibrations` through and
+    # require them. `clock_calibrations` is empty for every ledger that
+    # predates this field or never recorded an attempt.
+    clock_calibrations: tuple[ClockCalibrationRecord, ...] = ()
+    clock_calibration_required: bool = False
 
 
 @dataclass
@@ -556,11 +578,25 @@ class CounterfactualLedger:
     Event, Visit, MediaAsset, ReviewLabel, or reviewed truth.
     """
 
-    def __init__(self, *, stream_id: str, config: CounterfactualRetentionConfig | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        stream_id: str,
+        config: CounterfactualRetentionConfig | None = None,
+        clock_calibration_expected: bool = False,
+    ) -> None:
         if not stream_id:
             raise ValueError("invalid_counterfactual_ledger_stream")
         self.stream_id = stream_id
         self._config = config or CounterfactualRetentionConfig()
+        # Camera Node -> Host Clock Normalization v1: whether this session's
+        # own source is expected to need cross-clock-domain calibration at
+        # all (`provider_key == "camera_node"` -- an RTSP/local/USB/replay
+        # source never populates `FramePacket.received_at`, so `record_
+        # clock_calibration` below is simply never called for one and this
+        # stays `False`, its own safe default). Exposed unchanged on every
+        # `CounterfactualWindowResult` this ledger produces.
+        self.clock_calibration_expected = clock_calibration_expected
         self._lock = threading.Lock()
         self._raw_detections = _BoundedOffsetLedger(
             max_count=self._config.max_raw_detection_records,
@@ -578,6 +614,11 @@ class CounterfactualLedger:
             offset_of=lambda record: (
                 record.decided_at_offset_ms if record.decided_at_offset_ms is not None else record.end_offset_ms
             ),
+        )
+        self._clock_calibrations = _BoundedOffsetLedger(
+            max_count=self._config.max_clock_calibration_records,
+            max_age_ms=self._config.max_age_ms,
+            offset_of=lambda record: record.source_offset_ms,
         )
         self._open_generations: dict[str, _OpenGeneration] = {}
         self._session_first_offset_ms: int | None = None
@@ -671,6 +712,42 @@ class CounterfactualLedger:
         with self._lock:
             self._proposal_outcomes.append(record)
 
+    def record_clock_calibration(
+        self,
+        pairs: Sequence[tuple[datetime, datetime]],
+        *,
+        source_offset_ms: int,
+        calibrated_at: datetime,
+    ) -> ClockCalibrationRecord:
+        """Record one calibration attempt from `pairs` of `(node_captured_at,
+        host_received_at)` -- called once per assembly tick by a live
+        session that actually saw Camera Node packets (`engine_runtime.
+        _EngineSession._refresh_clock_calibration`; never called at all for
+        a same-clock-domain source, so `clock_calibrations` stays empty for
+        one, exactly matching `clock_calibration_expected=False`). Compares
+        against this stream's own most recent `state="calibrated"` record
+        (if any) to flag a detected clock jump (`clock_calibration.
+        detect_clock_jump`) *before* appending -- never decided after the
+        fact by a later reader re-deriving it, so every exported record is
+        already self-describing (see this milestone's own §14 "acceptance
+        -recorder integration")."""
+
+        sample = estimate_clock_calibration(
+            pairs, stream_id=self.stream_id, source_offset_ms=source_offset_ms, calibrated_at=calibrated_at,
+        )
+        with self._lock:
+            previous = self._latest_calibrated_locked()
+            if previous is not None and detect_clock_jump(previous, sample):
+                sample = replace(sample, clock_jump_detected=True)
+            self._clock_calibrations.append(sample)
+        return sample
+
+    def _latest_calibrated_locked(self) -> ClockCalibrationRecord | None:
+        for item in reversed(self._clock_calibrations.records):
+            if item.state == "calibrated":
+                return item
+        return None
+
     def coverage(self) -> CounterfactualCoverage:
         with self._lock:
             return CounterfactualCoverage(
@@ -707,6 +784,10 @@ class CounterfactualLedger:
                 item for item in self._proposal_outcomes.records
                 if item.start_offset_ms <= end_offset_ms and item.end_offset_ms >= start_offset_ms
             )
+            calibrations = tuple(
+                item for item in self._clock_calibrations.records
+                if start_offset_ms <= item.source_offset_ms <= end_offset_ms
+            )
             coverage = CounterfactualCoverage(
                 session_first_offset_ms=self._session_first_offset_ms,
                 session_last_offset_ms=self._session_last_offset_ms,
@@ -729,6 +810,8 @@ class CounterfactualLedger:
             raw_detections_in_roi=raw_in_roi,
             track_generations_in_roi=generations_in_roi,
             coverage=coverage,
+            clock_calibrations=calibrations,
+            clock_calibration_required=self.clock_calibration_expected,
         )
 
 

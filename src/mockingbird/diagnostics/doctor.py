@@ -1755,13 +1755,24 @@ def _interpret_clock(gathered: dict[str, Any]) -> DoctorCheckResult:
         detail=detail,
         diagnostic_context={
             "resolved_timezone": zone_key,
-            # See "Clock/time" in the contract doc: the analysis-to-host
-            # offset a live session computes per frame
-            # (`node_to_host_clock_offset_ms`) is not persisted or exposed
-            # by any status surface today, so a standalone Doctor run
-            # genuinely cannot measure Camera Node clock divergence -- this
-            # is disclosed rather than fabricated.
-            "camera_node_clock_divergence": "not measurable: not currently persisted or exposed by any status surface",
+            # Camera Node -> Host Clock Normalization v1 (see
+            # docs/camera-node-host-clock-normalization-latency-v1-report.md):
+            # a *live* Observation Engine session now computes and bounds a
+            # real Node/Host offset estimate
+            # (`counterfactual_lineage.CounterfactualLedger.record_clock_
+            # calibration`, surfaced via `GET .../observation/counterfactual`
+            # `clock_calibrations`) -- but that state lives only in that
+            # session's own in-memory ledger, never a durable store. Doctor
+            # runs as a separate, standalone process with no live session
+            # handle, so it genuinely still cannot read a fact nothing
+            # durable persists -- disclosed rather than fabricated, not a
+            # regression from before this milestone (only the *reason*
+            # changed, from "never computed" to "computed live, not
+            # durably readable from here").
+            "camera_node_clock_divergence": (
+                "not measurable from a standalone Doctor check: see a running session's own "
+                "GET .../observation/counterfactual response (clock_calibrations) instead"
+            ),
         },
     )
 

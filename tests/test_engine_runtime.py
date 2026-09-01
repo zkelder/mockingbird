@@ -4548,3 +4548,93 @@ def test_checkpoint_without_a_boot_id_never_reports_a_transition(repository: Pro
     session._checkpoint_observation_exposure(repository, healthy_at=healthy_at)
     assert "camera_node_fresh_boot_detected" not in session._advanced
     assert "camera_node_boot_transitions_this_session" not in session._advanced
+
+
+# =============================================================================
+# Camera Node -> Host Clock Normalization v1 (see docs/camera-node-host
+# -clock-normalization-latency-v1-report.md): a Camera Node session's own
+# `_counterfactual` ledger is constructed to *expect* clock calibration
+# (`clock_calibration_expected=True`); `_refresh_clock_calibration` drains
+# whatever `(node_captured_at, host_received_at)` pairs the per-packet loop
+# already buffered into one new calibration record per assembly tick. Only
+# `_refresh_clock_calibration` and the buffer/ledger wiring are unit-tested
+# here directly (matching this file's own established pattern for other
+# small `_EngineSession` helpers, e.g. `_checkpoint_observation_exposure`
+# immediately above) -- the per-packet buffering line itself is a trivial,
+# already-covered-by-every-passing-test-in-this-file two-line guarded
+# append inside the real `_run_async` loop, not independently re-tested.
+# =============================================================================
+
+
+def test_camera_node_session_ledger_expects_clock_calibration(repository: ProductRepository) -> None:
+    session = _tick_session(repository)  # _camera_node_config() -- provider_key == "camera_node"
+    assert session._counterfactual.clock_calibration_expected is True
+
+
+def test_non_camera_node_session_ledger_never_expects_clock_calibration(repository: ProductRepository) -> None:
+    session = engine_runtime._EngineSession(
+        stream_id=STREAM_ID, playback_config=_non_camera_node_config(),
+        provider_config_path=Path("unused-for-this-test"), privacy_ignore_regions=(),
+        repository_factory=lambda: repository,
+    )
+    assert session._counterfactual.clock_calibration_expected is False
+    # This source never populates `FramePacket.received_at` -- the buffer
+    # stays empty for the lifetime of such a session, so a tick refresh is
+    # always a safe no-op, never a spurious `insufficient_samples` record.
+    session._refresh_clock_calibration(source_offset_ms=5_000)
+    window = session._counterfactual.query(start_offset_ms=0, end_offset_ms=10_000)
+    assert window.clock_calibrations == ()
+    assert window.clock_calibration_required is False
+
+
+def test_refresh_clock_calibration_records_a_calibration_from_buffered_camera_node_packets(
+    repository: ProductRepository,
+) -> None:
+    session = _tick_session(repository)
+    node_t0 = NOW
+    session._clock_calibration_buffer.extend(
+        (node_t0 + timedelta(milliseconds=i), node_t0 + timedelta(milliseconds=i + 2_000)) for i in range(5)
+    )
+
+    session._refresh_clock_calibration(source_offset_ms=5_000)
+
+    assert session._clock_calibration_buffer == []  # drained, never left to double-count next tick
+    window = session._counterfactual.query(start_offset_ms=0, end_offset_ms=10_000)
+    assert len(window.clock_calibrations) == 1
+    assert window.clock_calibration_required is True
+    calibration = window.clock_calibrations[0]
+    assert calibration.state == "calibrated"
+    assert calibration.source_offset_ms == 5_000
+    assert calibration.offset_ms == pytest.approx(2_000.0)
+    assert calibration.clock_jump_detected is False
+
+
+def test_refresh_clock_calibration_is_a_no_op_when_the_buffer_is_empty(repository: ProductRepository) -> None:
+    """A tick where zero packets happened to arrive (or none carried
+    `received_at`) must never append a spurious record."""
+    session = _tick_session(repository)
+    session._refresh_clock_calibration(source_offset_ms=1_000)
+    window = session._counterfactual.query(start_offset_ms=0, end_offset_ms=2_000)
+    assert window.clock_calibrations == ()
+
+
+def test_refresh_clock_calibration_across_two_ticks_detects_a_clock_jump(repository: ProductRepository) -> None:
+    session = _tick_session(repository)
+    node_t0 = NOW
+    session._clock_calibration_buffer.extend(
+        (node_t0 + timedelta(milliseconds=i), node_t0 + timedelta(milliseconds=i + 100)) for i in range(5)
+    )
+    session._refresh_clock_calibration(source_offset_ms=0)
+
+    jumped_base = node_t0 + timedelta(seconds=10)
+    huge_offset_ms = 100 + 60_000  # far beyond DEFAULT_CLOCK_JUMP_THRESHOLD_MS
+    session._clock_calibration_buffer.extend(
+        (jumped_base + timedelta(milliseconds=i), jumped_base + timedelta(milliseconds=i + huge_offset_ms))
+        for i in range(5)
+    )
+    session._refresh_clock_calibration(source_offset_ms=10_000)
+
+    window = session._counterfactual.query(start_offset_ms=0, end_offset_ms=20_000)
+    assert len(window.clock_calibrations) == 2
+    assert window.clock_calibrations[0].clock_jump_detected is False
+    assert window.clock_calibrations[1].clock_jump_detected is True

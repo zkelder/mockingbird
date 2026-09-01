@@ -53,7 +53,14 @@ accounting`, gitignored):
   `disposition`).
 - `latency-report.json` -- `capture_to_visible_latency.LatencySummary` plus
   every `LatencySample` (capture-to-visible latency samples, fallback
-  attempts flagged).
+  attempts flagged). Camera Node -> Host Clock Normalization v1
+  (additive): when `--input`'s own `clock_calibration_required` is `true`
+  (a real Camera Node session), every sample's raw T0 is normalized through
+  its own governing `clock_calibrations` entry before latency is computed
+  -- `state="invalid_clock_mapping"` (distinct from `unavailable_capture_
+  time`) whenever no trustworthy calibration covers it. A snapshot with no
+  `clock_calibrations` key at all (saved before this milestone) is handled
+  the same honest way, never a crash.
 
 Plus a compact human-readable summary on stdout.
 """
@@ -71,6 +78,7 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from run_encounter_accounting import (  # noqa: E402
+    _clock_calibration_from_dict,
     _proposal_outcome_from_dict,
     _track_generation_from_dict,
 )
@@ -136,6 +144,13 @@ def main(argv: list[str] | None = None) -> int:
     window = json.loads(args.input.read_text(encoding="utf-8"))
     track_generations = [_track_generation_from_dict(item) for item in window.get("track_generations", ())]
     proposal_outcomes = [_proposal_outcome_from_dict(item) for item in window.get("proposal_outcomes", ())]
+    # Camera Node -> Host Clock Normalization v1 (additive): absent for
+    # every ledger snapshot saved before this milestone -- `()`/`False` are
+    # the same honest "not a Camera Node session, or predates this field"
+    # defaults `capture_to_visible_latency.build_latency_samples` itself
+    # already uses.
+    clock_calibrations = [_clock_calibration_from_dict(item) for item in window.get("clock_calibrations", ())]
+    clock_calibration_required = window.get("clock_calibration_required", False)
 
     clusters = cluster_encounters(track_generations, proposal_outcomes)
     encounter_report = build_encounter_funnel_report(clusters)
@@ -147,7 +162,10 @@ def main(argv: list[str] | None = None) -> int:
         units = apply_reviewer_dispositions(units, overrides)
     fragmentation_report = build_fragmentation_accounting_report(units)
 
-    latency_samples = build_latency_samples(proposal_outcomes, track_generations)
+    latency_samples = build_latency_samples(
+        proposal_outcomes, track_generations,
+        clock_calibrations=clock_calibrations, clock_calibration_required=clock_calibration_required,
+    )
     latency_summary = build_latency_summary(latency_samples)
 
     args.output.mkdir(parents=True, exist_ok=True)
@@ -200,11 +218,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(f"  fragmentation_rate={fragmentation_report.fragmentation_rate}")
     print(
+        f"Clock calibration: required={clock_calibration_required}, "
+        f"{len(clock_calibrations)} attempts recorded "
+        f"({sum(1 for item in clock_calibrations if item.state == 'calibrated')} calibrated, "
+        f"{sum(1 for item in clock_calibrations if item.clock_jump_detected)} clock jump(s) detected)"
+    )
+    print(
         f"Latency: {latency_summary.sample_count} admitted samples -- "
         f"measured={latency_summary.measured_count}, "
         f"unavailable_capture_time={latency_summary.unavailable_capture_time_count}, "
         f"invalid_negative={latency_summary.invalid_negative_count}, "
         f"implausible={latency_summary.implausible_count}, "
+        f"invalid_clock_mapping={latency_summary.invalid_clock_mapping_count}, "
         f"fallback_measured={latency_summary.fallback_measured_count}"
     )
     print(
