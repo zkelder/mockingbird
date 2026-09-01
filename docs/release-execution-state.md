@@ -24,8 +24,23 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `ea38d21` -- the report commit for Camera Node <->
-  Host RTT-Bounded Clock Calibration v1 (see §3/§6.R, below, and
+- **Accepted HEAD:** `1a36b06` -- the report commit for Reference Camera
+  Node RTT-Capability Upgrade & Compatibility Re-Proof v1 (see §3/§6.R,
+  below, and
+  [reference-camera-node-rtt-capability-upgrade-compatibility-reproof-v1-report.md](reference-camera-node-rtt-capability-upgrade-compatibility-reproof-v1-report.md)
+  for the complete record). No production code changed by this milestone
+  (it upgraded and re-verified real Camera Node hardware, not the
+  repository) -- `1a36b06` sits directly on top of `1a39479` (the
+  reconciliation commit accepting Representative Daylight Gate A Field
+  Acceptance v8). Self-correction: this file's own §1 headline bullet was
+  not refreshed when v8 was reconciled at `1a39479` (only §3/§6.R were
+  updated at the time) -- `1a39479`/`eb75bd6` (v8's own reconciliation/
+  report commits) were real, correctly-accepted intermediate states that
+  this bullet simply never advanced past; see §3's own chronological
+  entries, which are and remain the authoritative record.
+- **Prior accepted HEAD (pre-Reference-Camera-Node-RTT-Capability-Upgrade
+  -Compatibility-Re-Proof-v1):** `ea38d21` -- the report commit for Camera
+  Node <-> Host RTT-Bounded Clock Calibration v1 (see §3/§6.R, below, and
   [camera-node-host-rtt-bounded-clock-calibration-v1-report.md](camera-node-host-rtt-bounded-clock-calibration-v1-report.md)
   for the complete record), sitting directly on top of `bc6d5ee` (this
   milestone's own implementation commit -- a new `RttRoundTrip`/
@@ -1874,6 +1889,81 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-01 update (Reference Camera Node RTT-Capability Upgrade &
+Compatibility Re-Proof v1, see §1/§6.R):** closes the Camera Node upgrade
+dependency the v8 reconciliation immediately below named as Gate A's own
+sharpest remaining item. See
+[reference-camera-node-rtt-capability-upgrade-compatibility-reproof-v1-report.md](reference-camera-node-rtt-capability-upgrade-compatibility-reproof-v1-report.md)
+for the complete record. Classification **A**. The real reference Camera
+Node (`node-76ec8e53ae586dd0`, Pi 4, `192.168.1.112`) was upgraded, using
+the accepted `scripts/install_camera_node.py` mechanism end to end (build
+against accepted HEAD `1a39479` -> preflight -> install), from
+`git_commit baf9fdb` (71 commits behind, built 2026-08-27, predating the
+RTT protocol) to `git_commit 1a39479` itself -- confirmed via the fresh
+`manifest.json`, `install_camera_node.py --status`, and direct inspection
+of the deployed wheel. Zero unexpected config/data loss (`node.env`
+byte-preserved per the installer's own report; pairing survived the
+upgrade itself intact -- `node_id`/`pairing_required` unchanged
+before/after); rollback to the prior build remains available and was not
+exercised (no new defect appeared). Pre-upgrade RED confirmed live
+(`GET /node/v1/health` lacked `node_receive_time`/`node_time`);
+post-upgrade GREEN confirmed live (both fields present, valid UTC,
+`node_receive_time <= node_time`, advancing across independent requests
+over the following ~10 minutes -- proven live, not cached). Ran the real,
+unmodified production RTT functions (`CameraNodeClient.sample_clock_
+round_trip`, `estimate_rtt_clock_calibration`) directly against the
+upgraded Node: **6 of 6 real calibration batches (30 round trips, ~3.35
+real minutes) reached `state="calibrated"`**, zero `insufficient_samples`,
+zero `inconsistent_samples`, all 6 batch intervals mutually consistent
+(raw RTT 102-393ms, all well under the 1000ms ceiling). This is the first
+real, valid RTT-bounded calibration evidence to exist since the protocol
+was accepted -- v8's own 796-batch, 0-valid session is now understood to
+be an infrastructure gap already closed, not a mechanism defect (the
+mechanism itself was already independently proven correct-under-failure by
+v8; this milestone proves it correct-under-success). A real camera smoke
+test (a fresh, disposable, CPU-only local Host instance -- no Windows/GPU
+needed for this, since the live-preview path used is independent of the
+GPU-only Observation Engine detector) drove a real pairing, a real camera
+-setup completion, and three real 1920x1080 live frames through the actual
+Host API, with advancing frame sequence numbers and capture timestamps,
+visually confirmed as real footage of the reference yard. This session
+deliberately displaced the stale pairing v8's own session had left in
+place (with real-time user approval, after the environment's own safety
+layer correctly declined to let this proceed silently) -- documented
+explicitly as a choice this session made for its own verification
+purposes, distinct from and subsequent to confirming the upgrade itself
+preserved pairing cleanly. Doctor ran clean for every check within this
+milestone's scope; confirmed no dedicated "old Node version" warning
+exists anywhere in Doctor to have newly cleared (there was never one).
+Also newly, independently root-caused (not merely re-cited): **no
+automated mechanism anywhere in the release process currently checks
+Camera-Node-build-vs-Host-build compatibility before a Gate A/field
+-acceptance session begins** -- `install_camera_node.py --preflight` only
+ever runs on-demand, before an operator-chosen upgrade, never as a
+precondition of starting an Observation session. Disclosed, not fixed
+(explicit non-goal: no fleet-management feature built here) -- a future,
+separately-scoped release-engineering milestone should weigh a lightweight
+preflight/Doctor check for this. No production code was changed; no tests
+were invented (real-hardware validation is this milestone's own
+validation, per its own explicit instruction). Authorization remains
+**NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, unchanged;
+this closure does **not** authorize the next Representative Field
+Acceptance / Gate A session, External Pre-Release Acceptance, or Final
+Release Hardening, and does **not** select a next development milestone.
+**Remaining Gate A dependency, in priority order, superseding the priority
+order in the v8 entry immediately below:** (1) the first real, *validly
+RTT-normalized* T0->T5 capture-to-visible latency field distribution --
+the Node, Host, and calibration mechanism are now all proven ready; only a
+live field session's own real samples are missing; (2) reconciling the
+now-diverged false-Visit-rate/useful-evidence-rate evidence body (v5/v7
+vs. v8) -- unchanged, not attempted here (non-goal: no detector/model
+tuning); (3) a second live cohort producing genuinely crowded
+3+-simultaneous-subject activity (unchanged); (4) the bounded
+visual-review pass against v7's own two remaining genuinely-unreviewed
+ambiguous fragmentation units (unchanged); (5) the ~13 untraced
+`blocked_missing_evidence` records, v7's own (unchanged); (6) the
+already-known Gate B admission-precision residual (unchanged).
 
 **2026-09-01 update (Representative Daylight Gate A Field Acceptance v8 --
 True-Latency & Crowding Closure Tranche, see §1/§6.R):** ran the first field
@@ -4633,6 +4723,55 @@ visual-review pass against v7's own two remaining genuinely-unreviewed
 ambiguous fragmentation units (unchanged); (4) the ~13 untraced
 `blocked_missing_evidence` records (unchanged); (5) the already-known Gate
 B admission-precision residual (unchanged).
+
+**Reference Camera Node RTT-Capability Upgrade & Compatibility Re-Proof v1
+(2026-09-01)** closes the Camera Node upgrade dependency the v8 entry
+immediately below named as Gate A's own sharpest remaining item -- see
+[reference-camera-node-rtt-capability-upgrade-compatibility-reproof-v1-report.md](reference-camera-node-rtt-capability-upgrade-compatibility-reproof-v1-report.md)
+for the complete record. Classification **A**. The real reference Camera
+Node was upgraded end to end via the accepted `scripts/install_camera_
+node.py` mechanism (build against accepted HEAD `1a39479` -> preflight ->
+install) from `git_commit baf9fdb` (71 commits behind, predating the RTT
+protocol) to `git_commit 1a39479` itself, with zero unexpected config/data
+loss and pairing preserved intact through the upgrade itself. Pre-upgrade
+RED and post-upgrade GREEN both confirmed live against the real device
+(`node_receive_time`/`node_time` absent, then present/valid/advancing).
+Running the real, unmodified production RTT functions directly against
+the upgraded Node produced **6 of 6 valid calibration batches (30 round
+trips, ~3.35 real minutes)** -- the first real, valid RTT-bounded
+calibration evidence to exist since the protocol was accepted; v8's own
+796-batch, 0-valid session is now understood as an infrastructure gap,
+already closed, not a mechanism defect. A real camera smoke test (fresh
+disposable CPU-only Host instance, no Windows/GPU needed) drove a real
+pairing, camera-setup completion, and three real advancing 1920x1080 live
+frames through the actual Host API, visually confirmed as real reference
+-yard footage -- this deliberately, transparently, and with real-time user
+approval displaced the stale pairing v8's own session had left in place,
+after the environment's own safety layer correctly declined to let that
+proceed without asking. Doctor ran clean for this milestone's scope; no
+dedicated "old Node version" warning exists anywhere in Doctor to have
+newly cleared (there was never one). Newly, independently root-caused: no
+automated mechanism anywhere in the release process checks Camera-Node
+-build-vs-Host-build compatibility before a Gate A session begins --
+disclosed, not fixed (explicit non-goal: no fleet-management feature).
+No production code changed; no tests invented (real-hardware validation is
+this milestone's own validation). Authorization remains **NONE -- GLOBAL
+PRODUCT-ROADMAP RECONCILIATION REQUIRED**, unchanged; does not authorize
+the next Representative Field Acceptance / Gate A session, External
+Pre-Release Acceptance, or Final Release Hardening, and does not select a
+next development milestone. **Remaining Gate A dependency, in priority
+order, superseding the priority order in the v8 entry immediately below:**
+(1) the first real, *validly RTT-normalized* T0->T5 capture-to-visible
+latency field distribution -- the Node, Host, and calibration mechanism
+are now all proven ready; only a live field session's own real samples
+are missing; (2) reconciling the now-diverged false-Visit-rate/
+useful-evidence-rate evidence body (v5/v7 vs. v8) (unchanged); (3) a
+second live cohort producing genuinely crowded 3+-simultaneous-subject
+activity (unchanged); (4) the bounded visual-review pass against v7's own
+two remaining genuinely-unreviewed ambiguous fragmentation units
+(unchanged); (5) the ~13 untraced `blocked_missing_evidence` records, v7's
+own (unchanged); (6) the already-known Gate B admission-precision residual
+(unchanged).
 
 **Representative Daylight Gate A Field Acceptance v8 -- True-Latency &
 Crowding Closure Tranche (2026-09-01) ran the first field session against
