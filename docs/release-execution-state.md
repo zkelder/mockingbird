@@ -24,7 +24,28 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `1766ad6` -- the report commit for Camera Node ->
+- **Accepted HEAD:** `ea38d21` -- the report commit for Camera Node <->
+  Host RTT-Bounded Clock Calibration v1 (see §3/§6.R, below, and
+  [camera-node-host-rtt-bounded-clock-calibration-v1-report.md](camera-node-host-rtt-bounded-clock-calibration-v1-report.md)
+  for the complete record), sitting directly on top of `bc6d5ee` (this
+  milestone's own implementation commit -- a new `RttRoundTrip`/
+  `RttClockCalibrationRecord`/`estimate_rtt_clock_calibration` section in
+  `clock_calibration.py` (the accepted one-way estimator entirely
+  unchanged alongside it, now scoped to relative drift/jump monitoring
+  only), two additive `/node/v1/health` response fields (`mockingbird_
+  node/app.py`), a new `CameraNodeClient.sample_clock_round_trip` method,
+  an additive `rtt_clock_calibrations` ledger/API/CLI projection, a
+  deliberately renamed-not-retyped `rtt_calibrations` parameter and new
+  interval fields (`*_min_ms`/`*_max_ms`) on `capture_to_visible_
+  latency.py`, a new bounded RTT-recalibration trigger/concurrent-batch on
+  `engine_runtime.py`, one Doctor diagnostic-string update, and one
+  contract-doc correction -- zero Camera Node/wire-protocol breaking
+  change, zero schema/database change, zero Visit-grouping/admission/
+  model change), which sits on top of `d25134b` (the reconciliation
+  commit accepting Camera Node -> Host Clock Normalization for True
+  Capture-to-Visible Latency v1).
+- **Prior accepted HEAD (pre-Camera-Node-Host-RTT-Bounded-Clock
+  -Calibration-v1):** `1766ad6` -- the report commit for Camera Node ->
   Host Clock Normalization for True Capture-to-Visible Latency v1 (see
   §3/§6.R, below, and
   [camera-node-host-clock-normalization-latency-v1-report.md](camera-node-host-clock-normalization-latency-v1-report.md)
@@ -1853,6 +1874,86 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-01 update (Camera Node <-> Host RTT-Bounded Clock Calibration
+v1, see §1/§6.R):** closes the absolute Node<->Host offset/error-bound gap
+the accepted Camera Node -> Host Clock Normalization v1's own report
+disclosed but did not solve -- that milestone's own one-way estimator
+(`received_at_host - captured_at_node`) is, by construction, only ever a
+one-sided upper bound on the true offset (`true_offset_ms <=
+min(deltas)`), never a defensible two-sided error bound, however tight its
+own observed jitter spread looks. See
+[camera-node-host-rtt-bounded-clock-calibration-v1-report.md](camera-node-host-rtt-bounded-clock-calibration-v1-report.md)
+for the complete record. Classification **A**. Reuses the existing `GET
+/node/v1/health` request/response operation (two additive response
+fields, `node_receive_time`/`node_time`) rather than inventing a dedicated
+time-sync protocol, per this milestone's own explicit instruction -- a
+real correction, disclosed rather than silently fixed, to the accepted
+prior milestone's own "no request/response exchange exists" framing
+(correct for the one-way analysis-stream push specifically, incorrectly
+generalized to the whole Camera Node protocol). A rigorously-derived
+two-sided offset interval (`[offset_min_ms, offset_max_ms]`, never a
+symmetric-delay NTP formula) replaces the one-way estimator as the sole
+input `capture_to_visible_latency.py` normalizes T0 through; the one-way
+estimator itself is not discarded (its per-frame ~10-second cadence
+continues, unchanged, as the *relative* drift/jump monitor that decides
+when a live session spends the cost of a fresh RTT-bounded batch -- one of
+four recalibration triggers: session start, a 5-minute bounded periodic
+cadence, detected reconnect, or a one-way-detected jump). Every latency
+sample now carries the full interval (`latency_min_ms`/`latency_max_ms`),
+never only a collapsed point estimate; re-proved directly against
+fallback, stop-finalization, and multi-subject-sibling scenarios, each now
+asserting the interval, not only the point estimate. A real regression (a
+sequential 5-attempt calibration batch against an unreachable Node
+blocking a live session's own frame-processing tick for up to ~10 seconds)
+was found via a genuinely failing pre-existing end-to-end test and fixed
+(concurrent batch attempts; the first calibration moved off the session
+-start critical path entirely, triggered instead at the first ordinary
+tick). Zero Camera Node/wire-protocol breaking changes -- an old Node's
+`/node/v1/health` response simply lacks the two new keys, degrading
+honestly to `insufficient_samples`, never a crash. Schema unchanged
+(`v58`) -- nothing here is persisted to SQLAlchemy. Tier 1 (404 passed) +
+Tier 2 (670 passed, combined in one invocation) + Tier 3 (full Core gate,
+run because this milestone -- unlike the accepted prior one -- adds
+genuinely new runtime network I/O to the live engine loop, not merely
+passive computation over already-flowing data): 5487 passed, 3 failed (all
+3 independently confirmed pre-existing/unrelated by fresh baseline
+bisection -- the same recurring `test_place_biodiversity_summary_
+repository.py` pair this file's own history has already reconfirmed across
+multiple prior milestones, plus one real-clock/local-day-boundary-sensitive
+test in `test_stream_playback_contract.py` whose own 27m38s run happened
+to straddle the actual local-midnight rollover into 2026-09-01), 3
+skipped, 23 deselected, 11 xfailed. Zero new ruff findings (verified via
+direct line-content diff against a stashed baseline, not merely a count
+match). **Absolute Node<->Host clock-calibration state moves from OPEN to
+CLOSED**: a defensible bounded interval now exists, with honest
+degradation for poor-quality/high-RTT/mutually-inconsistent samples, and
+epoch-based clock-jump invalidation extended to the new anchor type.
+**True capture-to-visible latency remains MORE FIELD EVIDENCE REQUIRED,
+unchanged in kind but now for a materially stronger reason a second
+time**: the measurement mechanism itself is now both closed AND correct/
+defensible, not merely closed; every historical cohort (2026-08-19, v6,
+v7) still predates `rtt_clock_calibrations` entirely and cannot be
+retroactively fixed. A next field session run against post-this-milestone
+accepted HEAD would be the first able to produce a real, validly
+RTT-normalized T0 -> T5 distribution. Does not reopen fragmentation
+accounting, does not tune models/detectors, does not run a field cohort.
+Authorization remains **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION
+REQUIRED**, unchanged; this closure does not authorize the next
+Representative Field Acceptance / Gate A session, External Pre-Release
+Acceptance, or Final Release Hardening, and does not select a next
+development milestone. **Remaining Gate A dependency, unchanged in
+priority order and in every item's own substance -- only item (1)'s own
+bar is now sharper a second time:** (1) real, *validly RTT-normalized*
+capture-to-visible latency field samples -- the measurement mechanism is
+now both closed and defensible; the samples themselves still do not
+exist; (2) a second live cohort producing genuinely crowded
+3+-simultaneous-subject activity (unchanged); (3) the bounded
+visual-review pass against v7's own two remaining genuinely-unreviewed
+ambiguous fragmentation units (unchanged); (4) the ~13 untraced
+`blocked_missing_evidence` records (unchanged); (5) the already-known Gate
+B admission-precision residual (unchanged). See §6.R, below, for the
+complete, updated account.
 
 **2026-08-31 update (Camera Node -> Host Clock Normalization for True
 Capture-to-Visible Latency v1, see §1/§6.R):** closes the clock-domain
@@ -4320,6 +4421,76 @@ cohort producing genuinely crowded 3+-simultaneous-subject activity
 remaining genuinely-unreviewed ambiguous fragmentation units (unchanged);
 (4) the ~13 untraced `blocked_missing_evidence` records (unchanged); (5)
 the already-known Gate B admission-precision residual (unchanged).
+
+**Camera Node <-> Host RTT-Bounded Clock Calibration v1 (2026-09-01)**
+does not itself run a field session -- it closes the absolute Node-Host
+offset/error-bound measurement gap the immediately-preceding milestone's
+own report named as still open: that milestone's own one-way estimator
+(`offset_ms = min(deltas)`) is, by construction, only ever a one-sided
+upper bound on the true offset, never a defensible two-sided error bound.
+See
+[camera-node-host-rtt-bounded-clock-calibration-v1-report.md](camera-node-host-rtt-bounded-clock-calibration-v1-report.md)
+for the complete record. Classification **A**. Reuses the existing `GET
+/node/v1/health` request/response operation (two additive response
+fields, `node_receive_time`/`node_time`) rather than a new time-sync
+protocol -- correcting, in place, the immediately-preceding milestone's
+own "no request/response exchange exists" framing (correct for the
+one-way analysis-stream push specifically, incorrectly generalized to the
+whole Camera Node protocol; `docs/camera-node-live-shadow-contract.md` is
+corrected the same way). A rigorously-derived two-sided offset interval
+(`[offset_min_ms, offset_max_ms]`, from the honest inequalities "request
+left before the Node's own receive timestamp" / "response arrived after
+the Node's own send timestamp," never a symmetric-delay NTP formula) is
+now the sole input `capture_to_visible_latency.py` normalizes T0 through;
+the accepted one-way estimator is not discarded -- it continues, unchanged,
+as the *relative* drift/jump monitor that decides when a live session
+spends the cost of a fresh RTT-bounded batch, one of four recalibration
+triggers (session start; a disclosed 5-minute bounded periodic cadence;
+detected reconnect; a one-way-detected jump). Every latency sample now
+carries the full interval (`latency_min_ms`/`latency_max_ms`), never only
+a collapsed point estimate -- re-proved directly against fallback,
+stop-finalization, and multi-subject-sibling scenarios, each now asserting
+the interval itself, not only the point estimate, and the min/max
+inversion (earliest possible t0 yields the *largest* possible latency)
+verified at two independent layers. A real regression -- a sequential
+5-attempt calibration batch against an unreachable Node blocking a live
+session's own frame-processing tick for up to ~10 seconds -- was found via
+a genuinely failing pre-existing end-to-end test during this milestone's
+own work and fixed (concurrent batch attempts; the first calibration
+triggered at the first ordinary tick rather than gating session start).
+Zero Camera Node/wire-protocol breaking changes -- an old Node's response
+simply lacks the two new keys, degrading honestly to `insufficient_
+samples` at every layer, never a crash. Schema unchanged (`v58`). Tier 1
+(404) + Tier 2 (670, combined) + Tier 3 (full Core gate, run because this
+milestone -- unlike the immediately-preceding one -- adds genuinely new
+runtime network I/O to the live engine loop): 5487 passed, 3 failed (all 3
+independently confirmed pre-existing/unrelated by fresh baseline
+bisection -- the recurring `test_place_biodiversity_summary_repository.py`
+pair, plus one real-clock/local-day-boundary test whose own run happened
+to straddle the actual midnight rollover into 2026-09-01), 3 skipped, 23
+deselected, 11 xfailed; zero new ruff findings. **Absolute Node<->Host
+clock-calibration state moves from OPEN to CLOSED.** **Capture-to-visible
+latency remains MORE FIELD EVIDENCE REQUIRED, unchanged in kind but now
+for a materially stronger reason a second time**: the measurement
+mechanism is now both closed and correct/defensible, not merely closed;
+every historical cohort (2026-08-19, v6, v7) still predates `rtt_clock_
+calibrations` entirely and cannot be retroactively fixed. Does not reopen
+fragmentation accounting, does not tune models/detectors, does not run a
+field cohort. Authorization remains **NONE -- GLOBAL PRODUCT-ROADMAP
+RECONCILIATION REQUIRED**, unchanged; this closure does not authorize the
+next Representative Field Acceptance / Gate A session, External
+Pre-Release Acceptance, or Final Release Hardening, and does not select a
+next development milestone. **Remaining Gate A dependency, unchanged in
+priority order and in every item's own substance -- only item (1)'s own
+bar is now sharper a second time:** (1) real, *validly RTT-normalized*
+capture-to-visible latency field samples -- the measurement mechanism is
+now both closed and defensible; the samples themselves still do not
+exist; (2) a second live cohort producing genuinely crowded
+3+-simultaneous-subject activity (unchanged); (3) the bounded
+visual-review pass against v7's own two remaining genuinely-unreviewed
+ambiguous fragmentation units (unchanged); (4) the ~13 untraced
+`blocked_missing_evidence` records (unchanged); (5) the already-known Gate
+B admission-precision residual (unchanged).
 
 ### S. Actual Final Release Hardening
 
