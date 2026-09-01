@@ -24,7 +24,16 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `1a36b06` -- the report commit for Reference Camera
+- **Accepted HEAD:** `8b5185b` -- the report commit for Representative
+  Daylight Gate A Field Acceptance v9 (True-Latency & Precision
+  Reconciliation Tranche; see §3/§6.R, below, and
+  [representative-daylight-gate-a-field-acceptance-v9-report.md](representative-daylight-gate-a-field-acceptance-v9-report.md)
+  for the complete record). No production code changed by this milestone
+  (a live field-acceptance session plus post-hoc offline accounting) --
+  `8b5185b` sits directly on top of `17ce108` (the reconciliation commit
+  accepting Reference Camera Node RTT-Capability Upgrade & Compatibility
+  Re-Proof v1).
+- **Prior accepted HEAD (pre-v9):** `1a36b06` -- the report commit for Reference Camera
   Node RTT-Capability Upgrade & Compatibility Re-Proof v1 (see §3/§6.R,
   below, and
   [reference-camera-node-rtt-capability-upgrade-compatibility-reproof-v1-report.md](reference-camera-node-rtt-capability-upgrade-compatibility-reproof-v1-report.md)
@@ -1889,6 +1898,88 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-01 update (Representative Daylight Gate A Field Acceptance v9 --
+True-Latency & Precision Reconciliation Tranche, see §1/§6.R):** ran the
+field session the RTT re-proof's own closure made possible, at
+classification **A** -- see
+[representative-daylight-gate-a-field-acceptance-v9-report.md](representative-daylight-gate-a-field-acceptance-v9-report.md)
+for the complete record. A real ~97.1-minute Observation session (T_start
+20:34:04.727Z, `stopped_at` 22:11:53.796Z) against the same real reference
+Camera Node, with the acceptance recorder confirmed writing real frames to
+the correct per-session path within ~4.2 minutes (97.95% temporal-span
+coverage, 2,353 files, 2.02GB of a 4.3GB sized budget -- no truncation).
+**Item (1) (the first real, validly RTT-normalized T0->T5 latency field
+distribution) is now closed:** 447 of 460 in-session RTT-bounded batches
+`calibrated` (0 `inconsistent_samples`, 0 clock jumps), producing 24 of 25
+admitted Visits with a real measured latency sample (median 111,811ms,
+p90 173,944ms, max 307,373ms). Root-caused, not merely reported: an
+additive decomposition (beyond the accepted `capture_to_visible_
+latency.py` contract, using only already-published fields) shows a tight,
+consistent ~48-60s "tail latency" (last capture to decision) across
+almost every sample regardless of encounter length, matching the accepted
+Visit-Continuity/episode-boundary quiet-period design exactly (multiple
+individual proposals' own full `blocked_continuation_pending`/`episode_
+boundary_not_yet_final` revision histories directly confirm it) -- this is
+the deliberate, now-quantified cost of avoiding Visit fragmentation, not a
+pipeline inefficiency. **Item (2) (reconciling the diverged false-Visit-
+rate/useful-evidence-rate evidence body) now has a determinate answer:**
+direct multi-frame pixel-region inspection (the v5/v7/v8-established
+method) of every Visit with zero "strong" detections found **5 of 25
+(20.0%) confirmed false** -- closely replicating v8's own 22.2%, and
+materially diverging from v5 (5.3%)/v7 (4.0%). **v8's elevated rate
+reproduces: it is a real, reproducible characteristic of this scene under
+current conditions, not a v8-specific cohort anomaly.** Two distinct
+recurring hard-negative spatial locations were found and traced in full
+(detector box, confidence, frame content, track lifetime, proposal path,
+evidence, species eligibility): one a near-exact recurrence of v8's own
+already-reported location (a hanging leaf cluster over the road); one new
+this session (a sun-glint on the tube feeder's own glossy cap). The
+false-Visit-rate/useful-evidence-rate candidate budgets remain correctly
+withdrawn (v9 reinforces, not reverses, v8's own withdrawal -- v9's own
+strict useful-evidence rate, 76.0%, sits below the previously-proposed
+~85% candidate). A real, previously-unknown Gate B residual instance was
+also field-confirmed for the first time since Background/Empty Evidence
+Species-Confidence Correctness v1 was accepted: 1 of the 5 confirmed-false
+Visits received a wrong confident species label, root-caused precisely to
+the fix's own already-disclosed exclusion (genuinely detector-sourced,
+not tracker-extrapolated, evidence) -- not a regression, but the first
+live instance of an already-known gap. Fragmentation reached a
+sixth/seventh convergent real cohort at 0% (14/14 `correctly_represented`,
+using the accepted reviewer-disposition method, not raw clustering);
+duplicates a fourth convergent cohort at 0% (0/25, zero shared tracker
+evidence); `blocked_missing_evidence` a third independently-varied
+post-fix confirmation (8.9%, 12/135, closely clustered with v7's 9.4% and
+v8's 9.9%). The rolling `max_candidates_per_hour` limit activated for the
+second time in any cohort (6 real blocks, all high-confidence, self-
+cleared correctly). Direct visual confirmation of 2 simultaneous birds at
+the feeder was obtained (the best 2-subject evidence to date), but the
+detection-stage mechanism (independently detected-then-NMS-suppressed, or
+never separately detected) could not be traced this session
+(`raw_detections` did not merge losslessly, a disclosed, known gap
+matching v8's own). Zero persistence contention; zero ERROR/CRITICAL/
+WARNING/Traceback lines across the full structured log. One real,
+reproducible product defect was found via live product usage during this
+session's own review-recording step, disclosed and worked around, not
+fixed (out of this milestone's own scope): `POST /api/review-labels` with
+`review_origin=agent_diagnostic` and no `reviewer_identity` correctly
+raises `ReviewProvenanceError`, but `create_review_label` only catches
+`ReviewRevisionConflictError` explicitly, so this well-formed validation
+error propagates as an unhandled `500` instead of a clean `400` --
+a precise, bounded next DEV contract is named in the report's own
+"Defects" section. This closure does **not** authorize the next
+Representative Field Acceptance / Gate A session, External Pre-Release
+Acceptance, or Final Release Hardening, and does **not** select a next
+development milestone. Per this milestone's own explicit instruction,
+Gate A is **not** self-closed by this report: the false-Visit-rate
+divergence reproducing, rather than resolving, is judged a complete,
+determinate answer to this milestone's own second primary objective, but
+still leaves a release-blocking open item, and true latency has exactly
+one real cohort (Gate A's own standing rule requires cross-session
+convergence before any number is proposed). Authorization remains **NONE
+-- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, unchanged. See
+§6.R, below, for the complete, updated "Remaining Gate A dependency"
+account.
 
 **2026-09-01 update (Reference Camera Node RTT-Capability Upgrade &
 Compatibility Re-Proof v1, see §1/§6.R):** closes the Camera Node upgrade
@@ -4863,6 +4954,89 @@ raw evidence, recovered and archived this session for the first time, at
 `data/field-acceptance/2026-08-31-gate-a-v7-raw-recorder-and-ledger-preservation/`,
 remains available for that separate, still-open task); (6) the
 already-known Gate B admission-precision residual (unchanged).
+
+**Representative Daylight Gate A Field Acceptance v9 -- True-Latency &
+Precision Reconciliation Tranche (2026-09-01) ran the field session item
+(1) above named as the single most consequential remaining dependency, at
+classification **A** -- see §1/§3, above, and
+[representative-daylight-gate-a-field-acceptance-v9-report.md](representative-daylight-gate-a-field-acceptance-v9-report.md)
+for the complete record.** A real ~97.1-minute Observation session against
+the same real reference Camera Node, with the independent acceptance
+recorder confirmed armed and writing real frames within ~4.2 minutes
+(97.95% coverage, 2,353 files). **Item (1) closed:** 447/460 in-session
+RTT-bounded batches `calibrated` (0 inconsistent, 0 jumps), 24/25 admitted
+Visits produced a real measured T0->T5 latency sample (median 111,811ms,
+p90 173,944ms, max 307,373ms) -- the first real, defensible latency
+distribution in Gate A's history, root-caused via an additive tail-latency
+decomposition to the accepted Visit-Continuity/episode-boundary quiet
+-period design (a tight ~48-60s tail regardless of encounter length,
+directly confirmed on individual proposals' own `blocked_continuation_
+pending` revision histories), not pipeline inefficiency. **Item (2)
+(reconciling the diverged false-Visit-rate/useful-evidence-rate evidence
+body) now has a determinate answer:** direct multi-frame pixel-region
+inspection found 5/25 (20.0%) confirmed false, closely replicating v8's
+22.2% and materially diverging from v5 (5.3%)/v7 (4.0%) -- **v8's
+elevated rate reproduces, a real, reproducible scene characteristic, not
+a cohort anomaly.** Two distinct recurring hard-negative locations traced
+in full (one a near-exact recurrence of v8's own reported location; one
+new -- a feeder-cap sun-glint); the false-Visit-rate/useful-evidence-rate
+candidates remain correctly withdrawn (v9's own 76.0% strict useful-
+evidence rate sits below the ~85% figure v8 had already withdrawn). A
+real Gate B residual instance field-confirmed for the first time since
+its own governing fix was accepted (1/5 false Visits received a wrong
+confident species label, root-caused to the fix's own already-disclosed
+detector-sourced-evidence exclusion, not a regression). Fragmentation
+reached a sixth/seventh convergent real cohort at 0% (14/14, accepted
+reviewer-disposition method); duplicates a fourth convergent cohort at 0%
+(0/25); `blocked_missing_evidence` a third independently-varied post-fix
+confirmation (8.9%, 12/135, closely clustered with v7/v8). The rolling
+hourly candidate limit activated for the second time in any cohort (6
+real blocks, all high-confidence, self-cleared correctly). Direct visual
+confirmation of 2 simultaneous birds at the feeder obtained (the best
+2-subject evidence to date), but the detection-stage mechanism could not
+be traced this session (`raw_detections` did not merge losslessly, a
+disclosed gap matching v8's own). Zero persistence contention; zero
+ERROR/CRITICAL/WARNING/Traceback lines in the full structured log. One
+real, reproducible product defect found via live product usage (not
+fixed, out of scope, a precise bounded next DEV contract named in the
+report): `POST /api/review-labels` with `review_origin=agent_diagnostic`
+and no `reviewer_identity` correctly raises `ReviewProvenanceError`, but
+`create_review_label` only catches `ReviewRevisionConflictError`
+explicitly, so this well-formed validation error propagates as an
+unhandled `500` instead of a clean `400`. No production code was changed
+by this milestone. This closure does **not** authorize the next
+Representative Field Acceptance / Gate A session, External Pre-Release
+Acceptance, or Final Release Hardening, and does **not** select a next
+development milestone. Per this milestone's own explicit instruction,
+Gate A is **not** self-closed by this report -- the false-Visit-rate
+divergence reproducing (rather than resolving) is judged a complete,
+determinate answer to this milestone's own second primary objective, but
+still leaves a release-blocking open item, and true latency has exactly
+one real cohort. Authorization remains **NONE -- GLOBAL PRODUCT-ROADMAP
+RECONCILIATION REQUIRED**, unchanged. **Remaining Gate A dependency, in
+priority order, superseding the priority order immediately above:** (1)
+resolve the false-Visit-rate/useful-evidence-rate divergence itself --
+now sharpened to a well-evidenced, specific candidate explanation (scene-
+specific recurring hard-negative locations; the already-accepted, per-
+Stream `scene_confusor_regions` mechanism exists but is currently off by
+default for this Stream) rather than an unexplained scatter, but not yet
+confirmed as the actual explanation nor addressed -- the single most
+consequential remaining Gate A dependency; (2) a second, independently-
+varied true-latency cohort (Gate A's own standing rule requires cross-
+session convergence before any number is proposed; ideally at a
+materially different time of day/season, to test whether the ~48-60s
+tail-latency constant and the encounter-duration-dominated distribution
+shape both hold); (3) a second live cohort producing genuinely crowded
+3+-simultaneous-subject activity (unchanged -- still not observed in any
+cohort to date); (4) the bounded visual-review pass against v7's own two
+remaining genuinely-unreviewed ambiguous fragmentation units (unchanged);
+(5) the ~13 untraced `blocked_missing_evidence` records, v7's own
+(unchanged); (6) the newly-field-confirmed Gate B detector-sourced-
+evidence residual (sharpened from a theoretical gap to one concrete field
+instance -- still open, not fixed this milestone); (7) the disclosed
+`agent_diagnostic` review-provenance error-handling defect (bounded,
+unrelated to any measurement above, a precise next DEV contract already
+named).
 
 ### S. Actual Final Release Hardening
 
