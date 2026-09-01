@@ -125,6 +125,52 @@ verbatim onto `MediaAsset.captured_at`/`VisitEvidenceLink.captured_at`)
 remains open, unaffected -- this milestone's own scope was latency
 *measurement*, not persisted-evidence display.
 
+## RTT-bounded clock normalization (Camera Node <-> Host RTT-Bounded Clock Calibration v1)
+
+Closes the specific gap the section above disclosed rather than solved: a
+one-way estimator's point estimate (`min(deltas)`) is only ever a one-sided
+upper bound on the true Node/Host offset -- `true_offset_ms <=
+min(deltas)`, with no provable lower bound -- never a defensible two-sided
+error bound, however tight its own observed jitter spread looks. See
+docs/camera-node-host-rtt-bounded-clock-calibration-v1-report.md for the
+complete record.
+
+**Correction to this doc's own prior framing.** The section above (and
+`clock_calibration.py`'s own original docstring) stated "the Camera Node
+analysis-stream protocol has no [request/response] exchange" as
+justification for why only a one-way estimator was used. That is correct
+for the analysis stream specifically -- it remains a one-way push -- but
+was implicitly read as "no request/response exchange exists anywhere in
+the Camera Node protocol," which does not hold: `GET /node/v1/health`
+already is one, simply never used for clock calibration before this
+milestone. This milestone reuses that existing envelope (adding two
+additive response fields, `node_receive_time`/`node_time`) rather than
+inventing a dedicated time-sync protocol.
+
+A live session (`engine_runtime._EngineSession._perform_rtt_clock_
+calibration`) now also collects a small, bounded batch (5) of `/node/v1/
+health` round trips -- concurrently, never once per frame -- at session
+start, on a 5-minute periodic cadence, immediately after a detected
+reconnect, and immediately after the one-way monitor above detects a jump.
+Each round trip yields a rigorously justified two-sided bound
+`[offset_min_ms, offset_max_ms]` (never the classical symmetric-delay NTP
+formula -- see `clock_calibration.py`'s own docstring "The interval
+bound"), combined across the batch via interval intersection. This
+RTT-bounded anchor (`RttClockCalibrationRecord`, retained and exposed
+alongside the existing ledger via `GET .../observation/counterfactual`'s
+own new `rtt_clock_calibrations`) is now the *only* input `capture_to_
+visible_latency.py` normalizes T0 through -- the one-way estimator above
+keeps its exact prior role (drift/jump *monitoring*, feeding the "jump
+detected" recalibration trigger) but no longer feeds latency computation
+directly, since it can never itself supply a defensible bound.
+
+Every other property the section above established is unchanged and still
+holds for the RTT-bounded anchor too: session/stream-local (a new session
+recalibrates from zero), a detected clock jump invalidates the pre-jump
+epoch rather than bridging across it, and no external NTP/cloud
+reachability is required (Local Only) -- every input is a timestamp pair
+the existing Camera Node <-> Host connection already exchanges.
+
 ## Health and limitations
 
 Read-only status starts nothing. It reports source state, received FPS, gaps/drops/coalescing, frame age, current generation, supplied/inferred frames, detector observations and inferred cadence, active tracks, pending inference (bounded at zero or one), burst attempts/success/failure/stale results, median burst latency, and shadow-only authority. CUDA provider health and execution facts remain supplied by the Stage 3 detector adapter.

@@ -76,14 +76,51 @@ This module now requires an actual, bounded clock-calibration mapping
 - `clock_calibration_required=True` (set by a caller that knows this
   session came from a real Camera Node -- `engine_runtime._EngineSession`
   when `provider_key == "camera_node"`, or the field-acceptance CLI when a
-  saved ledger snapshot says so): T0 is normalized through
-  `clock_calibration.normalize_capture_time` before any subtraction.
-  `state="invalid_clock_mapping"` (a new, distinct `LatencyState` -- never
-  merged with `unavailable_capture_time`/`implausible`) replaces the old
-  silent cross-domain subtraction whenever no trustworthy calibration
-  covers this sample's own moment (none ever recorded, insufficient
-  samples, or invalidated by a detected clock jump -- see
-  `clock_calibration.py`).
+  saved ledger snapshot says so): T0 is normalized through an RTT-bounded
+  anchor (see "Camera Node <-> Host RTT-Bounded Clock Calibration v1",
+  below) before any subtraction. `state="invalid_clock_mapping"` (a new,
+  distinct `LatencyState` -- never merged with `unavailable_capture_time`/
+  `implausible`) replaces the old silent cross-domain subtraction whenever
+  no trustworthy calibration covers this sample's own moment.
+
+## Camera Node <-> Host RTT-Bounded Clock Calibration v1
+
+The one-way calibration this module originally normalized T0 through
+(`clock_calibration.estimate_clock_calibration`/`normalize_capture_time`)
+only ever produced a one-sided upper bound on the true offset
+(`true_offset_ms <= min(deltas)`), not a defensible two-sided error bound
+-- disclosed honestly by that milestone's own report, closed by this one.
+This module now normalizes T0 exclusively through the RTT-bounded anchor
+(`clock_calibration.RttClockCalibrationRecord`/`normalize_capture_time_
+with_bound`), which reuses the existing `/node/v1/health` request/response
+operation to derive a rigorously justified `[offset_min_ms, offset_max_ms]`
+interval -- see `clock_calibration.py`'s own docstring "Camera Node <->
+Host RTT-Bounded Clock Calibration v1" for the full derivation and
+docs/camera-node-host-rtt-bounded-clock-calibration-v1-report.md for the
+complete record.
+
+`build_latency_samples`'s own `rtt_calibrations` parameter (replacing the
+prior `clock_calibrations` parameter, which took the one-way estimator's
+own record type) carries this RTT-bounded anchor history. The one-way
+estimator itself is **not discarded** (per this milestone's own explicit
+instruction) -- it continues to exist, unchanged, in `clock_calibration.py`
+and continues to be fed by `engine_runtime._EngineSession`'s own ~10-second
+per-tick loop, but its role is now exclusively *relative* monitoring
+(drift/jump detection that decides when a live session should spend the
+cost of a fresh RTT-bounded batch), never the source of an authoritative
+T0 mapping -- a one-sided bound can never honestly become a defensible
+two-sided one no matter how it is consumed downstream.
+
+Every sample now carries the full interval, never only a collapsed point
+estimate (this milestone's own explicit "do not collapse the interval into
+a false single exact number"): `t0_captured_at_normalized`/`clock_
+offset_ms` remain the point estimate (the RTT anchor's own interval
+midpoint, for continuity with every existing consumer of those two field
+names), and `t0_captured_at_normalized_min`/`_max` and `clock_offset_min_
+ms`/`_max_ms` are new, additive fields carrying the honest bound.
+`latency_ms` (point estimate), `latency_min_ms`, and `latency_max_ms`
+follow the same pattern -- derived from the *same* interval, never treated
+as three independent measurements.
 
 Pure: no filesystem, network, CUDA/ONNX Runtime/OpenCV, product-repository,
 or SQLAlchemy import, matching every sibling Stage 6.x/7 decision module in
@@ -97,7 +134,7 @@ from datetime import datetime
 import math
 from typing import Literal, Mapping, Sequence
 
-from mockingbird.observation.clock_calibration import ClockCalibrationRecord, normalize_capture_time
+from mockingbird.observation.clock_calibration import RttClockCalibrationRecord, normalize_capture_time_with_bound
 from mockingbird.observation.counterfactual_lineage import ProposalOutcomeRecord, TrackGenerationRecord
 
 CAPTURE_TO_VISIBLE_LATENCY_VERSION = "capture-to-visible-latency-v2"
@@ -124,12 +161,16 @@ _CLOCK_DOMAIN_CAVEAT = (
     "clock_calibration_state == 'not_required' (no Camera Node in this "
     "session's own capture path, e.g. RTSP/local/USB -- t0_captured_at is "
     "already Host-compatible). When clock_calibration_state == 'normalized', "
-    "t0_captured_at_normalized/clock_offset_ms/clock_uncertainty_ms record "
-    "exactly how the Camera-Node-Host clock-normalization v1 mapping (see "
-    "clock_calibration.py) produced this sample's own Host-domain t0. When "
-    "clock_calibration_state == 'no_calibration', no trustworthy mapping "
-    "covered this sample and state is invalid_clock_mapping, never a silent "
-    "cross-domain subtraction."
+    "t0_captured_at_normalized/clock_offset_ms/clock_uncertainty_ms are the "
+    "RTT-bounded anchor's own interval midpoint/radius (see clock_"
+    "calibration.py 'Camera Node <-> Host RTT-Bounded Clock Calibration "
+    "v1') -- never represented as exact; t0_captured_at_normalized_min/_max "
+    "and clock_offset_min_ms/_max_ms carry the full, honest bound the "
+    "point estimate was drawn from. When clock_calibration_state == "
+    "'no_calibration', no trustworthy RTT-bounded anchor covered this "
+    "sample and state is invalid_clock_mapping, never a silent cross-"
+    "domain subtraction and never a substitution of the one-way per-frame "
+    "estimator (which cannot itself produce a defensible two-sided bound)."
 )
 
 
@@ -145,12 +186,25 @@ class LatencySample:
 
     `t0_captured_at` is always the *raw* value (Node-domain, or already
     Host-compatible when `clock_calibration_state == "not_required"`).
-    `t0_captured_at_normalized` is the value actually used for
+    `t0_captured_at_normalized` is the point estimate actually used for
     `latency_ms` -- identical to `t0_captured_at` when not required, the
-    calibrated Host-domain estimate when `"normalized"`, and `None` when
-    `"no_calibration"` (in which case `state == "invalid_clock_mapping"`
-    and `latency_ms` is `None`, never a value computed from the raw,
-    unnormalized subtraction)."""
+    RTT-bounded anchor's own interval midpoint when `"normalized"`, and
+    `None` when `"no_calibration"` (in which case `state ==
+    "invalid_clock_mapping"` and `latency_ms` is `None`, never a value
+    computed from the raw, unnormalized subtraction).
+
+    Camera Node <-> Host RTT-Bounded Clock Calibration v1 (additive):
+    `t0_captured_at_normalized_min`/`_max` and `clock_offset_min_ms`/
+    `_max_ms` carry the RTT-bounded anchor's own full, honest interval --
+    `None` unless `clock_calibration_state == "normalized"`, mirroring the
+    point-estimate fields' own gating exactly. `latency_min_ms`/`_max_ms`
+    are the corresponding latency bounds -- note the *inversion*: the
+    earliest possible T0 (`t0_captured_at_normalized_min`) yields the
+    *largest* possible latency (`latency_max_ms`), and vice versa, since
+    latency is `decided_at - t0` (see `_resolve_latency`'s own docstring).
+    Never collapsed into the point estimate alone (this milestone's own
+    explicit "do not collapse the interval into a false single exact
+    number")."""
 
     proposal_id: str
     visit_id: str
@@ -165,6 +219,12 @@ class LatencySample:
     decided_at: datetime
     state: LatencyState
     latency_ms: float | None
+    t0_captured_at_normalized_min: datetime | None = None
+    t0_captured_at_normalized_max: datetime | None = None
+    clock_offset_min_ms: float | None = None
+    clock_offset_max_ms: float | None = None
+    latency_min_ms: float | None = None
+    latency_max_ms: float | None = None
     clock_domain_caveat: str = _CLOCK_DOMAIN_CAVEAT
 
 
@@ -213,6 +273,10 @@ class _NormalizedT0:
     clock_calibration_state: ClockCalibrationState
     clock_offset_ms: float | None
     clock_uncertainty_ms: float | None
+    t0_captured_at_normalized_min: datetime | None = None
+    t0_captured_at_normalized_max: datetime | None = None
+    clock_offset_min_ms: float | None = None
+    clock_offset_max_ms: float | None = None
 
 
 _NOT_REQUIRED = _NormalizedT0(None, "not_required", None, None)
@@ -222,7 +286,7 @@ def _normalize_t0(
     t0_raw: datetime | None,
     t0_source_offset_ms: int | None,
     *,
-    clock_calibrations: Sequence[ClockCalibrationRecord],
+    rtt_calibrations: Sequence[RttClockCalibrationRecord],
     clock_calibration_required: bool,
 ) -> _NormalizedT0:
     """`t0_captured_at_normalized` mirrors `t0_captured_at` unchanged
@@ -231,7 +295,10 @@ def _normalize_t0(
     the caller's own `state` already becomes `unavailable_capture_time` in
     that case, so this function's own output is never consulted for it).
     Only when calibration is genuinely required and `t0_raw` exists does
-    this call into `clock_calibration.normalize_capture_time`."""
+    this call into `clock_calibration.normalize_capture_time_with_bound` --
+    the RTT-bounded anchor, never the one-way per-frame estimator (see this
+    module's own docstring "Camera Node <-> Host RTT-Bounded Clock
+    Calibration v1")."""
 
     if not clock_calibration_required:
         # No cross-clock-domain risk to normalize away -- t0_raw (if any) is
@@ -242,43 +309,82 @@ def _normalize_t0(
         # `unavailable_capture_time` regardless of this value.
         return _NOT_REQUIRED
     assert t0_source_offset_ms is not None  # always set alongside a non-None t0_raw -- see `_resolve_t0`
-    normalized = normalize_capture_time(t0_raw, clock_calibrations, source_offset_ms=t0_source_offset_ms)
+    normalized = normalize_capture_time_with_bound(t0_raw, rtt_calibrations, source_offset_ms=t0_source_offset_ms)
     if normalized.state == "no_calibration":
         return _NormalizedT0(None, "no_calibration", None, None)
     return _NormalizedT0(
-        normalized.host_domain_captured_at, "normalized", normalized.offset_ms, normalized.uncertainty_ms,
+        normalized.host_domain_captured_at_estimate, "normalized",
+        normalized.offset_estimate_ms, normalized.uncertainty_ms,
+        normalized.host_domain_captured_at_min, normalized.host_domain_captured_at_max,
+        normalized.offset_min_ms, normalized.offset_max_ms,
     )
 
 
 def _resolve_latency(
     t0_raw: datetime | None, normalized: _NormalizedT0, decided_at: datetime, max_plausible_latency_ms: int,
-) -> tuple[LatencyState, float | None]:
+) -> tuple[LatencyState, float | None, float | None, float | None]:
+    """Returns `(state, latency_ms, latency_min_ms, latency_max_ms)`.
+
+    Latency is `decided_at - t0` -- a *decreasing* function of t0, so the
+    interval inverts: the earliest possible host-domain t0
+    (`t0_captured_at_normalized_min`) yields the *largest* possible latency
+    (`latency_max_ms`), and the latest possible t0
+    (`t0_captured_at_normalized_max`) yields the *smallest* possible
+    latency (`latency_min_ms`). Getting this backwards is exactly the kind
+    of sign-inversion bug this milestone's own §34 self-review checklist
+    names -- see `test_normalize_capture_time_with_bound_direction_is_not_
+    inverted`/the analogous latency-level test in this module's own test
+    file for the regression proof.
+
+    Impossible-result policy (this milestone's own explicit §22): only
+    `latency_max_ms < 0` (impossible even under the single most charitable
+    -- fastest-t0 -- reading of the interval) is rejected as `invalid_
+    negative`, and only `latency_min_ms > max_plausible_latency_ms` (still
+    implausible even under the most charitable -- latest-t0 -- reading) is
+    rejected as `implausible`. A point estimate or lower bound that happens
+    to be slightly negative, while the upper bound remains non-negative, is
+    *not* impossible -- it is an honestly wide-but-plausible interval, and
+    is reported as `measured` with its true (possibly negative) bounds
+    intact. Never clamped, never silently narrowed -- see this module's own
+    §22 "do not clamp negatives; do not silently select a convenient
+    endpoint; do not drop the error bound.\""""
+
     if t0_raw is None:
-        return "unavailable_capture_time", None
+        return "unavailable_capture_time", None, None, None
     if normalized.clock_calibration_state == "no_calibration":
-        # Never silently fall back to the raw, unnormalized subtraction --
-        # this is exactly the failure mode Camera Node -> Host Clock
-        # Normalization v1 exists to close (see this module's own
-        # docstring). A distinct state, never merged with
-        # unavailable_capture_time/implausible.
-        return "invalid_clock_mapping", None
+        # Never silently fall back to the raw, unnormalized subtraction, and
+        # never silently substitute the one-way per-frame estimator (which
+        # cannot itself produce a defensible two-sided bound) -- a distinct
+        # state, never merged with unavailable_capture_time/implausible.
+        return "invalid_clock_mapping", None, None, None
     host_domain_t0 = normalized.t0_captured_at_normalized
     assert host_domain_t0 is not None  # guaranteed by "not_required"/"normalized" above
-    delta_ms = (decided_at - host_domain_t0).total_seconds() * 1000
-    if delta_ms < 0:
-        # Never reported as a real negative number -- see this milestone's
-        # own §18 "Prevent negative latency."
-        return "invalid_negative", None
-    if delta_ms > max_plausible_latency_ms:
-        return "implausible", None
-    return "measured", delta_ms
+    latency_ms = (decided_at - host_domain_t0).total_seconds() * 1000
+
+    if normalized.clock_calibration_state == "normalized":
+        assert normalized.t0_captured_at_normalized_min is not None
+        assert normalized.t0_captured_at_normalized_max is not None
+        latency_max_ms = (decided_at - normalized.t0_captured_at_normalized_min).total_seconds() * 1000
+        latency_min_ms = (decided_at - normalized.t0_captured_at_normalized_max).total_seconds() * 1000
+    else:
+        # "not_required": a single-clock-domain source has no interval at
+        # all -- the point estimate is the entire (degenerate, zero-width)
+        # interval, exactly like every pre-existing test in this file
+        # expects.
+        latency_min_ms = latency_max_ms = latency_ms
+
+    if latency_max_ms < 0:
+        return "invalid_negative", None, None, None
+    if latency_min_ms > max_plausible_latency_ms:
+        return "implausible", None, None, None
+    return "measured", latency_ms, latency_min_ms, latency_max_ms
 
 
 def build_latency_samples(
     proposal_outcomes: Sequence[ProposalOutcomeRecord],
     track_generations: Sequence[TrackGenerationRecord],
     *,
-    clock_calibrations: Sequence[ClockCalibrationRecord] = (),
+    rtt_calibrations: Sequence[RttClockCalibrationRecord] = (),
     clock_calibration_required: bool = False,
     max_plausible_latency_ms: int = DEFAULT_MAX_PLAUSIBLE_LATENCY_MS,
 ) -> tuple[LatencySample, ...]:
@@ -293,10 +399,15 @@ def build_latency_samples(
     -Host-Clock-Normalization-v1 behavior, appropriate for any source whose
     `captured_at` is already Host-domain (no cross-clock-domain risk to
     normalize away). Pass `True`, with this same window's own
-    `clock_calibrations` (from `counterfactual_lineage.
-    CounterfactualWindowResult`), for a session known to have used a real
-    Camera Node -- see this module's own docstring "Camera Node -> Host
-    Clock Normalization v1"."""
+    `rtt_calibrations` (from `counterfactual_lineage.
+    CounterfactualWindowResult.rtt_clock_calibrations`), for a session
+    known to have used a real Camera Node -- see this module's own
+    docstring "Camera Node <-> Host RTT-Bounded Clock Calibration v1".
+    Replaces the prior `clock_calibrations` parameter (the one-way
+    estimator's own record type), deliberately renamed rather than
+    silently retyped -- the one-way estimator can never supply a
+    defensible bound, so a caller migrating from the prior contract must
+    consciously supply the new, stronger anchor type instead."""
 
     generations_by_id = {item.generation_id: item for item in track_generations}
     samples: list[LatencySample] = []
@@ -306,9 +417,11 @@ def build_latency_samples(
         t0, t0_source, t0_source_offset_ms = _resolve_t0(outcome, generations_by_id)
         normalized = _normalize_t0(
             t0, t0_source_offset_ms,
-            clock_calibrations=clock_calibrations, clock_calibration_required=clock_calibration_required,
+            rtt_calibrations=rtt_calibrations, clock_calibration_required=clock_calibration_required,
         )
-        state, latency_ms = _resolve_latency(t0, normalized, outcome.decided_at, max_plausible_latency_ms)
+        state, latency_ms, latency_min_ms, latency_max_ms = _resolve_latency(
+            t0, normalized, outcome.decided_at, max_plausible_latency_ms,
+        )
         is_fallback, fallback_position = _fallback_position(outcome.reason)
         samples.append(
             LatencySample(
@@ -318,6 +431,11 @@ def build_latency_samples(
                 clock_calibration_state=normalized.clock_calibration_state,
                 clock_offset_ms=normalized.clock_offset_ms, clock_uncertainty_ms=normalized.clock_uncertainty_ms,
                 decided_at=outcome.decided_at, state=state, latency_ms=latency_ms,
+                t0_captured_at_normalized_min=normalized.t0_captured_at_normalized_min,
+                t0_captured_at_normalized_max=normalized.t0_captured_at_normalized_max,
+                clock_offset_min_ms=normalized.clock_offset_min_ms,
+                clock_offset_max_ms=normalized.clock_offset_max_ms,
+                latency_min_ms=latency_min_ms, latency_max_ms=latency_max_ms,
             )
         )
     return tuple(samples)
@@ -355,6 +473,7 @@ class LatencySummary:
     p95_ms: float | None
     max_ms: float | None
     mean_ms: float | None
+    mean_uncertainty_ms: float | None = None
 
 
 def build_latency_summary(samples: Sequence[LatencySample]) -> LatencySummary:
@@ -364,12 +483,28 @@ def build_latency_summary(samples: Sequence[LatencySample]) -> LatencySummary:
     latency, not `None`-as-zero; an `invalid_negative`/`implausible`/
     `invalid_clock_mapping` sample is a flagged anomaly, never averaged in
     as if valid -- and never merged with each other: each has its own
-    distinct count)."""
+    distinct count).
+
+    `mean_uncertainty_ms` (Camera Node <-> Host RTT-Bounded Clock
+    Calibration v1, additive): the mean per-sample latency-interval
+    half-width (`(latency_max_ms - latency_min_ms) / 2`) across every
+    `measured` sample whose interval is not degenerate (`clock_
+    calibration_state == "normalized"`) -- a single number for "how tight
+    was calibration across this whole window," for an auditor who does not
+    want to read every sample's own bound individually (this milestone's
+    own §23 reporting requirement). `None` when no such sample exists,
+    never fabricated as zero."""
 
     measured = sorted(sample.latency_ms for sample in samples if sample.state == "measured")  # type: ignore[type-var]
     fallback_measured = sum(1 for sample in samples if sample.state == "measured" and sample.is_fallback)
+    uncertainty_widths = [
+        (sample.latency_max_ms - sample.latency_min_ms) / 2.0
+        for sample in samples
+        if sample.state == "measured" and sample.clock_calibration_state == "normalized"
+        and sample.latency_min_ms is not None and sample.latency_max_ms is not None
+    ]
     return LatencySummary(
-        schema_version=2,
+        schema_version=3,
         sample_count=len(samples),
         measured_count=len(measured),
         unavailable_capture_time_count=sum(1 for s in samples if s.state == "unavailable_capture_time"),
@@ -382,4 +517,5 @@ def build_latency_summary(samples: Sequence[LatencySample]) -> LatencySummary:
         p95_ms=_percentile(measured, 0.95),
         max_ms=measured[-1] if measured else None,
         mean_ms=round(sum(measured) / len(measured), 3) if measured else None,
+        mean_uncertainty_ms=round(sum(uncertainty_widths) / len(uncertainty_widths), 3) if uncertainty_widths else None,
     )

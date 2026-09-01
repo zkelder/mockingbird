@@ -1755,23 +1755,26 @@ def _interpret_clock(gathered: dict[str, Any]) -> DoctorCheckResult:
         detail=detail,
         diagnostic_context={
             "resolved_timezone": zone_key,
-            # Camera Node -> Host Clock Normalization v1 (see
-            # docs/camera-node-host-clock-normalization-latency-v1-report.md):
-            # a *live* Observation Engine session now computes and bounds a
-            # real Node/Host offset estimate
-            # (`counterfactual_lineage.CounterfactualLedger.record_clock_
-            # calibration`, surfaced via `GET .../observation/counterfactual`
-            # `clock_calibrations`) -- but that state lives only in that
-            # session's own in-memory ledger, never a durable store. Doctor
-            # runs as a separate, standalone process with no live session
-            # handle, so it genuinely still cannot read a fact nothing
-            # durable persists -- disclosed rather than fabricated, not a
-            # regression from before this milestone (only the *reason*
-            # changed, from "never computed" to "computed live, not
-            # durably readable from here").
+            # Camera Node <-> Host RTT-Bounded Clock Calibration v1 (see
+            # docs/camera-node-host-rtt-bounded-clock-calibration-v1
+            # -report.md): a *live* Observation Engine session now computes
+            # and bounds a real, defensible Node/Host offset *interval*
+            # (`counterfactual_lineage.CounterfactualLedger.record_rtt_
+            # clock_calibration`, surfaced via `GET .../observation/
+            # counterfactual` `rtt_clock_calibrations`) -- but that state
+            # lives only in that session's own in-memory ledger, never a
+            # durable store. Doctor runs as a separate, standalone process
+            # with no live session handle, so it genuinely still cannot
+            # read a fact nothing durable persists -- disclosed rather than
+            # fabricated, not a regression from before this milestone (only
+            # the *reason* changed, from "never computed" to "computed
+            # live, not durably readable from here"). The one-way `clock_
+            # calibrations` key still exists for relative drift/jump
+            # monitoring but was never itself a defensible bound, before or
+            # after this milestone.
             "camera_node_clock_divergence": (
                 "not measurable from a standalone Doctor check: see a running session's own "
-                "GET .../observation/counterfactual response (clock_calibrations) instead"
+                "GET .../observation/counterfactual response (rtt_clock_calibrations) instead"
             ),
         },
     )

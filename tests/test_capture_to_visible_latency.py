@@ -17,7 +17,7 @@ from mockingbird.observation.capture_to_visible_latency import (
     build_latency_samples,
     build_latency_summary,
 )
-from mockingbird.observation.clock_calibration import ClockCalibrationRecord
+from mockingbird.observation.clock_calibration import RttClockCalibrationRecord
 from mockingbird.observation.contracts import EMPTY_CONFIDENCE_EVIDENCE
 from mockingbird.observation.counterfactual_lineage import ProposalOutcomeRecord, TrackGenerationRecord
 
@@ -266,25 +266,35 @@ def test_summary_excludes_non_measured_states_from_percentiles_but_still_counts_
     assert summary.mean_ms == 7_000.0
 
 
-# --- Camera Node -> Host Clock Normalization v1 -----------------------------
+# --- Camera Node <-> Host RTT-Bounded Clock Calibration v1 ------------------
 #
 # Every test above exercises `clock_calibration_required=False` (the
 # default) -- a same-clock-domain source (RTSP/local/USB/replay), where
 # `t0_captured_at` is already Host-compatible and no mapping is needed. The
 # tests below exercise `clock_calibration_required=True` -- a real Camera
-# Node in the loop -- see this module's own docstring "Camera Node -> Host
-# Clock Normalization v1" and docs/camera-node-host-clock-normalization
-# -latency-v1-report.md.
+# Node in the loop -- see this module's own docstring "Camera Node <-> Host
+# RTT-Bounded Clock Calibration v1" and docs/camera-node-host-rtt-bounded
+# -clock-calibration-v1-report.md. `_rtt_calibration`'s own `offset_ms`/
+# `uncertainty_ms` parameters produce a symmetric interval
+# (`offset_min_ms = offset_ms - uncertainty_ms`, `offset_max_ms = offset_ms
+# + uncertainty_ms`) matching exactly how `clock_calibration.
+# estimate_rtt_clock_calibration` itself derives `offset_ms` as the
+# interval's own midpoint -- so every numeric assertion below that predates
+# this milestone (`t0_captured_at_normalized`, `clock_offset_ms`, `latency_
+# ms`) remains valid unchanged; only the calibration record's own *type*
+# changed (the one-way estimator can never supply a defensible bound -- see
+# `build_latency_samples`'s own docstring).
 
 
-def _calibration(
+def _rtt_calibration(
     offset_ms: float, *, source_offset_ms: int, calibrated_at: datetime, uncertainty_ms: float = 20.0,
     jump: bool = False,
-) -> ClockCalibrationRecord:
-    return ClockCalibrationRecord(
+) -> RttClockCalibrationRecord:
+    return RttClockCalibrationRecord(
         stream_id=STREAM_ID, source_offset_ms=source_offset_ms, calibrated_at=calibrated_at,
-        sample_count=5, state="calibrated", offset_ms=offset_ms, uncertainty_ms=uncertainty_ms,
-        min_delta_ms=offset_ms, max_delta_ms=offset_ms + uncertainty_ms, clock_jump_detected=jump,
+        sample_count=5, valid_sample_count=5, state="calibrated", offset_ms=offset_ms,
+        offset_min_ms=offset_ms - uncertainty_ms, offset_max_ms=offset_ms + uncertainty_ms,
+        uncertainty_ms=uncertainty_ms, rtt_ms=2 * uncertainty_ms, clock_jump_detected=jump,
     )
 
 
@@ -293,10 +303,10 @@ def test_cross_domain_valid_calibration_produces_measured_latency_from_normalize
     generations = [_generation("gen-1", start_captured_at=t0, start_ms=0, end_ms=2_000)]
     decided_at = t0 + timedelta(seconds=12)
     outcomes = [_outcome("p-1", generation_ids=("gen-1",), visit_id="visit-1", decided_at=decided_at)]
-    calibrations = [_calibration(2_000.0, source_offset_ms=0, calibrated_at=t0)]
+    calibrations = [_rtt_calibration(2_000.0, source_offset_ms=0, calibrated_at=t0, uncertainty_ms=20.0)]
 
     samples = build_latency_samples(
-        outcomes, generations, clock_calibrations=calibrations, clock_calibration_required=True,
+        outcomes, generations, rtt_calibrations=calibrations, clock_calibration_required=True,
     )
     sample = samples[0]
     assert sample.clock_calibration_state == "normalized"
@@ -306,6 +316,21 @@ def test_cross_domain_valid_calibration_produces_measured_latency_from_normalize
     assert sample.clock_uncertainty_ms == pytest.approx(20.0)
     assert sample.state == "measured"
     assert sample.latency_ms == pytest.approx(10_000.0)  # 12s raw gap minus the 2s offset
+    # Camera Node <-> Host RTT-Bounded Clock Calibration v1: the full
+    # interval, never collapsed into the point estimate alone (this
+    # milestone's own explicit §21 "do not collapse the interval into a
+    # false single exact number").
+    assert sample.clock_offset_min_ms == pytest.approx(1_980.0)
+    assert sample.clock_offset_max_ms == pytest.approx(2_020.0)
+    assert sample.t0_captured_at_normalized_min == t0 + timedelta(milliseconds=1_980.0)
+    assert sample.t0_captured_at_normalized_max == t0 + timedelta(milliseconds=2_020.0)
+    # The inversion: the earliest possible t0 (offset_min) yields the
+    # *largest* possible latency, and vice versa (see `_resolve_latency`'s
+    # own docstring) -- a concrete end-to-end regression against a
+    # min/max sign-swap bug, not only the isolated clock_calibration.py
+    # unit test.
+    assert sample.latency_max_ms == pytest.approx(sample.latency_ms + 20.0)
+    assert sample.latency_min_ms == pytest.approx(sample.latency_ms - 20.0)
 
 
 def test_cross_domain_missing_calibration_is_invalid_clock_mapping_never_a_silent_subtraction() -> None:
@@ -315,11 +340,13 @@ def test_cross_domain_missing_calibration_is_invalid_clock_mapping_never_a_silen
     generations = [_generation("gen-1", start_captured_at=t0)]
     outcomes = [_outcome("p-1", generation_ids=("gen-1",), visit_id="visit-1", decided_at=t0 + timedelta(seconds=8))]
 
-    samples = build_latency_samples(outcomes, generations, clock_calibrations=(), clock_calibration_required=True)
+    samples = build_latency_samples(outcomes, generations, rtt_calibrations=(), clock_calibration_required=True)
     sample = samples[0]
     assert sample.clock_calibration_state == "no_calibration"
     assert sample.state == "invalid_clock_mapping"
     assert sample.latency_ms is None
+    assert sample.latency_min_ms is None
+    assert sample.latency_max_ms is None
     assert sample.t0_captured_at_normalized is None
     # The raw fact is still preserved for audit -- only the derived latency
     # number is withheld.
@@ -335,12 +362,99 @@ def test_cross_domain_calibration_that_does_not_cover_this_t0_offset_is_also_inv
         _outcome("p-1", generation_ids=("gen-1",), visit_id="visit-1", decided_at=t0 + timedelta(seconds=5),
                   start_ms=0, end_ms=1_000),
     ]
-    calibrations = [_calibration(500.0, source_offset_ms=50_000, calibrated_at=t0 + timedelta(seconds=50))]
+    calibrations = [_rtt_calibration(500.0, source_offset_ms=50_000, calibrated_at=t0 + timedelta(seconds=50))]
 
     samples = build_latency_samples(
-        outcomes, generations, clock_calibrations=calibrations, clock_calibration_required=True,
+        outcomes, generations, rtt_calibrations=calibrations, clock_calibration_required=True,
     )
     assert samples[0].state == "invalid_clock_mapping"
+
+
+def test_cross_domain_wide_uncertainty_still_measures_honestly_never_falsely_precise() -> None:
+    """A deliberately poor (high-RTT-shaped) calibration -- this milestone's
+    own §28 -- still produces a `measured` sample, but with a wide, honest
+    interval, never a falsely precise point-only result."""
+    t0 = NOW
+    generations = [_generation("gen-1", start_captured_at=t0, start_ms=0, end_ms=1_000)]
+    decided_at = t0 + timedelta(seconds=30)
+    outcomes = [_outcome("p-1", generation_ids=("gen-1",), visit_id="visit-1", decided_at=decided_at)]
+    calibrations = [_rtt_calibration(1_000.0, source_offset_ms=0, calibrated_at=t0, uncertainty_ms=4_000.0)]
+
+    samples = build_latency_samples(
+        outcomes, generations, rtt_calibrations=calibrations, clock_calibration_required=True,
+    )
+    sample = samples[0]
+    assert sample.state == "measured"
+    assert sample.latency_ms == pytest.approx(29_000.0)
+    assert sample.latency_max_ms == pytest.approx(33_000.0)
+    assert sample.latency_min_ms == pytest.approx(25_000.0)
+    assert (sample.latency_max_ms - sample.latency_min_ms) == pytest.approx(8_000.0)
+
+
+def test_cross_domain_impossible_interval_even_the_best_case_is_negative_is_rejected() -> None:
+    """This milestone's own §22 "impossible result policy": when even the
+    single most charitable (fastest-t0) reading of the interval still
+    implies decision-before-capture, the sample is rejected outright --
+    never clamped, never a convenient endpoint silently selected."""
+    t0 = NOW
+    generations = [_generation("gen-1", start_captured_at=t0, start_ms=0, end_ms=1_000)]
+    decided_at = t0 - timedelta(seconds=1)  # decision "before" raw capture
+    outcomes = [_outcome("p-1", generation_ids=("gen-1",), visit_id="visit-1", decided_at=decided_at)]
+    # The most charitable (earliest-t0, largest-latency) reading uses
+    # offset_min_ms=-500 -> normalized t0 = t0-500ms; decided_at (t0-1000ms)
+    # is still 500ms *before* even that -- impossible under any reading.
+    calibrations = [_rtt_calibration(0.0, source_offset_ms=0, calibrated_at=t0, uncertainty_ms=500.0)]
+
+    samples = build_latency_samples(
+        outcomes, generations, rtt_calibrations=calibrations, clock_calibration_required=True,
+    )
+    sample = samples[0]
+    assert sample.state == "invalid_negative"
+    assert sample.latency_ms is None
+    assert sample.latency_min_ms is None
+    assert sample.latency_max_ms is None
+
+
+def test_cross_domain_interval_straddling_zero_is_still_measured_honestly() -> None:
+    """Distinguishes "impossible" from "merely uncertain": the interval's
+    *upper* bound remains non-negative, so this is a real, if imprecise,
+    measurement -- not impossible ordering. The negative lower bound is
+    reported honestly, never clamped to zero (this milestone's own explicit
+    "do not clamp negatives")."""
+    t0 = NOW
+    generations = [_generation("gen-1", start_captured_at=t0, start_ms=0, end_ms=1_000)]
+    decided_at = t0 + timedelta(milliseconds=100)
+    outcomes = [_outcome("p-1", generation_ids=("gen-1",), visit_id="visit-1", decided_at=decided_at)]
+    calibrations = [_rtt_calibration(0.0, source_offset_ms=0, calibrated_at=t0, uncertainty_ms=200.0)]
+
+    samples = build_latency_samples(
+        outcomes, generations, rtt_calibrations=calibrations, clock_calibration_required=True,
+    )
+    sample = samples[0]
+    assert sample.state == "measured"
+    assert sample.latency_min_ms == pytest.approx(-100.0)  # honestly negative, never clamped
+    assert sample.latency_max_ms == pytest.approx(300.0)
+    assert sample.latency_ms == pytest.approx(100.0)
+
+
+def test_cross_domain_implausible_even_the_most_charitable_bound_is_too_slow() -> None:
+    """The symmetric counterpart to the negative-interval test above: even
+    the *latest* possible t0 (the smallest possible latency) still exceeds
+    the plausibility ceiling."""
+    t0 = NOW
+    generations = [_generation("gen-1", start_captured_at=t0, start_ms=0, end_ms=1_000)]
+    decided_at = t0 + timedelta(milliseconds=DEFAULT_MAX_PLAUSIBLE_LATENCY_MS + 10_000)
+    outcomes = [_outcome("p-1", generation_ids=("gen-1",), visit_id="visit-1", decided_at=decided_at)]
+    calibrations = [_rtt_calibration(0.0, source_offset_ms=0, calibrated_at=t0, uncertainty_ms=1_000.0)]
+
+    samples = build_latency_samples(
+        outcomes, generations, rtt_calibrations=calibrations, clock_calibration_required=True,
+    )
+    sample = samples[0]
+    assert sample.state == "implausible"
+    assert sample.latency_ms is None
+    assert sample.latency_min_ms is None
+    assert sample.latency_max_ms is None
 
 
 def test_old_ledger_snapshot_with_no_calibration_metadata_degrades_gracefully_not_a_crash() -> None:
@@ -400,12 +514,12 @@ def test_fallback_latency_after_clock_normalization_uses_the_admitted_members_ow
     # fallback's own epoch (offset 45_000) -- large enough that using the
     # wrong epoch produces a materially different, wrong latency.
     calibrations = [
-        _calibration(1_000.0, source_offset_ms=0, calibrated_at=winner_t0),
-        _calibration(9_000.0, source_offset_ms=30_000, calibrated_at=winner_t0 + timedelta(seconds=30), jump=True),
+        _rtt_calibration(1_000.0, source_offset_ms=0, calibrated_at=winner_t0),
+        _rtt_calibration(9_000.0, source_offset_ms=30_000, calibrated_at=winner_t0 + timedelta(seconds=30), jump=True),
     ]
 
     samples = build_latency_samples(
-        outcomes, generations, clock_calibrations=calibrations, clock_calibration_required=True,
+        outcomes, generations, rtt_calibrations=calibrations, clock_calibration_required=True,
     )
     assert len(samples) == 1  # only the admitted member ever produces a sample
     sample = samples[0]
@@ -415,6 +529,16 @@ def test_fallback_latency_after_clock_normalization_uses_the_admitted_members_ow
     assert sample.t0_captured_at_normalized == fallback_t0 + timedelta(seconds=9)
     assert sample.state == "measured"
     assert sample.latency_ms == pytest.approx(11_000.0)
+    # This milestone's own explicit §24 "produces the fallback member's
+    # latency interval" -- not only its point estimate. The fallback's own
+    # post-jump calibration carries the default uncertainty_ms=20.0 (see
+    # `_rtt_calibration`); a bug that picked the winner's own epoch instead
+    # would produce a materially different interval too (centered on 18s),
+    # not merely a different point estimate.
+    assert sample.clock_offset_min_ms == pytest.approx(8_980.0)
+    assert sample.clock_offset_max_ms == pytest.approx(9_020.0)
+    assert sample.latency_max_ms == pytest.approx(11_020.0)
+    assert sample.latency_min_ms == pytest.approx(10_980.0)
 
 
 def test_stop_finalized_candidate_still_normalizes_correctly_under_clock_calibration() -> None:
@@ -424,13 +548,19 @@ def test_stop_finalized_candidate_still_normalizes_correctly_under_clock_calibra
     outcomes = [
         _outcome("p-1", generation_ids=("gen-1",), visit_id="visit-1", decided_at=decided_at, start_ms=0, end_ms=500),
     ]
-    calibrations = [_calibration(3_000.0, source_offset_ms=0, calibrated_at=t0)]
+    calibrations = [_rtt_calibration(3_000.0, source_offset_ms=0, calibrated_at=t0)]
 
     samples = build_latency_samples(
-        outcomes, generations, clock_calibrations=calibrations, clock_calibration_required=True,
+        outcomes, generations, rtt_calibrations=calibrations, clock_calibration_required=True,
     )
-    assert samples[0].state == "measured"
-    assert samples[0].latency_ms == pytest.approx(177_000.0)  # 180s raw gap minus the 3s offset
+    sample = samples[0]
+    assert sample.state == "measured"
+    assert sample.latency_ms == pytest.approx(177_000.0)  # 180s raw gap minus the 3s offset
+    # This milestone's own explicit §25 "latency interval reflects the real
+    # wait" -- resolved only at session stop, still carries the full,
+    # honest bound, not merely a point estimate.
+    assert sample.latency_min_ms == pytest.approx(176_980.0)
+    assert sample.latency_max_ms == pytest.approx(177_020.0)
 
 
 def test_multi_subject_siblings_each_get_their_own_correctly_normalized_capture_time() -> None:
@@ -450,10 +580,10 @@ def test_multi_subject_siblings_each_get_their_own_correctly_normalized_capture_
             decided_at=t0_perch + timedelta(seconds=7), start_ms=2_000, end_ms=6_000,
         ),
     ]
-    calibrations = [_calibration(1_000.0, source_offset_ms=0, calibrated_at=t0_feeder)]
+    calibrations = [_rtt_calibration(1_000.0, source_offset_ms=0, calibrated_at=t0_feeder)]
 
     samples = build_latency_samples(
-        outcomes, generations, clock_calibrations=calibrations, clock_calibration_required=True,
+        outcomes, generations, rtt_calibrations=calibrations, clock_calibration_required=True,
     )
     by_visit = {sample.visit_id: sample for sample in samples}
     assert by_visit["visit-feeder"].t0_captured_at_normalized == t0_feeder + timedelta(seconds=1)
@@ -461,6 +591,14 @@ def test_multi_subject_siblings_each_get_their_own_correctly_normalized_capture_
     assert by_visit["visit-feeder"].latency_ms == pytest.approx(5_000.0)  # 6s raw minus 1s offset
     assert by_visit["visit-perch"].latency_ms == pytest.approx(6_000.0)  # 7s raw minus 1s offset
     assert all(sample.state == "measured" for sample in by_visit.values())
+    # This milestone's own §26 "independent latency samples": each sibling
+    # carries its own correctly-shifted interval (both drawn from the same
+    # shared stream calibration, per §26's own "same stream calibration
+    # where appropriate") -- never a shared or cross-contaminated bound.
+    assert by_visit["visit-feeder"].latency_min_ms == pytest.approx(4_980.0)
+    assert by_visit["visit-feeder"].latency_max_ms == pytest.approx(5_020.0)
+    assert by_visit["visit-perch"].latency_min_ms == pytest.approx(5_980.0)
+    assert by_visit["visit-perch"].latency_max_ms == pytest.approx(6_020.0)
 
 
 def test_same_domain_default_matches_pre_normalization_behavior_exactly() -> None:
@@ -472,14 +610,16 @@ def test_same_domain_default_matches_pre_normalization_behavior_exactly() -> Non
     generations = [_generation("gen-1", start_captured_at=t0)]
     decided_at = t0 + timedelta(seconds=8)
     outcomes = [_outcome("p-1", generation_ids=("gen-1",), visit_id="visit-1", decided_at=decided_at)]
-    calibrations = [_calibration(2_000.0, source_offset_ms=0, calibrated_at=t0)]
+    calibrations = [_rtt_calibration(2_000.0, source_offset_ms=0, calibrated_at=t0)]
 
-    samples = build_latency_samples(outcomes, generations, clock_calibrations=calibrations)
+    samples = build_latency_samples(outcomes, generations, rtt_calibrations=calibrations)
     sample = samples[0]
     assert sample.clock_calibration_state == "not_required"
     assert sample.t0_captured_at_normalized == t0
     assert sample.state == "measured"
     assert sample.latency_ms == 8_000.0  # unaffected by the (ignored) calibration data
+    assert sample.latency_min_ms == 8_000.0
+    assert sample.latency_max_ms == 8_000.0
 
 
 def test_summary_counts_invalid_clock_mapping_separately_never_merged_with_other_states() -> None:

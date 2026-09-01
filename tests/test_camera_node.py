@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 import json
 from pathlib import Path
 import tempfile
@@ -90,6 +91,86 @@ def _counts(repository: ProductRepository) -> tuple[int, int, int, int, int]:
             session.scalar(select(func.count(model.id))) or 0
             for model in (CameraSourceModel, StreamModel, EventModel, VisitModel, MediaAssetModel)
         )
+
+
+# --------------------------------------------------------------------------
+# Camera Node <-> Host RTT-Bounded Clock Calibration v1:
+# CameraNodeClient.sample_clock_round_trip
+# --------------------------------------------------------------------------
+
+
+def test_sample_clock_round_trip_brackets_host_time_and_parses_node_timestamps() -> None:
+    class _TimedNodeRequester(_FakeNodeRequester):
+        def request(self, **kwargs):
+            if kwargs["url"].endswith("/health"):
+                self.requests.append((kwargs["method"], kwargs["url"], kwargs["headers"]))
+                self.timings.append(kwargs["timing"])
+                return 200, {"Content-Type": "application/json"}, json.dumps({
+                    "node_id": "node-test", "display_name": "Test node", "api_version": "v1",
+                    "node_receive_time": "2026-08-31T19:45:11.000000+00:00",
+                    "node_time": "2026-08-31T19:45:11.002000+00:00",
+                }).encode()
+            return super().request(**kwargs)
+
+    ticks = iter([
+        datetime(2026, 8, 31, 19, 45, 10, 995_000, tzinfo=UTC),  # H0
+        datetime(2026, 8, 31, 19, 45, 11, 5_000, tzinfo=UTC),  # H1
+    ])
+    client = CameraNodeClient(requester=_TimedNodeRequester())
+    sample = client.sample_clock_round_trip("http://127.0.0.1:8787", clock=lambda: next(ticks))
+    assert sample.host_send_at == datetime(2026, 8, 31, 19, 45, 10, 995_000, tzinfo=UTC)
+    assert sample.host_receive_at == datetime(2026, 8, 31, 19, 45, 11, 5_000, tzinfo=UTC)
+    assert sample.node_receive_time == datetime(2026, 8, 31, 19, 45, 11, 0, tzinfo=UTC)
+    assert sample.node_response_time == datetime(2026, 8, 31, 19, 45, 11, 2_000, tzinfo=UTC)
+
+
+def test_sample_clock_round_trip_sends_no_authorization_header() -> None:
+    requester = _FakeNodeRequester()
+    client = CameraNodeClient(requester=requester)
+    client.sample_clock_round_trip("http://127.0.0.1:8787")
+    method, url, headers = requester.requests[-1]
+    assert url.endswith("/node/v1/health")
+    assert "Authorization" not in headers
+
+
+def test_sample_clock_round_trip_degrades_gracefully_for_an_old_node_response() -> None:
+    """Old Node compatibility (this milestone's own §19): a response that
+    predates this milestone carries neither new key at all -- never a
+    crash, both fields honestly `None`."""
+    client = CameraNodeClient(requester=_FakeNodeRequester())
+    sample = client.sample_clock_round_trip("http://127.0.0.1:8787")
+    assert sample.node_receive_time is None
+    assert sample.node_response_time is None
+    assert sample.host_send_at <= sample.host_receive_at
+
+
+def test_sample_clock_round_trip_treats_a_malformed_node_timestamp_as_absent() -> None:
+    class _MalformedRequester(_FakeNodeRequester):
+        def request(self, **kwargs):
+            if kwargs["url"].endswith("/health"):
+                return 200, {"Content-Type": "application/json"}, json.dumps({
+                    "node_id": "node-test", "display_name": "Test node", "api_version": "v1",
+                    "node_receive_time": "not-a-timestamp",
+                    "node_time": "2026-08-31T19:45:11",  # naive -- no UTC offset
+                }).encode()
+            return super().request(**kwargs)
+
+    client = CameraNodeClient(requester=_MalformedRequester())
+    sample = client.sample_clock_round_trip("http://127.0.0.1:8787")
+    assert sample.node_receive_time is None
+    assert sample.node_response_time is None
+
+
+def test_sample_clock_round_trip_raises_on_non_200_status() -> None:
+    class _FailingRequester(_FakeNodeRequester):
+        def request(self, **kwargs):
+            if kwargs["url"].endswith("/health"):
+                return 503, {"Content-Type": "application/json"}, b"{}"
+            return super().request(**kwargs)
+
+    client = CameraNodeClient(requester=_FailingRequester())
+    with pytest.raises(CameraNodeClientError, match="node_unavailable"):
+        client.sample_clock_round_trip("http://127.0.0.1:8787")
 
 
 def test_camera_node_address_and_client_are_pinned_to_one_local_base_address() -> None:

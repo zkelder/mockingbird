@@ -53,14 +53,19 @@ accounting`, gitignored):
   `disposition`).
 - `latency-report.json` -- `capture_to_visible_latency.LatencySummary` plus
   every `LatencySample` (capture-to-visible latency samples, fallback
-  attempts flagged). Camera Node -> Host Clock Normalization v1
+  attempts flagged). Camera Node <-> Host RTT-Bounded Clock Calibration v1
   (additive): when `--input`'s own `clock_calibration_required` is `true`
-  (a real Camera Node session), every sample's raw T0 is normalized through
-  its own governing `clock_calibrations` entry before latency is computed
-  -- `state="invalid_clock_mapping"` (distinct from `unavailable_capture_
-  time`) whenever no trustworthy calibration covers it. A snapshot with no
-  `clock_calibrations` key at all (saved before this milestone) is handled
-  the same honest way, never a crash.
+  (a real Camera Node session), every sample's raw T0 is normalized
+  through its own governing `rtt_clock_calibrations` entry (a bounded,
+  two-sided offset interval, not the one-way estimator's own one-sided
+  bound) before latency is computed -- `state="invalid_clock_mapping"`
+  (distinct from `unavailable_capture_time`) whenever no trustworthy
+  RTT-bounded anchor covers it. A snapshot with no `rtt_clock_
+  calibrations` key at all (saved before this milestone, or from a
+  same-clock-domain source) is handled the same honest way, never a
+  crash. The one-way `clock_calibrations` key is still parsed and reported
+  on stdout for its own now-narrower purpose (relative drift/jump
+  monitoring), never as a latency-normalization input.
 
 Plus a compact human-readable summary on stdout.
 """
@@ -80,6 +85,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from run_encounter_accounting import (  # noqa: E402
     _clock_calibration_from_dict,
     _proposal_outcome_from_dict,
+    _rtt_clock_calibration_from_dict,
     _track_generation_from_dict,
 )
 
@@ -144,12 +150,20 @@ def main(argv: list[str] | None = None) -> int:
     window = json.loads(args.input.read_text(encoding="utf-8"))
     track_generations = [_track_generation_from_dict(item) for item in window.get("track_generations", ())]
     proposal_outcomes = [_proposal_outcome_from_dict(item) for item in window.get("proposal_outcomes", ())]
-    # Camera Node -> Host Clock Normalization v1 (additive): absent for
-    # every ledger snapshot saved before this milestone -- `()`/`False` are
-    # the same honest "not a Camera Node session, or predates this field"
-    # defaults `capture_to_visible_latency.build_latency_samples` itself
-    # already uses.
+    # Camera Node <-> Host RTT-Bounded Clock Calibration v1 (additive):
+    # absent for every ledger snapshot saved before this milestone --
+    # `()`/`False` are the same honest "not a Camera Node session, or
+    # predates this field" defaults `capture_to_visible_latency.
+    # build_latency_samples` itself already uses. The one-way `clock_
+    # calibrations` key (Camera Node -> Host Clock Normalization v1) is
+    # still parsed and reported below for its own now-narrower purpose
+    # (relative drift/jump monitoring) but, per that module's own current
+    # docstring, is no longer the input latency normalization itself
+    # consumes -- `rtt_calibrations` (below) is.
     clock_calibrations = [_clock_calibration_from_dict(item) for item in window.get("clock_calibrations", ())]
+    rtt_calibrations = [
+        _rtt_clock_calibration_from_dict(item) for item in window.get("rtt_clock_calibrations", ())
+    ]
     clock_calibration_required = window.get("clock_calibration_required", False)
 
     clusters = cluster_encounters(track_generations, proposal_outcomes)
@@ -164,7 +178,7 @@ def main(argv: list[str] | None = None) -> int:
 
     latency_samples = build_latency_samples(
         proposal_outcomes, track_generations,
-        clock_calibrations=clock_calibrations, clock_calibration_required=clock_calibration_required,
+        rtt_calibrations=rtt_calibrations, clock_calibration_required=clock_calibration_required,
     )
     latency_summary = build_latency_summary(latency_samples)
 
@@ -218,10 +232,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(f"  fragmentation_rate={fragmentation_report.fragmentation_rate}")
     print(
-        f"Clock calibration: required={clock_calibration_required}, "
+        f"Clock calibration (one-way, relative monitoring): required={clock_calibration_required}, "
         f"{len(clock_calibrations)} attempts recorded "
         f"({sum(1 for item in clock_calibrations if item.state == 'calibrated')} calibrated, "
         f"{sum(1 for item in clock_calibrations if item.clock_jump_detected)} clock jump(s) detected)"
+    )
+    print(
+        f"Clock calibration (RTT-bounded, absolute anchor): {len(rtt_calibrations)} batches recorded "
+        f"({sum(1 for item in rtt_calibrations if item.state == 'calibrated')} calibrated, "
+        f"{sum(1 for item in rtt_calibrations if item.state == 'insufficient_samples')} insufficient_samples, "
+        f"{sum(1 for item in rtt_calibrations if item.state == 'inconsistent_samples')} inconsistent_samples, "
+        f"{sum(1 for item in rtt_calibrations if item.clock_jump_detected)} clock jump(s) detected)"
     )
     print(
         f"Latency: {latency_summary.sample_count} admitted samples -- "

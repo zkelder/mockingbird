@@ -583,8 +583,15 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
 
     @app.get("/node/v1/health")
     def health() -> dict[str, object]:
+        # Camera Node <-> Host RTT-Bounded Clock Calibration v1: sampled at
+        # the very top of this handler, before any work -- this is `Nrecv`
+        # in the four-timestamp calibration form (see docs/camera-node
+        # -host-rtt-bounded-clock-calibration-v1-report.md). Every field
+        # below is unchanged so an old host client parsing this response is
+        # unaffected.
+        node_receive_time = datetime.now(UTC)
         cameras = provider.cameras()
-        return {
+        payload: dict[str, object] = {
             "node_id": node_id,
             "display_name": config.display_name,
             "api_version": NODE_API_VERSION,
@@ -607,7 +614,23 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
             "service_version": service_version,
             "self_test": self_test_result.as_payload(),
             "watchdog": watchdog_progress.as_payload(now_monotonic=time.monotonic()),
+            # Camera Node <-> Host RTT-Bounded Clock Calibration v1
+            # (additive; every field above this line is unchanged). Reusing
+            # this existing request/response envelope for absolute clock
+            # calibration rather than inventing a dedicated time-sync
+            # protocol (see this milestone's own report "Existing protocol
+            # investigation"). `node_receive_time` is `Nrecv` above;
+            # `node_time` (`Nsend`/`N1`) is sampled immediately below, right
+            # before this dict is returned -- the gap between them is this
+            # handler's own real processing time (camera enumeration),
+            # preserved for the four-timestamp calibration form rather than
+            # discarded. An old host client ignores both; a host client
+            # that predates this milestone never sent this field at all, so
+            # there is no compatibility requirement in the other direction.
+            "node_receive_time": node_receive_time.isoformat(),
+            "node_time": datetime.now(UTC).isoformat(),
         }
+        return payload
 
     @app.post("/node/v1/pair", response_model=PairResponse)
     def pair(payload: PairRequest) -> PairResponse:

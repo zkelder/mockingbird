@@ -9,6 +9,7 @@ intentionally never exercised here (see docs/candidate-visit-authority
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -52,6 +53,7 @@ from mockingbird.source_providers.camera_node import (
     CameraNodeCamera,
     CameraNodeCaptureProfile,
     CameraNodeClientError,
+    CameraNodeRoundTripSample,
 )
 from mockingbird.storage.models import MonitoringExposureIntervalModel
 from mockingbird.time_utils import normalize_utc
@@ -4638,3 +4640,166 @@ def test_refresh_clock_calibration_across_two_ticks_detects_a_clock_jump(reposit
     assert len(window.clock_calibrations) == 2
     assert window.clock_calibrations[0].clock_jump_detected is False
     assert window.clock_calibrations[1].clock_jump_detected is True
+
+
+# =============================================================================
+# Camera Node <-> Host RTT-Bounded Clock Calibration v1 (see docs/camera-node
+# -host-rtt-bounded-clock-calibration-v1-report.md): `_perform_rtt_clock_
+# calibration` collects a bounded batch of round trips against a
+# monkeypatched `engine_runtime.CameraNodeClient` (mirroring `test_capture_
+# profile_alignment_missing_config_returns_none_without_network`'s own
+# established "must not contact the Node" idiom above) and `_rtt_
+# recalibration_due` is the pure decision logic behind all four
+# recalibration triggers, directly unit-testable without a live loop --
+# matching this file's own established split between direct-method-call
+# tests and the separate full end-to-end tests elsewhere in this file.
+# =============================================================================
+
+
+def _fake_round_trip(
+    *, host_send_at: datetime, rtt_ms: float = 4.0, node_response_time: datetime | None = None,
+) -> CameraNodeRoundTripSample:
+    return CameraNodeRoundTripSample(
+        host_send_at=host_send_at,
+        host_receive_at=host_send_at + timedelta(milliseconds=rtt_ms),
+        node_receive_time=None,
+        node_response_time=node_response_time if node_response_time is not None else host_send_at,
+    )
+
+
+def _fake_rtt_client(sampler):
+    class _FakeClient:
+        def sample_clock_round_trip(self, base_address: str, *, clock):
+            return sampler(base_address=base_address, clock=clock)
+
+    return lambda: _FakeClient()
+
+
+def test_perform_rtt_clock_calibration_records_a_calibrated_batch(
+    repository: ProductRepository, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        engine_runtime, "CameraNodeClient",
+        _fake_rtt_client(lambda **_: _fake_round_trip(host_send_at=NOW, rtt_ms=4.0, node_response_time=NOW)),
+    )
+    session = _tick_session(repository)
+
+    asyncio.run(session._perform_rtt_clock_calibration(source_offset_ms=1_000))
+
+    window = session._counterfactual.query(start_offset_ms=0, end_offset_ms=2_000)
+    assert len(window.rtt_clock_calibrations) == 1
+    record = window.rtt_clock_calibrations[0]
+    assert record.state == "calibrated"
+    assert record.source_offset_ms == 1_000
+    assert record.valid_sample_count == engine_runtime._RTT_CALIBRATION_BATCH_SIZE
+
+
+def test_perform_rtt_clock_calibration_is_a_no_op_for_non_camera_node_sessions(
+    repository: ProductRepository, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        engine_runtime, "CameraNodeClient",
+        lambda: (_ for _ in ()).throw(AssertionError("must not contact the Node")),
+    )
+    session = engine_runtime._EngineSession(
+        stream_id=STREAM_ID, playback_config=_non_camera_node_config(),
+        provider_config_path=Path("unused-for-this-test"), privacy_ignore_regions=(),
+        repository_factory=lambda: repository,
+    )
+
+    asyncio.run(session._perform_rtt_clock_calibration(source_offset_ms=1_000))
+
+    window = session._counterfactual.query(start_offset_ms=0, end_offset_ms=2_000)
+    assert window.rtt_clock_calibrations == ()
+
+
+def test_perform_rtt_clock_calibration_tolerates_individual_probe_failures(
+    repository: ProductRepository, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One failed probe (a timeout, a connection error) never aborts the
+    whole batch -- this milestone's own explicit tolerance requirement. The
+    batch's own attempts run concurrently (see `_perform_rtt_clock_
+    calibration`'s own docstring), so a shared, lock-guarded counter
+    (never a bare unlocked dict increment, which would race across
+    threads) deterministically fails exactly 2 of `_RTT_CALIBRATION_
+    BATCH_SIZE` (5) attempts; the 3 that succeed still clear `MINIMUM_RTT_
+    CALIBRATION_SAMPLES` (3), so the batch calibrates."""
+    attempts = {"count": 0}
+    lock = threading.Lock()
+
+    def sampler(**_: object) -> CameraNodeRoundTripSample:
+        with lock:
+            attempts["count"] += 1
+            should_fail = attempts["count"] <= 2
+        if should_fail:
+            raise CameraNodeClientError("node_unavailable")
+        return _fake_round_trip(host_send_at=NOW, rtt_ms=4.0, node_response_time=NOW)
+
+    monkeypatch.setattr(engine_runtime, "CameraNodeClient", _fake_rtt_client(sampler))
+    session = _tick_session(repository)
+
+    asyncio.run(session._perform_rtt_clock_calibration(source_offset_ms=0))
+
+    window = session._counterfactual.query(start_offset_ms=0, end_offset_ms=1_000)
+    record = window.rtt_clock_calibrations[0]
+    assert attempts["count"] == engine_runtime._RTT_CALIBRATION_BATCH_SIZE  # every attempt actually ran
+    assert record.state == "calibrated"
+    # Failed network-level probes never even reach the estimator -- see
+    # `_perform_rtt_clock_calibration`'s own docstring -- so `sample_count`
+    # here reflects the 3 that were *collected*, not all 5 attempted.
+    assert record.sample_count == engine_runtime._RTT_CALIBRATION_BATCH_SIZE - 2
+    assert record.valid_sample_count == engine_runtime._RTT_CALIBRATION_BATCH_SIZE - 2
+
+
+def test_perform_rtt_clock_calibration_all_probes_failing_is_a_real_record_not_a_crash(
+    repository: ProductRepository, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def sampler(**_: object) -> CameraNodeRoundTripSample:
+        raise CameraNodeClientError("node_unavailable")
+
+    monkeypatch.setattr(engine_runtime, "CameraNodeClient", _fake_rtt_client(sampler))
+    session = _tick_session(repository)
+
+    asyncio.run(session._perform_rtt_clock_calibration(source_offset_ms=0))
+
+    window = session._counterfactual.query(start_offset_ms=0, end_offset_ms=1_000)
+    record = window.rtt_clock_calibrations[0]
+    assert record.state == "insufficient_samples"
+    assert record.valid_sample_count == 0
+
+
+# --- _rtt_recalibration_due: pure decision logic -----------------------
+
+
+def test_rtt_recalibration_due_on_session_start_never_yet_calibrated(repository: ProductRepository) -> None:
+    session = _tick_session(repository)
+    assert session._last_rtt_calibration_tick is None
+    assert session._rtt_recalibration_due(now=0.0, reconnect_count=0, one_way_jump_detected=False) is True
+
+
+def test_rtt_recalibration_due_bounded_periodic_cadence(repository: ProductRepository) -> None:
+    session = _tick_session(repository)
+    session._last_rtt_calibration_tick = 1_000.0
+    session._last_rtt_calibration_reconnect_count = 0
+    just_under = 1_000.0 + engine_runtime._RTT_RECALIBRATION_INTERVAL_SECONDS - 1.0
+    at_boundary = 1_000.0 + engine_runtime._RTT_RECALIBRATION_INTERVAL_SECONDS
+    assert session._rtt_recalibration_due(now=just_under, reconnect_count=0, one_way_jump_detected=False) is False
+    assert session._rtt_recalibration_due(now=at_boundary, reconnect_count=0, one_way_jump_detected=False) is True
+
+
+def test_rtt_recalibration_due_on_reconnect(repository: ProductRepository) -> None:
+    session = _tick_session(repository)
+    session._last_rtt_calibration_tick = 1_000.0
+    session._last_rtt_calibration_reconnect_count = 2
+    # Not otherwise due (well inside the periodic cadence, no jump) --
+    # only the changed reconnect count forces it.
+    assert session._rtt_recalibration_due(now=1_001.0, reconnect_count=2, one_way_jump_detected=False) is False
+    assert session._rtt_recalibration_due(now=1_001.0, reconnect_count=3, one_way_jump_detected=False) is True
+
+
+def test_rtt_recalibration_due_on_one_way_jump(repository: ProductRepository) -> None:
+    session = _tick_session(repository)
+    session._last_rtt_calibration_tick = 1_000.0
+    session._last_rtt_calibration_reconnect_count = 0
+    assert session._rtt_recalibration_due(now=1_001.0, reconnect_count=0, one_way_jump_detected=False) is False
+    assert session._rtt_recalibration_due(now=1_001.0, reconnect_count=0, one_way_jump_detected=True) is True

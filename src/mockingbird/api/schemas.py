@@ -1663,6 +1663,34 @@ class CounterfactualClockCalibrationResponse(BaseModel):
     clock_jump_detected: bool = False
 
 
+class CounterfactualRttClockCalibrationResponse(BaseModel):
+    """Camera Node <-> Host RTT-Bounded Clock Calibration v1 (additive; see
+    docs/camera-node-host-rtt-bounded-clock-calibration-v1-report.md): one
+    RTT-bounded calibration batch for this stream -- the defensible
+    absolute anchor `CounterfactualClockCalibrationResponse` above cannot
+    itself provide (that one-way estimator is a one-sided upper bound
+    only). `offset_ms` is the interval's own midpoint, never represented
+    as exact; `offset_min_ms`/`offset_max_ms` carry the full, honest bound.
+    `state == "insufficient_samples"`/`"inconsistent_samples"` are real,
+    auditable outcomes, not errors -- every numeric field stays `None` in
+    either case, never a fabricated number. `rtt_ms`/`node_processing_ms`
+    describe the single lowest-RTT sample actually used to anchor the
+    combined interval, not an average across the batch."""
+
+    source_offset_ms: int
+    calibrated_at: datetime
+    sample_count: int
+    valid_sample_count: int
+    state: Literal["calibrated", "insufficient_samples", "inconsistent_samples"]
+    offset_ms: float | None = None
+    offset_min_ms: float | None = None
+    offset_max_ms: float | None = None
+    uncertainty_ms: float | None = None
+    rtt_ms: float | None = None
+    node_processing_ms: float | None = None
+    clock_jump_detected: bool = False
+
+
 class CounterfactualLedgerAccountingResponse(BaseModel):
     """Clear eviction accounting: how much of this ledger's own bounded
     history is still retained versus already evicted."""
@@ -1713,6 +1741,13 @@ class CounterfactualWindowResponse(BaseModel):
     # fabricated.
     clock_calibrations: list[CounterfactualClockCalibrationResponse] = Field(default_factory=list)
     clock_calibration_required: bool = False
+    # Camera Node <-> Host RTT-Bounded Clock Calibration v1 (additive). The
+    # defensible, bounded absolute-anchor history -- see
+    # `CounterfactualRttClockCalibrationResponse`'s own docstring. Empty
+    # for a same-clock-domain session (identical reasoning to `clock_
+    # calibrations` above) and for every ledger snapshot that predates
+    # this field.
+    rtt_clock_calibrations: list[CounterfactualRttClockCalibrationResponse] = Field(default_factory=list)
 
 
 class SceneConfusorLearningStatusResponse(BaseModel):

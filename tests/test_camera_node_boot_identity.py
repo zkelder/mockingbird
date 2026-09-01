@@ -313,6 +313,29 @@ async def test_health_endpoint_exposes_boot_identity_and_selftest_fields(tmp_pat
 
 
 @pytest.mark.anyio
+async def test_health_endpoint_exposes_rtt_calibration_timestamps_in_forward_order(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Camera Node <-> Host RTT-Bounded Clock Calibration v1: `node_receive_
+    time` (sampled at the top of the handler) must not be later than `node_
+    time` (sampled immediately before the response is returned) -- the gap
+    between them is this handler's own real processing time, never
+    negative under a correct clock."""
+    monkeypatch.setenv("MOCKINGBIRD_NODE_PAIRING_STATE_PATH", str(tmp_path / "pairing.json"))
+    config = _synthetic_config()
+    app = create_node_app(config)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/node/v1/health")
+    body = response.json()
+    node_receive_time = datetime.fromisoformat(body["node_receive_time"])
+    node_time = datetime.fromisoformat(body["node_time"])
+    assert node_receive_time.tzinfo is not None
+    assert node_time.tzinfo is not None
+    assert node_receive_time <= node_time
+
+
+@pytest.mark.anyio
 async def test_analysis_stream_carries_boot_identity_headers(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("MOCKINGBIRD_NODE_PAIRING_STATE_PATH", str(tmp_path / "pairing.json"))
     config = _synthetic_config()

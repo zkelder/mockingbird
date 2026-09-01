@@ -298,6 +298,7 @@ from mockingbird.api.schemas import (
     SourceMonitorStartRequest,
     SourceMonitorStatusResponse,
     CounterfactualClockCalibrationResponse,
+    CounterfactualRttClockCalibrationResponse,
     CounterfactualConfidenceSummaryResponse,
     CounterfactualCoverageResponse,
     CounterfactualLedgerAccountingResponse,
@@ -11909,6 +11910,23 @@ def _counterfactual_window_response(window, attribution) -> CounterfactualWindow
             for item in window.clock_calibrations
         ],
         clock_calibration_required=window.clock_calibration_required,
+        rtt_clock_calibrations=[
+            CounterfactualRttClockCalibrationResponse(
+                source_offset_ms=item.source_offset_ms,
+                calibrated_at=item.calibrated_at,
+                sample_count=item.sample_count,
+                valid_sample_count=item.valid_sample_count,
+                state=item.state,
+                offset_ms=item.offset_ms,
+                offset_min_ms=item.offset_min_ms,
+                offset_max_ms=item.offset_max_ms,
+                uncertainty_ms=item.uncertainty_ms,
+                rtt_ms=item.rtt_ms,
+                node_processing_ms=item.node_processing_ms,
+                clock_jump_detected=item.clock_jump_detected,
+            )
+            for item in window.rtt_clock_calibrations
+        ],
     )
 
 

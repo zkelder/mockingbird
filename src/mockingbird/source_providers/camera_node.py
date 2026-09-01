@@ -15,7 +15,7 @@ import json
 import secrets
 import socket
 import time
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 from urllib.parse import urlsplit, urlunsplit
 
 
@@ -529,6 +529,47 @@ def _capture_profiles(value: object) -> list[CameraNodeCaptureProfile]:
     return profiles
 
 
+@dataclass(frozen=True)
+class CameraNodeRoundTripSample:
+    """One bracketed request/response measurement against the existing
+    `/node/v1/health` operation, reused (not a new time-sync protocol) for
+    Camera Node <-> Host RTT-Bounded Clock Calibration v1 -- see
+    docs/camera-node-host-rtt-bounded-clock-calibration-v1-report.md
+    "Existing protocol investigation". Plain data only; the actual
+    interval-bound estimation lives in `observation.clock_calibration`
+    (this module never imports that package, preserving the existing
+    `observation` -> `source_providers` dependency direction rather than
+    reversing it -- a caller that has both converts this into a
+    `clock_calibration.RttRoundTrip`).
+
+    `node_receive_time`/`node_response_time` are `None` whenever an old
+    Node's `/node/v1/health` response predates this milestone (no such
+    keys at all) or the value fails to parse as a genuine tz-aware
+    timestamp -- never a crash, matching this client's own established
+    "safe error codes only" discipline."""
+
+    host_send_at: datetime
+    host_receive_at: datetime
+    node_receive_time: datetime | None
+    node_response_time: datetime | None
+
+
+def _parse_node_timestamp(value: object) -> datetime | None:
+    """`None` (never a guess, never a raised error) for anything that is
+    not a well-formed, tz-aware ISO timestamp -- an old Node lacking the
+    key, a malformed value, or a naive one are all treated identically:
+    this specific round-trip sample simply cannot be used for calibration
+    (see `clock_calibration.py`'s own "Old Node compatibility")."""
+
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
 class CameraNodeClient:
     def __init__(self, *, requester: CameraNodeRequester | None = None) -> None:
         self._requester = requester or UrlLibCameraNodeRequester()
@@ -571,6 +612,43 @@ class CameraNodeClient:
         if status != 200:
             raise CameraNodeClientError("node_unavailable")
         return _safe_json(data)
+
+    def sample_clock_round_trip(
+        self, base_address: str, *, clock: Callable[[], datetime] | None = None,
+    ) -> CameraNodeRoundTripSample:
+        """Camera Node <-> Host RTT-Bounded Clock Calibration v1: one
+        bracketed `H0 -> GET /node/v1/health -> H1` measurement, reusing
+        this existing metadata request rather than a dedicated time-sync
+        call (see docs/camera-node-host-rtt-bounded-clock-calibration-v1
+        -report.md). `clock` defaults to the same canonical `datetime.
+        now(UTC)` read every other Host-side timestamp in this codebase
+        uses; a caller (an `_EngineSession`'s own injected clock) should
+        pass its own for deterministic tests, matching the established
+        `clock=` convention (`engine_runtime._EngineSession.__init__`).
+
+        No pairing credential is sent or required -- `/node/v1/health`
+        itself needs none (see `mockingbird_node.app.health`); this
+        mirrors `health()` above exactly. Raises `CameraNodeClientError`
+        on any transport failure (a non-200 status, a timeout, a
+        connection error) -- the caller is expected to treat one failed
+        probe as simply "this sample never happened," never fatal to a
+        live session (see `engine_runtime._EngineSession`'s own RTT
+        calibration batch, which tolerates individual probe failures)."""
+
+        read_clock = clock or (lambda: datetime.now(UTC))
+        base = normalize_camera_node_address(base_address)
+        host_send_at = read_clock()
+        status, _, data = self._request(base_address=base, path="/node/v1/health")
+        host_receive_at = read_clock()
+        if status != 200:
+            raise CameraNodeClientError("node_unavailable")
+        body = _safe_json(data)
+        return CameraNodeRoundTripSample(
+            host_send_at=host_send_at,
+            host_receive_at=host_receive_at,
+            node_receive_time=_parse_node_timestamp(body.get("node_receive_time")),
+            node_response_time=_parse_node_timestamp(body.get("node_time")),
+        )
 
     def pair(self, base_address: str, pairing_code: str) -> CameraNodePairing:
         base = normalize_camera_node_address(base_address)

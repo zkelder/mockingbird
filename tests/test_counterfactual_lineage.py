@@ -11,7 +11,11 @@ from pathlib import Path
 
 import pytest
 
-from mockingbird.observation.clock_calibration import DEFAULT_CLOCK_JUMP_THRESHOLD_MS
+from mockingbird.observation.clock_calibration import (
+    DEFAULT_CLOCK_JUMP_THRESHOLD_MS,
+    MINIMUM_RTT_CALIBRATION_SAMPLES,
+    RttRoundTrip,
+)
 from mockingbird.observation.contracts import (
     EMPTY_CONFIDENCE_EVIDENCE,
     DetectionObservation,
@@ -358,7 +362,8 @@ def test_ledger_and_records_expose_no_review_or_visit_creation_surface() -> None
         if not name.startswith("_") and inspect.isfunction(value)
     }
     assert public_methods == {
-        "observe_result", "record_proposal_outcome", "record_clock_calibration", "coverage", "query",
+        "observe_result", "record_proposal_outcome", "record_clock_calibration",
+        "record_rtt_clock_calibration", "coverage", "query",
     }
     assert not hasattr(module, "create_visit")
     assert not hasattr(module, "create_review_label")
@@ -552,3 +557,90 @@ def test_clock_calibration_retention_is_bounded() -> None:
     window = ledger.query(start_offset_ms=0, end_offset_ms=100_000)
     assert len(window.clock_calibrations) == 3  # bounded, oldest evicted first
     assert window.clock_calibrations[-1].source_offset_ms == 60_000
+
+
+# --- Camera Node <-> Host RTT-Bounded Clock Calibration v1: ledger-level ---
+# calibration
+
+
+def _round_trip(base: datetime, *, true_offset_ms: float, leg_ms: float = 1.0) -> RttRoundTrip:
+    node_receive_at = base + timedelta(milliseconds=leg_ms - true_offset_ms)
+    host_receive_at = node_receive_at + timedelta(milliseconds=true_offset_ms + leg_ms)
+    return RttRoundTrip(
+        host_send_at=base, host_receive_at=host_receive_at, node_response_at=node_receive_at,
+        node_receive_at=node_receive_at,
+    )
+
+
+def _round_trip_batch(base: datetime, *, true_offset_ms: float, count: int = MINIMUM_RTT_CALIBRATION_SAMPLES) -> list[RttRoundTrip]:
+    return [
+        _round_trip(base + timedelta(seconds=index), true_offset_ms=true_offset_ms, leg_ms=1.0 + index * 0.1)
+        for index in range(count)
+    ]
+
+
+def test_record_rtt_clock_calibration_appends_and_is_exposed_by_query() -> None:
+    ledger = CounterfactualLedger(stream_id=STREAM_ID, clock_calibration_expected=True)
+    record = ledger.record_rtt_clock_calibration(
+        _round_trip_batch(NOW, true_offset_ms=500.0), source_offset_ms=1_000, calibrated_at=NOW + timedelta(seconds=1),
+    )
+    assert record.state == "calibrated"
+    assert record.stream_id == STREAM_ID
+    assert record.clock_jump_detected is False
+    assert record.offset_min_ms is not None and record.offset_max_ms is not None
+
+    window = ledger.query(start_offset_ms=0, end_offset_ms=2_000)
+    assert window.rtt_clock_calibrations == (record,)
+    # The one-way ledger this milestone's own governing brief §15 says must
+    # not be discarded is untouched by this call -- entirely independent.
+    assert window.clock_calibrations == ()
+
+
+def test_window_result_rtt_clock_calibrations_empty_for_non_camera_node_sessions() -> None:
+    ledger = CounterfactualLedger(stream_id=STREAM_ID)  # clock_calibration_expected defaults to False
+    window = ledger.query(start_offset_ms=0, end_offset_ms=1_000)
+    assert window.rtt_clock_calibrations == ()
+
+
+def test_record_rtt_clock_calibration_flags_a_detected_jump_relative_to_the_previous_sample() -> None:
+    ledger = CounterfactualLedger(stream_id=STREAM_ID, clock_calibration_expected=True)
+    first = ledger.record_rtt_clock_calibration(
+        _round_trip_batch(NOW, true_offset_ms=50.0), source_offset_ms=0, calibrated_at=NOW,
+    )
+    assert first.clock_jump_detected is False
+
+    later = NOW + timedelta(seconds=10)
+    jumped_offset_ms = 50.0 + DEFAULT_CLOCK_JUMP_THRESHOLD_MS + 1_000
+    second = ledger.record_rtt_clock_calibration(
+        _round_trip_batch(later, true_offset_ms=jumped_offset_ms), source_offset_ms=10_000, calibrated_at=later,
+    )
+    assert second.clock_jump_detected is True
+
+    window = ledger.query(start_offset_ms=0, end_offset_ms=20_000)
+    assert window.rtt_clock_calibrations == (first, second)
+
+
+def test_record_rtt_clock_calibration_insufficient_samples_never_flagged_as_a_jump() -> None:
+    ledger = CounterfactualLedger(stream_id=STREAM_ID, clock_calibration_expected=True)
+    ledger.record_rtt_clock_calibration(
+        _round_trip_batch(NOW, true_offset_ms=50.0), source_offset_ms=0, calibrated_at=NOW,
+    )
+    later = NOW + timedelta(seconds=10)
+    insufficient = ledger.record_rtt_clock_calibration(
+        _round_trip_batch(later, true_offset_ms=100_000.0, count=1), source_offset_ms=10_000, calibrated_at=later,
+    )
+    assert insufficient.state == "insufficient_samples"
+    assert insufficient.clock_jump_detected is False
+
+
+def test_rtt_clock_calibration_retention_is_bounded() -> None:
+    config = CounterfactualRetentionConfig(max_rtt_clock_calibration_records=3, max_age_ms=10_000_000)
+    ledger = CounterfactualLedger(stream_id=STREAM_ID, config=config, clock_calibration_expected=True)
+    for tick in range(7):
+        moment = NOW + timedelta(seconds=tick * 300)
+        ledger.record_rtt_clock_calibration(
+            _round_trip_batch(moment, true_offset_ms=10.0), source_offset_ms=tick * 300_000, calibrated_at=moment,
+        )
+    window = ledger.query(start_offset_ms=0, end_offset_ms=3_000_000)
+    assert len(window.rtt_clock_calibrations) == 3  # bounded, oldest evicted first
+    assert window.rtt_clock_calibrations[-1].source_offset_ms == 1_800_000

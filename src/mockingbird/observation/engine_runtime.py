@@ -115,6 +115,7 @@ from mockingbird.observation.contracts import (
     ObservationResult,
     TrackUpdate,
 )
+from mockingbird.observation.clock_calibration import ClockCalibrationRecord, RttRoundTrip
 from mockingbird.observation.counterfactual_lineage import (
     BoundingBox,
     CounterfactualLedger,
@@ -148,6 +149,28 @@ PACKAGED_PROVIDER_CONFIG_FILENAME = "provider-config.json"
 _BATCH_FRAMES = 20
 _ASSEMBLY_TICK_SECONDS = 10.0
 _STOP_JOIN_TIMEOUT_SECONDS = 20.0
+# Camera Node <-> Host RTT-Bounded Clock Calibration v1 (see docs/camera
+# -node-host-rtt-bounded-clock-calibration-v1-report.md): disclosed,
+# deliberate judgment calls, not release budgets.
+#
+# `_RTT_CALIBRATION_BATCH_SIZE` (5): mirrors `clock_calibration.
+# MINIMUM_CALIBRATION_SAMPLES`'s own precedent and sits inside the
+# governing brief's own "small bounded batch, for example 3-7 samples."
+#
+# `_RTT_RECALIBRATION_INTERVAL_SECONDS` (5 minutes): per this milestone's
+# own explicit "do not run a network calibration per frame" and "choose a
+# bounded cadence based on evidence and cost" -- comfortably bounds
+# drift-induced error between refreshes (a live session's own one-way
+# per-tick monitor, `_refresh_clock_calibration`, already forces an
+# immediate recalibration sooner if it observes a jump in the meantime;
+# see `_run_async`'s own tick block) while adding at most five tiny LAN
+# `/node/v1/health` requests every five minutes -- negligible next to the
+# analysis stream's own steady ~10-second-cadence HTTP traffic. Not
+# derived from a measured real-world drift rate (none has been field
+# -measured yet -- see this milestone's own report "Remaining field
+# proof"); changeable if real evidence ever calls for a different cadence.
+_RTT_CALIBRATION_BATCH_SIZE = 5
+_RTT_RECALIBRATION_INTERVAL_SECONDS = 300.0
 _MAX_SUPPRESSED_REASONS = 8
 # Sustained-Activity Visit Admission Starvation & Stop-Finalization
 # Correctness v1 (see "Bounded component decision horizon" in
@@ -740,6 +763,20 @@ class _EngineSession:
         # every other provider, exactly matching `clock_calibration_
         # expected` above.
         self._clock_calibration_buffer: list[tuple[datetime, datetime]] = []
+        # Camera Node <-> Host RTT-Bounded Clock Calibration v1: `None`
+        # means "never yet recalibrated this session" -- `_run_async`'s own
+        # tick block treats that as always due, so the very first ordinary
+        # tick doubles as this milestone's own "session-start bounded
+        # calibration" trigger (no separate, loop-blocking call needed;
+        # see that block's own comment). Every later comparison uses
+        # `loop.time()`'s own monotonic domain, never a wall clock.
+        # `_last_rtt_calibration_reconnect_count` is compared against
+        # `AnalysisSourceStatus.transport_reconnect_count` each tick to
+        # force an immediate recalibration the tick after a reconnect,
+        # rather than waiting out the full periodic cadence -- see this
+        # milestone's own §18 "Reconnect / session identity."
+        self._last_rtt_calibration_tick: float | None = None
+        self._last_rtt_calibration_reconnect_count = 0
 
     @property
     def is_active(self) -> bool:
@@ -1343,7 +1380,43 @@ class _EngineSession:
                     now = loop.time()
                     if now - last_tick >= _ASSEMBLY_TICK_SECONDS:
                         last_tick = now
-                        self._refresh_clock_calibration(source_offset_ms=latest_known_offset_ms)
+                        one_way_sample = self._refresh_clock_calibration(source_offset_ms=latest_known_offset_ms)
+                        # Camera Node <-> Host RTT-Bounded Clock Calibration
+                        # v1: checked at this same ~10-second tick cadence,
+                        # never once per frame/batch (this milestone's own
+                        # explicit §17) -- see `_rtt_recalibration_due`'s
+                        # own docstring for the four triggers. Deliberately
+                        # not awaited before the main loop starts -- gating
+                        # frame capture on Node-health-request latency would
+                        # contradict this codebase's own established
+                        # capture-first backpressure priority (roadmap.md
+                        # "Gate A" -- "priority order: (1) capture...").
+                        if self._rtt_recalibration_due(
+                            now=now, reconnect_count=node_status.transport_reconnect_count,
+                            one_way_jump_detected=one_way_sample is not None and one_way_sample.clock_jump_detected,
+                        ):
+                            self._last_rtt_calibration_tick = now
+                            self._last_rtt_calibration_reconnect_count = node_status.transport_reconnect_count
+                            try:
+                                await self._perform_rtt_clock_calibration(source_offset_ms=latest_known_offset_ms)
+                            except Exception as error:  # pragma: no cover - defensive: must never break analysis
+                                # Matches this class's own established
+                                # convention (`_checkpoint_observation_
+                                # exposure`, `_advance_automatic_
+                                # identification`, et al.): a diagnostic/
+                                # calibration failure must never be able to
+                                # take down live observation -- an
+                                # unanticipated exception here degrades to
+                                # "this recalibration attempt never
+                                # happened" (the next due tick tries again),
+                                # never a crashed session.
+                                log_error_event(
+                                    "camera_node",
+                                    "rtt_clock_calibration_failed",
+                                    code=_sanitized(error),
+                                    exception=error,
+                                    stream_id=self.stream_id,
+                                )
                         self._run_assembly_tick(
                             all_track_updates=all_track_updates,
                             all_evidence_candidates=all_evidence_candidates,
@@ -1688,27 +1761,144 @@ class _EngineSession:
         with self._state_lock:
             self._advanced["automatic_identification"] = as_dict
 
-    def _refresh_clock_calibration(self, *, source_offset_ms: int) -> None:
+    def _refresh_clock_calibration(self, *, source_offset_ms: int) -> ClockCalibrationRecord | None:
         """Camera Node -> Host Clock Normalization v1: drain whatever
         `(node_captured_at, host_received_at)` pairs accumulated since the
         last tick into one new `counterfactual_lineage.CounterfactualLedger.
         record_clock_calibration` attempt, anchored to this tick's own
         `source_offset_ms` (`latest_known_offset_ms` -- the same value
         `_run_assembly_tick` is about to receive as `known_horizon_ms`,
-        reused rather than re-derived). A no-op for a same-clock-domain
-        source (the buffer stays permanently empty -- see `__init__`'s own
-        comment) and for a tick where zero packets happened to arrive.
-        Never called from the stop-finalization drain (`_run_async`'s own
-        `final_results` loop) -- mirrors that loop's own existing asymmetry
-        with the acceptance recorder, which likewise only records during
-        ordinary live operation."""
+        reused rather than re-derived). A no-op (returns `None`) for a
+        same-clock-domain source (the buffer stays permanently empty -- see
+        `__init__`'s own comment) and for a tick where zero packets
+        happened to arrive. Never called from the stop-finalization drain
+        (`_run_async`'s own `final_results` loop) -- mirrors that loop's
+        own existing asymmetry with the acceptance recorder, which likewise
+        only records during ordinary live operation.
+
+        Camera Node <-> Host RTT-Bounded Clock Calibration v1: now returns
+        the recorded sample (previously `None` always) so `_run_async`'s
+        own tick block can react to `.clock_jump_detected` -- one of this
+        milestone's own explicit RTT-recalibration triggers (see this
+        milestone's own §18/§27). This one-way per-frame monitor otherwise
+        keeps its exact pre-existing role and behavior unchanged (see
+        clock_calibration.py's own docstring "Composing with the one-way
+        per-frame monitor")."""
 
         if not self._clock_calibration_buffer:
-            return
+            return None
         pairs = tuple(self._clock_calibration_buffer)
         self._clock_calibration_buffer.clear()
-        self._counterfactual.record_clock_calibration(
+        return self._counterfactual.record_clock_calibration(
             pairs, source_offset_ms=source_offset_ms, calibrated_at=self._clock(),
+        )
+
+    def _rtt_recalibration_due(
+        self, *, now: float, reconnect_count: int, one_way_jump_detected: bool,
+    ) -> bool:
+        """Pure decision logic (no I/O, directly unit-testable without a
+        live loop) behind all four of this milestone's own RTT
+        recalibration triggers:
+
+        - **Session start**: `self._last_rtt_calibration_tick is None` --
+          true only before this session's very first ordinary tick, whose
+          own fresh `CounterfactualLedger` has no prior RTT sample to
+          compare against, so this first batch is never itself flagged as
+          a spurious jump (this milestone's own §17/§18).
+        - **Bounded periodic cadence**: `now - self._last_rtt_calibration_
+          tick >= _RTT_RECALIBRATION_INTERVAL_SECONDS` (this milestone's
+          own §17).
+        - **Reconnect**: `reconnect_count` (the live `AnalysisSourceStatus.
+          transport_reconnect_count` as of this tick) differs from the
+          count observed at the last RTT batch -- this milestone's own
+          §18 "do not blindly reuse the prior calibration" after a
+          reconnect.
+        - **Clock jump**: `one_way_jump_detected` -- the one-way per-frame
+          monitor (`_refresh_clock_calibration`) itself observed a jump
+          this tick (this milestone's own §16/§27).
+
+        `now` is `loop.time()`'s own monotonic domain, matching `last_
+        tick`'s own domain elsewhere in this class -- never a wall clock."""
+
+        session_start_or_periodic_due = (
+            self._last_rtt_calibration_tick is None
+            or now - self._last_rtt_calibration_tick >= _RTT_RECALIBRATION_INTERVAL_SECONDS
+        )
+        reconnect_detected = reconnect_count != self._last_rtt_calibration_reconnect_count
+        return session_start_or_periodic_due or reconnect_detected or one_way_jump_detected
+
+    async def _perform_rtt_clock_calibration(self, *, source_offset_ms: int) -> None:
+        """Camera Node <-> Host RTT-Bounded Clock Calibration v1: collect a
+        small, bounded batch of request/response round trips against the
+        existing `/node/v1/health` operation (`source_providers.
+        camera_node.CameraNodeClient.sample_clock_round_trip`, reusing this
+        existing envelope rather than a dedicated time-sync protocol -- see
+        this milestone's own report "Existing protocol investigation") and
+        turn them into one bounded, two-sided offset interval -- the
+        *absolute anchor* the one-way per-frame monitor above can never
+        itself provide (see clock_calibration.py's own docstring "Two
+        calibration methods, one anchor").
+
+        Triggered by `_run_async`: once at session start; on a bounded
+        periodic cadence; immediately after a detected reconnect;
+        immediately after the one-way monitor above detects a jump (see
+        each call site's own comment) -- never once per frame (this
+        milestone's own explicit §17).
+
+        A no-op for every non-Camera-Node provider (mirrors every other
+        camera_node-gated branch in this class) -- defensive here even
+        though `_run_async` itself never reaches this method for one, so
+        direct unit-testing (`_tick_session`-style, no live loop) stays
+        symmetric with `_refresh_clock_calibration`'s own convention.
+
+        The batch's own attempts run *concurrently*, not sequentially --
+        each is an independent probe of the same live moment, and a
+        genuinely unreachable Node must not cost `batch_size *
+        NODE_CONNECT_TIMEOUT_SECONDS` of real wall-clock delay (a real
+        regression found and fixed during this milestone's own testing:
+        a sequential batch against an unreachable Node blocked this tick's
+        entire assembly cycle for several seconds). Tolerates individual
+        probe failures -- one failed round trip (a timeout, a connection
+        error, an unexpected non-200 status) never aborts the whole batch
+        or the live session; `estimate_rtt_clock_calibration` already
+        handles "too few valid samples survived" honestly (`state=
+        "insufficient_samples"`), so a batch that loses every single probe
+        still produces a real, auditable record, never a crash and never a
+        silently-skipped calibration attempt."""
+
+        config = self._playback_config
+        if config.provider_key != "camera_node" or not config.camera_node_base_address:
+            return
+        base_address = config.camera_node_base_address
+        client = CameraNodeClient()
+        attempts = await asyncio.gather(
+            *(
+                asyncio.to_thread(client.sample_clock_round_trip, base_address, clock=self._clock)
+                for _ in range(_RTT_CALIBRATION_BATCH_SIZE)
+            ),
+            return_exceptions=True,
+        )
+        samples: list[RttRoundTrip] = []
+        for attempt in attempts:
+            # `CameraNodeClientError` is itself a `ValueError` subclass
+            # (see camera_node.py), so this tuple also covers every
+            # transport-level failure `sample_clock_round_trip` raises;
+            # `OSError` additionally covers a raw socket-level failure
+            # that never reached the point of becoming one. One failed
+            # probe is simply "this sample never happened" -- never fatal
+            # to the batch or the live session.
+            if isinstance(attempt, (OSError, ValueError)):
+                continue
+            if isinstance(attempt, BaseException):
+                raise attempt  # an unexpected exception type -- surface it, never swallow silently
+            samples.append(
+                RttRoundTrip(
+                    host_send_at=attempt.host_send_at, host_receive_at=attempt.host_receive_at,
+                    node_response_at=attempt.node_response_time, node_receive_at=attempt.node_receive_time,
+                )
+            )
+        self._counterfactual.record_rtt_clock_calibration(
+            samples, source_offset_ms=source_offset_ms, calibrated_at=self._clock(),
         )
 
     def _run_assembly_tick(

@@ -53,7 +53,14 @@ from typing import Literal, Protocol, Sequence, runtime_checkable
 
 from mockingbird.observation.candidate_quality_gate import REJECTED_OUTCOMES as _QUALITY_REJECTED_OUTCOMES
 from mockingbird.observation.candidate_visit_authority import BLOCKED_OUTCOMES as _AUTHORITY_BLOCKED_OUTCOMES
-from mockingbird.observation.clock_calibration import ClockCalibrationRecord, detect_clock_jump, estimate_clock_calibration
+from mockingbird.observation.clock_calibration import (
+    ClockCalibrationRecord,
+    RttClockCalibrationRecord,
+    RttRoundTrip,
+    detect_clock_jump,
+    estimate_clock_calibration,
+    estimate_rtt_clock_calibration,
+)
 from mockingbird.observation.contracts import ConfidenceEvidenceSummary, DetectionObservation, FramePacket, ObservationResult, TrackUpdate
 from mockingbird.observation.localization_attribution import geometry_source_from_support_state
 from mockingbird.observation.visit_episode_assembler import confidence_evidence_from_terminal_update
@@ -335,6 +342,15 @@ class CounterfactualRetentionConfig:
     # every other cap above is sized with generous headroom over real
     # measured sessions, not tuned to a specific one.
     max_clock_calibration_records: int = 200
+    # Camera Node <-> Host RTT-Bounded Clock Calibration v1: one batch per
+    # recalibration (session start; a bounded periodic cadence; after a
+    # detected reconnect; after a one-way-detected jump -- see
+    # `engine_runtime._EngineSession`'s own RTT recalibration triggers),
+    # each far rarer than the one-way ledger's own ~10s-cadence entries
+    # above. 100 comfortably exceeds any real bounded session's own count
+    # of such events, mirroring the same generous-headroom sizing rationale
+    # as every other cap in this class.
+    max_rtt_clock_calibration_records: int = 100
     max_age_ms: int = 60 * 60 * 1000
 
     def __post_init__(self) -> None:
@@ -343,6 +359,7 @@ class CounterfactualRetentionConfig:
             or self.max_track_generation_records < 1
             or self.max_proposal_outcome_records < 1
             or self.max_clock_calibration_records < 1
+            or self.max_rtt_clock_calibration_records < 1
             or self.max_age_ms < 1
         ):
             raise ValueError("invalid_counterfactual_retention_config")
@@ -470,6 +487,13 @@ class CounterfactualWindowResult:
     # predates this field or never recorded an attempt.
     clock_calibrations: tuple[ClockCalibrationRecord, ...] = ()
     clock_calibration_required: bool = False
+    # Camera Node <-> Host RTT-Bounded Clock Calibration v1 (additive). The
+    # defensible, bounded *absolute anchor* history -- see clock_
+    # calibration.py's own docstring "Composing with the one-way per-frame
+    # monitor". Empty for a same-clock-domain source (identical reasoning
+    # to `clock_calibrations` above) and for every ledger snapshot that
+    # predates this field.
+    rtt_clock_calibrations: tuple[RttClockCalibrationRecord, ...] = ()
 
 
 @dataclass
@@ -620,6 +644,11 @@ class CounterfactualLedger:
             max_age_ms=self._config.max_age_ms,
             offset_of=lambda record: record.source_offset_ms,
         )
+        self._rtt_clock_calibrations = _BoundedOffsetLedger(
+            max_count=self._config.max_rtt_clock_calibration_records,
+            max_age_ms=self._config.max_age_ms,
+            offset_of=lambda record: record.source_offset_ms,
+        )
         self._open_generations: dict[str, _OpenGeneration] = {}
         self._session_first_offset_ms: int | None = None
         self._session_last_offset_ms: int | None = None
@@ -748,6 +777,42 @@ class CounterfactualLedger:
                 return item
         return None
 
+    def record_rtt_clock_calibration(
+        self,
+        samples: Sequence[RttRoundTrip],
+        *,
+        source_offset_ms: int,
+        calibrated_at: datetime,
+    ) -> RttClockCalibrationRecord:
+        """Camera Node <-> Host RTT-Bounded Clock Calibration v1: record one
+        bounded batch of `RttRoundTrip` samples -- called once per
+        recalibration by a live session that actually saw Camera Node
+        packets (`engine_runtime._EngineSession._perform_rtt_clock_
+        calibration`; never called at all for a same-clock-domain source,
+        so `rtt_clock_calibrations` stays empty for one). Mirrors `record_
+        clock_calibration`'s own exact shape: compares against this
+        stream's own most recent `state="calibrated"` RTT record (if any)
+        to flag a detected clock jump *before* appending -- never decided
+        after the fact by a later reader re-deriving it (see `clock_
+        calibration.detect_clock_jump`, reused unchanged via the shared
+        `_CalibrationSample` protocol)."""
+
+        sample = estimate_rtt_clock_calibration(
+            samples, stream_id=self.stream_id, source_offset_ms=source_offset_ms, calibrated_at=calibrated_at,
+        )
+        with self._lock:
+            previous = self._latest_rtt_calibrated_locked()
+            if previous is not None and detect_clock_jump(previous, sample):
+                sample = replace(sample, clock_jump_detected=True)
+            self._rtt_clock_calibrations.append(sample)
+        return sample
+
+    def _latest_rtt_calibrated_locked(self) -> RttClockCalibrationRecord | None:
+        for item in reversed(self._rtt_clock_calibrations.records):
+            if item.state == "calibrated":
+                return item
+        return None
+
     def coverage(self) -> CounterfactualCoverage:
         with self._lock:
             return CounterfactualCoverage(
@@ -788,6 +853,10 @@ class CounterfactualLedger:
                 item for item in self._clock_calibrations.records
                 if start_offset_ms <= item.source_offset_ms <= end_offset_ms
             )
+            rtt_calibrations = tuple(
+                item for item in self._rtt_clock_calibrations.records
+                if start_offset_ms <= item.source_offset_ms <= end_offset_ms
+            )
             coverage = CounterfactualCoverage(
                 session_first_offset_ms=self._session_first_offset_ms,
                 session_last_offset_ms=self._session_last_offset_ms,
@@ -812,6 +881,7 @@ class CounterfactualLedger:
             coverage=coverage,
             clock_calibrations=calibrations,
             clock_calibration_required=self.clock_calibration_expected,
+            rtt_clock_calibrations=rtt_calibrations,
         )
 
 
