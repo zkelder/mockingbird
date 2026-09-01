@@ -1875,6 +1875,148 @@ exactly as open as stated.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
+**2026-09-01 update (Representative Daylight Gate A Field Acceptance v8 --
+True-Latency & Crowding Closure Tranche, see §1/§6.R):** ran the first field
+session against post-RTT-calibration accepted HEAD, at classification **B**
+-- see
+[representative-daylight-gate-a-field-acceptance-v8-report.md](representative-daylight-gate-a-field-acceptance-v8-report.md)
+for the complete record. Deployed a genuinely fresh, disposable instance
+(not the operator's own identity; reused V7's already-populated runtime/
+model/BioCLIP caches by renaming its directory and wiping only `userdata/`,
+per two user-approved storage-headroom decisions -- see the report's own
+"Defects" -- rather than paying a fresh ~8GB cache-population cost against
+this milestone's own severely constrained storage headroom, itself now
+root-caused for the first time: every prior field-acceptance disposable
+instance was left running/retained indefinitely after acceptance, none
+ever cleaned up). A real, live 158.2-minute Observation session followed
+against the real reference Camera Node (the identical physical camera
+every prior Gate A cohort used) -- materially longer than the 60-120
+minute target, disclosed as such, not concealed. `candidates_created`
+reached **27** by session end (a new high across every Gate A cohort to
+date, exceeding v7's own 25), all in-session, none rescued at stop (an
+honest `stop_finalization_pending` observed live then correctly resolved
+with nothing further rescuable). Fragmentation accounting reached, for the
+first time in any cohort, **zero residual ambiguous denominator units**
+(16 of 16 `correctly_represented`, 0 fragmented/duplicate/missed/merged --
+the fourth/fifth convergent real cohort at 0% confirmed fragmentation).
+Fallback mechanics were exercised more deeply than any prior cohort (8
+attempted, 7 admitted, 1 honestly exhausted, one chain reaching fallback
+position 3 -- the deepest yet observed), and `blocked_missing_evidence`
+(9.9%, 21/212 distinct proposals, using the same denominator convention v6/
+v7 established) closely replicates v7's own post-fix level at nearly 2x the
+sample size, a real second independently-varied confirmation the
+Preservation/Fallback fix holds at scale. `observation_candidate_visit_
+persistence_contention`: zero. Stop-finalization: honest, clean.
+
+**Primary purpose not achieved, for a real, precisely root-caused reason,
+not a measurement-contract defect: zero valid RTT-bounded calibration
+samples were obtained (0 of 796 attempted batches; 796 `insufficient_
+samples`), so zero valid true T0 -> T5 latency samples exist (27 of 27
+admitted Visits honestly report `invalid_clock_mapping`).** Root-caused
+three independent ways, not merely disclosed: the reference Camera Node's
+live `GET /node/v1/health` response lacks the two additive fields
+(`node_receive_time`/`node_time`) the accepted RTT-Bounded Clock
+Calibration v1 milestone added; `grep` of the Node's own installed code
+confirms the string does not exist anywhere on it; and its own install
+manifest records `git_commit baf9fdb` (built 2026-08-27), independently
+confirmed via `git merge-base --is-ancestor` to be **69 commits behind**
+current HEAD and to predate the commit (`bc6d5ee`) that introduced the
+field the calibration protocol depends on -- the reference Camera Node has
+not been redeployed since the "Camera Node Upgrade & Compatibility
+Recovery v1" milestone (2026-08-26), across five field-relevant milestones
+accepted since. Not fixed live, deliberately: doing so mid-session would
+have required restarting/redeploying the Node's own service, risking
+exactly the "do not force a reconnect" action this milestone's own
+governing brief explicitly prohibited, and would have contaminated
+already-collected measurements. The accepted one-way (relative)
+drift/jump monitor, unaffected by the missing fields, returned a complete,
+clean, fully valid record throughout (796 of 796 `calibrated`, offset
+stable within an 85-244ms band across the full session, zero clock
+jumps) -- real, positive evidence the underlying Node-Host clock
+relationship was stable and well-behaved, but this cannot substitute for
+the two-sided bound the milestone needed, by the accepted design's own
+explicit reasoning. **RTT calibration mechanism itself further validated
+as correct and honest under exactly this failure mode** (graceful
+degradation, never a crash, at every layer, across a genuinely large real
+sample) -- the measurement contract is proven working; the physical
+prerequisite it depends on is not yet met.
+
+A further real, well-evidenced, and materially reopening finding: **direct
+pixel-region inspection** (cropping each low-confidence, no-species
+admitted Visit's own exact recorded bounding box out of its nearest
+acceptance-recorder frame, matching the v5 report's own established
+method) found **6 of 27 admitted Visits (22.2%) to be false or
+likely-false** -- empty grass/background, not animals, 5 of them directly
+pixel-confirmed and clustered at one specific recurring low-confidence
+screen location (most plausibly one hanging leaf cluster or branch tip).
+This directly and materially exceeds v5 (5.3%) and v7 (4.0%), the two
+cohorts whose own convergence previously supported a candidate false-Visit
+budget -- that candidate is **withdrawn pending more evidence**, not
+reaffirmed, and the useful-evidence-rate candidate (directly downstream of
+the same root cause) is withdrawn alongside it. Root cause is real, not
+noise: production admission stays deliberately confidence-blind by
+measured decision (`roadmap.md` "Numeric release budgets" -- confidence
+gating was swept against real reviewed data and explicitly not adopted),
+so a scene with a recurring weak-signal location pays a real, now-quantified
+cost under that design. Gate B's own abstention behavior held cleanly
+throughout despite this -- **zero confidently-wrong species labels on any
+false Visit** -- the accepted Background/Empty Evidence Species-Confidence
+Correctness v1 fix continues to hold under the largest real test it has
+yet received. This same rigorous pixel-level check also **reversed the
+session's own initial working hypothesis**: the cleanest-looking
+concurrent-multi-subject signature found this session (Visits 010/011 --
+identical start offset to the millisecond, shared `event_id`, clearly
+disjoint bounding-box positions) turned out, on direct pixel inspection,
+to be two independent false detections, not two birds -- disclosed
+explicitly as a methodological finding (structural/temporal concurrency
+signals alone are not sufficient proof of genuine crowding) rather than
+quietly corrected. A second candidate pair (Visits 021/022, materially
+higher confidence, same shared-Event structural signal) remains the
+session's best 2-subject evidence but falls outside the acceptance
+recorder's own coverage window (which itself stopped at ~99.4 of the
+session's 158.2 minutes, cleanly, on reaching its own configured 4GB byte
+bound -- a disclosed, self-inflicted, non-product coverage shortfall, not
+a product regression; product-side Observation Engine continuity was
+~100%, zero reconnects logged, zero errors in the live session itself) and
+so could not be additionally visually confirmed. No 3+-subject moment was
+observed. Recall: the one exhaustive-denominator window reviewed (0-5.0
+minutes, all 23 track generations individually reviewed, not sampled)
+found 3 of 3 genuine encounters represented (100%), with one further
+confirmed-but-honestly-rejected track disclosed as ambiguous rather than
+folded into either side of the ratio.
+
+Two further concrete, bounded, same-session findings, both disclosed, not
+release-blocking: an operator (not product) recorder-configuration mistake
+(`MAX_BYTES` exceeding `AcceptanceRecorderConfig`'s own hard 5GB ceiling)
+caused one real `500` on the first `observation/start` attempt, root-caused
+immediately from the structured log's own traceback and fixed by
+relaunching the already-built release with a corrected value -- zero
+product code touched, and the storage-decline root cause named above,
+mitigated for this session via two user-approved decisions (reusing V7's
+caches; deleting its now-redundant 3.2GB recorder set after archiving its
+small, critical raw ledger data first, closing part of the "v7's own raw
+evidence never archived" gap Gate A Measurement Closure v1 had disclosed)
+but left at only ~3.5GB free post-session, needing attention before any
+near-term next session. All raw session artifacts (merged lossless
+ledger, Visits export, reviewer-dispositions used to fully resolve
+fragmentation, accounting reports, and the decisive pixel-crop images) are
+archived to
+`data/field-acceptance/2026-09-01-gate-a-v8-true-latency-crowding-tranche/`.
+No production code was changed by this milestone; Core was not run per its
+own explicit instruction for a no-code-change field session (identity,
+schema, and product-visible results were independently validated live
+instead -- see the report's own "Identity"/validation account). This
+closure does **not** authorize the next Representative Field Acceptance /
+Gate A session, External Pre-Release Acceptance, or Final Release
+Hardening, and does **not** select a next development milestone.
+Authorization remains **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION
+REQUIRED**, unchanged. Per this milestone's own explicit instruction, Gate
+A is **not** self-closed by this report -- closure requires external
+(ChatGPT) review; see §6.R, below, for the complete, updated "Remaining
+Gate A dependency" account, now led by the Camera Node upgrade
+dependency and the reopened false-Visit-rate/useful-evidence-rate
+evidence body.
+
 **2026-09-01 update (Camera Node <-> Host RTT-Bounded Clock Calibration
 v1, see §1/§6.R):** closes the absolute Node<->Host offset/error-bound gap
 the accepted Camera Node -> Host Clock Normalization v1's own report
@@ -4491,6 +4633,97 @@ visual-review pass against v7's own two remaining genuinely-unreviewed
 ambiguous fragmentation units (unchanged); (4) the ~13 untraced
 `blocked_missing_evidence` records (unchanged); (5) the already-known Gate
 B admission-precision residual (unchanged).
+
+**Representative Daylight Gate A Field Acceptance v8 -- True-Latency &
+Crowding Closure Tranche (2026-09-01) ran the first field session against
+post-RTT-calibration accepted HEAD, at classification **B** -- see §1/§3,
+above, and
+[representative-daylight-gate-a-field-acceptance-v8-report.md](representative-daylight-gate-a-field-acceptance-v8-report.md)
+for the complete record.** A real, live 158.2-minute Observation session
+(longer than the 60-120 minute target, disclosed) against the same real
+reference Camera Node produced the highest `candidates_created` of any
+cohort to date (27, all in-session), the first-ever fully-resolved
+(zero-residual-ambiguous) fragmentation accounting (16/16
+`correctly_represented`, a fourth/fifth convergent 0% cohort), the
+deepest fallback chain yet observed (position 3 of 3), and
+`blocked_missing_evidence` (9.9%, 21/212) closely replicating v7's own
+9.4% at nearly double the distinct-proposal volume -- a real second,
+independently-varied confirmation the Preservation/Fallback fix holds at
+scale. Zero persistence contention; honest, clean stop-finalization.
+**Item (1) above remains not closed, for a real, precisely root-caused
+reason:** zero of 796 attempted RTT-bounded calibration batches produced
+a valid sample (all `insufficient_samples`) because the reference Camera
+Node's own installed software (`git_commit baf9fdb`, built 2026-08-27,
+confirmed 69 commits behind current HEAD via `git merge-base
+--is-ancestor`, and confirmed via direct `grep` to contain neither of the
+two response fields the RTT protocol depends on) has not been redeployed
+since the "Camera Node Upgrade & Compatibility Recovery v1" milestone
+(2026-08-26) -- across five field-relevant milestones accepted since, none
+of which touched the physical Node. Not fixed live: doing so mid-session
+would have forced a reconnect (explicitly prohibited by this milestone's
+own governing brief) and risked contaminating already-collected
+measurements. The unaffected one-way drift/jump monitor returned a
+complete, fully valid record (796/796 `calibrated`, stable 85-244ms
+offset, zero jumps) -- real positive evidence of a stable underlying clock
+relationship, not a substitute for the missing two-sided bound. Item (2)
+(3+-subject crowding) remains unmet; a second candidate 2-subject pair
+(Visits 021/022) was found but not visually confirmable (outside the
+session's own recorder coverage window). **A new, materially reopening
+finding, from direct pixel-region inspection of every low-confidence
+admitted Visit's own recorded bounding box (matching the v5 report's own
+established method):** 6 of 27 admitted Visits (22.2%) are false or
+likely-false (empty background, clustered at one recurring weak-signal
+screen location) -- materially exceeding v5 (5.3%) and v7 (4.0%), whose
+own convergence previously supported a candidate false-Visit budget. That
+candidate, and the directly-downstream useful-evidence-rate candidate, are
+**withdrawn pending more evidence**, not reaffirmed, per this session's own
+report ("Budget maturity"/"Candidate budgets") -- `roadmap.md` itself is not
+edited by this reconciliation, per this milestone's own explicit scope
+(release-execution-state.md only); a future reconciliation should confirm
+whether `roadmap.md`'s own "Numeric release budgets" text already reflects
+v7's own candidate proposals or still needs updating before this
+withdrawal is reflected there too. Gate B's
+own abstention behavior held cleanly throughout (zero confidently-wrong
+species labels on any false Visit). The same rigorous check also reversed
+this session's own initial working hypothesis that Visits 010/011
+constituted directly-confirmed 2-subject crowding -- both are, in fact,
+false detections sharing the same structural/temporal signature genuine
+concurrent siblings would show, a disclosed methodological finding in its
+own right. One real, previously-undiagnosed root cause was found for the
+storage decline `roadmap.md`/this file had disclosed but not explained
+since 2026-08-28: every prior field-acceptance disposable instance was
+left running/retained indefinitely after acceptance, none ever cleaned up
+-- mitigated for this session via two user-approved decisions (documented
+in the report's own "Defects"), left at ~3.5GB free post-session, needing
+attention before any near-term next session. No production code was
+changed; Core was not run (no-code-change field session, per this
+milestone's own explicit instruction) -- identity/schema/product-visible
+results were independently validated live instead. This closure does
+**not** authorize the next Representative Field Acceptance / Gate A
+session, External Pre-Release Acceptance, or Final Release Hardening, and
+does **not** select a next development milestone. Per this milestone's
+own explicit instruction, Gate A is **not** self-closed by this report.
+Authorization remains **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION
+REQUIRED**, unchanged. **Remaining Gate A dependency, in priority order,
+superseding the priority order immediately above:** (1) a Camera Node
+software upgrade (via the already-accepted, already-validated upgrade
+procedure) followed by a field session, to obtain the first real valid
+RTT-bounded calibration samples and true T0->T5 latency distribution --
+now the single most consequential, precisely-scoped remaining Gate A
+dependency, a materially narrower ask than "more field evidence required"
+was before this milestone; (2) reconciling the now-diverged
+false-Visit-rate/useful-evidence-rate evidence body (v5/v7 vs. v8) before
+either budget can be responsibly proposed -- likely via one or more
+further cohorts, not by discarding v8's own result; (3) a second live
+cohort producing genuinely crowded 3+-simultaneous-subject activity
+(unchanged); (4) the bounded visual-review pass against v7's own two
+remaining genuinely-unreviewed ambiguous fragmentation units (unchanged --
+out of this milestone's own scope, not attempted here); (5) the ~13
+untraced `blocked_missing_evidence` records, v7's own (unchanged -- v7's
+raw evidence, recovered and archived this session for the first time, at
+`data/field-acceptance/2026-08-31-gate-a-v7-raw-recorder-and-ledger-preservation/`,
+remains available for that separate, still-open task); (6) the
+already-known Gate B admission-precision residual (unchanged).
 
 ### S. Actual Final Release Hardening
 
