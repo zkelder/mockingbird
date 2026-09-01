@@ -24,8 +24,25 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `86955ab` -- the report commit for Gate A Measurement
-  Closure v1 (see §3/§6.R, below, and
+- **Accepted HEAD:** `1766ad6` -- the report commit for Camera Node ->
+  Host Clock Normalization for True Capture-to-Visible Latency v1 (see
+  §3/§6.R, below, and
+  [camera-node-host-clock-normalization-latency-v1-report.md](camera-node-host-clock-normalization-latency-v1-report.md)
+  for the complete record), sitting directly on top of `1e1a78b` (this
+  milestone's own implementation commit -- new `clock_calibration.py` plus
+  its test file, additive `CounterfactualLedger`/`CounterfactualWindowResult`
+  calibration fields on `counterfactual_lineage.py`, an additive
+  `clock_calibration_required`/`invalid_clock_mapping` extension to
+  `capture_to_visible_latency.py` defaulted to exactly pre-milestone
+  behavior, a small additive buffer/tick hook on `engine_runtime.py`,
+  additive API-schema/route projection, additive calibration parsing in
+  both `run_gate_a_measurement_accounting.py`/`run_encounter_accounting.py`,
+  one Doctor diagnostic-string update, and one contract-doc update -- zero
+  Camera Node/wire-protocol change, zero schema/database change, zero
+  Visit-grouping/admission/model change), which sits on top of `3eeb8ed`
+  (the reconciliation commit accepting Gate A Measurement Closure v1).
+- **Prior accepted HEAD (pre-Camera-Node-Host-Clock-Normalization-v1):**
+  `86955ab` -- the report commit for Gate A Measurement Closure v1 (see
   [gate-a-measurement-closure-fragmentation-latency-v1-report.md](gate-a-measurement-closure-fragmentation-latency-v1-report.md)
   for the complete record), sitting directly on top of `211a368` (this
   milestone's own implementation commit -- new `fragmentation_accounting.py`/
@@ -1836,6 +1853,23 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-08-31 update (Camera Node -> Host Clock Normalization for True
+Capture-to-Visible Latency v1, see §1/§6.R):** closes the clock-domain
+precondition Gate A Measurement Closure v1's own T0 -> `decided_at` figure
+was silently resting on -- not a new field session (none run here), but
+proof that the ~39-second discrepancy that figure's own caveat cited was
+never evidence of a real Camera-Node-vs-Host wall-clock offset, and a
+real, bounded, tested calibration/normalization mechanism for when one
+actually needs measuring. Classification **A**; see §6.R, below, for the
+complete account (root-cause re-measurement, calibration/uncertainty/
+drift/clock-jump design, fallback/stop-finalization/multi-subject proof,
+551 Tier 1 + Tier 2 tests, zero new ruff findings). Schema unchanged
+(`v58`). Authorization remains **NONE -- GLOBAL PRODUCT-ROADMAP
+RECONCILIATION REQUIRED**, unchanged; does not authorize the next
+Representative Field Acceptance / Gate A session, External Pre-Release
+Acceptance, or Final Release Hardening, and does not select a next
+development milestone.
 
 **2026-08-31 update (Gate A Measurement Closure v1 -- Fragmentation
 Accounting & True User-Visible Latency Instrumentation, see §1/§6.R):**
@@ -4217,6 +4251,75 @@ here as out of this milestone's own measurement-contract scope; (4) the
 ~13 untraced `blocked_missing_evidence` records (unchanged from above);
 (5) the already-known Gate B admission-precision residual (unchanged from
 above).
+
+**Camera Node -> Host Clock Normalization for True Capture-to-Visible
+Latency v1 (2026-08-31)** does not supply item (1) above (that still
+requires an actual field session, not run here) -- it instead closes a
+precondition item (1)'s own eventual fulfillment was silently resting on:
+Gate A Measurement Closure v1's own T0 -> `decided_at` figure subtracted a
+Camera Node-domain timestamp from a Host-domain one, disclosed via a fixed
+caveat string but never proven safe, and a real ~39-second discrepancy
+found in v7's own data was cited as justification for that caveat without
+ever being root-caused. See
+[camera-node-host-clock-normalization-latency-v1-report.md](camera-node-host-clock-normalization-latency-v1-report.md)
+for the complete record. Classification **A**. Directly re-measured the
+~39s figure against v7's own preserved raw ledger (recovered by Gate A
+Measurement Closure v1, still present) and proved it was never evidence of
+a Node-Host clock offset at all -- both operands of that original
+comparison (`source_offset_ms`, `captured_at`) are Node-domain-labeled
+fields on the same record, so nothing Host-side ever entered it; the real
+Node-Host offset (`node_to_host_clock_offset_ms`, computed per frame in
+`camera_node_live.py` since before this milestone) has never been durably
+captured by any prior cohort, a fact now closed rather than merely
+disclosed. New pure module `clock_calibration.py` supplies a bounded,
+session-scoped one-way-delay calibration (point estimate: minimum observed
+delta; uncertainty: observed spread -- no round trip exists in the current
+push-only analysis-stream protocol, so none is invented) with drift
+observation and clock-jump detection/invalidation (a disclosed 5-second
+threshold, tested in both directions, never interpolated or extrapolated
+across a detected jump). `capture_to_visible_latency.py`'s `LatencyState`
+gains a fourth, structurally distinct value, `invalid_clock_mapping` -- a
+required mapping that does not exist now honestly rejects the sample
+rather than silently subtracting across an unproven clock boundary --
+gated behind a new `clock_calibration_required` parameter defaulting to
+`False` (exactly pre-milestone behavior, proven unaffected: all 11 of Gate
+A Measurement Closure v1's own existing tests pass byte-for-byte
+unchanged) and set `True` only for a real Camera Node session
+(`provider_key == "camera_node"`; an RTSP/local/USB source structurally
+never has this problem and is untouched). Fallback/stop-finalization/
+multi-subject correctness independently re-proven under normalization,
+including one deliberately discriminating fallback test (a clock jump
+placed between the winner's and the admitted fallback member's own
+calibration epochs, which would fail under a cross-proposal contamination
+bug). Zero Camera Node/wire-protocol changes -- every input already
+existed on both sides before this milestone; every schema/response change
+is additive and defaulted. Schema unchanged (`v58`) -- nothing here is
+persisted to SQLAlchemy. Tier 1 (285) + Tier 2 (266) = 551 tests passed, 0
+failed, run together in one invocation; zero new ruff findings (one
+pre-existing finding incidentally fixed). Does not reopen fragmentation
+accounting, does not tune models/detectors, does not run a field cohort.
+**Capture-to-visible latency remains MORE FIELD EVIDENCE REQUIRED,
+unchanged in kind but now for a materially stronger reason: the
+measurement mechanism itself is closed and correct, not merely defined.**
+Every historical cohort (2026-08-19, v6, v7) still predates `clock_
+calibration.py` entirely and is not, and cannot be, retroactively fixed
+(stated explicitly, not inferred around) -- a next field session run
+against post-this-milestone accepted HEAD would be the first able to
+produce a real, validly-normalized T0 -> T5 distribution. Authorization
+remains **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**,
+unchanged; this closure does not authorize the next Representative Field
+Acceptance / Gate A session, External Pre-Release Acceptance, or Final
+Release Hardening, and does not select a next development milestone.
+**Remaining Gate A dependency, unchanged in priority order and in every
+item's own substance -- only item (1)'s own bar is now sharper:** (1) real,
+*validly clock-normalized* capture-to-visible latency field samples (not
+merely "field samples" -- the measurement mechanism they would need is now
+closed; the samples themselves still do not exist); (2) a second live
+cohort producing genuinely crowded 3+-simultaneous-subject activity
+(unchanged); (3) the bounded visual-review pass against v7's own two
+remaining genuinely-unreviewed ambiguous fragmentation units (unchanged);
+(4) the ~13 untraced `blocked_missing_evidence` records (unchanged); (5)
+the already-known Gate B admission-precision residual (unchanged).
 
 ### S. Actual Final Release Hardening
 
