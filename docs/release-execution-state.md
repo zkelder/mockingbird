@@ -24,9 +24,68 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `3c75674` -- the report commit for Independent
+- **Accepted HEAD:** `547209d` -- the report commit for Representative
+  Daylight Gate A Field Acceptance v11 (Independent-Corroboration &
+  Scene-Confusor Re-Proof; see §3/§6.R, below, and
+  [representative-daylight-gate-a-field-acceptance-v11-report.md](representative-daylight-gate-a-field-acceptance-v11-report.md)
+  for the complete record). No production code changed by this milestone
+  (a real, representative-daylight, real-hardware field session, 101.8
+  combined real observing minutes across two segments separated by a
+  genuine ~71-minute Camera Node CSI-ribbon-cable hardware fault -- fully
+  disclosed, user-resolved mid-session, isolated from the Host, which
+  stayed healthy throughout including through the outage). Classification
+  **B**. 100% lossless raw-ledger recovery verified on both segments
+  against live cumulative counters. Directly queried (not inferred)
+  `scene_confusor_regions` after the session -- answering the prior
+  milestone's own disclosed evidence-trail gap definitively: 14 regions
+  tracked, `occurrence_count` up to 5, `suspected_count = 0` throughout --
+  every region that crossed the suspicion threshold held genuinely
+  strong-confidence detections and was correctly, by design, never
+  suspected (including a real, stationary, repeatedly-visited house-finch
+  feeder location, spanning both segments -- direct field proof a real
+  bird's own Visit at a spatially-stable location survives the mechanism);
+  the session's one genuinely weak persistent-confusor chain (42
+  generations, 883 detections, ~20 minutes, same coordinates the fix's own
+  reproducer used) was intercepted almost every time by a different,
+  pre-existing mechanism (`blocked_ambiguous_boundary`) before it could
+  ever reach scene-confusor, so the two accepted mechanisms did not get a
+  documented chance to compose in the field this session. Zero confirmed-
+  false Visits trace to the corroboration axis (its 2 field rejections
+  were both correct), but one admission (a 14-generation chain reaching
+  the session's own dominant persistent-confusor coordinates) is a direct,
+  hand-verified field reproduction of the fix's own explicitly-disclosed
+  residual boundary (multiple non-dominant generations, none individually
+  concentrated: `remainder=68 > remaining_floor=27` for `N=14`) --
+  classified ambiguous, not confirmed-false, since its own evidence image
+  does not clearly resolve a subject either way. Primary false-Visit rate
+  8/18 confirmed (excluding 5 ambiguous) = 44.4%, numerically worse than
+  v10's 36.4% but causally disjoint from it: all 8 confirmed-false Visits
+  trace to a real landscaping worker in-frame (7, the already-accepted,
+  out-of-scope person-background-false-positive residual class) plus one
+  strong-confidence leaf artifact (1) -- none caused by a corroboration-
+  axis or scene-confusor failure. Useful-evidence 43.5% raw / 62.5%
+  excluding the same confound. Recall 100% (7/7 conservative denominator)
+  / 70% (7/10 less-conservative, honestly disclosed both ways).
+  Fragmentation 1/7 = 14.3% (a second consecutive non-zero cohort after
+  v10 reopened it). Duplicates 0% (an 8th-9th convergent cohort).
+  `blocked_missing_evidence` 9.29% (in-band, v7-v10 convergent range). Two
+  genuine simultaneous-bird sightings directly, independently visually
+  confirmed. Zero confident species labels on any confirmed-false Visit
+  (Gate B clean). Two disclosed tooling defects (an acceptance-recorder
+  directory-path encoding bug; fragile `--dev-root` absolute-Windows-path
+  handling this milestone's own operator hit and self-corrected, with no
+  lasting effect -- `git status` confirmed clean throughout and at
+  report time), one disclosed real Camera Node hardware fault (root-
+  caused to a CSI cable, user-resolved), and one open, unconfirmed
+  observation (a 71-proposal `blocked_continuation_pending` backlog at
+  segment-2 end, plausibly superseded intermediate state, not yet
+  confirmed either way). This closure does **not** authorize the next
+  Representative Field Acceptance / Gate A session, External Pre-Release
+  Acceptance, or Final Release Hardening, and does **not** select a next
+  development milestone -- see §3 for the complete reconciliation entry.
+- **Prior accepted HEAD (pre-Representative-Daylight-Gate-A-Field-
+  Acceptance-v11):** `3c75674` -- the report commit for Independent
   Corroboration Value & Persistent-Confusor Admission Correctness v1 (see
-  §3/§6.R, below, and
   [independent-corroboration-value-persistent-confusor-admission-correctness-v1-report.md](independent-corroboration-value-persistent-confusor-admission-correctness-v1-report.md)
   for the complete record), sitting directly on top of `eeb1e57` (this
   milestone's own implementation commit -- one new, additive
@@ -2090,6 +2149,98 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-02 update (Representative Daylight Gate A Field Acceptance v11
+-- Independent-Corroboration & Scene-Confusor Re-Proof, see §1/§6.R):**
+ran the field session the Independent Corroboration Value v1 closure's own
+item (1), below, required, at classification **B**. See
+[representative-daylight-gate-a-field-acceptance-v11-report.md](representative-daylight-gate-a-field-acceptance-v11-report.md)
+for the complete record. No production code changed; schema unchanged
+(`v58`). A real 101.8-minute combined field session across two segments,
+separated by a genuine, fully-disclosed, user-resolved ~71-minute Camera
+Node CSI-cable hardware fault -- isolated from the Host, which stayed
+healthy throughout.
+**Independent-corroboration field-proof state:** the corroboration axis
+was evaluated 3 times with a final outcome -- 2 correct field rejections
+(Location A and the "ornament" recurrence, both classic single-generation
+shapes) and 1 admission (a 14-generation proposal reaching the session's
+own dominant persistent-confusor coordinates) that is a direct, hand-
+verified field reproduction of the fix's own disclosed non-dominant-
+multi-generation residual (`remainder=68 > remaining_floor=27` for
+`N=14`) -- classified ambiguous (not confirmed-false) since its own
+evidence does not clearly resolve a subject. Zero confirmed-false Visits
+trace to the corroboration axis this session. **Scene-confusor field-
+proof state, now directly measured, closing the prior milestone's own
+disclosed evidence-trail gap:** a direct `scene_confusor_regions` table
+read (not inferred) found 14 regions tracked, `occurrence_count` up to 5,
+**`suspected_count = 0` for every region** -- every region crossing the
+suspicion threshold held genuinely strong-confidence detections and was
+correctly, by design, never suspected (one such region is the real,
+stationary, repeatedly-visited feeder location itself, spanning both
+segments -- direct field proof a real bird survives the mechanism); the
+session's own genuinely weak, ~20-minute, 42-generation persistent-
+confusor chain was intercepted almost every time by a different,
+pre-existing mechanism (`blocked_ambiguous_boundary`) before it could
+reach scene-confusor at all, so **the two accepted mechanisms did not get
+a documented chance to compose in the field this session.** **Gate A
+metric maturity:** primary false-Visit rate 8/18 confirmed = 44.4%,
+numerically worse than v10's 36.4% but shown causally disjoint from it
+(all 8 confirmed-false Visits trace to a real landscaping worker in-frame
+-- the already-accepted, out-of-scope person-background-false-positive
+class -- plus one strong-confidence leaf artifact; none caused by a
+corroboration-axis or scene-confusor failure); useful-evidence 43.5% raw
+/ 62.5% excluding the same confound (still below the v5/v7 94-96% band);
+recall 100% (7/7 conservative) / 70% (7/10 less-conservative, both
+disclosed); fragmentation 1/7 = 14.3% (a second consecutive non-zero
+cohort, still not reconverged toward the prior 0% streak);
+duplicates 0% (an 8th-9th convergent cohort, still READY);
+`blocked_missing_evidence` 9.29% (in-band, v7-v10 convergent range,
+still effectively mature as a measurement); monitoring coverage 97.5%
+combined (still READY-band). Two genuine simultaneous-bird sightings
+directly, independently visually confirmed (short of 3+). Zero confident
+species labels on any confirmed-false Visit (Gate B clean). **Two
+disclosed tooling defects** (an acceptance-recorder directory-path
+encoding bug -- data itself intact, 4,373 independent frames captured
+correctly regardless; and fragile `--dev-root` absolute-Windows-path
+handling this same milestone's own operator hit and immediately
+self-corrected, confirmed zero lasting effect), **one disclosed real
+Camera Node hardware fault** (root-caused to a CSI ribbon-cable I2C
+failure, user-resolved by physical reseat, fully isolated from the
+product), and **one open, unconfirmed observation** (a 71-proposal
+`blocked_continuation_pending` backlog at segment-2 end, plausibly
+superseded intermediate state from the session's own dominant
+ambiguous-boundary chain, not yet confirmed either way). This closure
+does **not** authorize the next Representative Field Acceptance / Gate A
+session, External Pre-Release Acceptance, or Final Release Hardening,
+and does **not** select a next development milestone. Authorization
+remains **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**,
+unchanged. **Remaining Gate A dependency, in priority order, superseding
+the priority order in the entry immediately below (item (1) there --
+the concrete field-proof the Independent Corroboration Value v1 closure
+required -- is now answered by this session, though inconclusively: see
+above; replaced below by the concrete new blocker this session's own
+finding requires):** (1) a next, separately-authorized Representative
+Daylight Gate A cohort must specifically seek a session where a
+never-strong, single-generation-shaped persistent confusor clears
+`blocked_ambiguous_boundary` and reaches the quality gate as a genuinely
+single-generation, repeatedly-admitted case -- the one direct field re-
+test of the corroboration-axis fix this milestone was designed for and
+did not obtain this session (this session's own dominant persistent
+confusor was almost entirely intercepted upstream instead); the same
+cohort should also re-measure whether A and B ever compose in the field
+now that non-participation has a documented structural cause; (2) the
+false-Visit-rate and useful-evidence-rate budgets need at least one
+cohort not dominated by an unrelated person-in-frame confound, to avoid
+the causal-decomposition burden this session's own report had to carry;
+(3) fragmentation, re-measured a third time (v10: 1/5; v11: 1/7; still
+not reconverged toward the prior 0% streak); (4) a second,
+independently-varied true-latency cohort (unchanged); (5) a second live
+cohort producing genuinely crowded 3+-simultaneous-subject activity
+(unchanged -- v11's own best result remains 2 simultaneous subjects,
+achieved twice, directly confirmed); (6) the bounded visual-review pass
+against v7's own two remaining genuinely-unreviewed ambiguous
+fragmentation units (unchanged); (7) the ~13 untraced
+`blocked_missing_evidence` records, v7's own (unchanged).
 
 **2026-09-02 update (Independent Corroboration Value & Persistent-Confusor
 Admission Correctness v1, see §1/§6.R):** reopened the accepted Hard-
