@@ -44,6 +44,7 @@ from mockingbird.api.schemas import (
     StreamRuntimeStatusResponse,
 )
 from mockingbird.observation.engine_runtime import ObservationEngineCounts, ObservationEngineSessionStatus
+from mockingbird.observation.node_compatibility import NodeCompatibilityResult
 from mockingbird.playback.local_camera_bridge import LOCAL_USB_STREAM_TYPE
 from mockingbird.playback.windows_camera_bridge import WINDOWS_DSHOW_STREAM_TYPE
 from mockingbird.repository.product_repository import StreamLivePlaybackConfig
@@ -286,6 +287,47 @@ def camera_node_facts(
         runtime_available=True,
         setup_action="edit_camera_setup",
         advanced={"runtime_kind": RUNTIME_KIND_CAMERA_NODE},
+    )
+
+
+def camera_node_incompatible_facts(result: NodeCompatibilityResult) -> ObservationPanelFacts:
+    """Host <-> Camera Node Release-Compatibility Preflight v1: the
+    `field_acceptance` profile's own paired-but-incompatible outcome.
+    Reached only after `start_stream_observation` has already confirmed
+    `_camera_node_paired(config)` (this Stream would otherwise have
+    started normally) and the caller is a field-acceptance credential --
+    see `api/main.py`. Stays pure, matching this module's own invariant:
+    `result` is an already-computed `NodeCompatibilityResult` -- the live
+    probe itself (`node_compatibility.probe_node_compatibility`) ran in the
+    caller, never here.
+
+    `camera_connected` reflects the Node/camera reachability half of
+    `result.state` specifically (`node_unreachable`/`camera_unavailable`
+    are genuinely about the camera; `incompatible_protocol`/
+    `incompatible_missing_capability`/`calibration_failed` mean the camera
+    itself is fine and reachable -- only the specific capability this
+    acceptance run needs is the problem), so a reviewer scanning this
+    fact never conflates "camera not connected" with "camera connected,
+    but this Host operation cannot safely proceed on it right now"
+    (Section 12: never imply the Node is unusable for all MockingBird
+    functionality when only one profile is incompatible)."""
+
+    camera_connected = result.state not in ("node_unreachable", "camera_unavailable")
+    return ObservationPanelFacts(
+        state="needs_attention",
+        observing=False,
+        message=result.message,
+        camera_connected=camera_connected,
+        camera_message=result.message,
+        engine_available=False,
+        engine_message=result.message,
+        runtime_available=True,
+        advanced={
+            "runtime_kind": RUNTIME_KIND_CAMERA_NODE,
+            "node_compatibility_state": result.state,
+            "node_compatibility_profile": result.profile,
+            "node_compatibility_missing_capabilities": list(result.missing_capabilities),
+        },
     )
 
 

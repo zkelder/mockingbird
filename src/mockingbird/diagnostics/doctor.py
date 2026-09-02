@@ -1292,6 +1292,24 @@ def _interpret_camera_node(gathered: dict[str, Any], *, now: datetime) -> Doctor
                 user_action="Review this camera's Zones and confirm they still match what the camera actually sees.",
                 diagnostic_context=context,
             )
+    if camera_node_configured:
+        # Host <-> Camera Node Release-Compatibility Preflight v1: Doctor
+        # stays read-only and never live-probes a paired Node (this
+        # module's own documented design invariant -- see the module
+        # docstring -- would require touching `secret=True`-flagged
+        # provider configuration), so it cannot itself confirm whether
+        # this Node supports bounded RTT clock calibration. Points at the
+        # one live tool that can, mirroring the `clock` check's own
+        # established "not measurable from a standalone Doctor check: see
+        # ... instead" precedent, rather than guessing from `camera_node_
+        # service_version` alone (a package version, not a capability
+        # signal -- see node_compatibility.py's own "Version-skew
+        # behavior" docstring).
+        context["field_acceptance_compatibility_check"] = (
+            "Not measurable from a standalone Doctor check: run "
+            "scripts/check_camera_node_compatibility.py for a live "
+            "verdict before a true-latency acceptance session."
+        )
     return DoctorCheckResult(
         code=DoctorCheckCode.CAMERA_NODE,
         component="Camera Node",

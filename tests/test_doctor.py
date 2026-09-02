@@ -1000,6 +1000,46 @@ def test_interpret_camera_node_surfaces_boot_id_and_service_version_in_context()
     assert result.diagnostic_context["camera_node_service_version"] == "0.1.0"
 
 
+def test_interpret_camera_node_points_at_the_live_compatibility_preflight_tool() -> None:
+    """Host <-> Camera Node Release-Compatibility Preflight v1: Doctor
+    stays read-only (never a live probe of the paired Node -- see the
+    module docstring's own design invariant) but points an operator at the
+    one tool that can give a real field-acceptance verdict, mirroring the
+    `clock` check's own established "not measurable from a standalone
+    Doctor check" precedent."""
+
+    result = doctor._interpret_camera_node(
+        {
+            "source_count": 1,
+            "source_kinds": ["integration"],
+            "stream_count": 1,
+            "currently_monitored_count": 1,
+            "attention_count": 0,
+            "stalest_camera_node_fresh_at": datetime.now(UTC).isoformat(),
+        },
+        now=datetime.now(UTC),
+    )
+    assert result.status == DoctorStatus.PASS
+    assert "check_camera_node_compatibility.py" in result.diagnostic_context["field_acceptance_compatibility_check"]
+
+
+def test_interpret_camera_node_omits_the_preflight_pointer_when_no_camera_node_is_configured() -> None:
+    result = doctor._interpret_camera_node(
+        {
+            "source_count": 1,
+            "source_kinds": ["external_url"],
+            "stream_count": 1,
+            "currently_monitored_count": 0,
+            "attention_count": 0,
+            "stalest_camera_node_fresh_at": None,
+            "camera_node_last_seen_at": None,
+        },
+        now=datetime.now(UTC),
+    )
+    assert result.status == DoctorStatus.PASS
+    assert "field_acceptance_compatibility_check" not in result.diagnostic_context
+
+
 def _boot_transitions_json(*, count: int, now: datetime, within_seconds: float) -> str:
     return json.dumps(
         [

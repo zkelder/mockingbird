@@ -494,6 +494,7 @@ from mockingbird.monitoring.attention_sync_service import AttentionSyncService
 from mockingbird.observation import (
     ObservationEngineRegistry,
     SnapshotObservationProvider,
+    node_compatibility,
     unified_status,
 )
 from mockingbird.observation.acceptance_recorder import (
@@ -11673,6 +11674,44 @@ async def start_stream_observation(
     lane = unified_status.resolve_observation_runtime(configuration)
 
     if lane == unified_status.RUNTIME_KIND_CAMERA_NODE:
+        # Host <-> Camera Node Release-Compatibility Preflight v1: only a
+        # field-acceptance credential's own Observation start (see
+        # `auth.install_authorization`'s `request.state.field_acceptance_
+        # principal`, resolved unconditionally on every request) is held to
+        # the stricter `field_acceptance` profile -- an ordinary signed-in
+        # user's Start observing is never newly blocked (Section 15).
+        # Mirrors `unified_status._camera_node_paired`'s own four-field
+        # check exactly: an unpaired Stream is left to the existing "not
+        # paired yet" message below unchanged, never a new, less specific
+        # "unreachable" result from a probe this configuration was never
+        # ready for.
+        if (
+            getattr(request.state, "field_acceptance_principal", None) is not None
+            and configuration.camera_node_base_address
+            and configuration.camera_node_credential
+            and configuration.camera_node_camera_id
+        ):
+            git_commit, _ = resolve_build_identity()
+            compatibility = await asyncio.to_thread(
+                node_compatibility.probe_node_compatibility,
+                get_camera_node_client(),
+                stream_id=stream_id,
+                profile="field_acceptance",
+                base_address=configuration.camera_node_base_address,
+                credential=configuration.camera_node_credential,
+                expected_camera_id=configuration.camera_node_camera_id,
+                host_app_version=APP_VERSION,
+                host_git_commit=git_commit,
+            )
+            if not compatibility.compatible:
+                # Fail closed *before* the long Observation session, the
+                # acceptance-recorder allocation, or any GPU/model resource
+                # commitment below -- never mutates Node state, never
+                # starts the engine (Section 14/16).
+                facts = unified_status.camera_node_incompatible_facts(compatibility)
+                return _observation_action_response(
+                    request, action="stream.observation_started", stream_id=stream_id, facts=facts,
+                )
         regions = repository.stream_privacy_ignore_regions(stream_id)
         status = get_observation_engine_session_manager().start(
             stream_id, configuration, privacy_ignore_regions=regions,
