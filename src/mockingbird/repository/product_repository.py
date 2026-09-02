@@ -3161,6 +3161,52 @@ def _max_confidence_from_evidence_json(confidence_evidence_json: str | None) -> 
 
 
 @dataclass(frozen=True)
+class _CorroborationFacts:
+    """Duck-typed `confidence_evidence` fact for `candidate_quality_gate.
+    evaluate_evidence_admission`'s `reject_insufficient_detector_
+    corroboration` check (Hard-Negative Visit Admission Precision &
+    Species-Escalation Correctness v1) -- deliberately just the three
+    primitive fields that check actually reads, not a reconstructed
+    `contracts.ConfidenceEvidenceSummary`: this repository module never
+    imports observation-engine dataclasses (see `CandidateVisitProposalFacts.
+    confidence_evidence_json`'s own docstring for why), the same boundary
+    `_max_confidence_from_evidence_json` above already keeps for the
+    scene-confusor mechanism."""
+
+    strong_detection_count: int | None
+    detection_count: int | None
+    max_consecutive_detector_confirmed_frames: int | None
+
+
+def _corroboration_facts_from_evidence_json(confidence_evidence_json: str | None) -> _CorroborationFacts | None:
+    """Reads the three corroboration-structure fields `evaluate_evidence_
+    admission`'s corroboration check needs from an already-serialized
+    `contracts.ConfidenceEvidenceSummary` JSON blob. Mirrors `_max_
+    confidence_from_evidence_json`'s own honesty rule exactly: `None` --
+    never a fabricated `0` -- for a missing, empty, or malformed payload,
+    or for any field the payload itself does not carry."""
+
+    if not confidence_evidence_json:
+        return None
+    try:
+        payload = json.loads(confidence_evidence_json)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    def _int_or_none(key: str) -> int | None:
+        value = payload.get(key)
+        return int(value) if isinstance(value, (int, float)) else None
+
+    return _CorroborationFacts(
+        strong_detection_count=_int_or_none("strong_detection_count"),
+        detection_count=_int_or_none("detection_count"),
+        max_consecutive_detector_confirmed_frames=_int_or_none("max_consecutive_detector_confirmed_frames"),
+    )
+
+
+@dataclass(frozen=True)
 class CameraConfigurationApplyResult:
     revision: CameraConfigurationRevision
     preview: CameraConfigurationImpactPreview
@@ -6981,7 +7027,11 @@ class ProductRepository:
             return CandidateVisitCreationOutcome(
                 "blocked_missing_evidence", "no_persistable_evidence_bytes", None, None, proposal.proposal_id, (),
             )
-        quality = evaluate_evidence_admission(proposal, items_with_content)
+        quality = evaluate_evidence_admission(
+            proposal,
+            items_with_content,
+            confidence_evidence=_corroboration_facts_from_evidence_json(proposal.confidence_evidence_json),
+        )
         if not quality.admitted:
             return CandidateVisitCreationOutcome(
                 quality.outcome, quality.reason, None, None, proposal.proposal_id, (),
