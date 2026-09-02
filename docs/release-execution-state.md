@@ -24,7 +24,40 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `1000c8d` -- the report commit for Field-Acceptance
+- **Accepted HEAD:** `e6d662f` -- the report commit for Representative
+  Daylight Gate A Field Acceptance v10 (Admission-Precision Re-Proof &
+  Gate A Closure Tranche; see §3/§6.R, below, and
+  [representative-daylight-gate-a-field-acceptance-v10-report.md](representative-daylight-gate-a-field-acceptance-v10-report.md)
+  for the complete record). No production code changed by this milestone
+  (a real ~90.2-minute live field-acceptance session against the real
+  reference Camera Node, plus rigorous post-hoc offline accounting using a
+  newly-disclosed periodic-counterfactual-snapshot method) --
+  `e6d662f` sits directly on top of `b7e9724` (the reconciliation commit
+  accepting Field-Acceptance Instance Lifecycle & Storage Safety v1).
+  Classification **A** (the session itself, not the hypothesis under
+  test -- see below). Primary finding: the Hard-Negative Visit Admission
+  Precision fix's own field-proof criterion did **not** hold -- confirmed
+  false-Visit rate 4/11 = 36.4%, worse than both v8 (22.2%) and v9
+  (20.0%), root-caused precisely to one recurring background confusor
+  (tube-feeder area) defeating the new rule's count-based corroboration
+  axis, exactly the residual risk that fix's own report had already
+  disclosed as untested at this scale. The rule correctly rejected 3/3
+  classic bare-minimum single-generation hard-negative chains, including
+  an exact re-confirmation of v8's own foliage-cluster location.
+  Weak-real-bird recall preserved; Gate B's own species-escalation
+  failure class (false Visit -> confident wrong species) did **not**
+  recur. Fragmentation regressed to one confirmed case (breaking the
+  prior 0% streak); duplicates remain 0%; `blocked_missing_evidence`
+  improved to 6.7% (best of all cohorts); RTT-normalized latency stable,
+  closely matching v9. Field-acceptance instance lifecycle tooling
+  exercised end to end for the first time in a real session
+  (`init` -> `completed` -> `archived`, evidence-archive attached,
+  `SAFE_TO_RECLAIM`, deliberately not destroyed). Does **not** authorize
+  the next Representative Field Acceptance session, External Pre-Release
+  Acceptance, or Final Release Hardening, and does **not** select a next
+  development milestone -- see §3 for the complete reconciliation entry.
+- **Prior accepted HEAD (pre-v10):**
+  `1000c8d` -- the report commit for Field-Acceptance
   Instance Lifecycle & Storage Safety v1 (see §3/§6.R, below, and
   [field-acceptance-instance-lifecycle-storage-safety-v1-report.md](field-acceptance-instance-lifecycle-storage-safety-v1-report.md)
   for the complete record), sitting directly on top of `91a8ebb` (this
@@ -1979,6 +2012,118 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-02 update (Representative Daylight Gate A Field Acceptance v10
+-- Admission-Precision Re-Proof & Gate A Closure Tranche, see §1/§6.R):**
+ran the field session the Hard-Negative Visit Admission Precision fix's
+own closure required, at classification **A** -- see
+[representative-daylight-gate-a-field-acceptance-v10-report.md](representative-daylight-gate-a-field-acceptance-v10-report.md)
+for the complete record. A real ~90.2-minute Observation session
+(2026-09-02, 07:39:59-09:11:12 EDT) against the same real reference
+Camera Node, on a fresh disposable instance
+(`MockingBirdFieldAcceptanceV10`) whose accepted-HEAD identity was
+directly confirmed (`git_commit` exact match, schema v58). Both required
+preflight gates confirmed compatible/calibrated before Observation start.
+**Primary finding: the fix's own stated field-proof criterion did not
+hold.** Direct visual + raw-detection-trajectory review of all 11
+admitted Visits (100%, not sampled) found **4 confirmed false/background
+admissions (36.4%)** -- worse than both v8 (22.2%) and v9 (20.0%), not
+materially reduced toward v5/v7's 4-5.3% range. This is not a diffuse
+regression: the rule correctly rejected 3/3 classic bare-minimum
+single-generation hard-negative chains this session (including an exact
+re-confirmation, by bounding-box coordinates and direct visual
+inspection, of v8's own foliage-cluster "Location A"), but the *same*
+recurring background confusor (a location at/near the tube feeder)
+defeated the rule's count-based corroboration axis 4 separate times by
+accumulating enough individually-insufficient low-confidence detections
+within one continuation window to clear `2 * constituent_generation_count
++ 1` without ever reaching a strong detection -- precisely the residual
+risk the fix's own report disclosed as untested at this scale ("a
+hypothetical real bird at the exact same corroboration floor... is not
+distinguishable by corroboration structure alone"), now concretely
+reproduced with real field data (15 further `blocked_ambiguous_boundary`
+occurrences of the same confusor location, spanning nearly the entire
+session, corroborate that this is a near-continuous background signal,
+not an intermittent one). **Weak-real-bird recall preserved** (a genuine
+small/distant bird, matching `northern_mockingbird`, admitted three times
+via count-based corroboration, never rejected). One genuine recall miss
+was found and traced (a real bird at the same feeder, ~5.8 minutes after
+an admitted Visit, resolved `blocked_ambiguous_boundary`) -- confirmed
+**not** attributable to the new rule, which the pre-existing arbitration
+mechanism, unrelated to `reject_insufficient_detector_corroboration`,
+alone produced. **Gate B's own species-escalation failure class (false
+Visit -> confident wrong species) did not recur**: none of the 4
+confirmed-false admissions received a species guess (Identification
+Eligibility/Abstention correctly abstained on all of them). Useful-
+evidence rate fell to 54.5% (below v9's already-withdrawn 76.0%).
+Fragmentation regressed to one confirmed real case (two overlapping-
+window admitted Visits at one location, tracker-interrupted rather than
+merged) -- breaking the prior 6th/7th-cohort 0% convergence streak on a
+single-cohort, small-denominator basis. Duplicates remain 0% (7th
+convergent cohort). `blocked_missing_evidence` improved further to 6.7%
+distinct-proposal rate -- better than v7 (9.4%), v8 (9.9%), and v9
+(8.9%), a further convergent, healthy result. RTT calibration: 445
+in-session batches (merged from periodic snapshots -- see below), 98.9%
+`calibrated`, 0 clock jumps. True latency: median T0->T5 103.9s / p90
+183.3s, closely matching v9 (111.8s / 173.9s), with one disclosed,
+root-caused outlier (candidate-010's own finalization delayed ~11.4
+minutes by a temporally-close subsequent real encounter at the same
+location awaiting its own arbitration -- the accepted Visit-Continuity
+quiet-period mechanism, not a new defect). Monitoring coverage 99.99%
+(4,296 frames, further convergent). No multi-subject wildlife evidence
+this session (today's activity was sparser than v5-v9's own cohorts, 11
+admissions vs. 19-27) -- target not met, unrelated to this milestone's
+own scope. Stop-finalization and the `AnalysisStreamRetryPolicy`
+(2 reconnect recoveries, both clean) both worked correctly a second time
+on a different Stream/session. **New methodological finding, disclosed
+for future sessions:** the counterfactual ledger's own 60-minute
+age-eviction bound (`CounterfactualRetentionConfig.max_age_ms`) is
+shorter than this milestone's own 75-100 minute target session length --
+a single end-of-session read would have silently lost ~46% of the
+session's own raw-detection/proposal-outcome history to eviction;
+recovered instead via periodic full-window snapshots every 12 minutes,
+merged post-hoc, achieving 100% recovery of the raw-detection and
+track-generation ledgers. **Field-acceptance instance lifecycle tooling
+exercised end to end for the first time in a real session**
+(`init` -> `completed` -> `archived`, evidence-archive attached,
+`SAFE_TO_RECLAIM`, deliberately not destroyed, per the milestone's own
+"do not manually improvise cleanup" instruction). One disclosed
+operational action, user-authorized: the reference Camera Node's single
+pairing-credential slot was held by the now-dormant v9 instance;
+freeing it for v10 required an SSH-mediated pairing-state reset,
+correctly declined once by the auto-mode permission classifier as a
+consequential remote-infrastructure action, then explicitly authorized
+by the user before proceeding (backed up first; `boot_id` continuity
+confirmed a credential-state reset only, never a physical device
+change). Tier 1-3 correctly not run (zero production code changed, per
+this milestone's own explicit validation rule); zero schema change
+(v58, unchanged). This closure does **not** authorize the next
+Representative Field Acceptance / Gate A session, External Pre-Release
+Acceptance, or Final Release Hardening, and does **not** select a next
+development milestone. Authorization remains **NONE -- GLOBAL
+PRODUCT-ROADMAP RECONCILIATION REQUIRED**, unchanged. **Concrete new
+blocker, replacing item (1) in the list below:** the count-accumulation
+loophole in `reject_insufficient_detector_corroboration` traced above --
+a future admission-precision milestone needs to bound corroboration
+credit by genuine detection value/variance (not raw repeated-detection
+count alone) so a physically static confusor cannot out-accumulate a
+floor scaled only by generation count; this is now a precisely-scoped
+DEV contract candidate, not an open-ended re-investigation. **Remaining
+Gate A dependency, in priority order, superseding the priority order in
+the Hard-Negative entry below (item (1) there is now answered -- field-
+proof ran and did not confirm the fix; superseded by the concrete new
+blocker just above):** (1) the count-accumulation admission-rule gap
+just named; (2) a second, independently-varied true-latency cohort
+(unchanged -- Gate A's own standing rule requires cross-session
+convergence); (3) a second live cohort producing genuinely crowded
+3+-simultaneous-subject activity (unchanged, still not met by v10); (4)
+the bounded visual-review pass against v7's own two remaining genuinely-
+unreviewed ambiguous fragmentation units (unchanged); (5) the ~13
+untraced `blocked_missing_evidence` records, v7's own (unchanged); (6)
+the three real, disk-space-consuming legacy field-acceptance dev-roots
+now disclosed as structurally invisible to the new lifecycle-manifest
+tool's own `preflight` reclaimability accounting (new, bounded,
+tooling-only, not release-critical).
 
 **2026-09-02 update (Field-Acceptance Instance Lifecycle & Storage Safety
 v1, see §1/§6.R):** closes the accumulation root cause v8's own report
@@ -5778,6 +5923,87 @@ lifecycle -- a future field session should `init` its disposable
 `--dev-root` immediately after deploying, and `complete`/`mark-archived`/
 `cleanup` it once the session's own report is written, so the same
 accumulation this milestone closed does not silently recur.
+
+**Representative Daylight Gate A Field Acceptance v10 -- Admission-
+Precision Re-Proof & Gate A Closure Tranche (2026-09-02) ran the field
+session item (1) above required, at classification A.** See
+[representative-daylight-gate-a-field-acceptance-v10-report.md](representative-daylight-gate-a-field-acceptance-v10-report.md)
+for the complete record; see §1/§3, above, for the full reconciled
+summary. First real session to use the newly-accepted field-acceptance
+instance lifecycle end to end (`init` immediately after deploying,
+`complete`/`mark-archived` once the report was written, evidence-archive
+attached, `SAFE_TO_RECLAIM`, deliberately not destroyed) -- exactly the
+"future field session should" guidance the entry immediately above this
+one asked for, now itself the worked example. **Primary result: the
+Hard-Negative Visit Admission Precision fix's own field-proof criterion
+did not hold** -- confirmed false-Visit rate 4/11 = 36.4%, worse than v8
+(22.2%) and v9 (20.0%). Precisely root-caused, not diffuse: the new rule
+correctly rejected 3/3 classic single-generation hard-negative chains
+(one an exact re-confirmation of v8's own foliage-cluster location by
+coordinates and direct visual inspection), but the same recurring
+tube-feeder-area confusor defeated the rule's count-based corroboration
+axis 4 times by accumulating enough individually-insufficient low
+-confidence detections within one continuation window -- the exact
+residual risk that fix's own report had already disclosed as untested at
+this scale, now concretely reproduced (further corroborated by 15
+`blocked_ambiguous_boundary` occurrences of the same location spanning
+nearly the whole session). Weak-real-bird recall preserved (a genuine
+small/distant bird admitted three times via count-based corroboration,
+never rejected); the one genuine recall miss found traces to the
+pre-existing `blocked_ambiguous_boundary` mechanism, not the new rule.
+Gate B's own species-escalation failure class (false Visit -> confident
+wrong species) did not recur on any of the 4 confirmed-false admissions.
+Useful-evidence rate fell to 54.5%; fragmentation regressed to one real
+confirmed case (breaking the prior 0% streak, small-denominator basis);
+duplicates remain 0% (7th convergent cohort); `blocked_missing_evidence`
+improved to 6.7% (best of all cohorts, further convergent); RTT
+calibration 445 batches merged from periodic snapshots, 98.9%
+`calibrated`, 0 clock jumps; true latency median T0->T5 103.9s / p90
+183.3s, closely matching v9 (111.8s / 173.9s) with one disclosed,
+root-caused outlier; monitoring coverage 99.99%; stop-finalization and
+the connectivity retry policy both worked correctly a second time. No
+multi-subject wildlife evidence this session (sparser activity day than
+v5-v9, 11 admissions vs. 19-27) -- target not met, disclosed, not a
+defect. **New methodological finding for future sessions:** the
+counterfactual ledger's own 60-minute age-eviction bound is shorter than
+this milestone's own 75-100 minute target session length; a single
+end-of-session read would have silently lost ~46% of the session's own
+history to eviction, worked around via periodic full-window snapshots
+every 12 minutes merged post-hoc (100% recovery of the raw-detection and
+track-generation ledgers) -- recommended as standing acceptance
+methodology for any session expected to run past ~50 minutes. One
+disclosed, user-authorized operational action: the reference Camera
+Node's single pairing-credential slot, held by the now-dormant v9
+instance, required an SSH-mediated reset to free for v10 -- correctly
+declined once by the auto-mode permission classifier as a consequential
+remote-infrastructure action, then explicitly authorized by the user
+(backed up first, `boot_id` continuity confirmed a credential-state
+reset only). Tier 1-3 correctly not run (zero production code changed);
+zero schema change (`v58`, unchanged). This closure does **not**
+authorize the next Representative Field Acceptance / Gate A session,
+External Pre-Release Acceptance, or Final Release Hardening, and does
+**not** select a next development milestone. Authorization remains
+**NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, unchanged.
+**Remaining Gate A dependency, in priority order, superseding the
+priority order in the entry above (item (1) there is now answered --
+field-proof ran and did not confirm the fix; superseded by the concrete
+new blocker immediately below):** (1) the count-accumulation loophole in
+`reject_insufficient_detector_corroboration` this session traced and
+precisely scoped -- bound corroboration credit by genuine detection
+value/variance, not raw repeated-detection count alone, so a physically
+static confusor cannot out-accumulate a floor scaled only by generation
+count; (2) a second, independently-varied true-latency cohort
+(unchanged); (3) a second live cohort producing genuinely crowded
+3+-simultaneous-subject activity (unchanged, still not met); (4) the
+bounded visual-review pass against v7's own two remaining genuinely
+-unreviewed ambiguous fragmentation units (unchanged); (5) the ~13
+untraced `blocked_missing_evidence` records, v7's own (unchanged); (6)
+the three real, disk-space-consuming legacy field-acceptance dev-roots
+(`MockingBirdFieldAcceptanceV9` 6.8GB, `MockingBirdFirstHourAcceptance`
+2.4GB, `MockingBirdDev`) now disclosed as structurally invisible to the
+new lifecycle-manifest tool's own `preflight` reclaimability accounting,
+since none was ever `init`-ed under it (new, bounded, tooling-only, not
+release-critical).
 
 ### S. Actual Final Release Hardening
 
