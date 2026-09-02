@@ -14737,6 +14737,14 @@ async def create_review_label(
             status_code=409,
             detail="This item changed. Refresh it before saving a correction.",
         ) from error
+    except ReviewProvenanceError as error:
+        # Mirrors `reclassify_review_label_provenance`'s own identical
+        # mapping below -- this endpoint was the one place `validate_review_
+        # origin`'s well-formed rejection (e.g. `agent_diagnostic` with no
+        # `reviewer_identity`) still reached the client as an unhandled 500
+        # instead of a clean 400. See docs/review-provenance-validation-api
+        # -error-semantics-v1-report.md.
+        raise HTTPException(status_code=400, detail=str(error)) from error
     repository.record_audit_event(
         actor_user_id=current_user.id, actor_display_name=current_user.display_name,
         action="review.corrected", target_type=payload.target_type, target_id=payload.target_id,

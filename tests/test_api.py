@@ -569,7 +569,7 @@ def test_unsupported_review_target_type_returns_400() -> None:
 def test_missing_review_target_returns_404() -> None:
     response = client.post(
         "/api/review-labels",
-        json={"review_origin": "human", 
+        json={"review_origin": "human",
             "target_type": "visit",
             "target_id": "visit-missing",
             "label": "carolina_wren",
@@ -578,6 +578,208 @@ def test_missing_review_target_returns_404() -> None:
 
     assert response.status_code == 404
     assert "Visit 'visit-missing' was not found." == response.json()["detail"]
+
+
+# Review Provenance Validation & API Error Semantics v1: the v9 field
+# session found that `POST /api/review-labels` with `review_origin=
+# "agent_diagnostic"` and no `reviewer_identity` correctly raises
+# `ReviewProvenanceError` deep in `product_repository.py`, but the endpoint
+# only caught `ReviewRevisionConflictError`, so this well-formed validation
+# error reached the client as an unhandled `500` instead of a clean `400`.
+# These tests exercise the real HTTP endpoint end to end (not the domain
+# function directly -- see `tests/test_review_decision_provenance.py` for
+# that coverage) so a regression here is caught at the boundary that
+# actually broke.
+
+
+def test_review_label_agent_diagnostic_without_reviewer_identity_returns_clean_400() -> None:
+    response = client.post(
+        "/api/review-labels",
+        json={
+            "review_origin": "agent_diagnostic",
+            "target_type": "visit",
+            "target_id": BIRD_VISIT_ID,
+            "label": "carolina_wren",
+            "notes": "diagnostic pass, no reviewer_identity supplied",
+        },
+    )
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert detail == "agent_diagnostic_requires_reviewer_identity"
+    # No traceback/internal exception plumbing leaked to the client.
+    assert "Traceback" not in detail
+    assert ".py" not in detail
+
+    # The rejected request never persisted a row or touched Reviewed truth.
+    # `detail["review_labels"]`/`GET /api/review-labels` both only resolve
+    # the current *authoritative* row per target (see `_effective_review_
+    # label_models`'s own docstring) -- a leaked `agent_diagnostic` row
+    # would never appear there even if one existed. `correction_history`
+    # (`_review_label_history_models_for_visit`) is the raw, unfiltered-by
+    # -authority per-Visit history, so it is the one API-visible place that
+    # can actually prove nothing was persisted.
+    detail = client.get(f"/api/visits/{BIRD_VISIT_ID}/detail").json()
+    assert detail["review_labels"] == []
+    assert detail["correction_history"] == []
+    visit = detail["visit"]
+    assert visit["review_status"] == "needs_review"
+    assert visit["reviewed_label"] is None
+
+
+def test_review_label_agent_diagnostic_with_reviewer_identity_is_accepted_but_not_authoritative() -> None:
+    response = client.post(
+        "/api/review-labels",
+        json={
+            "review_origin": "agent_diagnostic",
+            "reviewer_identity": "claude-review-agent-v1",
+            "target_type": "visit",
+            "target_id": BIRD_VISIT_ID,
+            "label": "carolina_wren",
+            "notes": "diagnostic pass",
+        },
+    )
+
+    assert response.status_code == 201
+    result = response.json()
+    label = result["review_label"]
+    assert label["review_origin"] == "agent_diagnostic"
+    assert label["reviewer_identity"] == "claude-review-agent-v1"
+    assert label["is_authoritative"] is False
+    # Provenance requirement stays strict even once satisfied: a diagnostic
+    # assessment is durably recorded but never becomes Reviewed truth.
+    assert result["visit"]["review_status"] == "needs_review"
+    assert result["visit"]["reviewed_label"] is None
+
+    # `detail["review_labels"]` only resolves the current *authoritative*
+    # row per target (see `_effective_review_label_models`'s own
+    # docstring), so the non-authoritative diagnostic row just created is
+    # correctly absent from it by design -- it is still durably recorded,
+    # visible instead in this Visit's own raw, unfiltered `correction_
+    # history` (`_review_label_history_models_for_visit`).
+    detail = client.get(f"/api/visits/{BIRD_VISIT_ID}/detail").json()
+    assert detail["review_labels"] == []
+    assert len(detail["correction_history"]) == 1
+    entry = detail["correction_history"][0]
+    assert entry["review_origin"] == "agent_diagnostic"
+    assert entry["is_authoritative"] is False
+    assert entry["label"] == "carolina_wren"
+
+
+def test_review_label_imported_curated_without_reviewer_identity_returns_clean_400() -> None:
+    # Same `ReviewProvenanceError` boundary, a different `IDENTITY_REQUIRED_
+    # ORIGINS` member -- confirms the fix is generic to review-provenance
+    # validation, not a special case for `agent_diagnostic` alone.
+    response = client.post(
+        "/api/review-labels",
+        json={
+            "review_origin": "imported_curated",
+            "target_type": "visit",
+            "target_id": BIRD_VISIT_ID,
+            "label": "carolina_wren",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "imported_curated_requires_reviewer_identity"
+    assert all(label["target_id"] != BIRD_VISIT_ID for label in client.get("/api/review-labels").json())
+
+
+def test_review_label_human_origin_conflicting_with_disclosed_non_human_notes_returns_clean_400() -> None:
+    response = client.post(
+        "/api/review-labels",
+        json={
+            "review_origin": "human",
+            "target_type": "visit",
+            "target_id": BIRD_VISIT_ID,
+            "label": "carolina_wren",
+            "notes": "[AGENT VISUAL REVIEW: looks like a Carolina Wren, not independently human-confirmed]",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "human_origin_conflicts_with_disclosed_non_human_review"
+    assert all(label["target_id"] != BIRD_VISIT_ID for label in client.get("/api/review-labels").json())
+
+
+def test_failed_provenance_validation_does_not_overwrite_existing_reviewed_truth() -> None:
+    valid = client.post(
+        "/api/review-labels",
+        json={
+            "review_origin": "human",
+            "target_type": "visit",
+            "target_id": BIRD_VISIT_ID,
+            "label": "northern_cardinal",
+            "notes": "Confirmed by the operator.",
+        },
+    )
+    assert valid.status_code == 201
+
+    failed = client.post(
+        "/api/review-labels",
+        json={
+            "review_origin": "agent_diagnostic",
+            "target_type": "visit",
+            "target_id": BIRD_VISIT_ID,
+            "label": "carolina_wren",
+        },
+    )
+    assert failed.status_code == 400
+
+    visit = client.get(f"/api/visits/{BIRD_VISIT_ID}").json()
+    assert visit["review_status"] == "reviewed"
+    assert visit["reviewed_label"] == "northern_cardinal"
+
+    labels = client.get("/api/review-labels").json()
+    bird_labels = [label for label in labels if label["target_id"] == BIRD_VISIT_ID]
+    assert len(bird_labels) == 1
+    assert bird_labels[0]["label"] == "northern_cardinal"
+
+
+def test_failed_provenance_validation_creates_no_review_corrected_audit_entry(
+    isolated_repository: ProductRepository,
+) -> None:
+    response = client.post(
+        "/api/review-labels",
+        json={
+            "review_origin": "agent_diagnostic",
+            "target_type": "visit",
+            "target_id": BIRD_VISIT_ID,
+            "label": "carolina_wren",
+        },
+    )
+    assert response.status_code == 400
+
+    audit_entries = isolated_repository.list_audit_log()
+    assert not any(
+        entry.action == "review.corrected" and entry.target_id == BIRD_VISIT_ID
+        for entry in audit_entries
+    )
+
+
+def test_unexpected_review_label_exception_still_surfaces_as_a_server_error(
+    monkeypatch: pytest.MonkeyPatch, isolated_repository: ProductRepository,
+) -> None:
+    """The new `except ReviewProvenanceError` clause must not widen into a
+    generic `except Exception` -> 400. An unrelated, genuinely unexpected
+    exception from the repository call must remain unmasked."""
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("unexpected_repository_failure")
+
+    monkeypatch.setattr(isolated_repository, "create_review_label", _boom)
+
+    with pytest.raises(RuntimeError, match="unexpected_repository_failure"):
+        client.post(
+            "/api/review-labels",
+            json={
+                "review_origin": "agent_diagnostic",
+                "reviewer_identity": "claude-review-agent-v1",
+                "target_type": "visit",
+                "target_id": BIRD_VISIT_ID,
+                "label": "carolina_wren",
+            },
+        )
 
 
 def test_dataset_exports_endpoint_returns_export() -> None:
