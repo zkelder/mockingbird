@@ -24,8 +24,29 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `6809933` -- the report commit for Review Provenance
-  Validation & API Error Semantics v1 (see §3/§6.R, below, and
+- **Accepted HEAD:** `b39b414` -- the report commit for Host <-> Camera
+  Node Release-Compatibility Preflight v1 (see §3/§6.R, below, and
+  [host-camera-node-release-compatibility-preflight-v1-report.md](host-camera-node-release-compatibility-preflight-v1-report.md)
+  for the complete record), sitting directly on top of `2e84227` (this
+  milestone's own implementation commit -- new `mockingbird.observation.
+  node_compatibility` (pure `classify_node_compatibility` decision table
+  + live `probe_node_compatibility` orchestration, reusing `CameraNode
+  Client`/`clock_calibration.estimate_rtt_clock_calibration` unchanged);
+  one new conditional gate in `api/main.py:start_stream_observation`,
+  active only when `request.state.field_acceptance_principal is not None`
+  and the Stream is already fully paired, failing closed via one new pure
+  `unified_status.camera_node_incompatible_facts` builder before
+  `.start(...)` is ever called; one new informational `diagnostic_
+  context` key on Doctor's existing `camera_node` check; a new standalone
+  `scripts/check_camera_node_compatibility.py` CLI; 25 new tests across
+  `test_node_compatibility.py`/`test_node_compatibility_api.py`/`test_
+  doctor.py` -- zero schema change, zero wire-protocol change), which
+  sits on top of `da1d05e` (the reconciliation commit accepting Review
+  Provenance Validation & API Error Semantics v1).
+- **Prior accepted HEAD (pre-Host-Camera-Node-Release-Compatibility-Preflight-v1):**
+  `6809933` -- the report commit for Review Provenance
+  Validation & API Error Semantics v1 (see §3/§6.R,
+  below, and
   [review-provenance-validation-api-error-semantics-v1-report.md](review-provenance-validation-api-error-semantics-v1-report.md)
   for the complete record), sitting directly on top of `00ff750` (this
   milestone's own implementation commit -- one new `except ReviewProvenanceError`
@@ -1932,6 +1953,98 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-02 update (Host <-> Camera Node Release-Compatibility Preflight
+v1, see §1/§6.R):** closes the release-process gap the Reference Camera
+Node RTT-Capability Upgrade & Compatibility Re-Proof v1 entry (below)
+disclosed but explicitly left unfixed -- "no automated mechanism
+currently exists that checks 'is the installed Camera Node build
+compatible with/current relative to the accepted repo HEAD' before a
+Gate A/field-acceptance session begins" -- at classification **A**. See
+[host-camera-node-release-compatibility-preflight-v1-report.md](host-camera-node-release-compatibility-preflight-v1-report.md)
+for the complete record. This is a release-process/correctness closure,
+not a field session: no wildlife cohort was run, no detector/model/
+hard-negative/RTT-protocol code was touched, and Gate A's own evidence
+body and remaining dependency (below) are unchanged by this milestone.
+New `mockingbird.observation.node_compatibility`: a pure decision table
+plus live orchestration reusing the existing, unmodified `CameraNode
+Client`/`clock_calibration.estimate_rtt_clock_calibration` functions --
+never a second calibration implementation. Compatibility is capability
+-based, never exact git-commit equality (the Camera Node has never
+exposed a live `git_commit`; `service_version`/`app_version` are both
+pinned at `"0.1.0"` on Host and Node today, so a `version_skew_detected`
+field is reported purely as informational diagnostics and never gates
+compatibility). Two bounded profiles (`ordinary_monitoring`: only the
+health protocol must answer; `field_acceptance`: additionally requires
+the expected camera live-confirmed available, RTT timestamp fields
+present, and a real bounded RTT-bounded calibration batch to actually
+reach `state == "calibrated"`); six actionable states (`compatible`,
+`incompatible_missing_capability`, `incompatible_protocol`,
+`calibration_failed`, `node_unreachable`, `camera_unavailable`) -- never
+a generic "Camera Node unhealthy" bucket. No wire-protocol change --
+every fact needed (`api_version`/`service_version`/`node_receive_time`/
+`node_time`) was already on the wire; an old Node's health response
+parses exactly as before. Wired into the one and only call site
+(`grep`-confirmed: `get_observation_engine_session_manager().start(`
+appears exactly once in `src/`) -- only a field-acceptance credential's
+own session start is held to the stricter profile, and only once the
+Stream is already fully paired; an ordinary signed-in user's Start
+observing is structurally unaffected (the new code path, and its network
+calls, never execute outside that condition). On incompatibility, fails
+closed before the Observation Engine session, acceptance-recorder
+allocation, or any GPU/model resource commitment -- confirmed end to end,
+including a same-session follow-up status check proving `observing`
+stayed `False`. Zero mutation of Node state anywhere (every call is a
+pre-existing, already-accepted, read-only GET). Doctor gains one new
+informational context key on its existing `camera_node` check's PASS
+branch, pointing at a new standalone script
+(`scripts/check_camera_node_compatibility.py`) for a live verdict --
+mirrors the `clock` check's own established "not measurable from a
+standalone Doctor check" precedent rather than adding a live probe to
+Doctor itself. Exercised live against the real, already-upgraded
+reference Camera Node (`192.168.1.112:8787`) from two independent
+network paths -- this sandbox and a real native-Windows Host (the actual
+Gate A Host platform) -- both profiles `compatible` on both paths, each
+with a real 5/5 valid RTT-bounded calibration batch (22.65ms RTT from
+this sandbox, 24.0ms from native Windows). One incidental, pre-existing,
+unrelated finding disclosed on the Windows dev instance (a stale database
+schema predating `camera_node_last_seen_at`, schema 37, causing Doctor's
+`camera_node` check to raise rather than gracefully degrade) -- confirmed
+unrelated to this milestone (`storage/models.py` untouched) and already
+covered by passing Linux-side tests against a correctly-migrated schema;
+left disclosed for a future Doctor/migration-robustness milestone, not
+fixed here. No schema change. Tier 1 (25/25, non-flaky across 5
+consecutive runs) and Tier 2 (582/582 across `CameraNodeClient`, RTT
+calibration, engine runtime, Doctor, field-acceptance auth, the
+installer, and the full `test_api.py`/`test_observation_camera_node_
+live.py` surface, plus a clean full-app import/boot smoke test) both
+clean; Tier 3 correctly not run, per this milestone's own explicit §29
+carve-out for enforcement limited to acceptance/Doctor surfaces, matching
+this diff precisely (confirmed by direct code reading: the new `api/
+main.py` behavior is conditionally gated and reachable only for an
+already-paired Stream; `unified_status.py` gained one new additive
+function; `doctor.py` gained one new informational context key inside an
+existing branch). Zero new `ruff` findings (`git stash`-isolated baseline
+comparison; `api/main.py`'s own 26 pre-existing, unrelated findings
+unchanged before/after). This closure does **not** authorize the next
+Representative Field Acceptance / Gate A session (Representative Daylight
+Gate A Field Acceptance v10 -- Admission-Precision Re-Proof & Gate A
+Closure Tranche remains the exact next daylight dependency, unchanged and
+not self-authorized here), External Pre-Release Acceptance, or Final
+Release Hardening, and does **not** select a next development milestone.
+Authorization remains **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION
+REQUIRED**, unchanged. **Remaining Gate A dependency, unchanged from the
+list immediately below -- this milestone is orthogonal to Gate A's own
+field-evidence dependency chain and neither adds to nor closes any item
+on it:** (1) the next Representative Daylight Gate A cohort must
+field-prove the Hard-Negative Visit Admission Precision fix (unchanged --
+see the Hard-Negative entry below for the complete field-proof criteria);
+(2) a second, independently-varied true-latency cohort (unchanged); (3) a
+second live cohort producing genuinely crowded 3+-simultaneous-subject
+activity (unchanged); (4) the bounded visual-review pass against v7's own
+two remaining genuinely-unreviewed ambiguous fragmentation units
+(unchanged); (5) the ~13 untraced `blocked_missing_evidence` records,
+v7's own (unchanged).
 
 **2026-09-01 update (Review Provenance Validation & API Error Semantics
 v1, see §1/§6.R):** closes item (6) immediately below -- the
@@ -5352,6 +5465,140 @@ cohort producing genuinely crowded 3+-simultaneous-subject activity
 remaining genuinely-unreviewed ambiguous fragmentation units (unchanged);
 (5) the ~13 untraced `blocked_missing_evidence` records, v7's own
 (unchanged).
+
+**Host <-> Camera Node Release-Compatibility Preflight v1 (2026-09-02)
+closes the release-process gap the Reference Camera Node RTT-Capability
+Upgrade & Compatibility Re-Proof v1 entry above disclosed -- "no
+automated mechanism currently exists that checks 'is the installed
+Camera Node build compatible with/current relative to the accepted repo
+HEAD' before a Gate A/field-acceptance session begins" -- at
+classification **A**. See
+[host-camera-node-release-compatibility-preflight-v1-report.md](host-camera-node-release-compatibility-preflight-v1-report.md)
+for the complete record.** New `mockingbird.observation.node_
+compatibility`: a pure decision table (`classify_node_compatibility`)
+plus live orchestration (`probe_node_compatibility`) reusing the
+existing, unmodified `CameraNodeClient`/`clock_calibration.estimate_rtt_
+clock_calibration` functions -- never a second calibration
+implementation. Compatibility is capability-based, never exact
+git-commit equality: the Camera Node has never exposed a live `git_
+commit` (only a static package `service_version`, currently `"0.1.0"` on
+both Host and Node, this codebase's own established never-bump
+practice), so a `version_skew_detected` field is reported purely as
+informational diagnostics and never gates compatibility -- the one place
+a real version mismatch is already meaningfully comparable, `api_
+version`, is already hard-gated to exact-match at pairing time. Two
+bounded profiles (`ordinary_monitoring`: only requires the health
+protocol to answer; `field_acceptance`: additionally requires the
+expected camera live-confirmed available, the RTT timestamp fields
+present, and a real bounded RTT-bounded calibration batch to actually
+reach `state == "calibrated"`); six actionable states (`compatible`,
+`incompatible_missing_capability`, `incompatible_protocol`,
+`calibration_failed`, `node_unreachable`, `camera_unavailable`) -- never
+a generic "Camera Node unhealthy" bucket. No wire-protocol change --
+every fact this contract needs (`api_version`/`service_version`/`node_
+receive_time`/`node_time`) was already present on the wire; an old
+Node's health response continues to parse exactly as before.
+
+Wired into the one and only call site (`grep`-confirmed:
+`get_observation_engine_session_manager().start(` appears exactly once
+in `src/`, in `api/main.py`'s `start_stream_observation` -- no bypass
+path exists): only a field-acceptance credential's own session start
+(`request.state.field_acceptance_principal`, already resolved
+unconditionally on every request by `auth.install_authorization`) is
+held to the stricter `field_acceptance` profile, and only once the Stream
+is already fully paired (mirrors `unified_status._camera_node_paired`'s
+own four-field check exactly, so an unpaired Stream is left to its
+existing "not paired yet" message unchanged) -- an ordinary signed-in
+user's Start observing is never newly blocked, confirmed both
+structurally (the new code path is wrapped in that same `if`, so its
+network calls never execute for an ordinary session) and behaviorally
+(real HTTP through the real pairing/setup/observation-start path: an
+Administrator's own Start observing against the identical v8-shape old-
+Node response is never blocked). On incompatibility, fails closed -- via
+one new pure `unified_status.camera_node_incompatible_facts` builder --
+before the Observation Engine session, acceptance-recorder allocation, or
+any GPU/model resource commitment, confirmed end to end (a field-
+acceptance credential's own `POST .../observation/start` against the
+exact real v8 health shape returns an honest `needs_attention` status and
+a same-session follow-up `GET .../observation/status` confirms
+`observing` stayed `False`). Zero mutation of any kind: every call this
+milestone's own code makes (`health`, `cameras`, `sample_clock_round_
+trip`) is a pre-existing, already-accepted, read-only GET -- nothing
+SSHes into the Node, installs software, resets pairing, or upgrades
+anything automatically; upgrade remains the existing, separate,
+operator-initiated `scripts/install_camera_node.py` action.
+
+Doctor (`diagnostics/doctor.py`) gains one new informational `diagnostic_
+context` key on the existing `camera_node` check's terminal PASS branch
+(only when a camera_node Source is configured), pointing at a new
+standalone script (`scripts/check_camera_node_compatibility.py`, which
+formalizes what every prior field-acceptance report has so far done by
+hand -- "5 real calibration batches run directly against the Node via
+the exact unmodified production functions") for a live verdict -- mirrors
+the `clock` check's own already-established "not measurable from a
+standalone Doctor check: see ... instead" precedent rather than adding a
+live network probe, which would violate Doctor's own documented
+read-only, no-`ProductRepository`-construction design invariant. No new
+check, no existing check's status/recoverability changed.
+
+Exercised live against the real, already-upgraded reference Camera Node
+(`192.168.1.112:8787`, confirmed LAN-reachable) from two independent
+network paths: this sandbox (WSL2) and, more representatively, a real
+native-Windows Host (the actual Gate A Host platform) via the existing,
+accepted `scripts/deploy_windows_dev.py`, with the deployed instance's
+`git_commit` independently verified over real HTTP rather than trusting
+the deploy helper's own report. Both `ordinary_monitoring` and `field_
+acceptance` profiles return `compatible` on both paths, each with a real
+5/5 valid RTT-bounded calibration batch (22.65ms RTT from this sandbox,
+24.0ms from native Windows) -- the first real RTT evidence collected by
+this milestone's own new tool, consistent with (and independent
+confirmation of) the Reference Camera Node RTT-Capability Upgrade &
+Compatibility Re-Proof v1's own real-hardware proof. `--camera-id`/
+`--credential` were deliberately not exercised against the real device
+(would require a fresh, state-changing re-pair, out of this milestone's
+own non-goals); the identical camera-availability code path is already
+fully exercised, both directions, by fake-transport unit tests and
+real-HTTP pairing-flow API tests. One incidental, pre-existing, unrelated
+finding disclosed on the Windows dev instance: its persistent database
+schema predates `camera_node_last_seen_at` (schema 37), so Doctor's
+`camera_node` check raised rather than gracefully degrading -- confirmed
+unrelated to this milestone (`storage/models.py` untouched here) and
+already covered by two passing Linux-side unit tests against a
+correctly-migrated schema; left disclosed for a future, separately-scoped
+Doctor/migration-robustness milestone, not fixed here.
+
+No schema change. Tier 1 (25 new tests across `test_node_compatibility.py`/
+`test_node_compatibility_api.py`/`test_doctor.py`) 25/25, confirmed
+non-flaky across 5 consecutive runs; Tier 2 (every directly-affected
+subsystem -- `CameraNodeClient`, RTT calibration, engine runtime, Doctor,
+field-acceptance auth, the installer, and the full `test_api.py`/`test_
+observation_camera_node_live.py` surface) 582/582, 0 regressions, plus a
+clean full-app import/boot smoke test (335 FastAPI routes); Tier 3
+correctly not run, per this milestone's own explicit §29 carve-out for
+enforcement limited to acceptance/Doctor surfaces, matching this diff
+precisely (confirmed, not merely asserted: the new `api/main.py` behavior
+is conditionally gated and only reachable for an already-paired Stream;
+`unified_status.py` gained one new additive function; `doctor.py` gained
+one new informational context key inside an existing branch). Zero new
+`ruff` findings (`git stash`-isolated baseline comparison; `api/main.py`'s
+own 26 pre-existing, unrelated findings unchanged before/after). This
+closure does **not** authorize the next Representative Field Acceptance /
+Gate A session (Representative Daylight Gate A Field Acceptance v10 --
+Admission-Precision Re-Proof & Gate A Closure Tranche remains the exact
+next daylight dependency, unchanged and not self-authorized here),
+External Pre-Release Acceptance, or Final Release Hardening, and does
+**not** select a next development milestone. Authorization remains
+**NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, unchanged.
+**Remaining Gate A dependency, unchanged from the entry immediately
+above -- this milestone is a release-process closure orthogonal to Gate
+A's own field-evidence dependency chain, and neither adds to nor closes
+any item on it:** (1) the next Representative Daylight Gate A cohort must
+field-prove the Hard-Negative Visit Admission Precision fix; (2) a
+second, independently-varied true-latency cohort; (3) a second live
+cohort producing genuinely crowded 3+-simultaneous-subject activity; (4)
+the bounded visual-review pass against v7's own two remaining genuinely-
+unreviewed ambiguous fragmentation units; (5) the ~13 untraced `blocked_
+missing_evidence` records, v7's own.
 
 ### S. Actual Final Release Hardening
 
