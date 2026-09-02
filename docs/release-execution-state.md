@@ -24,9 +24,27 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `8b5185b` -- the report commit for Representative
-  Daylight Gate A Field Acceptance v9 (True-Latency & Precision
-  Reconciliation Tranche; see §3/§6.R, below, and
+- **Accepted HEAD:** `9cb14c7` -- the report commit for Hard-Negative Visit
+  Admission Precision & Species-Escalation Correctness v1 (see §3/§6.R,
+  below, and
+  [hard-negative-visit-admission-precision-species-escalation-correctness-v1-report.md](hard-negative-visit-admission-precision-species-escalation-correctness-v1-report.md)
+  for the complete record), sitting directly on top of `95f0340` (this
+  milestone's own implementation commit -- one new admission-time check,
+  `candidate_quality_gate.reject_insufficient_detector_corroboration`,
+  reusing already-computed `contracts.ConfidenceEvidenceSummary` detector
+  -corroboration facts never previously read at this boundary; a small,
+  duck-typed deserialization helper in `product_repository.py`; a new
+  Tier 1 replay test file driving every hard-negative/positive-control
+  case through real, unmodified production code -- zero change to
+  `frame_tracker.py`/`visit_episode_assembler.py`/`evidence_scoring.py`/
+  `scene_confusor.py`/`counterfactual_lineage.py`/the MDv5 detector path;
+  production MDv5a `score_threshold` unchanged at `0.1`; zero schema
+  change), which sits on top of `58c0634` (the reconciliation commit
+  accepting Representative Daylight Gate A Field Acceptance v9).
+- **Prior accepted HEAD (pre-Hard-Negative-Visit-Admission-Precision-
+  Species-Escalation-Correctness-v1):** `8b5185b` -- the report commit for
+  Representative Daylight Gate A Field Acceptance v9 (True-Latency &
+  Precision Reconciliation Tranche; see §3/§6.R, below, and
   [representative-daylight-gate-a-field-acceptance-v9-report.md](representative-daylight-gate-a-field-acceptance-v9-report.md)
   for the complete record). No production code changed by this milestone
   (a live field-acceptance session plus post-hoc offline accounting) --
@@ -1898,6 +1916,110 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-01 update (Hard-Negative Visit Admission Precision &
+Species-Escalation Correctness v1, see §1/§6.R):** closed the reproducible
+precision defect v9 field-confirmed, at classification **A** -- see
+[hard-negative-visit-admission-precision-species-escalation-correctness-v1-report.md](hard-negative-visit-admission-precision-species-escalation-correctness-v1-report.md)
+for the complete record. Traced the first irreversible product decision
+explicitly, not assumed: neither tracker confirmation (deliberate,
+recall-preserving infrastructure -- "a repeated, spatially-coherent
+evidence bar, never a strength bar," left untouched) nor candidate
+authority (mode/lineage/rate-limits only, by design, never evidence
+-quality) -- `candidate_quality_gate.evaluate_evidence_admission`, the
+existing boundary already composing "already-measured facts into one
+conservative reviewable-enough decision," immediately before evidence
+bytes are written and a Visit/Event becomes real. Root cause: the
+admission pipeline already computed rich per-detection confidence
+accounting (`contracts.ConfidenceEvidenceSummary`, Detection Quality
+Accounting v1) but no admission-adjacent gate had ever read it; v8's own
+already-recorded finding (confirmed-real Visits 006/016 "not
+distinguishable from the false cluster by confidence alone") and
+Detection Quality Accounting v1's own 70-Visit confidence-threshold sweep
+(conclusively rejected, "Production authority gate" in
+[detection-quality-accounting-contract.md](detection-quality-accounting-contract.md))
+together rule out a confidence-*magnitude* fix; what was unused was the
+corroboration-*structure* half of the same already-computed evidence.
+**New admission rule** (`reject_insufficient_detector_corroboration`,
+added last, after every pre-existing check): rejects only when a proposal
+never reached a strong detection AND its genuine detector corroboration
+never exceeds a scaled floor (`2 * constituent_generation_count + 1` --
+closes the "chain more bare-minimum restarts together" loophole a flat
+floor would leave open, directly reproducing and correctly rejecting
+v9's own `visit-observation-candidate-027` 9-generation chained shape)
+AND it never showed two consecutive genuine detections anywhere
+(structurally ungameable -- `merge_confidence_evidence` already takes the
+max, never the sum, of that exact field). Either axis clearing its own
+floor admits; any unknown fact never causes a reject. Not a confidence
+threshold, not a scene-coordinate blacklist (proven via an explicit
+adversarial test at an arbitrary non-field bounding box), and does not
+touch the production MDv5a `0.1` `score_threshold`. **Reproduced from
+real field evidence, not a labeled-background fake unit test:**
+`visit-observation-candidate-026`'s own real, traced signature (3 raw
+detections, confidence 0.109-0.111, the feeder-cap sun-glint location --
+the one confirmed-false v9 Visit that received a confident wrong species
+label) and the recurring foliage-cluster location are each reproduced by
+driving real `DetectionObservation`/`FramePacket` sequences through the
+real, unmodified `ProviderNeutralFrameTracker`/`build_tracklets`/
+`assemble_visit_episodes`/`CandidateVisitAuthorityAdapter`/
+`ProductRepository` path, and both are now correctly rejected. Six
+distinct genuine-weak-bird positive controls (small/distant, brief
+landing, low-confidence-but-real, partially occluded, intermittently
+corroborated, sustained multi-generation with one real consecutive
+segment) continue to admit through the identical real path; a normal
+strong Visit, multi-subject isolation (no cross-subject corroboration),
+and the accepted sustained-activity/fallback/stop-finalization behavior
+are all unaffected (by construction -- zero lines changed in
+`frame_tracker.py`/`visit_episode_assembler.py` -- and directly tested).
+**Species-escalation result (Option A, directly confirmed against a real
+repository, not inferred):** rejecting the false Visit at admission
+structurally eliminates the issue -- no `VisitModel`/`ObservationCandidateVisitModel`
+row is ever created for a rejected proposal, and every production species
+-inference entry point requires one to resolve at all; `identification_
+eligibility.py` was not reopened. Reviewed truth preserved and directly
+tested. `blocked_missing_evidence` and the disclosed `POST
+/api/review-labels` `agent_diagnostic` 500 both confirmed untouched, as
+instructed. Rate-limit interaction confirmed clean: a rejected hard
+negative never increments `candidates_created_in_session`/`_trailing_
+hour` (only `outcome=="created"` does), so it cannot consume the same
+capacity an admitted Visit does. **Validation:** Tier 1 (new replay suite)
+16/16; Tier 2 (every directly/indirectly affected subsystem) 733 tests, 0
+regressions; Tier 3 (one full Core run) 5504 passed / 2 failed / 3 skipped
+/ 23 deselected / 11 xfailed -- the 2 failures independently confirmed
+pre-existing and unrelated via `git stash`-isolated baseline reproduction
+on the exact starting HEAD (the same already-repeatedly-documented
+`test_place_biodiversity_summary_repository.py` pair named in §14,
+below); zero new `ruff` findings (same baseline-isolated confirmation).
+One honestly disclosed residual, not hidden: a hypothetical real bird at
+the exact same corroboration floor as the traced false cluster is not
+distinguishable by corroboration structure alone (the same
+structurally-irreducible limit v8's own report already showed for
+confidence magnitude), and this fix has not yet been field-validated at
+the scale "Production authority gate"'s own six conditions would require
+for a fully-settled confidence-threshold-class policy -- both disclosed,
+neither self-authorized to close via a new field cohort here, per this
+milestone's own explicit instruction. This closure does **not** authorize
+the next Representative Field Acceptance / Gate A session, External
+Pre-Release Acceptance, or Final Release Hardening, and does **not**
+select a next development milestone. Authorization remains **NONE --
+GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, unchanged. **Remaining
+Gate A dependency, in priority order, superseding the priority order in
+the v9 entry immediately below:** (1) the next Representative Daylight
+Gate A cohort must field-prove this precision fix -- false-Visit rate
+materially below the v8/v9 ~20-22.2% regime, useful-evidence rate
+recovered, genuine low-confidence recall preserved, no recurrence of
+either known hard-negative cluster as an *admitted* Visit, Gate B
+hard-negative species-escalation absent -- not self-authorized by this
+closure; (2) a second, independently-varied true-latency cohort
+(unchanged -- Gate A's own standing rule requires cross-session
+convergence); (3) a second live cohort producing genuinely crowded
+3+-simultaneous-subject activity (unchanged); (4) the bounded
+visual-review pass against v7's own two remaining genuinely-unreviewed
+ambiguous fragmentation units (unchanged); (5) the ~13 untraced
+`blocked_missing_evidence` records, v7's own (unchanged, confirmed not
+the same root cause as this milestone's own fix); (6) the disclosed
+`agent_diagnostic` review-provenance error-handling defect (unchanged,
+bounded, a precise next DEV contract already named).
 
 **2026-09-01 update (Representative Daylight Gate A Field Acceptance v9 --
 True-Latency & Precision Reconciliation Tranche, see §1/§6.R):** ran the
@@ -5038,6 +5160,76 @@ instance -- still open, not fixed this milestone); (7) the disclosed
 unrelated to any measurement above, a precise next DEV contract already
 named).
 
+**Hard-Negative Visit Admission Precision & Species-Escalation
+Correctness v1 (2026-09-01) closed item (1) immediately above --
+resolving the false-Visit-rate divergence with a generalized correctness
+fix, at classification **A** -- see §1/§3, above, and
+[hard-negative-visit-admission-precision-species-escalation-correctness-v1-report.md](hard-negative-visit-admission-precision-species-escalation-correctness-v1-report.md)
+for the complete record.** First irreversible product decision traced
+explicitly: `candidate_quality_gate.evaluate_evidence_admission`, not
+tracker confirmation (deliberate, recall-preserving) or candidate
+authority (mode/lineage/rate-limits only, by design). New admission rule
+(`reject_insufficient_detector_corroboration`): rejects only when a
+proposal never reached a strong detection AND genuine detector
+corroboration never exceeds a scaled floor (`2 * constituent_generation_
+count + 1`, closing the chained-restart gaming loophole
+`visit-observation-candidate-027`'s own 9-generation shape would
+otherwise exploit) AND it never showed two consecutive genuine detections
+anywhere (structurally ungameable). Not a confidence threshold (Detection
+Quality Accounting v1's own 70-Visit sweep already ruled that out), not a
+scene-coordinate blacklist (proven via an explicit adversarial test at an
+arbitrary bounding box), production MDv5a `0.1` `score_threshold`
+untouched. `visit-observation-candidate-026`'s own real signature (the
+one confirmed-false v9 Visit with a confident wrong species label) and
+the recurring foliage-cluster location are each reproduced through the
+real, unmodified detector-observation-to-repository path and now
+correctly rejected; six genuine-weak-bird positive controls, a normal
+strong Visit, multi-subject isolation, and the accepted sustained
+-activity/fallback/stop-finalization behavior all continue to admit/
+function unaffected. Species-escalation Option A confirmed directly: a
+rejected proposal creates no `VisitModel`/`ObservationCandidateVisitModel`
+row, so species inference structurally cannot reach it;
+`identification_eligibility.py` not reopened. Reviewed truth preserved;
+`blocked_missing_evidence` and the disclosed `agent_diagnostic` 500 both
+confirmed untouched; rate-limit accounting confirmed clean (a rejection
+never increments the counters the hourly/session budget actually reads).
+Tier 1 16/16; Tier 2 733 tests/0 regressions; Tier 3 one full Core run,
+5504 passed / 2 failed (independently baseline-confirmed pre-existing and
+unrelated -- the same `test_place_biodiversity_summary_repository.py`
+pair §14 already names) / 3 skipped / 23 deselected / 11 xfailed; zero
+new `ruff` findings. One honestly disclosed residual: a hypothetical real
+bird at the exact same corroboration floor as the traced false cluster is
+not distinguishable by corroboration structure alone (the same
+structurally-irreducible limit v8's own report already showed for
+confidence magnitude), and this fix is not yet field-validated at the
+scale "Production authority gate"'s own six conditions
+([detection-quality-accounting-contract.md](detection-quality-accounting-contract.md))
+would require for a fully-settled policy -- expected, not self-authorized
+to close here. This closure does **not** authorize the next
+Representative Field Acceptance / Gate A session, External Pre-Release
+Acceptance, or Final Release Hardening, and does **not** select a next
+development milestone. Per this milestone's own explicit instruction,
+Gate A is **not** self-closed by this report: the fix is validated by
+deterministic real-production-code replay, not yet by a live cohort.
+Authorization remains **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION
+REQUIRED**, unchanged. **Remaining Gate A dependency, in priority order,
+superseding the priority order in the v9 entry immediately above:** (1)
+the next Representative Daylight Gate A cohort must field-prove this
+precision fix (see this milestone's own report, "Next field proof," for
+the complete list: false-Visit rate materially below the v8/v9 ~20-22.2%
+regime, useful-evidence rate recovered, genuine low-confidence recall
+preserved, no recurrence of either known hard-negative cluster as an
+*admitted* Visit, Gate B hard-negative species-escalation absent) -- not
+self-authorized by this closure; (2) a second, independently-varied
+true-latency cohort (unchanged); (3) a second live cohort producing
+genuinely crowded 3+-simultaneous-subject activity (unchanged); (4) the
+bounded visual-review pass against v7's own two remaining genuinely
+-unreviewed ambiguous fragmentation units (unchanged); (5) the ~13
+untraced `blocked_missing_evidence` records, v7's own (unchanged,
+confirmed this milestone not the same root cause); (6) the disclosed
+`agent_diagnostic` review-provenance error-handling defect (unchanged,
+bounded, a precise next DEV contract already named).
+
 ### S. Actual Final Release Hardening
 
 **Status:** LAST.
@@ -5215,7 +5407,35 @@ each session that touches this repository.
 
 ## 14. Validation baselines
 
-**Latest accepted Core checkpoint (Pending-Proposal Evidence Preservation
+**Latest accepted Core checkpoint (Hard-Negative Visit Admission
+Precision & Species-Escalation Correctness v1):** 5504 passed / **2
+failed** / 3 skipped / 23 deselected (`slow`-marked) / 11 xfailed -- 5543
+collected, `scripts/verify_core.py`'s own `pytest -m "not slow"`
+convention, run once as one bare foreground pass (1868.59s / ~31m08s), the
+first full-suite run in this section run as a single unbroken process
+rather than concurrently-chunked files. The 2 failures
+(`tests/test_place_biodiversity_summary_repository.py::test_api_route_
+returns_the_summary`, `::test_human_correction_updates_place_
+biodiversity_intelligence_correctly`) are independently confirmed
+pre-existing and unrelated, not merely assumed: both files this milestone
+touched (`candidate_quality_gate.py`, `product_repository.py`) were `git
+stash`-isolated back to the exact starting HEAD (`58c0634`), and the
+identical two tests re-run in isolation fail identically on that clean
+baseline, with the exact same assertion mismatches
+(`new_taxa`/`historical_status` -- Place Intelligence biodiversity
+-taxonomy-history logic, zero code-dependency relationship to Visit
+admission/evidence/quality-gate code this milestone touched). This is the
+same already-repeatedly-documented pair this section's own prior entries
+name recurring across numerous earlier Core checkpoints (see "Historical
+Species-Status..." entry, below, for the fullest prior account of this
+exact pair). Zero new `ruff` findings on either touched production file
+(same `git stash`-isolated baseline-vs-changed comparison: 57 pre-existing
+findings in `product_repository.py`, identical count/content before and
+after; `candidate_quality_gate.py` and the new test file both clean). No
+schema change. See this milestone's own report's "Validation" section for
+the complete account.
+
+**Prior accepted Core checkpoint (Pending-Proposal Evidence Preservation
 & Arbitration Fallback Correctness v1):** 5357 passed / 1 failed / 3
 skipped / 11 xfailed / 23 deselected (slow-marked) -- 5372 collected via
 `scripts/verify_core.py`'s own `pytest -m "not slow"` convention, **not**
