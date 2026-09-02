@@ -24,8 +24,34 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `b39b414` -- the report commit for Host <-> Camera
-  Node Release-Compatibility Preflight v1 (see §3/§6.R, below, and
+- **Accepted HEAD:** `1000c8d` -- the report commit for Field-Acceptance
+  Instance Lifecycle & Storage Safety v1 (see §3/§6.R, below, and
+  [field-acceptance-instance-lifecycle-storage-safety-v1-report.md](field-acceptance-instance-lifecycle-storage-safety-v1-report.md)
+  for the complete record), sitting directly on top of `91a8ebb` (this
+  milestone's own implementation commit -- a new durable, self-verifying
+  sidecar manifest (`field_acceptance_manifest.json`) tracking
+  `active -> completed -> archived` for a disposable field-acceptance
+  Windows dev-root, with `SAFE_TO_RECLAIM` computed fresh at assess/
+  cleanup time rather than stored; a new standalone `scripts/field_
+  acceptance_instance_lifecycle.py` (`init`/`status`/`assess`/`complete`/
+  `mark-archived`/`cleanup`/`preflight`), reusing `deploy_windows_dev.py`'s
+  own process/port-safety primitives via the identical `runpy.run_path`
+  sibling-script convention that file already uses for `build_local_
+  product.py`; two additive changes to `deploy_windows_dev.py` itself
+  (a `--stop` flag exposing the already-existing `stop_verified_
+  deployment` standalone; `check_storage_headroom`, a pre-build fail
+  -closed storage-preflight guard mirroring already-accepted disk
+  -pressure/recorder-ceiling thresholds as literals); cleanup dry-run by
+  default, explicit `--destroy` required, redundantly re-verified
+  immediately before its one destructive call, which delegates to
+  `deploy_windows_dev.py`'s own already-hardened `WindowsHost.remove_tree`
+  -- zero schema change, zero `src/mockingbird/` files touched), which
+  sits on top of `664bfbe` (the reconciliation commit accepting Host <->
+  Camera Node Release-Compatibility Preflight v1).
+- **Prior accepted HEAD (pre-Field-Acceptance-Instance-Lifecycle-Storage-Safety-v1):**
+  `b39b414` -- the report commit for Host <-> Camera
+  Node Release-Compatibility Preflight v1 (see §3/§6.R,
+  below, and
   [host-camera-node-release-compatibility-preflight-v1-report.md](host-camera-node-release-compatibility-preflight-v1-report.md)
   for the complete record), sitting directly on top of `2e84227` (this
   milestone's own implementation commit -- new `mockingbird.observation.
@@ -1953,6 +1979,55 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-02 update (Field-Acceptance Instance Lifecycle & Storage Safety
+v1, see §1/§6.R):** closes the accumulation root cause v8's own report
+first diagnosed and v9's own session re-encountered and manually worked
+around -- "every prior field-acceptance disposable instance was left
+running/retained indefinitely after acceptance, none ever cleaned up" --
+at classification **A**. See
+[field-acceptance-instance-lifecycle-storage-safety-v1-report.md](field-acceptance-instance-lifecycle-storage-safety-v1-report.md)
+for the complete record; see §6.R's own chronological entry for the full
+account (root cause, the new manifest/lifecycle/reclaimability contract,
+cleanup safety, cache scope, and the real native-Windows proof, including
+one genuine performance defect found and fixed by that proof -- a
+multi-minute wrong-target refusal against the real, ~29GB, many-release
+`MockingBirdDev` root, fixed to 0.104 seconds, safety never at risk).
+Purely release/deployment tooling: no wildlife cohort, no Camera Node
+activity, zero `src/mockingbird/` files changed, zero schema change
+(`v58`, unchanged), and general product retention/disk-pressure behavior
+(Storage / Retention / Disk-Pressure & Recovery Closure v1 / Retention
+Correctness & Bounded Cleanup Closure v1, §6.M, already accepted and
+frozen) was **not reopened**. New: a durable, self-verifying sidecar
+manifest (`field_acceptance_manifest.json`) tracking `active -> completed
+-> archived`, a new standalone `scripts/field_acceptance_instance_
+lifecycle.py` (`init`/`status`/`assess`/`complete`/`mark-archived`/
+`cleanup`/`preflight`), and two additive changes to `scripts/deploy_
+windows_dev.py` (a `--stop` flag exposing the already-existing, already
+-safe `stop_verified_deployment` standalone; a pre-build storage
+-preflight guard mirroring already-accepted disk-pressure/recorder
+-ceiling thresholds). Cleanup is dry-run by default, explicit `--destroy`
+required, redundantly re-verified immediately before its one delegated
+-not-reimplemented destructive call. Tier 1 170/170, Tier 2 147/147, 0
+regressions across both; Tier 3 correctly not run (no product code
+touched); zero `ruff` findings. This closure does **not** authorize the
+next Representative Field Acceptance / Gate A session (Representative
+Daylight Gate A Field Acceptance v10 -- Admission-Precision Re-Proof &
+Gate A Closure Tranche remains the exact next daylight dependency,
+unchanged and not self-authorized here), External Pre-Release Acceptance,
+or Final Release Hardening, and does **not** select a next development
+milestone. Authorization remains **NONE -- GLOBAL PRODUCT-ROADMAP
+RECONCILIATION REQUIRED**, unchanged. **Remaining Gate A dependency,
+unchanged from the list immediately below -- this milestone is orthogonal
+to Gate A's own field-evidence dependency chain and neither adds to nor
+closes any item on it:** (1) the next Representative Daylight Gate A
+cohort must field-prove the Hard-Negative Visit Admission Precision fix
+(unchanged); (2) a second, independently-varied true-latency cohort
+(unchanged); (3) a second live cohort producing genuinely crowded
+3+-simultaneous-subject activity (unchanged); (4) the bounded
+visual-review pass against v7's own two remaining genuinely-unreviewed
+ambiguous fragmentation units (unchanged); (5) the ~13 untraced `blocked_
+missing_evidence` records, v7's own (unchanged).
 
 **2026-09-02 update (Host <-> Camera Node Release-Compatibility Preflight
 v1, see §1/§6.R):** closes the release-process gap the Reference Camera
@@ -5599,6 +5674,110 @@ cohort producing genuinely crowded 3+-simultaneous-subject activity; (4)
 the bounded visual-review pass against v7's own two remaining genuinely-
 unreviewed ambiguous fragmentation units; (5) the ~13 untraced `blocked_
 missing_evidence` records, v7's own.
+
+**Field-Acceptance Instance Lifecycle & Storage Safety v1 (2026-09-02)
+closes the accumulation root cause v8's own report first diagnosed and
+v9's own session re-encountered and manually worked around --
+"every prior field-acceptance disposable instance was left running/
+retained indefinitely after acceptance, none ever cleaned up" -- at
+classification **A**. See
+[field-acceptance-instance-lifecycle-storage-safety-v1-report.md](field-acceptance-instance-lifecycle-storage-safety-v1-report.md)
+for the complete record.** A release-process/tooling closure, not a field
+session: no wildlife cohort was run, no Camera Node activity occurred,
+and Gate A's own evidence body and remaining dependency (below) are
+unchanged. Root-caused precisely, by direct code reading, not assumed:
+`scripts/deploy_windows_dev.py` had a safe, ownership-verified stop
+primitive (`stop_verified_deployment`) but no standalone CLI path to
+invoke it without also deploying/rolling back something else; no concept
+of "disposable" existed anywhere in the codebase (the only Host-side
+instance-identity concept, `mockingbird.runtime_state.resolve_instance_
+id`, carries no purpose/lifecycle field at all); and `--cleanup`/`--keep`/
+`--gc-cache` (Storage / Retention / Disk-Pressure & Recovery Closure v1,
+already accepted and frozen, **not reopened here**) each operate on one
+`--dev-root` at a time, with nothing anywhere reasoning about *multiple*
+separate disposable instances.
+
+New, additive-only: a durable, self-verifying sidecar manifest
+(`field_acceptance_manifest.json`, sitting beside `deploy_windows_dev.py`'s
+own `deployments.json`/`current.json`, never a schema or product-code
+change) recording `active -> completed -> archived`, with `SAFE_TO_
+RECLAIM` deliberately computed fresh at assess/cleanup time rather than
+stored (so a manually-relaunched process after archiving is still caught).
+A new standalone script, `scripts/field_acceptance_instance_lifecycle.py`
+(`init`/`status`/`assess`/`complete`/`mark-archived`/`cleanup`/
+`preflight`), reusing `deploy_windows_dev.py`'s own process/port-safety
+primitives via the identical `runpy.run_path` sibling-script convention
+that file already uses for `build_local_product.py` -- never a second
+implementation. `deploy_windows_dev.py` itself gained exactly two additive
+things: a `--stop` flag (exposes the existing `stop_verified_deployment`
+standalone, previously only reachable as a side effect of `deploy()`/
+`rollback()`) and `check_storage_headroom`, a pre-build fail-closed
+storage-preflight guard (mirrors the product's own already-accepted disk
+-pressure thresholds and the acceptance recorder's own hard 5GB ceiling as
+literals, never invented numbers), placed at the same "fail fast before
+any build work" point as the pre-existing `_validate_host_port`.
+Cleanup is dry-run by default; `--destroy` is required explicitly, and
+`execute_cleanup` redundantly re-verifies path safety/identity/not
+-running immediately before its one destructive call, which delegates to
+`deploy_windows_dev.py`'s own already-hardened `WindowsHost.remove_tree`
+-- never a second recursive-delete implementation. Shared runtime/model/
+BioCLIP-model caches are confirmed structurally per-dev-root (never
+shared across separate `--dev-root` instances, matching V8's own report's
+direct confirmation), so a full-instance reclaim never touches another
+instance's cache; the pre-existing `--gc-cache`/`--cleanup --keep` remain
+the correct, un-duplicated path for trimming one *persistent* dev-root's
+own release history.
+
+Real native-Windows proof, end to end, against the actual reference dev
+host (genuinely storage-constrained at proof time, 26.8GB free of ~499GB):
+a fresh, purpose-created disposable instance
+(`MockingBirdLifecycleProofV1`) was identified, measured, gracefully
+stopped, archived against minimal synthetic evidence, dry-run assessed,
+and destructively cleaned up -- with the operator's own persistent
+`MockingBirdDev` (29.2GB) and every other historical instance
+(`MockingBirdFieldAcceptanceV9`, `MockingBirdFirstHourAcceptance`)
+confirmed byte-for-byte untouched throughout, ~2.43GB of real disk space
+genuinely reclaimed, and `MockingBirdDev` fully restored afterward
+(verified identical `instance_id`/`git_commit`/`build_id` to before). This
+same real proof found and fixed one genuine defect no small-fixture unit
+test could have surfaced: a wrong-target refusal against the real,
+~29GB, many-release `MockingBirdDev` initially took over two minutes
+(an unconditional full byte-count walk ran before the identity check that
+was always going to refuse regardless -- safety never at risk, only
+performance) -- fixed by reordering, reverified at 0.104 seconds, and
+regression-tested. Tier 1 170/170 (37 new tests in a new `test_field_
+acceptance_instance_lifecycle.py`, 8 new in `test_deploy_windows_dev.py`
+alongside its 125 pre-existing, 0 regressions); Tier 2 147/147 across
+every directly-relevant surface (`test_acceptance_recorder.py`, `test_
+field_acceptance_authentication.py`, the three `test_storage_retention_*`
+files, `test_storage_status_disk.py`, `test_node_compatibility*.py`,
+`test_observation_session_api.py`/`test_observation_unified_api.py`), 0
+regressions; Tier 3 correctly not run (zero `src/mockingbird/` files
+changed, confirmed via `git diff --stat`); zero `ruff` findings (absolute,
+not merely relative to baseline). No schema change (`v58`, unchanged).
+This closure does **not** authorize the next Representative Field
+Acceptance / Gate A session (Representative Daylight Gate A Field
+Acceptance v10 -- Admission-Precision Re-Proof & Gate A Closure Tranche
+remains the exact next daylight dependency, unchanged and not
+self-authorized here), External Pre-Release Acceptance, or Final Release
+Hardening, and does **not** select a next development milestone.
+Authorization remains **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION
+REQUIRED**, unchanged. **Remaining Gate A dependency, unchanged from the
+entry immediately above -- this milestone is a release-process/tooling
+closure orthogonal to Gate A's own field-evidence dependency chain, and
+neither adds to nor closes any item on it:** (1) the next Representative
+Daylight Gate A cohort must field-prove the Hard-Negative Visit Admission
+Precision fix; (2) a second, independently-varied true-latency cohort;
+(3) a second live cohort producing genuinely crowded 3+-simultaneous
+-subject activity; (4) the bounded visual-review pass against v7's own
+two remaining genuinely-unreviewed ambiguous fragmentation units; (5) the
+~13 untraced `blocked_missing_evidence` records, v7's own. **New,
+disclosed release-operational fact this milestone adds, not a Gate A
+dependency:** disposable field-acceptance instances now have an explicit
+lifecycle -- a future field session should `init` its disposable
+`--dev-root` immediately after deploying, and `complete`/`mark-archived`/
+`cleanup` it once the session's own report is written, so the same
+accumulation this milestone closed does not silently recur.
 
 ### S. Actual Final Release Hardening
 
