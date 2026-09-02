@@ -142,6 +142,24 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_VERIFY_TIMEOUT_SECONDS = 90.0
 DEFAULT_KEEP = 5
 
+# Field-Acceptance Instance Lifecycle & Storage Safety v1: a minimal,
+# self-contained storage-headroom guard for *this* dev-root -- fires for
+# every deploy (ordinary dev iteration included), never only for a marked
+# field-acceptance instance, so it stays a simple, generic "is there
+# enough raw headroom for this build+session" check with no knowledge of
+# the field-acceptance manifest concept (see scripts/field_acceptance_
+# instance_lifecycle.py, which owns that -- deliberately not reused here,
+# to avoid a circular runpy load between the two sibling scripts; that
+# script's own `preflight` command is the fuller report, including known
+# -reclaimable-sibling-instance scanning, layered on top of this one).
+# Mirrors `AcceptanceRecorderConfig.__post_init__`'s own hard byte ceiling
+# and `src/mockingbird/storage/database.py`'s own action_recommended
+# reserve boundary as literals -- duplicated, not imported, the same
+# "this script never depends on the product package's own namespace"
+# convention this file's own module docstring already establishes.
+ACCEPTANCE_RECORDER_HARD_CEILING_BYTES = 5_000_000_000
+STORAGE_PREFLIGHT_RESERVE_BYTES = 1_000_000_000
+
 # A `site-packages` top-level entry belongs to the small, always-fresh "app
 # tier" (never cached/junctioned) exactly when its name is this or starts
 # with this followed by `-` (`mockingbird`, `mockingbird-0.1.0.dist-info`,
@@ -1987,6 +2005,53 @@ def _validate_host_port(host: str, port: int) -> None:
         )
 
 
+def check_storage_headroom(
+    *,
+    dev_root: Path,
+    acceptance_recorder_max_bytes: int,
+    reserve_bytes: int = STORAGE_PREFLIGHT_RESERVE_BYTES,
+    disk_usage_fn: Callable[[str], object] | None = None,
+) -> None:
+    """Fail fast, before any build/materialize work (same placement as
+    `_validate_host_port`, immediately above), when this volume does not
+    have enough free space for a fresh build plus the requested acceptance
+    -recorder budget plus a safety reserve -- see governing brief §17:
+    "fail before starting the expensive session," not after paying for a
+    build/cache-population pass. Raises `DeploymentError` with the exact
+    free/required/reserve figures rather than a bare refusal. Probes the
+    nearest existing ancestor of `dev_root` (a fresh dev-root does not
+    exist yet) so this works identically for a brand-new disposable
+    instance and an already-populated persistent one."""
+
+    if acceptance_recorder_max_bytes > ACCEPTANCE_RECORDER_HARD_CEILING_BYTES:
+        raise DeploymentError(
+            f"--acceptance-recorder-max-bytes {acceptance_recorder_max_bytes} exceeds the acceptance "
+            f"recorder's own hard ceiling ({ACCEPTANCE_RECORDER_HARD_CEILING_BYTES}, mirrors "
+            "AcceptanceRecorderConfig) -- this would already be rejected at session-start time."
+        )
+    if disk_usage_fn is None:
+        # Resolved fresh on every call needing the real default (never
+        # bound once at function-definition time) so a test can
+        # `monkeypatch.setattr(shutil, "disk_usage", ...)` on the real
+        # `shutil` module and have it actually take effect here.
+        disk_usage_fn = shutil.disk_usage
+    probe_target = dev_root
+    while not probe_target.exists() and probe_target.parent != probe_target:
+        probe_target = probe_target.parent
+    usage = disk_usage_fn(str(probe_target))
+    free_bytes = int(usage.free)  # type: ignore[attr-defined]
+    required_bytes = acceptance_recorder_max_bytes + reserve_bytes
+    if free_bytes < required_bytes:
+        raise DeploymentError(
+            "Insufficient storage for the requested acceptance budget: "
+            f"{free_bytes / 1e9:.1f}GB free, {required_bytes / 1e9:.1f}GB estimated required "
+            f"({acceptance_recorder_max_bytes / 1e9:.1f}GB recorder budget + {reserve_bytes / 1e9:.1f}GB "
+            "reserve). Stop and reclaim completed disposable instances first -- see "
+            "scripts/field_acceptance_instance_lifecycle.py's own 'preflight'/'assess'/'cleanup' commands "
+            "-- or pass --skip-storage-preflight to proceed anyway."
+        )
+
+
 def deploy(
     *,
     repo_root: Path,
@@ -2008,6 +2073,8 @@ def deploy(
     poll_interval_seconds: float = 1.0,
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], float] = time.monotonic,
+    acceptance_recorder_max_bytes: int = ACCEPTANCE_RECORDER_HARD_CEILING_BYTES,
+    skip_storage_preflight: bool = False,
 ) -> DeployReport:
     """The one-command deployment: verify the requested commit, build or
     accept an artifact, populate/reuse the runtime+model cache, materialize
@@ -2021,9 +2088,20 @@ def deploy(
     release directory has already been fully materialized and recorded in
     the ledger -- a failed deploy never deletes or corrupts the previous
     release, which stays retained and immediately usable via `--rollback`.
+
+    `acceptance_recorder_max_bytes`/`skip_storage_preflight`: Field
+    -Acceptance Instance Lifecycle & Storage Safety v1's own storage-
+    headroom guard (`check_storage_headroom`, immediately above) --
+    conservatively defaults to assuming the acceptance recorder's full 5GB
+    hard ceiling will be used this session (see that function's own
+    docstring for why this, not a smaller "typical" figure, is the safe
+    default) rather than promising an exact byte count JPEG-size variance
+    cannot actually guarantee.
     """
 
     _validate_host_port(host, port)
+    if not skip_storage_preflight:
+        check_storage_headroom(dev_root=dev_root, acceptance_recorder_max_bytes=acceptance_recorder_max_bytes)
     windows_host.ensure_dir(dev_root)
     userdata_dir = dev_root / USERDATA_DIRNAME
     windows_host.ensure_dir(userdata_dir)
@@ -2841,6 +2919,12 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="stop the current verified dev deployment and launch the previous retained release",
     )
     parser.add_argument(
+        "--stop", action="store_true",
+        help="stop the current verified dev deployment; does not launch or delete anything -- a no-op "
+        "if nothing is running. See also scripts/field_acceptance_instance_lifecycle.py's own "
+        "'complete'/'assess'/'cleanup' commands for what to do next with a disposable instance.",
+    )
+    parser.add_argument(
         "--status", action="store_true", help="report the current dev deployment; makes no changes",
     )
     parser.add_argument(
@@ -2880,6 +2964,16 @@ def build_argument_parser() -> argparse.ArgumentParser:
         "--build-output-dir", type=Path, default=None,
         help="staging directory for the build (default: a fresh temp directory)",
     )
+    parser.add_argument(
+        "--acceptance-recorder-max-bytes", type=int, default=ACCEPTANCE_RECORDER_HARD_CEILING_BYTES,
+        help="expected acceptance-recorder byte budget this session, for the storage-preflight check "
+        f"only (default: the recorder's own hard ceiling, {ACCEPTANCE_RECORDER_HARD_CEILING_BYTES}) -- "
+        "does not configure the recorder itself.",
+    )
+    parser.add_argument(
+        "--skip-storage-preflight", action="store_true",
+        help="skip the pre-build storage-headroom check (see check_storage_headroom)",
+    )
     return parser
 
 
@@ -2897,6 +2991,16 @@ def main(argv: list[str] | None = None) -> int:
                 verify_timeout_seconds=args.timeout,
             )
             print(report.render())
+            return 0
+
+        if args.stop:
+            stopped = stop_verified_deployment(
+                dev_root=dev_root, host=args.host, port=args.port, windows_host=windows_host,
+            )
+            if stopped is not None:
+                print(f"Stopped {stopped.sha} (verified).")
+            else:
+                print("Nothing was running.")
             return 0
 
         if args.status:
@@ -2938,6 +3042,8 @@ def main(argv: list[str] | None = None) -> int:
             skip_bioclip_runtime=args.skip_bioclip_runtime,
             bioclip_bundle_source=args.bioclip_bundle_source,
             bioclip_wheel_cache_dir=args.bioclip_wheel_cache_dir,
+            acceptance_recorder_max_bytes=args.acceptance_recorder_max_bytes,
+            skip_storage_preflight=args.skip_storage_preflight,
         )
         print(report.render())
         return 0

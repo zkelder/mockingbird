@@ -110,6 +110,10 @@ DEFAULT_HOST = _MODULE["DEFAULT_HOST"]
 DEFAULT_PORT = _MODULE["DEFAULT_PORT"]
 DEFAULT_KEEP = _MODULE["DEFAULT_KEEP"]
 
+check_storage_headroom = _MODULE["check_storage_headroom"]
+ACCEPTANCE_RECORDER_HARD_CEILING_BYTES = _MODULE["ACCEPTANCE_RECORDER_HARD_CEILING_BYTES"]
+STORAGE_PREFLIGHT_RESERVE_BYTES = _MODULE["STORAGE_PREFLIGHT_RESERVE_BYTES"]
+
 _BLP = runpy.run_path(str(ROOT / "scripts" / "build_local_product.py"))
 PACKAGED_BUILD_INFO_FILENAME = _BLP["PACKAGED_BUILD_INFO_FILENAME"]
 PACKAGED_OBSERVATION_RUNTIME_DIRNAME = _BLP["PACKAGED_OBSERVATION_RUNTIME_DIRNAME"]
@@ -2069,6 +2073,125 @@ def test_deploy_fails_fast_on_a_non_default_port_before_any_build_work(
 
 
 # ---------------------------------------------------------------------------
+# check_storage_headroom() -- Field-Acceptance Instance Lifecycle & Storage
+# Safety v1's own pre-build storage-preflight guard.
+# ---------------------------------------------------------------------------
+
+
+class _FakeUsage:
+    def __init__(self, *, total: int, free: int) -> None:
+        self.total = total
+        self.free = free
+
+
+def test_check_storage_headroom_passes_with_sufficient_free_space(dev_root: Path) -> None:
+    check_storage_headroom(
+        dev_root=dev_root, acceptance_recorder_max_bytes=1_000_000_000,
+        disk_usage_fn=lambda _path: _FakeUsage(total=100_000_000_000, free=50_000_000_000),
+    )  # must not raise
+
+
+def test_deploy_fails_fast_when_storage_preflight_rejects_before_any_build_work(
+    tmp_path: Path, dev_root: Path, fake_host: WindowsHost, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Integration point only (the preflight logic itself is covered
+    directly by the `check_storage_headroom` unit tests above/below,
+    including v9's own real, disclosed ~1.37GB-free figure) -- `deploy()`
+    must propagate a preflight rejection *before* any build/materialize
+    work, exactly like `_validate_host_port` immediately above it."""
+
+    monkeypatch.setitem(
+        deploy.__globals__, "check_storage_headroom",
+        lambda **_kwargs: (_ for _ in ()).throw(DeploymentError("Insufficient storage for the requested acceptance budget")),
+    )
+    bundle = make_bundle(tmp_path / "build-a", git_commit="a" * 40, build_id="id-a")
+
+    with pytest.raises(DeploymentError, match="Insufficient storage"):
+        deploy(
+            repo_root=ROOT, dev_root=dev_root, windows_host=fake_host, artifact_path=bundle,
+            verify_timeout_seconds=5.0, sleep=_NO_SLEEP,
+        )
+    assert not (dev_root / RELEASES_DIRNAME).exists()  # nothing was materialized
+
+
+def test_check_storage_headroom_error_message_reports_exact_figures(dev_root: Path) -> None:
+    with pytest.raises(DeploymentError) as excinfo:
+        check_storage_headroom(
+            dev_root=dev_root, acceptance_recorder_max_bytes=4_000_000_000,
+            disk_usage_fn=lambda _path: _FakeUsage(total=100_000_000_000, free=1_370_000_000),
+        )
+    message = str(excinfo.value)
+    assert "1.4GB free" in message
+    assert "5.0GB estimated required" in message
+    assert "scripts/field_acceptance_instance_lifecycle.py" in message
+
+
+def test_check_storage_headroom_default_disk_usage_is_late_bound_and_patchable(
+    dev_root: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The default `disk_usage_fn` must be resolved fresh on every call
+    (never captured once at function-definition time into `__defaults__`)
+    so a real `monkeypatch.setattr(shutil, "disk_usage", ...)` on the
+    actual stdlib module -- the only realistic way to fake "the whole
+    volume is nearly full" for an *unspecified* dev-root -- actually takes
+    effect. This is a real, previously-hit gotcha (an early-bound default
+    silently ignores this exact kind of patch), not a hypothetical."""
+
+    monkeypatch.setattr(shutil, "disk_usage", lambda _path: _FakeUsage(total=100_000_000_000, free=1_370_000_000))
+
+    with pytest.raises(DeploymentError, match="Insufficient storage"):
+        check_storage_headroom(dev_root=dev_root, acceptance_recorder_max_bytes=4_000_000_000)
+
+
+def test_check_storage_headroom_rejects_a_recorder_budget_over_the_hard_ceiling(dev_root: Path) -> None:
+    with pytest.raises(DeploymentError, match="hard ceiling"):
+        check_storage_headroom(
+            dev_root=dev_root, acceptance_recorder_max_bytes=ACCEPTANCE_RECORDER_HARD_CEILING_BYTES + 1,
+            disk_usage_fn=lambda _path: _FakeUsage(total=1, free=1),
+        )
+
+
+def test_deploy_can_skip_the_storage_preflight_check_explicitly(
+    tmp_path: Path, dev_root: Path, fake_host: WindowsHost, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(
+        deploy.__globals__, "check_storage_headroom",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("must not be called when skipped")),
+    )
+    bundle = make_bundle(tmp_path / "build-a", git_commit="a" * 40, build_id="id-a")
+
+    report = deploy(
+        repo_root=ROOT, dev_root=dev_root, windows_host=fake_host, artifact_path=bundle,
+        verify_timeout_seconds=5.0, sleep=_NO_SLEEP, skip_storage_preflight=True,
+    )
+
+    assert report.sha  # deploy proceeded normally; the preflight stub above was never even called
+
+
+def test_deploy_probes_the_nearest_existing_ancestor_of_a_not_yet_created_dev_root(
+    tmp_path: Path, fake_host: WindowsHost,
+) -> None:
+    """A brand-new disposable instance's own `--dev-root` does not exist
+    yet at preflight time -- this must probe the nearest existing parent
+    rather than raising `FileNotFoundError`."""
+
+    (tmp_path / "LOCALAPPDATA").mkdir()
+    fresh_dev_root = tmp_path / "LOCALAPPDATA" / "MockingBirdFieldAcceptanceBrandNew"
+    assert not fresh_dev_root.exists()
+    probed: list[str] = []
+
+    def fake_disk_usage(path: str) -> _FakeUsage:
+        probed.append(path)
+        return _FakeUsage(total=100_000_000_000, free=50_000_000_000)
+
+    check_storage_headroom(
+        dev_root=fresh_dev_root, acceptance_recorder_max_bytes=1_000_000_000, disk_usage_fn=fake_disk_usage,
+    )
+
+    assert probed == [str(fresh_dev_root.parent)]
+
+
+# ---------------------------------------------------------------------------
 # rollback()
 # ---------------------------------------------------------------------------
 
@@ -2554,9 +2677,12 @@ def test_build_argument_parser_defaults() -> None:
     assert args.host == DEFAULT_HOST
     assert args.port == DEFAULT_PORT
     assert args.rollback is False
+    assert args.stop is False
     assert args.status is False
     assert args.cleanup is False
     assert args.keep is None
+    assert args.acceptance_recorder_max_bytes == ACCEPTANCE_RECORDER_HARD_CEILING_BYTES
+    assert args.skip_storage_preflight is False
 
 
 def _dummy_report(sha: str = "aaaaaaa") -> DeployReport:
@@ -2591,6 +2717,21 @@ def test_main_dispatches_to_rollback(monkeypatch: pytest.MonkeyPatch, fake_host:
 
     assert exit_code == 0
     assert calls == ["rollback"]
+
+
+def test_main_dispatches_to_stop(monkeypatch: pytest.MonkeyPatch, fake_host: WindowsHost) -> None:
+    calls: list[str] = []
+    monkeypatch.setitem(main.__globals__, "real_windows_host", lambda: fake_host)
+    monkeypatch.setitem(
+        main.__globals__, "stop_verified_deployment", lambda **_kwargs: calls.append("stop") or None,
+    )
+    monkeypatch.setitem(main.__globals__, "deploy", lambda **_kwargs: (_ for _ in ()).throw(AssertionError("must not be called")))
+    monkeypatch.setitem(main.__globals__, "rollback", lambda **_kwargs: (_ for _ in ()).throw(AssertionError("must not be called")))
+
+    exit_code = main(["--stop"])
+
+    assert exit_code == 0
+    assert calls == ["stop"]
 
 
 def test_main_dispatches_to_status(monkeypatch: pytest.MonkeyPatch, fake_host: WindowsHost) -> None:
