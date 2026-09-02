@@ -24,9 +24,87 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `e6d662f` -- the report commit for Representative
-  Daylight Gate A Field Acceptance v10 (Admission-Precision Re-Proof &
-  Gate A Closure Tranche; see §3/§6.R, below, and
+- **Accepted HEAD:** `3c75674` -- the report commit for Independent
+  Corroboration Value & Persistent-Confusor Admission Correctness v1 (see
+  §3/§6.R, below, and
+  [independent-corroboration-value-persistent-confusor-admission-correctness-v1-report.md](independent-corroboration-value-persistent-confusor-admission-correctness-v1-report.md)
+  for the complete record), sitting directly on top of `eeb1e57` (this
+  milestone's own implementation commit -- one new, additive
+  `max_single_generation_detection_count` fact on `contracts.
+  ConfidenceEvidenceSummary` (max, not sum, across constituents, mirroring
+  `max_consecutive_detector_confirmed_frames`'s own established pattern),
+  and one new pure helper in `candidate_quality_gate.py`,
+  `_concentrated_in_single_generation`, recursively re-applying the
+  *existing* `_BARE_DETECTOR_CONFIRMATIONS_PER_GENERATION`/`_QUALIFYING_
+  DETECTIONS_MARGIN` constants to "the chain minus its own single largest
+  member" -- zero new numeric constants introduced anywhere), which sits
+  on top of `89b87f1` (the reconciliation commit accepting Representative
+  Daylight Gate A Field Acceptance v10). Classification **A**. Reopened
+  the accepted Hard-Negative Visit Admission Precision & Species-
+  Escalation Correctness v1 fix because v10 produced real field evidence
+  satisfying the accepted-work-freeze exception: that fix correctly
+  rejected 3/3 classic bare-minimum single-generation hard negatives, but
+  the same recurring tube-feeder-area confusor defeated its count-based
+  corroboration axis 4 separate times (36.4% confirmed-false-Visit rate)
+  by accumulating many individually-insufficient detections within one
+  already-confirmed generation's own extended natural persistence, never
+  by chaining bare-minimum restarts (the shape the prior fix already
+  closed). Mathematically proved -- not merely observed -- that no
+  function of raw detection-count magnitude, for any constant, could
+  separate the disclosed v10 false range (9-33) from the disclosed real
+  range (13-18, v10's own weak/distant-bird control), since they overlap;
+  ruled out per-generation caps, detection-rate/density, geometry
+  variance, and confidence-shape heuristics on the same evidentiary
+  grounds, each explicitly forbidden or mathematically shown ineffective
+  before landing on the recursive-floor design actually shipped.
+  Investigation also found, and empirically verified via a real
+  sequential-admission reproducer (not modified, not duplicated, not
+  re-tuned), that the already-live `scene_confusor` mechanism
+  (unconditional since schema 34) independently blocks a 4th
+  same-geometry, single-generation recurrence of a never-strong signature
+  within one session -- closing, together with this milestone's own new
+  within-proposal check, both the concentrated-corroboration shape and
+  the repeat-occurrence shape v10's persistent confusor exhibited, with a
+  single-generation proposal's first-through-third occurrence at a new
+  location remaining the same honestly disclosed, now mathematically
+  irreducible residual the prior milestone already named. Every accepted
+  positive control retained (v10's own weak/distant real bird, including
+  at the confusor's own former location; a dedicated stationary/
+  motionless real-bird control; brief and intermittent real-bird
+  controls; both accepted v8/v9 hard negatives, one proven to reach the
+  byte-identical pre-existing rejection path; multi-subject isolation;
+  species-escalation and Reviewed-truth safety). Zero new numeric
+  constants; zero coordinate literals read by the fix (proven in both
+  directions by adversarial tests); production MDv5a `score_threshold`
+  confirmed unchanged at `0.1`; schema unchanged (`v58` -- the new fact
+  travels inside the existing `confidence_evidence_json` text blob, no
+  migration). Tier 1 (new 18-test replay suite) 18/18; Tier 2 (24
+  affected-subsystem files, including scene-confusor's own 65 tests) 725
+  passed / 2 pre-existing unrelated skips / 0 failures; Tier 3 (one full
+  Core run) 5600 passed / 1 failed / 3 skipped / 23 deselected / 11
+  xfailed -- the 1 failure (`test_transport_worker.py`, unrelated Camera
+  Node transport/retry code, zero call-graph relationship to any file
+  this milestone touched) independently confirmed a non-reproducible,
+  load-induced async-timing flake via 8 consecutive clean isolated
+  re-runs (3 on the clean starting HEAD, 5 with this milestone's changes
+  restored), not the same previously-documented recurring pair and
+  verified from scratch rather than assumed; zero new `ruff` findings on
+  every touched production file (`git stash`-isolated baseline
+  comparison). Honestly disclosed, not hidden: two independently-
+  substantial generations neither individually dominant are not flagged
+  by this check (a deliberate, bounded, documented design choice, not an
+  oversight), and the real v10 session's own report never confirms
+  whether scene-confusor state was actually consulted for its own 4
+  admitted false Visits -- both named as concrete inputs to the next,
+  separately-authorized daylight tranche, not resolved here (no field
+  session was run by this milestone). Does **not** authorize the next
+  Representative Field Acceptance session, External Pre-Release
+  Acceptance, or Final Release Hardening, and does **not** select a next
+  development milestone -- see §3 for the complete reconciliation entry.
+- **Prior accepted HEAD (pre-Independent-Corroboration-Value-Persistent-
+  Confusor-Admission-Correctness-v1):** `e6d662f` -- the report commit for
+  Representative Daylight Gate A Field Acceptance v10 (Admission-Precision
+  Re-Proof & Gate A Closure Tranche; see §3/§6.R, below, and
   [representative-daylight-gate-a-field-acceptance-v10-report.md](representative-daylight-gate-a-field-acceptance-v10-report.md)
   for the complete record). No production code changed by this milestone
   (a real ~90.2-minute live field-acceptance session against the real
@@ -2012,6 +2090,113 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-02 update (Independent Corroboration Value & Persistent-Confusor
+Admission Correctness v1, see §1/§6.R):** reopened the accepted Hard-
+Negative Visit Admission Precision & Species-Escalation Correctness v1
+fix because Representative Daylight Gate A Field Acceptance v10 (below)
+produced real field evidence satisfying the accepted-work-freeze
+exception, at classification **A** -- see
+[independent-corroboration-value-persistent-confusor-admission-correctness-v1-report.md](independent-corroboration-value-persistent-confusor-admission-correctness-v1-report.md)
+for the complete record. v10 found the prior rule correctly rejected 3/3
+classic bare-minimum single-generation hard negatives, but the same
+recurring tube-feeder-area confusor defeated its count-based
+corroboration axis 4 separate times (36.4% confirmed-false-Visit rate) by
+accumulating many individually-insufficient detections within one
+already-confirmed generation's own extended natural persistence, never by
+chaining bare-minimum restarts. **Root cause, mathematically proved, not
+merely observed:** the prior floor (`2 * constituent_generation_count +
+1`) implicitly assumed every constituent generation contributes only ~2
+detections (the bare confirmation minimum); it never bounded how many
+*more* a single generation may go on to accumulate once confirmed. The
+disclosed v10 false range (9-33 detections) and real range (13-18, v10's
+own weak/distant-bird control) overlap directly, so no function of raw
+`detection_count` magnitude, for any constant, can separate them --
+proven algebraically for a per-generation cap combined with the existing
+linear floor (either a complete no-op for any cap `>2`, or a rule that
+also rejects every real single-generation positive control for a cap
+`<=3`) -- and a time-density/detection-rate signal, geometry variance,
+and confidence-shape heuristics were each independently ruled out on the
+same or stronger grounds (the last three each explicitly forbidden by
+this milestone's own governing brief). **Fix:** one new, additive
+`max_single_generation_detection_count` fact (`contracts.
+ConfidenceEvidenceSummary`, max-not-sum across constituents) lets
+`candidate_quality_gate._concentrated_in_single_generation` recursively
+re-apply the *existing*, already field-justified `_BARE_DETECTOR_
+CONFIRMATIONS_PER_GENERATION`/`_QUALIFYING_DETECTIONS_MARGIN` constants to
+"the chain minus its own single largest member": a multi-generation
+proposal's count-axis credit is now insufficient when discounting its
+most-dominant generation leaves the rest at or below their own
+identically-scaled floor. Zero new numeric constants anywhere.
+Single-generation proposals (`N == 1`) are provably, byte-identically
+unaffected -- nothing to recurse against -- so v10's own real weak-bird
+control (admitted "purely via count-based corroboration") and every
+existing accepted positive control are unchanged. **New finding, not
+previously documented:** the already-live, unconditional (since schema
+34) `scene_confusor` mechanism sits in the same admission function as a
+completely independent, already-field-validated third check; empirically
+verified, via a real sequential-admission reproducer (not modified, not
+duplicated, not re-tuned), to independently block a 4th same-geometry,
+single-generation recurrence of a never-strong signature within one
+session -- closing, together with this milestone's own new check, both
+the concentrated-corroboration shape (new) and the repeat-occurrence
+shape (already-existing, now verified rather than assumed) v10's
+persistent confusor exhibited. A single-generation proposal's own
+first-through-third occurrence at a *new* location remains the same
+disclosed residual the prior milestone already named, now proven
+mathematically irreducible for this signal class rather than merely
+observed -- honestly disclosed, not hidden, along with the real v10
+session's own report never confirming whether scene-confusor state was
+actually consulted for its own 4 admissions, and a two-independently-
+substantial-generations edge case this check does not flag (a deliberate,
+documented, bounded design choice). Production MDv5a `score_threshold`
+confirmed unchanged at `0.1`; zero coordinate literals read by the fix,
+proven in both directions by adversarial tests (no spatial blacklist);
+schema unchanged (`v58` -- the new fact travels inside the existing
+`confidence_evidence_json` text blob). **Validation:** Tier 1 (new
+18-test replay suite) 18/18; Tier 2 (24 affected-subsystem files,
+including scene-confusor's own 65 tests) 725 passed / 2 pre-existing
+unrelated skips / 0 failures; Tier 3 (one full Core run) 5600 passed / 1
+failed / 3 skipped / 23 deselected / 11 xfailed -- the 1 failure
+(`test_transport_worker.py`, unrelated Camera Node transport/retry code)
+independently confirmed a non-reproducible, load-induced async-timing
+flake via 8 consecutive clean isolated re-runs (3 on the clean starting
+HEAD, 5 with this milestone's changes restored) -- a *new* finding, not
+the same previously-documented `test_place_biodiversity_summary_
+repository.py` pair, verified from scratch rather than pattern-matched;
+zero new `ruff` findings on every touched production file. Species-
+escalation, Reviewed-truth, multi-subject-isolation, and sustained/
+fallback/stop-finalization correctness all directly re-tested and
+preserved (the last by construction -- zero lines changed in `frame_
+tracker.py`/`candidate_visit_authority.py` -- and by both full,
+unmodified suites passing unchanged). This closure does **not** authorize
+the next Representative Field Acceptance / Gate A session (no field
+session was run by this milestone, per its own explicit instruction),
+External Pre-Release Acceptance, or Final Release Hardening, and does
+**not** select a next development milestone. Authorization remains
+**NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, unchanged.
+**Remaining Gate A dependency, in priority order, superseding the
+priority order in the v10 entry immediately below (item (1) there --
+the count-accumulation admission-rule gap -- is now closed by this
+milestone, with two narrow, honestly disclosed residuals named above,
+and replaced below by the concrete field-proof this closure itself
+requires):** (1) a next, separately-authorized Representative Daylight
+Gate A cohort must field-prove this closure -- the known persistent
+tube-feeder confusor no longer admits; false-Visit rate materially below
+the v8/v9/v10 ~20-36% regime; useful-evidence rate materially recovers
+toward v5/v7's own 94-96% range; v10's own weak small/distant-bird shape
+still admits; a genuinely stationary real bird's own Visit survives in
+the field, not only in a constructed reproducer; and whether scene-
+confusor state was actually consulted for any repeat occurrence this
+milestone's own reproducer shows it should catch, closing this
+milestone's own disclosed evidence-trail gap; (2) a second,
+independently-varied true-latency cohort (unchanged); (3) a second live
+cohort producing genuinely crowded 3+-simultaneous-subject activity
+(unchanged); (4) the bounded visual-review pass against v7's own two
+remaining genuinely-unreviewed ambiguous fragmentation units (unchanged);
+(5) the ~13 untraced `blocked_missing_evidence` records, v7's own
+(unchanged); (6) fragmentation, re-measured after v10's own 1/5 result
+(unchanged, out of this milestone's own explicit scope).
 
 **2026-09-02 update (Representative Daylight Gate A Field Acceptance v10
 -- Admission-Precision Re-Proof & Gate A Closure Tranche, see §1/§6.R):**
