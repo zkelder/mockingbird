@@ -24,7 +24,23 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `9cb14c7` -- the report commit for Hard-Negative Visit
+- **Accepted HEAD:** `6809933` -- the report commit for Review Provenance
+  Validation & API Error Semantics v1 (see §3/§6.R, below, and
+  [review-provenance-validation-api-error-semantics-v1-report.md](review-provenance-validation-api-error-semantics-v1-report.md)
+  for the complete record), sitting directly on top of `00ff750` (this
+  milestone's own implementation commit -- one new `except ReviewProvenanceError`
+  clause in `create_review_label`, `mockingbird/api/main.py`, mapping the
+  v9-disclosed `agent_diagnostic` review-provenance `500` to a clean `400`
+  via `str(error)`, mirrored from the identical, already-established
+  convention its sibling endpoint `reclassify_review_label_provenance`
+  already used for this exact exception type; 7 new API-level tests in
+  `tests/test_api.py` against the real endpoint; zero change to
+  `review_provenance.py`, zero schema/model/provenance-policy change),
+  which sits on top of `e18e0e8` (the reconciliation commit accepting
+  Hard-Negative Visit Admission Precision & Species-Escalation
+  Correctness v1).
+- **Prior accepted HEAD (pre-Review-Provenance-Validation-API-Error-Semantics-v1):**
+  `9cb14c7` -- the report commit for Hard-Negative Visit
   Admission Precision & Species-Escalation Correctness v1 (see §3/§6.R,
   below, and
   [hard-negative-visit-admission-precision-species-escalation-correctness-v1-report.md](hard-negative-visit-admission-precision-species-escalation-correctness-v1-report.md)
@@ -1916,6 +1932,67 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-01 update (Review Provenance Validation & API Error Semantics
+v1, see §1/§6.R):** closes item (6) immediately below -- the
+`agent_diagnostic` review-provenance `500` v9's own field session
+disclosed and worked around -- at classification **A**. See
+[review-provenance-validation-api-error-semantics-v1-report.md](review-provenance-validation-api-error-semantics-v1-report.md)
+for the complete record. Reproduced through the real `POST
+/api/review-labels` endpoint (not the domain function directly), captured
+pre-fix: `review_origin="agent_diagnostic"` with no `reviewer_identity`
+correctly raises `ReviewProvenanceError` in `product_repository.py`, but
+`create_review_label` (`api/main.py`) caught only
+`ReviewRevisionConflictError`, so this well-formed validation error
+reached the client as an unhandled `500`. Root cause traced to one
+missing `except` clause -- `create_review_label`'s own closest sibling,
+`reclassify_review_label_provenance`, already carries the identical
+mapping for this identical exception type (`except ReviewProvenanceError
+as error: raise HTTPException(status_code=400, detail=str(error)) from
+error`); the fix adds exactly that one clause, mirrored, not invented. A
+scope check traced every one of the four endpoints reaching
+`review_provenance.validate_review_origin`: `create_review_label` was the
+only one still exhibiting an unhandled `500` (the other three --
+`revise_visit_review`, `create_fast_review_correction`,
+`bulk_correct_review_queue_items` -- already avoid it via their own
+pre-existing generic `except ValueError` fallback, with a less-specific
+message than `str(error)`, disclosed in the report as a minor,
+out-of-scope inconsistency, not fixed here). Provenance policy
+unweakened: `review_provenance.py` untouched, `agent_diagnostic`/
+`imported_curated` still strictly require `reviewer_identity`, no
+default, no anonymous-reviewer fallback. Directly confirmed, not assumed:
+the rejected request persists nothing (checked via the Visit's own
+unfiltered `correction_history`, since `GET /api/review-labels` resolves
+only the current *authoritative* row per target and would hide a leaked
+non-authoritative row regardless); a failed request cannot overwrite
+*existing* Reviewed truth on the same Visit; no misleading
+`review.corrected` audit entry is created on failure; a genuinely
+unrelated unexpected exception (a monkeypatched `RuntimeError`) still
+surfaces unmasked, proving the new clause did not widen into a generic
+catch-all. 8 lines changed in one function in `api/main.py`; zero
+schema/model/provenance-policy change. Tier 1 (`tests/test_api.py` in
+full, 7 new tests) 61/61; Tier 2 (11 directly-traced
+review/correction/auth/audit files) 206/206, 0 regressions; Tier 3
+correctly not run (one `except` clause, one endpoint, nothing
+shared/cross-cutting touched -- the decision criterion this milestone
+itself set, satisfied against the actual diff); zero new `ruff` findings
+(baseline-isolated via `git stash`). This closure does **not** authorize
+the next Representative Field Acceptance / Gate A session, External
+Pre-Release Acceptance, or Final Release Hardening, and does **not**
+select a next development milestone. Authorization remains **NONE --
+GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, unchanged. **Remaining
+Gate A dependency, in priority order, superseding the priority order in
+the Hard-Negative entry immediately below (item (6) there -- the
+`agent_diagnostic` review-provenance defect -- is now CLOSED by this
+milestone and dropped from this list):** (1) the next Representative
+Daylight Gate A cohort must field-prove the Hard-Negative Visit Admission
+Precision fix (unchanged -- see the Hard-Negative entry immediately below
+for the complete field-proof criteria); (2) a second, independently
+-varied true-latency cohort (unchanged); (3) a second live cohort
+producing genuinely crowded 3+-simultaneous-subject activity (unchanged);
+(4) the bounded visual-review pass against v7's own two remaining
+genuinely-unreviewed ambiguous fragmentation units (unchanged); (5) the
+~13 untraced `blocked_missing_evidence` records, v7's own (unchanged).
 
 **2026-09-01 update (Hard-Negative Visit Admission Precision &
 Species-Escalation Correctness v1, see §1/§6.R):** closed the reproducible
@@ -5229,6 +5306,52 @@ untraced `blocked_missing_evidence` records, v7's own (unchanged,
 confirmed this milestone not the same root cause); (6) the disclosed
 `agent_diagnostic` review-provenance error-handling defect (unchanged,
 bounded, a precise next DEV contract already named).
+
+**Review Provenance Validation & API Error Semantics v1 (2026-09-01)
+closed item (6) immediately above -- the `agent_diagnostic`
+review-provenance `500`, at classification **A** -- see §1/§3, above, and
+[review-provenance-validation-api-error-semantics-v1-report.md](review-provenance-validation-api-error-semantics-v1-report.md)
+for the complete record.** Reproduced through the real `POST
+/api/review-labels` endpoint, captured pre-fix: `review_origin=
+"agent_diagnostic"` with no `reviewer_identity` correctly raises
+`ReviewProvenanceError`, but `create_review_label` caught only
+`ReviewRevisionConflictError`, so it reached the client as an unhandled
+`500`. Fixed with one `except ReviewProvenanceError as error: raise
+HTTPException(status_code=400, detail=str(error)) from error` clause,
+mirrored from the identical, already-established convention its sibling
+endpoint `reclassify_review_label_provenance` already used for this exact
+exception type -- repository precedent, not intuition. A scope check
+traced all four endpoints reaching `review_provenance.validate_review_
+origin`: `create_review_label` was the only one still unhandled (the
+other three already avoid a `500` via their own pre-existing generic
+`except ValueError` fallback, with a less-specific message, disclosed as
+a minor out-of-scope inconsistency). `review_provenance.py` untouched --
+`agent_diagnostic`/`imported_curated` still strictly require `reviewer_
+identity`. Directly confirmed: nothing persists on a rejected request
+(via the Visit's own unfiltered `correction_history`, since `GET
+/api/review-labels` resolves only the current *authoritative* row per
+target and would hide a leaked non-authoritative row regardless);
+existing Reviewed truth on the same Visit cannot be overwritten by a
+subsequent failed request; no misleading `review.corrected` audit entry
+on failure; a monkeypatched, genuinely unrelated `RuntimeError` still
+surfaces unmasked. 8 lines changed in one function, zero schema/model
+/provenance-policy change. Tier 1 (`tests/test_api.py`, 7 new tests)
+61/61; Tier 2 (11 directly-traced files) 206/206, 0 regressions; Tier 3
+correctly not run (not cross-cutting); zero new `ruff` findings. Does
+**not** authorize Gate A v10, External Pre-Release Acceptance, or Final
+Release Hardening, and does **not** select a next development milestone.
+Authorization remains **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION
+REQUIRED**, unchanged. **Remaining Gate A dependency, superseding the
+list immediately above (item (6) there is now CLOSED and dropped):** (1)
+the next Representative Daylight Gate A cohort must field-prove the
+Hard-Negative Visit Admission Precision fix (unchanged -- see the entry
+above for the complete field-proof criteria); (2) a second,
+independently-varied true-latency cohort (unchanged); (3) a second live
+cohort producing genuinely crowded 3+-simultaneous-subject activity
+(unchanged); (4) the bounded visual-review pass against v7's own two
+remaining genuinely-unreviewed ambiguous fragmentation units (unchanged);
+(5) the ~13 untraced `blocked_missing_evidence` records, v7's own
+(unchanged).
 
 ### S. Actual Final Release Hardening
 
