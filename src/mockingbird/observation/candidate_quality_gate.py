@@ -150,6 +150,55 @@ _BARE_DETECTOR_CONFIRMATIONS_PER_GENERATION = 2
 _QUALIFYING_DETECTIONS_MARGIN = 1
 _MINIMUM_CONSECUTIVE_DETECTOR_CONFIRMED_FRAMES = 1
 
+# Independent Corroboration Value & Persistent-Confusor Admission
+# Correctness v1 (see docs/independent-corroboration-value-persistent-
+# confusor-admission-correctness-v1-report.md): reopened by Representative
+# Daylight Gate A Field Acceptance v10's own real field evidence -- the
+# fix above correctly rejected 3/3 classic bare-minimum single-generation
+# hard negatives this session, but the *same* recurring background
+# confusor (a tube-feeder-area location) defeated the count-based axis 4
+# separate times by accumulating many individually-insufficient detections
+# *within one already-confirmed generation's own natural persistence*,
+# never by chaining many bare-minimum restarts together (the shape the
+# formula above was already built to close). No raw-count/confidence
+# threshold retune can separate this v10 signature from a genuine
+# real weak bird: the two disclosed field ranges (persistent confusor,
+# 9-33 detections; v10's own genuine small/distant bird, 13-18
+# detections, "admitted purely via count-based corroboration") overlap,
+# and this is not incidental -- for a single constituent generation
+# (`constituent_generation_count == 1`), `detection_count` and
+# `max_single_generation_detection_count` are the same fact by
+# construction, so *no* function of `detection_count` alone, for any
+# constant, can separate them (the false cluster's own single-generation
+# case is the same structurally-irreducible residual Hard-Negative Visit
+# Admission Precision v1's own report already disclosed for a
+# hypothetical bird "at the exact same corroboration floor," now
+# concretely reproduced with real field data rather than hypothetical --
+# see "Independence analysis" in this milestone's own report for the
+# full derivation, including why every per-generation-cap variant was
+# tried and mathematically ruled out). What *is* real and fixable: a
+# **multi**-generation proposal (`constituent_generation_count >= 2`)
+# whose count-axis credit is concentrated almost entirely in one
+# generation's own extended persistence, with the rest of its own
+# "chain" contributing nothing beyond what those *other* generations
+# would already need to justify *themselves* -- see
+# `_concentrated_in_single_generation`. This introduces no new numeric
+# constant: it recursively re-applies the identical, already-justified
+# `_BARE_DETECTOR_CONFIRMATIONS_PER_GENERATION`/`_QUALIFYING_DETECTIONS_
+# MARGIN` formula to "the chain minus its own single largest member,"
+# which is what makes it resistant to gaming by padding a dominant
+# generation's chain with more bare-minimum filler restarts (the
+# remaining generations' own floor grows right along with them). The
+# ungameable, uncapped streak axis (`max_consecutive_detector_confirmed_
+# frames`) remains a completely independent escape, untouched by this --
+# a genuinely sustained multi-generation encounter with at least one real
+# back-to-back pair anywhere still admits exactly as before. Cross-
+# session recurrence of the *same* never-strong single-generation
+# signature at one location is a separate, already-live, unmodified
+# mechanism this module does not duplicate -- see
+# `mockingbird.observation.scene_confusor` and this milestone's own
+# report for the empirical composition result.
+
 
 @dataclass(frozen=True)
 class QualityDecision:
@@ -176,6 +225,43 @@ def _valid_normalized_box(box: tuple[float, float, float, float] | None) -> bool
         return False
     left, top, right, bottom = box
     return 0.0 <= left < right <= 1.0 and 0.0 <= top < bottom <= 1.0
+
+
+def _concentrated_in_single_generation(
+    confidence_evidence: object, *, count: int, generations: int,
+) -> bool:
+    """Independent Corroboration Value & Persistent-Confusor Admission
+    Correctness v1: whether a *multi*-generation proposal's own count-axis
+    credit (already known to clear `2 * generations + 1` -- the caller's
+    own responsibility to check first) is, despite that, concentrated
+    almost entirely in one constituent generation's own extended
+    persistence -- recognized by asking whether the *other* generations,
+    on their own, with the single largest contributor excluded, would
+    already have cleared their own identically-scaled floor. Only ever
+    called for `generations >= 2`; a single-generation proposal has
+    nothing to recurse against (see `_insufficient_detector_
+    corroboration`'s own call site) and is completely unaffected by this
+    function's existence.
+
+    Unknown-safe: `max_single_generation_detection_count` being
+    unavailable (a legacy proposal, or any caller that predates this
+    fact) returns `False` -- never concentrated, never a guessed reject --
+    so a proposal with this one new fact missing is judged exactly as it
+    was before this milestone, identical to every other unknown-evidence
+    rule already established on `confidence_evidence`.
+    """
+
+    if generations < 2:
+        return False
+    dominant = getattr(confidence_evidence, "max_single_generation_detection_count", None)
+    if dominant is None:
+        return False
+    remainder = count - dominant
+    remaining_generations = generations - 1
+    remaining_floor = (
+        _BARE_DETECTOR_CONFIRMATIONS_PER_GENERATION * remaining_generations + _QUALIFYING_DETECTIONS_MARGIN
+    )
+    return remainder <= remaining_floor
 
 
 def _insufficient_detector_corroboration(
@@ -215,9 +301,23 @@ def _insufficient_detector_corroboration(
       nothing beyond what repeating the tracker's own bare per-generation
       confirmation floor, as many times as it likes, could already produce.
 
+    Independent Corroboration Value & Persistent-Confusor Admission
+    Correctness v1 (see the module-level comment above `_BARE_DETECTOR_
+    CONFIRMATIONS_PER_GENERATION` for the full field-evidenced rationale):
+    clearing the count axis's own scaled floor is *necessary but no
+    longer alone sufficient* for a multi-generation proposal
+    (`constituent_generation_count >= 2`) -- `_concentrated_in_single_
+    generation` additionally asks whether that credit is concentrated
+    almost entirely in one constituent generation's own extended
+    persistence, with the rest of the chain contributing nothing beyond
+    what those *other* generations would already need to justify
+    *themselves*. A single-generation proposal is completely unaffected
+    (nothing to recurse against); the streak axis is completely
+    unaffected either way (it was never count-based to begin with).
+
     Unknown-safe throughout, matching this codebase's universal "never a
     guessed reject" convention (see `contracts.ConfidenceEvidenceSummary`'s
-    own honesty rules): `confidence_evidence` itself, or either of the two
+    own honesty rules): `confidence_evidence` itself, or any of the
     fields read from it, being `None`/absent never causes a reject -- a
     legacy proposal with no retained confidence lineage, or a caller that
     predates this fact, is admitted exactly as before this check existed.
@@ -243,13 +343,19 @@ def _insufficient_detector_corroboration(
         return None
     generations = max(1, constituent_generation_count)
     qualifying_floor = _BARE_DETECTOR_CONFIRMATIONS_PER_GENERATION * generations + _QUALIFYING_DETECTIONS_MARGIN
-    if count is not None and count > qualifying_floor:
+    count_clears_floor = count is not None and count > qualifying_floor
+    concentrated = count_clears_floor and _concentrated_in_single_generation(
+        confidence_evidence, count=count, generations=generations,
+    )
+    if count_clears_floor and not concentrated:
         return None
     streak = getattr(confidence_evidence, "max_consecutive_detector_confirmed_frames", None)
     if streak is not None and streak > _MINIMUM_CONSECUTIVE_DETECTOR_CONFIRMED_FRAMES:
         return None
     if count is None and streak is None:
         return None
+    if concentrated:
+        return "corroboration_concentrated_in_single_generation"
     return "never_strong_and_minimal_detector_corroboration"
 
 

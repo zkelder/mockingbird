@@ -84,6 +84,22 @@ one shared, reusable representation used at every layer:
   new, nullable `observation_candidate_visits.confidence_evidence_json`
   column (schema 31, `_migrate_to_observation_confidence_evidence`).
 
+**Addition (Independent Corroboration Value & Persistent-Confusor Admission
+Correctness v1):** `ConfidenceEvidenceSummary` gains one further additive
+field, `max_single_generation_detection_count` -- for a leaf (pre-merge,
+single-generation) summary this always equals `detection_count` itself
+(exact, since `detection_count` is always known regardless of whether
+per-detection samples survived); `merge_confidence_evidence` takes the
+*max*, never the sum, across constituents, mirroring `max_consecutive_
+detector_confirmed_frames`'s own already-established reasoning applied to
+a different field: how much any *one* generation alone contributed is not
+made larger by how many other generations were chained alongside it. No
+new column: it travels inside the existing `confidence_evidence_json` text
+blob, so no schema/migration change was needed. See
+[independent-corroboration-value-persistent-confusor-admission-correctness-v1-report.md](independent-corroboration-value-persistent-confusor-admission-correctness-v1-report.md)
+for the full field-evidenced rationale and `candidate_quality_gate.
+_concentrated_in_single_generation` for the one place that reads it.
+
 ### Honesty rules (no fabricated confidence for legacy records)
 
 `None` means "not known," never a fabricated zero:
@@ -107,6 +123,10 @@ one shared, reusable representation used at every layer:
 - `sample_truncated` disambiguates "we hold a bounded/partial sample" from
   "we hold none at all despite detections happening," for either the
   128-sample cap or a legacy record.
+- `max_single_generation_detection_count` is `None` only for a record from
+  before this field existed (never merely because per-detection samples
+  did not survive -- unlike the fields above, it is derivable from
+  `detection_count` alone, which is always exact and known).
 
 `VisitModel.confidence` (an existing column) is deliberately left alone by
 this contract: elsewhere in the schema it means species-guess confidence,

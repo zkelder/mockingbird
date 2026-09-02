@@ -322,6 +322,14 @@ def confidence_evidence_from_terminal_update(
     sample_confidences = [sample.confidence for sample in samples]
     offsets = [sample.source_offset_ms for sample in samples if sample.source_offset_ms is not None]
     detection_count = terminal.detector_confirmation_count
+    # Independent Corroboration Value & Persistent-Confusor Admission
+    # Correctness v1: a leaf (single-generation, pre-merge) summary's own
+    # "largest single generation" is trivially itself -- `detection_count`
+    # is exact and authoritative regardless of whether `samples` survived
+    # (see the field's own docstring on `ConfidenceEvidenceSummary`), so
+    # this is set unconditionally, not only in the `samples`-truncated
+    # branch below.
+    max_single_generation_detection_count = detection_count
     if samples:
         strong_detection_count: int | None = sum(1 for sample in samples if sample.is_strong)
         weak_detection_count: int | None = sum(1 for sample in samples if not sample.is_strong)
@@ -357,6 +365,7 @@ def confidence_evidence_from_terminal_update(
         first_detection_offset_ms=min(offsets) if offsets else None,
         last_detection_offset_ms=max(offsets) if offsets else None,
         sample_truncated=len(samples) < detection_count,
+        max_single_generation_detection_count=max_single_generation_detection_count,
     )
 
 

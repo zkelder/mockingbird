@@ -3165,21 +3165,30 @@ class _CorroborationFacts:
     """Duck-typed `confidence_evidence` fact for `candidate_quality_gate.
     evaluate_evidence_admission`'s `reject_insufficient_detector_
     corroboration` check (Hard-Negative Visit Admission Precision &
-    Species-Escalation Correctness v1) -- deliberately just the three
-    primitive fields that check actually reads, not a reconstructed
-    `contracts.ConfidenceEvidenceSummary`: this repository module never
-    imports observation-engine dataclasses (see `CandidateVisitProposalFacts.
-    confidence_evidence_json`'s own docstring for why), the same boundary
-    `_max_confidence_from_evidence_json` above already keeps for the
-    scene-confusor mechanism."""
+    Species-Escalation Correctness v1; fourth field added by Independent
+    Corroboration Value & Persistent-Confusor Admission Correctness v1) --
+    deliberately just the primitive fields that check actually reads, not
+    a reconstructed `contracts.ConfidenceEvidenceSummary`: this repository
+    module never imports observation-engine dataclasses (see
+    `CandidateVisitProposalFacts.confidence_evidence_json`'s own docstring
+    for why), the same boundary `_max_confidence_from_evidence_json` above
+    already keeps for the scene-confusor mechanism."""
 
     strong_detection_count: int | None
     detection_count: int | None
     max_consecutive_detector_confirmed_frames: int | None
+    # Independent Corroboration Value & Persistent-Confusor Admission
+    # Correctness v1 (see docs/independent-corroboration-value-persistent-
+    # confusor-admission-correctness-v1-report.md): the fourth, additive
+    # corroboration-structure field `evaluate_evidence_admission`'s
+    # concentrated-in-one-generation check reads. Same honesty rule as the
+    # three fields above -- `None`, never a fabricated `0`, for a missing/
+    # malformed/legacy payload.
+    max_single_generation_detection_count: int | None
 
 
 def _corroboration_facts_from_evidence_json(confidence_evidence_json: str | None) -> _CorroborationFacts | None:
-    """Reads the three corroboration-structure fields `evaluate_evidence_
+    """Reads the four corroboration-structure fields `evaluate_evidence_
     admission`'s corroboration check needs from an already-serialized
     `contracts.ConfidenceEvidenceSummary` JSON blob. Mirrors `_max_
     confidence_from_evidence_json`'s own honesty rule exactly: `None` --
@@ -3203,6 +3212,7 @@ def _corroboration_facts_from_evidence_json(confidence_evidence_json: str | None
         strong_detection_count=_int_or_none("strong_detection_count"),
         detection_count=_int_or_none("detection_count"),
         max_consecutive_detector_confirmed_frames=_int_or_none("max_consecutive_detector_confirmed_frames"),
+        max_single_generation_detection_count=_int_or_none("max_single_generation_detection_count"),
     )
 
 

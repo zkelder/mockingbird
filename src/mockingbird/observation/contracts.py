@@ -176,6 +176,24 @@ class ConfidenceEvidenceSummary:
     # `samples` is provably the complete set (including the trivial
     # `detection_count == 0` case).
     sample_truncated: bool = False
+    # Independent Corroboration Value & Persistent-Confusor Admission
+    # Correctness v1 (see docs/independent-corroboration-value-persistent-
+    # confusor-admission-correctness-v1-report.md): the largest
+    # `detection_count` contributed by any *single* constituent generation
+    # behind this summary -- for a leaf (single-generation, pre-merge)
+    # summary this always equals `detection_count` itself (set at
+    # `visit_episode_assembler.confidence_evidence_from_terminal_update`);
+    # for a merged multi-generation summary it is the max, never the sum,
+    # across constituents (see `merge_confidence_evidence`), mirroring
+    # `max_consecutive_detector_confirmed_frames`'s own established
+    # "max, not sum" reasoning applied to a different field: how much any
+    # *one* generation alone contributed is not made larger by how many
+    # other generations were chained alongside it. `None` under the same
+    # "no retained samples despite detection_count > 0" legacy condition as
+    # `strong_detection_count`/`max_consecutive_detector_confirmed_frames`
+    # above -- honestly unknown, never a fabricated guess, for a
+    # legacy/reconstructed record this contract predates.
+    max_single_generation_detection_count: int | None = None
 
     def __post_init__(self) -> None:
         if self.detection_count < 0:
@@ -192,6 +210,8 @@ class ConfidenceEvidenceSummary:
             raise ValueError("invalid_confidence_evidence_summary")
         if self.max_consecutive_detector_confirmed_frames is not None and self.max_consecutive_detector_confirmed_frames < 0:
             raise ValueError("invalid_confidence_evidence_summary")
+        if self.max_single_generation_detection_count is not None and self.max_single_generation_detection_count < 0:
+            raise ValueError("invalid_confidence_evidence_summary")
 
 
 EMPTY_CONFIDENCE_EVIDENCE = ConfidenceEvidenceSummary(
@@ -207,6 +227,7 @@ EMPTY_CONFIDENCE_EVIDENCE = ConfidenceEvidenceSummary(
     first_detection_offset_ms=None,
     last_detection_offset_ms=None,
     sample_truncated=False,
+    max_single_generation_detection_count=0,
 )
 
 
@@ -286,6 +307,18 @@ def merge_confidence_evidence(
         first_detection_offset_ms=min(first_offsets) if first_offsets else None,
         last_detection_offset_ms=max(last_offsets) if last_offsets else None,
         sample_truncated=any(item.sample_truncated for item in summaries) or len(ordered_samples) < detection_count,
+        # Independent Corroboration Value & Persistent-Confusor Admission
+        # Correctness v1: max, never sum, across constituents -- same "any
+        # unknown constituent makes the merged fact unknown" reasoning as
+        # `strong_count`/`weak_count`/`max_consecutive_detector_confirmed_
+        # frames` above (a known max drawn only from the known constituents
+        # could silently understate how dominant the unknown one actually
+        # was).
+        max_single_generation_detection_count=(
+            max(item.max_single_generation_detection_count for item in summaries)
+            if all(item.max_single_generation_detection_count is not None for item in summaries)
+            else None
+        ),
     )
 
 
