@@ -24,8 +24,64 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `8a3ad4f` -- the report commit for Ecosystem /
-  Provider Integrations Release-Scope Decision v1 (see §3, below, and
+- **Accepted HEAD:** `e57c911` -- the report commit for Authenticated
+  Camera Node Golden-Path Capture & Preview Acceptance v1 (see §3, below,
+  and
+  [authenticated-camera-node-golden-path-capture-preview-acceptance-v1-report.md](authenticated-camera-node-golden-path-capture-preview-acceptance-v1-report.md)
+  for the complete record). Lane G hardware-validation milestone
+  (directly authorized outside this file), release-critical,
+  validation-focused with one bounded two-part Camera Node fix. Traced
+  the reference Camera Node's orphaned pairing credential (unresolved by
+  the immediately-prior milestone) to an archived, dormant Representative
+  Daylight field-acceptance instance (`MockingBirdFieldAcceptanceV11`) by
+  SHA-256 digest comparison and safely revoked it through the real,
+  unmodified `CameraNodeClient.revoke()` production path -- the first
+  session on record to recover a dormant credential via the authenticated
+  path rather than a manual `pairing.json` edit. Deployed the previously
+  -accepted `V4L2CameraProvider` diagnostic-truth fix (`ca98fc6`, never
+  live-deployed in its own milestone) to the real reference Pi via the
+  existing installer, which immediately exposed a second, real,
+  previously-unknown gap in the same diagnostic: `isOpened()` alone is
+  insufficient ground truth for "capture capable" -- this Pi's
+  `bcm2835-isp` internal ISP pipeline-stage nodes can accept a V4L2
+  `open()` while never delivering a frame. Fixed (a bounded read-check,
+  same file/pattern as the first fix) together with the timing
+  consequence that fix's own real-hardware enumeration cost exposed in
+  self-test's fixed timeout, before any further validation proceeded
+  (implementation commit `4c1be35`, RED->GREEN, 361 passed / 0 failed
+  across the full Camera Node subsystem, 0 new `ruff` findings, Tier 3
+  correctly not run -- identical bounded-blast-radius reasoning to the
+  prior fix). Real authenticated Node images captured and decoded
+  end to end (1920x1080, a real backyard scene, three independent
+  captures via two request shapes); real Add Camera pairing/preview/
+  complete proven via a genuinely fresh disposable Host instance; real
+  Chromium/Playwright proof against the real built frontend (full pass,
+  real screenshots); preview non-persistence verified directly against
+  the database (zero Visits/Events created); bounded interruption/
+  recovery exercised against the configured Stream; credential safety
+  verified against the real secret value, not merely field names; strict
+  `field_acceptance` compatibility passed with a real 5/5-sample RTT
+  calibration batch. One disclosed, non-blocking finding: a real,
+  self-resolving post-pairing background-warm-proof timing race
+  (self-resolves in ~5-10s with honest failure messaging throughout;
+  judged correctly non-release-critical, not fixed as a product change).
+  Classification **A**. **Lane G status, updated (see §6, below):**
+  `MATERIALLY CLOSED / VALIDATION REMAINS` -> `CLOSED -- RELEASE
+  -CRITICAL`. Final Node state: healthy, upgraded, genuinely unpaired
+  (every test credential this milestone itself minted, including two
+  self-inflicted orphans from its own iterative testing, was cleanly
+  revoked before finishing) -- deliberately not left as another mystery
+  credential for the next session to untangle. One disposable Windows
+  instance (`MockingBirdCameraGoldenPathV1`, built/verified but not
+  ultimately needed for the proof) left `SAFE_TO_RECLAIM`
+  (~2.5GB), not destroyed. This closure does **not** authorize the next
+  Representative Field Acceptance / Gate A session, External Pre-Release
+  Acceptance, or Final Release Hardening, and does **not** select a next
+  development milestone -- see §3 for the complete reconciliation entry.
+- **Prior accepted HEAD (pre-Authenticated-Camera-Node-Golden-Path-
+  Capture-&-Preview-Acceptance-v1):** `8a3ad4f` -- the report commit for
+  Ecosystem / Provider Integrations Release-Scope Decision v1 (see §3,
+  below, and
   [ecosystem-provider-integrations-release-scope-decision-v1-report.md](ecosystem-provider-integrations-release-scope-decision-v1-report.md)
   for the complete record). Pre-release product-scope decision for Lane K
   -- documentation/reconciliation only, zero production code changed, no
@@ -2379,6 +2435,44 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-03 update (Authenticated Camera Node Golden-Path Capture &
+Preview Acceptance v1, see §1):** Lane G hardware-validation milestone
+(directly authorized outside this file), release-critical -- proves the
+one concrete gap Camera / Source Release Hardware Validation Closure v1
+left open: authenticated Camera Node capture/preview end to end on the
+accepted build. See
+[authenticated-camera-node-golden-path-capture-preview-acceptance-v1-report.md](authenticated-camera-node-golden-path-capture-preview-acceptance-v1-report.md)
+for the complete record. Classification **A**. **Pairing-state mystery
+resolved:** the Node's orphaned credential (unknown to every prior
+session) traced to an archived, dormant `MockingBirdFieldAcceptanceV11`
+by SHA-256 digest comparison and safely revoked through the real
+authenticated `CameraNodeClient.revoke()` path. **Accepted-build
+deployment:** `ca98fc6`'s `V4L2CameraProvider` fix, never live-deployed in
+its own milestone, deployed to the reference Pi -- which immediately
+exposed a second, real diagnostic-truth gap in the same class
+(`isOpened()` alone insufficient; a `bcm2835-isp` pipeline-stage node can
+accept `open()` while never delivering a frame). Fixed together with the
+timing consequence its own real-hardware cost exposed in self-test's
+fixed timeout (implementation `4c1be35`, RED->GREEN, Tier 1+2 clean, Tier
+3 correctly not run). **Golden-path proof:** real authenticated Node
+images captured and decoded (1920x1080, real scene, three independent
+captures); real Add Camera pairing/preview/complete via a genuinely fresh
+disposable Host instance; real Chromium/Playwright proof against the real
+built frontend (full pass, screenshots); preview non-persistence verified
+directly against the database; bounded interruption/recovery exercised
+against the configured Stream; credential safety verified against the
+real secret value; strict `field_acceptance` compatibility passed with a
+real RTT calibration. One disclosed, non-blocking finding (a
+self-resolving post-pairing timing race) -- not fixed, correctly judged
+non-release-critical. **Lane G status, updated (see §6, below):**
+`MATERIALLY CLOSED / VALIDATION REMAINS` -> `CLOSED -- RELEASE-CRITICAL`.
+Final Node state: healthy, upgraded, genuinely unpaired. Does **not**
+authorize the next Representative Field Acceptance / Gate A session,
+External Pre-Release Acceptance, or Final Release Hardening, and does
+**not** select a next development milestone. This file's own bold "NONE
+-- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED" statement, directly
+above, is unchanged.
 
 **2026-09-03 update (Ecosystem / Provider Integrations Release-Scope
 Decision v1, see §1):** pre-release product-scope decision for Lane K,
@@ -5069,7 +5163,10 @@ to this lane's closure.
 
 ### G. Camera / Source Experience
 
-**Status:** MATERIALLY CLOSED / VALIDATION REMAINS -- RELEASE-CRITICAL.
+**Status:** CLOSED -- RELEASE-CRITICAL. Authenticated Camera Node
+Golden-Path Capture & Preview Acceptance v1 (2026-09-03, classification
+**A**) closed this lane's own last-named remaining gap -- see the end of
+this section for the full closure record.
 Camera / Source Experience & First-Hour Setup Closure v1 (2026-08-25)
 fixed two real P0 first-hour gaps and two P1s; see
 [camera-source-experience-v1-report.md](camera-source-experience-v1-report.md)
@@ -5149,6 +5246,43 @@ unreachable, with a known Windows DirectShow webcam registered but not
 connected (real, live, enumeration-honesty proof only; no live capture).
 Concrete remaining item: obtain or mint a usable Camera Node pairing
 credential and prove live video capture/preview end to end.
+
+**Authenticated Camera Node Golden-Path Capture & Preview Acceptance v1**
+(2026-09-03, classification **A**; see
+[authenticated-camera-node-golden-path-capture-preview-acceptance-v1-report.md](authenticated-camera-node-golden-path-capture-preview-acceptance-v1-report.md))
+closed the concrete remaining item named above. Traced the reference
+Node's orphaned credential (unresolved by the immediately-prior session)
+to an archived, dormant `MockingBirdFieldAcceptanceV11` by SHA-256 digest
+comparison and safely revoked it through the real, unmodified
+`CameraNodeClient.revoke()` path. Deployed the previously-accepted
+`V4L2CameraProvider` fix (`ca98fc6`, never live-deployed in its own
+milestone) to the reference Pi, which immediately exposed a second, real
+diagnostic-truth gap in the same class (`isOpened()` alone insufficient --
+a `bcm2835-isp` internal ISP pipeline-stage node can accept a V4L2
+`open()` while never delivering a frame); fixed together with the timing
+consequence its own real-hardware cost exposed in self-test's fixed
+timeout (`4c1be35`, RED->GREEN, Tier 1+2 clean). Real authenticated Node
+images captured and decoded end to end (1920x1080, a real backyard scene,
+three independent captures via two request shapes); real Add Camera
+pairing/preview/complete proven via a genuinely fresh disposable Host
+instance; real Chromium/Playwright proof against the real built frontend
+(full pass, real screenshots); preview non-persistence verified directly
+against the database (zero Visits/Events created); bounded interruption/
+recovery exercised against the configured Stream; credential safety
+verified against the real secret value; strict `field_acceptance`
+compatibility passed with a real 5/5-sample RTT calibration batch. One
+disclosed, non-blocking finding: a real, self-resolving post-pairing
+background-warm-proof timing race (self-resolves in ~5-10s with honest
+failure messaging throughout the whole time; judged correctly non
+-release-critical, not fixed as a product change). RTSP/local-USB/ONVIF/
+Windows-DirectShow hardware remains unavailable in this environment,
+exactly as every prior session already, honestly, disclosed -- per that
+milestone's own governing brief, this does not block Lane G closure; those
+paths' declared support labels remain honest and unchanged. Final Node
+state: healthy, upgraded, genuinely unpaired (every test credential this
+milestone itself minted was cleanly revoked before finishing). **Lane G
+status, updated:** `MATERIALLY CLOSED / VALIDATION REMAINS` -> `CLOSED --
+RELEASE-CRITICAL`.
 
 ### H. Site-Specific Learning
 
