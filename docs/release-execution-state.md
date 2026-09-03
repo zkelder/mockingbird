@@ -2436,6 +2436,70 @@ exactly as open as stated.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
+**2026-09-03 update (Representative Daylight Gate A Field Acceptance v12
+-- Precision, Recall & Budget-Convergence Tranche, see §1/§6.R):** the
+next real-field Lane R / Gate A cohort, directly authorized outside this
+file as the milestone following global reconciliation. See
+[representative-daylight-gate-a-field-acceptance-v12-report.md](representative-daylight-gate-a-field-acceptance-v12-report.md)
+for the complete record. Classification **A**. 96.97-minute real daylight
+session against the accepted configuration (HEAD `fa9c8f0` unchanged,
+schema v58, MDv5a `score_threshold 0.1`, real RTT-bounded calibration
+`calibrated`, real Node build `4c1be35`). **Best-ever single-session
+precision**: 1/18 = 5.6% confirmed false Visits (v8 22.2%, v9 20.0%, v10
+36.4%, v11 44.4%) -- and, for the first time, **person-confound-free**
+(no dual-class person-associated activity occurred at all), directly
+answering dependency item #2's own requirement for an unconfounded
+cohort. Recall 14/16 = 87.5% conservative (14/24 = 58.3% broader lower
+bound), fragmentation 0/14 = 0% (own manual method, tool data-starved --
+see below), duplicates 0% (9th consecutive cohort), useful evidence
+77.8% raw / 94.4% including alternate frames, zero Gate B recurrence,
+zero natural Node disconnect. **Two genuinely new findings, both
+precisely root-caused, neither fixed during the cohort (§8/§32):** (1) a
+brand-new persistent non-animal confusor -- a small red property/utility
+marking flag -- directly confirmed by pixel inspection, driving ~70% of
+this session's track-generation volume yet producing zero registered
+scene-confusor rows (the first real-field example of category D, "never
+eligible to reach scene-confusor," since its tracks terminate at the
+tracking layer itself); it produced zero false Visits. (2) A real,
+visually-confirmed recall gap: `reject_no_identification_or_context`
+(`candidate_quality_gate.py`) discards a proposal outright -- no Visit
+at all, not even an abstained one -- whenever no captured evidence item
+ever reaches role `identification`/`context`; two brief, clearly-visible
+real birds were independently confirmed by full-resolution frame
+inspection to have received no Visit this way. **Disclosed field-tooling
+defect (this session's own snapshot script, not product code):** the
+10-minute periodic-ledger-snapshot loop's `end_offset_ms=None` was
+silently dropped against a server-required parameter, breaking raw
+ledger capture for all 12 snapshots; a single post-stop corrective fetch
+recovered a partial tail (52.95%/39.40%/53.85% completeness by record
+type, zero coverage for the session's own first ~37-46 minutes) --
+quantified precisely, not inferred, per the governing brief's own
+instruction. Visit-level detail and evidence (100% of 18 Visits / 36
+images) and the independent acceptance-recorder (4,833 frames, zero
+gaps over 10s) are unaffected. Budget-readiness: duplicate rate and
+monitoring coverage now **READY FOR BUDGET** (duplicates: 9 consecutive
+0% cohorts; coverage: 5 cohorts in the 97.5-99.99%+ band); every other
+Gate A metric remains **MORE EVIDENCE REQUIRED**, named precisely in the
+report's own budget-convergence section. **Gate A status: unchanged,
+`NOT DONE -- RELEASE-CRITICAL`** -- per this milestone's own governing
+brief, Classification A here reflects excellent, valid field evidence,
+not Gate A closure. The pre-existing 11-item dependency list is
+carried forward (items #2, #3, #11 meaningfully advanced but not
+closed; items #1, #4-10 unmet or only trivially satisfied), **extended
+by two new items**: (12) a cohort with intact full-session ledger
+coverage, to properly cross-validate this session's own partially-
+unverifiable figures; (13) whether `reject_no_identification_or_
+context`'s all-or-nothing behavior for brief-but-real encounters should
+be revisited. Field instance archived (`SAFE_TO_RECLAIM`, ~8.8GB, not
+destroyed by default); real defects/discoveries preserved as evidence
+under `data/field-acceptance/2026-09-03-gate-a-v12-precision-recall-
+budget-convergence/`. Zero production code changed; no Tier 3 run (§33).
+Does **not** authorize the next Gate A cohort, External Pre-Release
+Acceptance, or Final Release Hardening, and does **not** select a next
+development milestone. This file's own bold "NONE -- GLOBAL
+PRODUCT-ROADMAP RECONCILIATION REQUIRED" statement, directly above, is
+unchanged.
+
 **2026-09-03 update (Authenticated Camera Node Golden-Path Capture &
 Preview Acceptance v1, see §1):** Lane G hardware-validation milestone
 (directly authorized outside this file), release-critical -- proves the
