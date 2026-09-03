@@ -23,7 +23,26 @@ import threading
 from typing import Any, Callable
 
 
-DEFAULT_SELF_TEST_TIMEOUT_SECONDS = 4.0
+#: Bounds `provider.cameras()` as a whole (every enabled provider, e.g. a
+#: composite of `picamera2`+`v4l2`, enumerated sequentially -- see
+#: `mockingbird_node.providers.CompositeCameraProvider`). Real, measured
+#: evidence against the reference Pi (Authenticated Camera Node Golden-Path
+#: Capture & Preview Acceptance v1): `V4L2CameraProvider.cameras()` alone,
+#: bounding up to `MAX_CAMERAS` per-path open+read probes at
+#: `V4L2_PROBE_TIMEOUT_SECONDS` each, measured 2.8s warm (more, cold, right
+#: after a service restart, while `picamera2` is still loading tuning files)
+#: even before `_is_capture_capable` also required a successful frame read
+#: (a real defect this same milestone fixed -- see
+#: `V4L2CameraProvider._is_capture_capable`); requiring that read makes any
+#: non-camera-but-openable path cost close to the full per-path bound rather
+#: than returning fast. The previous 4.0s budget under-covered this
+#: real-hardware cost and produced a live, reproducible false "degraded"/
+#: `provider_enumeration_timed_out` self-test reading for a Node whose
+#: configured camera was, in live truth, genuinely available seconds later.
+#: Still finite and still never blocks the process indefinitely (see the
+#: module docstring) -- a Node with a truly wedged driver still degrades
+#: within this bound rather than hanging startup.
+DEFAULT_SELF_TEST_TIMEOUT_SECONDS = 10.0
 
 
 @dataclass(frozen=True)

@@ -20,9 +20,14 @@ MAX_CAMERAS = 8
 MAX_CAPTURE_PROFILES_PER_CAMERA = 12
 CAPTURE_LOCK_TIMEOUT_SECONDS = 0.5
 CAPTURE_TIMEOUT_SECONDS = 3.0
-# An open-only probe (no frame read) is cheaper than a full capture, so this
-# stays well under CAPTURE_TIMEOUT_SECONDS -- see
-# V4L2CameraProvider._is_capture_capable.
+# Bounds one path's combined open+single-frame-read probe (see
+# V4L2CameraProvider._is_capture_capable) -- deliberately tighter than
+# CAPTURE_TIMEOUT_SECONDS's full-capture budget: a genuinely capture-capable
+# device delivers a first frame quickly, and a short bound is itself part of
+# the signal (Authenticated Camera Node Golden-Path Capture & Preview
+# Acceptance v1: on the real reference Pi, a non-camera ISP pipeline-stage
+# node can accept `isOpened()` while its `read()` blocks for ~10s before
+# failing -- see that milestone's report).
 V4L2_PROBE_TIMEOUT_SECONDS = 1.5
 PICAMERA2_INITIALIZATION_TIMEOUT_SECONDS = 4.0
 PICAMERA2_FRAME_TIMEOUT_SECONDS = 4.0
@@ -323,13 +328,28 @@ class V4L2CameraProvider:
         camera capability exists" must never silently become "the
         configured camera is currently available."
 
-        Reuses the exact `VideoCapture(...).isOpened()` check `snapshot()`
-        already trusts as ground truth for a live capture (never a second,
-        divergent openability signal) -- just performed once per path
-        instead of only at actual-capture time, and wrapped in the same
-        bounded-background-thread pattern (`_bounded_call`) already used
-        elsewhere in this module so one truly wedged device cannot block
-        enumeration for every other one, or for any caller of `cameras()`.
+        Reuses the exact `VideoCapture(...).isOpened()` + `.read()` checks
+        `snapshot()` already trusts as ground truth for a live capture
+        (never a second, divergent openability signal) -- just performed
+        once per path instead of only at actual-capture time, and wrapped in
+        the same bounded-background-thread pattern (`_bounded_call`)
+        already used elsewhere in this module so one truly wedged device
+        cannot block enumeration for every other one, or for any caller of
+        `cameras()`.
+
+        Authenticated Camera Node Golden-Path Capture & Preview Acceptance
+        v1: `isOpened()` alone is not sufficient. Reproduced live against
+        this exact reference Pi immediately after deploying the
+        `isOpened()`-only version of this fix: its `bcm2835-isp` pipeline
+        -stage output nodes (internal ISP buffers `picamera2`/`libcamera`
+        use while a real capture session is active, never independent
+        cameras -- see the class docstring) can transiently accept a V4L2
+        `open()` call while *no* frame is ever delivered -- `isOpened()`
+        true, `read()` blocking for several seconds before failing. A path
+        must now pass both checks -- matching the *full* ground truth
+        `snapshot()` itself already required (it already raises
+        `camera_unusable_frame` on exactly this same failed-read shape) --
+        to be reported "available".
 
         Cached per path for this provider instance's lifetime: the
         capture-vs-pipeline-stage distinction being tested is a static
@@ -349,7 +369,10 @@ class V4L2CameraProvider:
         def probe() -> bool:
             capture = runtime.VideoCapture(path)
             try:
-                return bool(capture and capture.isOpened())
+                if not capture or not capture.isOpened():
+                    return False
+                result = capture.read()
+                return bool(result and result[0])
             finally:
                 if capture is not None:
                     capture.release()

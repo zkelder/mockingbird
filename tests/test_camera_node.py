@@ -304,7 +304,8 @@ def test_v4l2_enumeration_excludes_device_nodes_that_cannot_actually_open() -> N
 def test_v4l2_enumeration_still_reports_a_genuinely_openable_camera_available() -> None:
     """No regression for a real, directly-openable V4L2 camera (e.g. a
     genuine USB UVC webcam) alongside the same Node's non-camera device
-    nodes: only the device that actually opens is reported available."""
+    nodes: only the device that actually opens *and delivers a frame* is
+    reported available."""
 
     class Capture:
         def __init__(self, openable: bool) -> None:
@@ -312,6 +313,9 @@ def test_v4l2_enumeration_still_reports_a_genuinely_openable_camera_available() 
 
         def isOpened(self) -> bool:
             return self._openable
+
+        def read(self):
+            return (True, object()) if self._openable else (False, None)
 
         def release(self) -> None:
             return None
@@ -323,6 +327,53 @@ def test_v4l2_enumeration_still_reports_a_genuinely_openable_camera_available() 
     provider = V4L2CameraProvider(
         _node_config(),
         device_enumerator=lambda: [(0, "/dev/video0"), (2, "/dev/video2")],
+        cv2_module=Cv2(),
+    )
+    cameras = provider.cameras()
+    assert [camera.camera_id for camera in cameras] == ["v4l2-camera-2"]
+    assert cameras[0].status == "available"
+
+
+def test_v4l2_enumeration_excludes_a_path_that_opens_but_never_delivers_a_frame() -> None:
+    """Camera Node diagnostic-truth reproducer #2 (Authenticated Camera Node
+    Golden-Path Capture & Preview Acceptance v1), found live against the
+    real reference Pi immediately after deploying the `isOpened()`-only
+    version of the prior fix: a Raspberry Pi's `bcm2835-isp` pipeline-stage
+    output nodes (internal ISP buffers `picamera2`/`libcamera` use while a
+    real capture session is active -- never independent cameras) can
+    transiently accept a V4L2 `open()` call (`isOpened()` true) while no
+    frame is ever delivered (`read()` returns `(False, None)` or hangs until
+    it does). `isOpened()` alone is not sufficient ground truth; a path must
+    also deliver a frame, exactly like `snapshot()` itself already
+    requires (see its own `camera_unusable_frame` outcome)."""
+
+    class OpensButNeverReads:
+        def isOpened(self) -> bool:
+            return True
+
+        def read(self):
+            return (False, None)
+
+        def release(self) -> None:
+            return None
+
+    class GenuineCamera:
+        def isOpened(self) -> bool:
+            return True
+
+        def read(self):
+            return (True, object())
+
+        def release(self) -> None:
+            return None
+
+    class Cv2:
+        def VideoCapture(self, path):
+            return GenuineCamera() if path == "/dev/video2" else OpensButNeverReads()
+
+    provider = V4L2CameraProvider(
+        _node_config(),
+        device_enumerator=lambda: [(0, "/dev/video0"), (1, "/dev/video1"), (2, "/dev/video2")],
         cv2_module=Cv2(),
     )
     cameras = provider.cameras()

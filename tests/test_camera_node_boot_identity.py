@@ -235,6 +235,65 @@ def test_self_test_not_fooled_by_non_capture_v4l2_device_nodes_when_real_camera_
     assert "no_camera_available" in result.reasons
 
 
+def test_self_test_not_fooled_by_a_v4l2_node_that_opens_but_never_delivers_a_frame(
+    tmp_path: Path,
+) -> None:
+    """Camera Node diagnostic-truth reproducer #2, end to end (Authenticated
+    Camera Node Golden-Path Capture & Preview Acceptance v1): found live
+    against the real reference Pi immediately after deploying the
+    `isOpened()`-only version of the prior fix. `bcm2835-isp` pipeline-stage
+    output nodes can transiently accept a V4L2 `open()` call (`isOpened()`
+    true) while never delivering a frame -- `isOpened()` alone let these
+    keep reappearing as "available", the same class of false positive the
+    prior fix closed for a *non*-openable path. Uses a real
+    `V4L2CameraProvider` (not a fake) at the same composite-provider
+    boundary self-test itself calls, exactly like the reproducer above."""
+
+    class _NoRealCamera:
+        def cameras(self) -> list[NodeCamera]:
+            return [
+                NodeCamera(
+                    "picamera2-no-camera",
+                    "No Pi camera available",
+                    "unavailable",
+                    "Connect a supported local Pi camera.",
+                    provider_type="picamera2",
+                )
+            ]
+
+    class _OpensButNeverReads:
+        def VideoCapture(self, _path):
+            return self
+
+        def isOpened(self) -> bool:
+            return True
+
+        def read(self):
+            return (False, None)  # Real reference Pi: bcm2835-isp `read()` never delivers.
+
+        def release(self) -> None:
+            return None
+
+    v4l2 = V4L2CameraProvider(
+        CameraNodeConfig(
+            "Test Node", "127.0.0.1", 8787, "v4l2", None, 1_500_000, 1920, 1080, 60, 2,
+            testing=True, enabled_providers=("picamera2", "v4l2"),
+        ),
+        device_enumerator=lambda: [(14, "/dev/video14"), (15, "/dev/video15")],
+        cv2_module=_OpensButNeverReads(),
+    )
+    provider = CompositeCameraProvider([_NoRealCamera(), v4l2])
+
+    result = selftest.run_startup_self_test(
+        provider=provider,
+        pairing_state_path=tmp_path / "state" / "pairing.json",
+    )
+
+    assert result.camera_available is False
+    assert result.status == "degraded"
+    assert "no_camera_available" in result.reasons
+
+
 # --------------------------------------------------------------------------
 # watchdog.py -- sd_notify protocol + bounded, meaningful heartbeat
 # --------------------------------------------------------------------------
