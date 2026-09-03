@@ -24,7 +24,73 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `d1f4f18` -- the report commit for Strong-Confidence
+- **Accepted HEAD:** `e79420e` -- the report commit for Camera / Source
+  Release Hardware Validation Closure v1 (see §3, below, and
+  [camera-source-release-hardware-validation-closure-v1-report.md](camera-source-release-hardware-validation-closure-v1-report.md)
+  for the complete record). Lane G hardware-validation milestone
+  (release-critical, validation-only -- no new providers, no
+  wildlife-denominator field cohort). Scheduler headline reconciliation:
+  verified this document's own "Accepted HEAD" convention (naming the
+  report commit, never the reconciliation commit that records it) is
+  established and consistent, not stale; no bookkeeping correction made.
+  Proves, live, against the real reference Camera Node (Pi,
+  `node-76ec8e53ae586dd0`): health, both compatibility-preflight profiles
+  (including a real 5/5-valid bounded RTT clock-calibration batch), an
+  honest pairing-conflict rejection, and a clean bounded
+  service-restart-recovery cycle (`node_id`/`boot_id`/pairing all
+  correctly preserved) -- the first session on record to reach this depth
+  against a genuinely reachable reference Node rather than finding it
+  unreachable. Reproduces and fixes Representative Daylight Gate A Field
+  Acceptance v11's own disclosed diagnostic-truth defect
+  (`/node/v1/health`'s `self_test.camera_available` could report success
+  while the specifically-configured camera was actually unavailable):
+  root-caused, live, to `V4L2CameraProvider.cameras()` unconditionally
+  marking every enumerated `/dev/videoN` device "available" from path
+  existence alone, so this Node's own internal ISP/codec/HEVC-decoder
+  pipeline device nodes (confirmed, live, never real cameras -- none
+  opens via this Node's own installed OpenCV) masked the real camera's
+  correctly-reported absence inside self-test's aggregate check. Fixed in
+  `mockingbird_node.providers` (a bounded, per-path-cached, real-
+  openability probe reusing `snapshot()`'s own existing ground truth,
+  never a second signal); self-test's own separate, disclosed,
+  deliberately-not-fixed once-at-startup/cached-forever staleness
+  characteristic is not load-bearing for any safety decision today (the
+  Host compatibility preflight never reads `self_test.camera_available`).
+  Not deployed to the live reference Pi -- proven instead via tests
+  grounded in this Node's own real, live-captured device topology, to
+  avoid mutating a shared reference device for a validation-only
+  milestone. RED->GREEN via 4 tests (2 new V4L2-provider-level, 1 new
+  end-to-end composite+self-test integration reproducer, 1 existing test
+  updated for the new legitimate per-candidate probe); 731 passed, 0
+  failed across the full affected Camera Node/compatibility/RTSP/USB/
+  DirectShow/credential-redaction/preview-contract subsystem sweep (11
+  pre-existing xfails, unrelated); 0 new `ruff` findings (verified against
+  unmodified `HEAD` for both changed files). Tier 3 (full Core)
+  deliberately not run: `mockingbird_node` has zero import-time coupling
+  into the Host's `mockingbird` package, an already-documented
+  architectural invariant (`src/mockingbird/api/camera_node_transport.py`)
+  confirmed directly this session, so the blast radius is provably bounded
+  to Tier 2. No RTSP/local-USB/ONVIF hardware was reachable tonight
+  (confirmed live -- a port-554 probe and an empty `/dev/video*`/`lsusb`,
+  not assumed); a known Windows USB webcam (`EMEET SmartCam S600`) is
+  registered but not currently connected -- a real live DirectShow
+  enumeration-honesty proof only (zero video devices, correctly parsed by
+  the real product function against this exact captured output), no live
+  capture. Classification **B**: real, verified progress and one genuine
+  defect fixed with clean regression coverage, but the milestone's own
+  core named gap -- live authenticated video capture/preview proof for
+  any real camera, including the reachable Camera Node itself -- remains
+  open for every path tonight, for disclosed hardware/credential-
+  availability reasons, not a code defect; not force-closed to A. **Lane
+  G status, updated:** stays MATERIALLY CLOSED / VALIDATION REMAINS --
+  RELEASE-CRITICAL (see §6 Lane G, below) -- narrower and better
+  evidenced than before, not closed. This closure does **not** authorize
+  the next Representative Field Acceptance / Gate A session, External
+  Pre-Release Acceptance, or Final Release Hardening, and does **not**
+  select a next development milestone -- see §3 for the complete
+  reconciliation entry.
+- **Prior accepted HEAD (pre-Camera-Source-Release-Hardware-Validation-
+  Closure-v1):** `d1f4f18` -- the report commit for Strong-Confidence
   Subject-Evidence Viability & Scene-Artifact Abstention v1 (see §3, below,
   and
   [strong-confidence-subject-evidence-viability-scene-artifact-abstention-v1-report.md](strong-confidence-subject-evidence-viability-scene-artifact-abstention-v1-report.md)
@@ -2276,6 +2342,79 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-02 update (Camera / Source Release Hardware Validation Closure
+v1, see §1):** Lane G hardware-validation milestone (directly authorized
+outside this file), release-critical, validation-only -- no new provider
+integrations, no wildlife-denominator field cohort. See
+[camera-source-release-hardware-validation-closure-v1-report.md](camera-source-release-hardware-validation-closure-v1-report.md)
+for the complete record. Classification **B**. **Scheduler headline
+reconciliation:** determined the brief's suspected staleness (§1's
+"Accepted HEAD" naming the report commit rather than the reconciliation
+commit that records it) is this document's own established, consistent
+convention across at least two full verified cycles, not a defect --
+verified, not corrected. **Camera Node golden path:** real, live evidence
+against the reachable reference Pi (`node-76ec8e53ae586dd0`) -- health,
+both compatibility-preflight profiles (`ordinary_monitoring` and
+`field_acceptance`, the latter including a real 5/5-valid bounded RTT
+clock-calibration batch), an honest `409 pairing_code_used` rejection on a
+live pairing-conflict probe, and a clean bounded
+`systemctl restart`/recovery cycle (`node_id`/`boot_id`/pairing on-disk
+state all correctly preserved across the restart) -- the first session on
+record to reach this depth against a genuinely reachable reference Node.
+Live authenticated preview/snapshot was **not** exercised: the only
+locally-known pairing credential is stale/revoked, the Node's pairing
+model is single-credential, and this milestone deliberately did not force
+a fresh pairing against a shared reference device merely to obtain one.
+**v11 diagnostic-truth defect:** reproduced deterministically, live,
+against this exact Node's own real device topology, and fixed --
+`V4L2CameraProvider.cameras()` was unconditionally marking every
+enumerated `/dev/videoN` device "available" from path existence alone, so
+this Pi's own internal ISP/codec/HEVC-decoder pipeline device nodes (none
+of which open via this Node's own installed OpenCV, confirmed live) could
+keep self-test's aggregate `camera_available` true even when the real
+camera, correctly reported absent by `picamera2`, was actually gone --
+exactly v11's own recorded field shape. Fixed in `mockingbird_node.
+providers` (bounded, per-path-cached, reuses `snapshot()`'s own existing
+openability ground truth); not deployed to the live reference Pi, proven
+instead via tests grounded in its own real device topology. Self-test's
+separate, disclosed, deliberately-not-fixed once-at-startup/cached-
+forever staleness characteristic remains -- not load-bearing for any
+safety decision today (the Host compatibility preflight never reads
+`self_test.camera_available`). RED->GREEN via 4 tests; 731 passed, 0
+failed across the full affected subsystem sweep (11 pre-existing xfails,
+unrelated); 0 new `ruff` findings; Tier 3 (full Core) deliberately not
+run -- `mockingbird_node` has zero import-time coupling into the Host's
+`mockingbird` package (an already-documented architectural invariant,
+directly confirmed this session), so the blast radius is provably bounded
+to Tier 2. **RTSP/local-USB/ONVIF:** confirmed unavailable tonight (live
+port-554 probe, empty `/dev/video*`/`lsusb`), not fabricated -- unchanged
+from every prior camera-source milestone's own disclosed gap. **Windows
+DirectShow:** a known USB webcam (`EMEET SmartCam S600`) is registered on
+the reference Windows host but not currently connected; real live
+DirectShow enumeration returned zero video devices, correctly parsed as
+empty by the real product function against this exact captured output --
+enumeration-honesty proof only, no live capture. **Multi-source
+coexistence:** not exercisable -- only one source (Camera Node) was
+genuinely live tonight. **Lane G status, updated (see §6, below):** stays
+MATERIALLY CLOSED / VALIDATION REMAINS -- RELEASE-CRITICAL. Real,
+meaningful progress (the Camera Node golden path's health/compatibility/
+recovery layer is now proven for the first time, and one real,
+previously-only-anecdotally-known diagnostic defect is fixed with full
+regression coverage), but Lane G's own specifically-named remaining gap --
+proving live authenticated video decode/preview end-to-end for any real
+camera -- is **still open** for every path, including the one path that
+was genuinely reachable tonight, for disclosed credential/hardware-
+availability reasons rather than a rediscovered code defect. **Concrete
+remaining release-critical dependency:** obtain or mint a usable pairing
+credential for the reference Camera Node and prove live authenticated
+video capture/preview against it end to end; RTSP/local-USB/Windows-
+DShow/ONVIF live hardware acceptance remains a hardware-availability gap,
+not a release-blocking defect, exactly as open as every prior session
+already left it. This closure does **not** authorize the next
+Representative Field Acceptance / Gate A session, External Pre-Release
+Acceptance, or Final Release Hardening, and does **not** select a next
+development milestone.
 
 **2026-09-02 update (Strong-Confidence Subject-Evidence Viability &
 Scene-Artifact Abstention v1, see §1):** a direct, investigation-only
@@ -4917,6 +5056,34 @@ subprocess/HTTP/taxonomy/credential-merge mechanics genuinely work
 against a real unreachable host, not that a specific real camera's
 picture renders). Full integrated multi-camera/whole-product acceptance
 remains Lane R.
+
+Camera / Source Release Hardware Validation Closure v1 (2026-09-02,
+classification **B**; see
+[camera-source-release-hardware-validation-closure-v1-report.md](camera-source-release-hardware-validation-closure-v1-report.md))
+changed which specific gap remains, but not the overall status. For the
+first time on record, the reference Camera Node was genuinely reachable
+this session: real, live proof of health, both compatibility-preflight
+profiles (including a real bounded RTT clock-calibration batch), an
+honest pairing-conflict rejection, and a clean bounded service-restart
+recovery cycle. It also reproduced and fixed, live against this exact
+Node's real device topology, a diagnostic-truth defect Representative
+Daylight Gate A Field Acceptance v11 had disclosed but left open:
+`/node/v1/health`'s `self_test.camera_available` could report success
+purely because a co-enabled `v4l2` provider counted the Node's own
+internal ISP/codec/HEVC-decoder pipeline device nodes as cameras, masking
+the real camera's correctly-reported absence (`mockingbird_node.
+providers.V4L2CameraProvider`, not deployed to the live reference Pi --
+proven via tests grounded in its own real topology instead). Still not
+closed: live authenticated video capture/preview proof, for *any* real
+camera including the now-proven-reachable Camera Node itself -- this
+session had no usable pairing credential for it (the Node's pairing model
+is single-credential; the only locally-known one is stale/revoked, and
+forcing a fresh pairing against this shared reference device was
+deliberately avoided) -- and RTSP/local-USB/ONVIF hardware remained
+unreachable, with a known Windows DirectShow webcam registered but not
+connected (real, live, enumeration-honesty proof only; no live capture).
+Concrete remaining item: obtain or mint a usable Camera Node pairing
+credential and prove live video capture/preview end to end.
 
 ### H. Site-Specific Learning
 
