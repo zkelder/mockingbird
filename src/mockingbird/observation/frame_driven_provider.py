@@ -584,6 +584,7 @@ class FrameDrivenObservationProvider:
         self._facts["reconnect_bridges_expired"] += step.reconnect_bridges_expired
         self._facts["reconnect_ambiguous_associations"] += step.reconnect_ambiguous_associations
         self._facts["confidence_dip_bridges"] += step.confidence_dip_bridges
+        self._facts["same_frame_class_conflict_exclusions"] += step.same_frame_class_conflict_exclusions
         terminal_evidence: list[EvidenceCandidate] = []
         proposals: list[VisitProposal] = []
         for update in all_updates:
@@ -872,6 +873,14 @@ class FrameDrivenObservationProvider:
             "tracker_only_support_frames": 0,
             "confidence_dip_bridges": 0,
             "terminations_after_weak_support": 0,
+            # Strong-Confidence Non-Target & Scene-Artifact Visit Admission
+            # Correctness v1: bounded, observable count of animal-class
+            # detections excluded because they substantially coincided,
+            # same-frame, with an explicitly-non-animal (`person`/`vehicle`)
+            # detection -- see `frame_tracker._SAME_FRAME_NON_ANIMAL_
+            # OVERLAP_IOU`. Diagnostic only; never a raw per-detection or
+            # per-frame surveillance record.
+            "same_frame_class_conflict_exclusions": 0,
         }
 
 

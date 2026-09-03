@@ -7042,23 +7042,63 @@ class ProductRepository:
             items_with_content,
             confidence_evidence=_corroboration_facts_from_evidence_json(proposal.confidence_evidence_json),
         )
-        if not quality.admitted:
+        # Strong-Confidence Non-Target & Scene-Artifact Visit Admission
+        # Correctness v1 (see docs/strong-confidence-non-target-scene-
+        # artifact-visit-admission-correctness-v1-report.md): a proposal
+        # rejected specifically for `reject_insufficient_detector_
+        # corroboration` still has a real, valid, selected subject-geometry
+        # pick -- `evaluate_evidence_admission` only ever reaches that
+        # outcome after its own proposal-support/identification-or-context/
+        # geometry-validity checks have already passed. Every *other*
+        # reject outcome above is excluded here on purpose: none of them
+        # guarantee a meaningful, selected geometry to record (`reject_no_
+        # identification_or_context`/`reject_subject_geometry_invalid`
+        # mean there is no usable box at all; `reject_insufficient_
+        # proposal_support` means there is no real generation/class either).
+        # Only this one outcome shares the exact "real geometry, just not
+        # enough detector corroboration" shape scene-confusor's own
+        # recurrence history is meant to reason about.
+        if not quality.admitted and quality.outcome != "reject_insufficient_detector_corroboration":
             return CandidateVisitCreationOutcome(
                 quality.outcome, quality.reason, None, None, proposal.proposal_id, (),
             )
 
         # Scene confusor suspicion (see docs/scene-confusor-suspicion-
-        # contract.md): the last admission check, run only once authority
-        # and evidence quality have both already said "create" -- exactly
-        # where `blocked_privacy_zone` already sits, since this is the only
-        # place in the whole pipeline with both a live database session
-        # (for the durable, cross-session region history) and the
+        # contract.md): normally the last admission check, run once
+        # authority and evidence quality have both already said "create" --
+        # exactly where `blocked_privacy_zone` already sits, since this is
+        # the only place in the whole pipeline with both a live database
+        # session (for the durable, cross-session region history) and the
         # candidate's own selected evidence geometry. Uses whichever
         # evidence item will actually become the reviewer-visible subject
         # box (`identification`, falling back to `context` -- the same
         # preference `evaluate_evidence_admission` itself already requires
-        # at least one of); a proposal with neither was already rejected
-        # above and never reaches here.
+        # at least one of, for either outcome that can reach here); a
+        # proposal with neither was already rejected above and never
+        # reaches here.
+        #
+        # Also now run -- bookkeeping only, never blocking -- for a
+        # proposal `evaluate_evidence_admission` has already rejected via
+        # `reject_insufficient_detector_corroboration`: before this fix,
+        # `_touch_scene_confusor_region` was reachable only once `quality.
+        # admitted`, so a location whose every occurrence to date failed
+        # corroboration (weak, never strong -- exactly this codebase's own
+        # recurring "Location A" foliage/branch confusor, see
+        # `_LOCATION_A_BOX` in tests/test_independent_corroboration_value_
+        # persistent_confusor_v1.py) built *zero* scene-confusor history,
+        # no matter how many times it recurred -- so the one time it later
+        # happened to clear `strong_detection_threshold` and bypass
+        # corroboration outright (Representative Daylight Gate A Field
+        # Acceptance v11's own Visit 018), `find_matching_region` correctly,
+        # but unhelpfully, reported "no recurring geometry match" for a
+        # location that had, in fact, already misfired repeatedly. This
+        # does not change what a corroboration-rejected proposal itself
+        # returns below (still exactly `quality.outcome`/`quality.reason`,
+        # unchanged) -- only what a *later* occurrence at the same geometry
+        # will see. `evaluate_scene_confusor_suspicion` is still always
+        # computed (never skipped) so `suspected_count` stays an honest,
+        # consistent record of what the mechanism would have decided,
+        # regardless of which admission path reached this region.
         geometry_item = next(
             (item for item in items_with_content if item.role == "identification"),
             next((item for item in items_with_content if item.role == "context"), items_with_content[0]),
@@ -7086,10 +7126,14 @@ class ProductRepository:
                 now=observed_at,
                 suspected=confusor_decision.outcome == "suspected_confusor",
             )
-            if confusor_decision.outcome == "suspected_confusor":
+            if quality.admitted and confusor_decision.outcome == "suspected_confusor":
                 return CandidateVisitCreationOutcome(
                     "blocked_scene_confusor_suspected", confusor_decision.reason, None, None, proposal.proposal_id, (),
                 )
+        if not quality.admitted:
+            return CandidateVisitCreationOutcome(
+                quality.outcome, quality.reason, None, None, proposal.proposal_id, (),
+            )
 
         persisted: list[tuple[CandidateEvidenceItem, MediaAssetModel]] = []
         total_bytes = 0

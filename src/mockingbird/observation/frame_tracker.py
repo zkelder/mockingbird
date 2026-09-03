@@ -34,6 +34,50 @@ TRACKER_VERSION = "spatial-frame-tracker-v1"
 # rather than growing the retained list without bound.
 MAX_TRACK_CONFIDENCE_SAMPLES = 128
 
+# Strong-Confidence Non-Target & Scene-Artifact Visit Admission Correctness
+# v1 (see docs/strong-confidence-non-target-scene-artifact-visit-admission-
+# correctness-v1-report.md): a real MDv5 person-associated false Visit class
+# (field-confirmed 2026-08-20, reconfirmed 2026-09-02 at 7 further real
+# instances -- see docs/person-background-false-positive-attribution-v1-
+# report.md and Representative Daylight Gate A Field Acceptance v11) is
+# already known, by direct code inspection of that milestone, to be caused
+# by the raw detector's own class *output* being wrong (a real person
+# genuinely decoded as class index 0, "animal", not a MockingBird mapping
+# bug) -- `observe()` below already, correctly, only ever tracks
+# `is_animal is True` detections, so an explicit, correctly-classified
+# `person`/`vehicle` detection could never reach tracking at all, before
+# this fix or after it. What this fix closes is a narrower, previously-
+# unexamined gap: `onnx_provider._decode` decodes *every* class MDv5's own
+# raw output head reports, per frame, before this module ever sees it
+# (`mdv5_decoder.decode_md_v5_raw` assigns each raw candidate box its own
+# single best-scoring class via `argmax` over per-class scores, then runs
+# non-max-suppression *separately within each class* -- never across
+# classes) -- so a single real-world object can legitimately decode as
+# *two* overlapping boxes on the *same* frame, one per class, when the
+# model is genuinely torn between them (a well-documented failure mode of
+# this detector family, not specific to MockingBird's own adapter).
+# `observe()` receives this full multi-class `detections` tuple every
+# frame (see `frame_driven_provider._process_frame`, which never filters by
+# class before calling here) but, until this fix, silently discarded every
+# `is_animal is False` detection without ever checking whether it
+# corroborates -- rather than contradicts -- a same-frame `is_animal is
+# True` one at the same location. `_SAME_FRAME_NON_ANIMAL_OVERLAP_IOU`
+# reuses, not invents, `scene_confusor.GEOMETRY_IOU_THRESHOLD` (0.3) --
+# duplicated rather than imported, matching this package's own established
+# "each pure decision module stays self-contained" convention (see
+# `scene_confusor.py`'s identical disclosure for its own duplicated
+# geometry constants) -- deliberately much stricter than this tracker's own
+# `minimum_iou`/`maximum_centroid_distance` (which exist to tolerate a real
+# subject's *frame-to-frame motion* over time, not to test same-instant
+# co-location): two boxes decoded from the *same* frame that clear 0.3 IoU
+# are overwhelmingly likely the same physical object, not two coincidentally
+# nearby ones, so a real bird elsewhere in frame from an unrelated person
+# (see "Bird + person" in the milestone's own required positive controls) is
+# not affected -- only a detection whose own geometry substantially
+# coincides, this instant, with the detector's own contradicting class
+# output for that same region.
+_SAME_FRAME_NON_ANIMAL_OVERLAP_IOU = 0.3
+
 
 @dataclass(frozen=True)
 class TrackerConfiguration:
@@ -194,6 +238,13 @@ class TrackerStep:
     # already have ended it. Internal-only, mirrors the reconnect counters
     # above (`frame_driven_provider` folds it into its own facts).
     confidence_dip_bridges: int = 0
+    # Strong-Confidence Non-Target & Scene-Artifact Visit Admission
+    # Correctness v1: count of this step's own animal-class detections
+    # excluded because they substantially coincided, this same frame, with
+    # an explicitly-non-animal detection -- see `_SAME_FRAME_NON_ANIMAL_
+    # OVERLAP_IOU`'s own module-level docstring. Internal-only, mirrors the
+    # counters above.
+    same_frame_class_conflict_exclusions: int = 0
 
 
 @dataclass
@@ -431,6 +482,19 @@ class ProviderNeutralFrameTracker:
                 elif gap > tight_bound:
                     confidence_dip_bridges += 1
 
+        # Strong-Confidence Non-Target & Scene-Artifact Visit Admission
+        # Correctness v1: this frame's own explicitly-non-animal detections
+        # (a real, known class, not merely absent/unknown) -- see
+        # `_SAME_FRAME_NON_ANIMAL_OVERLAP_IOU`'s own docstring above for why
+        # these can legitimately coexist with an overlapping animal-class
+        # detection of the very same real-world object.
+        non_animal_boxes = tuple(
+            item.bounding_box
+            for item in detections
+            if item.is_animal is False
+            and item.bounding_box is not None
+            and item.frame_id == frame_id
+        )
         animals = tuple(
             item
             for item in detections
@@ -444,6 +508,33 @@ class ProviderNeutralFrameTracker:
             # track regardless of what a future/differently-configured
             # provider's own decode floor happens to be.
             and (item.confidence or 0.0) >= self.configuration.weak_detector_support_floor
+            # Strong-Confidence Non-Target & Scene-Artifact Visit Admission
+            # Correctness v1: this exact animal-class box substantially
+            # coincides, on this same frame, with the detector's own
+            # explicitly-non-animal output for the same region -- treated as
+            # absent evidence this frame (falls back to tracker-support/miss
+            # handling exactly like a frame the detector found nothing
+            # usable on), never as corroborating support for a wildlife
+            # track. Bounded, O(detections-this-frame) -- no history, no new
+            # network/ML call, no cross-frame state.
+            and not _overlaps_non_animal_class(item.bounding_box, non_animal_boxes)
+        )
+        # Strong-Confidence Non-Target & Scene-Artifact Visit Admission
+        # Correctness v1: a bounded, observable count of this exact frame's
+        # own exclusions -- `frame_driven_provider` folds this into its own
+        # semantic-fact counters (mirroring `confidence_dip_bridges`'
+        # identical convention), giving diagnostics a real signal for "how
+        # often did this Stream's own detector output contradict itself on
+        # class this session" without exposing any per-detection detail or
+        # raw surveillance-oriented data.
+        same_frame_class_conflict_exclusions = sum(
+            1
+            for item in detections
+            if item.is_animal is True
+            and item.bounding_box is not None
+            and item.frame_id == frame_id
+            and (item.confidence or 0.0) >= self.configuration.weak_detector_support_floor
+            and _overlaps_non_animal_class(item.bounding_box, non_animal_boxes)
         )
         assignments, ambiguous, reconnect_ambiguous = self._assign(animals)
         matched_tracks = {track_id for track_id, _ in assignments}
@@ -546,7 +637,7 @@ class ProviderNeutralFrameTracker:
         return TrackerStep(
             tuple(updates), tuple(terminals), ambiguous, ambiguous_reentries,
             reconnect_bridges_continued, reconnect_bridges_expired, reconnect_ambiguous,
-            confidence_dip_bridges,
+            confidence_dip_bridges, same_frame_class_conflict_exclusions,
         )
 
     def finalize(self, reason: str = "end_of_replay") -> TrackerStep:
@@ -1051,3 +1142,16 @@ def _iou(
     right_area = (right[2] - right[0]) * (right[3] - right[1])
     union = left_area + right_area - intersection
     return intersection / union if union > 0 else 0.0
+
+
+def _overlaps_non_animal_class(
+    box: tuple[float, float, float, float],
+    non_animal_boxes: tuple[tuple[float, float, float, float], ...],
+) -> bool:
+    """Strong-Confidence Non-Target & Scene-Artifact Visit Admission
+    Correctness v1: `True` when `box` (an animal-class detection this same
+    frame) substantially coincides with any of this same frame's own
+    explicitly-non-animal (`person`/`vehicle`/other) detections -- see
+    `_SAME_FRAME_NON_ANIMAL_OVERLAP_IOU`'s own module-level docstring."""
+
+    return any(_iou(box, other) >= _SAME_FRAME_NON_ANIMAL_OVERLAP_IOU for other in non_animal_boxes)
