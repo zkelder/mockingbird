@@ -248,7 +248,11 @@ def test_v4l2_enumeration_is_bounded_opaque_and_capture_releases_resources() -> 
     assert "/dev/" not in str(cameras)
     assert provider.snapshot("v4l2-camera-0").startswith(b"\xff\xd8")
     assert cv2.capture.released is True
-    assert cv2.paths == ["/dev/video0"]
+    # `cameras()` now really probes each of the 8 bounded candidates once
+    # (Camera Node diagnostic-truth fix, see
+    # test_v4l2_enumeration_excludes_device_nodes_that_cannot_actually_open)
+    # before `snapshot()` opens "/dev/video0" again for the real capture.
+    assert cv2.paths == [f"/dev/video{index}" for index in range(8)] + ["/dev/video0"]
 
 
 def test_v4l2_busy_and_picamera2_missing_are_safe_setup_states() -> None:
@@ -261,6 +265,69 @@ def test_v4l2_busy_and_picamera2_missing_are_safe_setup_states() -> None:
         provider._lock.release()
     pi = PiCamera2Provider(_node_config(provider_key="picamera2"), module=False, cv2_module=object())
     assert pi.cameras()[0].status == "setup_required"
+
+
+def test_v4l2_enumeration_excludes_device_nodes_that_cannot_actually_open() -> None:
+    """Camera Node diagnostic-truth reproducer (Camera / Source Release
+    Hardware Validation Closure v1): a `/dev/videoN` character device
+    existing is not evidence a camera is available there. Reproduced
+    directly against the real reference Camera Node's own device topology --
+    a Raspberry Pi's internal ISP/codec/HEVC-decoder pipeline stages
+    (`bcm2835-isp`, `bcm2835-codec-decode`, `rpi-hevc-dec`) and even its own
+    CSI sensor's raw `unicam` node (libcamera-only; not directly
+    V4L2-openable) all register real `/dev/videoN` nodes unconditionally,
+    regardless of whether an independently V4L2-openable camera exists.
+    Before this fix, every one of these was reported `status="available"`
+    purely from path existence."""
+
+    class Cv2:
+        def VideoCapture(self, _path):
+            return None  # Every real open attempt on this Node failed tonight.
+
+    provider = V4L2CameraProvider(
+        _node_config(),
+        device_enumerator=lambda: [
+            (0, "/dev/video0"),  # unicam (real CSI sensor's raw node; libcamera-only)
+            (10, "/dev/video10"),  # bcm2835-codec-decode
+            (11, "/dev/video11"),  # bcm2835-codec-decode
+            (13, "/dev/video13"),  # bcm2835-isp
+            (14, "/dev/video14"),  # bcm2835-isp
+            (19, "/dev/video19"),  # rpi-hevc-dec
+        ],
+        cv2_module=Cv2(),
+    )
+    cameras = provider.cameras()
+    assert [camera.camera_id for camera in cameras] == ["v4l2-no-camera"]
+    assert cameras[0].status == "unavailable"
+
+
+def test_v4l2_enumeration_still_reports_a_genuinely_openable_camera_available() -> None:
+    """No regression for a real, directly-openable V4L2 camera (e.g. a
+    genuine USB UVC webcam) alongside the same Node's non-camera device
+    nodes: only the device that actually opens is reported available."""
+
+    class Capture:
+        def __init__(self, openable: bool) -> None:
+            self._openable = openable
+
+        def isOpened(self) -> bool:
+            return self._openable
+
+        def release(self) -> None:
+            return None
+
+    class Cv2:
+        def VideoCapture(self, path):
+            return Capture(openable=(path == "/dev/video2"))
+
+    provider = V4L2CameraProvider(
+        _node_config(),
+        device_enumerator=lambda: [(0, "/dev/video0"), (2, "/dev/video2")],
+        cv2_module=Cv2(),
+    )
+    cameras = provider.cameras()
+    assert [camera.camera_id for camera in cameras] == ["v4l2-camera-2"]
+    assert cameras[0].status == "available"
 
 
 def test_picamera2_fake_runtime_keeps_opaque_identity_warm_and_releases_on_close() -> None:

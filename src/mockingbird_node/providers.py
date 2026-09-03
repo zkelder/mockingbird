@@ -20,6 +20,10 @@ MAX_CAMERAS = 8
 MAX_CAPTURE_PROFILES_PER_CAMERA = 12
 CAPTURE_LOCK_TIMEOUT_SECONDS = 0.5
 CAPTURE_TIMEOUT_SECONDS = 3.0
+# An open-only probe (no frame read) is cheaper than a full capture, so this
+# stays well under CAPTURE_TIMEOUT_SECONDS -- see
+# V4L2CameraProvider._is_capture_capable.
+V4L2_PROBE_TIMEOUT_SECONDS = 1.5
 PICAMERA2_INITIALIZATION_TIMEOUT_SECONDS = 4.0
 PICAMERA2_FRAME_TIMEOUT_SECONDS = 4.0
 WARM_SESSION_READY_TIMEOUT_SECONDS = 5.0
@@ -288,6 +292,7 @@ class V4L2CameraProvider:
     def __init__(self, config: CameraNodeConfig, *, device_enumerator: Callable[[], list[tuple[int, str]]] = _v4l2_devices, cv2_module: Any | None = None) -> None:
         self._config, self._enumerate, self._cv2 = config, device_enumerator, cv2_module
         self._lock = threading.Lock()
+        self._capture_capable_cache: dict[str, bool] = {}
 
     def _runtime(self) -> Any | None:
         return self._cv2 if self._cv2 is not None else _cv2()
@@ -295,10 +300,83 @@ class V4L2CameraProvider:
     def _devices(self) -> dict[str, tuple[int, str]]:
         return {f"v4l2-camera-{index}": (index, path) for index, path in sorted(self._enumerate())[:MAX_CAMERAS]}
 
+    def _is_capture_capable(self, runtime: Any, path: str) -> bool:
+        """Cheap, bounded, one-time-cached-per-path ground truth for whether
+        `path` is a real, directly openable V4L2 *capture* device -- not
+        merely a `/dev/videoN` character device that happens to exist.
+
+        Camera Node diagnostic-truth defect (Camera / Source Release
+        Hardware Validation Closure v1, reproduced against the real
+        reference Camera Node): a Raspberry Pi's own internal ISP/codec/
+        HEVC-decoder pipeline stages (`bcm2835-isp`, `bcm2835-codec-decode`,
+        `rpi-hevc-dec`) -- and even its CSI sensor's own raw `unicam`
+        capture node, which requires libcamera/picamera2, not plain V4L2 --
+        register real `/dev/videoN` nodes unconditionally whenever the
+        kernel driver stack is loaded, regardless of whether any
+        independently V4L2-openable camera is attached. Device-node
+        existence alone is therefore not evidence of camera availability;
+        `self_test.camera_available` (`mockingbird_node.selftest`) trusted
+        exactly this unconditional list, so a Node with `v4l2` enabled
+        (the packaged installer default) could report a phantom camera
+        "available" even while its real, specifically-configured camera was
+        physically undetected -- the required invariant is that "some
+        camera capability exists" must never silently become "the
+        configured camera is currently available."
+
+        Reuses the exact `VideoCapture(...).isOpened()` check `snapshot()`
+        already trusts as ground truth for a live capture (never a second,
+        divergent openability signal) -- just performed once per path
+        instead of only at actual-capture time, and wrapped in the same
+        bounded-background-thread pattern (`_bounded_call`) already used
+        elsewhere in this module so one truly wedged device cannot block
+        enumeration for every other one, or for any caller of `cameras()`.
+
+        Cached per path for this provider instance's lifetime: the
+        capture-vs-pipeline-stage distinction being tested is a static
+        kernel-driver/hardware fact, not one that changes while the process
+        runs. (A genuine camera that is only transiently busy at the exact
+        moment of this provider's first-ever `cameras()` call could be
+        under-cached as not-capture-capable for the rest of the process
+        lifetime -- a narrow, disclosed residual, and still strictly better
+        than every enumerated path being unconditionally "available"
+        forever, which was the prior behavior.)
+        """
+
+        cached = self._capture_capable_cache.get(path)
+        if cached is not None:
+            return cached
+
+        def probe() -> bool:
+            capture = runtime.VideoCapture(path)
+            try:
+                return bool(capture and capture.isOpened())
+            finally:
+                if capture is not None:
+                    capture.release()
+
+        try:
+            capable = bool(
+                _bounded_call(
+                    probe,
+                    failure_code="camera_probe_failed",
+                    timeout_seconds=V4L2_PROBE_TIMEOUT_SECONDS,
+                )
+            )
+        except ValueError:
+            capable = False
+        self._capture_capable_cache[path] = capable
+        return capable
+
     def cameras(self) -> list[NodeCamera]:
-        if self._runtime() is None:
+        runtime = self._runtime()
+        if runtime is None:
             return UnavailableCameraProvider(provider_key="v4l2", reason="V4L2 snapshot support requires an already-installed local capture runtime.").cameras()
-        return [NodeCamera(camera_id, f"Linux camera {index + 1}", "available", snapshot_supported=True, provider_type="v4l2") for camera_id, (index, _) in self._devices().items()] or [NodeCamera("v4l2-no-camera", "No Linux camera available", "unavailable", "Connect an allowed local V4L2 camera.", provider_type="v4l2")]
+        cameras = [
+            NodeCamera(camera_id, f"Linux camera {index + 1}", "available", snapshot_supported=True, provider_type="v4l2")
+            for camera_id, (index, path) in self._devices().items()
+            if self._is_capture_capable(runtime, path)
+        ]
+        return cameras or [NodeCamera("v4l2-no-camera", "No Linux camera available", "unavailable", "Connect an allowed local V4L2 camera.", provider_type="v4l2")]
 
     def capture_profiles(self, camera_id: str) -> list[NodeCaptureProfile]:
         if camera_id not in self._devices() or self._runtime() is None:

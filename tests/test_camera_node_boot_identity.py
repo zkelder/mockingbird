@@ -27,6 +27,7 @@ from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.storage.models import CameraSourceModel, StreamModel
 from mockingbird_node.app import create_node_app
 from mockingbird_node.config import CameraNodeConfig
+from mockingbird_node.providers import CompositeCameraProvider, NodeCamera, V4L2CameraProvider
 from mockingbird_node import identity, selftest, watchdog
 
 
@@ -174,6 +175,64 @@ def test_self_test_reports_unwritable_pairing_state_path() -> None:
     assert result.status == "degraded"
     assert result.pairing_state_writable is False
     assert "pairing_state_path_unwritable" in result.reasons
+
+
+def test_self_test_not_fooled_by_non_capture_v4l2_device_nodes_when_real_camera_is_absent(
+    tmp_path: Path,
+) -> None:
+    """Camera Node diagnostic-truth reproducer, end to end (Camera / Source
+    Release Hardware Validation Closure v1): reproduces Representative
+    Daylight Gate A Field Acceptance v11's exact real field shape --
+    `picamera2` (the real camera provider) correctly reports no camera, yet
+    `/node/v1/health` self-test still said `camera_available: true` twice --
+    because a co-enabled `v4l2` provider's own non-camera device nodes (a
+    Raspberry Pi's ISP/codec/HEVC-decoder pipeline stages, and even its CSI
+    sensor's own libcamera-only `unicam` node) were being counted as
+    "available cameras" purely from `/dev/videoN` path existence. Uses a
+    real `V4L2CameraProvider` (not a fake) fed the real reference Camera
+    Node's own device topology, recorded live this milestone, so this
+    proves the fix at the same composite-provider boundary self-test itself
+    calls -- not merely the V4L2-only unit tests in test_camera_node.py."""
+
+    class _NoRealCamera:
+        def cameras(self) -> list[NodeCamera]:
+            return [
+                NodeCamera(
+                    "picamera2-no-camera",
+                    "No Pi camera available",
+                    "unavailable",
+                    "Connect a supported local Pi camera.",
+                    provider_type="picamera2",
+                )
+            ]
+
+    class _NeverOpens:
+        def VideoCapture(self, _path):
+            return None  # Every real open attempt on this Node failed tonight.
+
+    v4l2 = V4L2CameraProvider(
+        CameraNodeConfig(
+            "Test Node", "127.0.0.1", 8787, "v4l2", None, 1_500_000, 1920, 1080, 60, 2,
+            testing=True, enabled_providers=("picamera2", "v4l2"),
+        ),
+        device_enumerator=lambda: [
+            (0, "/dev/video0"),  # unicam (real CSI sensor's raw node; libcamera-only)
+            (10, "/dev/video10"),  # bcm2835-codec-decode
+            (13, "/dev/video13"),  # bcm2835-isp
+            (19, "/dev/video19"),  # rpi-hevc-dec
+        ],
+        cv2_module=_NeverOpens(),
+    )
+    provider = CompositeCameraProvider([_NoRealCamera(), v4l2])
+
+    result = selftest.run_startup_self_test(
+        provider=provider,
+        pairing_state_path=tmp_path / "state" / "pairing.json",
+    )
+
+    assert result.camera_available is False
+    assert result.status == "degraded"
+    assert "no_camera_available" in result.reasons
 
 
 # --------------------------------------------------------------------------
