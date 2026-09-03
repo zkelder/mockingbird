@@ -24,9 +24,77 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `547209d` -- the report commit for Representative
-  Daylight Gate A Field Acceptance v11 (Independent-Corroboration &
-  Scene-Confusor Re-Proof; see §3/§6.R, below, and
+- **Accepted HEAD:** `1465103` -- the report commit for Strong-Confidence
+  Non-Target & Scene-Artifact Visit Admission Correctness v1 (see §3,
+  below, and
+  [strong-confidence-non-target-scene-artifact-visit-admission-correctness-v1-report.md](strong-confidence-non-target-scene-artifact-visit-admission-correctness-v1-report.md)
+  for the complete record). Reopened by Representative Daylight Gate A
+  Field Acceptance v11's own field evidence: 8/18 confirmed-false Visits
+  (44.4%), all admitted via the strong-detection bypass -- 7 a real
+  person-in-frame confound (matching the already-accepted, out-of-scope
+  Person-Background-False-Positive residual class), 1 (Visit 018) a
+  strong-confidence leaf/branch scene artifact at the recurring "Location
+  A" foliage geometry. Classification **B**. Both subclasses
+  deterministically reproduced against the real, unmodified production
+  admission path (tracker -> assembler -> authority -> quality-gate ->
+  repository), not a synthetic fixture. **Person subclass, partially
+  closed:** a new, bounded, same-frame class-contradiction check in
+  `frame_tracker.observe()` now excludes an `animal`-class detection from
+  ever corroborating a wildlife track when it substantially (IoU >= 0.3,
+  reusing `scene_confusor.GEOMETRY_IOU_THRESHOLD`'s own already-field-
+  justified bar) coincides, same frame, with an explicitly non-animal
+  (`person`/`vehicle`) detection -- grounded in a real architectural fact
+  confirmed at the code level (MDv5's own per-candidate-argmax-then-per-
+  class-NMS decode can legitimately emit two different-class boxes for
+  one real, torn-between-classes object). Deterministic RED->GREEN proof
+  via `git stash`: the identical reproducer sequence was `created`
+  pre-fix, `reject_insufficient_detector_corroboration` post-fix. The
+  pure single-class-misclassification sub-case (no co-occurring
+  contradiction anywhere) remains exactly the already-accepted 2026-08-20
+  Person-Background-False-Positive residual -- unchanged, not reopened.
+  **Artifact subclass, genuinely improved but not closed for the field-
+  observed shape:** `product_repository._create_candidate_visit_locked`
+  now also records scene-confusor region history (bookkeeping only,
+  never changing the returned outcome) for a proposal rejected via
+  `reject_insufficient_detector_corroboration`, not only an admitted one
+  -- closing a real, confirmed defect where a recurring, always-weak
+  hard-negative location (this codebase's own "Location A") left zero
+  trace in `scene_confusor_regions` no matter how many times it
+  recurred, because `_touch_scene_confusor_region` was reachable only
+  once quality-gate already said `admit`. Directly reproduced and fixed
+  for a never-strong recurring confusor that eventually clears the
+  count-based corroboration axis (pre-fix `created`, post-fix `blocked_
+  scene_confusor_suspected`, confirmed via `git stash`). **Directly
+  proven, numerically, not to close v11's own headline Visit 018 shape:**
+  a genuinely strong (>=0.70) occurrence still escapes scene-confusor
+  suspicion regardless of accumulated history, because `evaluate_scene_
+  confusor_suspicion`'s own steps 5 ("materially stronger than this
+  region's own history") and 6 ("independently strong, unconditionally")
+  are both, by original design, checked without reference to occurrence
+  history once triggered -- and both are load-bearing for the real,
+  field-proven feeder-pole stationary-real-bird positive control, so this
+  milestone leaves `scene_confusor.py` itself completely unmodified
+  rather than risk that control on an unverified assumption. Zero MDv5/
+  NMS/BioCLIP/eligibility threshold changed; zero coordinate literal read
+  by either fix; schema unchanged (`v58`). Every required positive
+  control preserved (strong/weak/stationary real bird, bird+person
+  spatially separate, multi-subject isolation, all prior hard-negative/
+  corroboration/scene-confusor mechanisms). Tier 1 (new 11-test
+  reproducer suite) 11/11; Tier 2 (28 directly-affected-subsystem files)
+  705 passed / 0 failed; Tier 3 (one full Core run) 5610 passed / 2
+  failed (both independently reconfirmed pre-existing and unrelated via
+  fresh `git stash` isolation against this session's own starting HEAD --
+  the same already-repeatedly-documented `test_place_biodiversity_
+  summary_repository.py` pair named in §14) / 3 skipped / 23 deselected /
+  11 xfailed; zero new `ruff` findings (git-stash-isolated baseline
+  comparison). This closure does **not** authorize the next
+  Representative Field Acceptance / Gate A session, External Pre-Release
+  Acceptance, or Final Release Hardening, and does **not** select a next
+  development milestone -- see §3 for the complete reconciliation entry.
+- **Prior accepted HEAD (pre-Strong-Confidence-Non-Target-Scene-Artifact-
+  Visit-Admission-Correctness-v1):** `547209d` -- the report commit for
+  Representative Daylight Gate A Field Acceptance v11 (Independent-
+  Corroboration & Scene-Confusor Re-Proof; see §3/§6.R, below, and
   [representative-daylight-gate-a-field-acceptance-v11-report.md](representative-daylight-gate-a-field-acceptance-v11-report.md)
   for the complete record). No production code changed by this milestone
   (a real, representative-daylight, real-hardware field session, 101.8
@@ -2149,6 +2217,94 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-02 update (Strong-Confidence Non-Target & Scene-Artifact Visit
+Admission Correctness v1, see §1):** reopened by Representative Daylight
+Gate A Field Acceptance v11's own real field evidence -- 8/18
+confirmed-false Visits (44.4%), all admitted via the strong-detection
+bypass (`candidate_quality_gate._insufficient_detector_corroboration`'s
+own `strong_detection_count > 0` escape), a mechanism no prior milestone
+had directly examined -- at classification **B**. See
+[strong-confidence-non-target-scene-artifact-visit-admission-correctness-v1-report.md](strong-confidence-non-target-scene-artifact-visit-admission-correctness-v1-report.md)
+for the complete record. Two genuinely distinct false subclasses (7 a
+real person-in-frame confound, 1 the "Location A" strong-confidence
+leaf/branch scene artifact) were separated and deterministically
+reproduced against the real, unmodified production admission path.
+**Person subclass:** traced to a real, architecturally-confirmed MDv5
+decode fact (per-candidate-argmax-before-NMS, then per-class NMS -- a
+single real object can legitimately decode as two different-class boxes
+on one frame) -- `frame_tracker.observe()` now excludes an animal-class
+detection from ever corroborating a wildlife track when it substantially
+(IoU >= 0.3, reusing `scene_confusor.GEOMETRY_IOU_THRESHOLD`'s own bar)
+coincides, same frame, with an explicitly non-animal (`person`/
+`vehicle`) detection -- partially closed: the co-occurring-contradiction
+shape is now measurably prevented (`git stash`-verified RED->GREEN); the
+pure single-class-misclassification shape (no co-occurring contradiction
+anywhere) remains exactly the already-accepted 2026-08-20
+Person-Background-False-Positive residual, unchanged. **Artifact
+subclass:** found and fixed a real, confirmed defect in `product_
+repository._create_candidate_visit_locked` -- `_touch_scene_confusor_
+region` was reachable only once the quality gate already said `admit`,
+so a recurring, always-weak hard-negative location (Location A) left
+zero scene-confusor history no matter how many times it recurred within
+a session, and the one time it finally cleared `strong_detection_
+threshold` outright it was evaluated against a blank history. Now fixed
+(bookkeeping runs for a `reject_insufficient_detector_corroboration`
+outcome too, never changing that outcome itself) and directly proven,
+via `git stash`, to newly catch a recurring never-strong confusor that
+eventually clears the corroboration *count* axis. **Directly proven,
+numerically, not to close v11's own headline Visit 018 shape itself:**
+`evaluate_scene_confusor_suspicion`'s own steps 5 (materially-stronger-
+than-history) and 6 (independently-strong, unconditional) are both
+checked without reference to occurrence history once triggered, by
+original design, and both are load-bearing for the real, field-proven
+feeder-pole stationary-real-bird control -- so `scene_confusor.py` itself
+is left completely unmodified rather than risk that control on an
+unverified assumption; this residual is reported honestly, not
+concealed. Zero MDv5/NMS/BioCLIP/eligibility threshold changed; zero
+coordinate literal read by either fix; no whole-frame human veto; no
+spatial blacklist; schema unchanged (`v58`). Every required positive
+control preserved (strong/weak/stationary real bird, bird+person
+spatially separate, multi-subject isolation, all prior hard-negative/
+corroboration/scene-confusor mechanisms, Reviewed truth, species
+non-escalation). **Validation:** Tier 1 (new 11-test reproducer suite,
+`tests/test_strong_confidence_non_target_scene_artifact_v1.py`) 11/11;
+Tier 2 (28 directly-affected-subsystem files) 705 passed / 0 failed;
+Tier 3 (one full Core run) 5610 passed / 2 failed / 3 skipped / 23
+deselected / 11 xfailed (1928.46s) -- the 2 failures independently
+reconfirmed pre-existing and unrelated via fresh `git stash` isolation
+against this session's own starting HEAD (the same already-repeatedly-
+documented `test_place_biodiversity_summary_repository.py` pair named in
+§14, most recently also independently reconfirmed by the Hard-Negative
+Visit Admission Precision & Species-Escalation Correctness v1 checkpoint
+touching the same two production files); zero new `ruff` findings on
+either touched production file (`git stash`-isolated baseline
+comparison, identical finding count/codes before and after). This
+closure does **not** authorize the next Representative Field Acceptance
+/ Gate A session, External Pre-Release Acceptance, or Final Release
+Hardening, and does **not** select a next development milestone.
+Authorization remains **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION
+REQUIRED**, unchanged. **Strong-confidence precision-defect state:**
+person subclass partially closed (co-occurring-contradiction sub-case);
+pure single-class-misclassification sub-case remains the already-
+accepted 2026-08-20 residual. Artifact subclass genuinely improved
+(scene-confusor historical bookkeeping now complete) but the field-
+observed Visit-018 shape itself remains open, with a precise, numeric,
+evidence-based account of why closing it further needs either new
+evidence-quality signals (Gate-B/new-ML territory, out of scope) or real
+field data this sandbox cannot safely produce. **Remaining Gate A
+dependency:** the v11 entry's own 7-item priority list, below, is
+unchanged and unmet by this milestone (no field session was run, per
+this milestone's own explicit instruction) -- extended, not replaced, by
+this milestone's own next-field-proof items: (8) whether the same-frame
+class-contradiction fix materially reduces person-associated false
+Visits in a cohort with a real, extended human presence; (9) whether any
+further strong-confidence scene-artifact false Visit recurs, and if so,
+whether it shows the same "weak-history-then-sudden-strong" shape this
+milestone could not close; (10) no whole-frame human suppression of real
+birds in a session with a person present; (11) scene-confusor
+participation, now also measuring corroboration-rejected occurrence
+counts directly (newly possible with this milestone's own fix).
 
 **2026-09-02 update (Representative Daylight Gate A Field Acceptance v11
 -- Independent-Corroboration & Scene-Confusor Re-Proof, see §1/§6.R):**
