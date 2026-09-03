@@ -24,9 +24,68 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `1465103` -- the report commit for Strong-Confidence
-  Non-Target & Scene-Artifact Visit Admission Correctness v1 (see §3,
-  below, and
+- **Accepted HEAD:** `d1f4f18` -- the report commit for Strong-Confidence
+  Subject-Evidence Viability & Scene-Artifact Abstention v1 (see §3, below,
+  and
+  [strong-confidence-subject-evidence-viability-scene-artifact-abstention-v1-report.md](strong-confidence-subject-evidence-viability-scene-artifact-abstention-v1-report.md)
+  for the complete record). Investigation-only, zero production code
+  changed. Reconstructs Representative Daylight Gate A Field Acceptance
+  v11's own Visit 018 (a leaf/branch cluster at the recurring "Location A"
+  geometry that cleared `strong_detection_threshold` six times in one
+  occurrence) faithfully, reusing the immediately-prior milestone's own
+  already-field-grounded reproducer unmodified, and investigates every
+  avenue the governing brief names (detector geometry lineage, crop
+  containment/occupancy/consistency/stability, evidence
+  diversity/temporal spacing, independent detector reacquisition,
+  track-generation structure, evidence scoring, scene-confusor state) for
+  a safe, non-ML, non-confidence-magnitude, non-motion, non-spatial-
+  blacklist fact that separates a strong scene artifact from a strong
+  real (including stationary and brief) bird. Classification **B**. **No
+  safe separator was found; per the brief's own explicit instruction, none
+  was invented.** Two new findings, both proven directly against real
+  production code paths in a new, additive test file
+  (`tests/test_strong_confidence_subject_evidence_viability_v1.py`, 2/2
+  passing), not merely asserted from reading source: (1) the exact
+  artifact shape and the accepted "strong real bird" positive control are
+  structurally identical at every fact `candidate_quality_gate`/
+  `scene_confusor` can read -- one track generation, `strong_detection_
+  count > 0` -- so no count/generation threshold, for any constant,
+  separates them without also catching the real bird; (2) the accepted
+  geometry-lineage signal (Localization Attribution / Detection Geometry
+  Lineage v1, `geometry_source`) -- the specific candidate generalization
+  the governing brief's own §11 asked this milestone to investigate --
+  does **not** separate them either: both classify identically as
+  `geometry_source="detector"` / `detector_off_target`, because the
+  artifact's own detector agreement is completely genuine and
+  contemporaneous, six times over, not stale/tracker-extrapolated (the
+  different, narrower defect class that signal already, correctly,
+  closes for Background/Empty Evidence Species-Confidence Correctness
+  v1). `scene_confusor.py` and `candidate_quality_gate.py` remain
+  completely unmodified -- both of scene-confusor's own confidence
+  escapes (steps 5/6) are reconfirmed, directly, still unconditional on
+  region history by original design and simultaneously required for the
+  real, field-proven feeder-pole stationary-real-bird control; weakening
+  either without a new, independent, safe fact (none found) would risk
+  that control. Zero MDv5/NMS/BioCLIP/eligibility threshold changed; zero
+  new coordinate literal in production code; no whole-frame human veto;
+  no spatial blacklist; no motion requirement; schema unchanged (`v58`).
+  Directly-relevant existing regression suite re-run unchanged (107
+  passed, 0 failed); 0 new `ruff` findings. Tier 3 (full Core)
+  deliberately not run, per the brief's own explicit instruction not to
+  run it for ceremony when a milestone concludes investigation-only with
+  no production change. This does **not** close the field-observed
+  Visit-018 defect -- it proves, with new evidence, that closing it
+  safely needs either a genuinely new evidence-quality/content signal
+  (explicitly out of scope for a Gate-A correctness milestone) or real
+  field data this sandbox cannot responsibly produce. This closure does
+  **not** authorize the next Representative Field Acceptance / Gate A
+  session, External Pre-Release Acceptance, or Final Release Hardening,
+  and does **not** select a next development milestone -- see §3 for the
+  complete reconciliation entry.
+- **Prior accepted HEAD (pre-Strong-Confidence-Subject-Evidence-
+  Viability-Scene-Artifact-Abstention-v1):** `1465103` -- the report
+  commit for Strong-Confidence Non-Target & Scene-Artifact Visit
+  Admission Correctness v1 (see
   [strong-confidence-non-target-scene-artifact-visit-admission-correctness-v1-report.md](strong-confidence-non-target-scene-artifact-visit-admission-correctness-v1-report.md)
   for the complete record). Reopened by Representative Daylight Gate A
   Field Acceptance v11's own field evidence: 8/18 confirmed-false Visits
@@ -2217,6 +2276,109 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-02 update (Strong-Confidence Subject-Evidence Viability &
+Scene-Artifact Abstention v1, see §1):** a direct, investigation-only
+follow-up to the immediately-prior milestone's own disclosed residual --
+the exact v11 Visit-018 strong-confidence leaf/branch scene-artifact shape
+at "Location A," proven, numerically, not closed by that milestone's own
+scene-confusor bookkeeping fix. See
+[strong-confidence-subject-evidence-viability-scene-artifact-abstention-v1-report.md](strong-confidence-subject-evidence-viability-scene-artifact-abstention-v1-report.md)
+for the complete record. Classification **B**. **Investigated every
+avenue the governing brief named -- detector geometry lineage, crop
+containment/occupancy/consistency/stability, evidence diversity/temporal
+spacing, independent detector reacquisition, track-generation structure,
+evidence scoring, scene-confusor state -- and found no safe, non-ML,
+non-confidence-magnitude, non-motion, non-spatial-blacklist fact that
+separates a strong scene artifact from a strong real (including
+stationary and brief) bird. Per the brief's own explicit instruction, no
+rule was invented to force a result: zero production code changed.**
+Two new findings, both proven directly against real production code
+paths (`ProviderNeutralFrameTracker`, `build_tracklets`/`assemble_visit_
+episodes`, `localization_attribution.geometry_attribution_for_update`/
+`classify_localization_attribution`) in a new, additive test file
+(`tests/test_strong_confidence_subject_evidence_viability_v1.py`, 2/2
+passing), not asserted from reading source alone: **(1) structural-shape
+identity** -- the exact artifact shape (one track generation,
+`strong_detection_count=6`) and the accepted "strong real bird" positive
+control (one track generation, `strong_detection_count=3`) are
+structurally identical at every fact `candidate_quality_gate`/
+`scene_confusor` can read; the real bird's own detection count is
+*lower* than the artifact's, so no count/generation threshold, for any
+constant, separates them without also catching the real bird first --
+this is a disguised confidence/count retune, which the brief explicitly
+forbids. **(2) geometry-grounding non-separation** -- directly answers
+the brief's own §11 (whether Background / Empty Evidence Species-
+Confidence Correctness v1's own "credible contemporaneous detector
+grounding" fact, `geometry_source`, generalizes to Visit admission):
+both the artifact and the real-bird control classify identically as
+`geometry_source="detector"` / `classify_localization_attribution(...)
+.attribution == "detector_off_target"`, because the artifact's own six
+detections are completely genuine, contemporaneous MDv5 agreement, not
+stale/tracker-extrapolated geometry -- the different, narrower defect
+class that signal already, correctly, closes elsewhere. `localization_
+attribution.classify_localization_attribution`'s own docstring already
+names this exact limit verbatim ("the raw detector output on that exact
+frame is the most defensible attribution available from lineage alone").
+Also investigated and explicitly rejected as unsafe, not merely
+unexamined: intra-generation box/geometry variance (a disguised
+motion/stillness requirement, forbidden by the brief); encounter
+duration/detection temporal density (would risk the mandatory brief-
+real-bird positive control); evidence-candidate diversity (the brief's
+own text preemptively names this insufficient by itself, since a real
+stationary bird legitimately produces the same shape); evidence
+photographic quality (re-confirmed, not re-derived, from the immediately-
+prior milestone's own real-crop trace -- none of `evidence_scoring.py`'s
+components are content/semantic signals). `scene_confusor.py` and
+`candidate_quality_gate.py` remain completely unmodified: both of
+scene-confusor's own confidence escapes (steps 5/6, `stronger_confidence_
+than_region_history`/`independently_strong_detection`) are reconfirmed
+directly, by reading the current source in full, to be unconditional on
+region history by original design and simultaneously required for the
+real, field-proven feeder-pole stationary-real-bird control (`occurrence_
+count=4`, `max_confidence_observed=0.827`, escaping via step 6 every
+time, spanning both v11 field segments) -- weakening either without a
+new, independent, safe fact (none found this milestone) would risk that
+control directly. Zero MDv5/NMS/BioCLIP/eligibility threshold changed;
+zero new coordinate literal in production code; no whole-frame human
+veto; no spatial blacklist; no motion requirement; no BioCLIP validity
+gate; schema unchanged (`v58`). Directly-relevant existing regression
+suite re-run unchanged (`tests/test_strong_confidence_non_target_scene_
+artifact_v1.py`, `tests/test_independent_corroboration_value_persistent_
+confusor_v1.py`, `tests/test_hard_negative_visit_admission_precision_v1.
+py`, `tests/test_localization_attribution.py`, `tests/test_observation_
+evidence_scoring.py`, plus the new file: 107 passed, 0 failed); 0 new
+`ruff` findings. Tier 3 (full Core) deliberately not run, matching the
+brief's own explicit instruction not to run it for ceremony when a
+milestone concludes investigation-only with no production change --
+documented, not omitted. **Strong-confidence-artifact defect state,
+updated:** still open, unchanged in observable product behavior (Visit
+018's own exact shape still admits), but now backed by two new,
+code-proven negative results narrowing what a future closure attempt
+would need (a genuinely new evidence-quality/content signal, or real
+field data this sandbox cannot responsibly produce) rather than an
+unexamined residual. This closure does **not** authorize the next
+Representative Field Acceptance / Gate A session, External Pre-Release
+Acceptance, or Final Release Hardening, and does **not** select a next
+development milestone. Authorization remains **NONE -- GLOBAL
+PRODUCT-ROADMAP RECONCILIATION REQUIRED**, unchanged. **Remaining Gate A
+dependency:** unchanged and unmet by this milestone (no field session
+was run, per this milestone's own explicit instruction, and no
+production admission behavior changed) -- the v11 entry's own priority
+list and the immediately-prior milestone's own extension items (8-11,
+below) remain exactly as they were; this milestone adds no new field-proof
+item beyond what its own "Next field proof" section (in the linked
+report) already names as separately out of scope. **Separately reproduced
+diagnostic/tooling defects (v11, carried forward, not this milestone's
+scope):** Camera Node `/node/v1/health` self-test can report
+`camera_available: true` while the specifically-configured camera remains
+physically undetected (real, disclosed, not release-blocking -- the
+actual safety-relevant compatibility-preflight gate already catches it
+correctly); acceptance-recorder directory-path encoding defect for an
+absolute Windows `MOCKINGBIRD_DEV_ACCEPTANCE_RECORDING_DIR` (data-intact,
+tooling-only). Neither investigated or fixed this milestone; no
+dependency found between either and this milestone's own subject-
+evidence-viability investigation.
 
 **2026-09-02 update (Strong-Confidence Non-Target & Scene-Artifact Visit
 Admission Correctness v1, see §1):** reopened by Representative Daylight
