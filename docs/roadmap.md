@@ -2871,6 +2871,32 @@ to consume only data already permitted by the existing reviewed-truth/
 research-eligibility contract; no second "human verification" mechanism
 was built per destination. None of this delays release.
 
+**Ecosystem / Provider Integrations.** Ecosystem / Provider Integrations
+Release-Scope Decision v1 (2026-09-03, see
+[ecosystem-provider-integrations-release-scope-decision-v1-report.md](ecosystem-provider-integrations-release-scope-decision-v1-report.md))
+closed release-execution-state.md's Lane K: no dedicated Frigate, Blue
+Iris, Scrypted, or Home Assistant adapter -- or a generic NVR/plugin
+framework -- is required for the one public launch. Native Camera Node
+(golden path) plus standards-based acquisition (ONVIF, RTSP/RTSPS, local
+USB/platform camera, offline/recorded ingest, camera-trap ingest --
+already substantial accepted work, see "Completed foundations," below,
+and release-execution-state.md's "Camera / Acquisition Foundations")
+already gives launch users reasonable non-proprietary acquisition
+options, and a generic, vendor-neutral webhook ingress
+(`docs/generic-webhook-provider-boundary-design.md`) already lets any of
+the four candidate ecosystems feed evidence-only events in today without
+MockingBird building a dedicated adapter. Each candidate was assessed
+individually and deferred pending evidence, not ruled out: a future
+adapter remains a legitimate, evidence-driven, after-release opportunity
+(see the report's "Reopening criteria"), and any such adapter, if ever
+built, must terminate into the existing Source/Stream/Visit/Evidence/
+Review Decision/Observation spine like every provider today -- never
+parallel Visit or Reviewed truth, a second camera database, cloud-required
+operation, a surveillance-specific mode, or separate per-provider
+analytics truth (see the report's "Architecture contract for future
+adapters"). Does not delay release; removes no launch blocker (Lane K was
+already a decision-only item, not release-critical).
+
 **Public benchmark / training governance.** See
 [public-benchmark-governance.md](public-benchmark-governance.md) (new --
 no dedicated governance existed before this pass beyond the internal frozen-
@@ -3552,8 +3578,10 @@ institutional -- see
 Retain remaining important lanes: site-specific learning/fine-tuning;
 broader wildlife/taxonomy maturity; ecological/research interoperability
 (see "Ecological export & sharing interoperability" in "After-release
-lanes," above); ecosystem/provider integrations; professional field/
-research validation; organization deployment/admin documentation; full
+lanes," above); ecosystem/provider integrations (see "Ecosystem /
+Provider Integrations" in "After-release lanes," above -- deferred
+pending evidence, not required for launch, not removed); professional
+field/research validation; organization deployment/admin documentation; full
 responsive/accessibility/performance polish; legal/license closure;
 model-license manifest; hardware/BOM/compatibility documentation; public
 launch assets/docs/site; field acceptance; security/packaging/OSS

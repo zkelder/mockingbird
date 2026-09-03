@@ -24,7 +24,44 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `e79420e` -- the report commit for Camera / Source
+- **Accepted HEAD:** `8a3ad4f` -- the report commit for Ecosystem /
+  Provider Integrations Release-Scope Decision v1 (see §3, below, and
+  [ecosystem-provider-integrations-release-scope-decision-v1-report.md](ecosystem-provider-integrations-release-scope-decision-v1-report.md)
+  for the complete record). Pre-release product-scope decision for Lane K
+  -- documentation/reconciliation only, zero production code changed, no
+  adapter or plugin framework implemented. Decision: no dedicated
+  Frigate, Blue Iris, Scrypted, or Home Assistant adapter (or generic
+  NVR/plugin framework) is required for the one public launch; launch
+  acquisition posture remains native Camera Node (golden path) +
+  standards-based acquisition (ONVIF, RTSP/RTSPS, local USB/platform
+  camera, offline/recorded ingest, camera-trap ingest) -- traced directly
+  from real existing code and design docs, all already substantial
+  accepted work (see "Camera / Acquisition Foundations," §5, below). Each
+  of the four candidates individually assessed against product value,
+  capability gap, existing standards coverage, surveillance/NVR
+  product-identity pressure, and new credential/network surface; all four
+  DEFERRED -- NOT REQUIRED FOR LAUNCH, not "never." Concrete,
+  evidence-based reopening criteria recorded (repeated otherwise-
+  unsolvable connection failures, a provider exposing evidence-quality
+  facts standards can't, measured installation-burden reduction, repeated
+  organizational dependency, measured reliability gain); popularity,
+  API-availability, competitor-parity, and plugin-framework desire are
+  explicitly insufficient alone. Architecture contract locked for any
+  future adapter: must terminate into the existing Source/Stream/Visit/
+  Evidence/Review Decision/Observation spine, never parallel Visit or
+  Reviewed truth, never a second camera database, never cloud-required
+  operation, never a surveillance-specific mode, never separate
+  per-provider analytics truth. Classification **A**. **Lane K status,
+  updated:** `OPEN DECISION` -> `DECISION CLOSED -- DEDICATED PROVIDER
+  INTEGRATIONS DEFERRED PENDING EVIDENCE; NOT REQUIRED FOR LAUNCH` (see §6
+  Lane K, below). Removes zero launch blockers -- Lane K was already
+  categorized decision-only (§6 category B), never release-critical. This
+  closure does **not** authorize a provider implementation, Lane R,
+  External Pre-Release Acceptance, or Final Release Hardening, and does
+  **not** select a next development milestone -- see §3 for the complete
+  reconciliation entry.
+- **Prior accepted HEAD (pre-Ecosystem-Provider-Integrations-Release-
+  Scope-Decision-v1):** `e79420e` -- the report commit for Camera / Source
   Release Hardware Validation Closure v1 (see §3, below, and
   [camera-source-release-hardware-validation-closure-v1-report.md](camera-source-release-hardware-validation-closure-v1-report.md)
   for the complete record). Lane G hardware-validation milestone
@@ -2342,6 +2379,34 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-03 update (Ecosystem / Provider Integrations Release-Scope
+Decision v1, see §1):** pre-release product-scope decision for Lane K,
+directly authorized outside this file as global product-roadmap
+reconciliation -- documentation/reconciliation only, zero production code
+changed. See
+[ecosystem-provider-integrations-release-scope-decision-v1-report.md](ecosystem-provider-integrations-release-scope-decision-v1-report.md)
+for the complete record. Classification **A**. Confirms MockingBird
+already has reasonable non-proprietary launch acquisition options across
+every category traced (Camera Node, ONVIF, RTSP/RTSPS, local USB/platform
+camera, offline/recorded ingest, camera-trap ingest, plus a
+general-purpose vendor-neutral webhook ingress any of the four candidate
+ecosystems could already use without a dedicated adapter) and closes Lane
+K's `OPEN DECISION` to `DECISION CLOSED -- DEDICATED PROVIDER
+INTEGRATIONS DEFERRED PENDING EVIDENCE; NOT REQUIRED FOR LAUNCH` (§6,
+below) with concrete reopening criteria and a locked architecture
+contract for any future adapter (must terminate into the existing
+Source/Stream/Visit/Evidence/Review Decision/Observation spine; no
+parallel truth, no second camera database, no cloud-required operation,
+no surveillance-specific mode, no separate analytics truth). Removes zero
+launch blockers: Lane K was already category B (pre-release decision),
+never release-critical, so no release-shape recategorization was needed,
+mirroring how Lane O and Lane P's own resolutions were each closed in
+place. Does **not** authorize a provider implementation, Lane R, External
+Pre-Release Acceptance, or Final Release Hardening, and does **not**
+select a next development milestone. This file's own bold "NONE --
+GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED" statement, directly
+above, is unchanged.
 
 **2026-09-02 update (Camera / Source Release Hardware Validation Closure
 v1, see §1):** Lane G hardware-validation milestone (directly authorized
@@ -4797,8 +4862,8 @@ words used to describe them:
   alongside it, is now resolved -- see Lane P, below); the still-open
   BirdNET commercial-adjacent legal posture (§2, above); platform-support
   declarations (Lane O, resolved -- see Lane O, below); Ecosystem/Provider
-  Integrations scope (Lane K, "OPEN DECISION"); any other genuine
-  unresolved release decision as it surfaces.
+  Integrations scope (Lane K, resolved -- see Lane K, below); any other
+  genuine unresolved release decision as it surfaces.
 - **C. After release** -- real product development explicitly not
   required for launch, kept so it is not lost: complete remote/
   intermittent-WAN/LTE, solar/battery, custom CM4/CM5 (Lane B, and §8,
@@ -5133,12 +5198,31 @@ scoping, already supported server-side via the reused
 
 ### K. Ecosystem / Provider Integrations
 
-**Status:** OPEN DECISION.
+**Status:** DECISION CLOSED -- DEDICATED PROVIDER INTEGRATIONS DEFERRED
+PENDING EVIDENCE; NOT REQUIRED FOR LAUNCH. Ecosystem / Provider
+Integrations Release-Scope Decision v1 (2026-09-03) closed this lane's
+decision; see
+[ecosystem-provider-integrations-release-scope-decision-v1-report.md](ecosystem-provider-integrations-release-scope-decision-v1-report.md).
+Classification **A**.
 
-Candidates previously discussed: Frigate; Blue Iris; Scrypted; Home
-Assistant. Do not implement all. Decide whether a minimum useful adapter
-set materially improves first-release adoption. Native Camera Node +
-standards-based acquisition remain the golden path.
+Candidates assessed individually: Frigate; Blue Iris; Scrypted; Home
+Assistant. None supplies a camera-acquisition capability MockingBird
+fundamentally lacks -- ONVIF, RTSP/RTSPS, local USB/platform camera,
+offline/recorded ingest, and camera-trap ingest already cover the core
+camera path (see "Camera / Acquisition Foundations," §5, above), and a
+generic, vendor-neutral webhook ingress already lets any of the four feed
+evidence-only events in today without a dedicated adapter. Each carries
+real surveillance/NVR product-identity pressure and a new credential/
+network surface. Native Camera Node + standards-based acquisition remain
+the golden/general launch path. Deferred, not implemented, not "never" --
+see the report's "Reopening criteria" for the concrete, evidence-based bar
+(repeated otherwise-unsolvable connection failures, a provider exposing
+evidence-quality facts standards can't, measured installation-burden
+reduction, repeated organizational dependency, measured reliability gain;
+popularity/API-availability/competitor-parity/plugin-framework desire are
+explicitly insufficient alone) and "Architecture contract for future
+adapters" for the locked terminating-into-existing-truth-architecture
+requirement any later adapter must meet.
 
 ### L. Appliance / Update / Recovery
 
