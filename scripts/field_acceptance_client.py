@@ -110,6 +110,30 @@ class FieldAcceptanceApiError(FieldAcceptanceClientError):
         self.detail = detail
 
 
+class FieldAcceptanceInvalidParameterError(FieldAcceptanceClientError):
+    """Raised locally, before any HTTP request is made, when a caller
+    passes a value `_request` would otherwise have silently dropped from
+    the query string instead of sending it -- see `_request`'s own
+    `if value is not None` filter, which is correct and desired for a
+    genuinely optional filter (e.g. `list_visits(limit=None)` should omit
+    `limit` entirely) but silently wrong for a parameter the server
+    requires.
+
+    Field Acceptance Evidence Integrity & Storage Preflight Correctness
+    v1 (see docs/field-acceptance-evidence-integrity-storage-preflight-
+    correctness-v1-report.md): Representative Daylight Gate A Field
+    Acceptance v12's own periodic-snapshot loop called
+    `observation_counterfactual(..., end_offset_ms=None)` -- Python's own
+    type hints (`end_offset_ms: int`, no `| None`) already say this is
+    wrong, but nothing enforced it at runtime, so `_request` silently
+    omitted `end_offset_ms` from the query string entirely, and the
+    server -- which requires it (`Query(..., ge=0)`, no default) -- 422'd
+    on every one of the 12 periodic snapshots that session took. This
+    exception makes that mistake impossible to repeat silently: the
+    caller finds out immediately, locally, with an actionable message,
+    never as a confusing HTTP 422 buried inside a background loop."""
+
+
 class FieldAcceptanceClient:
     """Thin authenticated HTTP wrapper. Stdlib-only (`urllib`), matching
     `scripts/repair_review_label_provenance.py`'s own precedent -- no new
@@ -176,10 +200,48 @@ class FieldAcceptanceClient:
     def observation_counterfactual(
         self, stream_id: str, *, start_offset_ms: int, end_offset_ms: int
     ) -> dict:
+        """`GET .../observation/counterfactual`. Both bounds are required
+        by the server (`start_offset_ms`/`end_offset_ms`: `Query(...,
+        ge=0)`, no default -- see `get_stream_observation_counterfactual`
+        in `src/mockingbird/api/main.py`), so both are validated *here*,
+        before `_request` ever builds a URL: a caller passing `None` for
+        either (the exact Representative Daylight Gate A Field Acceptance
+        v12 mistake -- see `FieldAcceptanceInvalidParameterError`) fails
+        immediately and locally with an actionable message, rather than
+        silently sending a request missing the parameter entirely and
+        finding out only from a 422 deep inside a periodic-snapshot loop.
+        There is no "omit the bound" form of this call -- if a future,
+        genuinely-optional bound is ever added to this endpoint, it
+        belongs in `**query_params` like `list_visits`, not here."""
+
+        if start_offset_ms is None or end_offset_ms is None:
+            missing = "start_offset_ms" if start_offset_ms is None else "end_offset_ms"
+            raise FieldAcceptanceInvalidParameterError(
+                f"observation_counterfactual() requires an explicit real {missing}, not None -- the "
+                "server treats it as a required parameter (Query(..., ge=0), no default) and would "
+                "422 on a request silently missing it. Pass an explicit int (e.g. a large fixed "
+                "end_offset_ms such as 86_400_000 for 'everything retained so far')."
+            )
         return self._request(
             "GET", f"/api/streams/{stream_id}/observation/counterfactual",
             params={"start_offset_ms": start_offset_ms, "end_offset_ms": end_offset_ms},
         )
+
+    def scene_confusor_learning_status(self, stream_id: str) -> dict:
+        """`GET .../observation/scene-confusor-learning` -- the accepted,
+        already-production, side-effect-free scene-confusor status read
+        (`SceneConfusorLearningStatusResponse`; see `src/mockingbird/api/
+        main.py`'s `get_stream_scene_confusor_learning_status`). Reachable
+        by the field-acceptance credential with no allowlist entry needed
+        (any read-tier/`authenticated` route already is -- see
+        `mockingbird.api.auth`'s own `FIELD_ACCEPTANCE_ALLOWED_ADMIN_
+        ROUTES` docstring). Added for `field_acceptance_ledger_snapshot.
+        py`'s own periodic checkpoint, which treats this as one of the
+        "where enabled" artifact classes a checkpoint should capture --
+        never a raw-region DB read (no such API exists, and this module
+        never touches the database directly)."""
+
+        return self._request("GET", f"/api/streams/{stream_id}/observation/scene-confusor-learning")
 
     def product_health(self) -> dict:
         """Public, unauthenticated (`/api/product/health`) -- included for

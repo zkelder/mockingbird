@@ -113,6 +113,8 @@ DEFAULT_KEEP = _MODULE["DEFAULT_KEEP"]
 check_storage_headroom = _MODULE["check_storage_headroom"]
 ACCEPTANCE_RECORDER_HARD_CEILING_BYTES = _MODULE["ACCEPTANCE_RECORDER_HARD_CEILING_BYTES"]
 STORAGE_PREFLIGHT_RESERVE_BYTES = _MODULE["STORAGE_PREFLIGHT_RESERVE_BYTES"]
+resolve_storage_probe_target = _MODULE["resolve_storage_probe_target"]
+StorageProbeTarget = _MODULE["StorageProbeTarget"]
 
 _BLP = runpy.run_path(str(ROOT / "scripts" / "build_local_product.py"))
 PACKAGED_BUILD_INFO_FILENAME = _BLP["PACKAGED_BUILD_INFO_FILENAME"]
@@ -2189,6 +2191,258 @@ def test_deploy_probes_the_nearest_existing_ancestor_of_a_not_yet_created_dev_ro
     )
 
     assert probed == [str(fresh_dev_root.parent)]
+
+
+# ---------------------------------------------------------------------------
+# resolve_storage_probe_target() -- Field Acceptance Evidence Integrity &
+# Storage Preflight Correctness v1. See that module's own module-level
+# docstring section (immediately above its definition in
+# scripts/deploy_windows_dev.py) for the full v12 root-cause this closes.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_storage_probe_target_ordinary_posix_path_resolves_directly(tmp_path: Path) -> None:
+    """An ordinary, already-existing POSIX target: resolution is a plain
+    identity mapping, `resolution_method="direct"` -- unchanged from
+    before this milestone."""
+
+    root = tmp_path / "MockingBirdFieldAcceptanceNew"
+    root.mkdir()
+
+    target = resolve_storage_probe_target(root, is_native_windows=False)
+
+    assert target.resolution_method == "direct"
+    assert target.platform == "posix"
+    assert target.resolved == str(root.resolve())
+    assert target.probed == str(root.resolve())
+
+
+def test_resolve_storage_probe_target_walks_multiple_levels_to_nearest_existing_ancestor(
+    tmp_path: Path,
+) -> None:
+    """Governing brief §15: a fresh deployment root nested *several*
+    levels below the nearest existing directory must still resolve to
+    that real existing ancestor -- the pre-fix code only ever checked one
+    level (`dev_root` then `dev_root.parent`), silently falling through
+    to `Path("/")` for anything nested deeper than that even on an
+    entirely ordinary, honest POSIX path."""
+
+    existing = tmp_path / "mnt-sim" / "c-sim" / "MockingBird"
+    existing.mkdir(parents=True)
+    deeply_nested = existing / "NewInstance" / "Deep" / "Nested" / "Path"
+    assert not deeply_nested.exists()
+    assert not deeply_nested.parent.exists()
+
+    target = resolve_storage_probe_target(deeply_nested, is_native_windows=False)
+
+    assert target.resolution_method == "direct"
+    assert target.probed == str(existing)
+
+
+def test_resolve_storage_probe_target_windows_drive_path_on_posix_translates_via_wslpath(
+    tmp_path: Path,
+) -> None:
+    """The supported, safe form: a real, trustworthy `wslpath -u`
+    translation (injected here; the real proof against the actual
+    `wslpath` binary lives in the governing report, not in this hermetic
+    suite) maps the Windows-style string to its real mounted equivalent,
+    which then resolves exactly like any other absolute POSIX path --
+    never the invoking shell's own CWD."""
+
+    windows_style = r"C:\Users\zachk\AppData\Local\MockingBirdFieldAcceptanceV12"
+    fake_mount_root = tmp_path / "mnt-sim" / "c-sim"
+    fake_mount_root.mkdir(parents=True)
+    translated = str(fake_mount_root / "Users" / "zachk" / "AppData" / "Local" / "MockingBirdFieldAcceptanceV12")
+
+    def fake_translate(raw: str) -> str | None:
+        assert raw == windows_style
+        return translated
+
+    target = resolve_storage_probe_target(
+        Path(windows_style), is_native_windows=False, wsl_translate_fn=fake_translate,
+    )
+
+    assert target.resolution_method == "translated_from_windows_drive_path"
+    assert target.requested == windows_style
+    assert target.resolved == translated
+    # The translated root does not exist yet -- probes its nearest real ancestor, never CWD/repo root.
+    assert target.probed == str(fake_mount_root)
+    assert ROOT.__str__() not in target.probed
+
+
+def test_resolve_storage_probe_target_windows_drive_path_on_posix_fails_closed_when_translation_unavailable() -> None:
+    """The exact Representative Daylight Gate A Field Acceptance v12
+    hazard: a Windows-style `--dev-root` given to a process that is not
+    running on native Windows. When translation is unavailable (no
+    `wslpath`, or it fails), this must refuse outright -- never silently
+    fall back to CWD or any other accidental ancestor."""
+
+    with pytest.raises(DeploymentError, match="wslpath"):
+        resolve_storage_probe_target(
+            Path(r"C:\Users\zachk\AppData\Local\MockingBirdFieldAcceptanceV12"),
+            is_native_windows=False, wsl_translate_fn=lambda _raw: None,
+        )
+
+
+def test_resolve_storage_probe_target_windows_drive_path_on_posix_fails_closed_for_unusable_translation() -> None:
+    """A translation function that returns a non-absolute or empty string
+    (a malformed/buggy translator) is treated exactly like "unavailable"
+    -- fail closed, never trust an unusable result."""
+
+    with pytest.raises(DeploymentError):
+        resolve_storage_probe_target(
+            Path(r"D:\Foo"), is_native_windows=False, wsl_translate_fn=lambda _raw: "not-absolute",
+        )
+
+
+def test_resolve_storage_probe_target_native_windows_drive_path_resolves_directly(tmp_path: Path) -> None:
+    """Governing brief §16: on native Windows, ordinary Windows-drive
+    syntax is not a hazard at all (real `pathlib.WindowsPath` resolves it
+    natively) -- no translation is attempted, and this must behave
+    exactly as it did before this milestone."""
+
+    root = tmp_path / "MockingBirdFieldAcceptanceNew"
+    root.mkdir()
+
+    def _must_not_be_called(_raw: str) -> str | None:
+        raise AssertionError("wsl_translate_fn must never be called when is_native_windows=True")
+
+    target = resolve_storage_probe_target(root, is_native_windows=True, wsl_translate_fn=_must_not_be_called)
+
+    assert target.resolution_method == "direct"
+    assert target.platform == "windows"
+
+
+def test_resolve_storage_probe_target_ordinary_path_never_looks_like_a_windows_drive_path(tmp_path: Path) -> None:
+    """A plausible real-world example straight from governing brief §15:
+    `/mnt/c/MockingBird/NewInstance` is already a correct, ordinary
+    absolute POSIX path -- it must never be routed through the
+    Windows-drive-translation branch at all."""
+
+    def _must_not_be_called(_raw: str) -> str | None:
+        raise AssertionError("an ordinary POSIX path must never be translated")
+
+    root = tmp_path / "mnt-sim" / "c-sim" / "MockingBird" / "NewInstance"
+    target = resolve_storage_probe_target(root, is_native_windows=False, wsl_translate_fn=_must_not_be_called)
+
+    assert target.resolution_method == "direct"
+
+
+# ---------------------------------------------------------------------------
+# check_storage_headroom() cross-OS regression coverage -- the actual,
+# real-world entry point every field-acceptance deploy calls (`deploy()`
+# runs this by default, before any build/materialize work, unless
+# --skip-storage-preflight).
+# ---------------------------------------------------------------------------
+
+
+def test_check_storage_headroom_fails_closed_for_windows_drive_path_under_posix_even_with_ample_space() -> None:
+    """The precise, end-to-end reproduction of Representative Daylight
+    Gate A Field Acceptance v12's own disclosed defect at the real entry
+    point `deploy()` itself calls: given a malformed Windows-style
+    `--dev-root` under POSIX with no trustworthy translation available,
+    this must refuse outright -- and, critically, must never even call
+    `disk_usage_fn` at all, proving it fails closed *before* measuring
+    anything, rather than measuring the wrong filesystem and then
+    separately (and here, wrongly) deciding that measurement looks fine."""
+
+    def _disk_usage_must_not_be_called(_path: str) -> None:
+        raise AssertionError("disk_usage_fn must never be called once resolution has failed closed")
+
+    with pytest.raises(DeploymentError):
+        check_storage_headroom(
+            dev_root=Path(r"C:\Users\zachk\AppData\Local\MockingBirdFieldAcceptanceV12"),
+            acceptance_recorder_max_bytes=1_000_000_000,
+            disk_usage_fn=_disk_usage_must_not_be_called,
+            is_native_windows=False, wsl_translate_fn=lambda _raw: None,
+        )
+
+
+def test_check_storage_headroom_windows_drive_path_translates_and_measures_the_right_target(
+    tmp_path: Path,
+) -> None:
+    """The correct, supported end-to-end path: once translated, the real
+    figure reported is measured against the translated target's own
+    nearest existing ancestor -- never the invoking shell's own CWD/repo
+    checkout."""
+
+    fake_mount_root = tmp_path / "mnt-sim" / "c-sim"
+    fake_mount_root.mkdir(parents=True)
+    translated = str(fake_mount_root / "Users" / "zachk" / "AppData" / "Local" / "MockingBirdX")
+    probed_paths: list[str] = []
+
+    def fake_disk_usage(path: str) -> object:
+        probed_paths.append(path)
+        return _FakeUsage(total=100_000_000_000, free=50_000_000_000)
+
+    check_storage_headroom(
+        dev_root=Path(r"C:\Users\zachk\AppData\Local\MockingBirdX"),
+        acceptance_recorder_max_bytes=1_000_000_000,
+        disk_usage_fn=fake_disk_usage,
+        is_native_windows=False, wsl_translate_fn=lambda _raw: translated,
+    )  # must not raise -- ample space at the *correct* target
+
+    assert probed_paths == [str(fake_mount_root)]
+
+
+def test_main_resolves_a_windows_drive_dev_root_before_any_other_use(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The real, end-to-end CLI entry point -- not just direct calls to
+    `check_storage_headroom`/`resolve_storage_probe_target`. A genuine
+    regression: this milestone's own first implementation pass left
+    `main()` calling bare `args.dev_root.resolve()` *before* handing
+    `dev_root` to anything else, which silently CWD-anchored a Windows
+    -style string (backslash is not `os.sep` under POSIX) before the
+    drive-path detection ever saw it -- defeating the entire fix at the
+    actual command real field sessions run
+    (`python scripts/deploy_windows_dev.py --dev-root 'C:\\...' ...`),
+    while only the lower-level unit tests above (which construct
+    `dev_root` Path objects directly, bypassing `main()` entirely)
+    stayed green. Caught by review before acceptance, fixed via `main()`
+    now routing through the same `resolve_dev_root_path` helper `resolve_
+    storage_probe_target` itself uses -- this test exercises `main()`
+    itself via the cheap, side-effect-free `--status` branch."""
+
+    windows_style = r"C:\Users\zachk\AppData\Local\MockingBirdSomething"
+    fake_mount_root = tmp_path / "mnt-sim" / "c-sim"
+    fake_mount_root.mkdir(parents=True)
+    translated = str(fake_mount_root / "Users" / "zachk" / "AppData" / "Local" / "MockingBirdSomething")
+    captured: dict[str, object] = {}
+
+    def fake_status_report(*, dev_root: Path, host: str, port: int, windows_host: object) -> str:
+        captured["dev_root"] = dev_root
+        return "status: ok"
+
+    monkeypatch.setitem(main.__globals__, "status_report", fake_status_report)
+    monkeypatch.setitem(main.__globals__, "_wsl_translate_windows_path", lambda _raw: translated)
+
+    exit_code = main(["--dev-root", windows_style, "--status"])
+
+    assert exit_code == 0
+    # The value main() actually passed downstream must be the *translated*
+    # real path -- never the CWD/repo-checkout-anchored mangling the old
+    # bare `.resolve()` call produced, and never the untranslated literal
+    # Windows string either (main() must have actually invoked resolution).
+    assert str(captured["dev_root"]) == translated
+    assert str(ROOT) not in str(captured["dev_root"])
+
+
+def test_main_fails_closed_for_a_windows_drive_dev_root_with_no_translation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other half of the same end-to-end proof: when translation is
+    unavailable, `main()` must refuse outright -- never fall through to
+    the old, dangerous CWD-anchored behavior."""
+
+    def _status_report_must_not_be_called(**_kwargs: object) -> str:
+        raise AssertionError("status_report must never be reached once resolution has failed closed")
+
+    monkeypatch.setitem(main.__globals__, "status_report", _status_report_must_not_be_called)
+    monkeypatch.setitem(main.__globals__, "_wsl_translate_windows_path", lambda _raw: None)
+
+    with pytest.raises(DeploymentError, match="wslpath"):
+        main(["--dev-root", r"C:\Users\zachk\AppData\Local\MockingBirdSomething", "--status"])
 
 
 # ---------------------------------------------------------------------------

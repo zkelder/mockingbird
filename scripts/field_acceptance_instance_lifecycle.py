@@ -849,7 +849,24 @@ def execute_cleanup(*, dev_root: Path, windows_host: Any, destroy: bool) -> Clea
 
 @dataclass(frozen=True)
 class StoragePreflightReport:
-    dev_root: str
+    """Field Acceptance Evidence Integrity & Storage Preflight
+    Correctness v1: `requested_root`/`resolved_root`/`probed_root`/
+    `resolution_method`/`platform`/`filesystem_device_id` are the
+    provenance Representative Daylight Gate A Field Acceptance v12's own
+    report disclosed as missing -- without them, a reviewer had no way to
+    tell "requested Windows instance root -> measured Windows storage"
+    apart from the dangerous "requested Windows root -> measured WSL
+    virtual disk" this tool actually did. See `storage_preflight_report`
+    and `deploy_windows_dev.resolve_storage_probe_target` (the shared
+    resolver both this and `deploy_windows_dev.py`'s own pre-build
+    `check_storage_headroom` call -- never two independent copies)."""
+
+    requested_root: str
+    resolved_root: str
+    probed_root: str
+    resolution_method: str  # "direct" | "translated_from_windows_drive_path"
+    platform: str  # "windows" | "posix"
+    filesystem_device_id: int | None
     free_bytes: int
     total_bytes: int
     storage_health_tier: str
@@ -903,7 +920,23 @@ def storage_preflight_report(
     reserve_bytes: int = DEFAULT_RESERVE_BYTES,
     scan_siblings: bool = True,
     disk_usage_fn: Callable[[str], Any] | None = None,
+    is_native_windows: bool | None = None,
+    wsl_translate_fn: Callable[[str], "str | None"] | None = None,
 ) -> StoragePreflightReport:
+    """Field Acceptance Evidence Integrity & Storage Preflight
+    Correctness v1: target resolution itself (`requested` -> `resolved`
+    -> `probed`) is delegated entirely to `deploy_windows_dev.
+    resolve_storage_probe_target` -- loaded via this module's own
+    established `_dwd()` `runpy.run_path` convention, exactly like
+    `read_current`/`probe_port`/every other `deploy_windows_dev.py`
+    primitive this tool already reuses -- rather than a second,
+    independently-drifting copy of that resolution logic. `is_native_
+    windows`/`wsl_translate_fn` exist only as hermetic test seams
+    (mirroring `disk_usage_fn` immediately below); real callers (the CLI)
+    never pass them, so production always gets the real `os.name`/real
+    `wslpath -u` behavior."""
+
+    dwd = _dwd()
     if disk_usage_fn is None:
         disk_usage_fn = shutil.disk_usage
     if recorder_max_bytes > ACCEPTANCE_RECORDER_HARD_CEILING_BYTES:
@@ -911,17 +944,27 @@ def storage_preflight_report(
             f"--recorder-max-bytes {recorder_max_bytes} exceeds the acceptance recorder's own hard ceiling "
             f"({ACCEPTANCE_RECORDER_HARD_CEILING_BYTES}, mirrors AcceptanceRecorderConfig)."
         )
-    resolved = _resolve(dev_root)
-    probe_target = resolved if resolved.exists() else resolved.parent if resolved.parent.exists() else Path("/")
-    usage = disk_usage_fn(str(probe_target))
+    try:
+        probe_target = dwd["resolve_storage_probe_target"](  # type: ignore[operator]
+            dev_root, is_native_windows=is_native_windows, wsl_translate_fn=wsl_translate_fn,
+        )
+    except dwd["DeploymentError"] as error:  # type: ignore[misc]
+        raise InstanceLifecycleError(str(error)) from error
+
+    probed_path = Path(probe_target.probed)
+    usage = disk_usage_fn(probe_target.probed)
     free_bytes, total_bytes = int(usage.free), int(usage.total)
+    try:
+        filesystem_device_id: int | None = probed_path.stat().st_dev
+    except OSError:
+        filesystem_device_id = None
 
     known: list[AssessmentResult] = []
     if scan_siblings:
         try:
             parent = _resolve(windows_host.local_appdata())
         except Exception:  # noqa: BLE001
-            parent = resolved.parent
+            parent = Path(probe_target.resolved).parent
         known = [result for result in scan_sibling_instances(parent, windows_host=windows_host) if result.verdict == SAFE_TO_RECLAIM]
     known_bytes = sum(result.reclaimable_bytes or 0 for result in known)
     known_names = tuple(result.dev_root for result in known)
@@ -929,16 +972,23 @@ def storage_preflight_report(
     required = recorder_max_bytes + reserve_bytes
     sufficient = free_bytes >= required
     if sufficient:
-        reason = f"{free_bytes / 1e9:.1f}GB free >= {required / 1e9:.1f}GB required -- OK to proceed."
+        reason = (
+            f"{free_bytes / 1e9:.1f}GB free >= {required / 1e9:.1f}GB required -- OK to proceed "
+            f"(measured {probe_target.probed!r})."
+        )
     else:
         reason = (
             f"Insufficient storage for the requested acceptance budget: {free_bytes / 1e9:.1f}GB free, "
             f"{required / 1e9:.1f}GB estimated required ({recorder_max_bytes / 1e9:.1f}GB recorder budget + "
-            f"{reserve_bytes / 1e9:.1f}GB reserve), {known_bytes / 1e9:.1f}GB safely reclaimable from "
+            f"{reserve_bytes / 1e9:.1f}GB reserve) measured at {probe_target.probed!r}, "
+            f"{known_bytes / 1e9:.1f}GB safely reclaimable from "
             f"{len(known_names)} completed disposable instance(s): {', '.join(known_names) or '(none)'}."
         )
     return StoragePreflightReport(
-        dev_root=str(resolved), free_bytes=free_bytes, total_bytes=total_bytes,
+        requested_root=probe_target.requested, resolved_root=probe_target.resolved,
+        probed_root=probe_target.probed, resolution_method=probe_target.resolution_method,
+        platform=probe_target.platform, filesystem_device_id=filesystem_device_id,
+        free_bytes=free_bytes, total_bytes=total_bytes,
         storage_health_tier=storage_health_tier(free_bytes=free_bytes, total_bytes=total_bytes),
         recorder_max_bytes=recorder_max_bytes, reserve_bytes=reserve_bytes, required_bytes=required,
         known_reclaimable_bytes=known_bytes, known_reclaimable_instances=known_names,

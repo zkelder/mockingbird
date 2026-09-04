@@ -603,6 +603,112 @@ def test_storage_preflight_reports_known_reclaimable_bytes_from_sibling_instance
 
 
 # ---------------------------------------------------------------------------
+# Storage-preflight cross-OS path correctness -- Field Acceptance Evidence
+# Integrity & Storage Preflight Correctness v1. `storage_preflight_report`
+# delegates target resolution to `deploy_windows_dev.
+# resolve_storage_probe_target` (loaded via `_dwd()`) -- see that
+# function's own tests in tests/test_deploy_windows_dev.py for the
+# resolver's own unit coverage; these tests confirm the *delegation*
+# itself (provenance fields threaded through, DeploymentError re-raised
+# as this module's own InstanceLifecycleError) at the tool a real field
+# session actually runs (`preflight`).
+# ---------------------------------------------------------------------------
+
+
+def test_storage_preflight_reports_provenance_for_an_ordinary_target(
+    fake_host: WindowsHost, tmp_path: Path,
+) -> None:
+    root = tmp_path / "MockingBirdFieldAcceptanceNew"
+    root.mkdir()
+
+    report = storage_preflight_report(
+        dev_root=root, windows_host=fake_host, recorder_max_bytes=1_000_000_000,
+        disk_usage_fn=lambda _path: _FakeUsage(total=100_000_000_000, free=50_000_000_000),
+        scan_siblings=False, is_native_windows=False,
+    )
+
+    assert report.requested_root == str(root)
+    assert report.resolved_root == str(root.resolve())
+    assert report.probed_root == str(root.resolve())
+    assert report.resolution_method == "direct"
+    assert report.platform == "posix"
+    assert report.filesystem_device_id is not None  # cheaply available via os.stat -- a real device id
+
+
+def test_storage_preflight_windows_drive_path_on_posix_fails_closed_without_translation(
+    fake_host: WindowsHost,
+) -> None:
+    """The exact Representative Daylight Gate A Field Acceptance v12
+    defect, reproduced at the operator-facing `preflight` command itself:
+    a malformed Windows-style `--dev-root` under POSIX, with no
+    trustworthy `wslpath` translation available. Must raise this module's
+    own `InstanceLifecycleError` (never a raw `DeploymentError` leaking
+    from `deploy_windows_dev.py`, and never a silent wrong-filesystem
+    'success') -- and must never call `disk_usage_fn` at all."""
+
+    def _disk_usage_must_not_be_called(_path: str) -> None:
+        raise AssertionError("disk_usage_fn must never be called once resolution has failed closed")
+
+    with pytest.raises(InstanceLifecycleError, match="wslpath"):
+        storage_preflight_report(
+            dev_root=Path(r"C:\Users\zachk\AppData\Local\MockingBirdFieldAcceptanceV12"),
+            windows_host=fake_host, recorder_max_bytes=1_000_000_000,
+            disk_usage_fn=_disk_usage_must_not_be_called,
+            scan_siblings=False, is_native_windows=False, wsl_translate_fn=lambda _raw: None,
+        )
+
+
+def test_storage_preflight_windows_drive_path_translates_and_reports_provenance(
+    fake_host: WindowsHost, tmp_path: Path,
+) -> None:
+    """The correct, supported form: once translated, the report's own
+    provenance fields let a reviewer see exactly what was requested versus
+    what was actually measured -- 'requested Windows instance root ->
+    measured Windows storage', never the v12 case, 'requested Windows root
+    -> measured WSL virtual disk' (governing brief §14)."""
+
+    windows_style = r"C:\Users\zachk\AppData\Local\MockingBirdFieldAcceptanceV12"
+    fake_mount_root = tmp_path / "mnt-sim" / "c-sim"
+    fake_mount_root.mkdir(parents=True)
+    translated = str(fake_mount_root / "Users" / "zachk" / "AppData" / "Local" / "MockingBirdFieldAcceptanceV12")
+
+    report = storage_preflight_report(
+        dev_root=Path(windows_style), windows_host=fake_host, recorder_max_bytes=1_000_000_000,
+        disk_usage_fn=lambda _path: _FakeUsage(total=100_000_000_000, free=50_000_000_000),
+        scan_siblings=False, is_native_windows=False, wsl_translate_fn=lambda _raw: translated,
+    )
+
+    assert report.requested_root == windows_style
+    assert report.resolved_root == translated
+    assert report.probed_root == str(fake_mount_root)  # nearest existing ancestor -- target itself is fresh
+    assert report.resolution_method == "translated_from_windows_drive_path"
+    assert report.sufficient is True
+    assert str(ROOT) not in report.probed_root  # never the repo checkout / CWD
+
+
+def test_storage_preflight_nested_nonexistent_target_resolves_to_correct_ancestor(
+    fake_host: WindowsHost, tmp_path: Path,
+) -> None:
+    """Governing brief §15: a fresh target nested several levels below
+    the nearest real directory (not just one level) still resolves
+    correctly -- see the identical resolver-level test in
+    tests/test_deploy_windows_dev.py for the underlying mechanism; this
+    confirms it end to end through `storage_preflight_report` itself."""
+
+    existing = tmp_path / "mnt-sim" / "c-sim" / "MockingBird"
+    existing.mkdir(parents=True)
+    deeply_nested = existing / "NewInstance" / "Deep" / "Nested"
+
+    report = storage_preflight_report(
+        dev_root=deeply_nested, windows_host=fake_host, recorder_max_bytes=1_000_000_000,
+        disk_usage_fn=lambda _path: _FakeUsage(total=100_000_000_000, free=50_000_000_000),
+        scan_siblings=False, is_native_windows=False,
+    )
+
+    assert report.probed_root == str(existing)
+
+
+# ---------------------------------------------------------------------------
 # Cache separation / shared-cache safety
 # ---------------------------------------------------------------------------
 
@@ -748,7 +854,9 @@ def test_cli_preflight_exits_one_when_insufficient(
     monkeypatch.setitem(
         main.__globals__, "storage_preflight_report",
         lambda **_kwargs: _MODULE["StoragePreflightReport"](
-            dev_root=str(root), free_bytes=1, total_bytes=100, storage_health_tier="critical",
+            requested_root=str(root), resolved_root=str(root), probed_root=str(root),
+            resolution_method="direct", platform="posix", filesystem_device_id=None,
+            free_bytes=1, total_bytes=100, storage_health_tier="critical",
             recorder_max_bytes=1, reserve_bytes=1, required_bytes=2, known_reclaimable_bytes=0,
             known_reclaimable_instances=(), sufficient=False, reason="Insufficient storage for testing.",
         ),

@@ -70,6 +70,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import runpy
 import secrets
 import shutil
@@ -2005,12 +2006,223 @@ def _validate_host_port(host: str, port: int) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# Storage-probe-target resolution -- Field Acceptance Evidence Integrity &
+# Storage Preflight Correctness v1.
+#
+# Representative Daylight Gate A Field Acceptance v12 reproduced a real
+# defect here: given a native Windows-style `--dev-root` string (e.g.
+# `C:\Users\...\MockingBirdFieldAcceptanceV12`) while this process itself
+# runs under WSL/POSIX, `pathlib.Path` never recognizes it as absolute --
+# backslash is not `os.sep` there, and even the plain string never starts
+# with `/` -- so the naive "walk to the nearest existing ancestor" fallback
+# immediately below (which exists to make a brand-new, not-yet-created
+# dev-root probeable at all) silently anchored it under the invoking
+# shell's own current working directory (this repo checkout) instead,
+# whose *existing* parent is what `shutil.disk_usage` then measured --
+# reporting `sufficient: true` against the WSL virtual disk (692GB/1TB
+# free) while the real Windows C: drive this field session was actually
+# going to fill had only ~7-8GB free. This one, single-source-of-truth
+# resolver is what both `check_storage_headroom` below and
+# `scripts/field_acceptance_instance_lifecycle.py`'s own
+# `storage_preflight_report` (loaded via that module's usual `runpy.
+# run_path` sibling-import convention, exactly like every other reuse of
+# this file) now call -- never a second, independently-drifting copy of
+# this exact logic.
+#
+# Governing contract: never silently measure a filesystem other than the
+# one that will actually contain the requested root. A Windows drive-letter
+# string given while *not* running on native Windows is translated via the
+# same real `wslpath -u` primitive `_windows_temp_root`/`_local_appdata_
+# real` already trust elsewhere in this file (see the module docstring's
+# "Why HTTP/process/junction operations shell out to PowerShell" -- this is
+# the same class of "reuse the one already-accepted, trustworthy Windows
+# <-> WSL primitive, never a hand-rolled string translation" reasoning) --
+# and refused outright, never guessed, when that translation is unavailable
+# or fails. Once translated (or when the input was never Windows-style to
+# begin with), the *same* ordinary ancestor-walk applies uniformly: this is
+# safe precisely because translation already fixed the one thing that made
+# v12's own walk dangerous -- an absolute path POSIX never recognized as
+# absolute in the first place. A real empirical check (`wslpath -u` against
+# an unmounted/unknown drive letter) confirms `wslpath` itself already
+# fails loudly (non-zero exit) rather than fabricating a plausible-looking
+# `/mnt/<letter>/...` path for a drive that was never actually mounted --
+# so no separate "does the translated mount point exist" guard is needed
+# on top of trusting `wslpath`'s own exit code.
+# ---------------------------------------------------------------------------
+
+_WINDOWS_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+def _looks_like_windows_drive_path(raw: str) -> bool:
+    """Whether `raw` uses Windows drive-letter syntax (`C:\\...` or
+    `C:/...`) or UNC syntax (`\\\\server\\share\\...`, including the
+    `\\\\wsl.localhost\\...` form `wslpath -u` itself already translates
+    -- confirmed by real testing) -- forms POSIX `pathlib.Path` never
+    recognizes as absolute. Used only to detect the precise cross
+    -environment hazard described above; an ordinary POSIX path (however
+    deeply nested and however nonexistent) never matches this and always
+    takes the plain ancestor-walk branch below, unchanged from before
+    this milestone. Deliberately only these two syntaxes -- not a
+    general Windows-path abstraction; any other foreign spelling this
+    tool has never actually been given still fails, in the *same* safe
+    direction as before this milestone (an ordinary nonexistent-path
+    ancestor walk), just not through this specific translated path."""
+
+    return raw.startswith("\\\\") or bool(_WINDOWS_DRIVE_PATH_RE.match(raw))
+
+
+def _wsl_translate_windows_path(raw_windows_path: str) -> str | None:
+    """Real `wslpath -u <raw_windows_path>` -- translates a Windows-style
+    path string to its real WSL-mounted equivalent (e.g. `C:\\Users\\x` ->
+    `/mnt/c/Users/x`). Wraps this file's own pre-existing `_wslpath()`
+    helper (the same one `_to_windows_path_real`/`_windows_temp_root`/
+    `_local_appdata_real` already use, for the opposite direction) rather
+    than a second, independent `subprocess.run(["wslpath", ...])` call --
+    never a second, independently-drifting invocation of the same
+    primitive. Returns `None` (never raises) on *any* failure -- missing
+    binary (a plain non-WSL POSIX host; `_wslpath` itself does not catch
+    this), an unmounted/unknown drive letter (confirmed by real testing
+    to already fail this way, non-zero exit, rather than fabricating a
+    path -- `_wslpath` raises `DeploymentError` for this, including the
+    real stderr), or any other error -- so the caller can fail closed
+    with one clear, actionable message rather than a bare `subprocess`/
+    `OSError`/`DeploymentError` traceback leaking through unexpectedly."""
+
+    try:
+        return _wslpath(["-u", raw_windows_path]) or None
+    except (DeploymentError, OSError):
+        return None
+
+
+def _nearest_existing_ancestor(path: Path) -> Path:
+    """Walk `path` upward to the nearest existing ancestor -- properly,
+    however many levels it takes, all the way to the filesystem root if
+    necessary (the pre-fix code only ever checked one level, silently
+    falling through to `Path("/")` for a nonexistent *grandparent* even on
+    an ordinary, honest POSIX path -- a real latent gap this closes as a
+    side effect, covered by `test_resolve_storage_probe_target_walks_
+    multiple_levels_to_nearest_existing_ancestor`)."""
+
+    current = path
+    while not current.exists():
+        parent = current.parent
+        if parent == current:  # filesystem root -- always exists in practice
+            return current
+        current = parent
+    return current
+
+
+@dataclass(frozen=True)
+class StorageProbeTarget:
+    """What a storage preflight actually resolved and measured --
+    Representative Daylight Gate A Field Acceptance v12's own disclosed
+    gap was that its report *lacked* exactly this: no way for a reviewer
+    to see that a "requested Windows instance root" had silently become a
+    "measured WSL virtual disk." `requested` is the raw operator input,
+    verbatim; `resolved` is the real absolute path this environment maps
+    it to (post-translation, if translation happened); `probed` is the
+    existing ancestor `disk_usage` was actually called against (equal to
+    `resolved` whenever that path already exists)."""
+
+    requested: str
+    resolved: str
+    probed: str
+    resolution_method: str  # "direct" | "translated_from_windows_drive_path"
+    platform: str  # "windows" | "posix"
+
+
+def resolve_dev_root_path(
+    dev_root: Path,
+    *,
+    is_native_windows: bool | None = None,
+    wsl_translate_fn: Callable[[str], "str | None"] | None = None,
+) -> Path:
+    """The one place ANY `--dev-root` (which may not exist yet, and may
+    use Windows drive-letter/UNC syntax) becomes a real, safe, absolute
+    path in the current execution environment -- used both by `main()`
+    below, for ordinary dev-root resolution throughout this file's own
+    CLI, and by `resolve_storage_probe_target`, for storage-preflight
+    probing specifically. Both need the *identical* translation: a
+    caller resolving `dev_root` for its own general purposes must never
+    see a different answer than what the storage preflight measured for
+    that same input, or the preflight's own "this is the real target"
+    guarantee means nothing.
+
+    This is the fix for a real gap this milestone's own first
+    implementation pass left open: `main()` used to call bare
+    `args.dev_root.resolve()` *before* handing `dev_root` to
+    `check_storage_headroom` -- which silently CWD-anchored a Windows
+    -style string at the CLI boundary, before the drive-path detection
+    below ever got a chance to see the original, still-recognizable
+    string. Routing `main()` through this same function closes that gap
+    for the real `deploy_windows_dev.py` entry point itself, not merely
+    for direct, lower-level calls to `check_storage_headroom`/`resolve_
+    storage_probe_target` (as covered by this file's own unit tests) --
+    see `test_main_resolves_a_windows_drive_dev_root_before_any_other_
+    use` in tests/test_deploy_windows_dev.py for the end-to-end proof.
+    """
+
+    if is_native_windows is None:
+        is_native_windows = os.name == "nt"
+    if wsl_translate_fn is None:
+        wsl_translate_fn = _wsl_translate_windows_path
+    requested = str(dev_root)
+
+    if _looks_like_windows_drive_path(requested) and not is_native_windows:
+        translated = wsl_translate_fn(requested)
+        if not translated or not Path(translated).is_absolute():
+            raise DeploymentError(
+                f"--dev-root {requested!r} looks like a Windows-style path (drive-letter/UNC syntax) but "
+                "this process is not running on native Windows, and translating it via 'wslpath -u' "
+                "failed, is unavailable, or produced an unusable result. Refusing to guess which "
+                "filesystem this points at (see Field Acceptance Evidence Integrity & Storage Preflight "
+                "Correctness v1 -- this is exactly the mistake that silently measured the wrong disk "
+                "before) -- pass the real WSL-mounted form instead (e.g. "
+                "/mnt/c/Users/<you>/AppData/Local/<DevRootName>)."
+            )
+        return Path(translated)
+
+    return Path(dev_root).resolve()
+
+
+def resolve_storage_probe_target(
+    dev_root: Path,
+    *,
+    is_native_windows: bool | None = None,
+    wsl_translate_fn: Callable[[str], "str | None"] | None = None,
+) -> StorageProbeTarget:
+    """The one place a `--dev-root` becomes a real, existing, trustworthy
+    filesystem path to hand to `disk_usage` -- `resolved` via `resolve_
+    dev_root_path` (above), `probed` its own nearest existing ancestor.
+    See the module section docstring immediately above `resolve_dev_
+    root_path` for the full contract and v12 root-cause this closes."""
+
+    if is_native_windows is None:
+        is_native_windows = os.name == "nt"
+    if wsl_translate_fn is None:
+        wsl_translate_fn = _wsl_translate_windows_path
+    requested = str(dev_root)
+    resolved = resolve_dev_root_path(dev_root, is_native_windows=is_native_windows, wsl_translate_fn=wsl_translate_fn)
+    resolution_method = (
+        "translated_from_windows_drive_path"
+        if _looks_like_windows_drive_path(requested) and not is_native_windows
+        else "direct"
+    )
+    return StorageProbeTarget(
+        requested=requested, resolved=str(resolved), probed=str(_nearest_existing_ancestor(resolved)),
+        resolution_method=resolution_method, platform="windows" if is_native_windows else "posix",
+    )
+
+
 def check_storage_headroom(
     *,
     dev_root: Path,
     acceptance_recorder_max_bytes: int,
     reserve_bytes: int = STORAGE_PREFLIGHT_RESERVE_BYTES,
     disk_usage_fn: Callable[[str], object] | None = None,
+    is_native_windows: bool | None = None,
+    wsl_translate_fn: Callable[[str], "str | None"] | None = None,
 ) -> None:
     """Fail fast, before any build/materialize work (same placement as
     `_validate_host_port`, immediately above), when this volume does not
@@ -2021,7 +2233,10 @@ def check_storage_headroom(
     free/required/reserve figures rather than a bare refusal. Probes the
     nearest existing ancestor of `dev_root` (a fresh dev-root does not
     exist yet) so this works identically for a brand-new disposable
-    instance and an already-populated persistent one."""
+    instance and an already-populated persistent one -- via
+    `resolve_storage_probe_target`, which also fails closed rather than
+    silently measuring the wrong filesystem for a malformed/cross
+    -environment `dev_root` (see that function's own docstring)."""
 
     if acceptance_recorder_max_bytes > ACCEPTANCE_RECORDER_HARD_CEILING_BYTES:
         raise DeploymentError(
@@ -2035,10 +2250,10 @@ def check_storage_headroom(
         # `monkeypatch.setattr(shutil, "disk_usage", ...)` on the real
         # `shutil` module and have it actually take effect here.
         disk_usage_fn = shutil.disk_usage
-    probe_target = dev_root
-    while not probe_target.exists() and probe_target.parent != probe_target:
-        probe_target = probe_target.parent
-    usage = disk_usage_fn(str(probe_target))
+    probe_target = resolve_storage_probe_target(
+        dev_root, is_native_windows=is_native_windows, wsl_translate_fn=wsl_translate_fn,
+    )
+    usage = disk_usage_fn(probe_target.probed)
     free_bytes = int(usage.free)  # type: ignore[attr-defined]
     required_bytes = acceptance_recorder_max_bytes + reserve_bytes
     if free_bytes < required_bytes:
@@ -2046,7 +2261,8 @@ def check_storage_headroom(
             "Insufficient storage for the requested acceptance budget: "
             f"{free_bytes / 1e9:.1f}GB free, {required_bytes / 1e9:.1f}GB estimated required "
             f"({acceptance_recorder_max_bytes / 1e9:.1f}GB recorder budget + {reserve_bytes / 1e9:.1f}GB "
-            "reserve). Stop and reclaim completed disposable instances first -- see "
+            f"reserve) measured at {probe_target.probed!r} (requested {probe_target.requested!r}). Stop "
+            "and reclaim completed disposable instances first -- see "
             "scripts/field_acceptance_instance_lifecycle.py's own 'preflight'/'assess'/'cleanup' commands "
             "-- or pass --skip-storage-preflight to proceed anyway."
         )
@@ -2980,8 +3196,15 @@ def build_argument_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_argument_parser().parse_args(argv)
     windows_host = real_windows_host()
+    # `resolve_dev_root_path`, never a bare `args.dev_root.resolve()` --
+    # the latter silently CWD-anchors a Windows-style `--dev-root` string
+    # (backslash is not `os.sep` under POSIX) *before* `check_storage_
+    # headroom`'s own drive-path detection ever gets a chance to
+    # recognize it, defeating this milestone's own fix at its real CLI
+    # entry point -- see `resolve_dev_root_path`'s own docstring.
     dev_root = (
-        args.dev_root.resolve() if args.dev_root is not None else (windows_host.local_appdata() / DEV_ROOT_DIRNAME)
+        resolve_dev_root_path(args.dev_root) if args.dev_root is not None
+        else (windows_host.local_appdata() / DEV_ROOT_DIRNAME)
     )
 
     try:
