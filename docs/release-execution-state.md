@@ -2436,6 +2436,83 @@ exactly as open as stated.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
+**2026-09-04 update (Field Acceptance Evidence Integrity & Storage
+Preflight Correctness v1, see §6.R):** bounded RELEASE-CRITICAL
+acceptance-tooling correctness milestone, directly authorized outside
+this file, following Representative Daylight Gate A Field Acceptance
+v12's own two disclosed field-tooling defects. See
+[field-acceptance-evidence-integrity-storage-preflight-correctness-v1-report.md](field-acceptance-evidence-integrity-storage-preflight-correctness-v1-report.md)
+for the complete record. Classification **A**. **Snapshot-evidence
+defect (v12's own `end_offset_ms=None` silently dropped, breaking raw
+-ledger capture for all 12 periodic snapshots) fixed and proven**:
+`FieldAcceptanceClient.observation_counterfactual` now fails locally,
+before any HTTP request, on a missing required bound
+(`FieldAcceptanceInvalidParameterError`); a new, committed periodic
+-snapshot + reconciliation tool
+(`scripts/field_acceptance_ledger_snapshot.py`) replaces the ad hoc,
+uncommitted script every real cohort since v9 wrote from scratch --
+each checkpoint carries explicit per-artifact success/failure (a failed
+required raw-ledger fetch is never silently `complete`), and end-of-run
+reconciliation deterministically reports `COMPLETE` or `PARTIAL` with
+the exact missing count/offset-window, never inferred from a clean
+session end. **Storage-preflight defect (a malformed Windows-style
+`--dev-root` under WSL/POSIX silently measuring the WSL virtual disk
+instead of the real Windows drive) fixed and proven** -- at both the
+secondary `field_acceptance_instance_lifecycle.py preflight` tool v12
+directly hit *and* the primary `deploy_windows_dev.py` deploy entry
+point every real field session actually runs first (an identical,
+independently-discovered instance of the same defect, only found via
+this milestone's own self-review, not named in v12's own report): a
+Windows-drive-letter/UNC path is translated via the real, already
+-accepted `wslpath -u` primitive or refused outright, never silently
+CWD-anchored; `StoragePreflightReport` now exposes requested/resolved
+/probed-path provenance plus filesystem device identity. **Real proof,
+not merely reasoned about**: a real WSL-to-Windows storage proof against
+the reference development Windows host (independently-queried free
+-space figures agree within normal measurement drift; the previously
+-dangerous Windows-drive-string form now measures the identical real
+device id as the direct-mounted-path form; a genuinely unmounted drive
+letter fails closed) and a real snapshot smoke proof (a fresh disposable
+instance, the real reference Camera Node re-paired to it after a
+confirmed-safe, precedented, user-approved local pairing-state reset; a
+real ~4.4-minute GPU-backed Observation session, 5 real periodic
+checkpoints plus one final corrective fetch, reconciled -- correctly
+distinguishing a genuine zero, `track_generations`/`proposal_outcomes`
+both `COMPLETE`, from one real, exact, sub-second interval-coverage gap
+named to the millisecond in `raw_detections` despite a perfect 220/220
+record-count match, proving the tool never rubber-stamps completeness
+from a count match alone). Two critical defects in this milestone's own
+first implementation pass (a `main()` CLI path that silently defeated
+the storage fix; a reconciler that misreported a genuinely healthy
+zero-activity artifact type as `PARTIAL`) were caught and fixed by
+multi-agent self-review before any real proof was attempted -- see the
+report's own "Self-review findings and fixes." Tier 1 (33/33 + 185/185)
+and Tier 2 (321/321) green; lint clean; zero `src/mockingbird/**` diff,
+zero schema change (`v58`, unchanged), zero wildlife/product admission
+behavior changed anywhere in this milestone -- confirmed directly,
+including that `candidate_quality_gate.py`'s
+`reject_no_identification_or_context` (the separate, preserved v12
+product finding) remains byte-for-byte untouched. **v12's own historical
+evidence-preservation gap is not retroactively upgraded** -- its raw
+ledger remains honestly partial, exactly as disclosed; this milestone
+repairs future collection, it does not manufacture v12's own missing
+data. **Gate A dependency list, narrowed precisely**: the *tooling
+-broken* rationale for item (12) (a cohort with intact full-session
+ledger coverage, needed specifically because v12's own snapshot tooling
+could not be trusted) is closed -- the tool is now fixed and proven. The
+underlying, independent requirement is **not** removed: Gate A still
+needs an actual representative cohort whose raw ledger this now-fixed
+tooling genuinely captures completely end to end; fixing the tool does
+not retroactively create that evidence. Item (13)
+(`reject_no_identification_or_context`'s all-or-nothing behavior for
+brief-but-real encounters) is preserved verbatim, untouched, still open
+-- this milestone's own governing brief explicitly scoped it out. This
+closure does **not** authorize the all-alternate-evidence product fix,
+another Representative Field Acceptance / Gate A session, External
+Pre-Release Acceptance, or Final Release Hardening, and does **not**
+select a next development milestone. Authorization remains **NONE --
+GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, unchanged.
+
 **2026-09-03 update (Representative Daylight Gate A Field Acceptance v12
 -- Precision, Recall & Budget-Convergence Tranche, see §1/§6.R):** the
 next real-field Lane R / Gate A cohort, directly authorized outside this
@@ -7107,6 +7184,43 @@ the three real, disk-space-consuming legacy field-acceptance dev-roots
 new lifecycle-manifest tool's own `preflight` reclaimability accounting,
 since none was ever `init`-ed under it (new, bounded, tooling-only, not
 release-critical).
+
+**Field Acceptance Evidence Integrity & Storage Preflight Correctness v1
+(2026-09-04) fixed and proved the field-tooling defects v12 disclosed --
+does not itself close Lane R/Gate A, does not run a field session, and
+does not authorize the next attempt.** **Remaining Gate A dependency, in
+priority order, restating v12's own 13-item list with item (12) now
+narrowed (unchanged otherwise):** (1) never-strong single-generation
+confusor clearing `blocked_ambiguous_boundary` then reaching the quality
+gate repeatedly -- unmet; (2) a second person-confound-free cohort, to
+confirm v12's own 5.6% false-Visit rate is representative -- unmet; (3)
+a full-ledger-coverage re-proof of fragmentation at full automated-tool
+strength (v12's own 0/14 used a weaker manual method, data-starved) --
+unmet; (4) a second independently-varied true-latency cohort -- unmet;
+(5) a 3+-simultaneous-subject cohort -- unmet; (6) v7's two remaining
+ambiguous fragmentation units -- not investigated; (7) the ~13 untraced
+v7 `blocked_missing_evidence` records -- not investigated; (8) same
+-frame class-contradiction fix's field effect on person-associated false
+Visits -- unmet, no genuine human presence has recurred since; (9)
+further strong-confidence scene-artifact recurrence -- has not recurred
+(a negative result, not a closure); (10) no whole-frame human
+suppression of real birds with a person present -- still only trivially
+satisfied; (11) scene-confusor participation incl.
+corroboration-rejected occurrence counts -- directly measured through
+v12, including the first real-field category-D case; **(12) [NARROWED
+by Field Acceptance Evidence Integrity & Storage Preflight Correctness
+v1] a cohort with intact full-session raw-ledger coverage** -- v12's own
+tooling defect that risked this outcome is fixed and proven (real
+WSL-independent periodic-snapshot + deterministic reconciliation
+tooling); this item no longer exists "because the snapshot tool might
+silently break again," but the standing evidence requirement is
+unchanged: Gate A still needs at least one representative cohort whose
+raw ledger this tool actually captures completely end to end, and
+fixing the tool does not retroactively create that evidence; (13)
+resolve whether `reject_no_identification_or_context`'s "vanish
+entirely, no Visit at all" behavior for brief-but-real encounters should
+be revisited -- untouched, preserved verbatim, still open (explicitly
+out of this milestone's own scope).
 
 ### S. Actual Final Release Hardening
 
