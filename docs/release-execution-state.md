@@ -2436,6 +2436,86 @@ exactly as open as stated.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
+**2026-09-04 update (Ambiguous-Boundary Real-Subject Recall Correctness
+v1, see §6.R):** bounded RELEASE-CRITICAL Gate A product-correctness
+milestone, directly authorized outside this file, following All-Alternate
+Subject Evidence Recall Correctness v1's own disclosed-not-fixed finding
+that the v12 ~37:12 real bird was permanently blocked by candidate
+-authority ambiguous-boundary arbitration. See
+[ambiguous-boundary-real-subject-recall-correctness-v1-report.md](ambiguous-boundary-real-subject-recall-correctness-v1-report.md)
+for the complete record. Classification **B**. **The chartered ~37:12
+case (`visit-episode:06c209aec98c56ebcc7d9d47`) was reconstructed with
+high fidelity -- including one decisive, code-grounded fact established
+for the first time: the real 187ms gap between its own `blocked_
+ambiguous_boundary` decision and its winning sibling's (`visit
+-observation-candidate-017`) `created` decision is two orders of magnitude
+below the proven 10-second minimum spacing between separate assembly
+ticks (`engine_runtime._ASSEMBLY_TICK_SECONDS = 10.0`), proving both were
+decided together, ordinarily, in one single tick -- the existing,
+unmodified fallback-chain mechanism working exactly as designed, not a
+dispatch defect. Its own true root cause is confirmed to be the *already
+-disclosed*, explicitly out-of-scope geometry-compatibility-tolerance
+finding that milestone raised (`classify_boundary`'s 0.6-normalized
+-centroid-distance cap): no safe, in-scope fix exists using only currently
+-trustworthy facts (Classification I, per that taxonomy, subsumed under
+this milestone's own overall B). No fix was attempted or claimed for this
+specific case -- it remains exactly as open as before this milestone,
+neither better nor worse.** **The same investigation independently
+surfaced, and safely fixed, a genuinely separate, real, in-scope defect in
+the identical mechanism**, confirmed live-reachable in this exact same
+real v12 session (that session's own very next `blocked_ambiguous_
+boundary` loss, ~11 seconds later, on a genuinely separate later tick):
+`engine_runtime._run_assembly_tick`'s winner-loop assumed an ambiguous
+component's own arbitration-selected winner is always attemptable this
+tick; because arbitration is recomputed fresh every tick from the
+assembler's *entire* tracklet history, a component's own top-ranked member
+can itself already be permanently resolved on a *strictly earlier* tick,
+silently starving every later, brand-new arrival within its reach --
+including when that stale member was never itself admitted at all (zero
+Visits ever produced). Fixed narrowly, entirely inside `engine_runtime.py`
+(`_live_chain_for_component`, a new pure helper, plus a same-shaped
+`admitted_proposal_ids` session-local record mirroring `attempted
+_proposal_ids`): no change to `candidate_visit_authority.resolve_
+ambiguous_boundary_arbitration`'s own ranking, no new time-based staleness
+constant, no threshold of any kind -- "at most one Visit per ambiguous
+cluster" is checked, and preserved, unconditionally before any promotion
+is ever attempted (proven directly by a dedicated adversarial regression
+test: a later arrival with dramatically higher confidence than an
+already-admitted anchor still correctly blocks). No schema change (v58,
+unchanged); no candidate-authority ranking, geometry, threshold, detector,
+tracker, BioCLIP, or Identification Eligibility/Abstention change. Real
+-hardware smoke judged unnecessary and not run (reachability verified;
+reasoning matches the immediately-prior milestone's own judgment for an
+analogously narrow, non-timing-sensitive diff -- see the report's own
+"Real-hardware smoke"). Tier 1 (6 new tests, `tests/test_engine_runtime.py`
+118/118) and Tier 2 (461/461 across every directly-affected observation/
+admission/precision/dashboard/multi-camera subsystem, 579/579 combined
+with Tier 1) both clean. Tier 3 (full Core): 5679 passed / **1 failed** /
+3 skipped / 23 deselected (`slow`-marked) / 11 xfailed, 236 warnings
+(1991.73s/33m11s) -- the 1 failure
+(`tests/test_place_change_summary_repository.py::test_api_round_trip_
+exposes_change_detection_fields`, a genuinely new, previously
+-uncatalogued-by-name instance, not the already-documented `test_place_
+biodiversity_summary_repository.py` pair) independently re-confirmed
+pre-existing and unrelated via `git stash` bisection to the clean
+starting HEAD, byte-identical failure, zero of this milestone's changes
+applied -- see §14, below, and the report's own "Tier 3 decision" for the
+complete account. **Gate A effect:** the v12 ~37:12 ambiguous-boundary recall defect remains
+**OPEN, unchanged** (root-caused, not fixed, not worsened); the separately
+-discovered dead-anchor-promotion defect is **CLOSED / READY FOR FIELD
+RE-PROOF**. Gate A's own pre-existing 13-item dependency list (items
+(1)-(13), as narrowed by the two immediately-prior milestones) is
+**unchanged** -- neither closed nor reopened by this milestone; the
+dead-anchor-promotion mechanism's own real-world field frequency and
+precision-safety under sustained real activity are added as a candidate
+fact for the next representative cohort to independently confirm, not as
+a new numbered item. This closure does **not** authorize the next
+Representative Field Acceptance / Gate A session, a fix for the v12
+~37:12 case's own still-open geometry-tolerance question, External
+Pre-Release Acceptance, or Final Release Hardening, and does **not**
+select a next development milestone. Authorization remains **NONE --
+GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, unchanged.
+
 **2026-09-04 update (All-Alternate Subject Evidence Recall Correctness v1,
 see §6.R):** bounded RELEASE-CRITICAL Gate A product-correctness milestone,
 directly authorized outside this file, following Representative Daylight
@@ -7332,6 +7412,48 @@ longer silently lost still awaits the next representative cohort (item
 milestone, not added as a 14th list item here since it was never part of
 v12's own original list.
 
+**Ambiguous-Boundary Real-Subject Recall Correctness v1 (2026-09-04)
+directly pursued the candidate the entry immediately above named -- does
+not close Lane R/Gate A, does not run a field session, and does not
+authorize the next attempt.** Reconstructed the chartered v12 ~37:12 case
+(`06c209ae...`) with high fidelity and established, for the first time, a
+decisive fact settling how it was actually lost: the real 187ms gap
+between its own `blocked_ambiguous_boundary` decision and its winning
+sibling's `created` decision is two orders of magnitude below the proven
+10-second minimum spacing between separate assembly ticks
+(`_ASSEMBLY_TICK_SECONDS=10.0`), proving both were decided together,
+ordinarily, in the existing fallback-chain mechanism -- not a dispatch
+defect. Its own root cause is confirmed to be exactly the already
+-disclosed geometry-compatibility-tolerance question the entry above
+raised; no safe, in-scope fix exists, and none was attempted
+(Classification I, per this milestone's own taxonomy). **The v12 ~37:12
+recall defect therefore stays exactly as open as before this milestone.**
+Separately, the same investigation found and safely fixed a genuinely
+different, real, in-scope defect in the identical mechanism, confirmed
+live-reachable in this exact real session (its own next `blocked_
+ambiguous_boundary` loss, ~11 seconds later, a genuinely separate tick):
+an ambiguous component's own arbitration-selected winner can itself
+already be permanently resolved on a strictly earlier tick, silently
+starving every later arrival within its reach even when that stale member
+was never admitted at all. Fixed entirely inside `engine_runtime.py`
+(`_live_chain_for_component` plus a same-shaped `admitted_proposal_ids`
+record), reusing only already-existing structural facts -- no new
+threshold, no time-based staleness constant, no change to arbitration's
+own ranking. Tier 1 (6 new tests) and Tier 2 (461 tests across every
+directly-affected subsystem, 579 combined) both clean; Tier 3 (full Core):
+5679 passed / 1 failed (independently re-confirmed pre-existing and
+unrelated via `git stash` bisection -- a new, previously-uncatalogued
+-by-name Place-Intelligence-change-summary test, unconnected to this
+milestone's own Observation-Engine-only diff). Classification **B**.
+**Remaining Gate A
+dependency, unchanged from the entry immediately above in every respect
+-- this milestone neither closes nor reopens any of the 13 items:** (1)
+-(13) as already narrowed. **New, disclosed candidate fact for the next
+representative cohort (not a 14th list item):** does the dead-anchor
+-promotion fix measurably change recall or precision under real, sustained
+activity, and does the already-disclosed geometry-compatibility-tolerance
+question (still the v12 ~37:12 case's own real, unresolved cause) recur.
+
 ### S. Actual Final Release Hardening
 
 **Status:** LAST.
@@ -7509,7 +7631,41 @@ each session that touches this repository.
 
 ## 14. Validation baselines
 
-**Latest accepted Core checkpoint (All-Alternate Subject Evidence Recall
+**Latest accepted Core checkpoint (Ambiguous-Boundary Real-Subject Recall
+Correctness v1):** 5679 passed / **1 failed** / 3 skipped / 23 deselected
+(`slow`-marked) / 11 xfailed, 236 warnings -- `scripts/verify_core.py`'s
+own `pytest -m "not slow"` convention, run once as one bare foreground
+pass (1991.73s / 33m11s). **A genuinely different failure from every prior
+checkpoint's own documented pair, not a recurrence of it:**
+`tests/test_place_change_summary_repository.py::test_api_round_trip_
+exposes_change_detection_fields`
+(`AssertionError: assert 'insufficient_recent_coverage' ==
+'higher_recent_presence'`) -- a different file, a different assertion,
+and a different symptom string from `test_place_biodiversity_summary_
+repository.py`'s own long-documented pair (which did *not* fail this
+checkpoint; see the immediately-following "Prior" entry for its own
+account). Independently re-confirmed pre-existing and unrelated this
+session, not merely assumed: this milestone's own four changed files
+(`engine_runtime.py`, `test_engine_runtime.py`, both contract/state docs)
+were `git stash`-isolated back to the exact starting HEAD (`40c2560`),
+and the identical test re-run on that clean baseline fails identically,
+byte-for-byte. This milestone touches zero Place Intelligence/
+change-summary/journal/biodiversity code -- `engine_runtime.py`'s own
+diff has no import-path relationship to `PlaceChangeSummaryRepository`/
+`build_place_activity_report` at all. The failing fixture compares a
+fixed historical test date (`PERIOD_START = 2026-08-21`) against some
+real-clock-relative "how recent is recent" computation -- consistent with
+the same general class of real-wall-clock-date-dependent Place
+Intelligence test fragility this section's own prior entries already
+extensively document for the *other* pair (see "Prior accepted Core
+checkpoint," below, and "Historical Species-Status..." further down), not
+independently traced to its own internal mechanism by this milestone
+(out of this milestone's own scope). Zero new `ruff` findings on any of
+the four changed files (identical `git stash`-isolated comparison). No
+schema change (v58, unchanged). See this milestone's own report's "Tier 3
+decision" section for the complete account.
+
+**Prior accepted Core checkpoint (All-Alternate Subject Evidence Recall
 Correctness v1):** 5672 passed / **2 failed** / 3 skipped / 23 deselected
 (`slow`-marked) / 11 xfailed, 236 warnings -- `scripts/verify_core.py`'s
 own `pytest -m "not slow"` convention, run once as one bare foreground
