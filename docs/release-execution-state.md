@@ -2436,6 +2436,95 @@ exactly as open as stated.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
+**2026-09-04 update (Representative Daylight Gate A Field Acceptance v13
+-- Intact-Ledger Re-Proof & Budget Convergence, see §6.R):** RELEASE
+-CRITICAL Gate A field-evidence milestone, directly authorized outside
+this file, following Representative Daylight Gate A Field Acceptance v12,
+Field Acceptance Evidence Integrity & Storage Preflight Correctness v1,
+All-Alternate Subject Evidence Recall Correctness v1, and Ambiguous
+-Boundary Real-Subject Recall Correctness v1. See
+[representative-daylight-gate-a-field-acceptance-v13-report.md](representative-daylight-gate-a-field-acceptance-v13-report.md)
+for the complete record. Classification **B** (one explicit, named,
+mechanical reason: this milestone's own acceptance bar required true
+latency to be sampled materially better than v12's own n=2 -- this
+session measured n=0, fewer, despite the strongest RTT-calibration
+-infrastructure evidence of any cohort to date, 523 batches, 99.04%
+calibrated; the `proposal_outcomes` ledger artifact also reconciled to
+only 44.6% decision-event completeness, a real, precisely-disclosed
+gap). Zero production code touched; Accepted HEAD unchanged (still the
+report commit for Ambiguous-Boundary Real-Subject Recall Correctness v1,
+`eb02d51` per this file's own established "name the report commit, never
+the reconciliation commit" convention -- **the top-of-§1 "Accepted HEAD"
+bullet itself was found stale at `e57c911` during this milestone's own
+starting-state verification, three code-changing milestones behind
+(`3600e98`/storage-preflight fix, `e672c87`/all-alternate fix,
+`14322b3`/dead-anchor fix, each its own report commit `146c085`/
+`f819cf6`/`eb02d51` never propagated into that bullet) -- flagged here
+for a future reconciliation pass to catch up properly; not corrected by
+this milestone itself, which is a field-evidence session, not the
+right occasion for a multi-milestone historical §1 rewrite**). Schema
+v58, unchanged.
+
+**Session**: a fresh disposable native-Windows instance
+(`MockingBirdFieldAcceptanceV13`), full accepted production stack
+(MDv5a ONNX, threshold 0.1, BioCLIP-2, onnx-cuda/CUDA), 101.8 real
+minutes of representative daylight monitoring against the real reference
+Camera Node (a new picamera2 pairing, after a user-authorized,
+twice-precedented, non-destructive Node-side pairing reset), independent
+acceptance recorder enabled throughout (5,013 frames, 4.48GB, zero gaps
+over 5s), and the accepted `field_acceptance_ledger_snapshot.py`
+collect/reconcile tool run detached for the full session (21 checkpoints,
+zero ad hoc script). **Headline finding: zero Visits were admitted
+against a genuinely, substantially active real session** (48
+independently-reconstructed encounter clusters via the accepted
+`encounter_accounting.py`, 19 conservatively confirmed real via
+plausibility classification and direct visual cross-check against the
+independent recorder -- including a visually-confirmed 30-second,
+16-strong-detection real bird at the feeder). **Root-caused, not merely
+observed**: a genuine, previously-undiscovered defect in the Observation
+Engine's own automatic evidence-capture path
+(`CameraNodeHttpTransport.request_evidence_burst`,
+`camera_node_live.py`) -- the Host persists a Camera-Node evidence
+`profile_id` at camera-setup time and never re-validates it against the
+Node's live advertised profile set; every burst failure (a stale-profile
+`409`, a timeout, a connection reset) collapses into one identical,
+**entirely unlogged** generic failure code, with no `EvidenceCandidate`
+ever created and no file ever written, so every proposal this session
+died at the evidence-existence gate (`no_persistable_evidence_bytes`)
+before any of the accepted precision mechanisms (ambiguous-boundary
+blocking specifically, detector-corroboration, scene-confusor, same-frame
+class-conflict) ever had a chance to engage -- confirmed via full code
+tracing, with two concrete, code-grounded candidate triggers identified
+(async Node-side profile renaming via warm-proof promotion; reconfiguration
+latency at or beyond the Host's own fixed timeout under real concurrent
+monitoring-stream contention). Not fixed during the cohort, per this
+file's own §8/standing discipline -- core admission/evidence-path code,
+explicitly off-limits during field collection. Both accepted precision
+fixes were honestly field-accounted despite the shared root cause:
+`classifier_same_frame` fallback, **zero occurrences**;
+`dead_anchor_promoted`, **exactly one occurrence** (a 3-generation
+component), itself defeated by the same evidence-capture defect before
+its own merits could be evaluated. Duplicate-rate and monitoring-coverage
+release-budget readiness (both `READY FOR BUDGET` since v12) are
+**reaffirmed and, for monitoring coverage, strengthened** (99.99% span
+coverage, max gap 3.68s -- the tightest of any cohort). Recall and
+evidence-survival, by contrast, are **REOPENED BY DEFECT** -- this
+session's own numbers are correctly excluded from budget-convergence
+averaging for those two metrics, since they are defect-attributable, not
+representative. This closure does **not** authorize a defect fix, v14,
+External Pre-Release Acceptance, or Final Release Hardening, and does
+**not** select a next development milestone -- authorization remains
+**NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, unchanged.
+**Remaining Gate A dependency, in priority order, restating the prior
+13-item list (unchanged in substance, see the Ambiguous-Boundary
+Real-Subject Recall Correctness v1 entry below) plus one new, more urgent
+item**: **(14) [NEW, RELEASE-CRITICAL] fix the Observation Engine's
+automatic evidence-capture profile-staleness/silent-failure defect
+identified above, then field-re-prove recall against a representative
+cohort with the fix in place** -- more urgent than items (1)-(13), since
+no future field cohort's own recall/evidence-survival measurement can be
+trusted at face value until this is closed.
+
 **2026-09-04 update (Ambiguous-Boundary Real-Subject Recall Correctness
 v1, see §6.R):** bounded RELEASE-CRITICAL Gate A product-correctness
 milestone, directly authorized outside this file, following All-Alternate
@@ -7453,6 +7542,115 @@ representative cohort (not a 14th list item):** does the dead-anchor
 -promotion fix measurably change recall or precision under real, sustained
 activity, and does the already-disclosed geometry-compatibility-tolerance
 question (still the v12 ~37:12 case's own real, unresolved cause) recur.
+
+**Representative Daylight Gate A Field Acceptance v13 -- Intact-Ledger
+Re-Proof & Budget Convergence (2026-09-04) directly answered the
+candidate fact immediately above, using the accepted committed snapshot
+tooling for the first time end to end -- does not close Lane R/Gate A,
+does not authorize the next attempt.** Classification **B** (see §3 for
+the full record and the one explicit named reason). 101.8 real minutes
+against a fresh disposable instance and the real reference Camera Node
+(fresh picamera2 pairing after a user-authorized Node-side reset),
+independent acceptance recorder enabled throughout (5,013 frames,
+4.48GB, zero gaps over 5s), accepted `field_acceptance_ledger_snapshot.py`
+run detached for the full session (21 checkpoints; `raw_detections`/
+`track_generations` reconciled 100% complete by record count,
+`proposal_outcomes` decision-event coverage 44.6% -- a real, disclosed,
+newly-identified residual limitation: this artifact's own retention can
+outpace a 5-minute snapshot cadence under high proposal-churn sessions,
+distinct from and narrower than v12's own now-fixed tooling defect).
+**Headline finding, dual-sourced (manual visual review of the fully
+independent acceptance recorder, plus the accepted automated
+`encounter_accounting.py`/`run_gate_a_measurement_accounting.py`
+reconstruction, 48 encounter clusters, 19 conservatively confirmed
+real): zero Visits were admitted against a genuinely, substantially
+active real feeder session** -- the worst recall result of any cohort to
+date, and, unlike v4's own pre-fix admission-arbitration starvation, not
+attributable to the accepted Sustained-Activity fix's own mechanism at
+all (that fix's own counters behaved correctly throughout: candidate
+authority never exhausted, fallback chains attempted and exhausted
+normally). **Root-caused precisely via full code tracing to a genuine,
+previously-undiscovered, release-critical defect in the Observation
+Engine's own automatic evidence-capture path**
+(`CameraNodeHttpTransport.request_evidence_burst`, `src/mockingbird/
+observation/camera_node_live.py:551-621`): the Host persists a Camera
+-Node evidence `profile_id` at camera-setup time and never re-validates
+it against the Node's live advertised profile set; every burst failure of
+any kind (a stale-profile `409 profile_not_advertised`, a `503`, a raw
+timeout, a connection reset) collapses into one identical, generic
+failure code with **zero logging anywhere in the file**, no
+`EvidenceCandidate` of any role is ever created, and no file is ever
+written -- so every proposal this session was rejected `blocked_missing_
+evidence`/`no_persistable_evidence_bytes` at the evidence-*existence*
+gate, before any of the accepted precision mechanisms (ambiguous-boundary
+blocking, detector-corroboration, scene-confusor, same-frame
+class-conflict) could ever engage. Two concrete, code-grounded candidate
+triggers identified (the Node's own async warm-proof promotion silently
+renaming/retiring the exact profile_id this Stream's config still names;
+and/or the still-`reconfiguration_required` capture path's own worst-case
+~12+-second latency sitting at or beyond the Host's own fixed ~12-second
+timeout under real concurrent monitoring-stream lock contention) --
+determining which one (or both) actually fired requires live Node
+inspection this milestone's own bounded field-collection scope did not
+extend to. Independently ruled out: the already-fixed 2026-08-20
+harvest-cache timing race (this session's own `evidence_harvest_misses`
+stayed 0 throughout, which that defect's own closure contract states
+proves nothing was ever successfully captured in the first place, not a
+recurrence of a captured-then-lost race). Both accepted precision fixes
+honestly field-accounted despite the shared root cause:
+`classifier_same_frame` fallback **zero occurrences**; `dead_anchor_
+promoted` **exactly one occurrence** (a 3-generation component), itself
+defeated by the identical evidence-capture defect before its own merits
+could be evaluated -- fallback counters (`fallback_attempted_count`/
+`fallback_exhausted_count`, both 16, `fallback_admitted_count` 0)
+internally coherent throughout. Zero `blocked_ambiguous_boundary` outcomes
+and zero `reject_insufficient_detector_corroboration` outcomes occurred
+all session -- a materially different shape from every prior cohort,
+since arbitration successfully selected and attempted real chain members
+(one chain alone tried at least 27 ranked positions) rather than being
+blocked at arbitration itself; the shared evidence-capture defect
+defeated every attempt regardless of rank, so the v12 ~37:12
+geometry-compatibility-tolerance question could not recur in a form this
+session could evaluate. Zero scene-confusor regions were ever registered
+(first cohort in this project's history with a completely empty table) --
+root-caused precisely: the scene-confusor touch point fires only `on
+admit` and `on reject_insufficient_detector_corroboration`, neither of
+which ever occurred. RTT-bounded clock calibration reached the largest,
+cleanest sample of any cohort to date (523 batches, 518 calibrated
+(99.04%), 0 clock jumps, `offset_ms` range `[-55.772, 110.616]`) --
+substantially strengthening dependency item #4's own infrastructure half
+even though 0 admitted-Visit latency samples resulted (worse, not better,
+than v12's own n=2 -- the one named reason this milestone classifies B
+rather than A). Independent-recorder monitoring coverage was the tightest
+of any cohort to date (99.99% span, max gap 3.68s, zero Node disconnects,
+`boot_id` unchanged throughout). Duplicate-rate and monitoring-coverage
+release-budget readiness (`READY FOR BUDGET` since v12) are **reaffirmed,
+and for monitoring coverage further strengthened** by this session; every
+other metric's own prior "MORE EVIDENCE REQUIRED" status is unchanged,
+except recall and evidence-survival/`blocked_missing_evidence`, both
+newly **REOPENED BY DEFECT** -- this session's own 0%/88.5% numbers are
+correctly excluded from budget-convergence averaging for those two
+metrics specifically, as defect-attributable rather than representative.
+Not fixed during the cohort, per this file's own standing discipline --
+core admission/evidence-path code, explicitly off-limits during field
+collection. Tier 1-3 correctly not run (zero production code changed);
+schema unchanged (`v58`). This closure does **not** authorize a defect
+fix, v14, External Pre-Release Acceptance, or Final Release Hardening,
+and does **not** select a next development milestone. Authorization
+remains **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**,
+unchanged. **Remaining Gate A dependency, in priority order, restating
+the prior 13-item list (unchanged in substance) plus one new, more
+urgent item:** (1)-(13) as already narrowed by prior entries above --
+none closed or reopened in substance by v13, except (11) (scene-confusor
+participation) directly measured again (zero regions) and (12) (intact
+ledger coverage) materially advanced (two of three artifacts fully
+complete by record count, the third's own residual limitation newly
+named precisely). **(14) [NEW, RELEASE-CRITICAL] fix the Observation
+Engine's automatic evidence-capture profile-staleness/silent-failure
+defect identified above, then field-re-prove recall against a
+representative cohort with the fix in place** -- more urgent than items
+(1)-(13): no future field cohort's own recall/evidence-survival
+measurement can be trusted at face value until this is closed.
 
 ### S. Actual Final Release Hardening
 
