@@ -538,9 +538,21 @@ one persistable item -- zero persistable evidence fails safely
 candidate. Every persisted `MediaAssetModel` carries `trigger_id =
 proposal_id` (an existing v24 provenance field, reused rather than
 duplicated) and `derivation_source = "observation_engine_candidate"`, plus
-`evidence_role` (`identification`/`context`/`alternate`) and
-`normalized_track_box_json` from the candidate's own subject geometry when
-known.
+`evidence_role` (`identification`/`context`/`alternate`, plus the
+separately-slotted, non-competing `classifier_same_frame` -- see Same-Frame
+Species Evidence v1) and `normalized_track_box_json` from the candidate's
+own subject geometry when known.
+
+**All-Alternate Subject Evidence Recall Correctness v1** (see docs/all-
+alternate-subject-evidence-recall-correctness-v1-report.md): a proposal
+whose identification/context picks both fail to survive to admission (real
+bytes never harvested, or independently ineligible), but whose
+`classifier_same_frame` item does, is no longer discarded outright
+(`reject_no_identification_or_context`) purely because that role never
+competes for identification/context. `evaluate_evidence_admission` treats
+it as a narrowly-scoped last-resort `primary` in exactly that one case --
+never displacing a real identification/context pick, and still subject to
+the same geometry-validity/detector-corroboration checks unchanged.
 
 For the real live trial, evidence is sourced only from the live session's
 own bounded high-resolution burst cache

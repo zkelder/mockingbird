@@ -29,6 +29,18 @@ class _Proposal:
     broad_class: str = "animal"
 
 
+@dataclass(frozen=True)
+class _Corroboration:
+    """Duck-typed `confidence_evidence` for these tests -- mirrors
+    `product_repository._CorroborationFacts` exactly, without importing the
+    repository (this gate stays product-repository-free)."""
+
+    strong_detection_count: int | None = None
+    detection_count: int | None = None
+    max_consecutive_detector_confirmed_frames: int | None = None
+    max_single_generation_detection_count: int | None = None
+
+
 def test_identification_with_valid_geometry_is_admitted() -> None:
     decision = evaluate_evidence_admission(_Proposal(), [_Item("identification")])
     assert decision.admitted
@@ -65,6 +77,107 @@ def test_no_evidence_items_is_rejected() -> None:
     decision = evaluate_evidence_admission(_Proposal(), [])
     assert not decision.admitted
     assert decision.outcome == "reject_no_identification_or_context"
+
+
+# --- All-Alternate Subject Evidence Recall Correctness v1 -------------------
+#
+# Root cause (see docs/all-alternate-subject-evidence-recall-correctness-v1-
+# report.md): `evidence_scoring.score_proposal_evidence` deliberately never
+# lets a `classifier_same_frame` item compete for `identification`/`context`
+# (Same-Frame Species Evidence v1 -- it must never outrank a real
+# high-resolution burst). That is correct. But when the real burst's own
+# bytes never survive to admission (lost before harvest, or independently
+# failing the scorer's own eligibility checks -- a real, disclosed,
+# bounded residual, not a hypothetical), the proposal's *only* persisted,
+# byte-backed evidence can be its own same-frame snapshot -- a real,
+# tracker/detector-confirmed, provably-this-exact-frame subject capture,
+# not "no evidence." Before this milestone's fix, that shape was
+# indistinguishable, at this gate, from `test_alternate_only_evidence_is_
+# rejected` above and was discarded the same way. `test_same_frame_only_
+# evidence_is_admitted_as_last_resort` below is this defect's exact,
+# faithful RED (fails against the pre-fix gate)/GREEN (passes against the
+# fixed one) reproducer at the pure-gate level; `tests/test_same_frame_
+# species_evidence.py::test_same_frame_only_evidence_creates_a_reviewable_
+# visit` proves the same fact end to end through the real repository.
+
+
+def test_same_frame_only_evidence_is_admitted_as_last_resort() -> None:
+    """The exact defect this milestone fixes: a proposal whose only
+    persisted evidence is its own `classifier_same_frame` snapshot must not
+    vanish -- a real, geometrically-proven subject capture exists, it is
+    just not identification-grade. RED against the pre-fix gate (asserted
+    `reject_no_identification_or_context`); GREEN here."""
+
+    decision = evaluate_evidence_admission(_Proposal(), [_Item("classifier_same_frame")])
+    assert decision.admitted
+    assert decision.outcome == "admit"
+    assert decision.reason == "evidence_sufficient_for_review:same_frame_primary"
+
+
+def test_same_frame_fallback_only_used_when_no_identification_or_context() -> None:
+    """A real identification/context pick still wins outright -- the
+    same-frame fallback is a last resort, never a competitor. Distinguishes
+    the ordinary `evidence_sufficient_for_review` reason from the fallback's
+    own `:same_frame_primary` suffix, proving the fallback did not fire."""
+
+    items = [_Item("classifier_same_frame", subject_geometry=None), _Item("identification")]
+    decision = evaluate_evidence_admission(_Proposal(), items)
+    assert decision.admitted
+    assert decision.reason == "evidence_sufficient_for_review"
+
+
+def test_same_frame_fallback_still_requires_valid_geometry() -> None:
+    """The new fallback is not a bypass: every check after primary
+    resolution still applies, unchanged, to whatever `primary` turned out
+    to be -- including the same-frame item."""
+
+    decision = evaluate_evidence_admission(
+        _Proposal(), [_Item("classifier_same_frame", subject_geometry=None)],
+    )
+    assert not decision.admitted
+    assert decision.outcome == "reject_subject_geometry_invalid"
+
+
+def test_same_frame_fallback_still_rejects_insufficient_detector_corroboration() -> None:
+    """Precision safety bar: a same-frame-only proposal with the exact
+    never-strong, bare-minimum-detection signature `reject_insufficient_
+    detector_corroboration` already exists to catch (see docs/hard-negative-
+    visit-admission-precision-species-escalation-correctness-v1-report.md)
+    must still be rejected -- this fix only changes what counts as a
+    *candidate* primary, never the corroboration bar a real subject capture
+    must still clear. Mirrors real field data: MockingBird's own 2026-09-03
+    persistent red-flag confusor's weakest generations show exactly this
+    shape (1 detection, confidence 0.121-0.184, never strong)."""
+
+    decision = evaluate_evidence_admission(
+        _Proposal(),
+        [_Item("classifier_same_frame")],
+        confidence_evidence=_Corroboration(strong_detection_count=0, detection_count=1),
+    )
+    assert not decision.admitted
+    assert decision.outcome == "reject_insufficient_detector_corroboration"
+
+
+def test_same_frame_fallback_admits_a_real_weak_but_corroborated_encounter() -> None:
+    """A genuinely present, brief real subject -- more than the tracker's
+    own bare confirmation floor, even though never a *strong* detection --
+    now gets a real, reviewable Visit instead of vanishing. Detection
+    count/confidence grounded in a real 2026-09-03 confirmed-real-bird
+    track generation (`stream-5288453906fb:frame-track:80735c36ab6a3cd599a7`,
+    8 detections, max confidence 0.479, single generation) -- reused here
+    only to ground the corroboration math in a real signature, not to
+    assert this reproduces that generation's own recorded admission-
+    authority outcome (a different, unrelated ambiguous-boundary-arbitration
+    defect, out of this milestone's scope -- see the milestone report's own
+    "v12 reproduced misses" section)."""
+
+    decision = evaluate_evidence_admission(
+        _Proposal(),
+        [_Item("classifier_same_frame")],
+        confidence_evidence=_Corroboration(strong_detection_count=0, detection_count=8),
+    )
+    assert decision.admitted
+    assert decision.reason == "evidence_sufficient_for_review:same_frame_primary"
 
 
 def test_missing_subject_geometry_is_rejected() -> None:

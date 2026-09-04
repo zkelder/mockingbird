@@ -50,6 +50,25 @@ above already settled. Duck-typed via `object`/`getattr` exactly like
 `candidate_visit_authority.ProposalArbitrationFacts.confidence_evidence`
 already is, so this module still imports neither `contracts` nor
 `admission_policy`.
+
+All-Alternate Subject Evidence Recall Correctness v1 (see docs/all-
+alternate-subject-evidence-recall-correctness-v1-report.md): closes a real,
+code-verified recall defect this module's own point-2 check produced --
+`reject_no_identification_or_context` firing for a proposal whose only
+persisted, byte-backed evidence is a `classifier_same_frame` snapshot (Same-
+Frame Species Evidence v1's own diagnostic/classifier-input asset, deliberately
+excluded from the scorer's identification/context ranking so it can never
+outrank a real high-resolution burst). That exclusion from *ranking* had been
+read, one gate downstream, as "no viable evidence" -- but the same-frame
+asset is a real, tracker/detector-confirmed, provably-this-exact-frame subject
+capture, not background. `evaluate_evidence_admission` now accepts it as a
+narrowly-scoped last-resort `primary` only when neither `identification` nor
+`context` exists, subject to every other check below completely unchanged
+(geometry validity, detector corroboration) -- this never admits anything the
+corroboration check would otherwise have rejected, and it never touches
+`evidence_scoring.py`'s own ranking, which still never lets a same-frame
+asset outrank a real burst. See `evaluate_evidence_admission`'s own docstring
+for why `alternate` deliberately does not get an equivalent fallback.
 """
 
 from __future__ import annotations
@@ -359,6 +378,17 @@ def _insufficient_detector_corroboration(
     return "never_strong_and_minimal_detector_corroboration"
 
 
+# All-Alternate Subject Evidence Recall Correctness v1 (see docs/all-
+# alternate-subject-evidence-recall-correctness-v1-report.md): a bare
+# string, not an import of `contracts.CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE`
+# -- this module's own established convention (`EvidenceItemFacts.role:
+# str`, the module docstring's "no ... product-repository ... import"
+# contract) already treats every role as a plain string it never owns the
+# vocabulary for. See `evaluate_evidence_admission`'s own docstring for why
+# this one role gets a narrowly-scoped fallback and `alternate` does not.
+_CLASSIFIER_SAME_FRAME_ROLE = "classifier_same_frame"
+
+
 def evaluate_evidence_admission(
     proposal: ProposalSupportFacts,
     items: Sequence[EvidenceItemFacts],
@@ -379,7 +409,27 @@ def evaluate_evidence_admission(
        alone, which by definition lost to something better or nothing at
        all -- see `evidence_scoring.score_proposal_evidence`'s
        `no_useful_evidence` fact, which is exactly "identification is None
-       and context is None").
+       and context is None") -- or, failing both, All-Alternate Subject
+       Evidence Recall Correctness v1's own narrowly-scoped fallback: a
+       persisted `classifier_same_frame` item (see `_CLASSIFIER_SAME_FRAME_
+       ROLE`'s own module-level comment for why this is safe and why
+       `alternate` does not get the same fallback). `no_useful_evidence`
+       being true means the scorer's own eligible-candidate pool was
+       genuinely empty (an `alternate` is only ever persisted when that
+       pool was non-empty, in which case `identification`/`context` are
+       also always set) -- but `classifier_same_frame` is deliberately
+       never a member of that pool at all (`evidence_scoring.score_
+       proposal_evidence`'s caller filters it out before scoring even
+       starts -- see `candidate_visit_adapter.attempt_candidate`'s own
+       `scoring_candidates`), so its presence or absence says nothing about
+       whether the pool was empty. A proposal whose *only* persisted,
+       byte-backed evidence is its own same-frame snapshot still has a
+       real, tracker/detector-confirmed, provably-this-exact-frame subject
+       capture (`GeometryAttribution.same_frame is True`) -- discarding the
+       whole encounter because that capture is not identification-grade is
+       exactly the recall defect this milestone traces to its first
+       irreversible error, one gate downstream of role assignment, not a
+       flaw in role assignment itself.
     3. That candidate's own subject geometry is a real, non-degenerate box
        -- a reviewer must be able to see *where* the claimed subject is, not
        just that some frame was captured.
@@ -419,6 +469,23 @@ def evaluate_evidence_admission(
 
     primary = next((item for item in items if item.role == "identification"), None)
     primary = primary or next((item for item in items if item.role == "context"), None)
+    same_frame_fallback = False
+    if primary is None:
+        # See this function's own docstring, point 2: `classifier_same_
+        # frame` is not a member of the scorer's eligible-candidate pool at
+        # all (excluded before scoring, never a competitor for
+        # identification/context), so falling back to it here neither
+        # contradicts nor duplicates the scorer's own "pool was empty"
+        # judgment -- it answers a different question ("is there still a
+        # real, located subject capture to review") than `identification`/
+        # `context` do ("which capture is the *best* one"). `alternate`
+        # deliberately gets no equivalent fallback: it is only ever
+        # persisted when `identification`/`context` are already set (see
+        # `evidence_scoring.score_proposal_evidence`), so an `alternate`
+        # -only item list is not a shape this gate can actually receive
+        # from a real proposal today.
+        primary = next((item for item in items if item.role == _CLASSIFIER_SAME_FRAME_ROLE), None)
+        same_frame_fallback = primary is not None
     if primary is None:
         return QualityDecision(
             "reject_no_identification_or_context",
@@ -437,4 +504,10 @@ def evaluate_evidence_admission(
     if corroboration_reason is not None:
         return QualityDecision("reject_insufficient_detector_corroboration", corroboration_reason)
 
-    return QualityDecision("admit", "evidence_sufficient_for_review")
+    # Diagnostics (this milestone, §18): distinguishable, not a new field --
+    # mirrors this codebase's existing bounded reason-suffix convention
+    # (`candidate_visit_adapter`'s own `:fallback_position_N`, `candidate_
+    # visit_authority`'s own `:retries_exhausted`) so a future session can
+    # measure how often this fallback fires without a schema change.
+    reason = "evidence_sufficient_for_review:same_frame_primary" if same_frame_fallback else "evidence_sufficient_for_review"
+    return QualityDecision("admit", reason)

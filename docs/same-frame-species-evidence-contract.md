@@ -209,24 +209,52 @@ provenance, not a redefinition of that field's own meaning.
 ## Non-promotion (product doctrine)
 
 A `classifier_same_frame` asset is diagnostic/classifier-input evidence
-only, never the canonical Visit image:
+only, never *preferred over* the canonical Visit image:
 
 - excluded from `_effective_primary_preview_from_visit`'s candidate pool
   (before its bounded top-4 truncation) and from `_visit_evidence_frames_
   from_links` (the API's own `evidence_frames` list) — it can neither
-  occupy a gallery slot nor ever be recommended as the effective primary;
+  occupy a gallery slot nor ever be recommended as the effective primary
+  **while any other, non-same-frame evidence item exists for the Visit**;
 - `select_effective_primary`'s own known-role priority chain never matches
   the new role name, so even without the exclusions above it could only
-  ever win via the last-resort `assessed[0]` fallback — structurally
-  prevented from mattering in practice because a same-frame asset is only
-  ever captured alongside a successful burst (see "Capture" above), so an
-  `identification`-role item always exists first;
+  ever win via the last-resort `assessed[0]` fallback;
 - `SpeciesSuggestionModel.media_asset_id`/`representative_media_path` never
   point at it (see above).
 
+**Revised premise (All-Alternate Subject Evidence Recall Correctness v1,
+see docs/all-alternate-subject-evidence-recall-correctness-v1-report.md):**
+the assumption originally recorded here — "a same-frame asset is only ever
+captured alongside a successful burst ... so an identification-role item
+always exists first" — is true of the `EvidenceCandidate` *object*
+`camera_node_live.py` constructs (a same-frame candidate is only ever
+created immediately after a burst capture already succeeded this same
+frame), but was never actually guaranteed of the *persisted evidence item*:
+the burst's own bytes can still be lost before harvest (a real, disclosed,
+bounded residual — see `engine_runtime._MAX_CACHED_BURST_BYTES`'s own
+docstring), or the burst's own crop can independently fail the scorer's own
+eligibility checks, while the same-frame capture — proven, by its own
+construction, to be *this exact tracked/detected frame* — survives. Real
+field evidence (two confirmed-real-bird misses in Representative Daylight
+Gate A Field Acceptance v12's own session, though this milestone found
+their own specific causes to be elsewhere — see the report's own "v12
+reproduced misses") motivated tracing this gap to a genuine, silent recall
+defect: `candidate_quality_gate.evaluate_evidence_admission` rejected the
+*entire proposal*
+(`reject_no_identification_or_context`), discarding a real, geometrically
+-proven subject capture, whenever a same-frame asset turned out to be a
+proposal's *only* surviving evidence. The gate now accepts a same-frame
+item as a narrowly-scoped last-resort `primary` in exactly that one case
+(never when a real burst/other identification/context evidence exists),
+and the two presentation exclusions above are each now conditional on
+non-same-frame evidence actually existing, so a same-frame-only admitted
+Visit keeps its one honest photo instead of showing none at all. This does
+not change the *preference* order in any other case: a same-frame asset
+still never outranks or displaces a real burst.
+
 Still fully queryable directly by `evidence_role` for diagnostics/species
 inference — never hidden from the database, only from human-facing
-presentation surfaces.
+presentation surfaces (except, now, in the one same-frame-only case above).
 
 ## Retention
 

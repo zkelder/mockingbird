@@ -52,11 +52,17 @@ function evidenceRoleLabel(frame: VisitEvidenceFrame): string {
     identification: isAudio ? "Best identification clip" : "Best identification image",
     context: isAudio ? "Context clip" : "Context image",
     alternate: isAudio ? "Alternate clip" : "Alternate image",
-    // Visit Same-Frame Classifier Evidence Visibility v1: only ever appears
-    // via the dedicated `classifier_supporting_evidence` panel below, never
-    // in this gallery itself (the role is structurally excluded from
-    // `evidence_frames`) -- kept here so that panel's own `VisitEvidenceSequence`
-    // instance gets a real, specific caption instead of the generic fallback.
+    // Visit Same-Frame Classifier Evidence Visibility v1: originally added
+    // only for the dedicated `classifier_supporting_evidence` panel below
+    // (the role was, at the time, structurally excluded from
+    // `evidence_frames` itself) -- kept here so that panel's own
+    // `VisitEvidenceSequence` instance gets a real, specific caption instead
+    // of the generic fallback. All-Alternate Subject Evidence Recall
+    // Correctness v1: the backend exclusion from `evidence_frames` is now
+    // conditional (`product_repository._visit_evidence_frames_from_links`)
+    // -- a Visit whose *only* evidence is this role now surfaces it there
+    // too, so this same label now also covers that real gallery case
+    // honestly, with no frontend logic change needed.
     classifier_same_frame: "Frame used for species suggestion",
   };
   return labels[frame.evidence_role] ?? (isAudio ? "Monitoring audio" : "Monitoring context");

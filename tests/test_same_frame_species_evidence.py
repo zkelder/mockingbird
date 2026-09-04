@@ -449,3 +449,118 @@ def test_same_frame_evidence_no_duplicate_on_idempotent_replay(repository: Produ
             evidence_role=CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE,
         ).count()
         assert same_frame_asset_count == 1
+
+
+# --- All-Alternate Subject Evidence Recall Correctness v1, end to end -------
+#
+# `tests/test_candidate_quality_gate.py` proves the pure-gate fallback in
+# isolation; the two tests below prove it holds through the real
+# repository -- the same boundary `create_candidate_visit_from_proposal`
+# already re-validates from scratch (see its own docstring) -- with no
+# assembler/adapter shortcut, matching this file's own established
+# `_create_visit`-adjacent, direct-`CreateCandidateVisitRequest` convention.
+
+
+def test_same_frame_only_evidence_creates_a_reviewable_visit(repository: ProductRepository) -> None:
+    """The exact recall defect this milestone fixes, proven through the
+    real repository: a proposal whose real high-resolution burst never
+    survived to admission (lost before harvest, or independently failing
+    the scorer's own eligibility checks -- never persisted here at all,
+    modeling that real, disclosed residual) still creates a real,
+    reviewable Visit from its own same-frame snapshot, and that snapshot
+    -- honestly, since it is now the Visit's *only* evidence -- is actually
+    visible in the ordinary gallery and effective-primary preview, not
+    silently blank."""
+
+    repository.set_observation_authority_mode(
+        ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW,
+    )
+    same_frame_only_item = CandidateEvidenceItem(
+        engine_media_id="shadow-same-frame:hash-only",
+        role=CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE,
+        content=_solid_jpeg(width=640, height=480, color=SAME_FRAME_COLOR),
+        content_type="image/jpeg",
+        width=640,
+        height=480,
+        captured_at=NOW,
+        subject_geometry=(0.4, 0.4, 0.5, 0.5),
+        geometry_attribution_json=json.dumps(asdict(GeometryAttribution(
+            geometry_source="detector", geometry_source_offset_ms=500, geometry_source_observation_id="obs-only",
+            geometry_source_confidence=0.9, same_frame=True, geometry_evidence_gap_ms=0,
+        ))),
+    )
+    outcome = repository.create_candidate_visit_from_proposal(CreateCandidateVisitRequest(
+        proposal=_facts("visit-episode:same-frame-only-1"), observed_at=NOW, evidence_items=(same_frame_only_item,),
+    ))
+
+    assert outcome.outcome == "created", outcome.reason
+    assert outcome.visit_id is not None
+
+    same_frame_asset_id = _linked_same_frame_asset_id(repository, outcome.visit_id)
+    assert same_frame_asset_id is not None
+
+    frames = repository.visit_evidence_frames(outcome.visit_id)
+    assert {frame.media_asset_id for frame in frames} == {same_frame_asset_id}
+    preview = repository.effective_primary_preview(outcome.visit_id)
+    assert preview is not None
+    assert preview["selected_media_asset_id"] == same_frame_asset_id
+
+
+def _linked_same_frame_asset_id(repository: ProductRepository, visit_id: str) -> str | None:
+    with repository.session_factory() as session:
+        link = session.query(VisitEvidenceLinkModel).filter_by(
+            visit_id=visit_id, evidence_role=CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE,
+        ).first()
+        return link.media_asset_id if link is not None else None
+
+
+def test_same_frame_only_evidence_still_rejects_weak_uncorroborated_detections(
+    repository: ProductRepository,
+) -> None:
+    """Precision safety bar, end to end: a same-frame-only proposal whose
+    detector evidence is the exact never-strong, bare-minimum shape
+    `reject_insufficient_detector_corroboration` already exists to catch
+    (real 2026-09-03 persistent-confusor signature: 1 detection, confidence
+    well under `strong_detection_threshold`) is not admitted just because it
+    now clears the identification/context check -- the corroboration gate
+    still applies, unchanged."""
+
+    repository.set_observation_authority_mode(
+        ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW,
+    )
+    same_frame_only_item = CandidateEvidenceItem(
+        engine_media_id="shadow-same-frame:hash-weak",
+        role=CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE,
+        content=_solid_jpeg(width=640, height=480, color=SAME_FRAME_COLOR),
+        content_type="image/jpeg",
+        width=640,
+        height=480,
+        captured_at=NOW,
+        subject_geometry=(0.06, 0.72, 0.08, 0.74),
+    )
+    weak_facts = CandidateVisitProposalFacts(
+        proposal_id="visit-episode:same-frame-only-weak-1",
+        stream_id=STREAM_ID,
+        zone_id=None,
+        broad_class="animal",
+        start_offset_ms=0,
+        end_offset_ms=5000,
+        constituent_generation_ids=("gen-weak-1",),
+        constituent_track_ids=("track-weak-1",),
+        source_capture_frame_ids=("frame-weak-1",),
+        supporting_frame_ids=("frame-weak-1",),
+        evidence_candidate_ids=("shadow-same-frame:hash-weak",),
+        limitation_facts=(),
+        ambiguous_adjacent_proposal_ids=(),
+        assembler_version="tracklet-visit-assembler-v1",
+        confidence_evidence_json=json.dumps({
+            "strong_detection_count": 0, "detection_count": 1, "max_confidence": 0.121,
+            "max_consecutive_detector_confirmed_frames": 1, "max_single_generation_detection_count": 1,
+        }),
+    )
+    outcome = repository.create_candidate_visit_from_proposal(CreateCandidateVisitRequest(
+        proposal=weak_facts, observed_at=NOW, evidence_items=(same_frame_only_item,),
+    ))
+
+    assert outcome.outcome == "reject_insufficient_detector_corroboration"
+    assert outcome.visit_id is None

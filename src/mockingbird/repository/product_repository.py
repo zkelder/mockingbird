@@ -22909,11 +22909,23 @@ class ProductRepository:
         # the bounded top-4 truncation below so it can neither occupy one of
         # those 4 slots nor ever be recommended as the effective primary
         # (see "Do not promote the classifier crop to canonical Visit
-        # image").
-        links = [
-            link for link in self._visit_evidence_link_models(session, visit.id)
-            if link.evidence_role != CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE
-        ][:4]
+        # image"). All-Alternate Subject Evidence Recall Correctness v1
+        # (see docs/all-alternate-subject-evidence-recall-correctness-v1-
+        # report.md): that exclusion is now conditional on a real,
+        # non-same-frame evidence item actually existing for this Visit --
+        # see `_visit_evidence_frames_from_links`'s own matching comment
+        # for the full rationale (the contract doc's own "only ever
+        # captured alongside a successful burst" premise proved true of the
+        # candidate object, not the persisted item). A complete no-op
+        # whenever a real burst survived (the overwhelming common case);
+        # only a same-frame-only Visit (candidate_quality_gate.py's own new
+        # fallback) keeps its one honest photo here instead of previewing
+        # nothing.
+        all_links = self._visit_evidence_link_models(session, visit.id)
+        non_same_frame_links = [
+            link for link in all_links if link.evidence_role != CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE
+        ]
+        links = (non_same_frame_links or all_links)[:4]
         if not links:
             return None
         dimensions = self._visit_evidence_dimensions_from_motion_evidence(session, visit.id)
@@ -23161,7 +23173,36 @@ class ProductRepository:
         # image"). Still fully queryable directly by evidence_role for
         # diagnostics/species inference (see `_classifier_same_frame_asset_
         # for_visit`), just never surfaced here.
-        links = [link for link in links if link.evidence_role != CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE]
+        #
+        # All-Alternate Subject Evidence Recall Correctness v1 (see docs/
+        # all-alternate-subject-evidence-recall-correctness-v1-report.md):
+        # this exclusion is now conditional on a real, non-same-frame
+        # evidence item actually existing for this Visit. The contract
+        # doc's own "Non-promotion" section assumed a same-frame asset "is
+        # only ever captured alongside a successful burst ... so an
+        # identification-role item always exists first" -- true of the
+        # `EvidenceCandidate` object `camera_node_live.py` constructs
+        # (a same-frame candidate is only ever created immediately after a
+        # burst capture already succeeded this same frame), never
+        # guaranteed of the *persisted* evidence item: the burst's own
+        # bytes can still be lost before harvest (a real, disclosed,
+        # bounded residual -- see `engine_runtime._MAX_CACHED_BURST_BYTES`'s
+        # own docstring), or the burst's own crop can independently fail
+        # the scorer's own eligibility checks, while the same-frame
+        # capture -- proven, by its own construction, to be *this exact
+        # tracked/detected frame* -- survives (see `candidate_quality_
+        # gate.evaluate_evidence_admission`'s own same-frame-fallback
+        # comment, which is what makes a same-frame-only Visit possible at
+        # all now). For the ordinary case (a real burst survived), this is
+        # a complete no-op: `non_same_frame_links` is non-empty, so the
+        # exclusion still applies exactly as before, byte-for-byte
+        # identical to the prior unconditional form. Only when same-frame
+        # is genuinely this Visit's *only* evidence does it now stay
+        # visible here -- an honest, if lower-resolution, subject photo is
+        # a better outcome than a real, admitted Visit with no photo at
+        # all.
+        non_same_frame_links = [link for link in links if link.evidence_role != CLASSIFIER_SAME_FRAME_EVIDENCE_ROLE]
+        links = non_same_frame_links or links
         for link in links[:MAX_LIVE_VISIT_EVIDENCE_FRAMES]:
             if link.media_asset_id in seen_media_ids:
                 continue
