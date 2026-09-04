@@ -475,6 +475,72 @@ this milestone's own report for the full RED/GREEN account, the exactly-
 once/multi-subject/stop-finalization proofs, and the 105-simulated-minute
 v6-shaped replay against the real bounded cache.
 
+**Dead-anchor promotion (Ambiguous-Boundary Real-Subject Recall Correctness
+v1):** the fallback contract above assumes `resolved_winner_ids`' own
+`winner_id` is always a proposal `_run_assembly_tick` can actually attempt
+this tick. Representative Daylight Gate A Field Acceptance v12's own
+~37:12 real-bird case investigation found this assumption false in
+general: `resolve_ambiguous_boundary_arbitration` is recomputed fresh every
+tick from the assembler's *entire* tracklet history (never only this
+tick's new arrivals), so a connected component's own top-ranked member can
+itself be a proposal that was already permanently resolved -- created, or
+itself blocked/rejected -- on a *strictly earlier* tick, simply because a
+brand-new tracklet later happened to fall within its geometry tolerance
+and `ambiguous_gap_ms` window. Before this fix, `winner_id` absent from
+`new_proposals_by_id` made `_run_assembly_tick`'s winner-loop treat the
+*entire* component as a silent no-op (`winner is None: continue`): the
+fallback chain above -- and therefore every brand-new member's own chance
+at the bypass -- was never reached, even when the component had never
+produced a Visit at all. Confirmed to actually fire, not merely
+theoretical: this exact real v12 session's own very next
+`blocked_ambiguous_boundary` loss (a different, weaker, single-generation
+proposal, ~11 seconds after the ~37:12 pair's own same-tick decision) is
+independently consistent with this identical mechanism, since every
+proposal it could plausibly have linked to was, by then, already resolved
+on a strictly earlier tick.
+
+`engine_runtime._live_chain_for_component` closes this, entirely inside
+`_run_assembly_tick`'s own dispatch code -- no change to
+`candidate_visit_authority.resolve_ambiguous_boundary_arbitration` itself,
+which still computes exactly the same deterministic ranking it always has.
+Given `winner_id`'s own already-computed ranked order (itself, then
+`fallback_order_by_winner_id[winner_id]`), a new, small, session-local
+`admitted_proposal_ids: set[str]` (mirroring `attempted_proposal_ids`'s own
+by-reference-mutation convention, recording only `created`/
+`idempotent_repeat` outcomes) decides between exactly two outcomes:
+
+- **Any id in the ranked order, at any rank, already admitted:** this
+  component already has its one Visit. Nothing further is attempted --
+  every live member still falls through to the ordinary per-proposal loop
+  and blocks exactly as it always has. This check runs *before* looking
+  for a live id specifically so a newly-joined, higher-ranked live member
+  can never resurrect a question the component's own earlier, real
+  admission already settled (a would-be regression an adversarial
+  self-review test in `tests/test_engine_runtime.py` -- a later arrival
+  with dramatically higher confidence than a modest already-admitted
+  anchor -- exists specifically to catch).
+- **No id in the ranked order was ever admitted:** the live subsequence of
+  the ranked order (every dead id silently dropped -- it can never be
+  attempted again and contributes nothing) becomes the chain the fallback
+  contract above walks, exactly as if arbitration had named the first live
+  id the winner directly. Honestly, distinguishably marked in the ledger
+  (`:dead_anchor_promoted`, mirroring the existing `:fallback_position_N`
+  convention) so a promoted admission is never indistinguishable from an
+  ordinary, uncontested win.
+
+This is a dispatch/bookkeeping correction, not a policy change: "at most
+one Visit per ambiguous cluster" is exactly as absolute after this fix as
+before it. It does not, and cannot, retroactively change the real v12
+~37:12 case's own recorded outcome -- that pair's own true ambiguous
+partner was never absent from its own tick (the 187ms gap between its two
+real decisions is far shorter than `_ASSEMBLY_TICK_SECONDS`, proving both
+were decided together, ordinarily, in the fallback contract's own
+already-existing, unmodified path) -- see
+[ambiguous-boundary-real-subject-recall-correctness-v1-report.md](ambiguous-boundary-real-subject-recall-correctness-v1-report.md)
+for the complete causal trace and why that specific case's own separation
+from valid ambiguity would require touching geometry tolerance, explicitly
+out of scope for this milestone.
+
 ## Continuation-pending policy (Visit Continuity / Provisional Admission Fix v1)
 
 A proposal whose own `continuation_pending` is `True` -- the assembler

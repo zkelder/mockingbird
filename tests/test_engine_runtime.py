@@ -23,7 +23,10 @@ from PIL import Image
 
 from mockingbird.observation import engine_runtime
 from mockingbird.observation.candidate_visit_adapter import CandidateVisitAuthorityAdapter
-from mockingbird.observation.candidate_visit_authority import ObservationAuthorityMode
+from mockingbird.observation.candidate_visit_authority import (
+    AmbiguousBoundaryArbitration,
+    ObservationAuthorityMode,
+)
 from mockingbird.observation.contracts import (
     DetectionObservation,
     EvidenceCandidate,
@@ -2432,6 +2435,426 @@ def test_fallback_works_during_stop_finalization(repository: ProductRepository) 
         known_horizon_ms=30_100, finalize=True,
     )
     assert session._counts.candidates_created == 1
+
+
+# =============================================================================
+# Ambiguous-Boundary Real-Subject Recall Correctness v1: Representative
+# Daylight Gate A Field Acceptance v12's own ~37:12 real-bird miss traced a
+# *different* mechanism from the one this milestone ultimately fixes (see
+# docs/ambiguous-boundary-real-subject-recall-correctness-v1-report.md) --
+# the real 187ms gap between that bird's own `blocked_ambiguous_boundary`
+# decision and its winning sibling's `created` decision is far too short to
+# span two ticks (`_ASSEMBLY_TICK_SECONDS = 10.0` floors the gap between any
+# two ticks), so both were decided together, ordinarily, in one single tick
+# -- the existing, unmodified fallback-chain mechanism above, working
+# exactly as designed. Tracing arbitration's own full mechanics for that
+# case surfaced a *second, independently real* defect instead, confirmed to
+# have fired later in that exact same real session (the session's own next
+# `blocked_ambiguous_boundary` loss, ~11 seconds after the v12 pair, on a
+# separate, later tick): `arbitration.resolved_winner_ids` is recomputed
+# fresh every tick from the assembler's *entire* tracklet history, so a
+# component's own top-ranked member can itself be a proposal already
+# permanently resolved on a *strictly earlier* tick. Before this fix,
+# `_run_assembly_tick`'s winner-loop treated that as a silent no-op for the
+# *whole* component (`winner is None: continue`) -- so `_attempt_resolved_
+# component`, and the fallback chain it alone walks, never ran for any
+# brand-new member of that component, even when the component had never
+# produced a Visit at all. `_live_chain_for_component` closes this: it
+# walks the same already-computed ranked order past every dead (resolved,
+# never-admitted) id to find the first live one, but stops immediately,
+# admitting nothing, the instant it finds *any* component member -- at any
+# rank -- that was already admitted, so "at most one Visit per ambiguous
+# cluster" stays absolute. These tests drive the real, unmodified
+# `_EngineSession._run_assembly_tick` across multiple ticks, exactly like
+# every other multi-tick test above.
+# =============================================================================
+
+
+def test_dead_component_winner_no_longer_starves_a_later_real_bird_forever(
+    repository: ProductRepository,
+) -> None:
+    """The core fix, isolated: a proposal that was permanently blocked
+    (never admitted -- here, no persistable evidence bytes at all) on an
+    earlier tick, with nothing else around to be ambiguous against yet,
+    later becomes the nominal arbitration "winner" of a component formed
+    only once a brand-new, later, real bird's own tracklet -- 20s after
+    the dead proposal's own end, well inside `ambiguous_gap_ms` -- happens
+    to share its geometry closely enough to link to it. Before this fix:
+    `created` stays 0 forever, on this tick and every tick after (the real,
+    reproduced field shape -- a component that never produces a single
+    Visit, yet still permanently starves every later arrival within its
+    reach). After this fix: the new bird -- the only live, ever-admissible
+    member of this component -- is promoted and admitted; the original dead
+    proposal's own true, unrescuable reason is untouched, never masked."""
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    gen_dead_anchor, gen_real_bird = "gen-dead-anchor", "gen-later-real-bird"
+    dead_updates = list(_tick_track_updates_with_confidence(gen_dead_anchor, 0, 5_000, confidence=0.6))
+    evidence_dead, _unused_bytes = _tick_evidence(gen_dead_anchor, "high_resolution_burst", "hash-dead-anchor")
+    burst_bytes_cache: dict[str, bytes] = {}  # deliberately no bytes for evidence_dead
+    attempted_proposal_ids: set[str] = set()
+    admitted_proposal_ids: set[str] = set()
+
+    # Tick 1: the dead anchor alone, nothing else around yet -- resolves to
+    # a permanent, non-retryable block on its own true merits (no evidence),
+    # never created.
+    session._run_assembly_tick(
+        all_track_updates=dead_updates, all_evidence_candidates=[evidence_dead],
+        attempted_proposal_ids=attempted_proposal_ids, admitted_proposal_ids=admitted_proposal_ids,
+        burst_bytes_cache=burst_bytes_cache, adapter=adapter, known_horizon_ms=5_000 + 45_000 + 1,
+    )
+    assert session._counts.candidates_created == 0
+    assert session._suppressed.get("blocked_missing_evidence") == 1
+    assert admitted_proposal_ids == set(), "the dead anchor must never be recorded as admitted"
+
+    # Tick 2 (a separate, later tick -- a real second `_run_assembly_tick`
+    # call, not a continuation of the same one): the real bird's own
+    # tracklet is now confirmed, 20s after the dead anchor's own end (past
+    # `merge_gap_ms`, inside `ambiguous_gap_ms`), same geometry -- forms a
+    # brand-new ambiguous link to the *already-resolved* dead anchor.
+    real_bird_updates = list(_tick_track_updates_with_confidence(gen_real_bird, 25_000, 30_000, confidence=0.5))
+    evidence_real, bytes_real = _tick_evidence(gen_real_bird, "high_resolution_burst", "hash-later-real-bird")
+    burst_bytes_cache[evidence_real.media_asset_id] = bytes_real
+    all_updates = dead_updates + real_bird_updates
+    session._run_assembly_tick(
+        all_track_updates=all_updates, all_evidence_candidates=[evidence_dead, evidence_real],
+        attempted_proposal_ids=attempted_proposal_ids, admitted_proposal_ids=admitted_proposal_ids,
+        burst_bytes_cache=burst_bytes_cache, adapter=adapter, known_horizon_ms=30_000 + 45_000 + 1,
+    )
+    assert session._counts.candidates_created == 1, "the later real bird must not be starved by a dead anchor"
+    assert "blocked_ambiguous_boundary" not in session._suppressed
+    # The dead anchor's own true reason is untouched -- never silently
+    # reinterpreted as "ambiguous" just because a later bird linked to it.
+    assert session._suppressed.get("blocked_missing_evidence") == 1
+
+    import json as _json
+
+    from mockingbird.repository.product_repository import ObservationCandidateVisitModel
+
+    with repository.session_factory() as db_session:
+        created_rows = [
+            row for row in (
+                db_session.get(ObservationCandidateVisitModel, proposal_id)
+                for proposal_id in attempted_proposal_ids
+            )
+            if row is not None
+        ]
+    assert len(created_rows) == 1
+    assert _json.loads(created_rows[0].constituent_generation_ids_json) == [gen_real_bird]
+
+    window = session.counterfactual_query(start_offset_ms=0, end_offset_ms=10_000_000)
+    outcomes_by_generation = {
+        tuple(record.constituent_generation_ids): record for record in window.proposal_outcomes
+    }
+    # Honestly, distinguishably marked -- an auditor can tell this admission
+    # promoted past a dead anchor, never indistinguishable from an ordinary,
+    # uncontested win (mirrors the existing `:fallback_position_N`
+    # convention for an ordinary same-tick fallback).
+    assert outcomes_by_generation[(gen_real_bird,)].reason.endswith(":dead_anchor_promoted")
+
+    # Tick 3: nothing new -- the admission must not be repeated or undone.
+    session._run_assembly_tick(
+        all_track_updates=all_updates, all_evidence_candidates=[evidence_dead, evidence_real],
+        attempted_proposal_ids=attempted_proposal_ids, admitted_proposal_ids=admitted_proposal_ids,
+        burst_bytes_cache=burst_bytes_cache, adapter=adapter, known_horizon_ms=30_000 + 45_000 + 100_000,
+    )
+    assert session._counts.candidates_created == 1
+
+
+def test_already_admitted_component_winner_still_blocks_every_later_member(
+    repository: ProductRepository,
+) -> None:
+    """The mirror-image control: when the component's own top-ranked member
+    was already *admitted* (not dead) on an earlier tick, a later, brand
+    -new member that links to it must still block, exactly as before this
+    fix -- "at most one Visit per ambiguous cluster" is a policy question
+    (is this new arrival really the same encounter?), never a dispatch
+    bug, and this fix must not change that outcome."""
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    gen_admitted_anchor, gen_later_arrival = "gen-admitted-anchor", "gen-later-arrival"
+    anchor_updates = list(_tick_track_updates_with_confidence(gen_admitted_anchor, 0, 5_000, confidence=0.6))
+    evidence_anchor, bytes_anchor = _tick_evidence(gen_admitted_anchor, "high_resolution_burst", "hash-admitted-anchor")
+    burst_bytes_cache = {evidence_anchor.media_asset_id: bytes_anchor}
+    attempted_proposal_ids: set[str] = set()
+    admitted_proposal_ids: set[str] = set()
+
+    session._run_assembly_tick(
+        all_track_updates=anchor_updates, all_evidence_candidates=[evidence_anchor],
+        attempted_proposal_ids=attempted_proposal_ids, admitted_proposal_ids=admitted_proposal_ids,
+        burst_bytes_cache=burst_bytes_cache, adapter=adapter, known_horizon_ms=5_000 + 45_000 + 1,
+    )
+    assert session._counts.candidates_created == 1
+    assert admitted_proposal_ids == attempted_proposal_ids
+
+    later_updates = list(_tick_track_updates_with_confidence(gen_later_arrival, 25_000, 30_000, confidence=0.5))
+    evidence_later, bytes_later = _tick_evidence(gen_later_arrival, "high_resolution_burst", "hash-later-arrival")
+    burst_bytes_cache[evidence_later.media_asset_id] = bytes_later
+    all_updates = anchor_updates + later_updates
+    session._run_assembly_tick(
+        all_track_updates=all_updates, all_evidence_candidates=[evidence_anchor, evidence_later],
+        attempted_proposal_ids=attempted_proposal_ids, admitted_proposal_ids=admitted_proposal_ids,
+        burst_bytes_cache=burst_bytes_cache, adapter=adapter, known_horizon_ms=30_000 + 45_000 + 1,
+    )
+    assert session._counts.candidates_created == 1, "must not admit a second Visit for an already-satisfied component"
+    assert session._suppressed.get("blocked_ambiguous_boundary") == 1
+
+
+def test_a_stronger_later_arrival_never_bypasses_an_already_admitted_component_member(
+    repository: ProductRepository,
+) -> None:
+    """Adversarial regression control for the naive version of this fix
+    (promote whichever live member ranks highest, without first checking
+    whether *any* component member was ever admitted): a later arrival with
+    dramatically higher confidence than the already-admitted anchor -- so
+    high it would rank first in a fresh recompute of the whole component --
+    must still block. `_live_chain_for_component` checks every id in the
+    ranked order for prior admission *before* ever looking for a live one,
+    specifically so a newly-joined, higher-ranked live member can never
+    resurrect a question the component's own earlier, real admission
+    already settled."""
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    gen_admitted_anchor, gen_super_strong = "gen-modest-admitted-anchor", "gen-super-strong-later-arrival"
+    anchor_updates = list(_tick_track_updates_with_confidence(gen_admitted_anchor, 0, 5_000, confidence=0.3))
+    evidence_anchor, bytes_anchor = _tick_evidence(gen_admitted_anchor, "high_resolution_burst", "hash-modest-anchor")
+    burst_bytes_cache = {evidence_anchor.media_asset_id: bytes_anchor}
+    attempted_proposal_ids: set[str] = set()
+    admitted_proposal_ids: set[str] = set()
+
+    session._run_assembly_tick(
+        all_track_updates=anchor_updates, all_evidence_candidates=[evidence_anchor],
+        attempted_proposal_ids=attempted_proposal_ids, admitted_proposal_ids=admitted_proposal_ids,
+        burst_bytes_cache=burst_bytes_cache, adapter=adapter, known_horizon_ms=5_000 + 45_000 + 1,
+    )
+    assert session._counts.candidates_created == 1
+
+    # Confidence 0.99 -- would unambiguously out-rank the 0.3 anchor in any
+    # fresh `_arbitration_key` recompute of the merged component.
+    strong_updates = list(_tick_track_updates_with_confidence(gen_super_strong, 25_000, 30_000, confidence=0.99))
+    evidence_strong, bytes_strong = _tick_evidence(gen_super_strong, "high_resolution_burst", "hash-super-strong")
+    burst_bytes_cache[evidence_strong.media_asset_id] = bytes_strong
+    all_updates = anchor_updates + strong_updates
+    session._run_assembly_tick(
+        all_track_updates=all_updates, all_evidence_candidates=[evidence_anchor, evidence_strong],
+        attempted_proposal_ids=attempted_proposal_ids, admitted_proposal_ids=admitted_proposal_ids,
+        burst_bytes_cache=burst_bytes_cache, adapter=adapter, known_horizon_ms=30_000 + 45_000 + 1,
+    )
+    assert session._counts.candidates_created == 1, (
+        "a higher-ranked new arrival must never bypass an already-admitted component member"
+    )
+    assert session._suppressed.get("blocked_ambiguous_boundary") == 1
+
+
+def test_two_independent_dead_anchored_components_rescue_independently(
+    repository: ProductRepository,
+) -> None:
+    """Multi-subject safety: two entirely separate, genuinely simultaneous
+    dead-anchored components -- two different real subjects at two
+    different places in frame, each linked only to its own past dead
+    anchor -- both resolve on the same later tick. Each must independently
+    promote and admit its *own* live member and nowhere else: no
+    cross-subject evidence reuse, no collapsing the two into one Visit, no
+    admitting only one of the two."""
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    feeder_box = (0.47, 0.58, 0.51, 0.63)
+    perch_box = (0.05, 0.05, 0.15, 0.15)  # geometrically incompatible with feeder_box -- a distinct subject
+
+    def _dead_updates(prefix: str, box: tuple[float, float, float, float]):
+        base = _tick_track_updates_with_confidence(f"gen-dead-{prefix}", 0, 5_000, confidence=0.5)
+        return [replace(update, bounding_box=box) for update in base]
+
+    def _live_updates(prefix: str, box: tuple[float, float, float, float]):
+        base = _tick_track_updates_with_confidence(f"gen-live-{prefix}", 25_000, 30_000, confidence=0.4)
+        return [replace(update, bounding_box=box) for update in base]
+
+    dead_feeder, dead_perch = _dead_updates("feeder", feeder_box), _dead_updates("perch", perch_box)
+    evidence_dead_feeder, _ = _tick_evidence("gen-dead-feeder", "high_resolution_burst", "hash-dead-feeder")
+    evidence_dead_perch, _ = _tick_evidence("gen-dead-perch", "high_resolution_burst", "hash-dead-perch")
+    burst_bytes_cache: dict[str, bytes] = {}  # no bytes for either dead anchor
+    attempted_proposal_ids: set[str] = set()
+    admitted_proposal_ids: set[str] = set()
+
+    session._run_assembly_tick(
+        all_track_updates=dead_feeder + dead_perch,
+        all_evidence_candidates=[evidence_dead_feeder, evidence_dead_perch],
+        attempted_proposal_ids=attempted_proposal_ids, admitted_proposal_ids=admitted_proposal_ids,
+        burst_bytes_cache=burst_bytes_cache, adapter=adapter, known_horizon_ms=5_000 + 45_000 + 1,
+    )
+    assert session._counts.candidates_created == 0
+    assert session._suppressed.get("blocked_missing_evidence") == 2
+
+    live_feeder, live_perch = _live_updates("feeder", feeder_box), _live_updates("perch", perch_box)
+    evidence_live_feeder, bytes_live_feeder = _tick_evidence("gen-live-feeder", "high_resolution_burst", "hash-live-feeder")
+    evidence_live_perch, bytes_live_perch = _tick_evidence("gen-live-perch", "high_resolution_burst", "hash-live-perch")
+    burst_bytes_cache[evidence_live_feeder.media_asset_id] = bytes_live_feeder
+    burst_bytes_cache[evidence_live_perch.media_asset_id] = bytes_live_perch
+    all_updates = dead_feeder + dead_perch + live_feeder + live_perch
+    all_evidence = [evidence_dead_feeder, evidence_dead_perch, evidence_live_feeder, evidence_live_perch]
+
+    session._run_assembly_tick(
+        all_track_updates=all_updates, all_evidence_candidates=all_evidence,
+        attempted_proposal_ids=attempted_proposal_ids, admitted_proposal_ids=admitted_proposal_ids,
+        burst_bytes_cache=burst_bytes_cache, adapter=adapter, known_horizon_ms=30_000 + 45_000 + 1,
+    )
+    assert session._counts.candidates_created == 2, "each independent subject must be rescued, never only one"
+
+    import json as _json
+
+    from mockingbird.repository.product_repository import MediaAssetModel, ObservationCandidateVisitModel
+
+    with repository.session_factory() as db_session:
+        created_rows = [
+            row for row in (
+                db_session.get(ObservationCandidateVisitModel, proposal_id)
+                for proposal_id in attempted_proposal_ids
+            )
+            if row is not None
+        ]
+    created_generations = {tuple(_json.loads(row.constituent_generation_ids_json))[0] for row in created_rows}
+    assert created_generations == {"gen-live-feeder", "gen-live-perch"}
+    with repository.session_factory() as db_session:
+        for row in created_rows:
+            persisted_ids = _json.loads(row.persisted_media_asset_ids_json)
+            assert persisted_ids
+            for media_id in persisted_ids:
+                media = db_session.get(MediaAssetModel, media_id)
+                assert media is not None
+                assert media.trigger_id == row.proposal_id, "no cross-subject evidence contamination"
+
+
+def test_v12_case_a_shaped_loss_is_unaffected_by_this_fix(repository: ProductRepository) -> None:
+    """Honest non-regression documentation, not a claim of a fix: this
+    milestone's own governing case (Representative Daylight Gate A Field
+    Acceptance v12's ~37:12 real bird, `visit-episode:06c209ae...`) is
+    reconstructed here at the real `_EngineSession._run_assembly_tick` call
+    site, using this exact session's own real, ledger-exact numbers where
+    preserved (an 18.4s gap; the winning sibling's own 2-generation,
+    16.7s-span merge; the losing bird's own single-generation, 8-detection,
+    0.479-confidence signature) -- both proposals newly confirmed together
+    in one single tick, exactly as the real ~187ms-apart decision pair
+    proves happened (`_ASSEMBLY_TICK_SECONDS=10.0` floors the gap between
+    any two *separate* ticks, far longer than 187ms). This is the
+    *different*, already-correctly-functioning mechanism from the one this
+    milestone's own fix addresses (see the section docstring above and
+    docs/ambiguous-boundary-real-subject-recall-correctness-v1-report.md
+    "First irreversible error"): the real losing bird's own true ambiguous
+    partner was never absent from this tick, so `_live_chain_for_component`
+    is not even reached in its "dead anchor" branch here. This test's own
+    purpose is exactly the opposite of every test above -- proving this
+    fix does *not* retroactively change this outcome, so this report's own
+    "does not achieve RED->GREEN for the chartered case" claim is verified,
+    not merely asserted."""
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    winner_gen1 = list(_tick_track_updates_with_confidence("v12-winner-gen1", 0, 8_000, confidence=0.55))
+    winner_gen2 = list(_tick_track_updates_with_confidence("v12-winner-gen2", 9_000, 16_721, confidence=0.6))
+    losing_bird = list(_tick_track_updates_with_confidence("v12-losing-real-bird", 16_721 + 18_377, 16_721 + 18_377 + 17_717, confidence=0.479))
+    all_updates = winner_gen1 + winner_gen2 + losing_bird
+
+    ev1, b1 = _tick_evidence("v12-winner-gen1", "high_resolution_burst", "hash-v12-winner-1")
+    ev2, b2 = _tick_evidence("v12-winner-gen2", "high_resolution_burst", "hash-v12-winner-2")
+    ev3, b3 = _tick_evidence("v12-losing-real-bird", "high_resolution_burst", "hash-v12-losing")
+    all_evidence = [ev1, ev2, ev3]
+    burst_bytes_cache = {ev1.media_asset_id: b1, ev2.media_asset_id: b2, ev3.media_asset_id: b3}
+    attempted_proposal_ids: set[str] = set()
+    admitted_proposal_ids: set[str] = set()
+    end_of_losing_bird = 16_721 + 18_377 + 17_717
+
+    session._run_assembly_tick(
+        all_track_updates=all_updates, all_evidence_candidates=all_evidence,
+        attempted_proposal_ids=attempted_proposal_ids, admitted_proposal_ids=admitted_proposal_ids,
+        burst_bytes_cache=burst_bytes_cache, adapter=adapter, known_horizon_ms=end_of_losing_bird + 45_000 + 1,
+    )
+    assert session._counts.candidates_created == 1
+
+    import json as _json
+
+    from mockingbird.repository.product_repository import ObservationCandidateVisitModel
+
+    with repository.session_factory() as db_session:
+        created_rows = [
+            row for row in (
+                db_session.get(ObservationCandidateVisitModel, proposal_id)
+                for proposal_id in attempted_proposal_ids
+            )
+            if row is not None
+        ]
+    assert len(created_rows) == 1
+    assert _json.loads(created_rows[0].constituent_generation_ids_json) == ["v12-winner-gen1", "v12-winner-gen2"]
+
+    window = session.counterfactual_query(start_offset_ms=0, end_offset_ms=10_000_000)
+    outcomes_by_generation = {
+        tuple(record.constituent_generation_ids): record for record in window.proposal_outcomes
+    }
+    losing_outcome = outcomes_by_generation[("v12-losing-real-bird",)]
+    assert losing_outcome.outcome == "blocked_ambiguous_boundary"
+    # No `:dead_anchor_promoted`/`:fallback_position_N` suffix -- this loss
+    # goes through the ordinary, unmodified same-tick path, never this
+    # milestone's own new branch.
+    assert losing_outcome.reason == "proposal_boundary_ambiguous_with_adjacent_proposal"
+
+
+def test_live_chain_for_component_pure_unit_matrix() -> None:
+    """Direct, repository-free coverage of `_live_chain_for_component`'s
+    own three branches, isolated from the full tick machinery above."""
+    arbitration = AmbiguousBoundaryArbitration(
+        resolved_winner_ids=frozenset({"dead-winner", "admitted-winner", "lone-winner"}),
+        deferred_ids=frozenset(),
+        fallback_order_by_winner_id={
+            "dead-winner": ("dead-middle", "live-tail"),
+            "admitted-winner": ("live-newcomer",),
+            "lone-winner": (),
+        },
+    )
+    new_proposals_by_id = {"live-tail": object(), "live-newcomer": object()}
+
+    # Branch 1: the nominal winner itself is live -- byte-identical to the
+    # pre-fix `(winner.proposal_id,) + fallback_order[...]` computation.
+    assert engine_runtime._live_chain_for_component(
+        "lone-winner", arbitration=arbitration, new_proposals_by_id={"lone-winner": object()},
+        admitted_proposal_ids=set(),
+    ) == ("lone-winner",)
+
+    # Branch 2: the nominal winner and one fallback member are both dead
+    # (never admitted) -- skips both, promotes the first live id.
+    assert engine_runtime._live_chain_for_component(
+        "dead-winner", arbitration=arbitration, new_proposals_by_id=new_proposals_by_id,
+        admitted_proposal_ids=set(),
+    ) == ("live-tail",)
+
+    # Branch 3: the nominal winner was already admitted -- stops
+    # immediately, even though a live, higher-ranked-looking newcomer
+    # exists further down the same ranked order.
+    assert engine_runtime._live_chain_for_component(
+        "admitted-winner", arbitration=arbitration, new_proposals_by_id=new_proposals_by_id,
+        admitted_proposal_ids={"admitted-winner"},
+    ) == ()
+
+    # `admitted_proposal_ids=None` (every pre-existing caller/test): the
+    # promotion is disabled, but a dead winner still safely degrades to the
+    # first live id (never an exception, never a stale-looking crash).
+    assert engine_runtime._live_chain_for_component(
+        "dead-winner", arbitration=arbitration, new_proposals_by_id=new_proposals_by_id,
+        admitted_proposal_ids=None,
+    ) == ("live-tail",)
+
+    # Nothing live anywhere in the ranked order -- `()`, not an exception.
+    assert engine_runtime._live_chain_for_component(
+        "dead-winner", arbitration=arbitration, new_proposals_by_id={},
+        admitted_proposal_ids=set(),
+    ) == ()
 
 
 # =============================================================================

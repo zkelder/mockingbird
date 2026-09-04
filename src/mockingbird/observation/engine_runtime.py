@@ -1127,6 +1127,14 @@ class _EngineSession:
             all_track_updates: list[TrackUpdate] = []
             all_evidence_candidates: list[EvidenceCandidate] = []
             attempted_proposal_ids: set[str] = set()
+            # Ambiguous-Boundary Real-Subject Recall Correctness v1: mirrors
+            # `attempted_proposal_ids` exactly (same lifetime, same
+            # by-reference-mutation convention, same two call sites below) --
+            # the durable, session-local record of which proposal ids this
+            # session has actually admitted a Visit for (`created` or
+            # `idempotent_repeat`; see `_run_assembly_tick`'s own
+            # `admitted_proposal_ids` parameter for why this is needed).
+            admitted_proposal_ids: set[str] = set()
             # The latest source-relative offset (ms) this session has
             # actually processed so far -- advances on every analyzed frame
             # (`ObservationResult.frame_packets`, always populated) whether
@@ -1421,6 +1429,7 @@ class _EngineSession:
                             all_track_updates=all_track_updates,
                             all_evidence_candidates=all_evidence_candidates,
                             attempted_proposal_ids=attempted_proposal_ids,
+                            admitted_proposal_ids=admitted_proposal_ids,
                             burst_bytes_cache=burst_bytes_cache,
                             same_frame_bytes_cache=same_frame_bytes_cache,
                             adapter=adapter,
@@ -1501,6 +1510,7 @@ class _EngineSession:
                     all_track_updates=all_track_updates,
                     all_evidence_candidates=all_evidence_candidates,
                     attempted_proposal_ids=attempted_proposal_ids,
+                    admitted_proposal_ids=admitted_proposal_ids,
                     burst_bytes_cache=burst_bytes_cache,
                     same_frame_bytes_cache=same_frame_bytes_cache,
                     adapter=adapter,
@@ -1907,6 +1917,7 @@ class _EngineSession:
         all_track_updates: list[TrackUpdate],
         all_evidence_candidates: list[EvidenceCandidate],
         attempted_proposal_ids: set[str],
+        admitted_proposal_ids: set[str] | None = None,
         burst_bytes_cache: dict[str, bytes],
         same_frame_bytes_cache: dict[str, bytes] | None = None,
         adapter: CandidateVisitAuthorityAdapter,
@@ -1974,6 +1985,33 @@ class _EngineSession:
         component still gets exactly one recorded outcome, and at most one
         of them is ever admitted -- see `_attempt_resolved_component` for
         the exact bounded walk.
+
+        Ambiguous-Boundary Real-Subject Recall Correctness v1: `arbitration.
+        resolved_winner_ids` is recomputed fresh every tick from `proposals`
+        -- the assembler's *entire* tracklet history, not only this tick's
+        new arrivals -- so a component's own top-ranked member (by the
+        unmodified `_arbitration_key`/`_forced_decision_key`) can itself be
+        a proposal that was already permanently resolved on a *strictly
+        earlier* tick (created, or itself blocked/rejected), simply because
+        a brand-new tracklet later happened to fall within its geometry
+        tolerance and `ambiguous_gap_ms` window. Before this fix, `winner is
+        None` (the id absent from this tick's own `new_proposals_by_id`)
+        made the entire component a silent no-op: `_attempt_resolved_
+        component` was never called, so no *new* member of that component
+        -- however well-evidenced -- ever got a chance at the bypass, even
+        when the component had never actually produced a Visit at all (see
+        `_live_chain_for_component`'s own docstring for the real,
+        reproduced field shape this closes). `admitted_proposal_ids` is
+        what makes the fix possible: a small, durable, session-local record
+        of exactly which proposal ids this session has *actually* admitted
+        a Visit for (`created` or `idempotent_repeat`), consulted -- never
+        mutated except by this method -- to tell "this component already
+        has its one Visit, block every new member exactly as before" apart
+        from "the true top-ranked member is dead, promote the best *live*
+        member instead." `None` (every pre-existing caller/test) disables
+        the promotion: a component whose own true winner is absent from
+        `new_proposals_by_id` is simply skipped, reproducing the exact
+        prior behavior.
         """
 
         evidence_by_generation: dict[str, list[str]] = {}
@@ -2091,6 +2129,18 @@ class _EngineSession:
             # must never be revisited (see `RETRYABLE_OUTCOMES`).
             if outcome.outcome not in RETRYABLE_OUTCOMES:
                 attempted_proposal_ids.add(proposal.proposal_id)
+            # Ambiguous-Boundary Real-Subject Recall Correctness v1: the
+            # only two outcomes that mean "a Visit exists for this exact
+            # proposal id" (see `_live_chain_for_component`) -- `created`
+            # this attempt, or `idempotent_repeat` (already created by an
+            # earlier attempt/process; see `CandidateAttemptResult.created`
+            # and `ProductRepository.create_candidate_visit_from_proposal`'s
+            # own `outcome="idempotent_repeat"` path). Every other outcome,
+            # including every `blocked_*`/`reject_*` code, never sets this.
+            if admitted_proposal_ids is not None and (
+                outcome.created or outcome.outcome == "idempotent_repeat"
+            ):
+                admitted_proposal_ids.add(proposal.proposal_id)
             with self._state_lock:
                 self._counts = ObservationEngineCounts(
                     track_updates_observed=self._counts.track_updates_observed,
@@ -2156,16 +2206,25 @@ class _EngineSession:
         # second, ordinary-only pass below.
         handled: set[str] = set()
         for winner_id in arbitration.resolved_winner_ids:
-            winner = new_proposals_by_id.get(winner_id)
-            if winner is None or winner_id in handled:
-                # Not present this tick (already permanently resolved on a
-                # prior tick -- a pre-existing, rare edge case unrelated to
-                # this fix) or already handled as part of another
-                # component's own chain (should not happen -- components
-                # are disjoint -- kept as defense in depth only).
+            if winner_id in handled:
+                # Already handled as part of another component's own chain
+                # -- should not happen (components are disjoint) -- kept as
+                # defense in depth only.
+                continue
+            chain = _live_chain_for_component(
+                winner_id, arbitration=arbitration, new_proposals_by_id=new_proposals_by_id,
+                admitted_proposal_ids=admitted_proposal_ids,
+            )
+            if not chain:
+                # Either nothing in this component is live this tick (the
+                # pre-existing "not present this tick" case), or this
+                # component already has its one admitted Visit -- either
+                # way, nothing further to attempt; every live member falls
+                # through to the ordinary per-proposal loop below and blocks
+                # exactly as it always has.
                 continue
             self._attempt_resolved_component(
-                winner, arbitration=arbitration, new_proposals_by_id=new_proposals_by_id,
+                chain, promoted=chain[0] != winner_id, new_proposals_by_id=new_proposals_by_id,
                 handled=handled, attempt=_attempt, record_and_count=_record_and_count,
             )
         for proposal in new_proposals:
@@ -2177,9 +2236,9 @@ class _EngineSession:
 
     def _attempt_resolved_component(
         self,
-        winner: AssembledVisitProposal,
+        chain: tuple[str, ...],
         *,
-        arbitration: AmbiguousBoundaryArbitration,
+        promoted: bool,
         new_proposals_by_id: dict[str, AssembledVisitProposal],
         handled: set[str],
         attempt: Callable[..., tuple],
@@ -2188,9 +2247,9 @@ class _EngineSession:
         """Fallback contract (Pending-Proposal Evidence Preservation &
         Arbitration Fallback Correctness v1, see docs/candidate-visit-
         authority-contract.md "Fallback contract"/"Fallback order"): walk
-        `winner`'s own resolved component -- `winner` itself, then every
-        other stable member `arbitration.fallback_order_by_winner_id`
-        already ranks best-first -- attempting each with `ambiguous_
+        `chain` -- the live (this-tick-attemptable) members of one resolved
+        ambiguous component, already ranked best-first by the caller (see
+        `_live_chain_for_component`) -- attempting each with `ambiguous_
         boundary_resolved=True` only while the chain is still genuinely "in
         contention" (nothing tried so far has succeeded or hit a
         non-fallback-eligible, whole-component-ending failure). The moment
@@ -2199,22 +2258,35 @@ class _EngineSession:
         exactly as it always was before this fix (`ambiguous_boundary_
         resolved=False`, permanently `blocked_ambiguous_boundary`) --
         preserving "at most one Visit per component" unchanged and never
-        rerunning arbitration itself. A component with no other stable
-        member (a resolved pair whose loser is not in this tick's own
-        `new_proposals`, or a winner whose `ambiguous_adjacent_proposal_ids`
-        had exactly one other member already permanently resolved earlier)
-        is simply a chain of length one -- an ordinary, unaffected loss if
-        the winner itself fails, exactly like before this fix; only a
-        chain of length two or more can ever count as a genuine fallback
-        attempt below."""
+        rerunning arbitration itself. A chain of length one is simply an
+        ordinary, unaffected loss if its one member fails, exactly like
+        before this fix; only a chain of length two or more can ever count
+        as a genuine fallback attempt below.
 
-        chain = (winner.proposal_id,) + tuple(
-            candidate_id
-            for candidate_id in arbitration.fallback_order_by_winner_id.get(winner.proposal_id, ())
-            if candidate_id in new_proposals_by_id
-        )
+        `chain` is never empty here (the caller only calls this method once
+        `_live_chain_for_component` has returned a non-empty tuple) and
+        every id in it is already known to be a key of `new_proposals_by_id`
+        -- the caller (`_live_chain_for_component`) has already filtered
+        out every not-live-this-tick id, whether it was the component's own
+        nominal top-ranked member or not.
+
+        `promoted` (Ambiguous-Boundary Real-Subject Recall Correctness v1):
+        `True` when `chain[0]` is *not* the component's own nominal
+        top-ranked member (`arbitration.resolved_winner_ids`'s own
+        `winner_id`) -- i.e. `_live_chain_for_component` had to skip past
+        one or more already-resolved-but-never-admitted (dead) ids before
+        reaching the first id this tick can actually attempt. Distinct from
+        an ordinary position>0 fallback (which only ever follows a *live*
+        member's own failure, this same tick): a promoted chain's own
+        position 0 is bypassed (`ambiguous_boundary_resolved=True`) exactly
+        like an ordinary winner's position 0 already was, but is honestly
+        marked `:dead_anchor_promoted` in the ledger rather than left
+        indistinguishable from an ordinary, uncontested win -- see
+        `_live_chain_for_component`'s own docstring for the real field
+        shape this reflects."""
+
         chain_settled = False
-        fallback_invoked = False
+        fallback_invoked = promoted
         fallback_admitted = False
         for position, candidate_id in enumerate(chain):
             member = new_proposals_by_id[candidate_id]
@@ -2223,16 +2295,18 @@ class _EngineSession:
                 fallback_invoked = True
             outcome, decided_at = attempt(member, ambiguous_boundary_resolved=attempt_as_bypassed)
             handled.add(candidate_id)
-            ledger_reason = (
-                f"{outcome.reason}:fallback_position_{position}" if position > 0 and attempt_as_bypassed
-                else outcome.reason
-            )
+            if position == 0 and promoted and attempt_as_bypassed:
+                ledger_reason = f"{outcome.reason}:dead_anchor_promoted"
+            elif position > 0 and attempt_as_bypassed:
+                ledger_reason = f"{outcome.reason}:fallback_position_{position}"
+            else:
+                ledger_reason = outcome.reason
             record_and_count(member, outcome, decided_at, ledger_reason=ledger_reason)
             if chain_settled:
                 continue
             if outcome.created or outcome.outcome == "idempotent_repeat":
                 chain_settled = True
-                if position > 0:
+                if position > 0 or promoted:
                     fallback_admitted = True
             elif outcome.outcome not in _FALLBACK_ELIGIBLE_OUTCOMES:
                 chain_settled = True
@@ -2243,6 +2317,87 @@ class _EngineSession:
                     self._fallback_admitted_count += 1
                 else:
                     self._fallback_exhausted_count += 1
+
+
+def _live_chain_for_component(
+    winner_id: str,
+    *,
+    arbitration: AmbiguousBoundaryArbitration,
+    new_proposals_by_id: dict[str, AssembledVisitProposal],
+    admitted_proposal_ids: set[str] | None,
+) -> tuple[str, ...]:
+    """Ambiguous-Boundary Real-Subject Recall Correctness v1: the ranked
+    order for `winner_id`'s own connected component -- `winner_id` itself
+    first, then `arbitration.fallback_order_by_winner_id[winner_id]`
+    best-first, exactly the order `resolve_ambiguous_boundary_arbitration`
+    already computed -- filtered down to the ids `_run_assembly_tick`'s
+    winner-loop may actually attempt this tick.
+
+    Real, reproduced field shape this closes (see docs/ambiguous-boundary-
+    real-subject-recall-correctness-v1-report.md): `resolve_ambiguous_
+    boundary_arbitration` ranks every member of a connected component --
+    including proposals that were already permanently resolved on a
+    *strictly earlier* tick, since `arbitration` is recomputed fresh, every
+    tick, over the assembler's entire tracklet history, not only this
+    tick's new arrivals. A brand-new tracklet that later falls within an
+    old, already-settled episode's geometry tolerance and `ambiguous_gap_
+    ms` window becomes transitively linked to it, and if that old episode
+    still out-ranks the new arrival (`_arbitration_key`/`_forced_decision_
+    key`, unchanged), it -- not the new arrival -- is `winner_id` this tick.
+    Before this fix, an id absent from `new_proposals_by_id` (`winner is
+    None`) made the caller treat the *entire* component as a no-op:
+    `_attempt_resolved_component`, and therefore the fallback chain it
+    alone walks, was never invoked for *any* member of that component --
+    including a brand-new one that never got its own chance at the bypass,
+    even when the component had never produced a Visit at all (the
+    confirmed real shape: a component whose own top-ranked member was
+    itself permanently blocked, not created, on an earlier tick, silently
+    starving every later arrival within its reach, forever, for zero
+    Visits ever admitted).
+
+    Two, and only two, outcomes:
+
+    - If *any* id in the ranked order -- at any rank, dead or alive this
+      tick -- is already in `admitted_proposal_ids` (a Visit already
+      exists for this exact proposal id), this component already has its
+      one Visit: `()`, unconditionally, regardless of how a newly-joined,
+      higher-ranked live member would otherwise sort. This is what keeps
+      "at most one Visit per ambiguous cluster" absolute -- a component
+      can only ever gain new (lower-priority, by construction of how
+      `_arbitration_key` already worked at admission time) members after
+      its own winner succeeds, never a reason to admit a second Visit for
+      it.
+    - Otherwise (no member of the component has ever been admitted), the
+      *live* subsequence of the ranked order -- every id present in
+      `new_proposals_by_id`, in the same relative rank order, with every
+      already-resolved-but-never-admitted (dead) id silently dropped,
+      since a dead id can never be attempted again and contributes
+      nothing -- becomes the chain `_attempt_resolved_component` walks,
+      exactly as if `resolve_ambiguous_boundary_arbitration` had named the
+      first live id the winner directly. `()` if no live id remains
+      (every member of the component is already dead and none was ever
+      admitted -- nothing left to attempt, identical to the pre-fix
+      `winner is None: continue`).
+
+    `admitted_proposal_ids=None` (every pre-existing caller/test) disables
+    the promotion entirely: the first branch never fires (nothing is ever
+    "in" `None`), so `winner_id` not present in `new_proposals_by_id`
+    always falls through to the dead-id-skipping logic above and, since
+    `winner_id` itself is dead, the *same* live-subsequence result as this
+    fix produces -- but with no way to tell "already admitted" apart from
+    "no live member yet reachable," so a caller that cares about that
+    distinction must supply a real set. When `winner_id` *is* live (the
+    ordinary case every pre-existing test already exercises), this always
+    returns exactly `(winner_id,) + fallback_order_by_winner_id[winner_id]`
+    filtered to `new_proposals_by_id` -- byte-identical to what
+    `_attempt_resolved_component` computed internally before this fix."""
+
+    ranked = (winner_id,) + arbitration.fallback_order_by_winner_id.get(winner_id, ())
+    if admitted_proposal_ids is not None and any(
+        candidate_id in admitted_proposal_ids for candidate_id in ranked
+    ):
+        return ()
+    return tuple(candidate_id for candidate_id in ranked if candidate_id in new_proposals_by_id)
 
 
 # Visit Authority Budget + Ambiguous-Boundary Recall Closure v1: raised from
