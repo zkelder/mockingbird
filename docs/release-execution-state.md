@@ -2436,6 +2436,82 @@ exactly as open as stated.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
+**2026-09-04 update (All-Alternate Subject Evidence Recall Correctness v1,
+see §6.R):** bounded RELEASE-CRITICAL Gate A product-correctness milestone,
+directly authorized outside this file, following Representative Daylight
+Gate A Field Acceptance v12's own two confirmed-real-bird `reject_no_
+identification_or_context` misses. See
+[all-alternate-subject-evidence-recall-correctness-v1-report.md](all-alternate-subject-evidence-recall-correctness-v1-report.md)
+for the complete record. Classification **A**. **Material correction to
+v12's own diagnosis, established by direct ledger-to-code cross-reference
+against the recovered raw ledger**: neither of v12's two named misses
+(37:12, 57:07) actually terminates at `reject_no_identification_or_
+context` -- the 37:12 bird was permanently blocked by candidate-authority
+ambiguous-boundary arbitration (never reached the evidence-quality gate at
+all); the 57:07 bird passed the identification/context check and was
+correctly rejected by the separate, already-hardened detector-
+corroboration gate on a genuinely marginal (3-detection, never-strong)
+real encounter. **The milestone's own chartered failure pattern was
+nonetheless proven real and fixed**, by complete case-exhaustion over
+`evidence_scoring.score_proposal_evidence`'s own logic (not sampling): a
+proposal whose *only* surviving, byte-backed evidence is its own
+`classifier_same_frame` snapshot (Same-Frame Species Evidence v1's
+diagnostic/classifier-input asset, deliberately excluded from
+identification/context ranking so it can never outrank a real burst) was
+being discarded outright because that exclusion from ranking was misread,
+one gate downstream, as "no viable evidence" -- despite the same-frame
+asset being a real, tracker/detector-confirmed, geometry-proven subject
+capture. Directly confirms and resolves a suspicion Harvested Evidence
+Issuance / Missing-Evidence Closure v1 (2026-08-20) explicitly raised and
+left unpursued ("the same accidental 'other evidence happens to survive'
+shape may be part of why the real field session's own ... cases ... were
+never conclusively ruled out as related"). Fixed narrowly:
+`candidate_quality_gate.evaluate_evidence_admission` gains one last-resort
+fallback to a `classifier_same_frame` item, only when neither
+`identification` nor `context` exists, subject to the same geometry-
+validity/detector-corroboration checks unchanged (never a bypass);
+`product_repository.py`'s two presentation-layer same-frame exclusions
+each gain a matching conditional carve-out so a same-frame-only admitted
+Visit actually shows its one photo rather than an empty gallery.
+`alternate` deliberately given no equivalent fallback (proven live
+-unreachable alone in the current scorer). No schema change (v58,
+unchanged); no detector/tracker/BioCLIP/threshold change; no candidate
+-authority or ambiguous-boundary change. RED->GREEN confirmed via `git
+stash` at both the pure-gate and real-repository-transaction levels, using
+this exact session's own real detection signatures for both the positive
+control (a real 8-detection/0.479-confidence encounter) and the negative/
+precision control (the session's own real persistent red-flag confusor's
+weakest signature, 1 detection/0.121 confidence). Tier 1 (8 new tests) and
+Tier 2 (518 tests across every directly-affected observation/admission/
+evidence subsystem, including every required historical false-positive
+-control regression suite) both clean. Tier 3 (full Core): 5672 passed / 2
+failed / 3 skipped / 23 deselected / 11 xfailed -- the 2 failures
+(`test_place_biodiversity_summary_repository.py`'s own extensively
+pre-documented, real-wall-clock-dependent pair -- see §14) independently
+re-confirmed pre-existing and unrelated via `git stash` bisection to the
+clean starting HEAD, byte-identical failure, zero of this milestone's
+changes applied. **One genuinely new, real, precisely-root-caused finding
+disclosed, not fixed** (explicitly out of this milestone's own scope, per
+its own brief's "do not touch candidate authority/ambiguity threshold"):
+the 37:12 bird's own real cause -- ambiguous-boundary arbitration's
+geometry-compatibility tolerance, capped at a large 0.6 normalized
+centroid distance for any gap >= ~9.6 seconds, may not meaningfully
+discriminate between a real, spatially-distinct subject and an unrelated
+persistent confusor/prior encounter within the same 45-second ambiguity
+window. **Gate A dependency item (13), narrowed**: the specific same-frame
+-only evidence-exclusion defect this item's own "all-or-nothing vanish"
+concern was partly about is now closed/fixed and proven; the item's own
+broader question (does this terminal reason ever discard a real encounter,
+in any other shape) is answered as completely as the current architecture
+allows by this milestone's own case-exhaustion proof, but full field
+re-confirmation still awaits the next representative cohort (item 12,
+unchanged). This closure does **not** authorize the next Representative
+Field Acceptance / Gate A session, a fix for the newly-disclosed
+ambiguous-boundary finding, External Pre-Release Acceptance, or Final
+Release Hardening, and does **not** select a next development milestone.
+Authorization remains **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION
+REQUIRED**, unchanged.
+
 **2026-09-04 update (Field Acceptance Evidence Integrity & Storage
 Preflight Correctness v1, see §6.R):** bounded RELEASE-CRITICAL
 acceptance-tooling correctness milestone, directly authorized outside
@@ -7222,6 +7298,40 @@ entirely, no Visit at all" behavior for brief-but-real encounters should
 be revisited -- untouched, preserved verbatim, still open (explicitly
 out of this milestone's own scope).
 
+**All-Alternate Subject Evidence Recall Correctness v1 (2026-09-04) root
+-caused and fixed one live-reachable mechanism behind item (13) -- a
+proposal whose only surviving evidence is a `classifier_same_frame`
+snapshot no longer vanishes -- but did not close item (13) itself: neither
+of v12's own two named `reject_no_identification_or_context` misses (37:12,
+57:07) was actually caused by this mechanism (precise ledger reconstruction
+found different, disclosed, out-of-scope causes for each -- candidate
+-authority ambiguous-boundary arbitration; detector corroboration), and a
+genuinely new, real, precisely-root-caused finding (whether ambiguous
+-boundary arbitration's own geometry-compatibility tolerance meaningfully
+discriminates real subjects from persistent confusors within its 45-second
+window) was disclosed, not fixed, staying explicitly out of that
+milestone's own scope. Does not itself close Lane R/Gate A, does not run a
+field session, and does not authorize the next attempt or a fix for the
+newly-disclosed ambiguous-boundary finding.** **Remaining Gate A
+dependency, in priority order, restating v12's own 13-item list with items
+(12) and (13) now narrowed (unchanged otherwise):** (1)-(11) unchanged,
+see immediately above; (12) unchanged, see immediately above; **(13)
+[NARROWED by All-Alternate Subject Evidence Recall Correctness v1]
+resolve whether `reject_no_identification_or_context`'s "vanish entirely,
+no Visit at all" behavior for brief-but-real encounters should be
+revisited** -- the one specific, proven, live-reachable mechanism behind
+it (a same-frame-only evidence set silently discarded) is fixed; the
+standing question is not retired: neither v12 real miss this item's own
+prior wording was motivated by is actually explained by that mechanism,
+so full field re-confirmation that brief-but-real encounters are no
+longer silently lost still awaits the next representative cohort (item
+12) run against this now-fixed code, and a new, separate, disclosed
+-not-fixed ambiguous-boundary/geometry-tolerance finding (see
+[all-alternate-subject-evidence-recall-correctness-v1-report.md](all-alternate-subject-evidence-recall-correctness-v1-report.md)
+"Remaining residuals") is a candidate for a future, separately-authorized
+milestone, not added as a 14th list item here since it was never part of
+v12's own original list.
+
 ### S. Actual Final Release Hardening
 
 **Status:** LAST.
@@ -7399,7 +7509,34 @@ each session that touches this repository.
 
 ## 14. Validation baselines
 
-**Latest accepted Core checkpoint (Hard-Negative Visit Admission
+**Latest accepted Core checkpoint (All-Alternate Subject Evidence Recall
+Correctness v1):** 5672 passed / **2 failed** / 3 skipped / 23 deselected
+(`slow`-marked) / 11 xfailed, 236 warnings -- `scripts/verify_core.py`'s
+own `pytest -m "not slow"` convention, run once as one bare foreground
+pass (2613.39s / ~43m33s). The 2 failures
+(`tests/test_place_biodiversity_summary_repository.py::test_api_route_
+returns_the_summary`, `::test_human_correction_updates_place_
+biodiversity_intelligence_correctly`) are independently confirmed
+pre-existing and unrelated, not merely assumed: all seven files this
+milestone touched (`candidate_quality_gate.py`, `product_repository.py`,
+two contract docs, `VisitEvidenceSequence.tsx`, two test files) were `git
+stash`-isolated back to the exact starting HEAD (`b4a2a660`), and the
+identical two tests re-run in isolation fail identically on that clean
+baseline, with the exact same assertion mismatch
+(`AssertionError: assert 'seen_before' == 'new'`) -- Place Intelligence
+biodiversity-taxonomy-history logic, zero code-dependency relationship to
+Visit admission/evidence/quality-gate code this milestone touched. This is
+the same already-repeatedly-documented pair this section's own prior
+entries name recurring across numerous earlier Core checkpoints (see the
+immediately-following entry and "Historical Species-Status..." below for
+the fullest prior account). Zero new `ruff` findings on any touched
+production file (same `git stash`-isolated baseline-vs-changed comparison:
+57 pre-existing findings in `product_repository.py`, identical count/
+content before and after; `candidate_quality_gate.py` and both new/touched
+test files clean). No schema change. See this milestone's own report's
+"Tier 3 decision" section for the complete account.
+
+**Prior accepted Core checkpoint (Hard-Negative Visit Admission
 Precision & Species-Escalation Correctness v1):** 5504 passed / **2
 failed** / 3 skipped / 23 deselected (`slow`-marked) / 11 xfailed -- 5543
 collected, `scripts/verify_core.py`'s own `pytest -m "not slow"`
