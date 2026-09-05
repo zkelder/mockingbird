@@ -1139,6 +1139,19 @@ rate; fragmentation rate; duplicate-Visit rate; useful-evidence rate;
 per-subject evidence correctness; capture-to-user-visible-Visit latency;
 monitoring coverage.
 
+**2026-09-05 update:** Gate A Release-Budget & Evidence-Sufficiency
+Reconciliation v1 accepted explicit numeric release budgets across these
+dimensions (see "Numeric release budgets," below) and passed Gate A on
+that basis, with one specific limitation (ambiguous-boundary sustained/
+crowded recall degradation) accepted and disclosed rather than fixed --
+see
+[gate-a-release-budget-evidence-sufficiency-reconciliation-v1-report.md](gate-a-release-budget-evidence-sufficiency-reconciliation-v1-report.md)
+for the complete evidence and reasoning. The historical narrative
+immediately below (2026-08-19 through 2026-08-30) is preserved as the
+record of how this gate's evidence accumulated, per this document's own
+"Phase sequencing" convention, and is superseded by, not deleted for, that
+reconciliation.
+
 **Current disposition (2026-08-19 evidence,
 [end-to-end-bird-encounter-recall-closure-v1-report.md](end-to-end-bird-encounter-recall-closure-v1-report.md)):**
 genuine encounter recall 15/22 = 68.2% (a disclosed ceiling), detector
@@ -2587,42 +2600,85 @@ than reinvented:
   "Production authority gate"). Production admission stays confidence-blind
   by measured decision, not by omission.
 
-What does **not** yet exist, and must be established from representative
-field evidence -- not invented -- before Gate A can be declared passed: an
-accepted minimum end-to-end Visit recall; a maximum false-Visit rate; a
-maximum fragmentation/duplicate-Visit rate; a maximum capture-to-visible-
-Visit latency. Four real cohorts now exist (2026-08-19, 2026-08-20,
-2026-08-29/v4, 2026-08-30/v5 -- see
-[release-execution-state.md](release-execution-state.md) §6.R for the
-complete reconciled record); each remains a *measurement*, not yet an
-*accepted budget*, and the four do not converge on a single number for any
-of these four dimensions -- v4 and v5 in particular are not directly
-comparable to the 2026-08-19/08-20 figures, since v4 predates and v5
-postdates the Sustained-Activity Visit Admission Starvation &
-Stop-Finalization Correctness v1 fix. The 2026-08-19 session (68.2% recall
-ceiling, 9.5% false-Visit rate) remains the most recent *pre-fix* recall
-measurement; v5 (2026-08-30, post-fix) found no missed genuine encounter
-via independent review, but that review was targeted, not exhaustive, so
-it is a qualitative result, not a superseding recall percentage. Do not
-adopt "looks pretty good," "no missed encounter found," or a single
-post-fix session's own strong result as a substitute for a stated,
-cross-session number, and do not invent a precise-sounding target (such as
-99.9%) that no field cohort has actually justified.
+**Accepted 2026-09-05 by Gate A Release-Budget & Evidence-Sufficiency
+Reconciliation v1** (see
+[gate-a-release-budget-evidence-sufficiency-reconciliation-v1-report.md](gate-a-release-budget-evidence-sufficiency-reconciliation-v1-report.md)
+for the complete evidence, qualifying-cohort matrix, and reasoning behind
+every figure below -- this section states the accepted conclusions only).
+Gate A **PASSED** as of this reconciliation. These replace the prior
+"not yet established" framing this section carried through 2026-08-30 (14
+real field cohorts, several correctness fixes, and two dedicated
+ambiguous-boundary investigations have run since):
 
-**Two dimensions are, as of 2026-08-30, proposed (not yet accepted) as
-READY FOR FORMAL BUDGET REVIEW**, per
-[representative-daylight-gate-a-field-acceptance-v5-report.md](representative-daylight-gate-a-field-acceptance-v5-report.md)
-"Candidate release budgets": minimum monitoring coverage ~99% (all four
-real cohorts independently measured 99.6%-99.99%, no cohort falling
-meaningfully short) and minimum useful-evidence rate ~85% (two independent
-measurements, 88.2% and 94.7%, no contrary evidence). These are candidate
-figures only -- proposed for external review, not self-accepted by the
-milestone that proposed them, and not yet promoted to accepted release
-budgets in this file. Establishing the remaining four budgets (recall,
-false-Visit rate, fragmentation/duplicate rate, latency), from a broader
-cross-session body of field evidence than any single session -- see
-"Remaining Gate A dependency" in the v5 report -- is itself part of what
-closes Gate A.
+- **Minimum end-to-end Visit recall (excluding the ambiguous-boundary
+  sustained/crowded limitation, below): ≥ 85%.** Derived from the two
+  cleanest, current-admission-stack, independently-re-derived cohorts
+  (Representative Daylight Gate A Field Acceptance v12 and v14), each
+  decomposed to isolate the one already-accepted, already-budgeted
+  precision-corroboration cost from the separately-tracked ambiguous-
+  boundary mechanism: 93.3% (v12) and 91.7% (v14), ~6.7 points of margin
+  below the worse cohort.
+- **Ambiguous-boundary sustained/crowded recall limitation: an accepted,
+  disclosed product limitation, not a numeric budget.** Two independent,
+  adversarial investigations (Ambiguous-Boundary Real-Subject Recall
+  Correctness v1; Sustained / Crowded Ambiguous-Boundary Recall
+  Correctness v2) found no safe correction using any currently-trustworthy
+  signal. The realized cost is always omission (no Visit created), never a
+  false merge, false continuation, or corrupted Reviewed-truth record. In
+  the worst observed case (v14), this cost one ~310-continuous-second,
+  multi-bird episode within a 102-minute session. This is disclosed here,
+  plainly, as a known release-time limitation of the current architecture,
+  not silently absorbed into the blended recall figures below or hidden
+  from users: MockingBird may not create a Visit for every bird during an
+  unusually busy, continuous stretch of activity where several birds
+  arrive in close succession at the same spot; it prioritizes never
+  fabricating a false continuation between different birds over
+  guaranteeing one Visit per individual in that specific circumstance.
+  Should be revisited only if a future, evidence-driven milestone
+  identifies a genuinely new, safe signal.
+- **Maximum confirmed false-Visit rate: ≤ 15%** under ordinary scene
+  conditions, from two convergent, person-confound-free, current-stack
+  cohorts (v12 5.6%, v14 7.1%; pooled 6.25%), with an explicit, disclosed
+  carve-out that a session containing sustained non-target dual-class
+  confusion (most concretely, a person in frame) can exceed this budget
+  until the remaining single-class-misclassification residual (see Gate
+  B, above) is closed.
+- **Maximum confirmed fragmentation rate: ≤ 5%.** Seven to eight
+  independently-varied cohorts across every configuration era (2026-08-19,
+  v5, v7, v8, v9, v12, v14), reanalyzed under the corrected reviewer-
+  disposition methodology, converge on 0% confirmed fragmentation.
+- **Maximum confirmed duplicate-Visit rate: ≤ 2%.** At least eight
+  consecutive cohorts (v5 through v14) have each measured exactly 0%.
+- **Minimum useful-evidence rate (primary + supporting evidence): ≥ 85%.**
+  Budgeted on the combined metric, which corresponds to actual user-facing
+  gallery value, not the more volatile primary-only figure (76.0%-96.0%
+  across cohorts, not yet convergent). Combined figures converge at
+  92.9%-96.0% (v7, v12, v14).
+- **Maximum evidence-loss (`blocked_missing_evidence`, as a share of
+  distinct proposals): ≤ 15%.** Five independently-varied cohorts (v7
+  through v11) converge in a 6.7%-9.9% band; v12's and v14's own,
+  differently-denominated (decision-event-basis) figures (4.2%-4.6%) are
+  directionally consistent, not pooled into this number.
+- **Median capture-to-visible latency: ≤ 180 seconds.** Three
+  RTT-normalized, reasonably-sized samples (v9 n=24, v10 n=11, v14 n=14)
+  converge at roughly 83-112 seconds; the deliberate ~48-60 second
+  quiet-period tail this reflects is confirmed directly by v9's and v10's
+  own additive decompositions. No p90 or maximum latency budget is
+  proposed -- only 2-3 sized samples exist for the tail, and doctrine does
+  not require a tail-latency SLA for a discovery-oriented, non-surveillance
+  product.
+- **Minimum monitoring coverage: ≥ 97%** in the steady state. Nearly every
+  cohort measured 97.5%-99.99%+; the two cohorts below a naive 99% floor
+  (v9 97.95%, v11 97.5%) are each honestly explained (a recorder
+  start-up-arming lag; a disclosed, physically-resolved Camera Node
+  hardware fault) rather than an ongoing coverage defect. A Camera Node
+  hardware fault remains separately governed by Gate D/E's own
+  field-recovery ladder, not by this coverage budget.
+
+Do not silently re-tighten any of the above toward the best-observed value
+in a future reconciliation without new convergent evidence -- each was set
+with deliberate margin below or above the worst qualifying cohort, per
+this reconciliation's own explicit reasoning.
 
 ## Public release readiness
 

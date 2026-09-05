@@ -2436,6 +2436,96 @@ exactly as open as stated.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
+**2026-09-05 update (Gate A Release-Budget & Evidence-Sufficiency
+Reconciliation v1, see §6.R):** the global evidence/release-decision
+reconciliation this file's own standing "NONE -- GLOBAL PRODUCT-ROADMAP
+RECONCILIATION REQUIRED" authorization has been waiting for since Gate A
+Measurement Closure v1 first proposed candidate budgets in 2026-08-31. See
+[gate-a-release-budget-evidence-sufficiency-reconciliation-v1-report.md](gate-a-release-budget-evidence-sufficiency-reconciliation-v1-report.md)
+for the complete evidence inventory, qualifying-cohort matrix, and
+reasoning. Classification **A**. Zero production code changed; documents
+only. Accepted HEAD unchanged (`de566f1`, the reconciliation commit
+accepting Sustained / Crowded Ambiguous-Boundary Recall Correctness v2);
+schema unchanged (`v58`).
+
+Synthesized the complete Gate A evidence body -- fourteen real field
+cohorts (2026-08-19 primary through v14), every intervening correctness
+fix, and both ambiguous-boundary investigations -- into explicit,
+evidence-traceable release budgets, none tuned to a specific cohort's own
+result: minimum end-to-end Visit recall (excluding the ambiguous-boundary
+limitation, below) ≥85%; maximum confirmed false-Visit rate ≤15%
+(ordinary scenes); maximum confirmed fragmentation rate ≤5%; maximum
+confirmed duplicate-Visit rate ≤2%; minimum useful-evidence rate (primary
++ supporting) ≥85%; maximum evidence-loss (`blocked_missing_evidence`, of
+distinct proposals) ≤15%; median capture-to-visible latency ≤180 seconds
+(no p90/maximum budget -- insufficient sized samples, and doctrine does
+not require a tail-latency SLA); minimum monitoring coverage ≥97% steady
+state. See `roadmap.md`'s own "Numeric release budgets" for the complete,
+now-current accounting (this file's own copy above is not restated a
+second time here).
+
+**Central decision: the `blocked_ambiguous_boundary`/geometry-
+compatibility-tolerance sustained/crowded recall limitation -- OPEN /
+ACCEPTED PRODUCT LIMITATION CANDIDATE FOR RELEASE-BUDGET DECISION per the
+immediately-prior two milestones -- is resolved as an accepted, disclosed
+product limitation, not a release blocker.** Both Ambiguous-Boundary
+Real-Subject Recall Correctness v1 and Sustained / Crowded Ambiguous-
+Boundary Recall Correctness v2 are treated as authoritative engineering
+fact (no safe correction exists using any currently-trustworthy signal);
+this milestone makes the release-quality judgment those two investigations
+were not chartered to make. The realized cost is always safe omission
+(no Visit created), never a false merge, fabricated continuation, or
+corrupted Reviewed-truth record -- the same abstention-over-fabrication
+principle product doctrine already applies to species uncertainty, one
+architectural layer earlier. Recall excluding this specific,
+mechanistically-traced mechanism converges tightly across the two
+cleanest current-stack cohorts (v12 93.3%, v14 91.7%), which is the basis
+for the accepted recall budget above; the blended, undifferentiated
+figures (v12 87.5%/58.3%, v14 64.7%/61.1%) remain the honest, reported
+field results and are not hidden. Required user-facing/support
+disclosure: MockingBird may not create a Visit for every bird during an
+unusually busy, continuous stretch of activity where several birds arrive
+in close succession at the same spot; it prioritizes never fabricating a
+false continuation over guaranteeing one Visit per individual in that
+specific circumstance -- to be named plainly in release notes/support
+documentation before public launch, not silently represented as fully
+solved.
+
+Every remaining numbered Gate A dependency item (the 13-item list plus
+item 14) is given an explicit disposition in the linked report -- none
+silently dropped. Most are downgraded from "blocking" to **NON-BLOCKING
+KNOWN LIMITATION** or **AFTER RELEASE / EVIDENCE-DRIVEN** based on
+current evidence (per this milestone's own explicit authority not to keep
+an item blocking merely because it was historically listed): items (4),
+(12), (14) are **CLOSED**; items (1), (3), (11), (13) are **materially
+advanced / non-blocking**; items (2) is **substantially advanced, not
+fully closed** (two, not three, convergent person-confound-free precision
+cohorts); items (5), (6), (7), (8), (9), (10) are **non-blocking known
+limitations or after-release/evidence-driven**, none currently justifying
+blocker status. Gate B interaction kept separate throughout: false Visits
+abstain honestly in both current-stack cohorts (v12, v14); the one
+already-known, already-tracked detector-sourced-background-crop residual
+is unaffected and not resolved here. The 3+-simultaneous-subject/NMS
+question is classified after-release/evidence-driven, non-blocking --
+eight real cohorts (v7-v14) have each sought, not manufactured, this
+condition and none has naturally produced it, which this milestone treats
+as evidence of genuine real-world infrequency, not inadequate testing.
+
+**Gate A decision: PASS.** Lane R moves to **CLOSED / PASSED** (see §6.R,
+below, for the updated status line). This does **not** trigger a release-
+phase transition: the source-code `LICENSE` owner decision and the
+BirdNET commercial-adjacent legal posture both remain genuinely open,
+pre-release, non-Gate-A decisions this milestone does not resolve and
+cannot resolve by engineering means, and Gate G (External Pre-Release
+Acceptance) has not been scoped or started. **CURRENT PHASE: SUBSTANTIAL
+PRODUCT DEVELOPMENT does not change.** This closure does **not**
+authorize External Pre-Release Acceptance, Final Release Hardening,
+another field cohort, another ambiguity-mechanism fix, or any other next
+development milestone. **Authorization remains NONE -- GLOBAL
+PRODUCT-ROADMAP RECONCILIATION REQUIRED**, returned here exactly as this
+milestone's own governing brief required, for the next external
+(ChatGPT) acceptance review to act on.
+
 **2026-09-05 update (Sustained / Crowded Ambiguous-Boundary Recall
 Correctness v2, see §6.R):** bounded RELEASE-CRITICAL Gate A correctness
 milestone, directly authorized outside this file, reopening the accepted,
@@ -6350,7 +6440,23 @@ See the report for the complete finding-by-finding record.
 
 ### R. Complete Field Acceptance
 
-**Status:** NOT DONE -- RELEASE-CRITICAL.
+**Status:** CLOSED / PASSED -- RELEASE-CRITICAL, per Gate A Release-Budget
+& Evidence-Sufficiency Reconciliation v1 (2026-09-05, see §3, above, and
+[gate-a-release-budget-evidence-sufficiency-reconciliation-v1-report.md](gate-a-release-budget-evidence-sufficiency-reconciliation-v1-report.md)).
+Explicit numeric release budgets accepted across recall (with the
+ambiguous-boundary sustained/crowded mechanism carved out as an accepted,
+disclosed limitation rather than folded into the number), false-Visit
+rate, fragmentation, duplicates, useful-evidence, evidence-survival,
+median latency, and monitoring coverage -- see `roadmap.md`'s "Numeric
+release budgets" for the accepted figures. Residual, explicitly
+non-blocking limitations remain (named in full in the linked report's own
+"Residual risks / known limitations"); none is a Gate A blocker. The
+chronological field-acceptance history immediately below (2026-08-19
+through Sustained / Crowded Ambiguous-Boundary Recall Correctness v2) is
+preserved as the complete evidentiary record this closure rests on, not
+superseded or deleted.
+
+**Prior status (superseded by the above):** NOT DONE -- RELEASE-CRITICAL.
 
 Component acceptance is not whole-product acceptance. Final integrated
 release configuration should exercise: several cameras; visual inference;
