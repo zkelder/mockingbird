@@ -5,9 +5,12 @@ import asyncio
 import hashlib
 from io import BytesIO
 import socket
+import threading
 
 import pytest
 from fastapi import HTTPException
+
+from _transport_fault_injection import RunningApp
 
 from mockingbird.observation.burst_scheduler import (
     DECISION_SUPPRESSED_NOVELTY_RESERVE_EXHAUSTED,
@@ -49,10 +52,10 @@ from mockingbird.observation.media_contracts import (
     EvidenceBurstResult,
     EvidenceBurstRequest,
 )
-from mockingbird.source_providers.camera_node import CameraNodeClientError
+from mockingbird.source_providers.camera_node import CameraNodeClient, CameraNodeClientError
 from mockingbird_node.app import EvidenceBurstNodeRequest, create_node_app
 from mockingbird_node.config import CameraNodeConfig
-from mockingbird_node.providers import SyntheticCameraProvider
+from mockingbird_node.providers import NodeCamera, NodeCaptureProfile, SyntheticCameraProvider
 from PIL import Image
 
 
@@ -1397,3 +1400,391 @@ def test_generation_change_still_resets_the_source_and_segment_ordinal() -> None
     assert source.status().transport_reconnect_count == 1  # the connection itself still changed
     assert source.status().current_connection_segment_ordinal == 0  # segment numbering restarts fresh
     assert packet.source_offset_ms == 0
+
+
+# --- Camera Node Evidence-Capture Profile Validity & Failure Observability
+# Correctness v1 (see docs/camera-node-evidence-capture-profile-validity
+# -failure-observability-correctness-v1-report.md): live-proven, against
+# the real reference Camera Node, that an async warm-proof promotion
+# silently retires a `reconfiguration_required` evidence profile id in
+# favor of a differently-named `warm_concurrent` one carrying an identical
+# capture contract (same width/height/purposes/geometry_group), and that
+# the pre-fix Host collapsed every distinct evidence-burst failure -- a
+# stale profile, a busy camera, a raw transport failure -- into one
+# generic, unlogged `evidence_burst_unavailable`. `_PromotingEvidenceProvider`
+# mirrors that real, live-measured mechanism deterministically (an explicit
+# `promote()` call rather than a background thread/timer) so these tests
+# exercise the real, unmodified wire protocol (`create_node_app` over a
+# real socket via `RunningApp`, real pairing, real `CameraNodeHttpTransport`
+# HTTP calls) end to end without needing real camera hardware. ------------
+
+
+def _evidence_request(*, profile_id: str, request_id: str = "evidence-request") -> EvidenceBurstRequest:
+    now = datetime(2026, 8, 4, tzinfo=UTC)
+    return EvidenceBurstRequest(
+        request_id=request_id, stream_id="stream-yard", node_session_id="node-session-a",
+        track_generation_id="track-a", trigger_frame_id="frame-a", trigger_captured_at=now,
+        requested_frame_count=1, requested_profile_id=profile_id, cadence_ms=0,
+        subject_geometry=None, zone_id=None, deadline_at=now + timedelta(seconds=10),
+    )
+
+
+class _PromotingEvidenceProvider:
+    CAMERA_ID = "promoting-camera-1"
+    MONITORING_PROFILE_ID = "monitoring-1920x1080"
+    COLD_EVIDENCE_PROFILE_ID = "cold-evidence-3840x2160"
+    WARM_EVIDENCE_PROFILE_ID = "warm-evidence-3840x2160"
+
+    def __init__(self) -> None:
+        self._evidence_profiles: tuple[NodeCaptureProfile, ...] = (
+            NodeCaptureProfile(
+                profile_id=self.COLD_EVIDENCE_PROFILE_ID, purposes=("evidence",),
+                width=3840, height=2160, jpeg_supported=True, max_expected_bytes=4_000_000,
+                capture_class="reconfiguration_required", geometry_group="fov-a", same_fov=True,
+            ),
+        )
+        image = BytesIO()
+        Image.new("RGB", (32, 24), color="white").save(image, format="JPEG")
+        self._payload = image.getvalue()
+
+    def promote(self) -> None:
+        """Mirror the real Node's async warm-proof promotion: the cold id
+        is retired entirely (never advertised again), replaced by a
+        differently-named `warm_concurrent` id carrying an identical
+        width/height/purposes/geometry_group -- exactly the live-measured
+        real-hardware transition (see the milestone report's "Live pre-fix
+        reproduction", ~4.2s on the real reference Pi)."""
+
+        self._evidence_profiles = (
+            NodeCaptureProfile(
+                profile_id=self.WARM_EVIDENCE_PROFILE_ID, purposes=("evidence",),
+                width=3840, height=2160, jpeg_supported=True, max_expected_bytes=4_000_000,
+                capture_class="warm_concurrent", geometry_group="fov-a", same_fov=True,
+            ),
+        )
+
+    def promote_ambiguously(self) -> None:
+        """A second, real-protocol-valid shape: more than one live
+        `warm_concurrent` evidence candidate exists at once, with no
+        authoritative discriminator -- reconciliation must fail closed
+        rather than guess (Section 13 of the milestone)."""
+
+        self._evidence_profiles = (
+            NodeCaptureProfile(
+                profile_id="warm-evidence-a", purposes=("evidence",),
+                width=3840, height=2160, jpeg_supported=True, max_expected_bytes=4_000_000,
+                capture_class="warm_concurrent", geometry_group="fov-a", same_fov=True,
+            ),
+            NodeCaptureProfile(
+                profile_id="warm-evidence-b", purposes=("evidence",),
+                width=1920, height=1080, jpeg_supported=True, max_expected_bytes=2_000_000,
+                capture_class="warm_concurrent", geometry_group="fov-b", same_fov=False,
+            ),
+        )
+
+    def cameras(self) -> list[NodeCamera]:
+        return [
+            NodeCamera(
+                self.CAMERA_ID, "Promoting camera", "available",
+                snapshot_supported=True, provider_type="synthetic",
+            )
+        ]
+
+    def capture_profiles(self, camera_id: str) -> list[NodeCaptureProfile]:
+        if camera_id != self.CAMERA_ID:
+            return []
+        return [
+            NodeCaptureProfile(
+                profile_id=self.MONITORING_PROFILE_ID, purposes=("monitoring", "preview"),
+                width=1920, height=1080, jpeg_supported=True, max_expected_bytes=2_000_000,
+                capture_class="warm_concurrent", geometry_group="fov-a", same_fov=True,
+            ),
+            *self._evidence_profiles,
+        ]
+
+    def snapshot(self, camera_id: str, *, profile_id: str | None = None) -> bytes:
+        if camera_id != self.CAMERA_ID:
+            raise ValueError("camera_not_allowed")
+        current = {profile.profile_id for profile in self.capture_profiles(camera_id)}
+        if profile_id is not None and profile_id not in current:
+            raise ValueError("capture_profile_not_allowed")
+        return self._payload
+
+    def close(self) -> None:
+        return None
+
+
+class _BusyEvidenceProvider(_PromotingEvidenceProvider):
+    """The configured evidence profile stays advertised (never stale) --
+    only the capture itself is transiently busy. Proves a non-profile
+    failure is never treated as a stale-profile recovery opportunity."""
+
+    def snapshot(self, camera_id: str, *, profile_id: str | None = None) -> bytes:
+        raise ValueError("camera_busy")
+
+
+def _pair(app, running: RunningApp) -> str:
+    return CameraNodeClient().pair(running.base_url, app.state.pairing_code).credential
+
+
+def test_stale_profile_burst_reconciles_to_the_single_live_warm_replacement_and_retries_once(tmp_path) -> None:
+    """The v13-shaped reproducer (Section 18): a proposal's evidence-burst
+    request names a profile that has since been silently promoted away.
+    BEFORE the fix this failed permanently for the rest of the session
+    (generic `evidence_burst_unavailable`, zero bytes, zero
+    `EvidenceCandidate` -- live-reproduced against the real reference
+    Camera Node, see the milestone report); AFTER the fix, real evidence
+    bytes become available again via exactly one bounded reconciliation +
+    retry, and the corrected id sticks for the rest of the session."""
+
+    provider = _PromotingEvidenceProvider()
+    app = create_node_app(_config(tmp_path), provider=provider)
+    running = RunningApp(app).start()
+    try:
+        credential = _pair(app, running)
+        provider.promote()  # the exact live-proven async rename, made deterministic here
+        transport = CameraNodeHttpTransport(
+            base_address=running.base_url, credential=credential,
+            camera_id=_PromotingEvidenceProvider.CAMERA_ID, stream_id="stream-yard",
+            evidence_profile_id=_PromotingEvidenceProvider.COLD_EVIDENCE_PROFILE_ID,
+        )
+        result = transport.request_evidence_burst(
+            _evidence_request(profile_id=_PromotingEvidenceProvider.COLD_EVIDENCE_PROFILE_ID, request_id="burst-1")
+        )
+        assert result.status == "captured"
+        assert len(result.frames) == 1  # exactly one -- the retry can never duplicate evidence
+        assert result.frames[0].width == 32 and result.frames[0].height == 24
+        assert result.reconciled_profile_id == _PromotingEvidenceProvider.WARM_EVIDENCE_PROFILE_ID
+        assert transport.evidence_profile_id == _PromotingEvidenceProvider.WARM_EVIDENCE_PROFILE_ID
+
+        # The corrected id is now sticky: a later request naming it directly
+        # (as a caller who adopted `reconciled_profile_id` would) succeeds
+        # immediately, with no further reconciliation needed.
+        second = transport.request_evidence_burst(
+            _evidence_request(profile_id=_PromotingEvidenceProvider.WARM_EVIDENCE_PROFILE_ID, request_id="burst-2")
+        )
+        assert second.status == "captured"
+        assert second.reconciled_profile_id is None
+        transport.close()
+    finally:
+        running.stop()
+
+
+def test_ambiguous_live_replacement_fails_closed_without_guessing(tmp_path) -> None:
+    provider = _PromotingEvidenceProvider()
+    app = create_node_app(_config(tmp_path), provider=provider)
+    running = RunningApp(app).start()
+    try:
+        credential = _pair(app, running)
+        provider.promote_ambiguously()
+        transport = CameraNodeHttpTransport(
+            base_address=running.base_url, credential=credential,
+            camera_id=_PromotingEvidenceProvider.CAMERA_ID, stream_id="stream-yard",
+            evidence_profile_id=_PromotingEvidenceProvider.COLD_EVIDENCE_PROFILE_ID,
+        )
+        result = transport.request_evidence_burst(
+            _evidence_request(profile_id=_PromotingEvidenceProvider.COLD_EVIDENCE_PROFILE_ID)
+        )
+        assert result.status == "failed"
+        assert result.failure_code == "node_capture_profile_unavailable"
+        assert result.reconciled_profile_id is None
+        assert result.frames == ()
+        # No guess was made -- the transport's own belief is untouched.
+        assert transport.evidence_profile_id == _PromotingEvidenceProvider.COLD_EVIDENCE_PROFILE_ID
+        transport.close()
+    finally:
+        running.stop()
+
+
+def test_camera_busy_is_distinguishable_and_never_treated_as_profile_recovery(tmp_path) -> None:
+    provider = _BusyEvidenceProvider()
+    app = create_node_app(_config(tmp_path), provider=provider)
+    running = RunningApp(app).start()
+    try:
+        credential = _pair(app, running)
+        # Never promoted -- the configured profile IS currently advertised;
+        # only the capture itself is busy, a materially different cause
+        # from a stale/no-longer-advertised profile.
+        transport = CameraNodeHttpTransport(
+            base_address=running.base_url, credential=credential,
+            camera_id=_PromotingEvidenceProvider.CAMERA_ID, stream_id="stream-yard",
+            evidence_profile_id=_PromotingEvidenceProvider.COLD_EVIDENCE_PROFILE_ID,
+        )
+        result = transport.request_evidence_burst(
+            _evidence_request(profile_id=_PromotingEvidenceProvider.COLD_EVIDENCE_PROFILE_ID)
+        )
+        assert result.status == "failed"
+        assert result.failure_code == "node_camera_unavailable"
+        assert result.reconciled_profile_id is None
+        assert transport.evidence_profile_id == _PromotingEvidenceProvider.COLD_EVIDENCE_PROFILE_ID
+        transport.close()
+    finally:
+        running.stop()
+
+
+def test_authentication_rejected_is_distinguishable_and_never_treated_as_profile_recovery(tmp_path) -> None:
+    provider = _PromotingEvidenceProvider()
+    app = create_node_app(_config(tmp_path), provider=provider)
+    running = RunningApp(app).start()
+    try:
+        _pair(app, running)  # establishes real pairing; deliberately unused below
+        transport = CameraNodeHttpTransport(
+            base_address=running.base_url, credential="wrong-credential",
+            camera_id=_PromotingEvidenceProvider.CAMERA_ID, stream_id="stream-yard",
+            evidence_profile_id=_PromotingEvidenceProvider.COLD_EVIDENCE_PROFILE_ID,
+        )
+        result = transport.request_evidence_burst(
+            _evidence_request(profile_id=_PromotingEvidenceProvider.COLD_EVIDENCE_PROFILE_ID)
+        )
+        assert result.status == "failed"
+        assert result.failure_code == "authentication_rejected"
+        assert result.reconciled_profile_id is None
+        assert transport.evidence_profile_id == _PromotingEvidenceProvider.COLD_EVIDENCE_PROFILE_ID
+        transport.close()
+    finally:
+        running.stop()
+
+
+def test_real_connection_refused_during_evidence_burst_is_distinguishable_from_profile_failure() -> None:
+    """A real OS-level connection refusal (not simulated), against the real
+    `request_evidence_burst` -- distinguished, via `failure_class`, from a
+    stale-profile failure."""
+
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+
+    transport = CameraNodeHttpTransport(
+        base_address=f"http://127.0.0.1:{port}", credential="paired",
+        camera_id="camera-a", stream_id="stream-yard", evidence_profile_id="evidence-large",
+    )
+    result = transport.request_evidence_burst(_evidence_request(profile_id="evidence-large"))
+    assert result.status == "failed"
+    assert result.failure_code == "evidence_burst_unavailable"
+    assert result.failure_class == "connect_refused"
+    assert result.reconciled_profile_id is None
+    transport.close()
+
+
+def test_real_timeout_during_evidence_burst_is_distinguishable_from_profile_failure() -> None:
+    """A real TCP server that accepts the connection but never responds --
+    exercising the real production timeout path (`connection.sock.
+    settimeout`), not a mock -- distinguished, via `failure_class`, from a
+    stale-profile failure."""
+
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    port = server.getsockname()[1]
+    stop = threading.Event()
+
+    def accept_and_stall() -> None:
+        server.settimeout(3.0)
+        try:
+            connection, _ = server.accept()
+        except socket.timeout:
+            return
+        try:
+            stop.wait(3.0)
+        finally:
+            connection.close()
+
+    thread = threading.Thread(target=accept_and_stall, daemon=True)
+    thread.start()
+    try:
+        transport = CameraNodeHttpTransport(
+            base_address=f"http://127.0.0.1:{port}", credential="paired",
+            camera_id="camera-a", stream_id="stream-yard", evidence_profile_id="evidence-large",
+            response_timeout_seconds=1.0,
+        )
+        result = transport.request_evidence_burst(_evidence_request(profile_id="evidence-large"))
+        assert result.status == "failed"
+        assert result.failure_code == "evidence_burst_unavailable"
+        assert result.failure_class == "timeout"
+        assert result.reconciled_profile_id is None
+        transport.close()
+    finally:
+        stop.set()
+        thread.join(timeout=5.0)
+        server.close()
+
+
+def test_node_unreachable_during_reconciliation_fails_closed_without_crashing(tmp_path) -> None:
+    """The Node becomes unreachable for the *reconciliation* lookup itself
+    (not just the original burst) -- `_reconcile_evidence_profile` must
+    degrade to `None`, never raise, and the caller gets back the original,
+    honestly-classified stale-profile failure."""
+
+    provider = _PromotingEvidenceProvider()
+    app = create_node_app(_config(tmp_path), provider=provider)
+    running = RunningApp(app).start()
+    credential = _pair(app, running)
+    provider.promote()
+    running.stop()  # the Node is now genuinely unreachable for reconciliation
+
+    transport = CameraNodeHttpTransport(
+        base_address=running.base_url, credential=credential,
+        camera_id=_PromotingEvidenceProvider.CAMERA_ID, stream_id="stream-yard",
+        evidence_profile_id=_PromotingEvidenceProvider.COLD_EVIDENCE_PROFILE_ID,
+    )
+    result = transport.request_evidence_burst(
+        _evidence_request(profile_id=_PromotingEvidenceProvider.COLD_EVIDENCE_PROFILE_ID)
+    )
+    assert result.status == "failed"
+    assert result.failure_code in {"node_capture_profile_unavailable", "evidence_burst_unavailable"}
+    assert result.reconciled_profile_id is None
+    assert transport.evidence_profile_id == _PromotingEvidenceProvider.COLD_EVIDENCE_PROFILE_ID
+    transport.close()
+
+
+class _ReconcilingTransport(_BurstTransport):
+    """A fake transport whose very first burst reports a reconciled profile
+    id, mirroring what `CameraNodeHttpTransport.request_evidence_burst`
+    itself now returns after a successful self-heal -- isolates
+    `LiveCameraNodeShadowSession`'s own adoption/counting behavior from the
+    real wire protocol (covered separately, above)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._first_call = True
+
+    def request_evidence_burst(self, request):
+        self.requests.append(request)
+        if self._first_call:
+            self._first_call = False
+            frame = EvidenceBurstFrame(
+                1, request.trigger_captured_at + timedelta(milliseconds=5), 32, 24, "image/jpeg",
+                hashlib.sha256(self.payload).hexdigest(), self.payload, request.trigger_frame_id,
+                "generation-a", 5, "supported",
+            )
+            return EvidenceBurstResult(
+                request.request_id, "captured", (frame,), reconciled_profile_id="evidence-reconciled",
+            )
+        return super().request_evidence_burst(request)
+
+
+@pytest.mark.anyio
+async def test_live_shadow_session_adopts_reconciled_profile_id_and_counts_it() -> None:
+    transport = _ReconcilingTransport()
+    session = LiveCameraNodeShadowSession(
+        source=CameraNodeAnalysisSource("stream-yard", maximum_frame_bytes=1024),
+        transport=transport, provider=_live_provider(), evidence_profile_id="evidence-stale",
+    )
+    session.start()
+    received = datetime(2026, 8, 4, tzinfo=UTC)
+    result = await session.process_envelope(_frame(1), received_at=received)
+    assert result is not None and len(transport.requests) == 1
+    assert session.evidence_profile_id == "evidence-reconciled"
+    assert session.status().evidence_profile_reconciliation_count == 1
+    session.stop()
+
+
+def test_classify_node_error_header_maps_known_codes_and_falls_back_honestly() -> None:
+    from mockingbird.observation.camera_node_live import _classify_node_error_header
+
+    assert _classify_node_error_header({"x-mockingbird-node-error": "profile_not_advertised"}) == "node_capture_profile_unavailable"
+    assert _classify_node_error_header({"x-mockingbird-node-error": "node_camera_unavailable"}) == "node_camera_unavailable"
+    assert _classify_node_error_header({"x-mockingbird-node-error": "provider_session_failed"}) == "provider_session_failed"
+    assert _classify_node_error_header({"x-mockingbird-node-error": "totally_unrecognized"}) == "evidence_burst_unavailable"
+    assert _classify_node_error_header({}) == "evidence_burst_unavailable"

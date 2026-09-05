@@ -167,6 +167,21 @@ class EvidenceBurstResult:
     failure_code: str | None = None
     temporary: bool = True
     shadow_only: bool = True
+    # Camera Node Evidence-Capture Profile Validity & Failure Observability
+    # Correctness v1 (see docs/camera-node-evidence-capture-profile-validity
+    # -failure-observability-correctness-v1-report.md). `failure_class` is a
+    # bounded, safe transport-level sub-classification (never raw host/port/
+    # exception text) of a `failure_code` such as `evidence_burst_unavailable`
+    # -- mirrors `CameraNodeClientError.failure_class`'s own established
+    # additive-diagnostic-only pattern; never used for control flow.
+    # `reconciled_profile_id` is set only when a stale, no-longer-advertised
+    # `evidence_profile_id` was deterministically reconciled to a live
+    # replacement during this exact call (see `CameraNodeHttpTransport.
+    # request_evidence_burst`); a caller (`LiveCameraNodeShadowSession`)
+    # uses it to keep its own copy of the profile id in sync, regardless of
+    # whether the retried attempt itself then succeeded.
+    failure_class: str | None = None
+    reconciled_profile_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.request_id or len(self.frames) > 8 or not self.temporary or not self.shadow_only:
@@ -178,6 +193,17 @@ class EvidenceBurstResult:
         if self.failure_code is not None and (
             len(self.failure_code) > 80
             or not self.failure_code.replace("_", "").isalnum()
+        ):
+            raise ValueError("invalid_evidence_burst_result")
+        if self.failure_class is not None and (
+            len(self.failure_class) > 40
+            or not self.failure_class.replace("_", "").isalnum()
+        ):
+            raise ValueError("invalid_evidence_burst_result")
+        if self.reconciled_profile_id is not None and (
+            not self.reconciled_profile_id
+            or len(self.reconciled_profile_id) > 120
+            or "/" in self.reconciled_profile_id
         ):
             raise ValueError("invalid_evidence_burst_result")
 

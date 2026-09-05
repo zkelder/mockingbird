@@ -1328,6 +1328,45 @@ class _EngineSession:
                         node_boot_id=node_status.node_boot_id,
                         node_service_version=node_status.node_service_version,
                     )
+                    # Camera Node Evidence-Capture Profile Validity &
+                    # Failure Observability Correctness v1: `session.
+                    # status()`'s own bounded burst/reconciliation counters
+                    # (see `LiveShadowStatus`) were computed all along but
+                    # never read here -- a session-wide evidence-capture
+                    # degradation (v13's own "350 proposals, 0 evidence
+                    # bytes") was therefore structurally invisible to this
+                    # session's own `advanced` diagnostics. Read once per
+                    # batch, the same cadence as the checkpoint immediately
+                    # above; low-cardinality counters only, never a raw
+                    # response body or credential. Best-effort, mirroring
+                    # `report_metadata` above: diagnostics must never break
+                    # observation itself, so a provider that only implements
+                    # the bounded subset `session.run()` actually needs
+                    # (never calling `session.status()`, unlike this new
+                    # instrumentation) degrades this one advanced-status
+                    # refresh silently rather than destabilizing the loop.
+                    try:
+                        live_shadow_status = session.status()
+                    except Exception:  # pragma: no cover - diagnostics must never break observation
+                        live_shadow_status = None
+                    if live_shadow_status is not None:
+                        with self._state_lock:
+                            self._advanced["evidence_burst_requests"] = live_shadow_status.burst_requests
+                            self._advanced["evidence_burst_captures"] = live_shadow_status.burst_captures
+                            self._advanced["evidence_burst_failures"] = live_shadow_status.burst_failures
+                            self._advanced["evidence_burst_stale"] = live_shadow_status.stale_bursts
+                            self._advanced["evidence_profile_reconciliation_count"] = (
+                                live_shadow_status.evidence_profile_reconciliation_count
+                            )
+                            if live_shadow_status.last_burst_failure_code is not None:
+                                self._advanced["evidence_burst_last_failure_code"] = (
+                                    live_shadow_status.last_burst_failure_code
+                                )
+                                self._advanced["evidence_burst_last_failure_at"] = (
+                                    live_shadow_status.last_burst_failure_at.isoformat()
+                                    if live_shadow_status.last_burst_failure_at
+                                    else None
+                                )
                     for result in results:
                         all_track_updates.extend(result.track_updates)
                         all_evidence_candidates.extend(result.evidence_candidates)

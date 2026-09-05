@@ -44,6 +44,7 @@ from mockingbird.observation.media_contracts import (
 )
 from mockingbird.observation.session_timeline import native_reconnect_step
 from mockingbird.source_providers.camera_node import (
+    CameraNodeClient,
     CameraNodeClientError,
     UrlLibCameraNodeRequester,
     normalize_camera_node_address,
@@ -453,6 +454,44 @@ def _classify_analysis_stream_transport_error(error: BaseException) -> str:
     return "os_error"
 
 
+# Camera Node Evidence-Capture Profile Validity & Failure Observability
+# Correctness v1 (see docs/camera-node-evidence-capture-profile-validity
+# -failure-observability-correctness-v1-report.md): live-proven root cause
+# was every distinct evidence-burst failure -- a stale/no-longer-advertised
+# profile, a busy camera, a warm-up timeout, a session failure -- collapsing
+# into one identical, unlogged `evidence_burst_unavailable`, even though the
+# Node already reports exactly which one via `X-MockingBird-Node-Error`
+# (`mockingbird_node.app.capture_image`). This mirrors, deliberately using
+# the identical vocabulary/alias, the already-established, already-tested
+# header-parsing contract `source_providers.camera_node.CameraNodeClient.
+# capture`/`.snapshot` use for the sibling `/capture` endpoint -- a small,
+# local duplication rather than importing that module's private constants,
+# matching this file's own existing precedent of a small, obviously-correct
+# duplication over a cross-module reach into another module's internals.
+_NODE_ERROR_HEADER = "x-mockingbird-node-error"
+_STALE_EVIDENCE_PROFILE_FAILURE_CODE = "node_capture_profile_unavailable"
+_NODE_ERROR_TO_BURST_FAILURE_CODE: dict[str, str] = {
+    "profile_not_advertised": _STALE_EVIDENCE_PROFILE_FAILURE_CODE,
+    "node_capture_profile_unavailable": _STALE_EVIDENCE_PROFILE_FAILURE_CODE,
+    "node_camera_unavailable": "node_camera_unavailable",
+    "node_camera_warmup_timeout": "node_camera_warmup_timeout",
+    "node_snapshot_invalid": "node_snapshot_invalid",
+    "node_snapshot_timeout": "node_snapshot_timeout",
+    "provider_reset_required": "provider_reset_required",
+    "provider_session_failed": "provider_session_failed",
+}
+
+
+def _classify_node_error_header(headers: dict[str, str]) -> str:
+    """Map the Node's own `X-MockingBird-Node-Error` response header to a
+    burst-specific failure code. `evidence_burst_unavailable` (the pre-
+    existing, still-generic fallback) is the honest result for a non-200
+    response carrying no recognized header -- an old Node, or a genuinely
+    unclassified failure -- never a guess."""
+
+    return _NODE_ERROR_TO_BURST_FAILURE_CODE.get(headers.get(_NODE_ERROR_HEADER, ""), "evidence_burst_unavailable")
+
+
 class CameraNodeHttpTransport:
     """Bounded authenticated multipart-JPEG transport for one paired Camera Node."""
 
@@ -557,12 +596,46 @@ class CameraNodeHttpTransport:
                 "failed",
                 failure_code="evidence_profile_mismatch",
             )
+        result = self._attempt_evidence_burst(request, profile_id=self.evidence_profile_id)
+        if result.failure_code != _STALE_EVIDENCE_PROFILE_FAILURE_CODE:
+            return result
+        # Camera Node Evidence-Capture Profile Validity & Failure
+        # Observability Correctness v1: the Node has just explicitly told us
+        # (via the header classified above) that this exact profile_id is
+        # not in its own live advertised set -- live-proven root cause is
+        # the Node's own async warm-proof promotion silently retiring a
+        # `reconfiguration_required` id in favor of a differently-named
+        # `warm_concurrent` one carrying an identical capture contract (see
+        # the milestone report's "Live pre-fix reproduction"). Exactly one
+        # reconciliation attempt, exactly one retry -- never a loop, and
+        # never triggered by any other failure classification (an auth
+        # failure, a timeout, a busy camera, or a genuine session failure
+        # is never treated as a profile-recovery opportunity).
+        reconciled_profile_id = self._reconcile_evidence_profile()
+        if reconciled_profile_id is None:
+            return result
+        self.evidence_profile_id = reconciled_profile_id
+        retried = self._attempt_evidence_burst(request, profile_id=reconciled_profile_id)
+        # `reconciled_profile_id` is reported regardless of whether this one
+        # retry itself then succeeded: the live Node has already confirmed
+        # this is now the correct id, and the caller (`LiveCameraNodeShadow
+        # Session`) must adopt it so its own next `EvidenceBurstRequest`
+        # does not immediately trip the mismatch guard above.
+        return replace(retried, reconciled_profile_id=reconciled_profile_id)
+
+    def _attempt_evidence_burst(self, request: EvidenceBurstRequest, *, profile_id: str) -> EvidenceBurstResult:
+        """One real HTTP burst attempt against `profile_id`, factored out of
+        `request_evidence_burst` so a stale-profile reconciliation (see that
+        method) can retry with a corrected id without duplicating the wire
+        protocol. Never mutates `self.evidence_profile_id`; the caller owns
+        that decision."""
+
         url = f"{self.base_address}/node/v1/cameras/{self.camera_id}/evidence-burst"
         connection: HTTPConnection | HTTPSConnection | None = None
         try:
             connection, path = UrlLibCameraNodeRequester._connection(url, connect_timeout_seconds=2.0)
             body = json.dumps(
-                {"request_id": request.request_id, "profile_id": self.evidence_profile_id, "frame_count": 1},
+                {"request_id": request.request_id, "profile_id": profile_id, "frame_count": 1},
                 separators=(",", ":"),
             ).encode("utf-8")
             connection.request(
@@ -581,7 +654,9 @@ class CameraNodeHttpTransport:
             if response.status == 401:
                 return EvidenceBurstResult(request.request_id, "failed", failure_code="authentication_rejected")
             if response.status != 200:
-                return EvidenceBurstResult(request.request_id, "failed", failure_code="evidence_burst_unavailable")
+                return EvidenceBurstResult(
+                    request.request_id, "failed", failure_code=_classify_node_error_header(headers),
+                )
             length = response.length
             if length is None or not 1 <= length <= 16_000_000:
                 return EvidenceBurstResult(request.request_id, "failed", failure_code="evidence_burst_invalid")
@@ -614,11 +689,54 @@ class CameraNodeHttpTransport:
                 temporal_alignment=alignment,
             )
             return EvidenceBurstResult(request.request_id, "captured", (frame,))
-        except (CameraNodeClientError, socket.timeout, TimeoutError, OSError):
+        except CameraNodeClientError:
             return EvidenceBurstResult(request.request_id, "failed", failure_code="evidence_burst_unavailable")
+        except (socket.timeout, TimeoutError, OSError) as error:
+            return EvidenceBurstResult(
+                request.request_id, "failed", failure_code="evidence_burst_unavailable",
+                failure_class=_classify_analysis_stream_transport_error(error),
+            )
         finally:
             if connection is not None:
                 connection.close()
+
+    def _reconcile_evidence_profile(self) -> str | None:
+        """Deterministically find this camera's current live evidence
+        profile when `evidence_profile_id` is no longer advertised --
+        reusing the already-established, already-bounded-timeout
+        `CameraNodeClient.cameras()` (the identical live-profile-list call
+        `engine_runtime._default_capture_profile_alignment` already makes
+        at session start) rather than a second Node-facing HTTP mechanism.
+
+        Matches on stable, already-defined protocol facts only: this
+        camera_id and "evidence" in purposes, preferring `capture_class ==
+        "warm_concurrent"` -- the identical "proven ready" signal
+        `api.main._camera_node_profile_selection` already prefers when
+        first choosing an evidence profile during camera setup. Never
+        guesses: returns `None` (fail closed) whenever zero or more than
+        one candidate remains ambiguous, or the live lookup itself fails
+        for any reason (Node unreachable, authentication rejected, a
+        malformed response)."""
+
+        try:
+            cameras = CameraNodeClient().cameras(base_address=self.base_address, credential=self.credential)
+        except CameraNodeClientError:
+            return None
+        camera = next((item for item in cameras if item.camera_id == self.camera_id), None)
+        if camera is None:
+            return None
+        evidence_candidates = [
+            profile for profile in camera.capture_profiles
+            if "evidence" in profile.purposes and profile.jpeg_supported
+        ]
+        warm_candidates = [
+            profile for profile in evidence_candidates if profile.capture_class == "warm_concurrent"
+        ]
+        if len(warm_candidates) == 1:
+            return warm_candidates[0].profile_id
+        if not warm_candidates and len(evidence_candidates) == 1:
+            return evidence_candidates[0].profile_id
+        return None
 
     def close(self) -> None:
         self._closed = True
@@ -692,6 +810,19 @@ class LiveShadowStatus:
     scheduler_diagnostics: BurstSchedulerDiagnostics | None = None
     scheduler_health: BurstSchedulerHealth | None = None
     reconnect_diagnostics: LiveReconnectDiagnostics | None = None
+    # Camera Node Evidence-Capture Profile Validity & Failure Observability
+    # Correctness v1: bounded, low-cardinality diagnostics so a session-wide
+    # evidence-capture degradation (v13's own "350 proposals, 0 evidence
+    # bytes, all evidence bursts failing") is visible during a live run
+    # without a code trace -- see "Observability contract" in that
+    # milestone's report. `evidence_profile_reconciliation_count` is a
+    # lifetime-for-this-session count of successful stale-profile self-heals
+    # (see `CameraNodeHttpTransport._reconcile_evidence_profile`); the
+    # `last_burst_failure_*` pair is the most recent classified burst
+    # failure, `None` until the first one occurs.
+    evidence_profile_reconciliation_count: int = 0
+    last_burst_failure_code: str | None = None
+    last_burst_failure_at: datetime | None = None
 
 
 class LiveCameraNodeShadowSession:
@@ -767,6 +898,14 @@ class LiveCameraNodeShadowSession:
         self._burst_captures = 0
         self._burst_failures = 0
         self._stale_bursts = 0
+        # Camera Node Evidence-Capture Profile Validity & Failure
+        # Observability Correctness v1: session-lifetime, never reset by
+        # `stop()` -- matches `_burst_failures`/`_frames_processed`'s own
+        # existing "for the life of this session" lifetime, not a per-tick
+        # window.
+        self._evidence_profile_reconciliation_count = 0
+        self._last_burst_failure_code: str | None = None
+        self._last_burst_failure_at: datetime | None = None
         self._pending_inference = 0
         self._running = False
         # Stage 6.11B: bounded, live-computed "does a track generation span
@@ -914,8 +1053,20 @@ class LiveCameraNodeShadowSession:
                 deadline_at=(frame.captured_at or datetime.now(UTC)) + timedelta(milliseconds=self.burst_deadline_ms),
             )
             burst = self.transport.request_evidence_burst(request)
+            if burst.reconciled_profile_id is not None and burst.reconciled_profile_id != self.evidence_profile_id:
+                # The transport already self-healed a stale profile id (see
+                # `CameraNodeHttpTransport.request_evidence_burst`) --
+                # adopt it here too so this session's *next*
+                # `EvidenceBurstRequest.requested_profile_id` already
+                # matches the transport's own corrected `evidence_profile_
+                # id`, rather than immediately tripping that method's
+                # mismatch guard on the very next opportunity.
+                self.evidence_profile_id = burst.reconciled_profile_id
+                self._evidence_profile_reconciliation_count += 1
             if burst.status != "captured":
                 self._burst_failures += 1
+                self._last_burst_failure_code = burst.failure_code
+                self._last_burst_failure_at = frame.captured_at or datetime.now(UTC)
                 self.scheduler.record_result(decision.request_id, status="failed", failure_code=burst.failure_code)
                 continue
             item = burst.frames[0]
@@ -1194,6 +1345,9 @@ class LiveCameraNodeShadowSession:
             scheduler_diagnostics=self.scheduler.diagnostics(),
             scheduler_health=self.scheduler.health(),
             reconnect_diagnostics=self._reconnect_diagnostics(facts, source),
+            evidence_profile_reconciliation_count=self._evidence_profile_reconciliation_count,
+            last_burst_failure_code=self._last_burst_failure_code,
+            last_burst_failure_at=self._last_burst_failure_at,
         )
 
     def _reconnect_diagnostics(
