@@ -1139,18 +1139,30 @@ rate; fragmentation rate; duplicate-Visit rate; useful-evidence rate;
 per-subject evidence correctness; capture-to-user-visible-Visit latency;
 monitoring coverage.
 
-**2026-09-05 update:** Gate A Release-Budget & Evidence-Sufficiency
-Reconciliation v1 accepted explicit numeric release budgets across these
-dimensions (see "Numeric release budgets," below) and passed Gate A on
-that basis, with one specific limitation (ambiguous-boundary sustained/
-crowded recall degradation) accepted and disclosed rather than fixed --
-see
-[gate-a-release-budget-evidence-sufficiency-reconciliation-v1-report.md](gate-a-release-budget-evidence-sufficiency-reconciliation-v1-report.md)
-for the complete evidence and reasoning. The historical narrative
-immediately below (2026-08-19 through 2026-08-30) is preserved as the
-record of how this gate's evidence accumulated, per this document's own
-"Phase sequencing" convention, and is superseded by, not deleted for, that
-reconciliation.
+**2026-09-05 update, corrected:** Gate A Release-Budget & Evidence-
+Sufficiency Reconciliation v1 claimed explicit numeric release budgets
+across these dimensions and a Gate A **PASS**, on the strength of a recall
+budget that excluded the ambiguous-boundary sustained/crowded limitation
+from its own denominator. **That conclusion was not accepted.** Gate A
+Whole-Scene Budget & Remaining-Evidence Correction v1 (see
+[gate-a-whole-scene-budget-remaining-evidence-correction-v1-report.md](gate-a-whole-scene-budget-remaining-evidence-correction-v1-report.md))
+corrects it: end-to-end recall must never exclude a miss by internal
+failure reason, whole-scene recall stays at v14's own 11/17 = 64.7%
+(conservative) / 11/18 = 61.1% (broader), and **Gate A remains OPEN --
+RELEASE DECISION REQUIRED** (recall's product-acceptability is an explicit
+release-authority judgment the evidence cannot make by itself; true
+latency's tail distribution is a second, independent open item). Six of
+the eight release dimensions (false-Visit rate on ordinary scenes,
+fragmentation, duplicates, useful-evidence, evidence-survival, monitoring)
+remain genuinely ready for a release budget -- see "Numeric release
+budgets," below, for the corrected figures. The original, unaccepted
+document
+([gate-a-release-budget-evidence-sufficiency-reconciliation-v1-report.md](gate-a-release-budget-evidence-sufficiency-reconciliation-v1-report.md))
+is preserved, not deleted, as the record of what was proposed and
+rejected; do not treat it as an accepted source. The historical narrative
+immediately below (2026-08-19 through 2026-08-30) remains the record of
+how this gate's evidence accumulated, per this document's own "Phase
+sequencing" convention.
 
 **Current disposition (2026-08-19 evidence,
 [end-to-end-bird-encounter-recall-closure-v1-report.md](end-to-end-bird-encounter-recall-closure-v1-report.md)):**
@@ -2600,73 +2612,110 @@ than reinvented:
   "Production authority gate"). Production admission stays confidence-blind
   by measured decision, not by omission.
 
-**Accepted 2026-09-05 by Gate A Release-Budget & Evidence-Sufficiency
-Reconciliation v1** (see
-[gate-a-release-budget-evidence-sufficiency-reconciliation-v1-report.md](gate-a-release-budget-evidence-sufficiency-reconciliation-v1-report.md)
+**Corrected 2026-09-05 by Gate A Whole-Scene Budget & Remaining-Evidence
+Correction v1** (see
+[gate-a-whole-scene-budget-remaining-evidence-correction-v1-report.md](gate-a-whole-scene-budget-remaining-evidence-correction-v1-report.md)
 for the complete evidence, qualifying-cohort matrix, and reasoning behind
-every figure below -- this section states the accepted conclusions only).
-Gate A **PASSED** as of this reconciliation. These replace the prior
-"not yet established" framing this section carried through 2026-08-30 (14
-real field cohorts, several correctness fixes, and two dedicated
-ambiguous-boundary investigations have run since):
+every figure below). The immediately-prior Gate A Release-Budget &
+Evidence-Sufficiency Reconciliation v1 was **not accepted** -- its recall
+budget excluded the ambiguous-boundary sustained/crowded limitation from
+its own denominator, which is not a valid way to compute end-to-end
+recall, and its latency budget claimed readiness on a median alone while
+its own tail table omitted an already-disclosed 742.3-second maximum (v10).
+**Gate A is OPEN**, not passed. Six of eight dimensions are nonetheless
+genuinely ready for a release budget (14 real field cohorts, several
+correctness fixes, and two dedicated ambiguous-boundary investigations
+have run since the prior "not yet established" framing this section
+carried through 2026-08-30):
 
-- **Minimum end-to-end Visit recall (excluding the ambiguous-boundary
-  sustained/crowded limitation, below): ≥ 85%.** Derived from the two
-  cleanest, current-admission-stack, independently-re-derived cohorts
-  (Representative Daylight Gate A Field Acceptance v12 and v14), each
-  decomposed to isolate the one already-accepted, already-budgeted
-  precision-corroboration cost from the separately-tracked ambiguous-
-  boundary mechanism: 93.3% (v12) and 91.7% (v14), ~6.7 points of margin
-  below the worse cohort.
-- **Ambiguous-boundary sustained/crowded recall limitation: an accepted,
-  disclosed product limitation, not a numeric budget.** Two independent,
-  adversarial investigations (Ambiguous-Boundary Real-Subject Recall
-  Correctness v1; Sustained / Crowded Ambiguous-Boundary Recall
-  Correctness v2) found no safe correction using any currently-trustworthy
-  signal. The realized cost is always omission (no Visit created), never a
-  false merge, false continuation, or corrupted Reviewed-truth record. In
-  the worst observed case (v14), this cost one ~310-continuous-second,
-  multi-bird episode within a 102-minute session. This is disclosed here,
-  plainly, as a known release-time limitation of the current architecture,
-  not silently absorbed into the blended recall figures below or hidden
-  from users: MockingBird may not create a Visit for every bird during an
-  unusually busy, continuous stretch of activity where several birds
-  arrive in close succession at the same spot; it prioritizes never
-  fabricating a false continuation between different birds over
-  guaranteeing one Visit per individual in that specific circumstance.
-  Should be revisited only if a future, evidence-driven milestone
-  identifies a genuinely new, safe signal.
-- **Maximum confirmed false-Visit rate: ≤ 15%** under ordinary scene
-  conditions, from two convergent, person-confound-free, current-stack
-  cohorts (v12 5.6%, v14 7.1%; pooled 6.25%), with an explicit, disclosed
-  carve-out that a session containing sustained non-target dual-class
-  confusion (most concretely, a person in frame) can exceed this budget
-  until the remaining single-class-misclassification residual (see Gate
-  B, above) is closed.
-- **Maximum confirmed fragmentation rate: ≤ 5%.** Seven to eight
-  independently-varied cohorts across every configuration era (2026-08-19,
-  v5, v7, v8, v9, v12, v14), reanalyzed under the corrected reviewer-
-  disposition methodology, converge on 0% confirmed fragmentation.
+- **End-to-end Visit recall: no budget adopted -- RELEASE DECISION
+  REQUIRED.** Whole-scene conservative recall, with no failure-reason
+  denominator exclusion, is measured on exactly two current-admission
+  -stack, independently-re-derived, full-session cohorts: Representative
+  Daylight Gate A Field Acceptance v12 (14/16 = 87.5%) and v14 (11/17 =
+  64.7%). These diverge by 22.8 points for a fully root-caused reason,
+  concentrated in sustained/crowded activity (see the ambiguous-boundary
+  item, below) -- not measurement noise. Two independent, adversarial
+  investigations (Ambiguous-Boundary Real-Subject Recall Correctness v1;
+  Sustained / Crowded Ambiguous-Boundary Recall Correctness v2) already
+  exhausted every currently-trustworthy signal and found no safe
+  correction, so the engineering side of this question is finished.
+  Whether a recall floor that can fall to 64.7% during unusually busy
+  activity is an acceptable v1 launch characteristic is an explicit
+  product-risk-tolerance decision for the release authority, using the
+  honest observed range above -- not a number this document invents by
+  excluding the sessions that produced the low end.
+- **Ambiguous-boundary sustained/crowded recall limitation: root-caused,
+  safe (omission-only), no further engineering fix currently justified --
+  but its cost stays inside the recall figures above, not removed from
+  them.** The mechanism itself (`classify_boundary`'s geometry
+  -compatibility tolerance forming an ambiguous link, then
+  `engine_runtime._live_chain_for_component`'s "any admitted component
+  member vetoes the whole component unconditionally" policy permanently
+  blocking a later proposal) is unchanged from the two investigations'
+  own findings: the realized cost is always omission (no Visit created),
+  never a false merge, false continuation, or corrupted Reviewed-truth
+  record. In the worst observed case (v14), this cost one
+  ~310-continuous-second, multi-bird episode within a 102-minute session,
+  and 5 of v14's own 6 conservative recall misses trace to it. This is a
+  known, disclosed limitation of the current architecture -- MockingBird
+  may not create a Visit for every bird during an unusually busy,
+  continuous stretch of activity where several birds arrive in close
+  succession at the same spot; it prioritizes never fabricating a false
+  continuation between different birds over guaranteeing one Visit per
+  individual in that specific circumstance. Should be revisited only if a
+  future, evidence-driven milestone identifies a genuinely new, safe
+  signal; its release-acceptability is the open recall decision above, not
+  a separate question this bullet resolves.
+- **Maximum confirmed false-Visit rate: ≤ 15%** under ordinary (non
+  -person) scene conditions, from two convergent, person-confound-free,
+  current-stack cohorts (v12 5.6%, v14 7.1%; pooled 6.25%). The
+  person-associated regime is a separate, disclosed, non-blocking known
+  limitation, not folded into this number: no cohort with both the current
+  admission stack and a real person-in-frame confound has run since the
+  Strong-Confidence-Non-Target partial fix, so the person-present rate
+  under the current stack is genuinely unmeasured (n=0), not merely
+  assumed to exceed this budget.
+- **Maximum confirmed fragmentation rate: ≤ 5%.** Seven independently
+  -varied cohorts across every configuration era (2026-08-19, v5, v7, v8,
+  v9, v12, v14), reanalyzed under the corrected reviewer-disposition
+  methodology, converge on 0% confirmed fragmentation.
 - **Maximum confirmed duplicate-Visit rate: ≤ 2%.** At least eight
-  consecutive cohorts (v5 through v14) have each measured exactly 0%.
+  independently-varied cohorts (v5 through v14) have each measured exactly
+  0%.
 - **Minimum useful-evidence rate (primary + supporting evidence): ≥ 85%.**
   Budgeted on the combined metric, which corresponds to actual user-facing
-  gallery value, not the more volatile primary-only figure (76.0%-96.0%
-  across cohorts, not yet convergent). Combined figures converge at
-  92.9%-96.0% (v7, v12, v14).
+  gallery value (MockingBird's Visit Evidence Gallery shows the full
+  evidence set, not only one system-selected "primary" frame), not the
+  more volatile primary-only figure (76.0%-96.0% across cohorts, not yet
+  convergent). Combined figures converge at 92.9%-96.0% (v7, v12, v14).
 - **Maximum evidence-loss (`blocked_missing_evidence`, as a share of
-  distinct proposals): ≤ 15%.** Five independently-varied cohorts (v7
-  through v11) converge in a 6.7%-9.9% band; v12's and v14's own,
-  differently-denominated (decision-event-basis) figures (4.2%-4.6%) are
-  directionally consistent, not pooled into this number.
-- **Median capture-to-visible latency: ≤ 180 seconds.** Three
-  RTT-normalized, reasonably-sized samples (v9 n=24, v10 n=11, v14 n=14)
-  converge at roughly 83-112 seconds; the deliberate ~48-60 second
-  quiet-period tail this reflects is confirmed directly by v9's and v10's
-  own additive decompositions. No p90 or maximum latency budget is
-  proposed -- only 2-3 sized samples exist for the tail, and doctrine does
-  not require a tail-latency SLA for a discovery-oriented, non-surveillance
-  product.
+  distinct proposals): ≤ 15%.** Six independently-varied cohorts now
+  converge on one common, harmonized distinct-proposal basis: v7 9.4%, v8
+  9.9%, v9 8.9%, v10 6.7%, v11 9.29%, and v14 8.89% (arithmetically
+  decomposed from v14's own published per-outcome event breakdown and
+  independently verified against its raw ledger -- v14 originally
+  published a differently-denominated, decision-event-basis 4.2% figure,
+  not directly comparable until harmonized this way). v12 is explicitly
+  excluded, not merely noted as a different basis: its own raw ledger
+  permanently lost the first ~37 of its 97 minutes, so no full-session
+  distinct-proposal figure can be recovered for it.
+- **True capture-to-visible latency: no budget adopted -- MORE EVIDENCE
+  REQUIRED.** Median converges reasonably across four RTT-normalized,
+  sized cohorts (v9 n=24, v10 n=11, v11 n=23, v14 n=14: roughly 83-116
+  seconds), reflecting the same deliberate ~48-60 second Visit-Continuity
+  quiet-period tail v9's and v10's own additive decompositions confirm
+  directly. The tail does **not** converge: observed maxima span
+  261.2-865.2 seconds across those same four cohorts, including v10's own
+  already-accepted 742.3-second maximum and a newly-recovered v11 maximum
+  of 865.2 seconds (both individually root-caused to the same
+  Visit-Continuity mechanism, and both within ~60-72% of the architecture's
+  own documented 20-minute component-decision-horizon ceiling, but neither
+  is yet part of a statistically converged distribution). Per this
+  document's own discipline against false precision, latency is not
+  called ready for a release budget merely because its median looks
+  stable -- a >3x spread at the maximum, from only four sized samples, is
+  a genuine open measurement gap, not a non-blocking footnote.
 - **Minimum monitoring coverage: ≥ 97%** in the steady state. Nearly every
   cohort measured 97.5%-99.99%+; the two cohorts below a naive 99% floor
   (v9 97.95%, v11 97.5%) are each honestly explained (a recorder
@@ -2675,10 +2724,13 @@ ambiguous-boundary investigations have run since):
   hardware fault remains separately governed by Gate D/E's own
   field-recovery ladder, not by this coverage budget.
 
-Do not silently re-tighten any of the above toward the best-observed value
-in a future reconciliation without new convergent evidence -- each was set
-with deliberate margin below or above the worst qualifying cohort, per
-this reconciliation's own explicit reasoning.
+Do not silently re-tighten any of the six adopted budgets above toward the
+best-observed value in a future reconciliation without new convergent
+evidence -- each was set with deliberate margin below or above the worst
+qualifying cohort. Do not adopt a recall or latency-tail budget merely to
+close Gate A -- both require, respectively, an explicit release decision
+and further converged evidence, named precisely in
+[gate-a-whole-scene-budget-remaining-evidence-correction-v1-report.md](gate-a-whole-scene-budget-remaining-evidence-correction-v1-report.md).
 
 ## Public release readiness
 

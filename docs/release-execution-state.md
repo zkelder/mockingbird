@@ -2436,6 +2436,92 @@ exactly as open as stated.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
+**2026-09-05 update (Gate A Whole-Scene Budget & Remaining-Evidence
+Correction v1, see §6.R):** bounded RELEASE-CRITICAL Lane R correction,
+directly authorized outside this file. **Gate A Release-Budget &
+Evidence-Sufficiency Reconciliation v1 (the entry immediately below,
+commits `8c42f80`/`d17ef3e`) was reviewed and explicitly NOT accepted --
+ChatGPT rejected its Classification A / Gate A PASS conclusion.** See
+[gate-a-whole-scene-budget-remaining-evidence-correction-v1-report.md](gate-a-whole-scene-budget-remaining-evidence-correction-v1-report.md)
+for the complete correction. Accepted HEAD unchanged (still `de566f1`'s
+own report-commit convention, i.e. unaffected by either the rejected
+milestone or this correction -- both are documentation-only). Schema
+unchanged (`v58`).
+
+**Six named defects, each corrected:** (1) "≥85% recall excluding the
+ambiguous-boundary sustained/crowded limitation" was not a valid recall
+budget -- it converted a disclosed, unfixed failure mode into an invisible
+denominator exclusion. (2) V14's whole-scene conservative recall (11/17 =
+64.7%) is restored as the release-relevant figure; those misses stay in
+the denominator. (3) No failure-reason denominator exclusion is applied
+anywhere in the corrected recall definition. (4) True latency is no longer
+called ready-for-budget on median alone -- the rejected report's own tail
+table silently omitted v10's own already-accepted 742.3-second maximum;
+this correction also recovers, via offline reanalysis of v11's preserved
+raw ledger (one dropped `clock_calibration_required` metadata flag
+restored in a scratch copy only, verified against v11's own raw
+per-checkpoint snapshots, never touching the committed archive or
+production code), a 4th sized RTT-normalized latency sample (n=23, max
+865.2s) -- confirming the tail is wider and less converged than any prior
+evidence body considered. (5) Evidence-survival denominators are
+genuinely harmonized, not merely flagged: v14's own published per-outcome
+event breakdown is arithmetically decomposed (verified directly against
+its raw ledger, `data/field-acceptance/2026-09-05-gate-a-v14-corrected-evidence-path-reproof/merged-ledger/counterfactual-merged.json`)
+to a distinct-proposal-basis 8/90 = 8.89%, landing inside the v7-v11
+6.7%-9.9% band -- six cohorts on one common basis, not five plus two
+"directionally consistent" outliers. v12 is confirmed permanently
+unrecoverable (its raw ledger's first ~37 of 97 minutes have zero
+recoverable detail, independently re-verified against its own preserved
+archive), not merely a basis mismatch. (6) **Lane R / Gate A is corrected
+back to OPEN** (see §6.R, below, for the updated status line -- the
+`CLOSED / PASSED` status the rejected reconciliation wrote is preserved,
+not deleted, immediately above the correction, as the record of what was
+wrongly claimed).
+
+**Corrected disposition:** six of eight release dimensions (false-Visit
+rate on ordinary scenes ≤15%, fragmentation ≤5%, duplicates ≤2%,
+useful-evidence ≥85% combined, evidence-survival ≤15% distinct-proposal
+basis, monitoring coverage ≥97%) are honestly READY FOR RELEASE BUDGET --
+two of them (evidence-survival, and the false-Visit stratification) on
+*stronger* footing than the rejected report established. Recall is
+**RELEASE DECISION REQUIRED**: the engineering side is finished (two
+independent adversarial investigations already exhausted every
+currently-trustworthy signal and found no safe correction), and what
+remains -- whether a whole-scene recall floor that can fall to 64.7%
+during unusually busy real activity is acceptable for a v1 launch -- is an
+explicit product-risk-tolerance judgment for the release authority, not an
+evidence gap. True latency is **MORE EVIDENCE REQUIRED** (median
+informative across four cohorts, ~83-116s; tail unconverged, four sized
+maxima spanning 261.2-865.2s). **Gate A decision: OPEN -- RELEASE DECISION
+REQUIRED**, with true-latency's tail distribution as a second, independent
+open item that would still need to close even after the recall decision is
+made.
+
+**Smallest sufficient remaining Gate A proof, per dimension** (this
+milestone's own central task, per its governing brief's explicit
+instruction not to default to scheduling another 90-105-minute field
+cohort): evidence-survival harmonization is **CLOSED by this correction**
+via offline reanalysis of an already-preserved cohort (v14's own raw
+ledger) -- no field time was needed. Latency-tail is **partially advanced
+the same way** (the newly-recovered v11 sample), with the residual gap
+sized to "one more ordinary-length representative session, whenever one
+next runs for its own reasons" rather than a dedicated cohort -- every
+other offline-reanalysis avenue for this specific gap is exhausted (v7/v8
+predate valid RTT calibration; v12's own raw ledger has the same permanent
+~37-minute gap that blocks its evidence-survival harmonization; v13 had
+zero admissions). Recall's smallest sufficient step is an **explicit
+owner/release-authority decision** on the already-sufficient (if
+divergent) evidence above -- not more field data; if the release authority
+instead wants a tighter numeric floor first, 2-3 more
+already-otherwise-motivated representative sessions (not a
+recall-dedicated cohort) would characterize how often high-density,
+lower-recall sessions occur. **This closure does not authorize a field
+cohort, another ambiguous-boundary investigation, External Pre-Release
+Acceptance, or Final Release Hardening, and does not select a next
+development milestone.** Authorization remains **NONE -- GLOBAL
+PRODUCT-ROADMAP RECONCILIATION REQUIRED**, unchanged. **CURRENT PHASE:
+SUBSTANTIAL PRODUCT DEVELOPMENT does not change.**
+
 **2026-09-05 update (Gate A Release-Budget & Evidence-Sufficiency
 Reconciliation v1, see §6.R):** the global evidence/release-decision
 reconciliation this file's own standing "NONE -- GLOBAL PRODUCT-ROADMAP
@@ -6440,7 +6526,36 @@ See the report for the complete finding-by-finding record.
 
 ### R. Complete Field Acceptance
 
-**Status:** CLOSED / PASSED -- RELEASE-CRITICAL, per Gate A Release-Budget
+**Status:** OPEN -- RELEASE-CRITICAL -- RELEASE DECISION REQUIRED, per
+Gate A Whole-Scene Budget & Remaining-Evidence Correction v1 (2026-09-05,
+see §3, above, and
+[gate-a-whole-scene-budget-remaining-evidence-correction-v1-report.md](gate-a-whole-scene-budget-remaining-evidence-correction-v1-report.md)),
+correcting the `CLOSED / PASSED` claim immediately below, which was
+**not accepted**. Six of eight release dimensions (false-Visit rate on
+ordinary scenes, fragmentation, duplicates, useful-evidence,
+evidence-survival, monitoring coverage) are genuinely READY FOR RELEASE
+BUDGET -- see `roadmap.md`'s "Numeric release budgets" for the corrected
+figures. Whole-scene end-to-end recall (no failure-reason denominator
+exclusion; v14's own conservative 11/17 = 64.7% stays in the denominator)
+is **RELEASE DECISION REQUIRED**: the ambiguous-boundary sustained/crowded
+mechanism producing v14's low end is fully root-caused and confirmed
+unfixable with any currently-trustworthy signal by two independent
+adversarial investigations, so what remains is an explicit
+product-risk-tolerance judgment for the release authority, not an
+engineering gap. True capture-to-visible latency is **MORE EVIDENCE
+REQUIRED** (median converges across four cohorts; the tail does not --
+observed maxima span 261.2-865.2 seconds, including v10's own
+already-accepted 742.3-second maximum and a newly-recovered v11 maximum of
+865.2 seconds this correction's own offline reanalysis surfaced). The
+chronological field-acceptance history immediately below (2026-08-19
+through Sustained / Crowded Ambiguous-Boundary Recall Correctness v2) is
+preserved, unchanged, as the complete evidentiary record both the rejected
+reconciliation and this correction rest on.
+
+**Superseded status (2026-09-05, Gate A Release-Budget & Evidence
+-Sufficiency Reconciliation v1's own claim -- NOT ACCEPTED, preserved here
+verbatim as the record of what was proposed and rejected, not as current
+status):** CLOSED / PASSED -- RELEASE-CRITICAL, per Gate A Release-Budget
 & Evidence-Sufficiency Reconciliation v1 (2026-09-05, see §3, above, and
 [gate-a-release-budget-evidence-sufficiency-reconciliation-v1-report.md](gate-a-release-budget-evidence-sufficiency-reconciliation-v1-report.md)).
 Explicit numeric release budgets accepted across recall (with the
@@ -6456,7 +6571,8 @@ through Sustained / Crowded Ambiguous-Boundary Recall Correctness v2) is
 preserved as the complete evidentiary record this closure rests on, not
 superseded or deleted.
 
-**Prior status (superseded by the above):** NOT DONE -- RELEASE-CRITICAL.
+**Prior status (before the above; this is the accurate pre-2026-09-05
+status):** NOT DONE -- RELEASE-CRITICAL.
 
 Component acceptance is not whole-product acceptance. Final integrated
 release configuration should exercise: several cameras; visual inference;
