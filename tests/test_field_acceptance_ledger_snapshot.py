@@ -11,11 +11,15 @@ own established convention.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 import runpy
 from typing import Any
 
 import pytest
+
+from mockingbird.observation.counterfactual_lineage import CounterfactualLedger, CounterfactualRetentionConfig
+from mockingbird.observation.visit_episode_assembler import AssembledVisitProposal
 
 ROOT = Path(__file__).resolve().parents[1]
 _MODULE = runpy.run_path(str(ROOT / "scripts" / "field_acceptance_ledger_snapshot.py"))
@@ -32,6 +36,7 @@ take_checkpoint = _MODULE["take_checkpoint"]
 run_periodic_collection = _MODULE["run_periodic_collection"]
 reconcile_ledger = _MODULE["reconcile_ledger"]
 build_merged_counterfactual_window = _MODULE["build_merged_counterfactual_window"]
+_proposal_outcome_identity = _MODULE["_proposal_outcome_identity"]
 CHECKPOINT_COMPLETE = _MODULE["CHECKPOINT_COMPLETE"]
 CHECKPOINT_PARTIAL = _MODULE["CHECKPOINT_PARTIAL"]
 CHECKPOINT_FAILED = _MODULE["CHECKPOINT_FAILED"]
@@ -588,3 +593,480 @@ def test_cli_reconcile_writes_merged_output(tmp_path: Path) -> None:
     assert exit_code == 0
     merged = json.loads(merged_output.read_text(encoding="utf-8"))
     assert merged["raw_detections"] == [{"source_offset_ms": 1}]
+
+
+# ---------------------------------------------------------------------------
+# Proposal-Outcome Ledger Retention & Field-Reconciliation Completeness v1:
+# `proposal_outcomes` is an append-only decision-EVENT log (a retryable
+# `blocked_continuation_pending` proposal legitimately accumulates several
+# independent decision events over a session), not a per-proposal state
+# table -- `proposal_id` alone was the wrong reconciliation identity for
+# this one artifact type. Everything below exercises the fix directly
+# against dict fixtures (fast, focused unit coverage) and, for the
+# highest-value proofs, against the REAL `CounterfactualLedger` (real
+# production retention config, real `record_proposal_outcome`/`query`) so
+# the retention/eviction/query mechanism itself is genuinely exercised,
+# never assumed. See docs/proposal-outcome-ledger-retention-field
+# -reconciliation-completeness-v1-report.md.
+# ---------------------------------------------------------------------------
+
+
+def test_reconcile_ledger_proposal_outcomes_retryable_decisions_all_recovered_are_complete() -> None:
+    """The direct fix, at unit scale: one `proposal_id` decided three
+    times (two `blocked_continuation_pending` retries, one terminal) --
+    all three are distinct, legitimate decision events, and completeness
+    must be judged against that event count (3), never silently
+    collapsed to a per-proposal count (1) that would make a fully-
+    recovered session look like a 33%-complete one."""
+
+    def _decision(decided_at: str, outcome: str) -> dict:
+        return {
+            "proposal_id": "p1", "broad_class": "animal", "zone_id": None,
+            "start_offset_ms": 1_000, "end_offset_ms": 3_000, "constituent_generation_ids": ["gen-1"],
+            "outcome": outcome, "reason": "test", "admitted": outcome == "created", "visit_id": None,
+            "decided_at": decided_at,
+        }
+
+    payload = _ledger_payload(
+        proposal_outcomes=[
+            _decision("2026-09-04T19:30:00.000Z", "blocked_continuation_pending"),
+            _decision("2026-09-04T19:30:10.000Z", "blocked_continuation_pending"),
+            _decision("2026-09-04T19:30:20.000Z", "blocked_missing_evidence"),
+        ],
+        proposal_recorded_count=3, oldest_retained_ms=0, newest_retained_ms=3_000, session_last_offset_ms=3_000,
+    )
+
+    report = reconcile_ledger([payload], stream_id="s1")
+
+    artifact = report.artifacts["proposal_outcomes"]
+    assert artifact.final_recorded_count == 3
+    assert artifact.recovered_unique_count == 3  # all three events, never collapsed to 1
+    assert artifact.recovered_distinct_entity_count == 1  # informational: one underlying proposal
+    assert artifact.completeness_fraction == 1.0
+    assert artifact.status == "COMPLETE"
+    assert "distinct proposal_ids" in artifact.reason
+
+
+def test_reconcile_ledger_proposal_outcomes_genuinely_missing_event_is_still_partial() -> None:
+    """The fix must not swing to the opposite failure mode: if a real
+    decision event for an already-seen `proposal_id` was never captured
+    by any checkpoint, that is still a real, honestly-reported gap -- the
+    new `(proposal_id, decided_at)` identity must not accidentally treat
+    'we already have *a* record for this proposal' as 'we have *every*
+    record for this proposal.'"""
+    payload = _ledger_payload(
+        proposal_outcomes=[
+            {
+                "proposal_id": "p1", "broad_class": "animal", "zone_id": None,
+                "start_offset_ms": 1_000, "end_offset_ms": 3_000, "constituent_generation_ids": ["gen-1"],
+                "outcome": "blocked_continuation_pending", "reason": "test", "admitted": False, "visit_id": None,
+                "decided_at": "2026-09-04T19:30:00.000Z",
+            },
+        ],
+        proposal_recorded_count=2,  # the ledger's own truth: 2 decision events actually happened for p1
+        oldest_retained_ms=1_000, newest_retained_ms=3_000, session_last_offset_ms=3_000,
+    )
+
+    report = reconcile_ledger([payload], stream_id="s1")
+
+    artifact = report.artifacts["proposal_outcomes"]
+    assert artifact.final_recorded_count == 2
+    assert artifact.recovered_unique_count == 1
+    assert artifact.recovered_distinct_entity_count == 1
+    assert artifact.status == "PARTIAL"
+    assert report.overall_status == "PARTIAL"
+
+
+def test_reconcile_ledger_raw_detections_and_track_generations_report_no_distinct_entity_count() -> None:
+    """`recovered_distinct_entity_count` is specific to `proposal_
+    outcomes` -- for the other two artifact types, identity already *is*
+    the entity, so a separate count would be meaningless noise, not a new
+    fact. Must stay `None`, not silently `0` or equal to `recovered_
+    unique_count`."""
+    payload = _ledger_payload(
+        raw_detections=[{"source_offset_ms": i} for i in range(3)], raw_recorded_count=3,
+    )
+
+    report = reconcile_ledger([payload], stream_id="s1")
+
+    assert report.artifacts["raw_detections"].recovered_distinct_entity_count is None
+    assert report.artifacts["track_generations"].recovered_distinct_entity_count is None
+
+
+def test_reconcile_ledger_zero_activity_proposal_outcomes_reports_zero_distinct_entities() -> None:
+    """The prior accepted zero-activity fix must keep working unchanged --
+    and the new entity count must honestly report zero, not `None`, for a
+    genuinely-empty `proposal_outcomes` artifact (identity is still
+    meaningful for this artifact type; there are simply no records)."""
+    payload = _ledger_payload(
+        raw_detections=[{"source_offset_ms": 1}], raw_recorded_count=1,
+    )
+
+    report = reconcile_ledger([payload], stream_id="s1")
+
+    artifact = report.artifacts["proposal_outcomes"]
+    assert artifact.status == "COMPLETE"
+    assert artifact.recovered_distinct_entity_count == 0
+
+
+def test_build_merged_counterfactual_window_preserves_full_proposal_outcome_history() -> None:
+    """`build_merged_counterfactual_window` shares `_accumulate_artifact`
+    with `reconcile_ledger` by design (see that helper's own docstring) --
+    confirms the fix applies to the merged-output path too, not only the
+    reconciliation percentage. The accepted downstream consumer
+    (`encounter_accounting.cluster_encounters`, see `tests/test_encounter
+    _accounting.py::test_proposal_outcomes_populate_cluster_lineage_
+    deduplicated_by_proposal_id`) is already specifically designed to
+    receive this full, undeduplicated history and reduce it itself via
+    its own established `_decision_offset`-latest-wins rule -- this merge
+    step must never pre-empt that reduction with a cruder, checkpoint
+    -iteration-order-dependent one of its own."""
+    pending = {
+        "proposal_id": "p1", "broad_class": "animal", "zone_id": None,
+        "start_offset_ms": 1_000, "end_offset_ms": 3_000, "constituent_generation_ids": ["gen-1"],
+        "outcome": "blocked_continuation_pending", "reason": "test", "admitted": False, "visit_id": None,
+        "decided_at": "2026-09-04T19:30:00.000Z",
+    }
+    created = {**pending, "outcome": "created", "admitted": True, "visit_id": "visit-1", "decided_at": "2026-09-04T19:30:10.000Z"}
+    payload = _ledger_payload(proposal_outcomes=[pending, created], proposal_recorded_count=2)
+
+    merged = build_merged_counterfactual_window([payload], stream_id="s1")
+
+    assert len(merged["proposal_outcomes"]) == 2  # both survive -- never collapsed by proposal_id alone
+    outcomes = {item["decided_at"]: item["outcome"] for item in merged["proposal_outcomes"]}
+    assert outcomes["2026-09-04T19:30:00.000Z"] == "blocked_continuation_pending"
+    assert outcomes["2026-09-04T19:30:10.000Z"] == "created"
+    assert merged["coverage"]["proposal_outcomes"]["recorded_count"] == 2
+    assert merged["coverage"]["proposal_outcomes"]["retained_count"] == 2
+
+
+# --- Real-ledger, v13-shaped high-churn reproduction ------------------------
+
+
+_V13_STREAM_ID = "stream-v13-shaped"
+_V13_SESSION_MS = 6_081_819  # v13's own real session_last_offset_ms
+_V13_CHECKPOINT_INTERVAL_MS = 300_000  # v13's own real 5-minute collection cadence
+_V13_TICK_MS = 10_000  # engine_runtime._ASSEMBLY_TICK_SECONDS
+
+
+def _window_to_payload(window: Any) -> dict:
+    """Minimal, hand-rolled mirror of `mockingbird.api.main._counterfactual_
+    window_response`'s own field mapping -- only the subset `reconcile_
+    ledger`/`build_merged_counterfactual_window` actually read. Deliberately
+    not an import of `mockingbird.api.main` (a large, FastAPI-app-importing
+    module with its own heavy dependency closure) -- this keeps the
+    real-ledger tests below fast and focused precisely on the
+    `counterfactual_lineage` <-> field-acceptance-tool boundary this
+    milestone is about."""
+
+    def _accounting(accounting: Any) -> dict:
+        return {
+            "retained_count": accounting.retained_count, "evicted_count": accounting.evicted_count,
+            "recorded_count": accounting.recorded_count,
+            "oldest_retained_offset_ms": accounting.oldest_retained_offset_ms,
+            "newest_retained_offset_ms": accounting.newest_retained_offset_ms,
+        }
+
+    return {
+        "stream_id": window.stream_id, "start_offset_ms": window.start_offset_ms,
+        "end_offset_ms": window.end_offset_ms, "roi": None,
+        "raw_detections": [], "track_generations": [],
+        "proposal_outcomes": [
+            {
+                "proposal_id": item.proposal_id, "stream_id": item.stream_id, "broad_class": item.broad_class,
+                "zone_id": item.zone_id, "start_offset_ms": item.start_offset_ms, "end_offset_ms": item.end_offset_ms,
+                "constituent_generation_ids": list(item.constituent_generation_ids),
+                "outcome": item.outcome, "reason": item.reason, "admitted": item.admitted,
+                "visit_id": item.visit_id, "decided_at": item.decided_at.isoformat(),
+            }
+            for item in window.proposal_outcomes
+        ],
+        "raw_detection_count_in_roi": 0, "track_generation_count_in_roi": 0,
+        "coverage": {
+            "session_first_offset_ms": window.coverage.session_first_offset_ms,
+            "session_last_offset_ms": window.coverage.session_last_offset_ms,
+            "raw_detections": _accounting(window.coverage.raw_detection_retention),
+            "track_generations": _accounting(window.coverage.track_generation_retention),
+            "proposal_outcomes": _accounting(window.coverage.proposal_outcome_retention),
+        },
+        "attribution": "test", "attribution_reason": "test",
+        "clock_calibrations": [], "clock_calibration_required": False, "rtt_clock_calibrations": [],
+    }
+
+
+def _v13_shaped_proposal_plan() -> list[int]:
+    """The exact per-proposal decision-event-count histogram independently
+    reconstructed from Representative Daylight Gate A Field Acceptance
+    v13's own archived `raw-periodic-snapshots` (union across all 21 real
+    checkpoints, `data/field-acceptance/2026-09-04-gate-a-v13-intact
+    -ledger-budget-convergence/`, not committed -- see the governing
+    report for the full derivation): 156 distinct proposals -- 92 decided
+    exactly once, 11 decided twice, 7 three times, 15 four times, 31 five
+    times. 92+11+7+15+31=156 proposals; 92+22+21+60+155=350 total decision
+    events -- matching v13's own real `proposals_observed`/ledger
+    `recorded_count` exactly."""
+    plan: list[int] = [1] * 92 + [2] * 11 + [3] * 7 + [4] * 15 + [5] * 31
+    assert len(plan) == 156
+    assert sum(plan) == 350
+    return plan
+
+
+def _make_proposal(proposal_id: str, generation_id: str, *, start_offset_ms: int) -> AssembledVisitProposal:
+    return AssembledVisitProposal(
+        proposal_id=proposal_id, stream_id=_V13_STREAM_ID, broad_class="animal",
+        start_offset_ms=start_offset_ms, end_offset_ms=start_offset_ms + 2_000,
+        constituent_generation_ids=(generation_id,), constituent_track_ids=(f"{generation_id}-track",),
+        supporting_frame_ids=(), source_capture_frame_ids=(), evidence_candidate_ids=(),
+        assembly_decisions=(),
+    )
+
+
+def _run_v13_shaped_session(
+    *, ledger: CounterfactualLedger | None = None, checkpoint_interval_ms: int = _V13_CHECKPOINT_INTERVAL_MS,
+) -> tuple[CounterfactualLedger, list[dict]]:
+    """Drives the REAL `CounterfactualLedger` (production retention config
+    by default) through a deterministic, v13-shaped high-churn session --
+    156 distinct proposals spread across the real session span, each
+    re-decided per `_v13_shaped_proposal_plan`'s own real histogram (every
+    non-final decision `blocked_continuation_pending`, one real assembly
+    -tick apart; the final decision `blocked_missing_evidence`, matching
+    v13's own 88.5%-dominant real outcome) -- with periodic-checkpoint
+    queries genuinely *interleaved* with live appends (never built after
+    the fact against an already-complete ledger), exactly mirroring how a
+    real live session and a real detached periodic collector run
+    concurrently. Deterministic: proposal start offsets are evenly spaced
+    across the real session span -- the real session's own bursty
+    clustering is not needed to prove the identity/retention mechanism,
+    only its real event-count/multiplicity shape (see the burst-churn test
+    below for an explicitly bursty scenario)."""
+    ledger = ledger or CounterfactualLedger(stream_id=_V13_STREAM_ID)
+    plan = _v13_shaped_proposal_plan()
+    now = datetime(2026, 9, 4, 19, 25, 22, tzinfo=UTC)
+    spacing_ms = _V13_SESSION_MS // len(plan)
+
+    events: list[tuple[int, AssembledVisitProposal, str, str]] = []
+    for index, decision_count in enumerate(plan):
+        # index 0 starts at offset 0 deliberately -- this fixture is about
+        # proving the identity/count fix, not about the separate,
+        # pre-existing, unrelated "no activity before the first-ever
+        # decision" leading-gap convention `_gaps_in`'s own `window_start=0`
+        # anchor already applies (matching v13's own real report, which
+        # similarly never treated its own pre-first-encounter window as a
+        # defect for any artifact).
+        proposal = _make_proposal(f"proposal-{index:04d}", f"gen-{index:04d}", start_offset_ms=spacing_ms * index)
+        for attempt in range(decision_count):
+            decided_offset_ms = proposal.start_offset_ms + attempt * _V13_TICK_MS
+            is_final = attempt == decision_count - 1
+            outcome = "blocked_missing_evidence" if is_final else "blocked_continuation_pending"
+            reason = "no_persistable_evidence_bytes" if is_final else "episode_boundary_not_yet_final"
+            events.append((decided_offset_ms, proposal, outcome, reason))
+    events.sort(key=lambda item: item[0])  # strict chronological decision order, matching real tick order
+
+    def _record(decided_offset_ms: int, proposal: AssembledVisitProposal, outcome: str, reason: str) -> None:
+        ledger.record_proposal_outcome(
+            proposal, outcome=outcome, reason=reason, visit_id=None,
+            decided_at=now + timedelta(milliseconds=decided_offset_ms), known_horizon_ms=decided_offset_ms,
+        )
+
+    payloads: list[dict] = []
+    event_index = 0
+    next_checkpoint_ms = checkpoint_interval_ms
+    while event_index < len(events):
+        decided_offset_ms, proposal, outcome, reason = events[event_index]
+        if decided_offset_ms <= next_checkpoint_ms:
+            _record(decided_offset_ms, proposal, outcome, reason)
+            event_index += 1
+            continue
+        # This checkpoint's own fixed-cadence boundary has arrived --
+        # take it now, before advancing further, mirroring the real
+        # collector's own wall-clock timer, indifferent to how much/little
+        # decision activity happened in this particular interval.
+        payloads.append(_window_to_payload(ledger.query(start_offset_ms=0, end_offset_ms=86_400_000)))
+        next_checkpoint_ms += checkpoint_interval_ms
+    for decided_offset_ms, proposal, outcome, reason in events[event_index:]:
+        _record(decided_offset_ms, proposal, outcome, reason)
+    # The final checkpoint, matching v13's own real "the last one landing
+    # exactly at the stop moment" precedent.
+    payloads.append(_window_to_payload(ledger.query(start_offset_ms=0, end_offset_ms=86_400_000)))
+    return ledger, payloads
+
+
+def test_reconcile_ledger_v13_shaped_high_churn_session_is_fully_complete() -> None:
+    """Proposal-Outcome Ledger Retention & Field-Reconciliation
+    Completeness v1's own primary reproducer (governing brief §17): the
+    real `CounterfactualLedger`, real production retention config
+    (`CounterfactualRetentionConfig()` defaults, unmodified), real
+    v13-shaped churn (156 distinct proposals / 350 decision events, using
+    v13's own real per-proposal decision-count histogram), a real
+    300-second periodic-checkpoint cadence -- reconciled through the fixed
+    `reconcile_ledger`. Before this milestone's fix (independently
+    confirmed via `git stash` bisection against the pre-fix `proposal_id`
+    -only identity -- see the governing report's "V13-shaped RED->GREEN"
+    section), this exact fixture reconciled to a misleadingly PARTIAL
+    result matching v13's own real 44.6%-completeness shape; the session
+    itself has genuinely zero data loss (every one of the 350 real
+    decision events is recoverable across the real checkpoint cadence --
+    the 60-minute retention window is never even approached being outrun
+    by the 5-minute cadence), and the fixed tool now says so."""
+    _ledger, payloads = _run_v13_shaped_session()
+
+    report = reconcile_ledger(payloads, stream_id=_V13_STREAM_ID)
+
+    artifact = report.artifacts["proposal_outcomes"]
+    assert artifact.final_recorded_count == 350
+    assert artifact.recovered_unique_count == 350
+    assert artifact.recovered_distinct_entity_count == 156
+    assert artifact.completeness_fraction == 1.0
+    assert artifact.gaps_ms == []
+    assert artifact.status == "COMPLETE"
+    assert report.overall_status == "COMPLETE"
+
+    merged = build_merged_counterfactual_window(payloads, stream_id=_V13_STREAM_ID)
+    assert len(merged["proposal_outcomes"]) == 350
+    assert merged["coverage"]["proposal_outcomes"]["recorded_count"] == 350
+    assert merged["coverage"]["proposal_outcomes"]["retained_count"] == 350
+    assert merged["coverage"]["proposal_outcomes"]["evicted_count"] == 0
+
+
+def test_reconcile_ledger_v13_shaped_session_pre_fix_identity_reproduces_44_percent_shape() -> None:
+    """Direct, permanent proof of the historical defect shape -- calling
+    the *old*, `proposal_id`-only identity function against the identical
+    v13-shaped fixture reproduces the exact misleading-PARTIAL failure
+    class (not the specific 44.6% figure, which depends on v13's own real
+    session timing/offsets this synthetic fixture does not reproduce
+    byte-for-byte -- see the governing report for the real-data
+    confirmation of the literal 44.6%). Guards against ever silently
+    reintroducing `proposal_id`-only identity for this artifact type."""
+    _ledger, payloads = _run_v13_shaped_session()
+
+    def _old_proposal_id_only_identity(record: dict) -> Any:
+        return record.get("proposal_id")
+
+    _MODULE["_IDENTITY_FN"]["proposal_outcomes"] = _old_proposal_id_only_identity
+    try:
+        report = reconcile_ledger(payloads, stream_id=_V13_STREAM_ID)
+    finally:
+        _MODULE["_IDENTITY_FN"]["proposal_outcomes"] = _proposal_outcome_identity
+
+    artifact = report.artifacts["proposal_outcomes"]
+    assert artifact.recovered_unique_count == 156  # collapsed to distinct proposal_ids, the historical bug shape
+    assert artifact.final_recorded_count == 350
+    assert artifact.status == "PARTIAL"  # a fully-intact, zero-loss session misreported as PARTIAL
+    assert artifact.completeness_fraction is not None and artifact.completeness_fraction < 0.5
+
+
+def test_reconcile_ledger_burst_churn_no_accidental_event_collapse() -> None:
+    """Burst-churn proof (governing brief §18): 200 single-shot decisions
+    inside one ~10-second window (a fallback-chain-shaped burst, matching
+    v13's own real 'one chain tried at least 27 ranked positions' shape,
+    scaled up) plus one proposal that churns `blocked_continuation_
+    pending` across three separate, overlapping 300-second checkpoint
+    intervals before finally resolving -- proves no accidental identity
+    -driven collapse under load, using the real ledger and the fixed
+    identity."""
+    ledger = CounterfactualLedger(stream_id="stream-burst")
+    now = datetime(2026, 9, 4, 12, 0, 0, tzinfo=UTC)
+
+    # Build the full event schedule up front, then append in strict
+    # chronological (offset) order -- the real ledger's own bounded
+    # retention (`_BoundedOffsetLedger`) assumes non-decreasing append
+    # offsets, exactly as a real live session always produces (`known_
+    # horizon_ms` only ever advances); appending out of that order is a
+    # fixture bug, never a real production shape.
+    events: list[tuple[int, AssembledVisitProposal, str, str]] = []
+    for i in range(200):
+        offset_ms = 900_000 + i * 50
+        events.append((
+            offset_ms, _make_proposal(f"burst-{i:04d}", f"burst-gen-{i:04d}", start_offset_ms=offset_ms),
+            "blocked_missing_evidence", "no_persistable_evidence_bytes",
+        ))
+    # Starts at offset 0 deliberately -- see `_run_v13_shaped_session`'s own
+    # comment on why this fixture avoids the separate, pre-existing,
+    # unrelated "no activity before the first-ever decision" leading-gap
+    # convention rather than conflating it with what this test is about.
+    churning = _make_proposal("burst-churn", "burst-churn-gen", start_offset_ms=0)
+    churn_offsets = [0, 300_000, 600_000, 890_000]
+    for offset_ms in churn_offsets[:-1]:
+        events.append((offset_ms, churning, "blocked_continuation_pending", "episode_boundary_not_yet_final"))
+    events.append((churn_offsets[-1], churning, "blocked_missing_evidence", "no_persistable_evidence_bytes"))
+    events.sort(key=lambda item: item[0])
+
+    for offset_ms, proposal, outcome, reason in events:
+        ledger.record_proposal_outcome(
+            proposal, outcome=outcome, reason=reason, visit_id=None,
+            decided_at=now + timedelta(milliseconds=offset_ms), known_horizon_ms=offset_ms,
+        )
+
+    # Five overlapping checkpoints, all taken after every event above --
+    # governing brief §18's own "overlapping checkpoints" case: identical,
+    # fully-overlapping payloads must reconcile to the same real total,
+    # never inflate or deflate it.
+    payloads = [_window_to_payload(ledger.query(start_offset_ms=0, end_offset_ms=86_400_000)) for _ in range(5)]
+
+    report = reconcile_ledger(payloads, stream_id="stream-burst")
+    artifact = report.artifacts["proposal_outcomes"]
+
+    assert artifact.final_recorded_count == 204  # 200 single-shot + 4 for the churning proposal
+    assert artifact.recovered_unique_count == 204
+    assert artifact.recovered_distinct_entity_count == 201  # 200 + the one churning proposal
+    assert artifact.status == "COMPLETE"
+    assert artifact.gaps_ms == []
+
+
+def test_reconcile_ledger_deliberately_exceeded_retention_is_honest_partial_never_complete() -> None:
+    """Bounded-eviction proof (governing brief §19): deliberately
+    configure a retention window shorter than the checkpoint interval (a
+    genuinely mis-configured/adversarial pairing -- the opposite of this
+    milestone's own locked-safe default, where the interval is a small
+    fraction of the retention window) and confirm the fixed reconciler
+    still correctly reports PARTIAL with a real, non-empty gap and an
+    accurate missing count -- proving the identity fix does not
+    accidentally mask a genuine retention/cadence shortfall. Memory/
+    storage stays bounded throughout (the real `_BoundedOffsetLedger`,
+    unmodified); only the *test's own* deliberately adversarial config/
+    cadence pairing is new."""
+    tiny_retention = CounterfactualRetentionConfig(max_age_ms=100_000)  # 100s -- far shorter than the 300s interval below
+    ledger = CounterfactualLedger(stream_id="stream-exceeded", config=tiny_retention)
+    now = datetime(2026, 9, 4, 12, 0, 0, tzinfo=UTC)
+    checkpoint_interval_ms = 300_000  # far coarser than the 100s retention window above
+    spacing_ms = 250_000
+    total_proposals = 20
+
+    payloads: list[dict] = []
+    next_checkpoint_ms = checkpoint_interval_ms
+    for index in range(total_proposals):
+        offset_ms = index * spacing_ms
+        proposal = _make_proposal(f"exceeded-{index:04d}", f"exceeded-gen-{index:04d}", start_offset_ms=offset_ms)
+        ledger.record_proposal_outcome(
+            proposal, outcome="blocked_missing_evidence", reason="no_persistable_evidence_bytes",
+            visit_id=None, decided_at=now + timedelta(milliseconds=offset_ms), known_horizon_ms=offset_ms,
+        )
+        while offset_ms >= next_checkpoint_ms:
+            payloads.append(_window_to_payload(ledger.query(start_offset_ms=0, end_offset_ms=86_400_000)))
+            next_checkpoint_ms += checkpoint_interval_ms
+    payloads.append(_window_to_payload(ledger.query(start_offset_ms=0, end_offset_ms=86_400_000)))
+
+    report = reconcile_ledger(payloads, stream_id="stream-exceeded")
+    artifact = report.artifacts["proposal_outcomes"]
+
+    assert artifact.final_recorded_count == total_proposals
+    assert artifact.recovered_unique_count < total_proposals  # genuine, real loss -- never masked
+    assert artifact.status == "PARTIAL"
+    assert artifact.gaps_ms  # a real, non-empty missing window is named, never silently absorbed
+    assert report.overall_status == "PARTIAL"
+
+
+def test_reconcile_ledger_zero_activity_still_complete_alongside_real_v13_shaped_activity() -> None:
+    """The prior accepted zero-activity fix (§20) must survive alongside
+    this milestone's own change: a session where `proposal_outcomes` is
+    genuinely, honestly busy (v13-shaped) but `track_generations` is
+    genuinely empty must still report `track_generations` as COMPLETE,
+    never PARTIAL merely because `proposal_outcomes` is large."""
+    _ledger, payloads = _run_v13_shaped_session()
+
+    report = reconcile_ledger(payloads, stream_id=_V13_STREAM_ID)
+
+    assert report.artifacts["track_generations"].status == "COMPLETE"
+    assert report.artifacts["track_generations"].final_recorded_count == 0
+    assert report.artifacts["raw_detections"].status == "COMPLETE"
+    assert report.artifacts["raw_detections"].final_recorded_count == 0

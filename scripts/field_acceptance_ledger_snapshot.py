@@ -57,6 +57,26 @@ Two subcommands:
   <merged>`, unmodified, is the intended next step, never a second,
   competing accounting implementation.
 
+  Proposal-Outcome Ledger Retention & Field-Reconciliation Completeness
+  v1: `proposal_outcomes`' own "natural identity" is `(proposal_id,
+  decided_at)`, not `proposal_id` alone -- a retryable `blocked_
+  continuation_pending` proposal legitimately accumulates several
+  independent decision events over a session's own life (see `_proposal_
+  outcome_identity`'s own docstring). The prior milestone's documented
+  contract used `proposal_id` alone for this artifact too (correct for
+  `track_generations`, wrong here), which is precisely what made
+  Representative Daylight Gate A Field Acceptance v13's own fully-intact,
+  zero-data-loss session reconcile to a misleading 44.6% "PARTIAL" --
+  independently reconstructed from that session's own archived
+  checkpoints, all 350 of its real decision events (156 distinct
+  proposals) are recoverable with zero gaps. Fixed here; see
+  docs/proposal-outcome-ledger-retention-field-reconciliation
+  -completeness-v1-report.md for the complete accounting. `reconcile`
+  additionally reports each artifact's own `recovered_distinct_entity_
+  count` (for `proposal_outcomes`: distinct `proposal_id`s among the
+  recovered decision events) -- informational only, never part of the
+  completeness ratio itself, which always compares events to events.
+
 Not a full field-session launcher (no tmux orchestration, no Observation
 start/stop, no acceptance-recorder wiring) -- matches
 `field_acceptance_client.py`'s own explicitly bounded scope, which this
@@ -134,6 +154,26 @@ CHECKPOINT_FAILED = "failed"
 REQUIRED_ARTIFACT = "raw_ledger"
 AUXILIARY_ARTIFACTS = ("monitoring_status", "scene_confusor_state")
 LEDGER_RECORD_KEYS = ("raw_detections", "track_generations", "proposal_outcomes")
+
+# Proposal-Outcome Ledger Retention & Field-Reconciliation Completeness
+# v1: the production ledger's own bounded age-retention window
+# (`CounterfactualRetentionConfig.max_age_ms`, currently 60 minutes --
+# `src/mockingbird/observation/counterfactual_lineage.py`) is not exposed
+# by any API today, so this constant documents that known, out-of-band
+# fact purely to let `collect` warn a caller whose own `--interval-
+# seconds` leaves too little safety margin against it -- never to
+# silently trust an arbitrarily long interval. Keep this in sync by hand
+# if that production default ever changes; this tool has no way to read
+# it live. `_RECOMMENDED_INTERVAL_SAFETY_FACTOR` is deliberately
+# conservative, not tight: real-session churn (Representative Daylight
+# Gate A Field Acceptance v13's own 350 decision-events/101.8 minutes)
+# shows a 5-minute interval already leaves roughly 12x margin against the
+# 60-minute retention window -- recommending at least 4x margin (an
+# interval no larger than 1/4 of the known retention window) leaves
+# headroom for a slow/degraded checkpoint or two without ever needing to
+# rely on that full 12x.
+_KNOWN_LEDGER_MAX_AGE_SECONDS = 60 * 60
+_RECOMMENDED_INTERVAL_SAFETY_FACTOR = 4
 
 
 def _now_iso() -> str:
@@ -384,10 +424,64 @@ def _id_identity(field_name: str) -> Callable[[dict], Any]:
     return lambda record: record.get(field_name)
 
 
+def _proposal_outcome_identity(record: dict) -> tuple:
+    """Proposal-Outcome Ledger Retention & Field-Reconciliation
+    Completeness v1: `proposal_outcomes` is an append-only decision
+    -EVENT log, not a per-proposal state table -- `blocked_continuation_
+    pending` is retryable (`candidate_visit_authority.RETRYABLE_
+    OUTCOMES`), so a live session re-attempts the identical `proposal_id`
+    on every ~10-second assembly tick it stays pending (`engine_runtime.
+    _run_assembly_tick`), and each attempt is its own distinct,
+    independently-recorded `record_proposal_outcome` call (see that
+    method's own docstring: "recorded regardless of outcome... This is
+    the exact proposal/geometry/confidence detail a retried blocked_
+    continuation_pending re-evaluation on a later tick previously
+    discarded completely on every attempt but the last"). `proposal_id`
+    alone is therefore the wrong identity for this one artifact type
+    specifically -- unlike `track_generations` (recorded exactly once per
+    generation, at its own `ended` transition: `generation_id` alone
+    really is that record's own natural, never-repeated identity) and
+    unlike `raw_detections` (one independent fact per analyzed frame).
+
+    This exact mismatch -- comparing a `proposal_id`-deduplicated
+    recovered count against the ledger's own raw per-event `recorded_
+    count` -- is precisely what made Representative Daylight Gate A Field
+    Acceptance v13's own session reconcile to a misleading 44.6%
+    "PARTIAL": independently reconstructed from that session's own
+    archived periodic checkpoints, every one of its real 350 decision
+    events (156 distinct proposals, 64 of them re-decided 2-5 times each)
+    is recoverable with zero gaps -- a fully intact, zero-loss session
+    that the old `proposal_id`-only identity nonetheless collapsed to
+    156/350. `decided_at` (a fresh ISO-8601 instant stamped once per
+    `record_proposal_outcome` call -- see `engine_runtime._run_assembly_
+    tick._attempt`) is the natural per-event discriminator alongside
+    `proposal_id`, mirroring `_raw_detection_identity`'s own "the
+    record's own natural fact tuple" convention rather than inventing a
+    synthetic counter. See docs/proposal-outcome-ledger-retention-field
+    -reconciliation-completeness-v1-report.md."""
+    return (record.get("proposal_id"), record.get("decided_at"))
+
+
 _IDENTITY_FN: dict[str, Callable[[dict], Any]] = {
     "raw_detections": _raw_detection_identity,
     "track_generations": _id_identity("generation_id"),
-    "proposal_outcomes": _id_identity("proposal_id"),
+    "proposal_outcomes": _proposal_outcome_identity,
+}
+
+# For an artifact type whose own recovered-record identity is a decision
+# EVENT rather than a stable per-entity fact (currently only
+# `proposal_outcomes` -- see `_proposal_outcome_identity`'s own
+# docstring), the count of distinct underlying entities (here: distinct
+# `proposal_id`s) is a separate, purely informational fact worth
+# reporting -- never conflated into `completeness_fraction`, which must
+# always compare events to events (the same unit `coverage.<type>.
+# recorded_count` itself counts). `None` for an artifact type where
+# identity already *is* the entity -- no separate count would be
+# meaningful.
+_ENTITY_FIELD: dict[str, str | None] = {
+    "raw_detections": None,
+    "track_generations": None,
+    "proposal_outcomes": "proposal_id",
 }
 
 # (start_field, end_field) -- for raw_detections both are the same field
@@ -410,6 +504,16 @@ class ArtifactReconciliation:
     gaps_ms: list[tuple[int, int]]
     status: str  # "COMPLETE" | "PARTIAL" | "UNKNOWN"
     reason: str
+    # Proposal-Outcome Ledger Retention & Field-Reconciliation
+    # Completeness v1 (additive): distinct underlying entities among the
+    # records this reconciliation actually recovered -- see `_ENTITY_
+    # FIELD`. `None` for an artifact type whose own identity already is
+    # the entity (`raw_detections`/`track_generations`); a real, honestly
+    # possibly-smaller-than-`recovered_unique_count` integer for
+    # `proposal_outcomes` (distinct `proposal_id`s among the recovered
+    # decision events) -- informational only, never part of `completeness_
+    # fraction`.
+    recovered_distinct_entity_count: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -486,25 +590,81 @@ def _accumulate_artifact(payloads: list[dict], artifact_type: str) -> _ArtifactA
     the largest `recorded_count` seen across every payload: the
     session's own true total only ever grows, so an earlier/stale
     checkpoint's smaller count is never more authoritative than a later
-    one's."""
+    one's.
+
+    Proposal-Outcome Ledger Retention & Field-Reconciliation Completeness
+    v1 -- proven-coverage gap refinement. A naturally sparse/bursty
+    artifact (`proposal_outcomes` above all: no proposal is ever decided
+    before the first candidate encounter, and none after the last one)
+    always looked "gapped" before its own first and after its own last
+    real record, even under perfect, continuous checkpointing throughout
+    the *whole* session -- exactly what made Representative Daylight
+    Gate A Field Acceptance v13's own real archive still reconcile to a
+    misleading PARTIAL even after the `(proposal_id, decided_at)`
+    identity fix alone (see the governing report's "First irreversible
+    loss"). Two cases give a payload PROVEN interval coverage from
+    session start up to its own fetch position (`coverage.session_last_
+    offset_ms`, populated by every successful payload from the first
+    analyzed frame onward -- see `CounterfactualLedger._observe_result_
+    locked` -- regardless of whether *this* artifact specifically had any
+    activity), independent of its own `oldest`/`newest_retained_offset_
+    ms`:
+
+    1. `recorded_count == 0`: definitively nothing existed for this
+       artifact yet, as of this payload's own fetch -- always trustworthy
+       on its own, regardless of how many other payloads exist.
+    2. `recorded_count == final_recorded_count` (the session-wide max),
+       but *only* when independently corroborated by at least one other,
+       separately-fetched payload also reporting that same final value --
+       otherwise a single, lone late/corrective fetch (the historical
+       v12 shape this tool's own governing contract already protects
+       against) could trivially "confirm" its own count as final with no
+       independent evidence at all, silently masking a real, uncaptured
+       tail the collector simply stopped watching for. Two or more
+       independent payloads agreeing (matching v13's own real shape: its
+       21st periodic checkpoint and its separate final corrective fetch
+       both independently reported the identical final count) is
+       genuine, repeated corroboration that the true session-wide total
+       had already stabilized -- not merely the single artifact of
+       whichever payload happens to be last.
+
+    Every other payload (genuinely partial, mid-range `recorded_count`,
+    or an uncorroborated lone final-count payload) is unaffected --
+    contributes its own real `[oldest, newest]` retained window exactly
+    as before this milestone.
+    """
 
     identity_fn = _IDENTITY_FN[artifact_type]
     unique: dict[Any, dict] = {}
-    retained_intervals: list[tuple[int, int]] = []
     final_recorded_count: int | None = None
+    per_payload: list[tuple[dict, int | None, int | None]] = []
     for payload in payloads:
         if not payload:
             continue
         for record in payload.get(artifact_type) or []:
             unique[identity_fn(record)] = record
         type_coverage = (payload.get("coverage") or {}).get(artifact_type) or {}
+        recorded_count = type_coverage.get("recorded_count")
+        if isinstance(recorded_count, int):
+            final_recorded_count = max(final_recorded_count or 0, recorded_count)
+        session_position = (payload.get("coverage") or {}).get("session_last_offset_ms")
+        per_payload.append((type_coverage, recorded_count, session_position if isinstance(session_position, int) else None))
+
+    final_count_confirmations = sum(1 for _coverage, count, _pos in per_payload if count == final_recorded_count)
+    trailing_rule_corroborated = final_recorded_count is not None and final_count_confirmations >= 2
+
+    retained_intervals: list[tuple[int, int]] = []
+    for type_coverage, recorded_count, session_position in per_payload:
+        proven_from_session_start = session_position is not None and (
+            recorded_count == 0 or (recorded_count == final_recorded_count and trailing_rule_corroborated)
+        )
+        if proven_from_session_start:
+            retained_intervals.append((0, session_position))
+            continue
         oldest = type_coverage.get("oldest_retained_offset_ms")
         newest = type_coverage.get("newest_retained_offset_ms")
         if isinstance(oldest, int) and isinstance(newest, int) and newest >= oldest:
             retained_intervals.append((oldest, newest))
-        recorded_count = type_coverage.get("recorded_count")
-        if isinstance(recorded_count, int):
-            final_recorded_count = max(final_recorded_count or 0, recorded_count)
     return _ArtifactAccumulation(unique, retained_intervals, final_recorded_count)
 
 
@@ -546,6 +706,20 @@ def reconcile_ledger(
             for value in (record.get(start_field), record.get(end_field))
             if isinstance(value, int)
         ]
+        # Proposal-Outcome Ledger Retention & Field-Reconciliation
+        # Completeness v1: purely informational, computed for every
+        # branch below alongside `recovered_unique_count` -- see
+        # `_ENTITY_FIELD`'s own docstring for why this must never enter
+        # `completeness_fraction` itself.
+        entity_field = _ENTITY_FIELD[artifact_type]
+        recovered_distinct_entity_count = (
+            len({record.get(entity_field) for record in accumulation.unique_records.values()})
+            if entity_field is not None else None
+        )
+        entity_suffix = (
+            f" ({recovered_distinct_entity_count} distinct {entity_field}s)"
+            if entity_field is not None else ""
+        )
 
         if final_recorded_count is None:
             status = "UNKNOWN"
@@ -570,13 +744,17 @@ def reconcile_ledger(
             completeness_fraction = recovered_unique_count / final_recorded_count
             if recovered_unique_count >= final_recorded_count and not gaps:
                 status = "COMPLETE"
-                reason = f"100% -- {recovered_unique_count}/{final_recorded_count} unique records recovered, zero gaps."
+                reason = (
+                    f"100% -- {recovered_unique_count}/{final_recorded_count} unique records recovered"
+                    f"{entity_suffix}, zero gaps."
+                )
             else:
                 missing = max(final_recorded_count - recovered_unique_count, 0)
                 status = "PARTIAL"
                 reason = (
-                    f"PARTIAL -- {recovered_unique_count}/{final_recorded_count} unique records recovered "
-                    f"({missing} missing); uncovered offset window(s) (ms): {gaps or 'none identified'}."
+                    f"PARTIAL -- {recovered_unique_count}/{final_recorded_count} unique records recovered"
+                    f"{entity_suffix} ({missing} missing); uncovered offset window(s) (ms): "
+                    f"{gaps or 'none identified'}."
                 )
                 overall_complete = False
 
@@ -588,6 +766,7 @@ def reconcile_ledger(
             earliest_recovered_offset_ms=min(offsets) if offsets else None,
             latest_recovered_offset_ms=max(offsets) if offsets else None,
             gaps_ms=gaps, status=status, reason=reason,
+            recovered_distinct_entity_count=recovered_distinct_entity_count,
         )
 
     return ReconciliationReport(
@@ -706,6 +885,18 @@ def _load_checkpoint_ledger_payloads(snapshot_dir: Path) -> list[dict]:
 def _cmd_collect(args: argparse.Namespace) -> int:
     fac = _fac()
     client = fac["FieldAcceptanceClient"](base_url=args.base_url)  # type: ignore[operator]
+    max_safe_interval_seconds = _KNOWN_LEDGER_MAX_AGE_SECONDS // _RECOMMENDED_INTERVAL_SAFETY_FACTOR
+    if args.interval_seconds > max_safe_interval_seconds:
+        print(
+            f"WARNING: --interval-seconds {args.interval_seconds} leaves less than "
+            f"{_RECOMMENDED_INTERVAL_SAFETY_FACTOR}x safety margin against the production ledger's own "
+            f"known ~{_KNOWN_LEDGER_MAX_AGE_SECONDS // 60}-minute proposal-outcome retention window "
+            "(CounterfactualRetentionConfig.max_age_ms) under high proposal churn -- a real decision "
+            "event could, in principle, be recorded and evicted between two consecutive checkpoints. "
+            f"Consider --interval-seconds {max_safe_interval_seconds} or shorter for a long/high-churn "
+            "session.",
+            file=sys.stderr,
+        )
     checkpoints = run_periodic_collection(
         client, stream_id=args.stream_id, output_dir=args.output_dir,
         interval_seconds=args.interval_seconds, end_offset_ms=args.end_offset_ms,
@@ -743,7 +934,14 @@ def build_argument_parser() -> argparse.ArgumentParser:
     collect_parser = subparsers.add_parser("collect", help="Run the periodic raw-ledger snapshot loop.")
     collect_parser.add_argument("--stream-id", required=True)
     collect_parser.add_argument("--output-dir", type=Path, required=True)
-    collect_parser.add_argument("--interval-seconds", type=int, default=600)
+    collect_parser.add_argument(
+        "--interval-seconds", type=int, default=600,
+        help="Seconds between periodic checkpoints (default: 600/10min). A value leaving less than "
+        f"{_RECOMMENDED_INTERVAL_SAFETY_FACTOR}x safety margin against the production ledger's own known "
+        f"~{_KNOWN_LEDGER_MAX_AGE_SECONDS // 60}-minute proposal-outcome retention window prints a "
+        "non-fatal WARNING, never a hard failure -- this tool cannot verify the live server's own "
+        "retention config.",
+    )
     collect_parser.add_argument(
         "--end-offset-ms", type=int, default=86_400_000,
         help="Explicit, real end bound for every periodic fetch (default: 86400000ms/24h -- "
