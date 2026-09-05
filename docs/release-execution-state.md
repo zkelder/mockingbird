@@ -2436,6 +2436,71 @@ exactly as open as stated.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
+**2026-09-05 update (Sustained / Crowded Ambiguous-Boundary Recall
+Correctness v2, see §6.R):** bounded RELEASE-CRITICAL Gate A correctness
+milestone, directly authorized outside this file, reopening the accepted,
+frozen Ambiguous-Boundary Real-Subject Recall Correctness v1 investigation
+because Representative Daylight Gate A Field Acceptance v14 (immediately
+above) supplied new, materially richer real-field evidence about the
+identical mechanism. See
+[sustained-crowded-ambiguous-boundary-recall-correctness-v2-report.md](sustained-crowded-ambiguous-boundary-recall-correctness-v2-report.md)
+for the complete record. Classification **B** -- zero production code
+changed. Reconstructed all five v14 `blocked_ambiguous_boundary` recall
+misses plus the ~310-second sustained/crowded case directly from the
+preserved real-session ledger (22,260 `raw_detections`, 218 `track_
+generations`, 191 `proposal_outcomes`) and confirmed, with materially
+greater depth than the isolated v12 case allowed, that the dominant
+mechanism is the *same* one v1 already found and declined to fix:
+`classify_boundary`'s own out-of-scope geometry-compatibility tolerance
+forms an ambiguous link, and `engine_runtime._live_chain_for_component`'s
+deliberate, adversarially-tested "any admitted component member vetoes
+the whole component unconditionally" policy then permanently blocks a
+later, sometimes materially stronger, proposal -- reached either directly
+(miss #4: a stronger, longer proposal blocked behind a modest anchor
+admitted ~43s earlier) or transitively through several already
+-permanently-resolved intermediate hops spanning hundreds of seconds
+(misses #10/#13 and the ~310-second case, both tracing to the already
+-admitted simultaneous-subject pair `visit-observation-candidate-010`/
+`-011`). Miss #7 is a different, same-tick transitive-bridging shape with
+no stale-admission complication, structurally identical in kind to the
+original chartered v12 case. **One genuine, new, principled structural
+fact was found and disclosed, not fixed**: the codebase already bounds how
+long a still-growing ambiguous component may defer (`maximum_episode_
+duration_ms`, 20 minutes, "Bounded component decision horizon") but places
+no symmetric bound on how long an already-resolved member's veto reach may
+persist (`engine_runtime._live_chain_for_component` takes no time/horizon
+parameter at all -- confirmed directly against its own signature).
+Reusing that same 20-minute constant for this different purpose would
+**not** have changed any of v14's own five misses' recorded outcomes (the
+real veto fired at only ~12 minutes elapsed, already under that bound),
+and is not proven live-reachable in this project's own field data --
+per this project's own established discipline (fix what is proven live
+-reachable; do not overturn an adversarially-tested safety decision
+without a new fact that resolves the question it protects), **no
+production code was changed**. Three new, additive tests in `tests/
+test_engine_runtime.py` reproduce the three distinct shapes (miss #4,
+miss #7, the ~310s multi-hop chain) directly against the real, unmodified
+`_EngineSession._run_assembly_tick`/`resolve_ambiguous_boundary_
+arbitration`/`_live_chain_for_component` call path -- all pass on first
+execution against the real, unmodified production code, confirming the
+root-cause analysis by direct code execution, not only documentation
+reading. Tier 1 (`test_engine_runtime.py`): 121 passed, 0 failed. Tier 2
+(24 directly-relevant subsystem files): 461 passed, 0 failed -- an
+identical count to v1's own Tier 2 run on the same file list, confirming
+zero regression from this milestone's additive-only tests. Tier 3 not
+run (zero production code changed). `ruff check`: 2 findings, both
+confirmed pre-existing via `git stash` isolation, zero new findings. No
+schema change (`v58`, unchanged). **This closure does not authorize
+another admission change, another field cohort, External Pre-Release
+Acceptance, or Final Release Hardening, and does not select a next
+development milestone.** Authorization remains **NONE -- GLOBAL
+PRODUCT-ROADMAP RECONCILIATION REQUIRED**, unchanged. **The ambiguous
+-boundary sustained/crowded recall limitation remains OPEN / ACCEPTED
+PRODUCT LIMITATION CANDIDATE FOR RELEASE-BUDGET DECISION** -- not silently
+converted into acceptance of v14's own 64.7% recall figure, which would
+require an explicit global budget/release review this milestone does not
+perform.
+
 **2026-09-05 update (Representative Daylight Gate A Field Acceptance v14 --
 Corrected Evidence-Path Re-Proof & Budget Convergence, see §6.R):**
 RELEASE-CRITICAL Gate A field-evidence milestone, directly authorized
@@ -8184,6 +8249,47 @@ remains OPEN** -- Classification A does not mean Gate A passes, and does
 not here: recall (64.7%) is a credible measurement of a real, substantial,
 already-disclosed, deliberately-untouched-this-session limitation, not a
 release-ready number.
+
+**Sustained / Crowded Ambiguous-Boundary Recall Correctness v2 (2026-09-05)
+directly answers whether v14's own richer evidence exposes a safe fix for
+the `blocked_ambiguous_boundary`/geometry-compatibility-tolerance
+limitation immediately above -- does not close Lane R/Gate A.**
+Classification **B** (see §3 for the full record). Reconstructed all five
+v14 ambiguous-boundary misses plus the ~310-second sustained/crowded case
+from the preserved real-session ledger and confirmed, at materially
+greater depth than the isolated v12 case allowed, that the dominant cause
+is the *same* mechanism v1 already investigated and declined to fix
+(`classify_boundary`'s out-of-scope geometry tolerance forming an
+ambiguous link; `engine_runtime._live_chain_for_component`'s deliberate
+"any admitted component member vetoes the whole component unconditionally"
+policy then permanently blocking a later proposal, directly for miss #4
+or transitively across several already-resolved hops for misses #10/#13
+and the ~310s case, all tracing to the already-admitted `visit-
+observation-candidate-010`/`-011` pair). Miss #7 shares the chartered v12
+case's own same-tick transitive-bridging shape, with no stale-admission
+complication. One new, disclosed-not-fixed structural asymmetry was
+found (an already-resolved member's veto reach has no time bound, unlike
+the existing 20-minute-bounded "still growing" deferral) -- proven, by
+direct calculation, not to change any of v14's own five misses' recorded
+outcomes, and not proven live-reachable in this project's own field data,
+so left unfixed per this project's own established discipline. Zero
+production code changed; three new, additive tests in `tests/
+test_engine_runtime.py` reproduce all three distinct shapes directly
+against the real, unmodified dispatch path, all passing. Tier 1 (121
+passed) and Tier 2 (461 passed, identical count to v1's own run) both
+fully green; Tier 3 not run (zero production diff). **The `blocked_
+ambiguous_boundary`/geometry-compatibility-tolerance recall limitation
+remains OPEN / ACCEPTED PRODUCT LIMITATION CANDIDATE FOR RELEASE-BUDGET
+DECISION** -- the prior v1 conclusion (no safe correction without touching
+geometry) is reconfirmed, not contradicted, at real-field scale; this is
+**not** silently converted into acceptance of v14's own 64.7% recall
+figure, which would require an explicit global budget/release review this
+milestone does not perform. Gate A's remaining dependency list (items
+(1), (3), (5)-(11), (13) from v14's own accounting) is unchanged in
+substance. Authorization remains **NONE -- GLOBAL PRODUCT-ROADMAP
+RECONCILIATION REQUIRED**; does not authorize another admission change,
+another field cohort, External Pre-Release Acceptance, or Final Release
+Hardening.
 
 ### S. Actual Final Release Hardening
 
