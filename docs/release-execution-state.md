@@ -2436,6 +2436,96 @@ exactly as open as stated.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
+**2026-09-05 update (Representative Daylight Gate A Field Acceptance v14 --
+Corrected Evidence-Path Re-Proof & Budget Convergence, see §6.R):**
+RELEASE-CRITICAL Gate A field-evidence milestone, directly authorized
+outside this file, following Representative Daylight Gate A Field
+Acceptance v13, Camera Node Evidence-Capture Profile Validity & Failure
+Observability Correctness v1, Proposal-Outcome Ledger Retention & Field
+-Reconciliation Completeness v1, All-Alternate Subject Evidence Recall
+Correctness v1, and Ambiguous-Boundary Real-Subject Recall Correctness v1.
+See
+[representative-daylight-gate-a-field-acceptance-v14-report.md](representative-daylight-gate-a-field-acceptance-v14-report.md)
+for the complete record. Classification **A**. Zero production code
+touched; Accepted HEAD unchanged (still the report commit for Proposal
+-Outcome Ledger Retention & Field-Reconciliation Completeness v1,
+`2301335`, per this file's own established "name the report commit, never
+the reconciliation commit" convention).
+
+**Session**: a fresh disposable native-Windows instance
+(`MockingBirdFieldAcceptanceV14`), full accepted production stack (MDv5a
+ONNX, threshold 0.1, BioCLIP-2, onnx-cuda/CUDA), 102.68 real minutes of
+representative daylight monitoring against the real reference Camera Node
+(a routine pairing-code refresh only -- the Node was already unpaired at
+session start, so no destructive pairing-state removal was needed),
+independent acceptance recorder enabled throughout (5,182 frames, 4.10GB,
+99.73% coverage by this milestone's own reporting method, zero gaps >10s),
+and the accepted `field_acceptance_ledger_snapshot.py` collect/reconcile
+tool run detached for the full session (22 checkpoints).
+**Both of the two defects this milestone was chartered to re-prove are
+confirmed fixed, live, together, for the first time**: evidence-capture
+profile recovery (204/204 evidence-burst requests captured, 0 failures, 1
+correct self-healing reconciliation matching the root-caused mechanism
+exactly) and proposal-outcome ledger completeness (`raw_detections`
+22,260/22,260, `track_generations` 218/218, `proposal_outcomes` 191/191
+decision-events across 90 distinct proposals -- **all three artifacts
+100% `COMPLETE`, zero gaps, the cleanest ledger-completeness result of any
+cohort to date**). **Headline finding #1**: 14 Visits admitted, a direct,
+complete reversal of v13's zero-Visit defect-driven pathology.
+**Headline finding #2, equally important**: rigorous visual cross-check
+against the independent recorder (12 full-session contact sheets plus
+full-resolution inspection of every admitted-Visit window, every
+ledger-derived "silent" ambiguous-boundary/missing-evidence/detector
+-corroboration window, and supplementary spot-checks) established a
+17-encounter-period conservative denominator and **conservative recall of
+only 11/17 = 64.7%** (lower than v12's 87.5%) -- **5 of the 6 confirmed
+misses trace directly to `blocked_ambiguous_boundary`**, several spanning
+tens to hundreds of continuous seconds of visually-unambiguous real bird
+presence (one 11-overlapping-proposal cluster alone spans ~310 continuous
+seconds with confirmed simultaneous 2-bird moments), the 6th to
+`reject_insufficient_detector_corroboration` on a genuinely marginal,
+off-feeder ground-foraging bird. This directly and substantially answers
+the "does the geometry-compatibility-tolerance question recur" candidate
+fact Ambiguous-Boundary Real-Subject Recall Correctness v1 left open:
+**yes, materially, under real sustained/crowded activity** -- not merely
+the one chartered v12 ~37:12 case (which remains **OPEN / NO SAFE
+CORRECTION ESTABLISHED**, untouched, not tuned this session). One
+confirmed false Visit (1/14 = 7.1%, "other background/artifact", no
+species claim, zero Gate B recurrence); fragmentation 0/8 = 0.0%
+(visually confirmed, not merely inferred); duplicates 0/14 = 0%; useful
+evidence 78.6%/92.9% (closely matching v12's own 77.8%/94.4%); one
+`dead_anchor_promoted` occurrence, evaluated on its merits for the first
+time (visually confirmed real, sustained bird presence, correctly
+promoted); one confirmed naturally-occurring simultaneous-subject pair,
+now visually verified (two real birds in one frame), not merely
+ledger-inferred; zero `classifier_same_frame`, zero scene-confusor
+participation (off by default); **true latency n=14, 100% measured, by
+far the richest sample of any cohort** (median 82,920.6ms, p95
+253,408.4ms, max 261,211.4ms), against RTT-bounded calibration of 528
+batches (527 calibrated, 99.8%). Monitoring coverage 99.73%, zero Node
+disconnects, `boot_id` unchanged throughout. One isolated field-tooling
+defect (this session's own uncommitted scratch orchestration -- a stray
+PowerShell CRLF and an untranslated WSL path) was found and fixed within
+~90 seconds, before any real session time was affected; no product
+runtime file touched. Tier 1-3 correctly not run (zero production code
+changed); schema unchanged (`v58`). **Gate A dependency effect**: item
+(14) (evidence-capture + proposal-outcome ledger) now **fully CLOSED,
+both halves**; the intact-full-session-ledger-coverage item (12) **CLOSED**;
+a second independently-varied true-latency cohort item (4) **CLOSED**; the
+second person-confound-free false-Visit-rate cohort item (2) **substantially
+advanced, not fully closed**; the `blocked_ambiguous_boundary`/geometry
+-compatibility-tolerance question moves from "candidate fact for the next
+cohort" to **this cohort's own best-evidenced, most consequential open
+item** -- more urgent than the pre-existing items (1), (3), (5)-(11), (13),
+which remain otherwise unchanged in substance. **This closure does not
+authorize a defect fix, v15, External Pre-Release Acceptance, or Final
+Release Hardening, and does not select a next development milestone.**
+Authorization remains **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION
+REQUIRED**, unchanged. **Classification A does not mean Gate A passes --
+and it does not here: Gate A remains OPEN**, now with its most important
+remaining dependency more precisely characterized than at any prior
+cohort.
+
 **2026-09-05 update (Proposal-Outcome Ledger Retention & Field
 -Reconciliation Completeness v1, see §6.R):** bounded RELEASE-CRITICAL
 Gate A evidence-integrity milestone, directly authorized outside this
@@ -8009,6 +8099,91 @@ survival; complete/intact `proposal_outcome` ledger coverage;
 `classifier_same_frame` fallback; dead-anchor promotion; precision;
 fragmentation; true latency; monitoring; Gate B. No numeric release
 budget is invented or advanced by this milestone.
+
+**Representative Daylight Gate A Field Acceptance v14 -- Corrected
+Evidence-Path Re-Proof & Budget Convergence (2026-09-05) directly answers
+the representative field cohort the two entries immediately above both
+called for -- does not close Lane R/Gate A.** Classification **A** (see
+§3 for the full record). 102.68 real minutes against a fresh disposable
+instance and the real reference Camera Node (a routine pairing-code
+refresh only -- the Node was already unpaired at session start),
+independent acceptance recorder enabled throughout (5,182 frames, 4.10GB,
+99.73% coverage, zero gaps >10s), accepted `field_acceptance_ledger_
+snapshot.py` run detached for the full session (22 checkpoints).
+**Both defect-fixes proved clean, live, together, for the first time**:
+evidence-capture (204/204 bursts captured, 0 failures, 1 correct
+self-heal) and proposal-outcome ledger completeness (`raw_detections`
+22,260/22,260, `track_generations` 218/218, `proposal_outcomes` 191/191
+across 90 distinct proposals -- **all three artifacts 100% `COMPLETE`,
+zero gaps**, the cleanest of any cohort). 14 Visits admitted -- a
+complete reversal of v13's zero-Visit pathology. **Rigorous independent
+-recorder-first visual review** (12 full-session contact sheets; full
+-resolution inspection of all 14 admitted-Visit windows, all 11 "silent"
+`blocked_ambiguous_boundary` windows, all 8 `blocked_missing_evidence`
+windows, all 4 `reject_insufficient_detector_corroboration` windows, plus
+6 supplementary spot-checks) established a 17-encounter-period
+conservative denominator (18 including one low-confidence broader
+candidate) and **conservative recall of only 11/17 = 64.7%** (lower than
+v12's 87.5%) -- **5 of 6 confirmed misses trace directly to
+`blocked_ambiguous_boundary`** (one 11-overlapping-proposal cluster alone
+spans ~310 continuous visually-confirmed seconds, including simultaneous
+2-bird moments, with zero admission), the 6th to `reject_insufficient_
+detector_corroboration` on a real, marginal, off-feeder ground-foraging
+bird. Zero misses trace to `blocked_missing_evidence`, detector/tracker
+failure, or the evidence-quality gate. **This directly and substantially
+answers Ambiguous-Boundary Real-Subject Recall Correctness v1's own
+disclosed "does the geometry-compatibility-tolerance question recur"
+candidate fact: yes, materially, under real sustained/crowded activity**
+-- distinct from, but sharing the identical root mechanism as, the
+still-untouched, still-open v12 ~37:12 case. One confirmed false Visit
+(1/14 = 7.1%, "other background/artifact," no species claim, zero Gate B
+recurrence); both automated-tool "ambiguous" fragmentation units resolved
+by visual review to correctly-represented, not fragmentation (0/8 = 0.0%,
+now visually confirmed rather than merely inferred); duplicates 0/14 =
+0%; useful evidence 78.6%/92.9% (closely matching v12's 77.8%/94.4%); one
+`dead_anchor_promoted` occurrence evaluated on its merits for the first
+time (visually confirmed real, sustained bird presence correctly
+promoted, though only the final 58.6s of a ~316-second real bout); one
+naturally-occurring simultaneous-subject pair, now visually confirmed
+(two real birds in one frame, not merely ledger-inferred); zero
+`classifier_same_frame`; zero scene-confusor participation (off by
+default). **True latency: n=14, 100% measured, by far the richest sample
+of any cohort** (v12 n=2, v13 n=0) -- median 82,920.6ms, p90 235,454.9ms,
+p95 253,408.4ms, max 261,211.4ms -- against RTT-bounded calibration of
+528 batches (527 calibrated, 99.8%, 0 clock jumps), directly corroborating
+the previously-flagged Visit-Continuity-design tail-latency root cause
+(v9) with the richest real evidence to date. Monitoring coverage 99.73%
+(max gap 5.80s, zero gaps >10s), zero Node disconnects, `boot_id`
+unchanged throughout, zero error/restart entries in the Node's own service
+journal across the exact session window. One isolated field-tooling
+defect (this session's own uncommitted scratch orchestration -- a stray
+PowerShell CRLF in an extracted bearer token, and an untranslated WSL path
+passed to a Windows-native process argument) found and fixed within ~90
+seconds, before any real session time was affected -- no product runtime
+file touched. Tier 1-3 correctly not run (zero production code changed);
+schema unchanged (`v58`). `ruff check` not applicable (no Python source
+changed). **Does not authorize a defect fix, v15, External Pre-Release
+Acceptance, or Final Release Hardening, and does not select a next
+development milestone.** Authorization remains **NONE -- GLOBAL
+PRODUCT-ROADMAP RECONCILIATION REQUIRED**, unchanged. **Gate A dependency,
+updated**: item (14) (evidence-capture + proposal-outcome ledger) now
+**fully CLOSED, both halves**; item (12) (intact full-session ledger
+coverage) **CLOSED**; item (4) (a second independently-varied true-latency
+cohort) **CLOSED**; item (2) (second person-confound-free false-Visit-rate
+cohort) **substantially advanced, not fully closed** (two mutually
+-consistent cohorts, 5.6% and 7.1%, still short of a 3-cohort convergence
+bar); the `blocked_ambiguous_boundary`/geometry-compatibility-tolerance
+question moves from "candidate fact for the next cohort" to **this
+cohort's own best-evidenced, most consequential open item** -- ahead of
+the pre-existing items (1), (3), (5)-(11), (13), which remain otherwise
+unchanged in substance (item (3)'s own fragmentation-tool-strength target
+is materially advanced by this session's real, visually-confirmed 0/8
+result, though its precise historical wording targeted a different prior
+gap; item (5)'s 3+-simultaneous-subject bar remains unmet at 2). **Gate A
+remains OPEN** -- Classification A does not mean Gate A passes, and does
+not here: recall (64.7%) is a credible measurement of a real, substantial,
+already-disclosed, deliberately-untouched-this-session limitation, not a
+release-ready number.
 
 ### S. Actual Final Release Hardening
 
