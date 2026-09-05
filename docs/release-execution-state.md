@@ -2436,6 +2436,79 @@ exactly as open as stated.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
+**2026-09-04 update (Camera Node Evidence-Capture Profile Validity &
+Failure Observability Correctness v1, see §6.R):** bounded RELEASE
+-CRITICAL correctness milestone, directly authorized outside this file,
+following Representative Daylight Gate A Field Acceptance v13 (below).
+See
+[camera-node-evidence-capture-profile-validity-failure-observability-correctness-v1-report.md](camera-node-evidence-capture-profile-validity-failure-observability-correctness-v1-report.md)
+for the complete record. Classification **A**. Fixes v13's own disclosed,
+release-critical evidence-capture defect (dependency item (14), below):
+root-caused live, on the real reference Camera Node, to
+`PiCamera2Provider`'s async warm-proof promotion silently retiring a
+`reconfiguration_required` evidence profile id in favor of a differently
+-named `warm_concurrent` one carrying an identical capture contract
+(~4.2 real seconds after pairing/Node start, live-timed) --
+`CameraNodeHttpTransport.request_evidence_burst` never re-validated the
+persisted id against the Node's live advertised set, and collapsed every
+distinct burst failure into one identical, unlogged generic code even
+though the Node already reports the exact cause via `X-MockingBird-Node
+-Error`. The competing timeout hypothesis (the other v13 candidate
+trigger) was independently measured live and found **not supported**
+(real cold `reconfiguration_required` captures: 5.66s-7.87s against a
+~12s Host budget) -- the timeout was not changed. Fix:
+`request_evidence_burst` now classifies failures via the Node's own
+already-available header (a real, bounded taxonomy: stale/no-longer
+-advertised profile, camera-busy, warm-up-timeout, session-failure, plus
+a `failure_class` sub-classification for raw transport exceptions) and,
+only on the specific stale-profile code, performs exactly one
+deterministic live reconciliation (matching on stable semantic facts --
+camera identity, "evidence" purpose, `capture_class == "warm_concurrent"`
+-- failing closed on any ambiguity) plus one bounded retry -- never a
+blind/generic retry loop, structurally unable to duplicate evidence.
+`LiveShadowStatus`'s own burst/reconciliation counters -- confirmed
+computed but never once read by `engine_runtime.py` before this
+milestone -- now reach the existing `observation/status` `advanced`
+payload with zero schema change. Schema `v58`, unchanged. Live-proven on
+the real reference Camera Node (a user-authorized, non-destructive
+pairing reset): the cold->warm promotion reproduced and timed; the pre
+-fix generic failure reproduced against real hardware; post-fix, the
+identical stale-id condition self-heals and captures real bytes both
+through the full unmodified `ObservationEngineSessionManager`/
+`_EngineSession` production pipeline (a real `EvidenceCandidate`
+constructed with real Pi bytes -- the exact code path v13 proved
+unreachable, now proven reachable) and directly at the transport layer
+(three sequential real bursts, all succeeded); a non-recoverable failure
+(wrong credential) stayed conservative and correctly classified. Nine
+new tests, genuine RED proven by `git stash` bisection against the pre
+-fix code, GREEN after the fix (53/53 in the affected file); one real
+regression found and fixed during the same RED->GREEN pass (a test
+fixture gap the new diagnostics read exposed, closed with this file's
+own established "diagnostics must never break observation" discipline).
+Tier 2: 686 passed / 11 xfailed across 24 Camera Node/Observation Engine
+test files, one unrelated, isolation-confirmed pre-existing flake in a
+disjoint transport-spool/worker test file. Tier 3 (Core) correctly not
+run -- narrow, well-isolated diff, already fully covered by Tier 2. No
+admission/species/truth semantics changed (confirmed against the full
+freeze list: MDv5, threshold, NMS, tracker, candidate authority,
+ambiguous-boundary arbitration, dead-anchor promotion, candidate quality
+gate, `classifier_same_frame`, corroboration, scene-confusor, evidence
+quality/ranking, Visit grouping, BioCLIP, Identification Eligibility, and
+Reviewed truth are all untouched). **This closure does not authorize a
+representative field cohort, v14, External Pre-Release Acceptance, or
+Final Release Hardening, and does not select a next development
+milestone.** Authorization remains **NONE -- GLOBAL PRODUCT-ROADMAP
+RECONCILIATION REQUIRED**, unchanged. **Gate A dependency effect:**
+evidence-capture profile validity/failure observability -- item (14)'s
+own defect-fix half -- moves to **CLOSED / READY FOR REPRESENTATIVE
+FIELD RE-PROOF**; recall and evidence-survival remain **REOPENED /
+WAITING FOR FIELD RE-PROOF**, item (14)'s own remaining half -- only a
+representative field cohort with this fix in place can re-measure them.
+The pre-existing 13-item Gate A dependency list (unchanged in substance)
+and the separate proposal-outcome ledger-cadence dependency (v13's own
+disclosed 44.6% completeness, not touched or widened by this milestone)
+remain exactly as v13 left them.
+
 **2026-09-04 update (Representative Daylight Gate A Field Acceptance v13
 -- Intact-Ledger Re-Proof & Budget Convergence, see §6.R):** RELEASE
 -CRITICAL Gate A field-evidence milestone, directly authorized outside
@@ -7651,6 +7724,139 @@ defect identified above, then field-re-prove recall against a
 representative cohort with the fix in place** -- more urgent than items
 (1)-(13): no future field cohort's own recall/evidence-survival
 measurement can be trusted at face value until this is closed.
+
+**Camera Node Evidence-Capture Profile Validity & Failure Observability
+Correctness v1 (2026-09-04) directly answers item (14) immediately
+above's own defect-fix half -- does not close Lane R/Gate A, does not
+authorize the next representative field attempt.** Classification **A**
+(see §3 for the full record). Independent, bounded, non-field-cohort
+correctness milestone: reproduced v13's own defect live, on the real
+reference Camera Node, rather than relying on the historical (now
+unrecoverable -- that Node process has long since cycled) v13 session
+alone. **First irreversible error, confirmed**: `CameraNodeHttpTransport.
+request_evidence_burst` (`src/mockingbird/observation/camera_node_
+live.py`) received the Node's own `409` + `X-MockingBird-Node-Error:
+profile_not_advertised` and discarded the header, returning the same
+generic `evidence_burst_unavailable` code used for every other failure
+class, with zero logging -- confirmed unchanged from v13's own account.
+**Root cause, proven live (classification B, not merely inferred)**:
+`PiCamera2Provider`'s background `_schedule_warm_proof`/`_prove_warm_
+profiles` (`src/mockingbird_node/providers.py`) retires a cold
+`reconfiguration_required` evidence profile id and replaces it with a
+differently-named `warm_concurrent` id (identical width/height/purposes/
+`geometry_group`) -- live-measured at ~4.18 real seconds after a fresh
+pairing on the reference Pi, confirmed to stay retired (never
+re-advertised) for the rest of that Node process's life. **The competing
+timeout hypothesis was independently, separately measured live and
+found not supported**: real cold `reconfiguration_required` captures
+(forcing a full reset -> reinit -> capture -> monitoring-restore cycle)
+took 5.66s-7.87s against the Host's own ~12s budget (2s connect + 10s
+response) -- real headroom in every measured case, on the real
+hardware; the timeout was not changed, and no fix was invented for an
+unproven cause. **Fix, at the causal layer only**: `request_evidence_
+burst` now parses the Node's own `X-MockingBird-Node-Error` header (the
+identical alias table `source_providers.camera_node.CameraNodeClient.
+capture`/`.snapshot` already use for the sibling `/capture` endpoint,
+duplicated locally rather than cross-imported, matching this file's own
+existing precedent) into a real, bounded failure taxonomy, and -- only
+on the Node's own explicit "not advertised" signal -- performs exactly
+one live reconciliation (`_reconcile_evidence_profile`, reusing the
+already-bounded-timeout `CameraNodeClient.cameras()` already used
+elsewhere in this exact runtime) matched on stable semantic facts alone
+(camera identity, "evidence" purpose, preferring `capture_class ==
+"warm_concurrent"`), failing closed on any ambiguity/zero-match/
+unreachable-Node condition, followed by exactly one bounded retry --
+never a loop, never triggered by any other failure class (auth,
+camera-busy, session-failure, raw transport exception all keep their
+own distinct, now-observable codes). `LiveShadowStatus`'s pre-existing
+`burst_requests`/`burst_captures`/`burst_failures`/`stale_bursts`
+counters -- confirmed by direct code search to have been computed all
+along but never once read by `engine_runtime.py`, and therefore
+structurally invisible to `observation/status`'s own `advanced` payload
+in production -- now reach that same already-untyped, schema-free dict
+once per batch, alongside new reconciliation-count/last-failure
+diagnostics. Schema `v58`, unchanged. **Real Camera Node re-proof, twice
+over**: (a) the full, unmodified `ObservationEngineSessionManager`/
+`_EngineSession`/`LiveCameraNodeShadowSession` production pipeline,
+against the real Pi, with only the detector substituted for this
+project's own established deterministic test fixture (MDv5/threshold/
+tracker completely uninvolved, matching this milestone's own freeze
+list) -- configured with the exact stale cold profile id, self-healed
+within 13 real seconds, `evidence_burst_captures=1`/`evidence_burst_
+failures=0`/`evidence_profile_reconciliation_count=1` via the real
+`advanced` status API, a real `EvidenceCandidate` constructed with real
+Pi bytes (the exact code path v13 proved structurally unreachable all
+session, now proven reachable); no Visit was admitted in this bounded
+~24-second smoke, correctly not required, and consistent with every
+`EvidenceCandidate`'s own `temporary=True`/`shadow_only=True` design
+(durable persistence is gated on Visit admission through the
+deliberately untouched downstream precision gates, independently
+reconfirmed unaffected by the full Tier 2 run). (b) three sequential
+real burst requests directly at the transport layer, all succeeded
+(the first self-healing in 0.450s, the next two using the corrected id
+directly in ~0.29-0.31s each) -- proving the fix is sticky for the life
+of the transport, not a one-shot fluke. A non-recoverable failure (a
+deliberately wrong credential against the real Node) stayed
+conservative: correctly classified `authentication_rejected`, zero
+frames, no reconciliation attempted, no crash. Nine new tests (a real
+`create_node_app` over a real socket via the established `RunningApp`
+harness, real pairing, real HTTP), genuine RED proven by `git stash`
+bisection against the pre-fix code (9/9 failed for the right reasons),
+GREEN after the fix (53/53 in the affected file); one real regression
+was found and fixed during the same RED->GREEN pass -- the new
+`engine_runtime.py` diagnostics read initially broke an unrelated
+`test_engine_runtime.py` fixture whose minimal fake provider didn't
+implement `replay_semantic_facts()`/`active_track_count` (a latent gap
+`session.status()` had simply never been called against before this
+milestone), closed with this file's own established "diagnostics must
+never break observation"/`report_metadata` discipline, re-run clean.
+Tier 2: 686 passed / 11 xfailed across the full Camera Node/Observation
+Engine/live-camera-session/multi-camera-concurrent-runtime/unified
+-observation-status subsystem (24 files), zero failures attributable to
+this change; one unrelated, real-thread/real-socket, isolation-confirmed
+pre-existing flake (`test_camera_node_transport_acceptance.py`, a
+disjoint Remote/Intermittent-WAN transport-spool/worker test file
+sharing zero code with this diff, two different background-worker
+retry-timing races across three full-batch runs, clean 8/8 and 4/4 in
+isolation). Tier 3 (Core) correctly not run -- identical bounded-blast
+-radius reasoning to prior comparably-scoped Camera Node milestones; the
+diff touches only the evidence-capture transport, two additive
+dataclass fields, and one additive best-effort diagnostics read, all
+fully covered by Tier 2. `ruff check` clean (one pre-existing, out-of
+-scope unused import elsewhere in the touched test file, confirmed via
+`git diff` to predate this milestone). No admission/species/truth
+semantics changed -- MDv5, threshold, NMS, tracker, candidate authority,
+ambiguous-boundary arbitration, dead-anchor promotion, candidate quality
+gate, `classifier_same_frame`, detector/independent corroboration,
+scene-confusor, evidence quality/ranking, Visit grouping, BioCLIP,
+Identification Eligibility, and Reviewed truth are all confirmed
+untouched. Disclosed, not fixed (out of this milestone's bounded Host
+-side scope): the Node's own earliest "camera missing/not available"
+checks still carry no `X-MockingBird-Node-Error` header at the wire
+level (would require touching and redeploying the separate
+`mockingbird_camera_node` package); `engine_runtime._default_capture_
+profile_alignment`'s own live-profile lookup (feeding `fov_alignment_
+proven`/geometry lineage, deliberately frozen territory) still silently
+degrades to `not_checked` rather than self-healing when the persisted
+evidence profile is stale at session start -- evidence capture itself is
+unaffected, proven live above. This closure does **not** authorize a
+representative field cohort, v14, External Pre-Release Acceptance, or
+Final Release Hardening, and does **not** select a next development
+milestone. Authorization remains **NONE -- GLOBAL PRODUCT-ROADMAP
+RECONCILIATION REQUIRED**, unchanged. **Remaining Gate A dependency,
+updated:** the pre-existing 13-item list (unchanged in substance) plus
+item (14), now split -- its defect-fix half **CLOSED / READY FOR
+REPRESENTATIVE FIELD RE-PROOF**, its recall/evidence-survival
+field-re-proof half **still REOPENED / WAITING FOR FIELD RE-PROOF**, and
+the separate proposal-outcome ledger-cadence dependency (v13's own
+disclosed 44.6% completeness) untouched and unwidened by this milestone.
+The next representative field cohort must still gather: complete/intact
+ledger evidence; independent denominator; recall; false-Visit rate;
+fragmentation; duplicates; useful evidence; evidence survival; true
+RTT-normalized latency; monitoring coverage; `classifier_same_frame`
+field participation; dead-anchor field participation; ambiguous-boundary
+evidence; precision-mechanism participation; Gate B check. No numeric
+release budget is invented or advanced by this milestone.
 
 ### S. Actual Final Release Hardening
 
