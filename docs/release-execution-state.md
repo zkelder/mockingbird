@@ -2436,6 +2436,95 @@ exactly as open as stated.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
+**2026-09-05 update (Proposal-Outcome Ledger Retention & Field
+-Reconciliation Completeness v1, see §6.R):** bounded RELEASE-CRITICAL
+Gate A evidence-integrity milestone, directly authorized outside this
+file, following Camera Node Evidence-Capture Profile Validity & Failure
+Observability Correctness v1 and Representative Daylight Gate A Field
+Acceptance v13 (below). See
+[proposal-outcome-ledger-retention-field-reconciliation-completeness-v1-report.md](proposal-outcome-ledger-retention-field-reconciliation-completeness-v1-report.md)
+for the complete record. Classification **A**. Root-caused v13's own
+disclosed 44.6% `proposal_outcome` completeness (the separate ledger
+-cadence dependency v13 left open, distinct from and narrower than the
+evidence-capture defect the milestone immediately below fixed): **not a
+retention, query, or ledger-writer defect** -- all three independently
+exonerated by direct code trace and by re-analysis of v13's own real,
+locally-preserved archived checkpoint files (gitignored, not committed;
+never retroactively edited) -- **entirely a field-acceptance
+reconciliation defect** in `scripts/field_acceptance_ledger_snapshot.py`.
+`proposal_outcomes` is an append-only decision-*event* log, not a
+per-proposal state table: a retryable `blocked_continuation_pending`
+proposal legitimately accumulates several independent decision events
+across assembly ticks (confirmed: 64 of v13's real 156 distinct
+proposals were re-decided 2-5 times each, together accounting for all
+350 of that session's real decision events). The reconciler deduplicated
+`proposal_outcomes` by `proposal_id` alone -- correct for `track_
+generations`/`raw_detections`, wrong for this one artifact type --
+silently collapsing 194 of 350 real, legitimate decision events down to
+one each; direct re-analysis of v13's own real archive confirms **zero
+data was ever actually lost** (the union of all 21 real periodic
+checkpoints recovers exactly 350/350 real events with zero gaps). A
+second, closely-related reconciliation defect in the same function was
+independently discovered via this milestone's own real-runtime smoke
+proof: the interval/gap check assumed every artifact type has activity
+spanning close to the full session (true for `raw_detections`/`track_
+generations`; never true for `proposal_outcomes`, which is naturally
+silent before the first candidate encounter and after the last one) --
+even after fixing the identity collapse alone, v13's own real archive
+still falsely reconciled `PARTIAL` for this reason alone. **Fix, entirely
+confined to field-acceptance tooling -- zero production runtime files
+touched, zero schema change, zero admission/perception/truth-semantics
+code changed:** (1) new `(proposal_id, decided_at)` reconciliation
+identity, replacing `proposal_id` alone, shared automatically by both
+`reconcile_ledger`'s completeness accounting and `build_merged_
+counterfactual_window`'s merged output (which now correctly preserves
+full per-proposal decision history -- exactly the shape `encounter_
+accounting.cluster_encounters` was already built, and already tested, to
+receive and reduce itself via its own established `_decision_offset`
+-latest-wins rule); (2) a new, purely informational `recovered_distinct_
+entity_count` field, never conflated into the completeness ratio; (3) a
+gap-coverage refinement recognizing a payload's own `recorded_count == 0`
+or (independently corroborated by a second payload) `recorded_count ==
+final_recorded_count` as proof of interval coverage from session start,
+guarding against a lone corrective fetch trivially "confirming" itself
+(the historical Representative Daylight Gate A Field Acceptance v12
+shape); (4) a new, non-fatal checkpoint-cadence safety-margin warning.
+Capacity/churn analysis (v12: 325 events/96.97min; v13: 350/101.8min;
+real peak 37 events/5-minute interval) shows the existing 1,000-record/
+60-minute retention bounds already carry 2.9x-27x margin against every
+real churn rate measured to date -- **no capacity increase was made or
+warranted**. Validated via real-data `git stash` RED->GREEN bisection
+against v13's own archive (proposal_outcomes: 44.57% `PARTIAL` ->
+100%/`COMPLETE`; `raw_detections`/`track_generations` confirmed
+byte-identical before and after -- zero regression, their own residual
+`PARTIAL` status being the same, already-accepted, harmless trivial-tail
+-window characteristic v13's own report already disclosed), a permanent
+synthetic regression fixture built from v13's own real per-proposal
+decision-count histogram, a dedicated burst-churn proof, a deliberate
+bounded-eviction proof (a genuinely adversarial retention/cadence pairing
+still produces an honest `PARTIAL`, never silently masked), and a real,
+full end-to-end runtime smoke proof (a real server, a real Observation
+Engine session with the real, unmodified `CounterfactualLedger` and
+production retention config -- only the detector/Camera-Node transport
+substituted for this project's own established hardware-free test
+fixtures -- real HTTP, the real CLI run as a real subprocess) reconciling
+`COMPLETE` with fully coherent counts. Tier 1: 34/34 (10 new). Tier 2:
+290/290 across every directly-affected field-acceptance/counterfactual
+-ledger/encounter-accounting/engine-runtime consumption path. Tier 3
+(Core) correctly not run -- zero production runtime files touched.
+`ruff check` clean. V13 remains historically **44.6%**, unchanged --
+this milestone fixes future collection/reconciliation only. **This
+closure does not authorize a representative field cohort, v14, External
+Pre-Release Acceptance, or Final Release Hardening, and does not select a
+next development milestone.** Authorization remains **NONE -- GLOBAL
+PRODUCT-ROADMAP RECONCILIATION REQUIRED**, unchanged. **Gate A dependency
+effect:** the separate proposal-outcome ledger-cadence/completeness
+dependency (v13's own disclosed 44.6% gap) moves to **CLOSED / READY FOR
+REPRESENTATIVE FIELD RE-PROOF**; the pre-existing 13-item Gate A
+dependency list (unchanged in substance) and item (14)'s own recall/
+evidence-survival field-re-proof half (**still REOPENED / WAITING FOR
+FIELD RE-PROOF**) remain exactly as the milestone below left them.
+
 **2026-09-04 update (Camera Node Evidence-Capture Profile Validity &
 Failure Observability Correctness v1, see §6.R):** bounded RELEASE
 -CRITICAL correctness milestone, directly authorized outside this file,
@@ -7857,6 +7946,69 @@ RTT-normalized latency; monitoring coverage; `classifier_same_frame`
 field participation; dead-anchor field participation; ambiguous-boundary
 evidence; precision-mechanism participation; Gate B check. No numeric
 release budget is invented or advanced by this milestone.
+
+**Proposal-Outcome Ledger Retention & Field-Reconciliation Completeness
+v1 (2026-09-05) directly answers the separate proposal-outcome ledger
+-cadence dependency v13 left open above -- does not close Lane R/Gate A,
+does not authorize the next representative field attempt.** Classification
+**A** (see §3 for the full record). Root-caused v13's own disclosed 44.6%
+`proposal_outcome` completeness precisely: not a retention/query/writer
+defect (all three independently exonerated), entirely a `scripts/field_
+acceptance_ledger_snapshot.py` reconciliation defect -- `proposal_id`
+-only deduplication silently collapsing a retryable proposal's own several
+real, legitimate `blocked_continuation_pending`/terminal decision events
+(64 of v13's real 156 distinct proposals, together accounting for all 350
+real decision events) down to one each, plus a second, related
+gap-coverage defect misreading `proposal_outcomes`' own naturally sparse
+activity pattern as an interval gap. Direct re-analysis of v13's own real,
+locally-preserved archive (gitignored, never retroactively edited) proves
+**zero data was ever actually lost**: the union of all 21 real periodic
+checkpoints recovers exactly 350/350 real decision events with zero gaps.
+Fixed entirely inside the field-acceptance tool -- zero production
+runtime files touched, zero schema change, zero admission/perception/
+truth-semantics code changed: a `(proposal_id, decided_at)` reconciliation
+identity (shared by `reconcile_ledger` and `build_merged_counterfactual_
+window`), a new informational `recovered_distinct_entity_count` field, a
+gap-coverage refinement (a payload's own proven-zero or, when
+independently corroborated, proven-final `recorded_count` closes interval
+ambiguity from session start -- guarding against the historical v12
+"lone corrective fetch" shape), and a non-fatal cadence-safety-margin
+warning. Capacity/churn analysis (v12 325 events/96.97min, v13
+350/101.8min, real peak 37 events/5-min interval) shows the existing
+1,000-record/60-minute retention bounds already carry 2.9x-27x margin
+against every real churn rate measured to date -- no capacity increase
+made or warranted. Validated via real-data `git stash` RED->GREEN
+bisection against v13's own archive (proposal_outcomes 44.57% `PARTIAL`
+-> 100%/`COMPLETE`; `raw_detections`/`track_generations` confirmed
+byte-identical before/after -- zero regression), a permanent synthetic
+regression fixture built from v13's own real decision-count histogram, a
+burst-churn proof, a deliberate bounded-eviction proof (a genuinely
+adversarial config still produces an honest, unmasked `PARTIAL`), and a
+real, full end-to-end runtime smoke proof (real server, real Observation
+Engine session with the real, unmodified `CounterfactualLedger` and
+production retention config, hardware-free detector/transport fixtures,
+real HTTP, the real CLI as a real subprocess) reconciling `COMPLETE` with
+fully coherent counts. Tier 1: 34/34 (10 new). Tier 2: 290/290. Tier 3
+correctly not run (zero production runtime diff). `ruff check` clean.
+**V13 remains historically 44.6%, unchanged** -- this milestone fixes
+future collection/reconciliation only. Does **not** authorize a
+representative field cohort, v14, External Pre-Release Acceptance, or
+Final Release Hardening, and does **not** select a next development
+milestone. Authorization remains **NONE -- GLOBAL PRODUCT-ROADMAP
+RECONCILIATION REQUIRED**, unchanged. **Remaining Gate A dependency,
+updated:** the pre-existing 13-item list (unchanged in substance) plus
+item (14) (unchanged from the milestone above: its defect-fix half
+**CLOSED / READY FOR REPRESENTATIVE FIELD RE-PROOF**, its recall/
+evidence-survival field-re-proof half **still REOPENED / WAITING FOR
+FIELD RE-PROOF**) remain exactly as before -- and the separate
+proposal-outcome ledger-cadence/completeness dependency this entry
+answers now moves to **CLOSED / READY FOR REPRESENTATIVE FIELD
+RE-PROOF**. The next representative field cohort may now simultaneously
+field-re-prove: evidence-capture profile recovery; recall; evidence
+survival; complete/intact `proposal_outcome` ledger coverage;
+`classifier_same_frame` fallback; dead-anchor promotion; precision;
+fragmentation; true latency; monitoring; Gate B. No numeric release
+budget is invented or advanced by this milestone.
 
 ### S. Actual Final Release Hardening
 
