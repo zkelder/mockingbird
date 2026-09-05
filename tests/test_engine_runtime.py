@@ -5226,3 +5226,274 @@ def test_rtt_recalibration_due_on_one_way_jump(repository: ProductRepository) ->
     session._last_rtt_calibration_reconnect_count = 0
     assert session._rtt_recalibration_due(now=1_001.0, reconnect_count=0, one_way_jump_detected=False) is False
     assert session._rtt_recalibration_due(now=1_001.0, reconnect_count=0, one_way_jump_detected=True) is True
+
+
+# --- Sustained / Crowded Ambiguous-Boundary Recall Correctness v2 -------
+#
+# Investigation-only milestone (Classification B, zero production code
+# changed -- see docs/sustained-crowded-ambiguous-boundary-recall-
+# correctness-v2-report.md). These three tests reproduce, at the real
+# `_EngineSession._run_assembly_tick` call site with the real, unmodified
+# `resolve_ambiguous_boundary_arbitration`/`_live_chain_for_component`, the
+# exact shapes Representative Daylight Gate A Field Acceptance v14's own
+# five confirmed `blocked_ambiguous_boundary` misses reduce to. None of
+# them is a new regression: each confirms that the richer v14 evidence
+# recurs through the *same*, already-accepted, already-adversarially-tested
+# mechanism the immediately-prior Ambiguous-Boundary Real-Subject Recall
+# Correctness v1 milestone investigated for the v12 ~37:12 case (see
+# `test_v12_case_a_shaped_loss_is_unaffected_by_this_fix`, above, and
+# `test_a_stronger_later_arrival_never_bypasses_an_already_admitted_
+# component_member`) -- not a newly-discovered, safely-fixable defect.
+# Proven directly, by real code execution, rather than merely asserted
+# from reading source.
+
+
+def test_v14_miss4_shaped_stronger_later_arrival_still_blocks_behind_admitted_anchor(
+    repository: ProductRepository,
+) -> None:
+    """Direct reproduction of v14's own recall miss #4 (offset
+    1467.0-1512.3s, see the report's "V14 five-miss case set"): a short,
+    modest anchor is admitted first (matching the real, ledger-confirmed
+    `visit-observation-candidate-005`, confidence 0.787, single generation,
+    5.19s span); ~42.9 real seconds later -- the real, ledger-confirmed
+    gap, comfortably inside `ambiguous_gap_ms` (45,000ms) -- a materially
+    *stronger*, longer, better-evidenced proposal forms (matching the real
+    `visit-episode:44fe74e3290a71e9`, confidence 0.813, 2 generations,
+    ~45.3s span) and becomes ambiguous-adjacent to the already-admitted
+    anchor.
+
+    This must, and does, still block: `_live_chain_for_component` finds
+    the admitted anchor anywhere in the freshly-recomputed component's own
+    ranked order and vetoes the *entire* component unconditionally --
+    exactly the same policy `test_a_stronger_later_arrival_never_bypasses_
+    an_already_admitted_component_member` (above) already adversarially
+    tests with synthetic numbers. This test uses the real v14 numbers to
+    confirm the identical policy is what actually produced this real
+    session's own recall loss -- not a dispatch bug, and not something
+    this investigation fixes (see the report's "Root-cause classification"
+    for why no safe, non-arbitrary correction was found)."""
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    gen_anchor, gen_stronger_later = "gen-v14-miss4-anchor", "gen-v14-miss4-stronger-later"
+    anchor_updates = list(_tick_track_updates_with_confidence(gen_anchor, 0, 5_190, confidence=0.787))
+    evidence_anchor, bytes_anchor = _tick_evidence(gen_anchor, "high_resolution_burst", "hash-v14-miss4-anchor")
+    burst_bytes_cache = {evidence_anchor.media_asset_id: bytes_anchor}
+    attempted_proposal_ids: set[str] = set()
+    admitted_proposal_ids: set[str] = set()
+
+    # Tick 1: the modest anchor alone, resolves and is admitted on its own
+    # merits (no rival exists yet).
+    session._run_assembly_tick(
+        all_track_updates=anchor_updates, all_evidence_candidates=[evidence_anchor],
+        attempted_proposal_ids=attempted_proposal_ids, admitted_proposal_ids=admitted_proposal_ids,
+        burst_bytes_cache=burst_bytes_cache, adapter=adapter, known_horizon_ms=5_190 + 45_000 + 1,
+    )
+    assert session._counts.candidates_created == 1
+
+    # Tick 2 (a separate, later tick): the real, much stronger, longer
+    # proposal -- 42.91s after the anchor's own end, its own real gap --
+    # forms a fresh ambiguous link to the already-admitted anchor.
+    stronger_updates = list(
+        _tick_track_updates_with_confidence(gen_stronger_later, 48_100, 93_390, confidence=0.813)
+    )
+    evidence_stronger, bytes_stronger = _tick_evidence(
+        gen_stronger_later, "high_resolution_burst", "hash-v14-miss4-stronger-later",
+    )
+    burst_bytes_cache[evidence_stronger.media_asset_id] = bytes_stronger
+    all_updates = anchor_updates + stronger_updates
+    session._run_assembly_tick(
+        all_track_updates=all_updates, all_evidence_candidates=[evidence_anchor, evidence_stronger],
+        attempted_proposal_ids=attempted_proposal_ids, admitted_proposal_ids=admitted_proposal_ids,
+        burst_bytes_cache=burst_bytes_cache, adapter=adapter, known_horizon_ms=93_390 + 45_000 + 1,
+    )
+    assert session._counts.candidates_created == 1, (
+        "matches the real v14 session: the materially stronger, longer, better-evidenced "
+        "later proposal still receives zero admission, exactly as visit-observation-"
+        "candidate-005's own component actually decided it in the field"
+    )
+    assert session._suppressed.get("blocked_ambiguous_boundary") == 1
+
+
+def test_v14_miss7_shaped_same_tick_transitive_bridge_admits_only_one_of_two_plausible_encounters(
+    repository: ProductRepository,
+) -> None:
+    """Direct reproduction of v14's own recall miss #7 (offset
+    3378.9-3453.1s): a sequential chain of tracklets, each pairwise gap
+    inside `ambiguous_gap_ms` (matching the real 4c7978cf.../2e4d766a.../
+    b63a3d8d... chain), all resolve in one tick together with the real
+    session's own next, admitted encounter (matching real
+    `visit-observation-candidate-008`) -- exactly the "transitively bridges
+    temporally-separated activity" shape (failure class D in the report),
+    structurally identical to the prior v1 investigation's own v12
+    ~37:12 case (V016/V017/06c209ae...), not the "already-admitted anchor"
+    shape the previous test covers. Arbitration correctly, and by original
+    design, admits exactly one Visit for the whole connected component --
+    the strongest, most recent member -- leaving the earlier part of the
+    chain (an equally plausible separate real encounter, per this
+    project's own visual field review) with zero representation. This is
+    not a new defect: no lineage/geometry/confidence fact in this
+    component distinguishes "one continuous encounter with a mid-visit
+    lull" from "two separate encounters," matching the prior investigation's
+    own Classification I/J conclusion for the identically-shaped chartered
+    case."""
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    gen_a, gen_b, gen_c = "gen-v14-miss7-a", "gen-v14-miss7-b", "gen-v14-miss7-c"
+    # Each pairwise gap is comfortably inside ambiguous_gap_ms (45,000ms)
+    # and outside merge_gap_ms (15,000ms) -- the real chain's own shape --
+    # so classify_boundary links every pair ambiguously, never merges them,
+    # and the three are never compared directly (only pairwise-adjacent),
+    # exactly the transitive-closure mechanism "Chain scope" documents.
+    updates_a = list(_tick_track_updates_with_confidence(gen_a, 0, 13_045, confidence=0.4))
+    updates_b = list(_tick_track_updates_with_confidence(gen_b, 33_045, 63_184, confidence=0.5))
+    updates_c = list(_tick_track_updates_with_confidence(gen_c, 83_184, 113_452, confidence=0.81))
+    all_updates = updates_a + updates_b + updates_c
+
+    evidence_a, bytes_a = _tick_evidence(gen_a, "high_resolution_burst", "hash-v14-miss7-a")
+    evidence_b, bytes_b = _tick_evidence(gen_b, "high_resolution_burst", "hash-v14-miss7-b")
+    evidence_c, bytes_c = _tick_evidence(gen_c, "high_resolution_burst", "hash-v14-miss7-c")
+    burst_bytes_cache = {
+        evidence_a.media_asset_id: bytes_a, evidence_b.media_asset_id: bytes_b, evidence_c.media_asset_id: bytes_c,
+    }
+    attempted_proposal_ids: set[str] = set()
+    admitted_proposal_ids: set[str] = set()
+
+    # One tick, everything already finalized and past its own continuation
+    # window -- matching the real session's own proven-same-tick decision
+    # (187ms apart, two orders of magnitude below the 10-second tick floor).
+    session._run_assembly_tick(
+        all_track_updates=all_updates, all_evidence_candidates=[evidence_a, evidence_b, evidence_c],
+        attempted_proposal_ids=attempted_proposal_ids, admitted_proposal_ids=admitted_proposal_ids,
+        burst_bytes_cache=burst_bytes_cache, adapter=adapter, known_horizon_ms=113_452 + 45_000 + 1,
+    )
+    assert session._counts.candidates_created == 1, (
+        "exactly one Visit for the whole connected component, matching the real "
+        "visit-observation-candidate-008 admission"
+    )
+    assert session._suppressed.get("blocked_ambiguous_boundary") == 2, (
+        "the earlier part of the chain (gen_a, gen_b) -- an equally plausible separate "
+        "real encounter -- receives zero admission, matching v14's own encounter-period #7"
+    )
+
+
+def test_v14_case310_shaped_multihop_transitive_chain_suppresses_a_strong_later_live_tail(
+    repository: ProductRepository,
+) -> None:
+    """Direct reproduction of the mechanism behind v14's own ~310-second
+    sustained/crowded case (encounter-period #14's own missed portion,
+    offset 4948.7-5259.0s) and recall misses #10/#13: an early, tiny,
+    already-admitted anchor (matching the real simultaneous-subject pair
+    `visit-observation-candidate-010`/`-011`) remains permanently,
+    transitively wired into whatever connected ambiguous component the
+    live stream's own later activity happens to grow into -- via one or
+    more intermediate proposals that are *themselves* already permanently
+    (non-admitted) resolved on an earlier tick, never re-examined, yet
+    never removed from the graph either, since `resolve_ambiguous_
+    boundary_arbitration` recomputes the component fresh every tick from
+    the assembler's *entire* tracklet history (see "Ambiguous-Boundary
+    Real-Subject Recall Correctness v1" in docs/candidate-visit-authority-
+    contract.md).
+
+    A materially stronger, much longer, later live tail -- transitively
+    linked to the admitted anchor only through an intermediate bridge that
+    itself never won anything -- still receives zero admission, no matter
+    how far removed in time or how much independently-decided history
+    separates it from the original anchor: `_live_chain_for_component`
+    (unlike `resolve_ambiguous_boundary_arbitration`'s own `known_horizon_
+    ms`/`maximum_component_pending_ms`-bounded "still growing" deferral)
+    takes no time/horizon parameter of any kind -- a structural fact
+    directly visible in its own signature, not merely an untested
+    assumption. This is the same policy the two tests above already
+    confirm, demonstrated at the real, multi-hop, transitively-bridged
+    scale v14's own sustained/crowded activity actually produced -- not a
+    new, additional mechanism, and not fixed here (see the report's
+    "Component evolution" / "Root-cause classification" for why no safe,
+    non-arbitrary distinguishing fact was found to bound this reach)."""
+    repository.set_observation_authority_mode(ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW)
+    session = _tick_session(repository)
+    adapter = _tick_adapter(repository)
+
+    gen_anchor, gen_bridge, gen_strong_tail = (
+        "gen-v14-case310-anchor", "gen-v14-case310-bridge", "gen-v14-case310-strong-tail",
+    )
+    anchor_updates = list(_tick_track_updates_with_confidence(gen_anchor, 0, 1_700, confidence=0.6))
+    evidence_anchor, bytes_anchor = _tick_evidence(gen_anchor, "high_resolution_burst", "hash-v14-case310-anchor")
+    burst_bytes_cache = {evidence_anchor.media_asset_id: bytes_anchor}
+    attempted_proposal_ids: set[str] = set()
+    admitted_proposal_ids: set[str] = set()
+
+    # Tick 1: the tiny anchor alone -- matches the real ~1.7s
+    # simultaneous-subject Visit's own brief constituent generation --
+    # admitted on its own merits.
+    session._run_assembly_tick(
+        all_track_updates=anchor_updates, all_evidence_candidates=[evidence_anchor],
+        attempted_proposal_ids=attempted_proposal_ids, admitted_proposal_ids=admitted_proposal_ids,
+        burst_bytes_cache=burst_bytes_cache, adapter=adapter, known_horizon_ms=1_700 + 45_000 + 1,
+    )
+    assert session._counts.candidates_created == 1
+
+    # Tick 2 (separate, later tick): an intermediate bridge proposal --
+    # weaker than the anchor, so it loses on its own merits regardless of
+    # admission state, matching the real chain's own many weak
+    # intermediate hops. Gap from the anchor's own end: 20,000ms (>
+    # merge_gap_ms, <= ambiguous_gap_ms) -- ambiguous, never a merge.
+    bridge_updates = list(_tick_track_updates_with_confidence(gen_bridge, 21_700, 34_700, confidence=0.4))
+    evidence_bridge, bytes_bridge = _tick_evidence(gen_bridge, "high_resolution_burst", "hash-v14-case310-bridge")
+    burst_bytes_cache[evidence_bridge.media_asset_id] = bytes_bridge
+    updates_so_far = anchor_updates + bridge_updates
+    session._run_assembly_tick(
+        all_track_updates=updates_so_far, all_evidence_candidates=[evidence_anchor, evidence_bridge],
+        attempted_proposal_ids=attempted_proposal_ids, admitted_proposal_ids=admitted_proposal_ids,
+        burst_bytes_cache=burst_bytes_cache, adapter=adapter, known_horizon_ms=34_700 + 45_000 + 1,
+    )
+    assert session._counts.candidates_created == 1, "the bridge itself never wins -- it is not the point of this test"
+    assert session._suppressed.get("blocked_ambiguous_boundary") == 1
+
+    # Tick 3 (a third, separate, later tick): a materially stronger,
+    # 30-second live tail arrives -- 20,300ms after the bridge's own end,
+    # again ambiguous, never a merge. It is transitively linked to the
+    # already-admitted anchor *only* through the already-dead bridge --
+    # the two are never compared to each other directly, exactly like the
+    # real 4443s-to-5130s+ chain this test's own shape is drawn from.
+    strong_tail_updates = list(
+        _tick_track_updates_with_confidence(gen_strong_tail, 55_000, 85_000, confidence=0.9)
+    )
+    evidence_strong, bytes_strong = _tick_evidence(
+        gen_strong_tail, "high_resolution_burst", "hash-v14-case310-strong-tail",
+    )
+    burst_bytes_cache[evidence_strong.media_asset_id] = bytes_strong
+    all_updates = anchor_updates + bridge_updates + strong_tail_updates
+    session._run_assembly_tick(
+        all_track_updates=all_updates,
+        all_evidence_candidates=[evidence_anchor, evidence_bridge, evidence_strong],
+        attempted_proposal_ids=attempted_proposal_ids, admitted_proposal_ids=admitted_proposal_ids,
+        burst_bytes_cache=burst_bytes_cache, adapter=adapter, known_horizon_ms=85_000 + 45_000 + 1,
+    )
+    assert session._counts.candidates_created == 1, (
+        "the strong, substantial, 30-second live tail -- confidence 0.9, unambiguously the "
+        "best-evidenced proposal in the entire component -- still receives zero admission, "
+        "vetoed transitively by the tiny anchor admitted 83.3 real seconds (and one dead "
+        "intermediate hop) earlier, matching the real v14 ~310-second case's own shape"
+    )
+    assert session._suppressed.get("blocked_ambiguous_boundary") == 2
+
+    import inspect
+
+    from mockingbird.observation.engine_runtime import _live_chain_for_component
+
+    # Structural confirmation, not merely empirical: the veto check above
+    # has no time/horizon parameter at all -- unlike `resolve_ambiguous_
+    # boundary_arbitration`'s own bounded "still growing" deferral
+    # (`known_horizon_ms`/`maximum_component_pending_ms`), there is no
+    # symmetric bound on how long an already-admitted member's veto reach
+    # may persist. Disclosed in the report as a genuine structural
+    # asymmetry, not proven live-reachable within the real v14 session
+    # (whose own longest anchor-to-veto gap was ~12 minutes, already under
+    # `_MAXIMUM_COMPONENT_PENDING_MS`), and therefore not fixed here.
+    assert set(inspect.signature(_live_chain_for_component).parameters) == {
+        "winner_id", "arbitration", "new_proposals_by_id", "admitted_proposal_ids",
+    }
