@@ -461,13 +461,12 @@ why detection sophistication is not the goal by itself.
 
 ## License
 
-MockingBird's own source-code license has not yet been finalized -- this is
-an explicit, open owner decision, not an oversight (see
-`docs/release-execution-state.md`, Lane P, for its current status). No
-`LICENSE` file exists in this repository yet, and none should be assumed.
+MockingBird's own source code is licensed under the [MIT License](LICENSE).
 
-Third-party components MockingBird redistributes or depends on -- including
-the bundled MDv5a and BioCLIP-2 model weights, and the optional BirdNET
-bird-sound identification feature MockingBird deliberately does **not**
-bundle -- are documented in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+This covers MockingBird's own code only. Third-party components MockingBird
+redistributes or depends on -- including the bundled MDv5a and BioCLIP-2
+model weights, and the optional BirdNET bird-sound identification feature
+MockingBird deliberately does **not** bundle -- are licensed under their own
+separate terms, not necessarily MIT, and remain governed by those terms.
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the complete
+account of what is bundled, what is not, and under what license.

@@ -182,6 +182,17 @@ PACKAGED_WEB_DIST = ROOT / "src" / "mockingbird" / "web_dist"
 # `package_third_party_notices`, below -- so an end user never has to find
 # the source repository to answer "what license is this, and what's in it?"
 THIRD_PARTY_NOTICES_SOURCE = ROOT / "THIRD_PARTY_NOTICES.md"
+# MIT Source License Adoption & Lane P Mechanical Closure v1: MockingBird's
+# own source-code license, mirroring THIRD_PARTY_NOTICES_SOURCE's own
+# reasoning exactly -- see `package_license`, below. `pyproject.toml`'s
+# `license-files = ["LICENSE"]` already carries this file into MockingBird's
+# own built wheel (`<dist-info>/licenses/LICENSE`, verified empirically this
+# milestone), but that lands buried inside `python/site-packages/` in the
+# assembled bundle -- not somewhere an end user unpacking the release folder
+# would ever look. This copies the same file to the bundle root, visible
+# alongside `THIRD_PARTY_NOTICES.md`, the same way that file made third-party
+# licensing visible without requiring a source-repository visit.
+LICENSE_SOURCE = ROOT / "LICENSE"
 DEFAULT_BUILD_CACHE_DIR = ROOT / ".build-cache"
 # The verified, already-downloaded win_amd64/cp312 GPU-stack wheel cache (see
 # docs/local-product-packaging-design.md and the accepted-Observation-model-
@@ -1435,6 +1446,30 @@ def package_third_party_notices(
     return destination
 
 
+def package_license(*, bundle_dir: Path, license_source: Path = LICENSE_SOURCE) -> Path:
+    """Copy the repository's own `LICENSE` into the bundle root, alongside
+    `THIRD_PARTY_NOTICES.md` -- see MIT Source License Adoption & Lane P
+    Mechanical Closure v1.
+
+    Never optional and never best-effort, the identical contract
+    `package_third_party_notices` already established: every official build
+    ships one, and this raises `LocalProductBuildError` -- failing the whole
+    release build, never a warning -- if the source file cannot be found,
+    since a release built without it would silently ship with no
+    visible source-code license at all.
+    """
+
+    if license_source.is_symlink() or not license_source.is_file():
+        raise LocalProductBuildError(
+            f"LICENSE not found at {license_source} -- an official release build must not "
+            "ship without it. If this file was intentionally moved or renamed, update "
+            "LICENSE_SOURCE to match."
+        )
+    destination = bundle_dir / "LICENSE"
+    shutil.copy2(license_source, destination)
+    return destination
+
+
 def _iter_installed_dll_entries(site_packages: Path) -> list[tuple[Path, int | None]]:
     """Every `.dll` file actually declared by an installed package's own
     `RECORD`, resolved to an absolute path under `site_packages`, paired with
@@ -1885,6 +1920,7 @@ def assemble_windows_bundle(
 
     (bundle_dir / "Start MockingBird.vbs").write_text(LAUNCHER_VBS, encoding="utf-8")
     (bundle_dir / "README-FIRST.txt").write_text(README_FIRST, encoding="utf-8")
+    package_license(bundle_dir=bundle_dir)
     package_third_party_notices(bundle_dir=bundle_dir)
 
     # Release Licensing, Distribution & Third-Party Legal Closure v1: the

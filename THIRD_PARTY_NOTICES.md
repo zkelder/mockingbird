@@ -5,9 +5,9 @@ externally-authored software and machine-learning models distributed
 alongside official MockingBird packages -- and, just as importantly, the
 ones deliberately **not** distributed alongside them.
 
-MockingBird's own source-code license is a separate, still-open question --
-see `docs/release-execution-state.md` (Lane P) for its current status.
-Nothing in this file changes or implies that decision.
+MockingBird's own source code is licensed under MIT -- see `LICENSE` at the
+repository root. Nothing in this file changes or implies that; it exists to
+document everything *external* to MockingBird's own code.
 
 ## Machine-learning models bundled with the official Windows package
 
@@ -181,8 +181,8 @@ MockingBird's official packaging never bundles bird-sound identification
 
 ## Where to look for anything not covered here
 
-- MockingBird's own source-code license: pending an explicit owner
-  decision -- see `docs/release-execution-state.md` (Lane P).
+- MockingBird's own source-code license: MIT -- see `LICENSE` at the
+  repository root.
 - Every individual Python dependency's own full license text: inside its
   own `<package>-<version>.dist-info/` folder, colocated with its code, in
   any installed copy of MockingBird.

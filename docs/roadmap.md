@@ -2608,14 +2608,21 @@ hardware/field validation tiers, test-runtime discipline, and
 property/state-machine test style already exist and are current -- see
 [test-suite-validation-tiers-contract.md](test-suite-validation-tiers-contract.md).
 
-**Current disposition:** CONTRIBUTING.md exists and is
-current; **no `LICENSE` or `SECURITY.md` file exists in the repository
-today** -- a real, open Gate F item, not yet started, distinct from and
-smaller than Phase 4's packaging work. Public benchmark/training governance
-(frozen holdout, provenance, contamination) exists for internal use (see
+**Current disposition:** CONTRIBUTING.md, SECURITY.md, and
+THIRD_PARTY_NOTICES.md exist and are current. **Corrected 2026-09-06 by MIT
+Source License Adoption & Lane P Mechanical Closure v1** (see
+[release-execution-state.md](release-execution-state.md), Lane P): this
+section previously read "no `LICENSE` or `SECURITY.md` file exists in the
+repository today," which was already half-stale (`SECURITY.md` was added by
+Release Engineering Foundation v1, 2026-08-25) and is now fully stale -- the
+owner selected MIT for MockingBird's own source-code license and a real
+`LICENSE` file now exists at the repository root, with matching
+`pyproject.toml`/`web/package.json` metadata and Windows-bundle inclusion.
+This Gate F item is closed. Public benchmark/training governance (frozen
+holdout, provenance, contamination) exists for internal use (see
 [wildlife-detector-training-contract.md](wildlife-detector-training-contract.md));
 the legal-releasability/license/consent layer needed before any public
-release did not exist before this pass -- see
+release did not exist before that pass -- see
 [public-benchmark-governance.md](public-benchmark-governance.md).
 
 ### Gate G -- External Pre-Release Acceptance

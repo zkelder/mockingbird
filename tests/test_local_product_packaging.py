@@ -75,6 +75,7 @@ verify_no_nc_licensed_acoustic_model_redistribution = _MODULE[
     "verify_no_nc_licensed_acoustic_model_redistribution"
 ]
 package_third_party_notices = _MODULE["package_third_party_notices"]
+package_license = _MODULE["package_license"]
 verify_no_bundled_ffmpeg_binary = _MODULE["verify_no_bundled_ffmpeg_binary"]
 write_build_identity = _MODULE["write_build_identity"]
 write_deterministic_zip = _MODULE["write_deterministic_zip"]
@@ -485,6 +486,14 @@ def test_assemble_windows_bundle_produces_a_python_and_pip_free_user_experience(
     notices_text = (bundle_dir / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
     assert "BirdNET" in notices_text
     assert "ffmpeg" in notices_text.lower()
+    # MIT Source License Adoption & Lane P Mechanical Closure v1: every
+    # official bundle also ships the repository's own root LICENSE file,
+    # visible alongside THIRD_PARTY_NOTICES.md -- not only buried inside
+    # python/site-packages/mockingbird-*.dist-info/licenses/ where an end
+    # user unpacking the release folder would never look.
+    license_text = (bundle_dir / "LICENSE").read_text(encoding="utf-8")
+    assert license_text == (ROOT / "LICENSE").read_text(encoding="utf-8")
+    assert "MIT License" in license_text
 
     # The interpreter is pre-wired to see the pre-installed packages -- no
     # `site` module, no pip, no venv activation step for the user.
@@ -1463,6 +1472,30 @@ def test_package_third_party_notices_fails_the_build_when_source_is_missing(tmp_
         package_third_party_notices(bundle_dir=bundle_dir, notices_source=missing_source)
 
 
+def test_package_license_copies_the_real_repository_file(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "bundle"
+    bundle_dir.mkdir()
+
+    destination = package_license(bundle_dir=bundle_dir)
+
+    assert destination == bundle_dir / "LICENSE"
+    real_source = (ROOT / "LICENSE").read_text(encoding="utf-8")
+    assert destination.read_text(encoding="utf-8") == real_source
+
+
+def test_package_license_fails_the_build_when_source_is_missing(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "bundle"
+    bundle_dir.mkdir()
+    missing_source = tmp_path / "does-not-exist" / "LICENSE"
+
+    # Never optional, never best-effort -- the identical contract
+    # `package_third_party_notices` already established: a release built
+    # without this file must fail outright rather than ship silently with no
+    # visible source-code license at all.
+    with pytest.raises(LocalProductBuildError, match="LICENSE"):
+        package_license(bundle_dir=bundle_dir, license_source=missing_source)
+
+
 def test_verify_no_bundled_ffmpeg_binary_passes_when_absent(tmp_path: Path) -> None:
     bundle_dir = tmp_path / "bundle"
     (bundle_dir / "python" / "site-packages" / "mockingbird").mkdir(parents=True)
@@ -2099,3 +2132,85 @@ def test_build_local_product_dirty_source_records_a_best_effort_commit(
     assert manifest["source_state"] == "dirty:unverified-working-tree"
     assert manifest["build_identity"]["git_commit"] == "d" * 40
     assert manifest["build_identity"]["source_clean"] is False
+
+
+# --- MIT Source License Adoption & Lane P Mechanical Closure v1 ------------
+# Package-metadata and user-facing-truth checks for the mechanical adoption
+# of the owner's MIT decision (see docs/release-execution-state.md, Lane P,
+# and docs/mit-source-license-adoption-lane-p-mechanical-closure-v1-report.md).
+# `package_license`/`package_third_party_notices`'s own dedicated tests,
+# above, already prove Windows-bundle inclusion; these prove the source-of-
+# -truth artifacts themselves (the `LICENSE` file, `pyproject.toml`'s
+# metadata, `web/package.json`, and README.md's user-facing claim) are
+# actually correct, not merely that a copy step exists.
+
+
+def test_pyproject_declares_mit_license_metadata() -> None:
+    """`pyproject.toml`'s own PEP 639 SPDX metadata must name MIT and the
+    real `LICENSE` file, and the `hatchling` floor must be high enough to
+    actually emit that metadata correctly -- empirically verified this
+    milestone that hatchling 1.24-1.25 reject `license-files` as an array
+    outright, and 1.26 accepts it but silently omits the `License-Expression`
+    /`License-File` Metadata-Version 2.4 fields; 1.27 is the first version
+    confirmed to emit both correctly."""
+
+    with (ROOT / "pyproject.toml").open("rb") as handle:
+        data = tomllib.load(handle)
+
+    assert data["project"]["license"] == "MIT"
+    assert data["project"]["license-files"] == ["LICENSE"]
+    hatchling_requirement = next(
+        req for req in data["build-system"]["requires"] if req.startswith("hatchling")
+    )
+    version = tuple(int(part) for part in re.match(r"hatchling>=(\d+)\.(\d+)", hatchling_requirement).groups())
+    assert version >= (1, 27), (
+        f"hatchling floor {hatchling_requirement!r} is below the (1, 27) minimum this milestone "
+        "empirically confirmed is required for correct license-expression/license-file metadata"
+    )
+
+
+def test_web_package_json_declares_mit_license() -> None:
+    data = json.loads((ROOT / "web" / "package.json").read_text(encoding="utf-8"))
+    assert data["license"] == "MIT"
+
+
+def test_license_file_exists_with_correct_mit_text_and_copyright() -> None:
+    text = (ROOT / "LICENSE").read_text(encoding="utf-8")
+
+    assert text.startswith("MIT License")
+    assert "Copyright (c) 2026 MockingBird contributors" in text
+    # The canonical, unaltered MIT permission/warranty boilerplate -- the
+    # identical text already reproduced (for MDv5a) in THIRD_PARTY_NOTICES.md,
+    # confirming this repository treats this as its one standard MIT text.
+    assert "Permission is hereby granted, free of charge" in text
+    assert 'THE SOFTWARE IS PROVIDED "AS IS"' in text
+    assert "MERCHANTABILITY" in text and "NONINFRINGEMENT" in text
+
+
+def test_readme_states_mit_license_and_points_to_license_file() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    license_section = readme.split("## License", maxsplit=1)[1]
+
+    assert "has not yet been finalized" not in license_section
+    assert "MIT" in license_section
+    assert "[LICENSE](LICENSE)" in license_section or "(LICENSE)" in license_section
+    assert "THIRD_PARTY_NOTICES.md" in license_section
+
+
+def test_third_party_notices_no_longer_calls_the_source_license_undecided() -> None:
+    """THIRD_PARTY_NOTICES.md's own self-referential note about MockingBird's
+    *own* license status must stay truthful once Lane P's mechanical
+    adoption lands -- it must not keep telling a reader the decision is
+    still open. This does not touch, and must not touch, any third-party
+    fact in the same file (MDv5a/BioCLIP-2/ffmpeg/BirdNET provenance)."""
+
+    notices = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+
+    assert "still-open question" not in notices
+    assert "pending an explicit owner decision" not in notices
+    assert "MIT" in notices
+    # Third-party facts this milestone must never alter:
+    assert "Microsoft Corporation" in notices
+    assert "CC BY-NC-SA 4.0" in notices
+    assert "verify_no_bundled_ffmpeg_binary" in notices
+    assert "verify_no_nc_licensed_acoustic_model_redistribution" in notices

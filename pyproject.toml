@@ -1,5 +1,15 @@
 [build-system]
-requires = ["hatchling>=1.24"]
+# MIT Source License Adoption & Lane P Mechanical Closure v1: bumped from
+# >=1.24. Empirically verified this milestone that hatchling 1.24-1.25
+# rejects this file's own `license-files` array (PEP 639 style) outright
+# with `TypeError: Field 'project.license-files' must be a table`; 1.26
+# accepts it and copies the file into the wheel's dist-info but still emits
+# pre-PEP-639 Metadata-Version 2.3 with no `License-Expression`/`License-File`
+# header; 1.27 is the first version that emits complete Metadata-Version 2.4
+# output (`License-Expression: MIT`, `License-File: LICENSE`). Raising the
+# floor here is required for the `license`/`license-files` fields below to
+# build correctly at all, not merely to prefer a newer default.
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
@@ -8,6 +18,8 @@ version = "0.1.0"
 description = "Local-first outdoor video intelligence API."
 readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
   "anyio>=3.7,<4.0",
   "fastapi>=0.111,<0.116",
