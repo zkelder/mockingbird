@@ -3757,6 +3757,57 @@ yet have a full year of real accumulated field history anywhere -- checked
 directly against this repository's own real, unmodified local development
 database, which honestly reports `insufficient_prior_history` today).
 
+**2026-09-06 update (Multi-Camera Place Feature Linking & Cross-View
+Habitat Context v1):** closes the "multi-camera Feature linking" gap named
+twice above and once more in the entry below (Place Features & Habitat
+Change v2's own Phase 28: "a Feature visible from two cameras can only be
+linked to one for now"; Multi-Camera Place Experience v2's own investigated-
+and-deferred finding) -- a deliberately-authorized, one-time, bounded
+reopening of product development for exactly this one capability, not a
+resumption of general product development. See
+[multi-camera-place-feature-linking-cross-view-habitat-context-v1-report.md](multi-camera-place-feature-linking-cross-view-habitat-context-v1-report.md).
+One new additive-and-backfilled table (schema 58 -> 59),
+`place_feature_observation_links` -- `PlaceFeatureModel.source_id`/`zone_id`
+become a repository-maintained compatibility mirror (populated only when a
+Feature has exactly one linked view, honestly `NULL`/`NULL` for zero or
+many, never an arbitrary "first" link), never the source of truth again.
+Two new endpoints (`POST`/`DELETE .../observation-links`) let a user attach
+or remove any number of camera/Zone views on one canonical Feature, never
+duplicating Feature identity per camera; the legacy singular `source_id`/
+`zone_id` update fields remain, explicitly redefined as a full-replacement
+compatibility operation, not an incremental add. Cross-view analytics reuse
+two already-accepted primitives completely unmodified -- `_associated_
+visit_ids_to_exclude_from_counting` (one real encounter recorded by two
+linked cameras counts once, proven directly) and `_place_activity_coverage_
+summary` (coverage is a real elapsed-time union across linked views, never
+a sum, proven with real overlapping-interval numbers) -- never a second
+duplicate-counting or coverage engine. Place Story required zero changes:
+Feature change events were already Feature-centered, not camera-centered.
+Found and fixed two real, pre-existing defects along the way: a bare-Source
+Feature association went silently quiet the instant its one camera was
+archived (unlike an otherwise-identical Zone-linked association, which
+stayed reachable) -- both now correctly stay reachable, matching "archiving
+preserves history" doctrine; and `delete_zone`'s reference guard had no
+check at all for a Zone referenced only by a Place Feature link, a real
+dangling-reference risk. A real, measured, avoidable N+1-shaped re-fetch of
+a Feature's own link rows (found by this milestone's own query-count
+measurement, not assumed) was fixed by threading one up-front fetch through
+the whole detail-bundle computation. 36 new backend tests (`test_place_
+feature.py`: 50 -> 86) plus one comprehensive product-shaped scenario test
+(two linked cameras, cross-camera dedup, independent-encounter preservation,
+coverage union, rename/archive safety, Reviewed-correction propagation, all
+under an enforced Local Only guarantee) plus one new schema-migration test
+proving a real v58 database's existing single- and zero-camera Features
+migrate with zero semantic change. 5 new Playwright e2e tests plus the 7
+pre-existing ones, all passing; the full directly-adjacent e2e matrix
+(today-report/place-activity-report/biodiversity-summary/place-story/
+year-over-year/mobile-viewport-audit) re-run and passing. Explicitly not
+built, recorded as future dependencies: a dedicated Feature detail page;
+representative evidence inside Feature detail; a ranked Feature-comparison
+view; Place Story's own still-unpopulated wildlife-event `source_id` (a
+separate, larger, previously-disclosed data-modeling exercise); consolidating
+the frontend's ~6 independently-implemented camera-filter controls.
+
 ### 5. Land Management / Agriculture
 
 An application of Place Intelligence, not a separate product architecture

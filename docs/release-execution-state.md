@@ -44,7 +44,87 @@ picture this phase label now reflects.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `a83b4e3` -- the implementation commit for
+- **Accepted HEAD:** `3cce9e4` -- the implementation commit for
+  Multi-Camera Place Feature Linking & Cross-View Habitat Context v1 (see
+  [multi-camera-place-feature-linking-cross-view-habitat-context-v1-report.md](multi-camera-place-feature-linking-cross-view-habitat-context-v1-report.md)
+  for the complete record). A deliberately-authorized, one-time, bounded
+  product-development reopening -- not a resumption of general product
+  development -- directly authorized outside this file, closing the
+  "multi-camera Feature linking" gap Place Features & Habitat Change v2's
+  own Phase 28 named and Multi-Camera Place Experience v2 investigated and
+  deferred: a Place Feature can now be linked to zero, one, or many
+  camera/Zone observation views ("these cameras are different views of the
+  same thing"), not just one. Classification **A**. Schema `v58` -> `v59`:
+  one new additive-and-backfilled table, `place_feature_observation_links`
+  (own id, required `source_id` -- deliberately matching
+  `PlaceFeatureModel.source_id`'s own existing FK target rather than the
+  governing brief's own literal `stream_id` candidate naming, so an
+  existing Feature's association migrates with zero translation --
+  optional `zone_id`, the identical information_class/provenance/
+  actor_user_id provenance quartet `PlaceFeatureModel` already carries, and
+  two partial unique indexes correctly preventing a duplicate view despite
+  the nullable `zone_id`, which a plain `UniqueConstraint` cannot do in
+  SQLite). `PlaceFeatureModel.source_id`/`zone_id` become a
+  repository-maintained compatibility mirror (populated only when a
+  Feature has exactly one link, honestly `NULL`/`NULL` for zero or many),
+  not the source of truth; every migrated single-link Feature reads back
+  byte-identical to its pre-migration self, proven directly by a real
+  v58-simulated database backfill test. Two new endpoints
+  (`POST`/`DELETE .../observation-links`) add or remove a view
+  incrementally; the legacy `PlaceFeatureUpdate.source_id`/`zone_id`
+  fields are preserved, explicitly redefined as a documented
+  full-replacement compatibility operation, never a silent one.
+  Cross-view analytics reuse two already-accepted primitives completely
+  unmodified -- `_associated_visit_ids_to_exclude_from_counting` (one real
+  encounter recorded by two linked cameras counts once, proven directly
+  with a real cross-camera-confirmed pair) and `_place_activity_coverage_
+  summary` (coverage is a real elapsed-time union across linked views,
+  never a sum, proven with real overlapping-interval numbers) -- never a
+  second duplicate-counting or coverage engine. Place Story required zero
+  changes: Feature change events were already Feature-centered, not
+  camera-centered. Two real, pre-existing defects found and fixed along
+  the way, beyond what this milestone strictly required: a bare-Source
+  Feature association went silently quiet the instant its one camera was
+  archived, unlike an otherwise-identical Zone-linked association (both
+  now correctly stay reachable, matching "archiving preserves history"
+  doctrine); and `delete_zone`'s reference guard had no check at all for a
+  Zone referenced only by a Place Feature link, a real dangling-reference
+  risk. A real, measured, avoidable N+1-shaped re-fetch of a Feature's own
+  link rows once per change event (found by this milestone's own
+  query-count measurement discipline, not assumed) was fixed by threading
+  one up-front link fetch through the whole detail-bundle computation,
+  confirmed safe by an identical passing-test re-run before and after.
+  36 new backend tests (`test_place_feature.py`: 50 -> 86) plus one
+  comprehensive product-shaped scenario test (two linked cameras,
+  cross-camera dedup, independent-encounter preservation, coverage union,
+  camera rename/archive safety, Reviewed-correction propagation, all under
+  an enforced Local Only guarantee) plus one new schema-migration test;
+  462 passed / 0 failed across the full directly-adjacent-subsystem sweep
+  plus the complete `test_persistence.py` migration suite, re-run against
+  the truly final code; full Core (`scripts/verify_core.py`) 5,854 passed /
+  1 failed / 3 skipped / 23 deselected (slow-marked) / 11 xfailed
+  (57m23s) -- the one failure independently re-confirmed pre-existing and
+  unrelated via a fresh `git stash push -u` bisection against this
+  milestone's own exact starting commit (a new sighting of the same
+  already-documented "fixed test date drifting against real wall-clock
+  time" flakiness class this codebase's own validation baselines already
+  record for a sibling test file); `ruff check` zero new findings, proven
+  by a message-level diff against a `git stash`-isolated clean baseline,
+  twice; `tsc --noEmit`/`vite build` clean; 12/12 new/updated Playwright
+  e2e tests passing (7 pre-existing + 5 new) plus 68/68 directly-adjacent
+  existing e2e specs re-run and passing. Starting state verified exactly
+  as expected: HEAD `2771d4c`, schema `v58`, Lane P `CLOSED`, Lane R
+  `OPEN -- RELEASE-CRITICAL -- TRUE LATENCY TAIL EVIDENCE REMAINS`
+  (untouched), authorization `NONE -- GLOBAL PRODUCT-ROADMAP
+  RECONCILIATION REQUIRED`. Worktree safe: no active writer, all seven
+  preserved untracked detector files present and unchanged. **This
+  closure does not reopen any other lane, does not authorize a second
+  product-development milestone, and does not change Lane R or Lane P.**
+  `CURRENT PHASE` returns unchanged to `FEATURE FREEZE -- EVIDENCE,
+  RELEASE READINESS & HOUSEKEEPING`. **Authorization remains NONE --
+  GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, for the next external
+  (ChatGPT) acceptance review to act on.
+- **Prior accepted HEAD (pre-Multi-Camera-Place-Feature-Linking-Cross-View-Habitat-Context-v1):** `a83b4e3` -- the implementation commit for
   Year-over-Year Seasonality & Long-Term Place Memory v1 (see
   [year-over-year-seasonality-long-term-place-memory-v1-report.md](year-over-year-seasonality-long-term-place-memory-v1-report.md)
   for the complete record). A deliberately-authorized, one-time, bounded
@@ -6273,11 +6353,13 @@ representative imagery on Story cards -- environmental-context/weather
 caveats on a before/after insight, formerly listed here, closed 2026-09-06
 by Environmental Context x Place Story & Habitat Change Composition v1,
 see §1), the remaining Place Features & Habitat Change product
-opportunities (multi-camera Feature linking, representative evidence in
-Feature detail, a ranked feature-comparison view -- see the Place Features
-& Habitat Change v2 report; composing environmental-context/weather
-caveats onto a before/after result, formerly listed here, closed the same
-day by the identical milestone), the remaining Place/Yard
+opportunities (representative evidence in Feature detail, a ranked
+feature-comparison view -- see the Place Features & Habitat Change v2
+report; composing environmental-context/weather caveats onto a before/after
+result, formerly listed here, closed the same day by the identical
+milestone; multi-camera Feature linking, formerly listed here, closed
+2026-09-06 by Multi-Camera Place Feature Linking & Cross-View Habitat
+Context v1, see §1), the remaining Place/Yard
 Intelligence product opportunities (seasonality maturation against real
 history, a `source_quality_signals` UI surface -- the habitat before/
 after change-event data model itself is now closed by that milestone),
@@ -6734,7 +6816,9 @@ grouping beyond the Dashboard status-view fix; Place Story wildlife-event
 source attribution (the field exists, populating it needs restructuring a
 shared SQL-aggregation layer, not a field-threading exercise); consolidating
 at least 6 independently-implemented camera-filter UI controls into one
-canonical component; multi-camera Place Feature linking; real GPU/CUDA-
+canonical component; multi-camera Place Feature linking, formerly listed
+here, closed 2026-09-06 by Multi-Camera Place Feature Linking & Cross-View
+Habitat Context v1, see the status note directly below; real GPU/CUDA-
 driver-level concurrent-inference measurement (needs real hardware this
 sandbox lacks); a multi-hour concurrent soak beyond the single-pass
 measured proof; the pre-existing, disclosed 2-Stream cap on the separate
@@ -6749,6 +6833,20 @@ candidate under real concurrent multi-Stream SQLite writes -- is now
 [concurrent-candidate-visit-persistence-reliability-v1-report.md](concurrent-candidate-visit-persistence-reliability-v1-report.md).
 Every other item in the "Remaining, not closed by this pass" list directly
 above is unaffected and still open.
+
+**Feature-linking item status (Multi-Camera Place Feature Linking &
+Cross-View Habitat Context v1, 2026-09-06):** this lane's own "multi-camera
+Place Feature linking" item, named in the "Remaining, not closed by this
+pass" list above and repeated in Place Features & Habitat Change v2's own
+Phase-28 record, is now **CLOSED** at classification **A**;
+see §1, above, and
+[multi-camera-place-feature-linking-cross-view-habitat-context-v1-report.md](multi-camera-place-feature-linking-cross-view-habitat-context-v1-report.md).
+A Place Feature can now hold zero, one, or many camera/Zone observation
+links; cross-view analytics reuse the accepted cross-camera duplicate-
+encounter exclusion and elapsed-time coverage-union primitives unmodified
+(one real encounter recorded by two linked cameras counts once; coverage is
+a real union, never a sum). Every other item in the "Remaining, not closed
+by this pass" list directly above is unaffected and still open.
 
 True multi-site remains a separate product/architecture decision. Do not
 silently make it release scope, and do not self-authorize it by adjacency
