@@ -173,6 +173,14 @@ confirmed history -- your Bird Log, your yard's statistics, or an export --
 until you explicitly confirm or correct it. MockingBird's own guesses stay
 labeled as guesses until then.
 
+During an unusually busy, continuous stretch of activity -- several birds
+arriving at the same spot in close succession -- MockingBird can sometimes
+miss creating a separate Visit for every individual involved. It would
+rather quietly skip one than guess at where one bird ends and another
+begins and risk stitching two different birds together into one wrong
+Visit. This only affects unusually crowded moments at a single spot;
+ordinary, everyday activity is unaffected.
+
 ## Bird-sound identification (optional)
 
 Alongside identifying birds it sees, MockingBird can optionally identify
