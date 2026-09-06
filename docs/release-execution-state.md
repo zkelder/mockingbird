@@ -44,7 +44,88 @@ picture this phase label now reflects.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `1709bf3` -- the implementation commit for
+- **Accepted HEAD:** `a83b4e3` -- the implementation commit for
+  Year-over-Year Seasonality & Long-Term Place Memory v1 (see
+  [year-over-year-seasonality-long-term-place-memory-v1-report.md](year-over-year-seasonality-long-term-place-memory-v1-report.md)
+  for the complete record). A deliberately-authorized, one-time, bounded
+  product-development reopening -- not a resumption of general product
+  development -- directly authorized outside this file, building
+  MockingBird's first true year-over-year Place comparison ("how does this
+  season compare with the same time last year") and closing the gap
+  `seasonal_pattern.py`'s own docstring, the Place / Yard Intelligence v2
+  report, and the immediately-prior Global Remaining Product-Development &
+  Release-Queue Reconciliation v1 report all independently named as the
+  honest ceiling of every existing seasonality primitive (a single
+  trailing 366-day window that resets, never accumulates across years).
+  Classification **B**. Zero schema change (`v58` unchanged); one new pure
+  analytics module (`mockingbird.analytics.year_over_year_comparison`)
+  composed entirely over the already-accepted `conditional_association`
+  primitive (comparable-period boundaries shift by whole calendar years,
+  never a fixed 365/366-day timedelta, with a documented deterministic
+  Feb-29 rule; coverage/effort normalization reuses the existing
+  presence-day-rate convention `place_change_summary`/`seasonal_pattern`/
+  `habitat_association` already established, proven directly immune to a
+  raw-monitored-hours skew); species-level comparison covers normalized
+  activity difference and first-observed-timing difference ("first
+  observed here", never "arrived"), ranked by evidence strength and
+  bounded to 5, never raw percent change. One pre-existing repository
+  helper (`_historical_usable_dates`) extracted, not behaviorally changed,
+  into a window-parameterized sibling -- all 6 of its own pre-existing
+  call sites' full test coverage passes unmodified. New
+  `GET /api/place/year-over-year`; a new `YearOverYearCard` on both
+  Dashboard and the Place Report page; a new Place Story `year_over_year`
+  event kind, gated to compute only when a Story request's own range
+  includes "now" (measured isolated marginal cost: -4.9ms, noise-level).
+  Multi-camera duplicate safety, archived-Stream reachability, and
+  Reviewed-correction propagation proven directly (repository tests plus a
+  real product-shaped 2-camera/2-year end-to-end scenario that also proves
+  Local Only by patching `socket.socket.connect` to raise for its entire
+  duration); a real measured performance proof (~18ms per call against a
+  synthetic 3-year/1,644-Visit history, query count unchanged after
+  seeding three additional unrelated years). 64 new backend tests plus 18
+  new tests across the two Place Story test files, all passing; a broader
+  Tier 2.5 sweep across every directly-affected subsystem at 677 passed /
+  1 failed (the one failure independently re-confirmed pre-existing and
+  unrelated via a fresh `git stash push -u` bisection against this
+  milestone's own exact starting commit -- `test_place_change_summary_
+  repository.py::test_api_round_trip_exposes_change_detection_fields`,
+  already documented in prior sessions' memory); `ruff check` zero new
+  findings, proven by a message-level diff against a `git stash`-isolated
+  clean baseline; `tsc --noEmit`/`vite build` clean; 7/7 new e2e tests plus
+  23/23 directly-adjacent existing e2e specs re-run and passing. Three real
+  defects found and fixed during this milestone's own development, never
+  shipped: a `has_any_monitoring_history` scoping gap (conflated "history
+  exists ever" with "history reaches back to this period's own end",
+  caught by this milestone's own `test_no_prior_year_history_at_all`); a
+  Pydantic Literal type mismatch on the new association status (`Place
+  YearOverYearAssociation` needed the full `insufficient_data`-inclusive
+  range, not `PlaceFeatureAssociation`'s narrower one); and a missed
+  schema-level mirror for the new Story event kind (added to the pure
+  analytics module's own `PlaceStoryEventKind` but initially missed in
+  `schemas.py`'s mirrored copy, then also missed on the frontend's own
+  `PlaceStoryPage.tsx` group/label maps) -- each caught immediately by a
+  real `pydantic_core.ValidationError` or TypeScript compile error in the
+  very first end-to-end integration test/build, none shipped. No live
+  production proof of a `"comparable"` (material-difference) outcome
+  exists yet -- checked directly against this
+  repository's own real, unmodified local development database, which
+  honestly reports `insufficient_prior_history` today, since no real
+  installation has a full year of accumulated field history anywhere yet;
+  this is the identical, unavoidable "blocked on elapsed real history, not
+  engineering" constraint the immediately-prior reconciliation already
+  named, not a defect of this milestone's own engineering. Starting state
+  verified exactly as expected: HEAD `c07171b`, schema `v58`, Lane P
+  `CLOSED`, Lane R `OPEN -- RELEASE-CRITICAL -- TRUE LATENCY TAIL EVIDENCE
+  REMAINS` (untouched), authorization `NONE -- GLOBAL PRODUCT-ROADMAP
+  RECONCILIATION REQUIRED`. Worktree safe: no active writer, all seven
+  preserved untracked detector files present and unchanged. **This closure
+  does not reopen any other lane, does not authorize a second product-
+  development milestone, and does not change Lane R or Lane P.**
+  `CURRENT PHASE` returns unchanged to `FEATURE FREEZE -- EVIDENCE, RELEASE
+  READINESS & HOUSEKEEPING`. **Authorization remains NONE -- GLOBAL
+  PRODUCT-ROADMAP RECONCILIATION REQUIRED**, for the next external
+  (ChatGPT) acceptance review to act on.
+- **Prior accepted HEAD (pre-Year-over-Year-Seasonality-Long-Term-Place-Memory-v1):** `1709bf3` -- the implementation commit for
   Environmental Context x Place Story & Habitat Change Composition v1 (see
   §3, below, and
   [environmental-context-place-story-habitat-change-composition-v1-report.md](environmental-context-place-story-habitat-change-composition-v1-report.md)
@@ -6375,10 +6456,22 @@ Change Composition v1 (2026-09-06) closed the "environmental-context/
 weather caveats not yet composed onto a before/after result or a Story
 insight" gap named here -- see
 [environmental-context-place-story-habitat-change-composition-v1-report.md](environmental-context-place-story-habitat-change-composition-v1-report.md).
-Substantial product-roadmap opportunity still remains (year-over-year
-seasonality; multi-camera Feature linking; a ranked feature-comparison
-view; Place Story period summaries; a dedicated taxon/Feature story page;
-representative imagery on Story cards -- see that report's and
+Year-over-Year Seasonality & Long-Term Place Memory v1 (2026-09-06) closed
+the "year-over-year seasonality" gap named here -- see
+[year-over-year-seasonality-long-term-place-memory-v1-report.md](year-over-year-seasonality-long-term-place-memory-v1-report.md):
+a new pure module composes onto the already-accepted `conditional_
+association` primitive to compare one Place-local calendar month against
+the same month one year earlier (Place-level activity and per-species
+activity/first-observed-timing), zero schema change, plus a new Dashboard/
+Place Report card and a new Place Story event kind. No live production
+proof of a `"comparable"` outcome exists yet -- this product does not have
+a full year of real accumulated field history anywhere yet, an
+unavoidable data-availability constraint, not an engineering gap.
+Substantial product-roadmap opportunity still remains (multi-camera
+Feature linking; a ranked feature-comparison view; Place Story period
+summaries; a dedicated taxon/Feature story page; representative imagery on
+Story cards; a year/month picker over the new year-over-year card; week-
+level or named-seasonal-period comparison -- see that report's and
 [place-features-habitat-change-v2-report.md](place-features-habitat-change-v2-report.md)'s
 and
 [place-yard-intelligence-v2-report.md](place-yard-intelligence-v2-report.md)'s

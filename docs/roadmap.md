@@ -3704,6 +3704,59 @@ summaries, a dedicated taxon/Feature story page, representative Story
 imagery, and a new Explore page -- none promoted or newly authorized by
 this milestone's closure of the weather-caveat gap specifically.
 
+**2026-09-06 update (Year-over-Year Seasonality & Long-Term Place Memory
+v1):** closes the "year-over-year seasonality" gap named immediately above
+and repeated across at least four prior entries in this section
+(`seasonal_pattern.py`'s own docstring: "a different, non-resetting
+historical-accumulation strategy -- an explicitly recorded future
+dependency, not built here") -- a deliberately-authorized, one-time,
+bounded reopening of product development for exactly this one capability,
+not a resumption of general product development. See
+[year-over-year-seasonality-long-term-place-memory-v1-report.md](year-over-year-seasonality-long-term-place-memory-v1-report.md).
+One new pure module, `mockingbird.analytics.year_over_year_comparison`,
+composes onto `conditional_association.compute_conditional_association`
+completely unmodified (the current period's own calendar days become the
+"condition," and `usable_dates` is narrowed to exactly the two compared
+periods, so the primitive's existing "in condition"/"out of condition"
+split becomes "current period"/"prior-year comparable period" with zero
+new statistical logic) -- comparable-period boundaries shift by whole
+calendar years via `date.replace(year=...)`, never a fixed 365/366-day
+timedelta, with a documented, deterministic Feb-29 rule. Coverage/effort
+normalization reuses the existing presence-day-rate convention (`place_
+change_summary`/`seasonal_pattern`/`habitat_association`'s own shared
+primitive), proven directly immune to a raw-monitored-hours skew (a
+period monitored 8x more intensively per day produces a byte-identical
+verdict to an "equal effort" baseline, as long as both clear the same
+usable-day count). Species-level comparison covers normalized activity
+difference and first-observed-timing difference ("first observed here",
+never "arrived"), the brief's own suggested minimal scope; ranked by
+evidence strength, never raw percent change, bounded to 5. Zero schema
+change (stays v58); one pre-existing repository helper (`_historical_
+usable_dates`) was extracted into a window-parameterized sibling, pure
+extraction, all 6 of its own pre-existing call sites' full test coverage
+passing unmodified. New `GET /api/place/year-over-year`; a new
+`YearOverYearCard` on both Dashboard and the Place Report page; a new
+Place Story `year_over_year` event kind, gated to compute only when a
+Story request's own range includes "now" (measured isolated marginal
+cost: -4.9 ms, noise-level). 64 new backend tests plus 18 new tests across
+the two Place Story test files, all passing; a real product-shaped
+2-camera, 2-year end-to-end scenario (normalized comparison, archived-
+camera history reachability, cross-camera dedup, a Reviewed correction
+moving a precise count on the very next read, a calm non-causal Story
+entry, and zero network access for the whole scenario, proven by patching
+`socket.socket.connect` to raise); a real measured performance proof
+(~18 ms per call against a synthetic 3-year/1,644-Visit history, query
+count unchanged after seeding three additional unrelated years). Explicitly
+not built, recorded as future dependencies: week-level or named-seasonal-
+period comparison (month is the only supported shape); "sustained seasonal
+presence window" and "regularity difference" species signals (offered as
+candidates, not required, by the milestone's own brief); a year/month
+picker in the UI (the API already accepts arbitrary `year`/`month`); a
+live production proof of a `"comparable"` outcome (this product does not
+yet have a full year of real accumulated field history anywhere -- checked
+directly against this repository's own real, unmodified local development
+database, which honestly reports `insufficient_prior_history` today).
+
 ### 5. Land Management / Agriculture
 
 An application of Place Intelligence, not a separate product architecture
