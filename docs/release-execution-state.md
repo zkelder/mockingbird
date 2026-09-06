@@ -44,7 +44,31 @@ picture this phase label now reflects.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `bdfa35f` -- the implementation commit for MIT Source
+- **Accepted HEAD:** `1709bf3` -- the implementation commit for
+  Environmental Context x Place Story & Habitat Change Composition v1 (see
+  §3, below, and
+  [environmental-context-place-story-habitat-change-composition-v1-report.md](environmental-context-place-story-habitat-change-composition-v1-report.md)
+  for the complete record). A deliberately-authorized, one-time, bounded
+  product-development reopening -- not a resumption of general product
+  development -- directly authorized outside this file, closing the
+  explicitly-named "compose environmental-context/weather caveats onto a
+  before/after result" gap both Place Features & Habitat Change v2 and
+  Place Story & Seasonal Timeline v1 recorded as deferred. Classification
+  **A**. Zero schema change (`v58` unchanged); one new pure analytics
+  module, one additive API field, one frontend line, zero new database
+  columns/tables. Starting state verified exactly as expected: HEAD
+  `d3b9820`, schema `v58`, Lane P `CLOSED`, Lane R `OPEN -- RELEASE-CRITICAL
+  -- TRUE LATENCY TAIL EVIDENCE REMAINS` (untouched), authorization `NONE --
+  GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED`. Worktree safe: no active
+  writer, all seven preserved untracked detector files present and
+  unchanged. See §3, below, for the complete implementation record. **This
+  closure does not reopen any other lane, does not authorize a second
+  product-development milestone, and does not change Lane R or Lane P.**
+  `CURRENT PHASE` returns unchanged to `FEATURE FREEZE -- EVIDENCE, RELEASE
+  READINESS & HOUSEKEEPING`. **Authorization remains NONE -- GLOBAL
+  PRODUCT-ROADMAP RECONCILIATION REQUIRED**, for the next external
+  (ChatGPT) acceptance review to act on.
+- **Prior accepted HEAD (pre-Environmental-Context-x-Place-Story-Habitat-Change-Composition-v1):** `bdfa35f` -- the implementation commit for MIT Source
   License Adoption & Lane P Mechanical Closure v1 (see §3, below, and
   [mit-source-license-adoption-lane-p-mechanical-closure-v1-report.md](mit-source-license-adoption-lane-p-mechanical-closure-v1-report.md)
   for the complete record). Bounded feature-freeze housekeeping milestone,
@@ -2672,6 +2696,71 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-06 update (Environmental Context x Place Story & Habitat Change
+Composition v1):** a deliberately-authorized, one-time, bounded reopening
+of product development for exactly one named product relationship
+(environmental context -> Feature/habitat-change understanding -> Place
+Story understanding) that the immediately-prior reconciliation (below) had
+itself examined and found did not clear the bar for *unprompted*
+pre-release development -- the owner's explicit choice tonight overrides
+that conclusion for this one item only. See
+[environmental-context-place-story-habitat-change-composition-v1-report.md](environmental-context-place-story-habitat-change-composition-v1-report.md)
+for the complete record. Classification **A**. Schema unchanged (`v58`);
+starting state verified exactly as expected (HEAD `d3b9820`, Lane P
+`CLOSED`, Lane R `OPEN` and untouched, worktree safe, all seven preserved
+untracked detector files present and unchanged throughout).
+
+Composes already-accepted facts -- never a new engine. One new pure module,
+`mockingbird.analytics.environmental_period_comparison`, shared unmodified
+by both surfaces: Place Feature before/after (`PlaceFeatureChangeEventWithComparison`
+gains an additive `environmental_comparison` field) and Place Story's
+`comparison_insight` (whose `weather_caveat` parameter already existed,
+wired end-to-end, tested, and simply never populated before this
+milestone). Materiality reuses `condition_bands`'s existing Place-relative
+temperature-tertile banding and physical wet/dry threshold verbatim -- a
+note appears only when the two compared periods land in genuinely
+different bands, never a newly-invented numeric cutoff; the coverage floor
+is `conditional_association.DEFAULT_MIN_USABLE_DAYS_IN_CONDITION` itself,
+imported, not reinvented. `feature_change_comparison.comparison_window_dates`
+(one small new public function on the existing, accepted module)
+reconstructs the *identical* before/after calendar days the wildlife
+comparison already used, from only its own `pre_start`/`post_end`/
+`window_days`, so the two halves of a Feature comparison can never
+honestly disagree about the period in question. `product_repository`'s
+`_cached_place_weather_context` was extracted (not rewritten) from
+`_historical_place_baseline_and_species_statuses`'s own pre-existing
+inline weather read so both the pre-existing weather-association axis and
+this milestone's new composition share one cached-weather-read path --
+re-verified behavior-preserving against that method's full pre-existing
+test coverage (220 tests, 0 regressions) via a direct before/after
+comparison. Never a causal claim anywhere: every producible sentence comes
+from one of five fixed, audited templates (temperature/precipitation x2,
+one neutral), none containing "caused"/"led to"/"resulted in"/"because
+of"/"drove"/"due to"/"may explain" -- enforced by a parametrized test over
+every reachable sentence, not merely reviewed by eye. Correction-safety
+and Local-Only both proven directly (not assumed): correcting a change
+event's date collapses a previously-stated environmental claim on the very
+next read with no invalidation step; an always-fails weather requester
+proves the new code paths never attempt a live fetch even when weather is
+enabled and a meaningful difference is genuinely found. Zero schema
+change. 36 new backend tests plus 2 new/extended Playwright e2e tests;
+Tier 2 subsystem run (377 tests) and Tier A `verify_fast` (1,801 tests)
+both green; frontend typecheck/build clean. One frontend file changed
+(`PlaceActivityReportPage.tsx`, a quiet secondary line under the existing
+wildlife insight, visible only when a real, meaningful difference was
+found); `PlaceStoryPage.tsx` needed no change at all. Two pre-existing,
+unrelated findings disclosed, neither introduced nor fixed here: the
+`early_signal` frontend-copy asymmetry in `featureAssociationSentence`,
+and a third near-duplicate temperature-baseline query block
+(`_recent_temperature_band`, a genuinely different bucketing convention,
+deliberately not consolidated). **This closure does not reopen any other
+lane, does not authorize a second product-development milestone, and does
+not change Lane R or Lane P.** `CURRENT PHASE` returns unchanged to
+`FEATURE FREEZE -- EVIDENCE, RELEASE READINESS & HOUSEKEEPING` immediately
+after this milestone. **Authorization remains NONE -- GLOBAL
+PRODUCT-ROADMAP RECONCILIATION REQUIRED**, for the next external (ChatGPT)
+acceptance review to act on.
 
 **2026-09-06 update (MIT Source License Adoption & Lane P Mechanical
 Closure v1, see §6.P, below):** bounded feature-freeze housekeeping
@@ -6098,13 +6187,16 @@ overlay-network (Tailscale/WireGuard) validation was possible from this
 sandbox -- see the Mobile & Remote Experience v1 report's "Remaining
 major PRODUCT opportunities"), the remaining Place Story product
 opportunities (period summaries -- deferred on a measured performance
-cost, not simply unattempted; environmental-context/weather caveats on a
-before/after insight; a dedicated taxon/Feature story page; representative
-imagery on Story cards), the remaining Place Features & Habitat Change
-product opportunities (composing environmental-context/weather caveats
-onto a before/after result, multi-camera Feature linking, representative
-evidence in Feature detail, a ranked feature-comparison view -- see the
-Place Features & Habitat Change v2 report), the remaining Place/Yard
+cost, not simply unattempted; a dedicated taxon/Feature story page;
+representative imagery on Story cards -- environmental-context/weather
+caveats on a before/after insight, formerly listed here, closed 2026-09-06
+by Environmental Context x Place Story & Habitat Change Composition v1,
+see §1), the remaining Place Features & Habitat Change product
+opportunities (multi-camera Feature linking, representative evidence in
+Feature detail, a ranked feature-comparison view -- see the Place Features
+& Habitat Change v2 report; composing environmental-context/weather
+caveats onto a before/after result, formerly listed here, closed the same
+day by the identical milestone), the remaining Place/Yard
 Intelligence product opportunities (seasonality maturation against real
 history, a `source_quality_signals` UI surface -- the habitat before/
 after change-event data model itself is now closed by that milestone),
@@ -6164,8 +6256,9 @@ Do NOT automatically authorize:
 - a second weather provider or user-facing provider choice;
 - Open-Meteo archive/ERA5 deep historical backfill;
 - a Feature/Zone multi-camera join table;
-- Place Story period summaries, weather-caveat composition, or dedicated
-  taxon/Feature story pages, as a standalone follow-on campaign;
+- Place Story period summaries or dedicated taxon/Feature story pages, as a
+  standalone follow-on campaign (weather-caveat composition, formerly
+  listed here, is closed -- see §1);
 - Land Management / Agriculture as a separate campaign;
 - notification-level (Calm Attention) cross-camera health grouping, Place
   Story wildlife-event source attribution, or camera-filter UI
@@ -6277,11 +6370,14 @@ timeline (`GET /api/place/story`), no new schema; see
 for the full record, including a genuine previously-undiscovered gap
 found in `place_change_summary.py`'s own already-accepted threshold logic
 (worked around locally, not patched at its source -- see that report's
-"Truth / provenance"). Substantial product-roadmap opportunity still
-remains (year-over-year seasonality; environmental-context/weather
-caveats not yet composed onto a before/after result or a Story insight;
-multi-camera Feature linking; a ranked feature-comparison view; Place
-Story period summaries; a dedicated taxon/Feature story page;
+"Truth / provenance"). Environmental Context x Place Story & Habitat
+Change Composition v1 (2026-09-06) closed the "environmental-context/
+weather caveats not yet composed onto a before/after result or a Story
+insight" gap named here -- see
+[environmental-context-place-story-habitat-change-composition-v1-report.md](environmental-context-place-story-habitat-change-composition-v1-report.md).
+Substantial product-roadmap opportunity still remains (year-over-year
+seasonality; multi-camera Feature linking; a ranked feature-comparison
+view; Place Story period summaries; a dedicated taxon/Feature story page;
 representative imagery on Story cards -- see that report's and
 [place-features-habitat-change-v2-report.md](place-features-habitat-change-v2-report.md)'s
 and

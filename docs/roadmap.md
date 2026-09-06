@@ -3668,6 +3668,42 @@ caveats on `comparison_insight`, a dedicated taxon/Feature story page (the
 API already supports the filters), representative imagery on Story cards,
 and the `place_change_summary.py` threshold-policy fix itself.
 
+**2026-09-06 update (Environmental Context x Place Story & Habitat Change
+Composition v1):** closes the "environmental-context (weather) caveats on
+`comparison_insight`" gap named immediately above and the matching
+"composing environmental-context/weather caveats onto a before/after
+result" gap named in Place Features & Habitat Change v2's own entry, above
+-- see
+[environmental-context-place-story-habitat-change-composition-v1-report.md](environmental-context-place-story-habitat-change-composition-v1-report.md).
+A deliberately-authorized, one-time, bounded reopening of product
+development for exactly this one named relationship, not a resumption of
+general product development. One new pure module,
+`mockingbird.analytics.environmental_period_comparison`, shared unmodified
+by both surfaces: materiality reuses `condition_bands`'s existing
+Place-relative temperature-tertile banding and physical wet/dry threshold
+verbatim (a note only when the two compared periods land in genuinely
+different bands -- never a new numeric cutoff), and the coverage floor is
+`conditional_association.DEFAULT_MIN_USABLE_DAYS_IN_CONDITION` itself,
+imported, not reinvented. `PlaceFeatureChangeEventWithComparison` gains an
+additive `environmental_comparison` field (rendered as a quiet secondary
+line beneath the existing wildlife before/after sentence on the Place
+Report page, visible only when a real difference was found);
+`comparison_insight_event`'s pre-existing, already-wired `weather_caveat`
+parameter is populated for the first time, appended only when a genuinely
+meaningful difference exists -- an ordinary Story entry never becomes a
+weather log. Zero schema change (stays v58); zero new causal-language
+surface (every producible sentence audited against a fixed forbidden-word
+list). Correction-safety and Local Only both proven directly: correcting a
+change event's date collapses a stale environmental claim on the very next
+read with no invalidation step, and an always-fails weather requester
+proves the new code paths never attempt a live fetch. Explicitly not
+built, still open: deeper ERA5/Open-Meteo archive backfill, wind/
+cloud-cover statistical associations, year-over-year seasonality, ranked
+Feature comparison, multi-camera Feature linking, Place Story period
+summaries, a dedicated taxon/Feature story page, representative Story
+imagery, and a new Explore page -- none promoted or newly authorized by
+this milestone's closure of the weather-caveat gap specifically.
+
 ### 5. Land Management / Agriculture
 
 An application of Place Intelligence, not a separate product architecture
