@@ -1103,6 +1103,30 @@ sequence," below) now proceed together, bounded per milestone -- see
 "Execution discipline" in that section -- rather than via a blanket
 freeze/unfreeze toggle tied to a version number.
 
+**2026-09-06 update (Global Remaining Product-Development & Release-Queue
+Reconciliation v1, see
+[its report](global-remaining-product-development-release-queue-reconciliation-v1-report.md)
+and `docs/release-execution-state.md` §1/§3/§6):** this does not reinstate
+the retired mechanism above -- no new named freeze milestone is declared,
+and bounded, evidenced capability work remains permitted exactly as this
+section already describes. It is a fresh, current, evidence-based
+finding, not a mechanism: a full lane-by-lane walk of every layer of
+"Remaining roadmap -- canonical sequence," below, found each one already
+has substantial accepted delivery, and a five-question product-opportunity
+test applied to every named remaining opportunity in that section and in
+"After-release lanes," below, found none clears the bar for substantial
+product development before release. MockingBird is, as of this
+reconciliation, **functionally at feature freeze** -- not because a
+mechanism says so, but because the evidence does. What remains before the
+one public launch is release-critical validation (`release-execution
+-state.md` Lane R's true-latency tail, daylight-dependent), release
+readiness/hardening residuals, a small resolved-but-not-yet-mechanically
+-adopted licensing action (the owner has selected MIT -- see Lane P),
+and the standing BirdNET commercial-adjacent legal question. If future
+evidence reopens a genuinely substantial product-development need, this
+finding reopens with it, per the scope-discipline criteria above -- it is
+not a permanent ceiling.
+
 ## Release gates
 
 The remaining path to release is a small, ordered set of release gates, not an

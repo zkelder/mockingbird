@@ -9,22 +9,118 @@ work is presently authorized.
 Claude's "next natural milestone" suggestions are advisory only. They do
 not authorize future work.
 
-## CURRENT PHASE: SUBSTANTIAL PRODUCT DEVELOPMENT
+## CURRENT PHASE: FEATURE FREEZE -- EVIDENCE, RELEASE READINESS & HOUSEKEEPING
 
-MockingBird is still in substantial product development. Representative
+**Corrected 2026-09-06 by Global Remaining Product-Development &
+Release-Queue Reconciliation v1** (see
+[global-remaining-product-development-release-queue-reconciliation-v1-report.md](global-remaining-product-development-release-queue-reconciliation-v1-report.md)).
+The prior `SUBSTANTIAL PRODUCT DEVELOPMENT` label is stale: a full
+lane-by-lane walk of §6, below, against direct repository evidence (not
+recent session-scoped focus, and not this session's own persisted memory,
+which was found behind the repository on at least one point) found every
+layer of `roadmap.md`'s "Remaining roadmap -- canonical sequence" has
+substantial accepted delivery, and a five-question test applied to every
+named remaining product opportunity (year-over-year seasonality,
+weather-on-before/after composition, multi-camera Feature linking, ranked
+Feature comparison, Place Story period summaries, dedicated taxon/Feature
+pages, representative Story imagery, environmental historical backfill)
+found none clears the bar for substantial product development before
+release. What genuinely remains is release-critical validation (Lane R's
+true-latency tail, daylight-dependent), release readiness/hardening
+residuals (Lanes L/E/F), a small resolved-but-not-yet-mechanically-adopted
+licensing housekeeping item (Lane P -- the owner has selected MIT), the
+still-open BirdNET commercial-adjacent legal question (no engineering
+action available), and disclosed non-blocking defects. Representative
 Field Acceptance, External Pre-Release Acceptance, and Final Release
-Hardening (Lanes R/S, below) are downstream gates and must **not** become
-the default next
-milestone while substantial product-roadmap capability remains
-intentionally unfinished -- see §6, "Global remaining execution queue,"
-for the complete remaining-capability picture this phase label is
-protecting.
+Hardening (Lanes R/S, below) remain the correct downstream sequence,
+gated on Lane R's own daylight-dependent evidence and Lane P's mechanical
+adoption -- **not** on unfinished product capability. This correction does
+**not** authorize Lane R's next tranche, External Pre-Release Acceptance,
+Final Release Hardening, or any product-development milestone -- see §6,
+"Global remaining execution queue," for the complete lane-by-lane
+picture this phase label now reflects.
 
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `a7f879f` -- the report commit for Representative
+- **Accepted HEAD:** `9c4f8d5` -- the report commit for Global Remaining
+  Product-Development & Release-Queue Reconciliation v1 (see §3, below,
+  and
+  [global-remaining-product-development-release-queue-reconciliation-v1-report.md](global-remaining-product-development-release-queue-reconciliation-v1-report.md)
+  for the complete record). Documentation/governance reconciliation,
+  directly authorized outside this file as the standing response to this
+  file's own long-running `NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION
+  REQUIRED` gate. Classification **A**. Zero product/test/schema code
+  changed. Read `release-execution-state.md`, `product-doctrine.md`, and
+  `roadmap.md` in full (not sampled) and walked every lane A-S against
+  direct repository evidence rather than recent session-scoped focus on
+  Lane R alone. Verified the conversation-side expected starting state
+  (branch, HEAD `b3dba92`, schema v58, Gate A/Lane R/recall/authorization)
+  an exact match to the repository, and worktree safety (the seven
+  preserved untracked detector files) unchanged. Found and corrects three
+  stale lane entries: Lane A's remaining-work list still named a
+  "frontend acoustic health/status" gap that Whole-Product UI /
+  Accessibility / Performance Closure v1 (2026-08-27) had already closed
+  by name; Lane E's remaining-work list still named a `ReviewQueuePage`
+  `product_category` gap and a login-rate-limiting gap that Whole-Product
+  UI / Accessibility / Performance Closure v1 and Login Rate-Limiting &
+  Authentication Abuse Resistance v1 had each already, separately closed.
+  Confirmed Lane G's `CLOSED -- RELEASE-CRITICAL` status (2026-09-03) is
+  itself already current and not stale -- the thing that was behind was
+  this session's own persisted memory, one milestone short; repository
+  evidence, not memory, governs. Records the owner's new, explicit MIT
+  source-code-license decision (Lane P) as **resolved**, distinct from
+  the still-pending mechanical adoption: empirically verified this
+  session that no `LICENSE` file exists, `pyproject.toml`/
+  `web/package.json` carry no license metadata, and `README.md`'s own
+  "License" section still says the decision "has not yet been finalized"
+  -- named as a small, bounded next action, deliberately not performed in
+  this reconciliation itself, per its own governing brief's explicit
+  instruction not to perform the follow-through unless necessary to make
+  the scheduler truthful (it is not -- Lane P's own text below already
+  states the decision is resolved and the adoption is pending). Applied a
+  five-question product-opportunity test (core-loop value; would a first
+  public user perceive its absence as unfinished; completes a shipped
+  concept vs. starts a new lane; pre-freeze dependency/risk; new
+  correctness surface) to every remaining opportunity `roadmap.md` and
+  this file's own §6 name -- year-over-year seasonality (mechanically
+  blocked on elapsed real history, not engineering), weather-on-before/
+  after composition, multi-camera Place Feature linking, ranked Feature
+  comparison, Place Story period summaries (explicitly deferred on a
+  measured performance cost -- a real pre-freeze risk argument, not a
+  reason to rush it), dedicated taxon/Feature story pages, representative
+  Story-card imagery, environmental historical backfill, and a
+  consolidated "Explore" page (`roadmap.md` Layer 6, considered and
+  rejected as a navigation nicety over already-surfaced capability, not a
+  missing one) -- and found **none clears the bar for substantial product
+  development before release**; fewer than three genuinely qualify, and
+  this reconciliation does not invent work to keep a development label
+  populated. **Feature-freeze decision: C -- MockingBird is functionally
+  at feature freeze already** (see `CURRENT PHASE`, above, corrected
+  accordingly): every layer of `roadmap.md`'s own "Remaining roadmap --
+  canonical sequence" (Layers 1-8) shows substantial accepted delivery,
+  and every lane A-S here is closed, materially closed/advanced/
+  delivered, frozen, or decision-closed except Lane R (a validation gap,
+  daylight-dependent, explicitly **not** scheduled by this reconciliation
+  -- no new Gate A investigation opened) and Lane P's now-small mechanical
+  remainder. BirdNET's own commercial-adjacent legal posture (§2, below)
+  is reconciled to **B+D**: blocks only commercial-adjacent use of the
+  optional acoustic feature, not all public launch, and has no available
+  engineering action -- a standing legal-review item. External
+  Pre-Release Acceptance and Final Release Hardening readiness criteria
+  are stated (see the linked report); neither is authorized. **No
+  substantial product-development milestone is recommended** -- the one
+  small, independent, advisory-only next action named is Lane P's own
+  bounded mechanical LICENSE/packaging-metadata adoption, not a product
+  capability milestone, not self-authorized here. This closure does
+  **not** authorize External Pre-Release Acceptance, Final Release
+  Hardening, the next Lane R daylight tranche, another Gate A
+  investigation, or any product-development milestone -- see §3, below,
+  for the complete reconciliation entry. **Authorization remains NONE --
+  GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, for the next external
+  (ChatGPT) acceptance review to act on.
+- **Prior accepted HEAD (pre-Global-Remaining-Product-Development-Release-Queue-Reconciliation-v1):** `a7f879f` -- the report commit for Representative
   Daylight True-Latency Tail Convergence v2 (see §3, above, and
   [representative-daylight-true-latency-tail-convergence-v2-report.md](representative-daylight-true-latency-tail-convergence-v2-report.md)
   for the complete record). Bounded RELEASE-CRITICAL Lane R evidence
@@ -2468,13 +2564,18 @@ Established facts:
 Remaining bounded gaps -- classified as bounded product/field gaps, **not**
 reasons to reopen the acoustic architecture:
 
-- no product-facing frontend acoustic health/status surface yet;
 - no true physical mid-session microphone unplug acceptance;
 - no multi-hour acoustic soak;
 - no natural wild-bird acoustic field session from the accepted test
   hardware;
 - no audio equivalent of visual Privacy Zone redaction/exclusion beyond
   the currently documented privacy boundary.
+
+**Corrected 2026-09-06 by Global Remaining Product-Development &
+Release-Queue Reconciliation v1:** "no product-facing frontend acoustic
+health/status surface yet" (formerly the first item above) is removed --
+closed by Whole-Product UI / Accessibility / Performance Closure v1
+(2026-08-27), same fact and same correction as Lane A, §6.A, below.
 
 Acoustics are optional in the public release because of
 licensing/distribution posture, not because the core implementation is
@@ -2504,6 +2605,87 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-06 update (Global Remaining Product-Development & Release-Queue
+Reconciliation v1, see `CURRENT PHASE`/§1, above, and §6, below):** a
+documentation/governance reconciliation, directly authorized outside this
+file as this file's own standing response to the bold "NONE -- GLOBAL
+PRODUCT-ROADMAP RECONCILIATION REQUIRED" line immediately above. See
+[global-remaining-product-development-release-queue-reconciliation-v1-report.md](global-remaining-product-development-release-queue-reconciliation-v1-report.md)
+for the complete record. Classification **A**. Zero production code
+changed.
+
+Read `release-execution-state.md` (9,877 lines), `product-doctrine.md`,
+and `roadmap.md` (4,125 lines) in full and walked every lane A-S against
+direct repository evidence, per this milestone's own governing brief's
+explicit instruction not to reconstruct current state from prior
+conversation summaries. **Starting state verified exact**: branch `main`,
+HEAD `b3dba92`, schema `v58`, Gate A `OPEN -- TRUE LATENCY TAIL EVIDENCE
+REMAINS`, recall `ACCEPTED KNOWN LIMITATION`, authorization `NONE --
+GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED`; worktree safe, all seven
+preserved untracked detector files present and untouched.
+
+**Three stale lane entries found and corrected** (see §6.A/§6.E, below):
+Lane A still named an already-closed "frontend acoustic health/status"
+gap (closed by Whole-Product UI / Accessibility / Performance Closure v1,
+2026-08-27); Lane E still named a `ReviewQueuePage` `product_category` gap
+and a login-rate-limiting gap, each already independently closed by that
+same milestone and by Login Rate-Limiting & Authentication Abuse
+Resistance v1 respectively. Lane G's own `CLOSED -- RELEASE-CRITICAL`
+status was verified already current, not stale -- this session's own
+persisted memory was the thing found behind (one milestone short of the
+real 2026-09-03 closure), not this document.
+
+**Owner MIT license decision recorded as RESOLVED** (Lane P, §6.P,
+below), distinct from mechanical adoption: empirically verified this
+session that no `LICENSE` file exists, no packaging-metadata license
+field exists, and `README.md`'s own "License" section still says the
+decision "has not yet been finalized" -- named as a small, bounded next
+action, not performed in this reconciliation.
+
+**Product Opportunity Review**, applying a five-question test (core-loop
+value; would a first public user perceive its absence as unfinished;
+completes a shipped concept vs. starts a new lane; pre-freeze dependency/
+risk; new correctness surface) to every named remaining opportunity in
+`roadmap.md`/§6 (year-over-year seasonality; weather-on-before/after
+composition; multi-camera Feature linking; ranked Feature comparison;
+Place Story period summaries -- explicitly deferred on a measured
+performance cost, a real reason *not* to rush it pre-freeze; dedicated
+taxon/Feature story pages; representative Story-card imagery;
+environmental historical backfill; a consolidated "Explore" page),
+**found none clears the bar for substantial product development before
+release** -- fewer than three genuinely qualify; none do. No work was
+invented to keep a development label populated.
+
+**Feature-freeze decision: C -- MockingBird is functionally at feature
+freeze already**, not "still in substantial product development" (see
+`CURRENT PHASE`, above, corrected accordingly, and the complete A-S lane
+matrix in the linked report). Every layer of `roadmap.md`'s own
+"Remaining roadmap -- canonical sequence" (Layers 1-8) shows substantial
+accepted delivery; every lane A-S in §6, below, is closed, materially
+closed/advanced/delivered, frozen, or decision-closed except Lane R (a
+validation gap, not a product gap) and Lane P's now-small mechanical
+remainder. **BirdNET's commercial-adjacent legal posture (§2, above)
+reconciled to B+D**: blocks only commercial-adjacent use of the optional
+acoustic feature, not all public launch; no engineering action is
+available, a standing legal-review item.
+
+**Lane R's true-latency tail convergence is explicitly not scheduled by
+this milestone and remains WAITING FOR A GENUINE DAYLIGHT WINDOW** -- not
+the default next task at night or under unsuitable conditions, and this
+closure opens no new Gate A investigation of any kind. **No substantial
+product-development milestone is recommended.** The one small,
+independent, advisory-only next action named is Lane P's own bounded
+mechanical LICENSE/packaging-metadata adoption -- a housekeeping/
+legal-compliance action, not a product capability milestone, not
+self-authorized here. External Pre-Release Acceptance and Final Release
+Hardening readiness criteria are stated in the linked report; neither is
+authorized. This closure does **not** authorize External Pre-Release
+Acceptance, Final Release Hardening, the next Lane R daylight tranche,
+another Gate A investigation, or any product-development milestone.
+**Authorization remains NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION
+REQUIRED**, returned here exactly as this milestone's own governing brief
+required, for the next external (ChatGPT) acceptance review to act on.
 
 **2026-09-06 update (Representative Daylight True-Latency Tail Convergence
 v2, see §6.R):** bounded RELEASE-CRITICAL Lane R evidence milestone,
@@ -6023,10 +6205,14 @@ words used to describe them:
   above become credible, External Pre-Release Acceptance and Final
   Release Hardening themselves (Lane S, below; roadmap.md Gates F-G).
 - **B. Pre-release decisions** -- decisions required before launch, not
-  necessarily implementation milestones: the codebase `LICENSE` (Lane P;
-  full ffmpeg distribution licensing, the item this line previously named
-  alongside it, is now resolved -- see Lane P, below); the still-open
-  BirdNET commercial-adjacent legal posture (§2, above); platform-support
+  necessarily implementation milestones: the codebase `LICENSE` -- the
+  owner decision itself is now **resolved (MIT)**, with a small mechanical
+  adoption pending, not yet performed (Lane P; see Lane P, below; full
+  ffmpeg distribution licensing, the item this line previously named
+  alongside it, is fully resolved); the still-open BirdNET
+  commercial-adjacent legal posture (§2, above -- blocks only
+  commercial-adjacent use of the optional acoustic feature, per the
+  2026-09-06 reconciliation below, not all public launch); platform-support
   declarations (Lane O, resolved -- see Lane O, below); Ecosystem/Provider
   Integrations scope (Lane K, resolved -- see Lane K, below); any other
   genuine unresolved release decision as it surfaces.
@@ -6053,9 +6239,19 @@ remains authoritative over this summary.
 
 **Status:** ACCEPTED -- RELEASE-READY OPTIONAL.
 
-Remaining bounded follow-up only: frontend acoustic health/status; longer
-field soak; physical unplug/replug; natural wild-bird field evidence. Do
-not schedule another acoustic architecture milestone automatically.
+**Corrected 2026-09-06 by Global Remaining Product-Development &
+Release-Queue Reconciliation v1:** the "frontend acoustic health/status"
+item this section previously listed as remaining was already closed by
+Whole-Product UI / Accessibility / Performance Closure v1 (2026-08-27):
+"the scheduler's disclosed bounded acoustic health/status gap (Lane A)
+closed with the smallest capability-aware addition the brief allowed --
+composed entirely from already-existing facts, never a factor in
+`ready`." Removed from the remaining list below; the other three items
+are unaffected.
+
+Remaining bounded follow-up only: longer field soak; physical
+unplug/replug; natural wild-bird field evidence. Do not schedule another
+acoustic architecture milestone automatically.
 
 ### B. Remote / Intermittent-WAN Field Productization
 
@@ -6161,13 +6357,25 @@ relay explicitly, plainly documented as unsupported/not-built; new CORS
 regression coverage. Native mobile remains explicitly out of scope,
 unchanged.
 
+**Corrected 2026-09-06 by Global Remaining Product-Development &
+Release-Queue Reconciliation v1:** two of the four items this section
+previously listed as remaining were already independently closed
+elsewhere in this document. The `ReviewQueuePage` `product_category` gap
+is the identical defect Whole-Product UI / Accessibility / Performance
+Closure v1 (2026-08-27) fixed as its own P0 finding: "manually- and
+folder-imported Visits... were silently excluded from Review Queue's
+default 'Animals' tab regardless of `subject_label` -- the real,
+previously-unidentified root cause of one class of confusion this project
+had repeatedly, incorrectly attributed to `reviewed-product-loop.spec.ts`
+being an unrelated flake." The login-rate-limiting gap was closed by
+Login Rate-Limiting & Authentication Abuse Resistance v1 (accepted
+classification A): a new `LoginRateLimiter`, account- and source-keyed,
+live at `POST /api/auth/sign-in` today. Both removed from the remaining
+list below.
+
 Remaining, not closed by this pass (see the report's "Remaining major
 PRODUCT opportunities" for the full record): progressive disclosure for
-the dense Visit/Stream/Settings pages; a pre-existing `ReviewQueuePage`
-`product_category` gap (found, documented, not fixed -- independently
-reproduced against an unmodified existing e2e spec); no login rate-
-limiting (pre-existing, real, and directly more relevant now that this
-lane increased network reachability); no live external-overlay-network
+the dense Visit/Stream/Settings pages; no live external-overlay-network
 (Tailscale/WireGuard) acceptance was possible from this sandbox --
 validated structurally only. Do not equate this closure with a finished,
 fully-polished mobile product, and do not automatically authorize a
@@ -6636,8 +6844,10 @@ was authorized.
 
 ### P. Release Engineering Foundation / Distribution
 
-**Status:** SUBSTANTIALLY CLOSED, one item deliberately left open --
-RELEASE-CRITICAL. Release Engineering Foundation v1 (2026-08-25) closed:
+**Status:** SUBSTANTIALLY CLOSED -- RELEASE-CRITICAL; the one deliberately
+-left-open item's own **owner decision is now RESOLVED (MIT)**, with a
+small mechanical adoption pending (see the 2026-09-06 correction below).
+Release Engineering Foundation v1 (2026-08-25) closed:
 upgrade procedure (see Lane L); a real, currently-live dependency-closure
 defect found and fixed via genuine native-Windows deployment (`astral`
 missing from the packaged bundle -- would have broken *every* launch,
@@ -6669,17 +6879,37 @@ correcting a real gap where the redistributed MDv5a/BioCLIP-2 model files
 carried zero accompanying license/notice text (unlike an ordinary pip
 dependency, whose own license already travels automatically).
 
-Deliberately still open, not silently dropped: **`LICENSE`** (a
-business/legal decision -- which license, and its interaction with the
-still-unresolved BirdNET commercial-adjacent-distribution question in
-§2, above -- outside a bounded engineering milestone's authority to
-resolve unilaterally; see Release Licensing, Distribution & Third-Party
-Legal Closure v1's own report for the complete decision packet: MIT
-recommended, two alternatives named and reasoned through, one exact
-owner-facing question). Public-repo hygiene beyond `SECURITY.md`/
-`CONTRIBUTING.md`/`THIRD_PARTY_NOTICES.md` (README/site polish,
-brand/trademark review) remains open per "Public release readiness" in
-[roadmap.md](roadmap.md), not release-critical blocking.
+**Corrected 2026-09-06 by Global Remaining Product-Development &
+Release-Queue Reconciliation v1:** the owner has now explicitly selected
+**MIT** for MockingBird's own source-code license -- the exact
+owner-facing question Release Licensing, Distribution & Third-Party
+Legal Closure v1's own decision packet posed. **The owner decision itself
+is RESOLVED**, not reopened; do not re-litigate MIT vs. Apache-2.0. This
+does **not** by itself close Lane P: verified empirically this session
+that no `LICENSE` file exists anywhere in the repository, neither
+`pyproject.toml` nor `web/package.json` carries any license metadata, and
+`README.md`'s own "License" section still tells a reader the decision
+"has not yet been finalized" -- all three would be false as of this
+reconciliation if left unchanged. **Lane P moves to `OWNER DECISION
+RESOLVED (MIT) -- MECHANICAL ADOPTION PENDING`**, not to closed. The
+bounded next action (deliberately not performed in this reconciliation,
+per its own governing brief's explicit instruction not to perform
+follow-through unless necessary to make the scheduler truthful): add a
+real `LICENSE` file with correct MIT text/copyright; add SPDX license
+metadata to `pyproject.toml` (and, for consistency, `web/package.json`);
+and correct `README.md`'s "License" section to state the resolved
+decision instead of "not yet finalized." The still-unresolved BirdNET
+commercial-adjacent-distribution question (§2, above) is a separate,
+standing legal-review item with no available engineering action --
+reconciled to **B+D** (blocks only commercial-adjacent use of the
+optional acoustic feature, not all public launch) in the linked report's
+"BirdNET legal posture" section, not resolved or newly blocking here.
+
+Deliberately still open, not silently dropped, and unaffected by the
+above: public-repo hygiene beyond `SECURITY.md`/`CONTRIBUTING.md`/
+`THIRD_PARTY_NOTICES.md` (README/site polish, brand/trademark review)
+remains open per "Public release readiness" in [roadmap.md](roadmap.md),
+not release-critical blocking.
 
 Release Engineering Foundation may occur before all product development is
 finished. Release Engineering Foundation is not the same as final Release
