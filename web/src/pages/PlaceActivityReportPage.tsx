@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { apiClient } from "../api/client";
 import type {
   CameraSource,
+  FeatureEnvironmentalComparison,
   PlaceActivityReportCoverageGap,
   PlaceActivityReportHourActivity,
   PlaceActivityReportOverallChangeStatus,
@@ -527,6 +528,23 @@ function featureAssociationSentence(association: {
   return `Activity looked similar in ${windowText} before and after this change.`;
 }
 
+/** Restrained, non-causal environmental-context line for the identical
+ * before/after windows `featureAssociationSentence` already describes --
+ * context only, never a cause (see docs/environmental-context-place-story-
+ * habitat-change-composition-v1-report.md). Renders nothing at all outside
+ * `status === "comparable"`: an unconfigured/disabled/insufficient-coverage
+ * state stays quietly absent here, matching `EnvironmentalContextCard`'s own
+ * "absence is silence, never an error banner" convention -- the wildlife
+ * insight above always remains the primary, visually dominant fact. */
+function environmentalComparisonSentence(
+  comparison: FeatureEnvironmentalComparison | null | undefined,
+): string | null {
+  if (!comparison || comparison.status !== "comparable") {
+    return null;
+  }
+  return comparison.summary ?? null;
+}
+
 export function PlaceActivityReportPage({ sources, onOpenVisit, onOpenBirdLog }: PlaceActivityReportPageProps) {
   const [preset, setPreset] = useState<PlaceReportPreset>("last_30_days");
   const [customStartDate, setCustomStartDate] = useState(localDateInputValue(localMidnight(new Date(), -29)));
@@ -1044,6 +1062,11 @@ export function PlaceActivityReportPage({ sources, onOpenVisit, onOpenBirdLog }:
                                     ? featureAssociationSentence(change.comparison)
                                     : "No camera or Zone is linked to this feature yet, so activity can't be compared."}
                                 </p>
+                                {environmentalComparisonSentence(change.environmental_comparison) ? (
+                                  <p className="meta-text feature-environmental-comparison">
+                                    {environmentalComparisonSentence(change.environmental_comparison)}
+                                  </p>
+                                ) : null}
                               </li>
                             ))}
                           </ul>

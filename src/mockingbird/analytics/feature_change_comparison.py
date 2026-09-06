@@ -86,6 +86,25 @@ def _window_dates(effective_date: date, window_days: int) -> tuple[set[date], se
     return pre_dates, post_dates, pre_start
 
 
+def comparison_window_dates(pre_start: date, post_end: date, window_days: int) -> tuple[set[date], set[date]]:
+    """Reconstructs the exact pre/post calendar-day sets a `FeatureChangeComparison`'s
+    own `pre_start`/`post_end`/`window_days` already describe, for a caller that needs
+    the identical before/after days the wildlife comparison used -- without re-deriving
+    `effective_date` or re-implementing window arithmetic a second time (Environmental
+    Context x Place Story & Habitat Change Composition v1: the environmental-context
+    comparison must be judged over exactly the same two windows as the wildlife one, or
+    the two halves of a Feature comparison could honestly disagree about what "before"
+    and "after" even mean). Equivalent to calling `_window_dates(effective_date,
+    window_days)` and discarding its own `pre_start`, but this function needs no
+    `effective_date` at all -- `post_end - window_days` recovers it exactly, since
+    `_window_dates` always sets `post_end = effective_date + window_days`."""
+
+    pre_dates = {pre_start + timedelta(days=offset) for offset in range(window_days)}
+    post_start = post_end - timedelta(days=window_days)
+    post_dates = {post_start + timedelta(days=offset) for offset in range(window_days)}
+    return pre_dates, post_dates
+
+
 def compute_feature_change_comparison(
     presence_dates: AbstractSet[date],
     *,
@@ -152,4 +171,5 @@ __all__ = [
     "FeatureComparisonMaturity",
     "FeatureChangeComparison",
     "compute_feature_change_comparison",
+    "comparison_window_dates",
 ]

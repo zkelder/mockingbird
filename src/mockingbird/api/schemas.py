@@ -8456,6 +8456,21 @@ FeatureComparisonMaturity = Literal[
     "too_soon", "insufficient_coverage", "early_signal", "comparable"
 ]
 
+# Environmental Context x Place Story & Habitat Change Composition v1: why an
+# environmental-context comparison for one Feature change event has (or does
+# not yet have) something to say. `"not_configured"`/`"disabled"` mirror
+# `WeatherConditions.status`'s own identical two values verbatim (no Place
+# location set; a location is set but weather was never opted in).
+# `"insufficient_coverage"` mirrors `FeatureComparisonMaturity`'s own value
+# (not enough locally cached weather over these specific before/after
+# windows -- a distinct, independent gate from the wildlife side's own
+# coverage floor). `"comparable"` means enough weather was cached to say
+# *something*, including the honest "nothing meaningfully different" case --
+# see `FeatureEnvironmentalComparison.summary`.
+EnvironmentalComparisonStatus = Literal[
+    "not_configured", "disabled", "insufficient_coverage", "comparable"
+]
+
 
 class PlaceFeature(BaseModel):
     """A durable, user-recorded Place Feature -- see `PlaceFeatureModel`
@@ -8598,6 +8613,38 @@ class PlaceFeatureAssociation(BaseModel):
     usable_days_out_of_condition: int | None = None
 
 
+class FeatureEnvironmentalComparison(BaseModel):
+    """Restrained, non-causal environmental context over the *identical*
+    before/after calendar-day windows `PlaceFeatureAssociation` already
+    established for the same change event (see `mockingbird.analytics.
+    environmental_period_comparison` "No new statistical primitive") --
+    context only, never a cause: this never claims weather explains a
+    wildlife change, only that conditions differed (or did not) between the
+    two periods. `pre_start`/`post_end`/`window_days` are always populated
+    whenever this object exists at all (mirroring the sibling
+    `PlaceFeatureAssociation`'s own window fields) so a caller can state
+    *which* period was or was not compared even when `status` is not
+    `"comparable"`. Every other field is `None` unless `status ==
+    "comparable"`; `summary` is the one restrained, ready-to-render sentence
+    ("The after period was notably cooler." / "Conditions were broadly
+    similar across the two periods.") -- always non-`None` when `status ==
+    "comparable"`, since the neutral "similar" case is itself a valid,
+    intentional answer on this dedicated comparison surface (contrast Place
+    Story's own stricter, never-neutral `comparison_insight` caveat)."""
+
+    status: EnvironmentalComparisonStatus
+    window_days: int | None = None
+    pre_start: date | None = None
+    post_end: date | None = None
+    information_class: Literal["inferred"] | None = None
+    provider_key: str | None = None
+    pre_mean_temperature_c: float | None = None
+    post_mean_temperature_c: float | None = None
+    pre_total_precipitation_mm: float | None = None
+    post_total_precipitation_mm: float | None = None
+    summary: str | None = None
+
+
 class PlaceFeatureChangeEventWithComparison(BaseModel):
     """One change event plus its own before/after comparison, computed
     fresh at read time -- never persisted (see `PlaceFeatureChangeEventModel`
@@ -8611,6 +8658,14 @@ class PlaceFeatureChangeEventWithComparison(BaseModel):
     `source_id` nor `zone_id` set) -- distinct from a `maturity` of
     `"too_soon"`/`"insufficient_coverage"`, which means an association *was*
     attempted but is not yet trustworthy."""
+    environmental_comparison: FeatureEnvironmentalComparison | None = None
+    """`None` under the identical condition as `comparison` being `None`
+    (no monitoring scope), plus one further case: `comparison.maturity` is
+    `"too_soon"`/`"insufficient_coverage"` (no before/after window exists
+    yet at all for the wildlife side, so there is no period for
+    environmental context to align with either) -- computed fresh at read
+    time exactly like `comparison`, with the identical correction-safety
+    property."""
 
 
 class PlaceFeatureYieldSummary(BaseModel):

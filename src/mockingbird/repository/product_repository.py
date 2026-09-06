@@ -101,9 +101,15 @@ from mockingbird.analytics.habitat_association import (
     TaxonHabitatAssociation,
     compute_habitat_associations,
 )
+from mockingbird.analytics.environmental_period_comparison import (
+    EnvironmentalPeriodComparison,
+    compute_environmental_period_comparison,
+    summarize_environmental_period_comparison,
+)
 from mockingbird.analytics.feature_change_comparison import (
     CANDIDATE_WINDOW_DAYS,
     FeatureChangeComparison,
+    comparison_window_dates,
     compute_feature_change_comparison,
 )
 from mockingbird.analytics.feature_yield import compute_feature_yield
@@ -762,8 +768,10 @@ from mockingbird.api.schemas import (
     AdministratorBootstrapRequest,
     AuditLogEntry,
     CurrentUser,
+    EnvironmentalComparisonStatus,
     EnvironmentalContextSettings,
     EnvironmentalContextSettingsUpdate,
+    FeatureEnvironmentalComparison,
     FieldAcceptanceCredentialCreate,
     FieldAcceptanceCredentialSummary,
     FieldAcceptancePrincipal,
@@ -3946,6 +3954,18 @@ def _place_story_entry(event: PlaceStoryEvent) -> PlaceStoryEntry:
 PLACE_STORY_DEFAULT_LOOKBACK_DAYS = 1825  # ~5 years
 
 
+class PlaceWeatherContext(NamedTuple):
+    """The bundled return of `ProductRepository._cached_place_weather_context`
+    -- a `NamedTuple` (not a bare tuple) so its two call sites
+    (`_historical_place_baseline_and_species_statuses`'s taxon weather
+    associations, and `_feature_environmental_period_comparison`'s Feature/
+    Place-Story composition) access fields by name, never position."""
+
+    temperature_baseline: condition_bands.TemperatureBaseline
+    daily_mean_temperatures_c: dict[date, float]
+    daily_total_precipitation_mm: dict[date, float]
+
+
 class ProductRepository:
     """Persist product-level stream, zone, event, review, and export state.
 
@@ -5224,6 +5244,85 @@ class ProductRepository:
         baseline = condition_bands.compute_temperature_baseline(means)
         return condition_bands.classify_temperature_day(mean_temperature_c, baseline)
 
+    def _cached_place_weather_context(
+        self, session: Session, *, window_end_at: datetime, local_timezone: tzinfo,
+    ) -> PlaceWeatherContext | None:
+        """Place-relative temperature baseline plus per-usable-day mean
+        temperature/total precipitation, built from whatever `open_meteo`
+        weather is already cached for this Place's own coordinates over the
+        trailing `WEATHER_MAX_PAST_DAYS` window ending at `window_end_at` --
+        read-only, never a live provider fetch (Environmental Context v2,
+        Phase 6/10). `None` when weather is not configured/enabled, or
+        nothing has been cached yet for that window -- callers must treat
+        that as honest absence, never an error.
+
+        Bucketed by `local_timezone` (not the storage layer's own UTC
+        `for_date`) so day boundaries match the rest of this reporting
+        pipeline (`presence_dates_by_taxon`, `feature_change_comparison`'s
+        own before/after date sets) -- see `condition_bands._bucket_date`'s
+        own docstring for why a UTC/local mismatch here would silently
+        misalign whole days for a Place far from UTC.
+
+        Extracted from `_historical_place_baseline_and_species_statuses`
+        (its original, sole caller) so Place Feature before/after and Place
+        Story's `comparison_insight` composition (Environmental Context x
+        Place Story & Habitat Change Composition v1) can reuse the identical
+        cached-weather-read path instead of a second one -- see "No new
+        statistical primitive" in `mockingbird.analytics.
+        environmental_period_comparison`."""
+
+        env_settings = session.get(EnvironmentalContextSettingsModel, 1)
+        if not (
+            env_settings is not None
+            and env_settings.weather_enabled
+            and env_settings.coarse_latitude is not None
+            and env_settings.coarse_longitude is not None
+        ):
+            return None
+        weather_window_start = (window_end_at - timedelta(days=weather_provider.WEATHER_MAX_PAST_DAYS)).date()
+        weather_window_end = window_end_at.date()
+        weather_rows = session.scalars(
+            select(EnvironmentalContextRecordModel).where(
+                EnvironmentalContextRecordModel.source_id.is_(None),
+                EnvironmentalContextRecordModel.provider_key == weather_provider.WEATHER_PROVIDER_KEY,
+                EnvironmentalContextRecordModel.metric.in_(("air_temperature", "precipitation_amount")),
+                EnvironmentalContextRecordModel.basis_latitude == env_settings.coarse_latitude,
+                EnvironmentalContextRecordModel.basis_longitude == env_settings.coarse_longitude,
+                EnvironmentalContextRecordModel.for_date >= weather_window_start,
+                EnvironmentalContextRecordModel.for_date <= weather_window_end,
+            )
+        ).all()
+        if not weather_rows:
+            return None
+        weather_observations = tuple(
+            _hourly_observation_from_environmental_context_record(row) for row in weather_rows
+        )
+
+        temperature_hour_counts = condition_bands.daily_hour_counts(
+            weather_observations, metric="air_temperature", local_timezone=local_timezone,
+        )
+        temperature_usable_dates = condition_bands.usable_environmental_dates(temperature_hour_counts)
+        temperature_means = condition_bands.daily_mean(
+            weather_observations, metric="air_temperature", dates=temperature_usable_dates,
+            local_timezone=local_timezone,
+        )
+        temperature_baseline = condition_bands.compute_temperature_baseline(temperature_means)
+
+        precipitation_hour_counts = condition_bands.daily_hour_counts(
+            weather_observations, metric="precipitation_amount", local_timezone=local_timezone,
+        )
+        precipitation_usable_dates = condition_bands.usable_environmental_dates(precipitation_hour_counts)
+        precipitation_sums = condition_bands.daily_sum(
+            weather_observations, metric="precipitation_amount", dates=precipitation_usable_dates,
+            local_timezone=local_timezone,
+        )
+
+        return PlaceWeatherContext(
+            temperature_baseline=temperature_baseline,
+            daily_mean_temperatures_c=temperature_means,
+            daily_total_precipitation_mm=precipitation_sums,
+        )
+
     def get_place_environmental_context_today(self) -> PlaceEnvironmentalContext:
         now = datetime.now(UTC)
         with self.session_factory() as session:
@@ -6229,6 +6328,90 @@ class ProductRepository:
             ),
         )
 
+    def _feature_environmental_period_comparison(
+        self, session: Session, comparison: FeatureChangeComparison, *, local_timezone: tzinfo,
+    ) -> tuple[EnvironmentalComparisonStatus, EnvironmentalPeriodComparison | None]:
+        """Environmental-context composition over the *identical* before/
+        after calendar days `comparison` itself already established
+        (`comparison.pre_start`/`post_end`/`window_days`) -- never a second
+        window computation (see `feature_change_comparison.
+        comparison_window_dates`). Preconditions: caller has already
+        confirmed `comparison.maturity in ("early_signal", "comparable")`
+        (the wildlife side reached a real window at all -- otherwise there
+        is no period for environmental context to align with).
+
+        Shared, unmodified, by Place Feature before/after
+        (`get_place_feature_detail`) and Place Story's `comparison_insight`
+        composition (`_place_story_feature_events`) -- one weather-period-
+        comparison path, not two."""
+
+        assert (
+            comparison.pre_start is not None
+            and comparison.post_end is not None
+            and comparison.window_days is not None
+        )
+        env_settings = session.get(EnvironmentalContextSettingsModel, 1)
+        provider_status = weather_provider.get_weather_provider_status(
+            env_settings.coarse_latitude if env_settings is not None else None,
+            env_settings.coarse_longitude if env_settings is not None else None,
+            weather_enabled=env_settings.weather_enabled if env_settings is not None else False,
+        )
+        if provider_status.status != "available":
+            return provider_status.status, None  # "not_configured" or "disabled"
+        window_end_at = datetime(
+            comparison.post_end.year, comparison.post_end.month, comparison.post_end.day, tzinfo=UTC,
+        )
+        weather_context = self._cached_place_weather_context(
+            session, window_end_at=window_end_at, local_timezone=local_timezone,
+        )
+        if weather_context is None:
+            return "insufficient_coverage", None
+        pre_dates, post_dates = comparison_window_dates(
+            comparison.pre_start, comparison.post_end, comparison.window_days,
+        )
+        period = compute_environmental_period_comparison(
+            pre_dates=pre_dates,
+            post_dates=post_dates,
+            temperature_baseline=weather_context.temperature_baseline,
+            daily_mean_temperatures_c=weather_context.daily_mean_temperatures_c,
+            daily_total_precipitation_mm=weather_context.daily_total_precipitation_mm,
+        )
+        if period.status == "insufficient_coverage":
+            return "insufficient_coverage", None
+        return "comparable", period
+
+    @staticmethod
+    def _feature_environmental_comparison_response(
+        comparison: FeatureChangeComparison,
+        status: EnvironmentalComparisonStatus,
+        period: EnvironmentalPeriodComparison | None,
+    ) -> FeatureEnvironmentalComparison:
+        """`pre_start`/`post_end`/`window_days` are always populated here --
+        mirroring `_feature_association_response`'s own window fields --
+        even when `status != "comparable"`, so a caller can honestly state
+        *which* period could not be environmentally compared."""
+
+        if status != "comparable" or period is None:
+            return FeatureEnvironmentalComparison(
+                status=status,
+                window_days=comparison.window_days,
+                pre_start=comparison.pre_start,
+                post_end=comparison.post_end,
+            )
+        return FeatureEnvironmentalComparison(
+            status="comparable",
+            window_days=comparison.window_days,
+            pre_start=comparison.pre_start,
+            post_end=comparison.post_end,
+            information_class="inferred",
+            provider_key=weather_provider.WEATHER_PROVIDER_KEY,
+            pre_mean_temperature_c=period.pre_mean_temperature_c,
+            post_mean_temperature_c=period.post_mean_temperature_c,
+            pre_total_precipitation_mm=period.pre_total_precipitation_mm,
+            post_total_precipitation_mm=period.post_total_precipitation_mm,
+            summary=summarize_environmental_period_comparison(period, include_neutral=True),
+        )
+
     def get_place_feature_detail(
         self, feature_id: str, *, now: datetime | None = None, local_timezone: tzinfo | None = None,
     ) -> PlaceFeatureDetail | None:
@@ -6262,6 +6445,7 @@ class ProductRepository:
             changes: list[PlaceFeatureChangeEventWithComparison] = []
             for event_model in event_models:
                 comparison_response = None
+                environmental_comparison_response = None
                 if stream_ids:
                     comparison = self._compute_feature_change_event_comparison(
                         session, model, stream_ids, event_model,
@@ -6269,10 +6453,18 @@ class ProductRepository:
                         taxonomy_index=taxonomy_index,
                     )
                     comparison_response = self._feature_association_response(comparison)
+                    if comparison.maturity in ("early_signal", "comparable"):
+                        env_status, period = self._feature_environmental_period_comparison(
+                            session, comparison, local_timezone=resolved_local_timezone,
+                        )
+                        environmental_comparison_response = self._feature_environmental_comparison_response(
+                            comparison, env_status, period,
+                        )
                 changes.append(
                     PlaceFeatureChangeEventWithComparison(
                         event=self._place_feature_change_event_from_model(event_model),
                         comparison=comparison_response,
+                        environmental_comparison=environmental_comparison_response,
                     )
                 )
             recent_yield = self._feature_yield_summary(
@@ -32612,108 +32804,36 @@ class ProductRepository:
         # own comparison window"), not a silent bias: missing/disabled
         # weather data must never break core Place intelligence, mirroring
         # habitat association's identical coverage-safety discipline above.
+        # `_cached_place_weather_context` is upper-bounded at `window_end_at`'s
+        # own date: `usable_dates` below is already scoped to this report's
+        # own trailing window, so a cached weather row from *after*
+        # window_end_at would be excluded from the association result
+        # regardless via that intersection -- this is a belt-and-suspenders
+        # query-efficiency tightening, not a correctness fix on its own.
         weather_associations: dict[str, list[TaxonWeatherAssociation]] = {}
-        env_settings = session.get(EnvironmentalContextSettingsModel, 1)
-        if (
-            env_settings is not None
-            and env_settings.weather_enabled
-            and env_settings.coarse_latitude is not None
-            and env_settings.coarse_longitude is not None
-        ):
-            weather_window_start = (
-                window_end_at - timedelta(days=weather_provider.WEATHER_MAX_PAST_DAYS)
-            ).date()
-            # Upper-bounded at `window_end_at`'s own date too: `usable_dates`
-            # below is already scoped to this report's own trailing window,
-            # so a cached weather row from *after* window_end_at (e.g. a
-            # historical report re-viewed after more recent Today lookups
-            # cached newer dates) would be excluded from the association
-            # result regardless via that intersection -- this bound is a
-            # belt-and-suspenders query-efficiency tightening, not a
-            # correctness fix on its own.
-            weather_window_end = window_end_at.date()
-            weather_rows = session.execute(
-                select(
-                    EnvironmentalContextRecordModel.metric,
-                    EnvironmentalContextRecordModel.value_numeric,
-                    EnvironmentalContextRecordModel.observed_at,
-                    EnvironmentalContextRecordModel.for_date,
-                ).where(
-                    EnvironmentalContextRecordModel.source_id.is_(None),
-                    EnvironmentalContextRecordModel.provider_key == weather_provider.WEATHER_PROVIDER_KEY,
-                    EnvironmentalContextRecordModel.metric.in_(("air_temperature", "precipitation_amount")),
-                    EnvironmentalContextRecordModel.basis_latitude == env_settings.coarse_latitude,
-                    EnvironmentalContextRecordModel.basis_longitude == env_settings.coarse_longitude,
-                    EnvironmentalContextRecordModel.for_date >= weather_window_start,
-                    EnvironmentalContextRecordModel.for_date <= weather_window_end,
-                )
-            ).all()
-            if weather_rows:
-                weather_observations = tuple(
-                    weather_provider.HourlyWeatherObservation(
-                        metric=metric,
-                        value_numeric=value_numeric if value_numeric is not None else 0.0,
-                        unit="",
-                        observed_at=_as_utc(observed_at),
-                        for_date=for_date if for_date is not None else _as_utc(observed_at).date(),
-                    )
-                    for metric, value_numeric, observed_at, for_date in weather_rows
-                )
-                # Bucketed by `local_timezone` (not the storage layer's own
-                # UTC `for_date`) -- this axis is intersected against
-                # `usable_dates`/taxon presence dates below, which are
-                # already local-day-bucketed by the rest of this reporting
-                # pipeline (`presence_dates_by_taxon`); see
-                # `condition_bands._bucket_date`'s own docstring for why a
-                # UTC/local mismatch here would silently misalign whole
-                # days for a Place far from UTC, not just round a few
-                # boundary hours.
-                temperature_hour_counts = condition_bands.daily_hour_counts(
-                    weather_observations, metric="air_temperature", local_timezone=local_timezone,
-                )
-                temperature_usable_dates = condition_bands.usable_environmental_dates(
-                    temperature_hour_counts
-                )
-                temperature_means = condition_bands.daily_mean(
-                    weather_observations,
-                    metric="air_temperature",
-                    dates=temperature_usable_dates,
-                    local_timezone=local_timezone,
-                )
-                temperature_baseline = condition_bands.compute_temperature_baseline(temperature_means)
-                temperature_bands = {
-                    day: band
-                    for day, mean_c in temperature_means.items()
-                    if (band := condition_bands.classify_temperature_day(mean_c, temperature_baseline))
-                    is not None
-                }
-
-                precipitation_hour_counts = condition_bands.daily_hour_counts(
-                    weather_observations, metric="precipitation_amount", local_timezone=local_timezone,
-                )
-                precipitation_usable_dates = condition_bands.usable_environmental_dates(
-                    precipitation_hour_counts
-                )
-                precipitation_sums = condition_bands.daily_sum(
-                    weather_observations,
-                    metric="precipitation_amount",
-                    dates=precipitation_usable_dates,
-                    local_timezone=local_timezone,
-                )
-                precipitation_bands = {
-                    day: condition_bands.classify_precipitation_day(total_mm)
-                    for day, total_mm in precipitation_sums.items()
-                }
-
-                for association in compute_weather_associations(
-                    window_visits,
-                    taxa=taxa,
-                    usable_dates=usable_dates,
-                    local_timezone=local_timezone,
-                    temperature_bands=temperature_bands,
-                    precipitation_bands=precipitation_bands,
-                ):
-                    weather_associations.setdefault(association.taxon.label, []).append(association)
+        weather_context = self._cached_place_weather_context(
+            session, window_end_at=window_end_at, local_timezone=local_timezone,
+        )
+        if weather_context is not None:
+            temperature_bands = {
+                day: band
+                for day, mean_c in weather_context.daily_mean_temperatures_c.items()
+                if (band := condition_bands.classify_temperature_day(mean_c, weather_context.temperature_baseline))
+                is not None
+            }
+            precipitation_bands = {
+                day: condition_bands.classify_precipitation_day(total_mm)
+                for day, total_mm in weather_context.daily_total_precipitation_mm.items()
+            }
+            for association in compute_weather_associations(
+                window_visits,
+                taxa=taxa,
+                usable_dates=usable_dates,
+                local_timezone=local_timezone,
+                temperature_bands=temperature_bands,
+                precipitation_bands=precipitation_bands,
+            ):
+                weather_associations.setdefault(association.taxon.label, []).append(association)
 
         return HistoricalPlaceIntelligence(
             baseline=baseline,
@@ -33744,6 +33864,23 @@ class ProductRepository:
             ):
                 continue
             assert comparison.window_days is not None and comparison.post_end is not None
+            # Environmental Context x Place Story & Habitat Change
+            # Composition v1: reuses `_feature_environmental_period_
+            # comparison` completely unmodified -- the exact method Place
+            # Feature before/after uses -- never a second weather-period-
+            # comparison path. `include_neutral=False` (via `status !=
+            # "comparable"` short-circuiting to `None` regardless) means an
+            # ordinary Story entry never gains a bland "conditions were
+            # similar" filler clause -- only a genuinely meaningful
+            # difference is ever appended (Phase 9: never a weather log).
+            env_status, period = self._feature_environmental_period_comparison(
+                session, comparison, local_timezone=local_timezone,
+            )
+            weather_caveat = (
+                summarize_environmental_period_comparison(period, include_neutral=False)
+                if env_status == "comparable" and period is not None
+                else None
+            )
             comparison_events.append(
                 comparison_insight_event(
                     change_event_id=event_model.id,
@@ -33754,11 +33891,7 @@ class ProductRepository:
                     window_days=comparison.window_days,
                     post_end=comparison.post_end,
                     association_status=association.status,
-                    # Environmental-context caveat composition onto this
-                    # comparison is a deliberately bounded v1 gap -- see
-                    # the report's "Remaining major PRODUCT opportunities."
-                    # Never fabricated; simply omitted when not computed.
-                    weather_caveat=None,
+                    weather_caveat=weather_caveat,
                 )
             )
         return feature_events, comparison_events

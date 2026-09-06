@@ -24,6 +24,7 @@ from starlette.testclient import TestClient
 from mockingbird.analytics.conditional_association import compute_conditional_association
 from mockingbird.analytics.feature_change_comparison import (
     CANDIDATE_WINDOW_DAYS,
+    comparison_window_dates,
     compute_feature_change_comparison,
 )
 from mockingbird.analytics.feature_yield import compute_feature_yield
@@ -31,6 +32,7 @@ from mockingbird.analytics.place_activity_report import TaxonFact, VisitFact
 from mockingbird.api.main import app, configure_repository
 from mockingbird.api.schemas import (
     CurrentUser,
+    EnvironmentalContextSettingsUpdate,
     PlaceFeatureChangeEventCreate,
     PlaceFeatureChangeEventUpdate,
     PlaceFeatureCreate,
@@ -38,6 +40,7 @@ from mockingbird.api.schemas import (
     ReviewCorrectionCreate,
     UserRole,
 )
+from mockingbird.environment import weather_provider
 from mockingbird.habitat.place_feature import (
     DERIVED_STATE_EVENT_TYPES,
     PLACE_FEATURE_CHANGE_EVENT_TYPES,
@@ -46,6 +49,7 @@ from mockingbird.habitat.place_feature import (
 from mockingbird.repository.product_repository import PlaceFeatureHasHistoryError, ProductRepository
 from mockingbird.storage.models import (
     CameraSourceModel,
+    EnvironmentalContextRecordModel,
     EventModel,
     MonitoringExposureIntervalModel,
     StreamModel,
@@ -201,6 +205,92 @@ def _cover_days(repository: ProductRepository, *, start: date, days: int, stream
         )
 
 
+# --- Environmental Context x Place Story & Habitat Change Composition v1 ---
+
+WEATHER_LATITUDE = 40.7
+WEATHER_LONGITUDE = -74.0
+
+
+def _enable_weather(
+    repository: ProductRepository, *, latitude: float = WEATHER_LATITUDE, longitude: float = WEATHER_LONGITUDE,
+) -> None:
+    repository.update_environmental_context_settings(
+        EnvironmentalContextSettingsUpdate(latitude=latitude, longitude=longitude, weather_enabled=True),
+        acting_user=_acting_user(),
+    )
+
+
+def _insert_environmental_context_day(
+    repository: ProductRepository,
+    *,
+    metric: str,
+    for_date: date,
+    value_numeric: float,
+    unit: str,
+    latitude: float = WEATHER_LATITUDE,
+    longitude: float = WEATHER_LONGITUDE,
+) -> None:
+    """Directly inserts one full day (24 hourly rows) of one weather metric
+    at a fixed value -- bypasses the fetch path entirely, mirroring
+    `test_environmental_context.py`'s own `_insert_air_temperature_day`
+    helper, generalized to any metric (here, also `precipitation_amount`)."""
+
+    now = datetime.now(UTC)
+    with repository.session_factory() as session:
+        with session.begin():
+            for hour in range(24):
+                session.add(
+                    EnvironmentalContextRecordModel(
+                        id=f"envctx-feature-test-{metric}-{for_date.isoformat()}-{hour:02d}",
+                        source_id=None,
+                        provider_key=weather_provider.WEATHER_PROVIDER_KEY,
+                        information_class=weather_provider.WEATHER_INFORMATION_CLASS,
+                        metric=metric,
+                        value_numeric=value_numeric,
+                        value_text=None,
+                        unit=unit,
+                        observed_at=datetime(for_date.year, for_date.month, for_date.day, hour, tzinfo=UTC),
+                        observed_at_end=None,
+                        for_date=for_date,
+                        retrieved_at=now,
+                        basis_latitude=latitude,
+                        basis_longitude=longitude,
+                        provenance_json=None,
+                        provenance_schema_version=1,
+                        created_at=now,
+                    )
+                )
+
+
+def _seed_flat_temperature_baseline(
+    repository: ProductRepository, *, before: date, days: int, temperature_c: float,
+) -> None:
+    """Establishes a Place-relative temperature baseline entirely *outside*
+    a comparison's own pre/post windows, at a stable value, so the windows
+    under test can be judged against a genuine, independent baseline rather
+    than the circular case of only the two windows being compared."""
+
+    for offset in range(1, days + 1):
+        _insert_environmental_context_day(
+            repository, metric="air_temperature", for_date=before - timedelta(days=offset),
+            value_numeric=temperature_c, unit="celsius",
+        )
+
+
+def _insert_precipitation_day(repository: ProductRepository, *, for_date: date, total_mm: float) -> None:
+    """`condition_bands.daily_sum` sums every hourly value for the day (real
+    Open-Meteo hourly precipitation, unlike temperature, is summed, not
+    averaged) -- spreading `total_mm` evenly across the day's 24 hourly rows
+    reconstructs the intended daily total exactly, rather than
+    `_insert_environmental_context_day`'s own flat-per-hour convention
+    (correct for temperature's daily *mean*) silently producing 24x too
+    much rain."""
+
+    _insert_environmental_context_day(
+        repository, metric="precipitation_amount", for_date=for_date, value_numeric=total_mm / 24, unit="mm",
+    )
+
+
 # --- Pure: feature_change_comparison ---------------------------------------
 
 
@@ -294,6 +384,31 @@ def test_compute_feature_change_comparison_matches_conditional_association_primi
     )
     direct = compute_conditional_association(presence, usable_dates=pre | post, condition_dates=post)
     assert result.association == direct
+
+
+def test_comparison_window_dates_reconstructs_the_exact_windows_used() -> None:
+    """Environmental Context x Place Story & Habitat Change Composition v1:
+    a caller reconstructing pre/post date-sets from only a `FeatureChangeComparison`'s
+    own `pre_start`/`post_end`/`window_days` (never `effective_date` itself) must get
+    byte-identical sets to the ones `compute_feature_change_comparison` actually used
+    to produce that result -- otherwise an environmental-context composition could
+    silently judge a different period than the wildlife comparison it explains."""
+
+    effective = date(2026, 6, 10)
+    today = effective + timedelta(days=30)
+    pre = {effective - timedelta(days=offset) for offset in range(1, 8)}
+    post = {effective + timedelta(days=offset) for offset in range(7)}
+    presence = {effective + timedelta(days=1), effective + timedelta(days=2)}
+    result = compute_feature_change_comparison(
+        presence_dates=presence, usable_dates=pre | post, effective_date=effective, today=today,
+    )
+    assert result.maturity == "comparable"
+    assert result.pre_start is not None and result.post_end is not None and result.window_days is not None
+    reconstructed_pre, reconstructed_post = comparison_window_dates(
+        result.pre_start, result.post_end, result.window_days
+    )
+    assert reconstructed_pre == pre
+    assert reconstructed_post == post
 
 
 # --- Pure: feature_yield -----------------------------------------------------
@@ -734,6 +849,274 @@ def test_correcting_change_event_date_changes_comparison_on_next_read(repository
     )
     after = repository.get_place_feature_detail(feature.id, now=now, local_timezone=UTC)
     assert after.changes[0].comparison.maturity == "too_soon"
+
+
+# --- Environmental Context x Place Story & Habitat Change Composition v1:
+# Feature before/after environmental-context composition ------------------
+
+
+def _feature_with_comparable_change(
+    repository: ProductRepository, *, effective: date = date(2026, 6, 20),
+) -> tuple[str, str, datetime]:
+    """A Feature + change event whose wildlife-side comparison is guaranteed
+    to reach `maturity in ("early_signal", "comparable")` at the smallest
+    (7-day) window -- full exposure coverage on both sides clears
+    `conditional_association`'s own usable-day floor regardless of presence,
+    so no Visit needs to be seeded at all for these environmental-focused
+    tests. Returns `(feature_id, event_id, now)`."""
+
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="feeder", name="Feeder", zone_id=ZONE_ID), acting_user=_acting_user(),
+    )
+    event = repository.add_place_feature_change_event(
+        PlaceFeatureChangeEventCreate(feature_id=feature.id, event_type="added", effective_date=effective),
+        acting_user=_acting_user(),
+    )
+    now = datetime(effective.year, effective.month, effective.day, tzinfo=UTC) + timedelta(days=7)
+    _cover_days(repository, start=effective - timedelta(days=7), days=14)
+    return feature.id, event.id, now
+
+
+def test_feature_environmental_comparison_not_configured_without_location(
+    repository: ProductRepository,
+) -> None:
+    feature_id, _event_id, now = _feature_with_comparable_change(repository)
+    detail = repository.get_place_feature_detail(feature_id, now=now, local_timezone=UTC)
+    comparison = detail.changes[0]
+    assert comparison.comparison.maturity == "comparable"
+    assert comparison.environmental_comparison is not None
+    assert comparison.environmental_comparison.status == "not_configured"
+    assert comparison.environmental_comparison.summary is None
+    # The window is still stated honestly even though nothing could be said
+    # about it -- mirrors `PlaceFeatureAssociation`'s own window fields.
+    assert comparison.environmental_comparison.window_days == 7
+
+
+def test_feature_environmental_comparison_insufficient_coverage_without_cached_weather(
+    repository: ProductRepository,
+) -> None:
+    effective = date(2026, 6, 20)
+    feature_id, _event_id, now = _feature_with_comparable_change(repository, effective=effective)
+    _enable_weather(repository)  # configured + enabled, but zero rows ever cached
+    detail = repository.get_place_feature_detail(feature_id, now=now, local_timezone=UTC)
+    environmental = detail.changes[0].environmental_comparison
+    assert environmental is not None
+    assert environmental.status == "insufficient_coverage"
+    assert environmental.summary is None
+
+
+def test_feature_environmental_comparison_notably_cooler_after(repository: ProductRepository) -> None:
+    effective = date(2026, 6, 20)
+    feature_id, _event_id, now = _feature_with_comparable_change(repository, effective=effective)
+    _enable_weather(repository)
+    pre_start = effective - timedelta(days=7)  # 2026-06-13
+    post_end = effective + timedelta(days=7)  # 2026-06-27 (exclusive)
+    # A broad, independent baseline at 15C, well outside [pre_start, post_end).
+    _seed_flat_temperature_baseline(repository, before=pre_start, days=20, temperature_c=15.0)
+    for offset in range(7):  # pre window: typical (15C)
+        _insert_environmental_context_day(
+            repository, metric="air_temperature", for_date=pre_start + timedelta(days=offset),
+            value_numeric=15.0, unit="celsius",
+        )
+    for offset in range(7):  # post window: much colder
+        _insert_environmental_context_day(
+            repository, metric="air_temperature", for_date=effective + timedelta(days=offset),
+            value_numeric=0.0, unit="celsius",
+        )
+    detail = repository.get_place_feature_detail(feature_id, now=now, local_timezone=UTC)
+    environmental = detail.changes[0].environmental_comparison
+    assert environmental is not None
+    assert environmental.status == "comparable"
+    assert environmental.summary == "The after period was notably cooler."
+    assert environmental.pre_mean_temperature_c == pytest.approx(15.0)
+    assert environmental.post_mean_temperature_c == pytest.approx(0.0)
+    assert environmental.information_class == "inferred"
+    assert environmental.provider_key == weather_provider.WEATHER_PROVIDER_KEY
+    assert environmental.pre_start == pre_start
+    assert environmental.post_end == post_end
+    # Never a causal claim.
+    for forbidden in ("caused", "led to", "resulted in", "because of", "drove", "due to"):
+        assert forbidden not in environmental.summary.lower()
+
+
+def test_feature_environmental_comparison_broadly_similar(repository: ProductRepository) -> None:
+    effective = date(2026, 6, 20)
+    feature_id, _event_id, now = _feature_with_comparable_change(repository, effective=effective)
+    _enable_weather(repository)
+    pre_start = effective - timedelta(days=7)
+    _seed_flat_temperature_baseline(repository, before=pre_start, days=20, temperature_c=15.0)
+    for offset in range(7):
+        _insert_environmental_context_day(
+            repository, metric="air_temperature", for_date=pre_start + timedelta(days=offset),
+            value_numeric=15.0, unit="celsius",
+        )
+    for offset in range(7):  # post window: also typical -- nothing meaningfully different
+        _insert_environmental_context_day(
+            repository, metric="air_temperature", for_date=effective + timedelta(days=offset),
+            value_numeric=15.0, unit="celsius",
+        )
+    detail = repository.get_place_feature_detail(feature_id, now=now, local_timezone=UTC)
+    environmental = detail.changes[0].environmental_comparison
+    assert environmental is not None
+    assert environmental.status == "comparable"
+    assert environmental.summary == "Conditions were broadly similar across the two periods."
+
+
+def test_feature_environmental_comparison_is_none_when_wildlife_maturity_too_soon(
+    repository: ProductRepository,
+) -> None:
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="feeder", name="Feeder", zone_id=ZONE_ID), acting_user=_acting_user(),
+    )
+    effective = date(2026, 6, 1)
+    now = datetime(2026, 6, 3, tzinfo=UTC)  # only 2 days have elapsed
+    repository.add_place_feature_change_event(
+        PlaceFeatureChangeEventCreate(feature_id=feature.id, event_type="added", effective_date=effective),
+        acting_user=_acting_user(),
+    )
+    _enable_weather(repository)
+    detail = repository.get_place_feature_detail(feature.id, now=now, local_timezone=UTC)
+    assert detail.changes[0].comparison.maturity == "too_soon"
+    assert detail.changes[0].environmental_comparison is None
+
+
+def test_correcting_change_event_date_also_collapses_environmental_comparison(
+    repository: ProductRepository,
+) -> None:
+    """Correction safety (Phase 12 of the governing brief): moving a change
+    event's own date so the wildlife comparison is no longer mature must
+    also retract the environmental comparison it was aligned to -- no stale
+    "notably cooler" claim may survive judging a period that is no longer
+    the one actually being compared. Computed fresh at read time, exactly
+    like `test_correcting_change_event_date_changes_comparison_on_next_read`."""
+
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="feeder", name="Feeder", zone_id=ZONE_ID), acting_user=_acting_user(),
+    )
+    now = datetime(2026, 6, 8, tzinfo=UTC)
+    event = repository.add_place_feature_change_event(
+        PlaceFeatureChangeEventCreate(feature_id=feature.id, event_type="added", effective_date=date(2026, 6, 1)),
+        acting_user=_acting_user(),
+    )
+    _cover_days(repository, start=date(2026, 5, 20), days=20)
+    _enable_weather(repository)
+    _seed_flat_temperature_baseline(repository, before=date(2026, 5, 25), days=20, temperature_c=15.0)
+    for offset in range(7):
+        _insert_environmental_context_day(
+            repository, metric="air_temperature", for_date=date(2026, 5, 25) + timedelta(days=offset),
+            value_numeric=15.0, unit="celsius",
+        )
+    for offset in range(7):
+        _insert_environmental_context_day(
+            repository, metric="air_temperature", for_date=date(2026, 6, 1) + timedelta(days=offset),
+            value_numeric=0.0, unit="celsius",
+        )
+    before = repository.get_place_feature_detail(feature.id, now=now, local_timezone=UTC)
+    assert before.changes[0].comparison.maturity == "comparable"
+    assert before.changes[0].environmental_comparison is not None
+    assert before.changes[0].environmental_comparison.status == "comparable"
+    assert before.changes[0].environmental_comparison.summary == "The after period was notably cooler."
+
+    repository.update_place_feature_change_event(
+        event.id, PlaceFeatureChangeEventUpdate(effective_date=date(2026, 6, 6)), acting_user=_acting_user()
+    )
+    after = repository.get_place_feature_detail(feature.id, now=now, local_timezone=UTC)
+    assert after.changes[0].comparison.maturity == "too_soon"
+    assert after.changes[0].environmental_comparison is None
+
+
+def test_feature_environmental_comparison_higher_rainfall_after(repository: ProductRepository) -> None:
+    effective = date(2026, 6, 20)
+    feature_id, _event_id, now = _feature_with_comparable_change(repository, effective=effective)
+    _enable_weather(repository)
+    pre_start = effective - timedelta(days=7)
+    for offset in range(7):
+        _insert_precipitation_day(repository, for_date=pre_start + timedelta(days=offset), total_mm=0.0)
+    for offset in range(7):
+        _insert_precipitation_day(repository, for_date=effective + timedelta(days=offset), total_mm=5.0)
+    detail = repository.get_place_feature_detail(feature_id, now=now, local_timezone=UTC)
+    environmental = detail.changes[0].environmental_comparison
+    assert environmental is not None
+    assert environmental.status == "comparable"
+    assert environmental.summary == "Rainfall was higher during the after period."
+    assert environmental.pre_total_precipitation_mm == pytest.approx(0.0)
+    assert environmental.post_total_precipitation_mm == pytest.approx(35.0)
+
+
+class _AlwaysFailsWeatherRequester:
+    """Mirrors `test_local_only_privacy.py`'s identical fake -- always
+    raises, and counts calls, so a test can prove a code path never even
+    attempts a live fetch (not merely that it tolerates one failing)."""
+
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    def get(self, url: str, *, timeout_seconds: float) -> bytes:
+        self.call_count += 1
+        raise weather_provider.WeatherProviderUnavailableError("simulated: no internet route")
+
+
+def test_feature_environmental_comparison_never_calls_the_network(tmp_path: Path) -> None:
+    """Local Only (Phase 13 of the governing brief): composing environmental
+    context onto a Feature comparison reads only already-persisted rows --
+    it must never itself attempt a live provider fetch, even when weather is
+    enabled and coordinates are configured. Proven, not assumed: a requester
+    that always raises is injected, and its `call_count` stays exactly `0`
+    after a full comparable-with-a-meaningful-difference read."""
+
+    isolated_repository = ProductRepository(
+        db_url=f"sqlite:///{tmp_path / 'mockingbird.sqlite3'}",
+        media_root=tmp_path / "media",
+        weather_requester=_AlwaysFailsWeatherRequester(),
+    )
+    configure_repository(isolated_repository)
+    try:
+        with isolated_repository.session_factory() as session:
+            with session.begin():
+                session.add(
+                    CameraSourceModel(
+                        id=SOURCE_ID, name="Feature fixture camera", kind="manual_upload",
+                        status="connected", description="Place Features fixture.",
+                    )
+                )
+                session.add(
+                    StreamModel(
+                        id=STREAM_ID, source_id=SOURCE_ID, name="Feature fixture stream",
+                        description="Place Features fixture.", is_live=False,
+                    )
+                )
+                session.add(
+                    ZoneModel(
+                        id=ZONE_ID, stream_id=STREAM_ID, name="Feeder", zone_type="feeder",
+                        polygon_json="[]", is_active=True, monitoring_policy_json=None,
+                    )
+                )
+        effective = date(2026, 6, 20)
+        feature_id, _event_id, now = _feature_with_comparable_change(isolated_repository, effective=effective)
+        _enable_weather(isolated_repository)
+        pre_start = effective - timedelta(days=7)
+        _seed_flat_temperature_baseline(isolated_repository, before=pre_start, days=20, temperature_c=15.0)
+        for offset in range(7):
+            _insert_environmental_context_day(
+                isolated_repository, metric="air_temperature", for_date=pre_start + timedelta(days=offset),
+                value_numeric=15.0, unit="celsius",
+            )
+        for offset in range(7):
+            _insert_environmental_context_day(
+                isolated_repository, metric="air_temperature", for_date=effective + timedelta(days=offset),
+                value_numeric=0.0, unit="celsius",
+            )
+
+        detail = isolated_repository.get_place_feature_detail(feature_id, now=now, local_timezone=UTC)
+        environmental = detail.changes[0].environmental_comparison
+        assert environmental is not None
+        assert environmental.status == "comparable"
+        assert environmental.summary == "The after period was notably cooler."
+        assert isolated_repository._weather_requester.call_count == 0, (
+            "environmental-context composition attempted a live fetch -- Local Only violated"
+        )
+    finally:
+        configure_repository(None)
 
 
 def test_features_summary_counts_and_highlight(repository: ProductRepository) -> None:

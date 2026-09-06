@@ -14,6 +14,7 @@ import pytest
 from mockingbird.api.main import app, configure_repository
 from mockingbird.api.schemas import (
     CurrentUser,
+    EnvironmentalContextSettingsUpdate,
     PlaceFeatureChangeEventCreate,
     PlaceFeatureCreate,
     PlacePhenologyObservationCreate,
@@ -21,9 +22,11 @@ from mockingbird.api.schemas import (
     ReviewCorrectionCreate,
     UserRole,
 )
+from mockingbird.environment import weather_provider
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.storage.models import (
     CameraSourceModel,
+    EnvironmentalContextRecordModel,
     EventModel,
     MonitoringExposureIntervalModel,
     StreamModel,
@@ -121,6 +124,93 @@ def _cover_days(repository: ProductRepository, *, start: date, days: int) -> Non
                 )
 
 
+# --- Environmental Context x Place Story & Habitat Change Composition v1 ---
+
+WEATHER_LATITUDE = 40.7
+WEATHER_LONGITUDE = -74.0
+
+
+def _enable_weather(
+    repository: ProductRepository, *, latitude: float = WEATHER_LATITUDE, longitude: float = WEATHER_LONGITUDE,
+) -> None:
+    repository.update_environmental_context_settings(
+        EnvironmentalContextSettingsUpdate(latitude=latitude, longitude=longitude, weather_enabled=True),
+        acting_user=_acting_user(),
+    )
+
+
+def _insert_air_temperature_day(
+    repository: ProductRepository,
+    *,
+    for_date: date,
+    temperature_c: float,
+    latitude: float = WEATHER_LATITUDE,
+    longitude: float = WEATHER_LONGITUDE,
+) -> None:
+    """Directly inserts one full day (24 hourly rows) of `air_temperature` --
+    bypasses the fetch path entirely, mirroring `test_environmental_context.
+    py`'s own `_insert_air_temperature_day` helper."""
+
+    now = datetime.now(UTC)
+    with repository.session_factory() as session:
+        with session.begin():
+            for hour in range(24):
+                session.add(
+                    EnvironmentalContextRecordModel(
+                        id=f"envctx-story-test-{for_date.isoformat()}-{hour:02d}",
+                        source_id=None,
+                        provider_key=weather_provider.WEATHER_PROVIDER_KEY,
+                        information_class=weather_provider.WEATHER_INFORMATION_CLASS,
+                        metric="air_temperature",
+                        value_numeric=temperature_c,
+                        value_text=None,
+                        unit="celsius",
+                        observed_at=datetime(for_date.year, for_date.month, for_date.day, hour, tzinfo=UTC),
+                        observed_at_end=None,
+                        for_date=for_date,
+                        retrieved_at=now,
+                        basis_latitude=latitude,
+                        basis_longitude=longitude,
+                        provenance_json=None,
+                        provenance_schema_version=1,
+                        created_at=now,
+                    )
+                )
+
+
+def _seed_flat_temperature_baseline(
+    repository: ProductRepository, *, before: date, days: int, temperature_c: float,
+) -> None:
+    for offset in range(1, days + 1):
+        _insert_air_temperature_day(repository, for_date=before - timedelta(days=offset), temperature_c=temperature_c)
+
+
+def _feeder_with_higher_activity_after_change(
+    repository: ProductRepository, *, effective: date,
+) -> tuple[str, str]:
+    """A Feature change event whose wildlife-side `comparison_insight` is
+    guaranteed to fire at the smallest (7-day) window: full exposure
+    coverage on both sides, confirmed presence every post-change day, none
+    before -- an unambiguous `more_common_under_condition`. Returns
+    `(feature_id, change_event_id)`."""
+
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="feeder", name="Sunflower Feeder", zone_id=ZONE_ID),
+        acting_user=_acting_user(),
+    )
+    change = repository.add_place_feature_change_event(
+        PlaceFeatureChangeEventCreate(feature_id=feature.id, event_type="added", effective_date=effective),
+        acting_user=_acting_user(),
+    )
+    _cover_days(repository, start=effective - timedelta(days=7), days=14)
+    for offset in range(7):
+        day = effective + timedelta(days=offset)
+        visit_id = f"visit-story-comparison-{effective.isoformat()}-{offset}"
+        _add_visit(repository, visit_id=visit_id, at=datetime(day.year, day.month, day.day, 10, tzinfo=UTC))
+        _confirm(repository, visit_id=visit_id)
+    return feature.id, change.id
+
+
 def test_first_visit_ever_produces_a_first_seen_entry(repository: ProductRepository) -> None:
     start = date(2025, 3, 1)
     _cover_days(repository, start=start, days=10)
@@ -193,6 +283,93 @@ def test_removed_feature_change_event_disappears_from_the_story(repository: Prod
 
     after = repository.place_story(start_at=datetime(2025, 4, 1, tzinfo=UTC), end_at=datetime(2025, 4, 30, tzinfo=UTC))
     assert not any(e.kind == "feature_change" for e in after.entries), "removed change event still appeared"
+
+
+# --- Environmental Context x Place Story & Habitat Change Composition v1:
+# comparison_insight's weather_caveat composition -----------------------
+
+
+def test_comparison_insight_gains_environmental_caveat_when_meaningfully_different(
+    repository: ProductRepository,
+) -> None:
+    effective = date(2025, 6, 20)
+    _feeder_with_higher_activity_after_change(repository, effective=effective)
+    _enable_weather(repository)
+    pre_start = effective - timedelta(days=7)
+    _seed_flat_temperature_baseline(repository, before=pre_start, days=20, temperature_c=15.0)
+    for offset in range(7):
+        _insert_air_temperature_day(repository, for_date=pre_start + timedelta(days=offset), temperature_c=15.0)
+    for offset in range(7):
+        _insert_air_temperature_day(repository, for_date=effective + timedelta(days=offset), temperature_c=0.0)
+
+    response = repository.place_story(
+        start_at=datetime(2025, 6, 1, tzinfo=UTC), end_at=datetime(2025, 7, 10, tzinfo=UTC),
+        now=datetime(effective.year, effective.month, effective.day, tzinfo=UTC) + timedelta(days=7),
+        local_timezone=UTC,
+    )
+    insights = [e for e in response.entries if e.kind == "comparison_insight"]
+    assert len(insights) == 1
+    assert "Confirmed wildlife activity was higher" in insights[0].summary
+    assert "The after period was notably cooler." in insights[0].summary
+    assert insights[0].information_class == "inferred"
+    for forbidden in ("caused", "led to", "resulted in", "because of", "drove", "due to"):
+        assert forbidden not in insights[0].summary.lower()
+
+
+def test_comparison_insight_has_no_weather_caveat_without_configured_weather(
+    repository: ProductRepository,
+) -> None:
+    """Missing/unconfigured environmental context leaves the Story entry
+    valid -- the wildlife `comparison_insight` still appears, with exactly
+    its own base sentence and no trailing caveat, never a broken card."""
+
+    effective = date(2025, 6, 20)
+    _feeder_with_higher_activity_after_change(repository, effective=effective)
+
+    response = repository.place_story(
+        start_at=datetime(2025, 6, 1, tzinfo=UTC), end_at=datetime(2025, 7, 10, tzinfo=UTC),
+        now=datetime(effective.year, effective.month, effective.day, tzinfo=UTC) + timedelta(days=7),
+        local_timezone=UTC,
+    )
+    insights = [e for e in response.entries if e.kind == "comparison_insight"]
+    assert len(insights) == 1
+    assert insights[0].summary == (
+        "Confirmed wildlife activity was higher during the monitored period after "
+        "Sunflower Feeder was added, compared with the monitored period before."
+    )
+
+
+def test_comparison_insight_has_no_weather_caveat_when_conditions_are_similar(
+    repository: ProductRepository,
+) -> None:
+    """An ordinary Story entry must not become a weather log: a genuinely
+    evaluated-but-unremarkable environmental comparison stays silent here
+    (unlike Place Feature's own dedicated comparison surface, which *does*
+    state "broadly similar" -- see `summarize_environmental_period_
+    comparison`'s `include_neutral` split)."""
+
+    effective = date(2025, 6, 20)
+    _feeder_with_higher_activity_after_change(repository, effective=effective)
+    _enable_weather(repository)
+    pre_start = effective - timedelta(days=7)
+    _seed_flat_temperature_baseline(repository, before=pre_start, days=20, temperature_c=15.0)
+    for offset in range(7):
+        _insert_air_temperature_day(repository, for_date=pre_start + timedelta(days=offset), temperature_c=15.0)
+    for offset in range(7):
+        _insert_air_temperature_day(repository, for_date=effective + timedelta(days=offset), temperature_c=15.0)
+
+    response = repository.place_story(
+        start_at=datetime(2025, 6, 1, tzinfo=UTC), end_at=datetime(2025, 7, 10, tzinfo=UTC),
+        now=datetime(effective.year, effective.month, effective.day, tzinfo=UTC) + timedelta(days=7),
+        local_timezone=UTC,
+    )
+    insights = [e for e in response.entries if e.kind == "comparison_insight"]
+    assert len(insights) == 1
+    assert insights[0].summary == (
+        "Confirmed wildlife activity was higher during the monitored period after "
+        "Sunflower Feeder was added, compared with the monitored period before."
+    )
+    assert "similar" not in insights[0].summary.lower()
 
 
 def test_corrected_phenology_date_moves_the_story_entry(repository: ProductRepository) -> None:

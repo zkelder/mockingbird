@@ -5390,6 +5390,20 @@ export type FeatureComparisonMaturity =
   | "early_signal"
   | "comparable";
 
+// Environmental Context x Place Story & Habitat Change Composition v1: why an
+// environmental-context comparison for one Feature change event has (or does
+// not yet have) something to say. "not_configured"/"disabled" mirror
+// WeatherConditions.status's own identical two values; "insufficient_coverage"
+// mirrors FeatureComparisonMaturity's own value (an independent coverage gate
+// from the wildlife side's own). "comparable" means enough weather was cached
+// to say something, including the honest "nothing meaningfully different"
+// case -- see FeatureEnvironmentalComparison.summary.
+export type EnvironmentalComparisonStatus =
+  | "not_configured"
+  | "disabled"
+  | "insufficient_coverage"
+  | "comparable";
+
 export interface PlaceFeature {
   id: string;
   feature_type: PlaceFeatureType;
@@ -5487,12 +5501,40 @@ export interface PlaceFeatureAssociation {
   usable_days_out_of_condition?: number | null;
 }
 
+// Restrained, non-causal environmental context over the *identical*
+// before/after calendar-day windows PlaceFeatureAssociation already
+// established for the same change event -- context only, never a cause: this
+// never claims weather explains a wildlife change, only that conditions
+// differed (or did not) between the two periods. `pre_start`/`post_end`/
+// `window_days` are always populated whenever this object exists at all.
+// Every other field is null/undefined unless `status === "comparable"`;
+// `summary` is the one restrained, ready-to-render sentence and is always
+// present when `status === "comparable"` (the neutral "similar" case is
+// itself a valid, intentional answer here).
+export interface FeatureEnvironmentalComparison {
+  status: EnvironmentalComparisonStatus;
+  window_days?: number | null;
+  pre_start?: string | null;
+  post_end?: string | null;
+  information_class?: "inferred" | null;
+  provider_key?: string | null;
+  pre_mean_temperature_c?: number | null;
+  post_mean_temperature_c?: number | null;
+  pre_total_precipitation_mm?: number | null;
+  post_total_precipitation_mm?: number | null;
+  summary?: string | null;
+}
+
 export interface PlaceFeatureChangeEventWithComparison {
   event: PlaceFeatureChangeEvent;
   // null only when the event's Feature has no camera/Zone association to
   // compare against -- distinct from a maturity of "too_soon"/
   // "insufficient_coverage", which means an association *was* attempted.
   comparison?: PlaceFeatureAssociation | null;
+  // null under the identical condition as `comparison` being null, plus one
+  // further case: `comparison.maturity` is "too_soon"/"insufficient_coverage"
+  // (no before/after window exists yet for the wildlife side either).
+  environmental_comparison?: FeatureEnvironmentalComparison | null;
 }
 
 export interface PlaceFeatureYieldSummary {

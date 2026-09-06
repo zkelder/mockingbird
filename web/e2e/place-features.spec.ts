@@ -155,6 +155,17 @@ test("Place Report shows a higher-after before/after insight, association langua
               presence_days_out_of_condition: 1,
               usable_days_out_of_condition: 7,
             },
+            environmental_comparison: {
+              status: "comparable",
+              window_days: 7,
+              pre_start: "2026-05-25",
+              post_end: "2026-06-08",
+              information_class: "inferred",
+              provider_key: "open_meteo",
+              pre_mean_temperature_c: 15.0,
+              post_mean_temperature_c: 4.0,
+              summary: "The after period was notably cooler.",
+            },
           },
         ],
         recent_yield: {
@@ -175,9 +186,76 @@ test("Place Report shows a higher-after before/after insight, association langua
   await expect(
     page.getByText("Confirmed wildlife activity was higher in the 7-day windows after this change than before."),
   ).toBeVisible();
+  // Environmental context renders as a restrained, secondary line -- never
+  // fused into the wildlife sentence above it, never a causal claim.
+  await expect(page.getByText("The after period was notably cooler.")).toBeVisible();
   // Never a raw percentage or a causal claim from this small a count.
   await expect(page.getByText("%")).toHaveCount(0);
-  await expect(page.getByText(/caused|because of/i)).toHaveCount(0);
+  await expect(page.getByText(/caused|because of|led to|resulted in|due to|drove/i)).toHaveCount(0);
+});
+
+test("a Feature comparison without configured weather shows no broken environmental line", async ({ page }) => {
+  await completeSetup(page);
+  await page.route("**/api/place/features", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([feature()]) }),
+  );
+  await page.route("**/api/place/feature-changes*", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) }),
+  );
+  await page.route("**/api/place/features/feature-e2e-1/detail", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        feature: feature(),
+        changes: [
+          {
+            event: {
+              id: "change-e2e-3",
+              feature_id: "feature-e2e-1",
+              event_type: "added",
+              effective_date: "2026-06-01",
+              note: null,
+              prior_value: null,
+              new_value: null,
+              information_class: "reviewed",
+              provenance: "user_manual_entry",
+              created_at: NOW,
+              updated_at: NOW,
+            },
+            comparison: {
+              maturity: "comparable",
+              window_days: 7,
+              pre_start: "2026-05-25",
+              post_end: "2026-06-08",
+              status: "no_clear_association",
+              presence_days_in_condition: 3,
+              usable_days_in_condition: 7,
+              presence_days_out_of_condition: 3,
+              usable_days_out_of_condition: 7,
+            },
+            environmental_comparison: {
+              status: "not_configured",
+              window_days: 7,
+              pre_start: "2026-05-25",
+              post_end: "2026-06-08",
+            },
+          },
+        ],
+        recent_yield: null,
+      }),
+    }),
+  );
+
+  await page.goto("/place-report");
+  await page.getByRole("button", { name: "See activity insight" }).click();
+  await expect(
+    page.getByText("Activity looked similar in the 7-day windows before and after this change."),
+  ).toBeVisible();
+  // "not_configured" stays quietly absent -- no broken/empty card, no raw
+  // status leaking into visible text.
+  await expect(page.getByText("not_configured")).toHaveCount(0);
+  await expect(page.locator(".feature-environmental-comparison")).toHaveCount(0);
 });
 
 test("an insufficiently-monitored change reads as an honest restrained state, not a guess", async ({ page }) => {
