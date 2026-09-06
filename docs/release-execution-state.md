@@ -24,7 +24,41 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `b6b4727` -- the report commit for Gate A
+- **Accepted HEAD:** `a7f879f` -- the report commit for Representative
+  Daylight True-Latency Tail Convergence v2 (see §3, above, and
+  [representative-daylight-true-latency-tail-convergence-v2-report.md](representative-daylight-true-latency-tail-convergence-v2-report.md)
+  for the complete record). Bounded RELEASE-CRITICAL Lane R evidence
+  milestone, directly authorized outside this file, whose sole purpose was
+  one additional intact, genuinely daylight, current-stack RTT-normalized
+  T0->T5 latency distribution large enough to evaluate tail convergence.
+  Classification **B**. Zero production code changed; zero new latency
+  samples; zero deployment. The governing brief's own hard daylight gate
+  (its §4) failed before any field tranche could be attempted: local
+  wall-clock time was 21:26-21:29 EDT on 2026-09-05, cross-checked via two
+  independent clocks (the sandbox and the native Windows host via
+  `powershell.exe`, the identical method v10 and v14 both used as their
+  own daylight proof) -- roughly 1.5-1.7 hours past civil twilight end,
+  unambiguous night. Per the brief's own explicit instruction for this
+  case, no fresh instance was deployed, no Camera Node pairing or RTT
+  preflight was attempted, and no Observation was opened -- only bounded,
+  read-only readiness checks (reference Camera Node confirmed reachable
+  on the LAN via ping and an open TCP 8787; no pairing/deployment
+  attempted). The existing qualifying latency body was re-confirmed
+  exactly from source and is unchanged: three intact, live-measured
+  cohorts (v9 n=24, 111.8/173.9/307.4s; v10 n=11, 103.9/183.3/742.3s; v14
+  n=14, 82.9/235.5/261.2s) plus one supporting/reconstructed cohort (v11
+  n=23, 115.7/318.5/865.2s, not equivalent to an intact cohort) -- no
+  fifth qualifying sample added, tail still spanning 261.2-865.2s with no
+  convergence. **Gate A decision: OPEN -- TRUE LATENCY TAIL EVIDENCE
+  REMAINS**, unchanged. Lane R remains `OPEN -- RELEASE-CRITICAL -- TRUE
+  LATENCY TAIL EVIDENCE REMAINS` (see §6.R, below), unchanged. No
+  correctness defect found; nothing patched; nothing deployed. This
+  closure does **not** authorize another field tranche, External
+  Pre-Release Acceptance, Final Release Hardening, or any other next
+  development milestone -- see §3 for the complete reconciliation entry.
+  `roadmap.md` intentionally left unchanged (no latency budget or Gate
+  A/Lane R final state was accepted this milestone, per its own §27).
+- **Prior accepted HEAD (pre-Representative-Daylight-True-Latency-Tail-Convergence-v2):** `b6b4727` -- the report commit for Gate A
   True-Latency Tail Closure & Final Lane R Decision v1 (see §3, above, and
   [gate-a-true-latency-tail-closure-final-lane-r-decision-v1-report.md](gate-a-true-latency-tail-closure-final-lane-r-decision-v1-report.md)
   for the complete record). Bounded RELEASE-CRITICAL Lane R
@@ -2470,6 +2504,64 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-06 update (Representative Daylight True-Latency Tail Convergence
+v2, see §6.R):** bounded RELEASE-CRITICAL Lane R evidence milestone,
+directly authorized outside this file, whose sole purpose was one
+additional intact, genuinely daylight, current-stack RTT-normalized
+T0->T5 latency distribution large enough to evaluate tail convergence. See
+[representative-daylight-true-latency-tail-convergence-v2-report.md](representative-daylight-true-latency-tail-convergence-v2-report.md)
+for the complete record. Classification **B**. Zero production code
+changed.
+
+**Starting state verified exactly as expected**, per the governing
+brief's own §2: HEAD `e103092`, schema `v58`, Gate A `OPEN -- TRUE LATENCY
+TAIL EVIDENCE REMAINS`, recall `ACCEPTED KNOWN LIMITATION`, authorization
+`NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED`. Worktree safe:
+no active writer, all seven preserved untracked detector files confirmed
+present and untouched.
+
+**Blocked at the hard daylight gate before any deployment.** Local
+wall-clock time was **21:26-21:29 EDT on 2026-09-05** -- night, roughly
+1.5-1.7 hours past civil twilight end for this latitude/date -- confirmed
+via two independent clocks (the sandbox and the native Windows host via
+`powershell.exe`, the identical cross-check method v10 and v14 both
+recorded as their own daylight proof). Per the governing brief's own §4
+("If it is currently night ... DO NOT RUN THE FIELD TRANCHE"), no fresh
+instance was deployed, no Camera Node pairing or RTT preflight was
+attempted, and no Observation was opened. Only bounded, read-only
+readiness checks were performed: the reference Camera Node confirmed
+reachable on the LAN (`ping` 0% loss/96-121ms; TCP 8787 open) with no
+pairing or deployment attempted against it.
+
+**True latency: MORE EVIDENCE REQUIRED, unchanged -- zero new samples.**
+The existing qualifying body was re-confirmed exactly from source and is
+identical to the pre-milestone state: three intact, live-measured cohorts
+(v9 n=24, median/p90/max 111.8/173.9/307.4s; v10 n=11, 103.9/183.3/742.3s;
+v14 n=14, 82.9/235.5/261.2s) plus one supporting/reconstructed cohort (v11
+n=23, 115.7/318.5/865.2s, explicitly not equivalent to an intact cohort).
+No fifth qualifying sample was added. The tail remains exactly as
+unconverged as the immediately-prior milestone left it: sized-cohort
+maxima span 261.2-865.2 seconds; medians remain informative and stable
+(~82.9-115.7s).
+
+**Gate A decision: OPEN -- TRUE LATENCY TAIL EVIDENCE REMAINS**,
+unchanged. Lane R remains `OPEN -- RELEASE-CRITICAL -- TRUE LATENCY TAIL
+EVIDENCE REMAINS` (see §6.R, below). Six of eight tracked release
+dimensions remain genuinely READY FOR RELEASE BUDGET, unchanged; recall
+remains ACCEPTED KNOWN LIMITATION, unchanged. `using-mockingbird.md`'s
+existing crowded/sustained-activity recall disclosure was read directly
+and confirmed still accurate; not expanded, since this tranche produced
+no new information. `roadmap.md` intentionally left unchanged, per the
+governing brief's own instruction to update it only if a latency budget or
+Gate A/Lane R final state is accepted -- neither happened.
+
+No correctness defect was found; nothing was patched; nothing was
+deployed. This closure does **not** authorize another field tranche,
+External Pre-Release Acceptance, Final Release Hardening, or any other
+next development milestone. **Authorization remains NONE -- GLOBAL
+PRODUCT-ROADMAP RECONCILIATION REQUIRED**, returned here exactly as this
+milestone's own governing brief required.
 
 **2026-09-06 update (Gate A True-Latency Tail Closure & Final Lane R
 Decision v1, see §6.R):** bounded RELEASE-CRITICAL Lane R field
@@ -6659,6 +6751,17 @@ release dimensions remain genuinely READY FOR RELEASE BUDGET, unchanged.
 Disclosed, not actioned: an 18.5GB disk-reclaim opportunity (two already
 -archived, `SAFE_TO_RECLAIM` Windows dev-roots from v13/v14) remains
 available for a future session.
+
+**Reconfirmed, no change (2026-09-06, Representative Daylight
+True-Latency Tail Convergence v2):** an attempt to obtain the next
+qualifying latency tranche was directly authorized and run, but stopped
+before any deployment at the governing brief's own hard daylight gate
+(local wall-clock 21:26-21:29 EDT on 2026-09-05, confirmed night via two
+independent clocks) -- Classification B, WAITING FOR REPRESENTATIVE
+DAYLIGHT. Zero new samples; the existing tail evidence above is unchanged.
+See
+[representative-daylight-true-latency-tail-convergence-v2-report.md](representative-daylight-true-latency-tail-convergence-v2-report.md).
+The status line above stands exactly as written.
 
 **Prior status (immediately preceding, 2026-09-05):** OPEN --
 RELEASE-CRITICAL -- RELEASE DECISION REQUIRED, per
