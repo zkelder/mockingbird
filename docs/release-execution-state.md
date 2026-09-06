@@ -44,7 +44,74 @@ picture this phase label now reflects.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `9c4f8d5` -- the report commit for Global Remaining
+- **Accepted HEAD:** `bdfa35f` -- the implementation commit for MIT Source
+  License Adoption & Lane P Mechanical Closure v1 (see §3, below, and
+  [mit-source-license-adoption-lane-p-mechanical-closure-v1-report.md](mit-source-license-adoption-lane-p-mechanical-closure-v1-report.md)
+  for the complete record). Bounded feature-freeze housekeeping milestone,
+  directly authorized outside this file, performing exactly the mechanical
+  follow-through the immediately-prior reconciliation named and
+  deliberately did not perform. Classification **A**. Zero product/schema/
+  Core code changed; confined to a new root `LICENSE` file, `pyproject.
+  toml`/`web/package.json` license metadata, one new packaging function
+  (`package_license` in `scripts/build_local_product.py`, mirroring
+  `package_third_party_notices` exactly) and its dedicated tests, `README.
+  md`'s "License" section, `THIRD_PARTY_NOTICES.md`'s own two self-
+  referential sentences about MockingBird's own license status (no third-
+  party fact touched), and one small `roadmap.md` Gate F staleness
+  correction. Verified starting state exactly as expected: HEAD `9eaa6e0`,
+  schema `v58`, worktree safe (all seven preserved untracked detector files
+  present and untouched). **Owner's MIT decision (already recorded resolved
+  by the immediately-prior reconciliation) is now mechanically adopted**: a
+  real `LICENSE` file exists (standard MIT text; copyright `MockingBird
+  contributors` -- the narrowest formulation this repository's own text
+  already established, `THIRD_PARTY_NOTICES.md`'s pre-existing "MockingBird
+  is written by its own contributors," used because a single individual git
+  identity is not by itself a defensible legal copyright-holder string and
+  no company/organization name exists anywhere in the repository);
+  `pyproject.toml` carries modern PEP 639 SPDX metadata (`license = "MIT"`,
+  `license-files = ["LICENSE"]`), which required raising the `hatchling`
+  build-system floor from `>=1.24` to `>=1.27` -- empirically verified
+  against a real version matrix that 1.24-1.25 reject `license-files` as an
+  array outright, 1.26 accepts it but silently omits the modern `License-
+  Expression`/`License-File` metadata fields, and 1.27 is the first version
+  confirmed to emit both correctly (Metadata-Version 2.4); `web/package.
+  json` gained a matching `"license": "MIT"` for consistency. Distribution
+  inclusion proven, not assumed: a real `pip wheel .` build of this exact
+  repository (the identical command `build_wheel()` runs) produced a real
+  `mockingbird-0.1.0-py3-none-any.whl` whose `METADATA` carries `License-
+  Expression: MIT`/`License-File: LICENSE` and whose `mockingbird-0.1.0.
+  dist-info/licenses/LICENSE` is byte-identical to the repository's own
+  file; the official Windows bundle additionally gained an explicit
+  `package_license` step copying `LICENSE` to the bundle root, visible
+  alongside `THIRD_PARTY_NOTICES.md`, since the wheel's own automatic
+  `dist-info/licenses/` copy lands buried in `python/site-packages/` where
+  an end user unpacking the release folder would not find it.
+  `README.md`'s "License" section no longer says the decision "has not yet
+  been finalized"; it states MIT plainly, points to `LICENSE`, and
+  continues to point to `THIRD_PARTY_NOTICES.md` for third-party terms
+  without implying they are all MIT. `THIRD_PARTY_NOTICES.md`'s own two
+  self-referential sentences were corrected to match; every third-party
+  fact in that file (MDv5a/BioCLIP-2 provenance, ffmpeg non-bundling,
+  BirdNET/birdnetlib NC-model exclusion, both build-time guards) is byte-
+  for-byte unchanged, re-confirmed directly. 7 new tests plus 2 new
+  assertions in the canonical `tests/test_local_product_packaging.py` (81
+  passed, 4 pre-existing slow-marked tests correctly deselected, 0 failed);
+  `ruff check` clean on every changed Python file; `tests/test_version_
+  provenance.py` (4 passed) as an adjacent sanity check. Tier 2/3: not run
+  -- every changed file is packaging/documentation-only with zero importers
+  anywhere in `src/mockingbird/`, the identical reasoning already applied
+  to every prior packaging-tooling-only milestone. **Lane P: CLOSED --
+  RELEASE-CRITICAL LICENSING/DISTRIBUTION REQUIREMENTS COMPLETE** (see
+  §6.P, below) -- the BirdNET commercial-adjacent legal posture (§2, above)
+  remains a separate, standing legal-review item, not reopened or newly
+  blocking here, and does not keep this lane's own mechanical
+  license/distribution scope open. This closure does **not** authorize
+  External Pre-Release Acceptance, Final Release Hardening, the next Lane R
+  daylight tranche, or any product-development milestone. **Authorization
+  remains NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**,
+  returned here exactly as this milestone's own governing brief required,
+  for the next external (ChatGPT) acceptance review to act on.
+- **Prior accepted HEAD (pre-MIT-Source-License-Adoption-Lane-P-Mechanical-Closure-v1):** `9c4f8d5` -- the report commit for Global Remaining
   Product-Development & Release-Queue Reconciliation v1 (see §3, below,
   and
   [global-remaining-product-development-release-queue-reconciliation-v1-report.md](global-remaining-product-development-release-queue-reconciliation-v1-report.md)
@@ -2605,6 +2672,61 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-06 update (MIT Source License Adoption & Lane P Mechanical
+Closure v1, see §6.P, below):** bounded feature-freeze housekeeping
+milestone, directly authorized outside this file as the one small,
+independent, advisory-only next action the immediately-prior reconciliation
+named. See
+[mit-source-license-adoption-lane-p-mechanical-closure-v1-report.md](mit-source-license-adoption-lane-p-mechanical-closure-v1-report.md)
+for the complete record. Classification **A**. Zero product/schema/Core
+code changed.
+
+**Starting state verified exactly as expected:** HEAD `9eaa6e0`, schema
+`v58`, `CURRENT PHASE` `FEATURE FREEZE`, Lane P `OWNER DECISION RESOLVED
+(MIT) -- MECHANICAL ADOPTION PENDING`, Lane R `OPEN -- RELEASE-CRITICAL --
+TRUE LATENCY TAIL EVIDENCE REMAINS` (untouched), authorization `NONE --
+GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED`. Worktree safe: no active
+writer, all seven preserved untracked detector files present and
+untouched.
+
+**Mechanical adoption complete, all three named artifacts.** A real
+`LICENSE` file now exists at the repository root (standard MIT text;
+copyright `MockingBird contributors` -- see the report's "Copyright-holder
+evidence" for why this formulation, already used by the project itself in
+`THIRD_PARTY_NOTICES.md`, was used rather than an invented individual or
+organization name). `pyproject.toml` gained modern PEP 639 SPDX metadata
+(`license = "MIT"`, `license-files = ["LICENSE"]`), which required raising
+the `hatchling` build-system floor from `>=1.24` to `>=1.27` -- empirically
+proven necessary, not a preference, against a real hatchling version
+matrix (1.24-1.25 fail outright; 1.26 silently omits the modern metadata
+fields; 1.27 is the first correct version); `web/package.json` gained a
+matching field. `README.md`'s "License" section no longer says the
+decision is unfinalized. Distribution inclusion was proven with a real
+`pip wheel .` build of this repository (not a fixture or a mock) plus
+direct inspection of the resulting wheel's `METADATA` and `dist-info/
+licenses/LICENSE`, and a new `package_license` packaging step (mirroring
+`package_third_party_notices` exactly) now copies `LICENSE` to the official
+Windows bundle's root, visible alongside `THIRD_PARTY_NOTICES.md`.
+`THIRD_PARTY_NOTICES.md`'s own two self-referential sentences about
+MockingBird's own license status were corrected to match; every third-party
+fact in that file is unchanged, re-confirmed directly. 81 focused tests
+passed (7 new, 2 new assertions in an existing test), 0 failed; `ruff`
+clean; no schema change; no Core run (packaging/documentation-only change,
+zero importers from `src/mockingbird/`, consistent with every prior
+packaging-tooling-only milestone).
+
+**Lane P: CLOSED -- RELEASE-CRITICAL LICENSING/DISTRIBUTION REQUIREMENTS
+COMPLETE** (see §6.P, below). The BirdNET commercial-adjacent legal posture
+(§2, above) remains a separate, standing legal-review item with no
+available engineering action -- unchanged, un-reopened, and (per this
+milestone's own governing brief) does not by itself keep Lane P's own
+mechanical license/distribution scope open. This closure does **not**
+authorize External Pre-Release Acceptance, Final Release Hardening, the
+next Lane R daylight tranche, or any product-development milestone.
+**Authorization remains NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION
+REQUIRED**, returned here exactly as this milestone's own governing brief
+required, for the next external (ChatGPT) acceptance review to act on.
 
 **2026-09-06 update (Global Remaining Product-Development & Release-Queue
 Reconciliation v1, see `CURRENT PHASE`/§1, above, and §6, below):** a
@@ -6205,11 +6327,13 @@ words used to describe them:
   above become credible, External Pre-Release Acceptance and Final
   Release Hardening themselves (Lane S, below; roadmap.md Gates F-G).
 - **B. Pre-release decisions** -- decisions required before launch, not
-  necessarily implementation milestones: the codebase `LICENSE` -- the
-  owner decision itself is now **resolved (MIT)**, with a small mechanical
-  adoption pending, not yet performed (Lane P; see Lane P, below; full
-  ffmpeg distribution licensing, the item this line previously named
-  alongside it, is fully resolved); the still-open BirdNET
+  necessarily implementation milestones: the codebase `LICENSE` --
+  **RESOLVED**: the owner selected MIT and mechanical adoption (a real
+  `LICENSE` file, package metadata, README truth, distribution inclusion)
+  is now complete, per MIT Source License Adoption & Lane P Mechanical
+  Closure v1 (Lane P now **CLOSED** -- see Lane P, below; full ffmpeg
+  distribution licensing, the item this line previously named alongside
+  it, is fully resolved); the still-open BirdNET
   commercial-adjacent legal posture (§2, above -- blocks only
   commercial-adjacent use of the optional acoustic feature, per the
   2026-09-06 reconciliation below, not all public launch); platform-support
@@ -6844,10 +6968,13 @@ was authorized.
 
 ### P. Release Engineering Foundation / Distribution
 
-**Status:** SUBSTANTIALLY CLOSED -- RELEASE-CRITICAL; the one deliberately
--left-open item's own **owner decision is now RESOLVED (MIT)**, with a
-small mechanical adoption pending (see the 2026-09-06 correction below).
-Release Engineering Foundation v1 (2026-08-25) closed:
+**Status:** CLOSED -- RELEASE-CRITICAL LICENSING/DISTRIBUTION REQUIREMENTS
+COMPLETE. The owner's MIT decision is resolved and mechanical adoption is
+now also complete -- a real `LICENSE` file, correct package metadata, and
+README truth all exist and are proven to reach every official deliverable
+this repository produces (see the 2026-09-06 MIT Source License Adoption &
+Lane P Mechanical Closure v1 correction below). Release Engineering
+Foundation v1 (2026-08-25) closed:
 upgrade procedure (see Lane L); a real, currently-live dependency-closure
 defect found and fixed via genuine native-Windows deployment (`astral`
 missing from the packaged bundle -- would have broken *every* launch,
@@ -6904,6 +7031,39 @@ standing legal-review item with no available engineering action --
 reconciled to **B+D** (blocks only commercial-adjacent use of the
 optional acoustic feature, not all public launch) in the linked report's
 "BirdNET legal posture" section, not resolved or newly blocking here.
+
+**Corrected 2026-09-06 by MIT Source License Adoption & Lane P Mechanical
+Closure v1** (see
+[mit-source-license-adoption-lane-p-mechanical-closure-v1-report.md](mit-source-license-adoption-lane-p-mechanical-closure-v1-report.md)):
+performed exactly the bounded mechanical next action named above, all
+three artifacts. A real `LICENSE` file now exists at the repository root
+(standard MIT text; copyright `MockingBird contributors` -- the narrowest
+formulation this repository's own text already established, used because a
+single individual git identity is not by itself a defensible legal
+copyright-holder string and no company/organization name exists anywhere
+in the repository). `pyproject.toml` carries modern PEP 639 SPDX metadata
+(`license = "MIT"`, `license-files = ["LICENSE"]`); this required raising
+the `hatchling` build-system floor from `>=1.24` to `>=1.27`, empirically
+proven necessary (not a preference) against a real version matrix: 1.24-
+1.25 reject `license-files` as an array outright, 1.26 accepts it but
+silently omits the modern `License-Expression`/`License-File` metadata
+fields, and 1.27 is the first version confirmed to emit both correctly.
+`web/package.json` gained a matching field. `README.md`'s "License"
+section no longer says the decision is unfinalized. Distribution inclusion
+was proven, not assumed: a real `pip wheel .` build of this repository
+produced a real wheel whose `METADATA` carries `License-Expression: MIT`/
+`License-File: LICENSE` and whose `dist-info/licenses/LICENSE` is byte-
+identical to the repository's own file; a new `package_license` packaging
+step (mirroring `package_third_party_notices` exactly) additionally copies
+`LICENSE` to the official Windows bundle's visible root, alongside
+`THIRD_PARTY_NOTICES.md`. `THIRD_PARTY_NOTICES.md`'s own two self-
+referential sentences about MockingBird's own license status were
+corrected to match; every third-party fact in that file is unchanged,
+re-confirmed directly. **Lane P moves to `CLOSED -- RELEASE-CRITICAL
+LICENSING/DISTRIBUTION REQUIREMENTS COMPLETE`.** The BirdNET commercial-
+adjacent legal posture remains exactly as reconciled above (**B+D**,
+separate and unaffected) -- per this milestone's own governing brief, it
+does not by itself keep Lane P's own mechanical scope open.
 
 Deliberately still open, not silently dropped, and unaffected by the
 above: public-repo hygiene beyond `SECURITY.md`/`CONTRIBUTING.md`/
