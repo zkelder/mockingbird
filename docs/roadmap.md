@@ -3808,6 +3808,69 @@ view; Place Story's own still-unpopulated wildlife-event `source_id` (a
 separate, larger, previously-disclosed data-modeling exercise); consolidating
 the frontend's ~6 independently-implemented camera-filter controls.
 
+**2026-09-06 update (Place Story Deep Dives & Representative Evidence v1):**
+closes the "dedicated taxon/Feature story page" gap named at least four times
+above (Place Story & Seasonal Timeline v1's own report; the Global Remaining
+Product-Development & Release-Queue Reconciliation v1 report) and the
+"representative evidence inside Feature detail"/"a dedicated Feature detail
+page" gaps named immediately above by Multi-Camera Place Feature Linking v1
+(itself repeating Place Features & Habitat Change v2's own original
+disclosure) -- a deliberately-authorized, one-time, bounded reopening of
+product development for exactly these two named opportunities, not a
+resumption of general product development. See
+[place-story-deep-dives-representative-evidence-v1-report.md](place-story-deep-dives-representative-evidence-v1-report.md).
+Zero schema change (stays v59). Two new pages -- `TaxonStoryPage.tsx`
+(`/place-story/taxon/:label`) and `FeatureStoryPage.tsx`
+(`/place-story/feature/:id`, also this product's first dedicated,
+URL-addressable Feature detail page) -- compose already-accepted primitives
+almost entirely unmodified: a Taxon Story's header is Bird Log's own
+existing per-species bundle (`GET /api/bird-log/journal/{label}`); a Feature
+Story's header is the existing Feature-detail bundle
+(`GET /api/place/features/{id}/detail`); both timelines reuse Place Story's
+own existing `taxon=`/`feature_id=` filters unmodified (in production,
+untouched, since Place Story & Seasonal Timeline v1 shipped). The one
+genuinely new backend capability is a `taxon` parameter on
+`GET /api/place/year-over-year`, reusing `compute_species_year_over_year_
+comparisons`'s already-computed, previously-discarded full per-taxon result
+(zero new statistical computation, proven to add zero extra queries).
+Representative evidence inside Feature detail reuses the canonical Gate C
+selector (`select_representative_evidence`) completely unmodified -- only
+the Feature-scoped candidate-gathering path is new, built on the identical
+cross-camera-deduplicated, archived-camera-inclusive v59 query core Feature
+yield/before-after already used (extracted into a shared, behavior-
+preserving helper). Two real, previously-nonexistent-until-this-milestone
+defects were found by this milestone's own query-count measurement
+discipline and fixed before shipping: an N+1-shaped inefficiency in the
+first representative-evidence implementation (building a full Visit summary
+for every historical row before bounding to the most-recent 20, instead of
+after); and a redundant taxonomy-table re-scan in the first `taxon=`
+year-over-year implementation. 19 new backend tests plus one comprehensive
+product-shaped scenario (two taxa, one two-camera Feature, two years of
+history, a deleted evidence file, camera rename/archive, a Reviewed
+correction, all under an enforced Local Only guarantee); 17 new Playwright
+e2e tests (both pages: direct route, reload, invalid id, sparse state,
+representative image + alt text, deep-link click-through, phone width,
+keyboard focus) plus 78 directly-adjacent existing e2e specs re-run with
+zero regressions. Deep links wired at every location named as in scope:
+Place Story's own entry actions, Bird Log's per-species header,
+`PlaceFeaturesCard`'s feature tags, the Year-over-Year card, and Calm
+Attention's `open_place_story` action (now routing precisely to a
+taxon's/Feature's own Story when the underlying attention signal already
+names one, instead of only the coarser category-group timeline -- reusing
+data already computed and already sent to the frontend, not a Web
+Push/attention-persistence/per-user-read-state reopening). Explicitly not
+built, recorded as future dependencies: a year/month picker on the Taxon
+Story's year-over-year line; a general "see all" ranked species-change
+drill-down; consolidating `BirdLogPage.tsx`'s own pre-existing `Journal
+Thumbnail` with the new shared `RepresentativeThumbnail` component; a ranked
+Feature-comparison view (explicit non-goal); a Feature-specific year-over-
+year comparison (explicit non-goal); Place Story period summaries (explicit
+non-goal); Place Story's own still-unpopulated wildlife-event `source_id`/
+`visit_id` (a separate, larger, previously-disclosed data-modeling
+exercise, unaffected by this milestone's own representative-evidence
+contract, which answers the same underlying need a different, already-
+sufficient way).
+
 ### 5. Land Management / Agriculture
 
 An application of Place Intelligence, not a separate product architecture

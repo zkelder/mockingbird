@@ -44,7 +44,122 @@ picture this phase label now reflects.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `3cce9e4` -- the implementation commit for
+- **Accepted HEAD:** `33d9f5f` -- the implementation commit for
+  Place Story Deep Dives & Representative Evidence v1 (see
+  [place-story-deep-dives-representative-evidence-v1-report.md](place-story-deep-dives-representative-evidence-v1-report.md)
+  for the complete record). A deliberately-authorized, one-time, bounded
+  product-development reopening -- not a resumption of general product
+  development -- directly authorized outside this file, closing two named
+  "D -- enrichment" opportunities the immediately-prior Global Remaining
+  Product-Development & Release-Queue Reconciliation v1 report had itself
+  examined and classified as not required before release: "a dedicated
+  taxon/Feature story page" and "representative imagery on Story cards."
+  Classification **A**. Schema unchanged (`v59` -> `v59`, no migration):
+  archaeology found `GET /api/bird-log/journal/{label}` (Bird Log's own
+  existing per-species drill-down) and `GET /api/place/features/{id}/detail`
+  (the existing Feature-detail bundle) already carried nearly everything a
+  deep-dive header needed, and Place Story's own `taxon=`/`feature_id=`
+  filters had worked end-to-end, unused by any page, since Place Story &
+  Seasonal Timeline v1 shipped. Two new pages, `TaxonStoryPage.tsx`
+  (`/place-story/taxon/:label`) and `FeatureStoryPage.tsx`
+  (`/place-story/feature/:id` -- also this product's first dedicated,
+  URL-addressable Feature detail page, closing the identically-named gap
+  Place Features & Habitat Change v2 and Multi-Camera Place Feature Linking
+  v1 had each separately disclosed), compose these already-accepted
+  primitives via three (Taxon) or two (Feature) independent fetches each,
+  rendered through one shared, extracted card component (`PlaceStoryEntryCard.tsx`,
+  behavior-preserving relative to `PlaceStoryPage.tsx`'s own former private
+  renderer -- the existing `place-story.spec.ts` suite passes unmodified).
+  The one genuinely new backend capability is an additive `taxon` parameter
+  on `GET /api/place/year-over-year`, reusing `compute_species_year_over_
+  year_comparisons`'s already-computed, previously-discarded full per-taxon
+  result (proven to add zero extra queries); the other is `PlaceFeatureDetail
+  .representative_evidence`, a new additive field built on the canonical
+  Gate C selector (`select_representative_evidence`) completely unmodified
+  -- only the Feature-scoped, multi-camera-aware, cross-camera-deduplicated
+  candidate-gathering path is new (`_feature_representative_evidence`,
+  sharing a newly-extracted, behavior-preserving query core, `_feature_
+  scoped_visit_rows`, with the pre-existing Feature yield/before-after
+  computation). Every abstention path required (no observation links, no
+  confirmed wildlife Visit in scope, a Visit outside the Feature's own
+  scope, a missing media file, an archived linked camera) is proven directly
+  with a dedicated regression test, not merely designed. Two real,
+  previously-nonexistent-until-this-milestone defects were found by this
+  milestone's own query-count measurement discipline and fixed before
+  shipping: an N+1-shaped inefficiency in the first representative-evidence
+  implementation (built a full Visit summary for every historical row
+  before bounding to the most-recent 20 confirmed candidates, instead of
+  after -- fixed by scanning most-recent-first with an early exit,
+  behaviorally identical final selection, proven by a dedicated query-count
+  test at 25 vs. 50 of a Feature's own confirmed Visits); and a redundant
+  taxonomy-table re-scan in the first `taxon=` year-over-year implementation
+  (fixed by reusing the caller's already-fetched `taxonomy_index`, proven
+  by a dedicated zero-extra-queries test). Deep links wired at every
+  location the governing brief named: Place Story's own entry actions (a
+  new "{name}'s story" action, additive alongside the existing Bird Log
+  link; a Feature-linked entry's action becomes "{name} story", replacing
+  its former "View in Place Report" fallback for that one case only), Bird
+  Log's per-species header (a new "See {name}'s story" link),
+  `PlaceFeaturesCard`'s calm-view feature tags (now clickable, optional
+  prop, backward compatible), `PlaceActivityReportPage`'s inline Feature
+  expand (a new "View {name} story" action), the Year-over-Year card
+  (`onOpenTaxonStory` as the primary per-species action, its existing Bird
+  Log link kept as a second explicit action), and Calm Attention's
+  `open_place_story` action (now routing precisely to a taxon's/Feature's
+  own Story when the underlying attention signal already names one --
+  `taxon_label`/`feature_id` were already flowing to the frontend, unused
+  until now -- falling back to the pre-existing category-group scoping only
+  when neither is present; not a Web Push/attention-persistence/per-user-
+  read-state reopening). A real, comprehensive product-shaped scenario (two
+  taxa, one two-camera Feature, two years of history, a deleted evidence
+  file, a real cross-camera duplicate encounter, camera rename/archive, a
+  Reviewed correction, all under an enforced Local Only guarantee) proves
+  the whole chain coheres end to end: a Taxon Story that never leaks a
+  different taxon's events; a Feature Story with exactly one change entry
+  despite two linked cameras and zero per-Visit wildlife entries; a real
+  year-over-year material increase narrated for one taxon specifically;
+  representative evidence that skips a deleted file honestly and survives
+  camera rename/archival; and a Reviewed correction removing the winning
+  representative-evidence Visit from eligibility on the very next read, no
+  invalidation step. 19 new focused backend tests (11 in `test_place_
+  feature.py`: 8 representative-evidence correctness/abstention + 1 HTTP
+  round trip + 2 performance, bringing that file from 86 to 97 tests; 8 in
+  `test_year_over_year_comparison_repository.py`: 5 taxon-comparison + 2
+  HTTP round trip + 1 performance, bringing that file from 25 to 33 tests)
+  plus the one product-shaped scenario, all passing; directly-affected re-run (`test_place_story.py`,
+  `test_place_story_repository.py`, `test_year_over_year_comparison.py`,
+  `test_year_over_year_product_shaped_scenario.py`, `test_multi_camera_
+  place_feature_linking_scenario.py`) 221 passed / 0 failed; `ruff check`
+  zero new findings, proven by a message-level diff against a `git stash
+  push -u`-isolated clean baseline; `tsc --noEmit`/`vite build` clean (109
+  modules, both new pages correctly code-split); 17 new Playwright e2e
+  tests (both pages: direct route, reload, invalid id, sparse state,
+  representative image + alt text, deep-link click-through, phone width,
+  keyboard focus-management) all passing; 78 directly-adjacent existing
+  e2e specs (`place-story`, `place-features`, `year-over-year`, `bird-log-
+  historical-status`, `mobile-viewport-audit`, `today-report`) re-run and
+  passing, zero regressions from the `PlaceStoryEntryCard` extraction or
+  the new optional props/response fields. Full Core (`scripts/verify_
+  core.py`) 5875 passed / 1 failed / 3 skipped / 23 deselected
+  (slow-marked) / 11 xfailed (42m57s) -- the one failure
+  (`test_place_change_summary_repository.py::test_api_round_trip_exposes_
+  change_detection_fields`) independently re-confirmed pre-existing and
+  unrelated via a fresh `git stash push -u` bisection against this exact
+  starting commit (byte-identical failure), the same already-documented
+  flakiness class Multi-Camera Place Feature Linking v1's own Core run
+  also hit on this identical commit. Starting state verified exactly as expected:
+  HEAD `973cb5e`, schema `v59`, Lane P `CLOSED`, Lane R `OPEN -- RELEASE-
+  CRITICAL -- TRUE LATENCY TAIL EVIDENCE REMAINS` (untouched), authorization
+  `NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED`. Worktree safe:
+  no active writer, all seven preserved untracked detector files present
+  and unchanged. **This closure does not reopen any other lane, does not
+  authorize a second product-development milestone, and does not change
+  Lane R or Lane P.** `CURRENT PHASE` returns unchanged to `FEATURE FREEZE
+  -- EVIDENCE, RELEASE READINESS & HOUSEKEEPING`. **Authorization remains
+  NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, for the next
+  external (ChatGPT) acceptance review to act on.
+- **Prior accepted HEAD (pre-Place-Story-Deep-Dives-Representative-Evidence-v1):** `3cce9e4` -- the implementation commit for
+  Multi-Camera Place Feature Linking & Cross-View Habitat Context v1 (see
   Multi-Camera Place Feature Linking & Cross-View Habitat Context v1 (see
   [multi-camera-place-feature-linking-cross-view-habitat-context-v1-report.md](multi-camera-place-feature-linking-cross-view-habitat-context-v1-report.md)
   for the complete record). A deliberately-authorized, one-time, bounded
@@ -6348,18 +6463,21 @@ overlay-network (Tailscale/WireGuard) validation was possible from this
 sandbox -- see the Mobile & Remote Experience v1 report's "Remaining
 major PRODUCT opportunities"), the remaining Place Story product
 opportunities (period summaries -- deferred on a measured performance
-cost, not simply unattempted; a dedicated taxon/Feature story page;
-representative imagery on Story cards -- environmental-context/weather
-caveats on a before/after insight, formerly listed here, closed 2026-09-06
-by Environmental Context x Place Story & Habitat Change Composition v1,
-see §1), the remaining Place Features & Habitat Change product
-opportunities (representative evidence in Feature detail, a ranked
-feature-comparison view -- see the Place Features & Habitat Change v2
-report; composing environmental-context/weather caveats onto a before/after
-result, formerly listed here, closed the same day by the identical
-milestone; multi-camera Feature linking, formerly listed here, closed
-2026-09-06 by Multi-Camera Place Feature Linking & Cross-View Habitat
-Context v1, see §1), the remaining Place/Yard
+cost, not simply unattempted -- environmental-context/weather caveats on a
+before/after insight, formerly listed here, closed 2026-09-06 by
+Environmental Context x Place Story & Habitat Change Composition v1; a
+dedicated taxon/Feature story page and representative imagery on Story
+cards, formerly listed here, closed 2026-09-06 by Place Story Deep Dives &
+Representative Evidence v1, see §1), the remaining Place Features & Habitat
+Change product opportunities (a ranked feature-comparison view -- see the
+Place Features & Habitat Change v2 report; composing environmental-
+context/weather caveats onto a before/after result, formerly listed here,
+closed the same day by the identical milestone; multi-camera Feature
+linking, formerly listed here, closed 2026-09-06 by Multi-Camera Place
+Feature Linking & Cross-View Habitat Context v1, see §1; representative
+evidence in Feature detail, formerly listed here, closed 2026-09-06 by
+Place Story Deep Dives & Representative Evidence v1, see §1), the
+remaining Place/Yard
 Intelligence product opportunities (seasonality maturation against real
 history, a `source_quality_signals` UI surface -- the habitat before/
 after change-event data model itself is now closed by that milestone),
@@ -6402,11 +6520,12 @@ Do NOT automatically authorize:
   Notifications v1's own deliberately-deferred Phase 22 Decision B gap --
   see that report for the full local-first/privacy reasoning this decision
   rests on;
-- a Review Queue product_category/"animals"-tab fix, per-user read/dismiss
-  state, or precise per-taxon/Feature Place Story deep links as a
-  standalone follow-on campaign -- each individually real and recorded in
-  the Calm Attention & Notifications v1 report, none automatically the
-  next milestone by adjacency;
+- a Review Queue product_category/"animals"-tab fix or per-user read/
+  dismiss state as a standalone follow-on campaign -- each individually
+  real and recorded in the Calm Attention & Notifications v1 report, none
+  automatically the next milestone by adjacency (precise per-taxon/Feature
+  Place Story deep links, formerly listed here, closed 2026-09-06 by Place
+  Story Deep Dives & Representative Evidence v1 -- see §1);
 - further Mobile/PWA/remote-access work as a standalone follow-on
   campaign -- specifically: progressive disclosure for the dense Visit/
   Stream/Settings pages, the `ReviewQueuePage` `product_category`/
@@ -6419,9 +6538,15 @@ Do NOT automatically authorize:
 - a second weather provider or user-facing provider choice;
 - Open-Meteo archive/ERA5 deep historical backfill;
 - a Feature/Zone multi-camera join table;
-- Place Story period summaries or dedicated taxon/Feature story pages, as a
-  standalone follow-on campaign (weather-caveat composition, formerly
-  listed here, is closed -- see §1);
+- Place Story period summaries as a standalone follow-on campaign
+  (weather-caveat composition and dedicated taxon/Feature story pages,
+  formerly listed here, are closed -- see §1);
+- a ranked Feature-comparison view, a Feature-specific year-over-year
+  comparison, or a general "see all" ranked species-change drill-down on
+  the Year-over-Year card, as standalone follow-on campaigns -- each
+  individually real and recorded in the Place Story Deep Dives &
+  Representative Evidence v1 report, none automatically the next milestone
+  by adjacency;
 - Land Management / Agriculture as a separate campaign;
 - notification-level (Calm Attention) cross-camera health grouping, Place
   Story wildlife-event source attribution, or camera-filter UI
@@ -6549,11 +6674,27 @@ Place Report card and a new Place Story event kind. No live production
 proof of a `"comparable"` outcome exists yet -- this product does not have
 a full year of real accumulated field history anywhere yet, an
 unavoidable data-availability constraint, not an engineering gap.
-Substantial product-roadmap opportunity still remains (multi-camera
-Feature linking; a ranked feature-comparison view; Place Story period
-summaries; a dedicated taxon/Feature story page; representative imagery on
-Story cards; a year/month picker over the new year-over-year card; week-
-level or named-seasonal-period comparison -- see that report's and
+Multi-Camera Place Feature Linking & Cross-View Habitat Context v1
+(2026-09-06) closed the "multi-camera Feature linking" gap named here (a
+Place Feature can now be linked to zero, one, or many camera/Zone
+observation views) -- see
+[multi-camera-place-feature-linking-cross-view-habitat-context-v1-report.md](multi-camera-place-feature-linking-cross-view-habitat-context-v1-report.md).
+Place Story Deep Dives & Representative Evidence v1 (2026-09-06) closed
+the "a dedicated taxon/Feature story page" and "representative imagery"
+gaps named here -- see
+[place-story-deep-dives-representative-evidence-v1-report.md](place-story-deep-dives-representative-evidence-v1-report.md):
+two new pages (`/place-story/taxon/:label`, `/place-story/feature/:id` --
+also this product's first dedicated Feature detail page) compose already-
+accepted primitives (Bird Log's own per-species bundle, the existing
+Feature-detail bundle, Place Story's own already-working `taxon=`/
+`feature_id=` filters) via one shared, extracted Story-card component;
+representative evidence reuses the canonical Gate C selector unmodified,
+extended to a Feature's own linked camera views via a new, multi-camera-
+aware, cross-camera-deduplicated candidate-gathering path.
+Substantial product-roadmap opportunity still remains (a ranked feature-
+comparison view; Place Story period summaries; a year/month picker over
+the year-over-year card; week-level or named-seasonal-period comparison --
+see that report's and
 [place-features-habitat-change-v2-report.md](place-features-habitat-change-v2-report.md)'s
 and
 [place-yard-intelligence-v2-report.md](place-yard-intelligence-v2-report.md)'s
