@@ -18,6 +18,7 @@ import type {
   PlaceHabitatFactUpdate,
   PlacePhenologyObservationCreate,
   PlacePhenologyObservationUpdate,
+  PlaceYearOverYearResponse,
   StorageSummary,
   StreamRuntimeStatus,
   Zone,
@@ -33,6 +34,7 @@ import { StatusPill } from "../components/StatusPill";
 import { TodayAttentionSummary } from "../components/TodayAttentionSummary";
 import { TodayReportPanel } from "../components/TodayReportPanel";
 import { WeeklySummaryCard } from "../components/WeeklySummaryCard";
+import { YearOverYearCard } from "../components/YearOverYearCard";
 import {
   cameraHealthLabel,
   cameraHealthTone,
@@ -257,6 +259,12 @@ export function DashboardPage({
   const [placeFeatures, setPlaceFeatures] = useState<PlaceFeature[] | null>(null);
   const [placeFeaturesSummary, setPlaceFeaturesSummary] = useState<PlaceFeaturesSummary | null>(null);
   const [zones, setZones] = useState<Zone[] | null>(null);
+  // Year-over-Year Seasonality & Long-Term Place Memory v1: a sixth,
+  // equally separate fetch -- see docs/year-over-year-seasonality-long-
+  // term-place-memory-v1-report.md. Same absence-safety discipline as the
+  // other context fetches above; always the current Place-local month (no
+  // params), so it needs no re-fetch when the report period picker changes.
+  const [yearOverYear, setYearOverYear] = useState<PlaceYearOverYearResponse | null>(null);
 
   const refreshDashboard = useCallback(async (initialLoad = false) => {
     if (initialLoad) {
@@ -276,6 +284,7 @@ export function DashboardPage({
         nextPlaceFeatures,
         nextPlaceFeaturesSummary,
         nextZones,
+        nextYearOverYear,
       ] = await Promise.all([
         apiClient.getDashboardSummary(todayLocalDateString()),
         apiClient.getStreamMonitoringStatuses().catch(() => null),
@@ -287,6 +296,7 @@ export function DashboardPage({
         apiClient.getPlaceFeatures().catch(() => null),
         apiClient.getPlaceFeaturesSummary().catch(() => null),
         apiClient.getZones().catch(() => null),
+        apiClient.getPlaceYearOverYear().catch(() => null),
       ]);
       setSummary(nextSummary);
       setStorageSummary(nextStorageSummary);
@@ -297,6 +307,7 @@ export function DashboardPage({
       setPlaceFeatures(nextPlaceFeatures);
       setPlaceFeaturesSummary(nextPlaceFeaturesSummary);
       setZones(nextZones);
+      setYearOverYear(nextYearOverYear);
       if (monitoringStatuses) {
         setDurableStatusByStream(
           Object.fromEntries(
@@ -619,6 +630,10 @@ export function DashboardPage({
           reasoning as EnvironmentalContextCard/HabitatPhenologyCard above --
           see docs/biodiversity-place-intelligence-v1-contract.md. */}
       <BiodiversitySummaryCard onOpenBirdLog={onOpenBirdLog} summary={biodiversitySummary} />
+      {/* Year-over-Year Seasonality & Long-Term Place Memory v1: a fifth
+          sibling card, same reasoning as the others above -- see
+          docs/year-over-year-seasonality-long-term-place-memory-v1-report.md. */}
+      <YearOverYearCard comparison={yearOverYear} onOpenBirdLog={onOpenBirdLog} />
       {/* Everyday Discovery / Product Experience v2 (Phase G): Today's own
           report above only ever shows one busiest_zone winner and a single
           change sentence -- this links to the fuller exploration surface

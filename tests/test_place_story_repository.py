@@ -503,3 +503,68 @@ def test_archiving_the_camera_afterward_does_not_erase_its_story_entry(
     assert len(first_seen_after) == 1
     assert first_seen_after[0].taxon_label == "northern_cardinal"
     assert first_seen_after[0].event_date == date(2025, 3, 3)
+
+
+# --- Year-over-Year Seasonality & Long-Term Place Memory v1 ---
+
+
+def test_year_over_year_insight_appears_when_the_requested_range_includes_now(
+    repository: ProductRepository,
+) -> None:
+    """A Story request whose own range spans "now" gets a `year_over_year`
+    entry when a real, material difference exists; see `ProductRepository.
+    place_story`'s own gating comment for why a deep historical-archive
+    browse never attempts this at all."""
+
+    _cover_days(repository, start=date(2026, 9, 1), days=30)
+    _cover_days(repository, start=date(2025, 9, 1), days=30)
+    for i, day in enumerate(range(1, 17)):
+        visit_id = f"cur-{i}"
+        _add_visit(repository, visit_id=visit_id, at=datetime(2026, 9, day, 10, tzinfo=UTC))
+        _confirm(repository, visit_id=visit_id, label="northern_cardinal")
+    for i, day in enumerate(range(1, 5)):
+        visit_id = f"pri-{i}"
+        _add_visit(repository, visit_id=visit_id, at=datetime(2025, 9, day, 10, tzinfo=UTC))
+        _confirm(repository, visit_id=visit_id, label="northern_cardinal")
+
+    # `now` lands on the current period's own last day (comfortably inside
+    # `[start_at, end_at)`, so the range-includes-now gate fires) and
+    # `local_timezone=UTC` is passed explicitly so "today" resolves
+    # deterministically against the UTC dates this test seeds -- no
+    # dependency on the host's own real timezone.
+    response = repository.place_story(
+        start_at=datetime(2026, 9, 1, tzinfo=UTC),
+        end_at=datetime(2026, 10, 1, tzinfo=UTC),
+        now=datetime(2026, 9, 30, 12, tzinfo=UTC),
+        local_timezone=UTC,
+    )
+    yoy_entries = [e for e in response.entries if e.kind == "year_over_year"]
+    assert len(yoy_entries) >= 1
+    assert any(e.taxon_label == "northern_cardinal" for e in yoy_entries) or any(
+        e.taxon_label is None for e in yoy_entries
+    )
+    for entry in yoy_entries:
+        assert entry.information_class == "inferred"
+        assert entry.group == "context"
+
+
+def test_year_over_year_insight_is_skipped_for_a_historical_archive_range(
+    repository: ProductRepository,
+) -> None:
+    """A request whose own range does not include "now" never attempts a
+    year-over-year computation at all -- zero cost, and structurally
+    correct (there is no "current period" to anchor to)."""
+
+    _cover_days(repository, start=date(2026, 9, 1), days=30)
+    _cover_days(repository, start=date(2025, 9, 1), days=30)
+    for i, day in enumerate(range(1, 17)):
+        visit_id = f"cur-{i}"
+        _add_visit(repository, visit_id=visit_id, at=datetime(2026, 9, day, 10, tzinfo=UTC))
+        _confirm(repository, visit_id=visit_id, label="northern_cardinal")
+
+    response = repository.place_story(
+        start_at=datetime(2025, 3, 1, tzinfo=UTC),
+        end_at=datetime(2025, 3, 10, tzinfo=UTC),
+        now=datetime(2026, 10, 2, tzinfo=UTC),
+    )
+    assert [e for e in response.entries if e.kind == "year_over_year"] == []

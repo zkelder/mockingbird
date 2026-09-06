@@ -5730,6 +5730,7 @@ export type PlaceStoryEventKind =
   | "feature_change"
   | "phenology"
   | "comparison_insight"
+  | "year_over_year"
   | "period_summary";
 
 export type PlaceStoryImportance = "major" | "notable";
@@ -5774,6 +5775,106 @@ export interface PlaceStoryRequest {
   feature_id?: string;
   page_size?: number;
   offset?: number;
+}
+
+// --- Year-over-Year Seasonality & Long-Term Place Memory v1 ---------------
+// See docs/year-over-year-seasonality-long-term-place-memory-v1-report.md.
+// Mirrors mockingbird.analytics.year_over_year_comparison's own vocabulary
+// field-for-field.
+
+export type PlaceYearOverYearStatus =
+  | "comparable"
+  | "no_material_difference"
+  | "insufficient_prior_history"
+  | "insufficient_current_coverage"
+  | "insufficient_prior_coverage"
+  | "partial_period";
+
+export type PlaceYearOverYearActivityDirection = "higher" | "lower" | "similar";
+
+export type PlaceYearOverYearTimingStatus = "comparable" | "insufficient_data";
+
+// Deliberately the *full* ConditionalAssociation range (unlike
+// FeatureAssociationStatus, which excludes "insufficient_data" because
+// PlaceFeatureAssociation's own contract guarantees `association` is
+// null/undefined whenever that value would occur): a year-over-year
+// comparison's `association` is always populated, even in an abstention
+// status.
+export type PlaceYearOverYearAssociationStatus =
+  | "insufficient_data"
+  | "no_clear_association"
+  | "more_common_under_condition"
+  | "less_common_under_condition";
+
+// One compared period's own summary facts -- current or prior year.
+// `is_complete` is false only for a current, still-in-progress calendar
+// period; the prior-year comparable period is always complete.
+export interface PlaceYearOverYearPeriod {
+  start_date: string;
+  end_date: string;
+  is_complete: boolean;
+  usable_day_count: number;
+  monitored_seconds?: number | null;
+  confirmed_wildlife_visit_count: number;
+}
+
+// The underlying presence-day-rate facts behind one year-over-year verdict
+// -- reuses PlaceFeatureAssociation's own flattened field naming, always
+// populated (unlike that sibling type) so drill-down can still explain an
+// abstention (e.g. "0 of 5 usable days" behind insufficient_current_coverage).
+export interface PlaceYearOverYearAssociation {
+  status?: PlaceYearOverYearAssociationStatus | null;
+  presence_days_in_condition?: number | null;
+  usable_days_in_condition?: number | null;
+  presence_days_out_of_condition?: number | null;
+  usable_days_out_of_condition?: number | null;
+}
+
+// The Place-wide year-over-year comparison for one current period against
+// its prior-year comparable period. `overall_activity` is populated exactly
+// when `status` is "comparable" (a real difference) or
+// "no_material_difference" ("similar") -- undefined for every abstention
+// status.
+export interface PlaceYearOverYearComparison {
+  policy_version: number;
+  current_period: PlaceYearOverYearPeriod;
+  prior_period: PlaceYearOverYearPeriod;
+  status: PlaceYearOverYearStatus;
+  overall_activity?: PlaceYearOverYearActivityDirection | null;
+  association?: PlaceYearOverYearAssociation | null;
+  information_class: "inferred";
+}
+
+// One taxon's year-over-year activity comparison, plus an optional
+// first-observed-timing comparison. `first_observed_day_difference` is
+// negative when the taxon was first observed earlier this period than in
+// the prior-year comparable period. `first_observed_is_material` gates
+// whether the day-difference is large enough to narrate -- do not state a
+// timing claim when this is false, even though the underlying dates are
+// still disclosed for drill-down.
+export interface PlaceYearOverYearSpeciesEntry {
+  label: string;
+  display_name: string;
+  category: LabelCategory;
+  is_species: boolean;
+  status: PlaceYearOverYearStatus;
+  activity_direction?: PlaceYearOverYearActivityDirection | null;
+  association?: PlaceYearOverYearAssociation | null;
+  current_first_observed_date?: string | null;
+  prior_first_observed_date?: string | null;
+  first_observed_timing_status: PlaceYearOverYearTimingStatus;
+  first_observed_day_difference?: number | null;
+  first_observed_is_material: boolean;
+}
+
+// GET /api/place/year-over-year -- a bounded, calm year-over-year summary:
+// the Place-wide comparison plus a small, ranked set of notable
+// species-level changes (never every species). Always computed fresh, never
+// cached -- a Reviewed correction is reflected on the very next call.
+export interface PlaceYearOverYearResponse {
+  generated_at: string;
+  place: PlaceYearOverYearComparison;
+  notable_species_changes: PlaceYearOverYearSpeciesEntry[];
 }
 
 // --- Ecological Interoperability & Submission Workflows v1 ---------------

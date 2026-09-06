@@ -16,6 +16,7 @@ import type {
   PlaceFeatureDetail,
   PlaceHabitatFact,
   PlacePhenologyObservation,
+  PlaceYearOverYearResponse,
 } from "../api/types";
 import { BiodiversitySummaryCard } from "../components/BiodiversitySummaryCard";
 import { EmptyState } from "../components/EmptyState";
@@ -23,6 +24,7 @@ import { MetricCard } from "../components/MetricCard";
 import { PageHeader } from "../components/PageHeader";
 import { SourceActivityList } from "../components/SourceActivityList";
 import { StatusPill } from "../components/StatusPill";
+import { YearOverYearCard } from "../components/YearOverYearCard";
 import {
   changeStatusBadge,
   formatDateTime,
@@ -652,6 +654,26 @@ export function PlaceActivityReportPage({ sources, onOpenVisit, onOpenBirdLog }:
     };
   }, []);
 
+  // Year-over-Year Seasonality & Long-Term Place Memory v1: another
+  // read-only, period-independent fetch, same reasoning as Biodiversity
+  // above -- always the current Place-local month, not scoped to whatever
+  // period is selected above. See docs/year-over-year-seasonality-long-
+  // term-place-memory-v1-report.md.
+  const [yearOverYear, setYearOverYear] = useState<PlaceYearOverYearResponse | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void apiClient
+      .getPlaceYearOverYear()
+      .catch(() => null)
+      .then((next) => {
+        if (active) setYearOverYear(next);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   function toggleSourceId(sourceId: string) {
     setSelectedSourceIds((current) =>
       current.includes(sourceId)
@@ -971,6 +993,14 @@ export function PlaceActivityReportPage({ sources, onOpenVisit, onOpenBirdLog }:
           scoped to the period picker. Same component the Dashboard's own
           sibling card uses, so the two can never disagree. */}
       <BiodiversitySummaryCard onOpenBirdLog={onOpenBirdLog} summary={biodiversitySummary} />
+
+      {/* Year-over-Year Seasonality & Long-Term Place Memory v1:
+          deliberately outside the `report` conditional above -- always the
+          current Place-local month, not scoped to the period picker (a
+          different question from "activity in the period I chose above").
+          Same component the Dashboard's own sibling card uses, so the two
+          can never disagree. */}
+      <YearOverYearCard comparison={yearOverYear} onOpenBirdLog={onOpenBirdLog} />
 
       {/* Habitat & Phenology Foundation v1: deliberately outside the `report`
           conditional above -- a genuinely independent, period-agnostic

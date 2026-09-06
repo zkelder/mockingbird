@@ -26,7 +26,11 @@ from mockingbird.analytics.place_story import (
     detect_regularity_transition_events,
     feature_change_event_to_story_event,
     phenology_observation_to_story_event,
+    year_over_year_place_event,
+    year_over_year_species_event,
+    year_over_year_story_events,
 )
+from mockingbird.analytics.year_over_year_comparison import ComparablePeriod, PlaceYearOverYearComparison, TaxonYearOverYearComparison
 
 NORTHERN_CARDINAL = TaxonFact("northern_cardinal", "Northern Cardinal", "bird", True)
 BLUE_JAY = TaxonFact("blue_jay", "Blue Jay", "bird", True)
@@ -433,3 +437,176 @@ def test_event_end_date_before_event_date_is_rejected() -> None:
             event_end_date=date(2025, 4, 1), title="t", summary="s", information_class="reviewed",
             importance="notable",
         )
+
+
+# ---------------------------------------------------------------------------
+# year_over_year_place_event / year_over_year_species_event /
+# year_over_year_story_events
+# ---------------------------------------------------------------------------
+
+
+def _period(*, start: date, end: date, is_complete: bool = True) -> ComparablePeriod:
+    return ComparablePeriod(
+        start_date=start, end_date=end, is_complete=is_complete,
+        usable_day_count=20, monitored_seconds=200_000.0, confirmed_wildlife_visit_count=10,
+    )
+
+
+def _place_comparison(*, status: str, overall_activity: str | None) -> PlaceYearOverYearComparison:
+    return PlaceYearOverYearComparison(
+        policy_version=1,
+        current_period=_period(start=date(2026, 9, 1), end=date(2026, 10, 1)),
+        prior_period=_period(start=date(2025, 9, 1), end=date(2025, 10, 1)),
+        status=status,  # type: ignore[arg-type]
+        overall_activity=overall_activity,  # type: ignore[arg-type]
+        association=None,
+    )
+
+
+def _species_entry(
+    *,
+    status: str = "no_material_difference",
+    activity_direction: str | None = None,
+    current_first_observed_date: date | None = None,
+    prior_first_observed_date: date | None = None,
+    first_observed_timing_status: str = "insufficient_data",
+    first_observed_day_difference: int | None = None,
+    first_observed_is_material: bool = False,
+    taxon: TaxonFact = NORTHERN_CARDINAL,
+) -> TaxonYearOverYearComparison:
+    return TaxonYearOverYearComparison(
+        taxon=taxon,
+        status=status,  # type: ignore[arg-type]
+        activity_direction=activity_direction,  # type: ignore[arg-type]
+        association=None,
+        current_first_observed_date=current_first_observed_date,
+        prior_first_observed_date=prior_first_observed_date,
+        first_observed_timing_status=first_observed_timing_status,  # type: ignore[arg-type]
+        first_observed_day_difference=first_observed_day_difference,
+        first_observed_is_material=first_observed_is_material,
+    )
+
+
+def test_place_event_created_for_a_real_higher_difference() -> None:
+    comparison = _place_comparison(status="comparable", overall_activity="higher")
+    event = year_over_year_place_event(comparison)
+    assert event is not None
+    assert event.kind == "year_over_year"
+    assert event.group == "context"
+    assert event.information_class == "inferred"
+    assert event.event_date == date(2026, 9, 30)  # the current period's own last day
+    assert "higher" in event.summary
+    assert "September 2026" in event.summary and "September 2025" in event.summary
+
+
+def test_place_event_created_for_a_real_lower_difference() -> None:
+    comparison = _place_comparison(status="comparable", overall_activity="lower")
+    event = year_over_year_place_event(comparison)
+    assert event is not None
+    assert "lower" in event.summary
+
+
+def test_place_event_is_none_for_no_material_difference() -> None:
+    comparison = _place_comparison(status="no_material_difference", overall_activity="similar")
+    assert year_over_year_place_event(comparison) is None
+
+
+@pytest.mark.parametrize(
+    "status", ["insufficient_prior_history", "insufficient_current_coverage", "insufficient_prior_coverage", "partial_period"]
+)
+def test_place_event_is_none_for_every_abstention_status(status: str) -> None:
+    comparison = _place_comparison(status=status, overall_activity=None)
+    assert year_over_year_place_event(comparison) is None
+
+
+def test_place_event_never_uses_causal_or_population_language() -> None:
+    for overall_activity in ("higher", "lower"):
+        event = year_over_year_place_event(_place_comparison(status="comparable", overall_activity=overall_activity))
+        assert event is not None
+        forbidden = ("caused", "led to", "resulted in", "because of", "drove", "due to", "may explain", "increased", "declined", "population")
+        summary_lower = event.summary.lower()
+        for word in forbidden:
+            assert word not in summary_lower, f"{word!r} found in: {event.summary}"
+
+
+def test_species_event_activity_signal_only() -> None:
+    entry = _species_entry(status="comparable", activity_direction="higher")
+    event = year_over_year_species_event(entry, current_period_end_date=date(2026, 10, 1))
+    assert event is not None
+    assert event.taxon_label == "northern_cardinal"
+    assert event.event_date == date(2026, 9, 30)
+    assert "observed higher often" in event.summary
+    assert "first observed" not in event.summary.lower()
+
+
+def test_species_event_timing_signal_only() -> None:
+    entry = _species_entry(
+        current_first_observed_date=date(2026, 9, 10),
+        prior_first_observed_date=date(2025, 9, 25),
+        first_observed_timing_status="comparable",
+        first_observed_day_difference=-15,
+        first_observed_is_material=True,
+    )
+    event = year_over_year_species_event(entry, current_period_end_date=date(2026, 10, 1))
+    assert event is not None
+    assert "first observed here" in event.summary
+    assert "earlier" in event.summary
+    assert "arrived" not in event.summary.lower()
+    assert "arrive" not in event.title.lower()
+
+
+def test_species_event_later_timing_uses_later_wording() -> None:
+    entry = _species_entry(
+        current_first_observed_date=date(2026, 9, 25),
+        prior_first_observed_date=date(2025, 9, 10),
+        first_observed_timing_status="comparable",
+        first_observed_day_difference=15,
+        first_observed_is_material=True,
+    )
+    event = year_over_year_species_event(entry, current_period_end_date=date(2026, 10, 1))
+    assert event is not None
+    assert "later" in event.summary
+    assert "earlier" not in event.summary
+
+
+def test_species_event_both_signals_produce_two_sentences() -> None:
+    entry = _species_entry(
+        status="comparable", activity_direction="higher",
+        current_first_observed_date=date(2026, 9, 10), prior_first_observed_date=date(2025, 9, 25),
+        first_observed_timing_status="comparable", first_observed_day_difference=-15, first_observed_is_material=True,
+    )
+    event = year_over_year_species_event(entry, current_period_end_date=date(2026, 10, 1))
+    assert event is not None
+    assert "observed higher often" in event.summary
+    assert "first observed here" in event.summary
+
+
+def test_species_event_is_none_when_neither_signal_is_material() -> None:
+    entry = _species_entry(status="no_material_difference", first_observed_is_material=False)
+    assert year_over_year_species_event(entry, current_period_end_date=date(2026, 10, 1)) is None
+
+
+def test_story_events_composes_place_and_species_and_skips_ineligible() -> None:
+    place_comparison = _place_comparison(status="comparable", overall_activity="higher")
+    notable = [
+        _species_entry(status="comparable", activity_direction="lower", taxon=BLUE_JAY),
+        _species_entry(status="no_material_difference"),  # would be skipped by select_notable_species_changes
+    ]
+    events = year_over_year_story_events(place_comparison=place_comparison, notable_species_changes=notable)
+    kinds = [e.kind for e in events]
+    assert kinds == ["year_over_year", "year_over_year"]
+    labels = {e.taxon_label for e in events if e.taxon_label is not None}
+    assert labels == {"blue_jay"}
+
+
+def test_story_events_place_only_when_no_notable_species() -> None:
+    place_comparison = _place_comparison(status="comparable", overall_activity="higher")
+    events = year_over_year_story_events(place_comparison=place_comparison, notable_species_changes=[])
+    assert len(events) == 1
+    assert events[0].taxon_label is None
+
+
+def test_story_events_empty_when_nothing_material() -> None:
+    place_comparison = _place_comparison(status="no_material_difference", overall_activity="similar")
+    events = year_over_year_story_events(place_comparison=place_comparison, notable_species_changes=[])
+    assert events == []

@@ -78,6 +78,7 @@ from mockingbird.analytics.place_activity_report_adapter import (
     _weather_association_response,
     place_activity_report_response,
     place_biodiversity_summary_response,
+    place_year_over_year_response,
     taxon_change_status_response,
     taxon_fact_from_taxonomy_label,
     visit_fact_from_stream_visit_summary,
@@ -87,6 +88,17 @@ from mockingbird.analytics.place_change_summary import (
     PlaceChangeSummary,
     TaxonChangeStatus,
     compute_place_change_summary,
+)
+from mockingbird.analytics.year_over_year_comparison import (
+    PeriodInput,
+    PlaceYearOverYearComparison,
+    TaxonYearOverYearComparison,
+    calendar_month_period,
+    comparable_prior_period,
+    compute_period_presence_facts,
+    compute_place_year_over_year_comparison,
+    compute_species_year_over_year_comparisons,
+    select_notable_species_changes,
 )
 from mockingbird.analytics.regularity_narrative import (
     RegularityNarrative,
@@ -123,6 +135,7 @@ from mockingbird.analytics.place_story import (
     detect_regularity_transition_events,
     feature_change_event_to_story_event,
     phenology_observation_to_story_event,
+    year_over_year_story_events,
 )
 from mockingbird.analytics.weather_association import (
     TaxonWeatherAssociation,
@@ -799,6 +812,7 @@ from mockingbird.api.schemas import (
     PlacePhenologyObservationUpdate,
     PlaceStoryEntry,
     PlaceStoryResponse,
+    PlaceYearOverYearResponse,
     SelfPasswordChangeRequest,
     SignInRequest,
     SolarContext,
@@ -32359,33 +32373,50 @@ class ProductRepository:
         ]
         return monitored_intervals, history_available_from, streams_without_history
 
-    def _historical_usable_dates(
+    def _usable_dates_for_window(
         self,
         session: Session,
         *,
         stream_ids: list[str],
+        window_start_at: datetime,
         window_end_at: datetime,
         local_timezone: tzinfo,
-    ) -> tuple[frozenset[date], bool, float]:
-        """Place-local usable-day facts for the trailing
-        `HISTORICAL_BASELINE_WINDOW_DAYS`-day window ending at
-        `window_end_at`, from the same durable `MonitoringExposureIntervalModel`
-        ledger `_place_activity_coverage_summary` reads -- never inferred
-        from Visit timestamps or current runtime state. Shared by both the
-        Place-wide `HistoricalPlaceBaseline` and Bird Log's per-label
-        regularity figures, so both always agree on the same usable-day set
-        (see `usable_dates_from_daily_monitored_seconds`'s docstring).
+    ) -> tuple[frozenset[date], datetime | None, float]:
+        """Place-local usable-day facts for an arbitrary, caller-supplied
+        `[window_start_at, window_end_at)` window, from the same durable
+        `MonitoringExposureIntervalModel` ledger `_place_activity_coverage_
+        summary` reads -- never inferred from Visit timestamps or current
+        runtime state.
 
-        Returns `(usable_dates, has_any_monitoring_history, total_monitored_
-        seconds_in_window)`. `has_any_monitoring_history` is a separate
-        signal from an empty `usable_dates` set -- see
-        `compute_historical_place_baseline`'s docstring for why a Place
-        monitored heavily outside this window still has a real, known
-        (possibly zero) total for the window, not a fabricated "not yet
-        computable" absence.
+        Extracted from `_historical_usable_dates` (its sole caller until
+        Year-over-Year Seasonality & Long-Term Place Memory v1 added a
+        second one, `place_year_over_year_comparison` -- see docs/
+        year-over-year-seasonality-long-term-place-memory-v1-report.md) so
+        both compute their usable-day figure from the exact same "durable
+        intervals -> local-day bucket -> usable-day threshold" chain rather
+        than two independently-written computations that could silently
+        drift apart -- mirroring `_monitoring_exposure_intervals_and_
+        history`'s own identical extraction rationale, one level up the
+        same call chain. Pure extraction: `_historical_usable_dates`'s own
+        observable behavior is unchanged (its full pre-existing test suite
+        passes unmodified).
+
+        Returns `(usable_dates, history_available_from, total_monitored_
+        seconds_in_window)`. `history_available_from` is `_monitoring_
+        exposure_intervals_and_history`'s own raw earliest-ever-recorded-
+        exposure fact for the in-scope Streams -- deliberately **not**
+        scoped to `[window_start_at, window_end_at)` (a Stream's history
+        can start before, during, or after the requested window). Most
+        callers only need "does any durable history exist at all"
+        (`is not None`, matching `_historical_usable_dates`'s own collapsed
+        boolean below); `place_year_over_year_comparison` additionally
+        needs the raw instant, to distinguish "history exists, but starts
+        after this specific period ended" (insufficient_prior_history) from
+        "history reaches back that far, this period just was not well
+        monitored" (insufficient_prior_coverage) -- a distinction a bare
+        boolean cannot make.
         """
 
-        window_start_at = window_end_at - timedelta(days=HISTORICAL_BASELINE_WINDOW_DAYS)
         monitored_intervals, history_available_from, _streams_without_history = (
             self._monitoring_exposure_intervals_and_history(
                 session,
@@ -32402,6 +32433,36 @@ class ProductRepository:
         )
         usable_dates = usable_dates_from_daily_monitored_seconds(daily_monitored_seconds)
         total_monitored_seconds = sum(daily_monitored_seconds.values())
+        return usable_dates, history_available_from, total_monitored_seconds
+
+    def _historical_usable_dates(
+        self,
+        session: Session,
+        *,
+        stream_ids: list[str],
+        window_end_at: datetime,
+        local_timezone: tzinfo,
+    ) -> tuple[frozenset[date], bool, float]:
+        """Place-local usable-day facts for the trailing
+        `HISTORICAL_BASELINE_WINDOW_DAYS`-day window ending at
+        `window_end_at`. Shared by both the Place-wide `HistoricalPlaceBaseline`
+        and Bird Log's per-label regularity figures, so both always agree on
+        the same usable-day set (see `usable_dates_from_daily_monitored_
+        seconds`'s docstring). See `_usable_dates_for_window` for the
+        underlying, window-parameterized computation this fixes to a
+        366-day trailing lookback; this method collapses that method's raw
+        `history_available_from` instant to a plain boolean, its own
+        unchanged external contract.
+        """
+
+        window_start_at = window_end_at - timedelta(days=HISTORICAL_BASELINE_WINDOW_DAYS)
+        usable_dates, history_available_from, total_monitored_seconds = self._usable_dates_for_window(
+            session,
+            stream_ids=stream_ids,
+            window_start_at=window_start_at,
+            window_end_at=window_end_at,
+            local_timezone=local_timezone,
+        )
         return usable_dates, history_available_from is not None, total_monitored_seconds
 
     def _daylight_bucket_by_visit_id(
@@ -33661,6 +33722,324 @@ class ProductRepository:
             environmental_context=self.get_place_environmental_context_today(),
         )
 
+    def _year_over_year_window_visit_facts(
+        self,
+        session: Session,
+        *,
+        stream_ids: list[str],
+        taxonomy_index: dict[str, TaxonomyLabelModel],
+        period_start_at: datetime,
+        period_end_at: datetime,
+    ) -> list[VisitFact]:
+        """Already-resolved Visit facts for one arbitrary, typically short
+        (a calendar-month) period. Mirrors `_historical_place_baseline_and_
+        species_statuses`'s own `window_rows` query shape and its `resolve_
+        any_taxon` breadth exactly (any resolvable taxonomy row, any
+        category, so a confirmed-but-species-unresolved "unknown_bird"/
+        "unknown_animal" abstention still resolves to a real `VisitFact`),
+        but parameterized by the caller's own period bounds instead of that
+        method's fixed 366-day trailing window -- a year-over-year
+        comparison needs two short, independently-anchored periods a year
+        apart, which that method's own hard-coded lookback cannot serve.
+        Bounded by period length, not accumulated history: a ~30-day
+        calendar-month query costs the same regardless of how much older
+        history this Place has (see docs/year-over-year-seasonality-long-
+        term-place-memory-v1-report.md's "Performance").
+        """
+
+        if not stream_ids:
+            return []
+        rows = session.execute(
+            select(VisitModel.id, VisitModel.reviewed_label, EventModel.started_at)
+            .join(EventModel, VisitModel.event_id == EventModel.id)
+            .where(
+                VisitModel.is_superseded.is_(False),
+                VisitModel.review_status == ReviewStatus.reviewed.value,
+                VisitModel.reviewed_label.is_not(None),
+                EventModel.stream_id.in_(stream_ids),
+                EventModel.started_at >= period_start_at,
+                EventModel.started_at < period_end_at,
+            )
+        ).all()
+        facts: list[VisitFact] = []
+        for visit_id, reviewed_label, started_at in rows:
+            taxonomy = taxonomy_index.get(_taxonomy_key(reviewed_label))
+            if taxonomy is None:
+                continue
+            taxon = taxon_fact_from_taxonomy_label(_taxonomy_label_from_model(taxonomy))
+            facts.append(
+                VisitFact(
+                    visit_id=visit_id,
+                    zone_id=None,
+                    zone_name=None,
+                    activity_started_at=_as_utc(started_at),
+                    resolution="reviewed",
+                    confirmed_taxon=taxon,
+                )
+            )
+        return facts
+
+    def _year_over_year_resolve_period(
+        self,
+        *,
+        now: datetime,
+        year: int | None,
+        month: int | None,
+        local_timezone: tzinfo | None,
+    ) -> tuple[tzinfo, date, date, bool, date, date]:
+        """Resolve the requested (or defaulted-to-current) Place-local
+        calendar month into current/prior period boundaries -- shared by
+        `place_year_over_year_comparison` (an explicit, possibly-past
+        `year`/`month`) and `place_story`'s own live-view integration
+        (always the current month, passing its own already-resolved `now`/
+        `local_timezone` through so the two never independently -- and
+        possibly inconsistently -- re-resolve the host's local zone).
+
+        Returns `(local_timezone, current_start_date, current_end_date,
+        is_complete, prior_start_date, prior_end_date)`. `is_complete` is
+        `False` only when the resolved current period is the real, still-
+        in-progress calendar month (its end clamped to `now`'s own local
+        date + 1); the prior-year comparable period is always complete.
+        """
+
+        if (year is None) != (month is None):
+            raise ValueError("year and month must be supplied together")
+
+        resolved_local_timezone = local_timezone or resolve_host_local_timezone(now)
+        today = now.astimezone(resolved_local_timezone).date()
+
+        if year is not None and month is not None:
+            if (year, month) > (today.year, today.month):
+                raise ValueError("year/month must not be in the future")
+            current_start_date, natural_end_date = calendar_month_period(year, month)
+        else:
+            current_start_date, natural_end_date = calendar_month_period(today.year, today.month)
+
+        is_complete = natural_end_date <= today + timedelta(days=1)
+        current_end_date = min(natural_end_date, today + timedelta(days=1))
+        prior_start_date, prior_end_date = comparable_prior_period(current_start_date, current_end_date)
+        return (
+            resolved_local_timezone, current_start_date, current_end_date, is_complete,
+            prior_start_date, prior_end_date,
+        )
+
+    def _year_over_year_comparison_facts_in_session(
+        self,
+        session: Session,
+        *,
+        stream_ids: list[str],
+        taxonomy_index: dict[str, TaxonomyLabelModel],
+        local_timezone: tzinfo,
+        current_start_date: date,
+        current_end_date: date,
+        is_complete: bool,
+        prior_start_date: date,
+        prior_end_date: date,
+    ) -> tuple[PlaceYearOverYearComparison, list[TaxonYearOverYearComparison]]:
+        """The query + compute core of Year-over-Year Seasonality &
+        Long-Term Place Memory v1 -- see docs/year-over-year-seasonality-
+        long-term-place-memory-v1-report.md. Reuses the caller's already-
+        open `session` and already-fetched `stream_ids`/`taxonomy_index`,
+        never opening a second session of its own -- shared by `place_year_
+        over_year_comparison` (opens its own session, fetches its own
+        Stream roster) and `place_story` (reuses its own, matching this
+        file's established "never nest a second session-opening call
+        inside an already-open one" discipline; see `_place_story_feature_
+        events`'s identical session-reuse shape).
+
+        Bounded, not per-period-in-a-range: exactly two short (typically
+        ~30-day) Visit/coverage queries total, one per compared period --
+        never the expensive 366-day-trailing `_historical_place_baseline_
+        and_species_statuses` called once per month in a range, the exact
+        anti-pattern this milestone's own governing brief and Place Story's
+        own disclosed "period summaries" performance finding both warn
+        against. See the report's "Performance" for measured proof.
+        """
+
+        def _local_midnight_utc(day: date) -> datetime:
+            return _as_utc(datetime(day.year, day.month, day.day, tzinfo=local_timezone))
+
+        current_start_at = _local_midnight_utc(current_start_date)
+        current_end_at = _local_midnight_utc(current_end_date)
+        prior_start_at = _local_midnight_utc(prior_start_date)
+        prior_end_at = _local_midnight_utc(prior_end_date)
+
+        current_usable_dates, current_history_available_from, current_monitored_seconds = (
+            self._usable_dates_for_window(
+                session,
+                stream_ids=stream_ids,
+                window_start_at=current_start_at,
+                window_end_at=current_end_at,
+                local_timezone=local_timezone,
+            )
+        )
+        prior_usable_dates, prior_history_available_from, prior_monitored_seconds = (
+            self._usable_dates_for_window(
+                session,
+                stream_ids=stream_ids,
+                window_start_at=prior_start_at,
+                window_end_at=prior_end_at,
+                local_timezone=local_timezone,
+            )
+        )
+        # `has_any_monitoring_history` means "history exists reaching back
+        # to at or before this period's own end" -- deliberately narrower
+        # than a bare `is not None` (which would also be True for a Stream
+        # whose *only* history is the *other*, unrelated period being
+        # compared here). This is what lets `insufficient_prior_history`
+        # (the Place/Stream did not exist yet during the whole comparable
+        # prior period) read differently from `insufficient_prior_coverage`
+        # (it existed, this specific period just was not well monitored) --
+        # see `_usable_dates_for_window`'s own docstring.
+        current_has_history = (
+            current_history_available_from is not None and current_history_available_from < current_end_at
+        )
+        prior_has_history = (
+            prior_history_available_from is not None and prior_history_available_from < prior_end_at
+        )
+
+        current_visit_facts = self._year_over_year_window_visit_facts(
+            session,
+            stream_ids=stream_ids,
+            taxonomy_index=taxonomy_index,
+            period_start_at=current_start_at,
+            period_end_at=current_end_at,
+        )
+        prior_visit_facts = self._year_over_year_window_visit_facts(
+            session,
+            stream_ids=stream_ids,
+            taxonomy_index=taxonomy_index,
+            period_start_at=prior_start_at,
+            period_end_at=prior_end_at,
+        )
+
+        # Camera / Source + Multi-Camera Maturity v1, Phase H: one real
+        # encounter seen by two cameras must count once, not twice -- both
+        # periods' Visit ids are pooled into a single dedup call (rather
+        # than one per period) since an "associated" pair only ever forms
+        # between two Visits close in time, which by construction never
+        # spans across the year-apart boundary between these two periods;
+        # pooling costs one query pair instead of two.
+        all_visit_ids = [fact.visit_id for fact in current_visit_facts] + [
+            fact.visit_id for fact in prior_visit_facts
+        ]
+        if len(all_visit_ids) >= 2:
+            excluded_visit_ids = self._associated_visit_ids_to_exclude_from_counting(session, all_visit_ids)
+            if excluded_visit_ids:
+                current_visit_facts = [
+                    fact for fact in current_visit_facts if fact.visit_id not in excluded_visit_ids
+                ]
+                prior_visit_facts = [
+                    fact for fact in prior_visit_facts if fact.visit_id not in excluded_visit_ids
+                ]
+
+        current_presence = compute_period_presence_facts(current_visit_facts, local_timezone=local_timezone)
+        prior_presence = compute_period_presence_facts(prior_visit_facts, local_timezone=local_timezone)
+
+        current_period = PeriodInput(
+            start_date=current_start_date,
+            end_date=current_end_date,
+            is_complete=is_complete,
+            usable_dates=current_usable_dates,
+            monitored_seconds=current_monitored_seconds if current_has_history else None,
+            confirmed_wildlife_visit_count=current_presence.confirmed_wildlife_visit_count,
+            has_any_monitoring_history=current_has_history,
+        )
+        prior_period = PeriodInput(
+            start_date=prior_start_date,
+            end_date=prior_end_date,
+            is_complete=True,
+            usable_dates=prior_usable_dates,
+            monitored_seconds=prior_monitored_seconds if prior_has_history else None,
+            confirmed_wildlife_visit_count=prior_presence.confirmed_wildlife_visit_count,
+            has_any_monitoring_history=prior_has_history,
+        )
+
+        place_comparison: PlaceYearOverYearComparison = compute_place_year_over_year_comparison(
+            current=current_period,
+            prior=prior_period,
+            current_presence_dates=current_presence.overall_presence_dates,
+            prior_presence_dates=prior_presence.overall_presence_dates,
+        )
+
+        taxa: dict[str, TaxonFact] = {**prior_presence.taxa, **current_presence.taxa}
+        species_comparisons: list[TaxonYearOverYearComparison] = compute_species_year_over_year_comparisons(
+            taxa,
+            current=current_period,
+            prior=prior_period,
+            current_presence_dates_by_taxon=current_presence.presence_dates_by_taxon,
+            prior_presence_dates_by_taxon=prior_presence.presence_dates_by_taxon,
+        )
+        notable_species_changes = select_notable_species_changes(species_comparisons)
+        return place_comparison, notable_species_changes
+
+    def place_year_over_year_comparison(
+        self,
+        *,
+        now: datetime | None = None,
+        year: int | None = None,
+        month: int | None = None,
+        local_timezone: tzinfo | None = None,
+    ) -> PlaceYearOverYearResponse:
+        """Year-over-Year Seasonality & Long-Term Place Memory v1: compare
+        one Place-local calendar month against the same calendar month one
+        year earlier -- see docs/year-over-year-seasonality-long-term-
+        place-memory-v1-report.md.
+
+        `year`/`month` default to the current Place-local calendar month
+        (possibly still in progress); both must be supplied together or
+        omitted, and a future month raises `ValueError`. Archived-Stream
+        inclusion mirrors `place_story`'s own "a Place memory surface must
+        not silently lose legitimate history merely because a Stream is now
+        archived" default -- unconditionally inclusive, unlike Today/Bird
+        Log's current-active-observatory default.
+
+        Computed fresh at read time on every call, never cached, matching
+        every other Place read-model's identical live-query-always
+        discipline -- a Reviewed correction is reflected on the very next
+        call with no invalidation step.
+        """
+
+        generation_moment = now or datetime.now(UTC)
+        (
+            resolved_local_timezone, current_start_date, current_end_date, is_complete,
+            prior_start_date, prior_end_date,
+        ) = self._year_over_year_resolve_period(
+            now=generation_moment, year=year, month=month, local_timezone=local_timezone,
+        )
+
+        with self.session_factory() as session:
+            # Multi-Camera Place Experience v2 / Place Story's own precedent
+            # (see that method's comment, above): a long-term Place-memory
+            # surface stays archived-inclusive so a camera retired between
+            # last year's comparable period and now never silently erases
+            # that period's own real history.
+            stream_ids = list(
+                session.scalars(
+                    select(StreamModel.id).join(
+                        CameraSourceModel, StreamModel.source_id == CameraSourceModel.id
+                    )
+                ).all()
+            )
+            taxonomy_index = self._taxonomy_label_index(session)
+            place_comparison, notable_species_changes = self._year_over_year_comparison_facts_in_session(
+                session,
+                stream_ids=stream_ids,
+                taxonomy_index=taxonomy_index,
+                local_timezone=resolved_local_timezone,
+                current_start_date=current_start_date,
+                current_end_date=current_end_date,
+                is_complete=is_complete,
+                prior_start_date=prior_start_date,
+                prior_end_date=prior_end_date,
+            )
+
+        return place_year_over_year_response(
+            generated_at=_as_utc(generation_moment),
+            place=place_comparison,
+            notable_species_changes=notable_species_changes,
+        )
+
     def place_story(
         self,
         *,
@@ -33769,11 +34148,49 @@ class ProductRepository:
             )
             phenology_events = self._place_story_phenology_events(session)
 
+            # Year-over-Year Seasonality & Long-Term Place Memory v1: a
+            # year-over-year insight is inherently about the *current*
+            # period, so it is only computed at all when this Story
+            # request's own range genuinely includes "now" -- a deep
+            # historical-archive browse (an old, closed date range) has no
+            # "this month vs. last year" to anchor to and skips this
+            # entirely, at zero cost. When it does apply, this reuses the
+            # session/`stream_ids`/`taxonomy_index` this method already
+            # fetched above -- one further pair of ~30-day-bounded Visit/
+            # coverage queries, never the expensive 366-day-trailing
+            # lookback, and never per-month-in-range (see `_year_over_year_
+            # comparison_facts_in_session`'s own "Bounded, not per-period-
+            # in-a-range" discipline).
+            year_over_year_events: list[PlaceStoryEvent] = []
+            if period_start_at <= generation_moment <= period_end_at:
+                (
+                    yoy_local_timezone, yoy_current_start_date, yoy_current_end_date, yoy_is_complete,
+                    yoy_prior_start_date, yoy_prior_end_date,
+                ) = self._year_over_year_resolve_period(
+                    now=generation_moment, year=None, month=None, local_timezone=resolved_local_timezone,
+                )
+                yoy_place_comparison, yoy_notable_species_changes = (
+                    self._year_over_year_comparison_facts_in_session(
+                        session,
+                        stream_ids=stream_ids,
+                        taxonomy_index=taxonomy_index,
+                        local_timezone=yoy_local_timezone,
+                        current_start_date=yoy_current_start_date,
+                        current_end_date=yoy_current_end_date,
+                        is_complete=yoy_is_complete,
+                        prior_start_date=yoy_prior_start_date,
+                        prior_end_date=yoy_prior_end_date,
+                    )
+                )
+                year_over_year_events = year_over_year_story_events(
+                    place_comparison=yoy_place_comparison, notable_species_changes=yoy_notable_species_changes,
+                )
+
         kinds_set = set(kinds) if kinds else None
         period_start_date = period_start_at.astimezone(resolved_local_timezone).date()
         period_end_date = period_end_at.astimezone(resolved_local_timezone).date()
         page = build_place_story(
-            [*wildlife_sources, feature_events, comparison_events, phenology_events],
+            [*wildlife_sources, feature_events, comparison_events, phenology_events, year_over_year_events],
             event_date_start=period_start_date,
             event_date_end=period_end_date,
             kinds=kinds_set,  # type: ignore[arg-type]

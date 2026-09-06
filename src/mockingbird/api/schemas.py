@@ -8773,6 +8773,130 @@ class PlaceBiodiversitySummaryResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Year-over-Year Seasonality & Long-Term Place Memory v1 -- see
+# `mockingbird.analytics.year_over_year_comparison` and docs/year-over-year-
+# seasonality-long-term-place-memory-v1-report.md. Mirrors that pure
+# module's vocabulary field-for-field (the same "response type mirrors the
+# pure module, never a second definition" discipline `PlaceStoryEntry`,
+# above, already follows), and reuses `PlaceFeatureAssociation`'s own
+# flattened-`ConditionalAssociation` field shape/naming for
+# `PlaceYearOverYearAssociation` below rather than inventing a second
+# association wrapper shape.
+# ---------------------------------------------------------------------------
+
+PlaceYearOverYearStatus = Literal[
+    "comparable",
+    "no_material_difference",
+    "insufficient_prior_history",
+    "insufficient_current_coverage",
+    "insufficient_prior_coverage",
+    "partial_period",
+]
+PlaceYearOverYearActivityDirection = Literal["higher", "lower", "similar"]
+PlaceYearOverYearTimingStatus = Literal["comparable", "insufficient_data"]
+# Deliberately the *full* `ConditionalAssociation.status` range (unlike
+# `FeatureAssociationStatus`, above, which excludes `"insufficient_data"`
+# because `FeatureChangeComparison`'s own contract guarantees `association`
+# is `None` whenever that value would occur): a year-over-year comparison's
+# `association` is always populated, even in an abstention status, so its
+# own `status` can legitimately be `"insufficient_data"` (see `PlaceYear
+# OverYearAssociation`, below).
+PlaceYearOverYearAssociationStatus = Literal[
+    "insufficient_data", "no_clear_association", "more_common_under_condition", "less_common_under_condition"
+]
+
+
+class PlaceYearOverYearPeriod(BaseModel):
+    """One compared period's own summary facts -- current or prior year.
+    `is_complete` is `False` only for a current, still-in-progress calendar
+    period (a month not yet finished); the prior-year comparable period is
+    always complete."""
+
+    start_date: date
+    end_date: date
+    is_complete: bool
+    usable_day_count: int = Field(ge=0)
+    monitored_seconds: float | None = None
+    confirmed_wildlife_visit_count: int = Field(ge=0)
+
+
+class PlaceYearOverYearAssociation(BaseModel):
+    """The underlying presence-day-rate facts behind one year-over-year
+    verdict -- reuses `PlaceFeatureAssociation`'s own flattened
+    `ConditionalAssociation` field naming verbatim (same field names), but
+    with the *full* `PlaceYearOverYearAssociationStatus` range: unlike
+    `PlaceFeatureAssociation` (whose `association` is `None` precisely when
+    its status would be `"insufficient_data"`), a year-over-year
+    comparison's `association` is always populated, even in an abstention
+    status, so drill-down can still show the underlying counts (e.g. "0 of
+    5 usable days" behind an `insufficient_current_coverage` verdict)."""
+
+    status: PlaceYearOverYearAssociationStatus | None = None
+    presence_days_in_condition: int | None = None
+    usable_days_in_condition: int | None = None
+    presence_days_out_of_condition: int | None = None
+    usable_days_out_of_condition: int | None = None
+
+
+class PlaceYearOverYearComparison(BaseModel):
+    """The Place-wide year-over-year comparison for one current period
+    against its prior-year comparable period. `overall_activity` is
+    populated exactly when `status` is `"comparable"` (a real difference)
+    or `"no_material_difference"` (`"similar"`) -- `None` for every
+    abstention status."""
+
+    policy_version: int = Field(ge=1)
+    current_period: PlaceYearOverYearPeriod
+    prior_period: PlaceYearOverYearPeriod
+    status: PlaceYearOverYearStatus
+    overall_activity: PlaceYearOverYearActivityDirection | None = None
+    association: PlaceYearOverYearAssociation | None = None
+    information_class: Literal["inferred"] = "inferred"
+
+
+class PlaceYearOverYearSpeciesEntry(BaseModel):
+    """One taxon's year-over-year activity comparison, plus an optional
+    first-observed-timing comparison. `first_observed_day_difference` is
+    negative when the taxon was first observed earlier this period than in
+    the prior-year comparable period; populated only when `first_observed_
+    timing_status == "comparable"`. `first_observed_is_material` gates
+    whether the day-difference is large enough to narrate (see
+    `mockingbird.analytics.year_over_year_comparison.
+    MIN_MATERIAL_TIMING_DIFFERENCE_DAYS`) -- a UI should not state a timing
+    claim when this is `False`, even though the underlying dates are still
+    disclosed for drill-down."""
+
+    label: str
+    display_name: str
+    category: LabelCategory
+    is_species: bool
+    status: PlaceYearOverYearStatus
+    activity_direction: PlaceYearOverYearActivityDirection | None = None
+    association: PlaceYearOverYearAssociation | None = None
+    current_first_observed_date: date | None = None
+    prior_first_observed_date: date | None = None
+    first_observed_timing_status: PlaceYearOverYearTimingStatus
+    first_observed_day_difference: int | None = None
+    first_observed_is_material: bool
+
+
+class PlaceYearOverYearResponse(BaseModel):
+    """`GET /api/place/year-over-year` -- a bounded, calm year-over-year
+    summary: the Place-wide comparison plus a small, ranked set of notable
+    species-level changes (never every species -- see `select_notable_
+    species_changes`'s own bounded-and-ranked-by-evidence-strength
+    discipline). Always computed fresh from current rows on every call,
+    never cached, matching every other Place read-model's identical
+    live-query-always discipline (`PlaceActivityReportResponse`,
+    `PlaceStoryResponse`, ...) -- a Reviewed correction is reflected on the
+    very next call with no invalidation step."""
+
+    generated_at: datetime
+    place: PlaceYearOverYearComparison
+    notable_species_changes: list[PlaceYearOverYearSpeciesEntry] = Field(default_factory=list, max_length=5)
+
+
+# ---------------------------------------------------------------------------
 # Place Story & Seasonal Timeline v1 -- see
 # docs/place-story-seasonal-timeline-v1-report.md. A derived read-model over
 # already-authoritative facts (Reviewed wildlife history, Reviewed Place
@@ -8793,6 +8917,7 @@ PlaceStoryEventKind = Literal[
     "feature_change",
     "phenology",
     "comparison_insight",
+    "year_over_year",
     "period_summary",
 ]
 PlaceStoryImportance = Literal["major", "notable"]

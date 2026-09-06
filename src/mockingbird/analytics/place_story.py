@@ -141,6 +141,10 @@ from mockingbird.analytics.regularity_narrative import (
     RegularityStateValue,
     compute_regularity_narrative,
 )
+from mockingbird.analytics.year_over_year_comparison import (
+    PlaceYearOverYearComparison,
+    TaxonYearOverYearComparison,
+)
 
 # ---------------------------------------------------------------------------
 # Vocabulary (Phase 3 of the governing brief: small, product-legible, never
@@ -162,6 +166,7 @@ PlaceStoryEventKind = Literal[
     "phenology",
     # context
     "comparison_insight",
+    "year_over_year",
     # summary
     "period_summary",
 ]
@@ -175,6 +180,7 @@ _KIND_GROUP: dict[PlaceStoryEventKind, PlaceStoryEventGroup] = {
     "feature_change": "place",
     "phenology": "place",
     "comparison_insight": "context",
+    "year_over_year": "context",
     "period_summary": "summary",
 }
 
@@ -917,6 +923,139 @@ def phenology_observation_to_story_event(
 
 
 # ---------------------------------------------------------------------------
+# Context: Year-over-Year Seasonality & Long-Term Place Memory v1. Mirrors
+# `comparison_insight_event`'s own established shape (a separate, later-
+# dated "inferred" Story event explaining an already-computed comparison,
+# never fused into the wildlife fact it describes) -- no new statistical
+# logic, only plain-language composition over an already-computed `mockingbird.
+# analytics.year_over_year_comparison` result. Callers must gate on `status
+# == "comparable"` (place) / pass only already-`select_notable_species_
+# changes`-bounded entries (species) before calling these -- an unresolved
+# or "similar" comparison produces no event at all, matching `comparison_
+# insight_event`'s identical "never a weather log" discipline: Place Story
+# narrates a genuine change, not the absence of one (Phase 17/18 of the
+# governing brief).
+# ---------------------------------------------------------------------------
+
+
+def year_over_year_place_event(comparison: PlaceYearOverYearComparison) -> PlaceStoryEvent | None:
+    """A Place-wide year-over-year insight, dated at the current period's
+    own last day. `None` unless `status == "comparable"` (a real, material
+    difference) -- the honest "similar" (`no_material_difference`) case,
+    and every abstention status, produce nothing here; a caller wanting the
+    full status for a dedicated Place/Yard Intelligence card should read
+    `ProductRepository.place_year_over_year_comparison`'s own richer
+    response directly, not this Story-only projection."""
+
+    if comparison.status != "comparable" or comparison.overall_activity not in ("higher", "lower"):
+        return None
+
+    period_label = comparison.current_period.start_date.strftime("%B %Y")
+    prior_label = comparison.prior_period.start_date.strftime("%B %Y")
+    event_date = comparison.current_period.end_date - timedelta(days=1)
+    return PlaceStoryEvent(
+        id=f"year-over-year:place:{comparison.current_period.start_date.isoformat()}",
+        kind="year_over_year",
+        group="context",
+        event_date=event_date,
+        event_end_date=None,
+        title=f"Wildlife activity {comparison.overall_activity} than {prior_label}",
+        summary=(
+            f"Confirmed wildlife activity at this Place was {comparison.overall_activity} in "
+            f"{period_label} than in {prior_label}, under comparable monitoring."
+        ),
+        information_class="inferred",
+        importance="notable",
+    )
+
+
+def year_over_year_species_event(
+    entry: TaxonYearOverYearComparison, *, current_period_end_date: date,
+) -> PlaceStoryEvent | None:
+    """One notable species-level year-over-year insight -- an activity
+    difference, a first-observed-timing difference, or both, composed into
+    one calm entry. `None` when neither sub-verdict has anything material
+    to say (should not happen for an entry already selected by `select_
+    notable_species_changes`, but defensively honest rather than emitting
+    an empty sentence).
+
+    "First observed here", never "arrived": detection is not proof of
+    arrival (section 11 of the governing brief; product-doctrine.md's
+    abstention discipline). Never a population/ecological claim -- "more/
+    less often", "earlier/later", always qualified "at this Place" /
+    "under comparable monitoring", never "increased"/"declined"/"arrived".
+    """
+
+    has_activity_signal = entry.status == "comparable" and entry.activity_direction in ("higher", "lower")
+    has_timing_signal = entry.first_observed_is_material and entry.first_observed_day_difference is not None
+    if not has_activity_signal and not has_timing_signal:
+        return None
+
+    display = entry.taxon.display_name
+    sentences: list[str] = []
+    if has_activity_signal:
+        sentences.append(
+            f"{display} was observed {entry.activity_direction} often this period than during the "
+            "comparable period last year, under comparable monitoring."
+        )
+    timing_word: str | None = None
+    if has_timing_signal:
+        assert entry.first_observed_day_difference is not None
+        days = abs(entry.first_observed_day_difference)
+        timing_word = "earlier" if entry.first_observed_day_difference < 0 else "later"
+        sentences.append(
+            f"{display} was first observed here about {days} day{'' if days == 1 else 's'} {timing_word} "
+            "than the comparable record last year."
+        )
+
+    if has_activity_signal:
+        direction_word = "more" if entry.activity_direction == "higher" else "less"
+        title = f"{display} {direction_word} active than last year"
+    else:
+        assert timing_word is not None
+        title = f"{display} first observed {timing_word} than last year"
+
+    return PlaceStoryEvent(
+        id=f"year-over-year:species:{entry.taxon.label}:{current_period_end_date.isoformat()}",
+        kind="year_over_year",
+        group="context",
+        event_date=current_period_end_date - timedelta(days=1),
+        event_end_date=None,
+        title=title,
+        summary=" ".join(sentences),
+        information_class="inferred",
+        importance="notable",
+        taxon_label=entry.taxon.label,
+        taxon_display_name=display,
+    )
+
+
+def year_over_year_story_events(
+    *,
+    place_comparison: PlaceYearOverYearComparison,
+    notable_species_changes: Sequence[TaxonYearOverYearComparison],
+) -> list[PlaceStoryEvent]:
+    """Compose every year-over-year Story event for one already-computed
+    comparison -- the Place-wide insight (if any) plus one entry per
+    already-selected notable species change. `notable_species_changes`
+    should already be `select_notable_species_changes`'s own bounded,
+    ranked output; this function performs no further selection of its own,
+    keeping Place Story's own promise to never become a wall of every
+    species comparison (section 18/23 of the governing brief)."""
+
+    events: list[PlaceStoryEvent] = []
+    place_event = year_over_year_place_event(place_comparison)
+    if place_event is not None:
+        events.append(place_event)
+    current_period_end_date = place_comparison.current_period.end_date
+    for entry in notable_species_changes:
+        species_event = year_over_year_species_event(entry, current_period_end_date=current_period_end_date)
+        if species_event is not None:
+            events.append(species_event)
+    return events
+
+
+# ---------------------------------------------------------------------------
 # Composition: merge, dedupe, filter, sort, paginate (Phase 4, 13, 14, 19, 25).
 # ---------------------------------------------------------------------------
 
@@ -1024,4 +1163,7 @@ __all__ = [
     "detect_regularity_transition_events",
     "feature_change_event_to_story_event",
     "phenology_observation_to_story_event",
+    "year_over_year_place_event",
+    "year_over_year_species_event",
+    "year_over_year_story_events",
 ]

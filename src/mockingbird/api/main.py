@@ -431,6 +431,7 @@ from mockingbird.api.schemas import (
     PlacePhenologyObservationCreate,
     PlacePhenologyObservationUpdate,
     PlaceStoryResponse,
+    PlaceYearOverYearResponse,
     VisitEnvironmentalContext,
 )
 from mockingbird.motion import (
@@ -15642,6 +15643,27 @@ async def get_place_story(
         start_at=start_at, end_at=end_at, kinds=kind, taxon=taxon, feature_id=feature_id,
         page_size=page_size, offset=offset,
     )
+
+
+@app.get("/api/place/year-over-year", response_model=PlaceYearOverYearResponse)
+async def get_place_year_over_year_comparison(
+    year: int | None = Query(default=None, ge=1970, le=9999),
+    month: int | None = Query(default=None, ge=1, le=12),
+) -> PlaceYearOverYearResponse:
+    """Compare one Place-local calendar month's confirmed wildlife activity
+    against the same calendar month one year earlier -- "how does this
+    season compare with the same time last year," at this Place. See
+    docs/year-over-year-seasonality-long-term-place-memory-v1-report.md.
+
+    `year`/`month` default to the current (possibly still in-progress)
+    Place-local calendar month; both must be supplied together. Always
+    computed fresh, never cached -- a Reviewed correction is reflected on
+    the very next call. Creates no review/Observation/product state."""
+
+    try:
+        return get_repository().place_year_over_year_comparison(year=year, month=month)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 def _storage_retention_http_error(error: ValueError) -> HTTPException:

@@ -62,6 +62,14 @@ from mockingbird.analytics.temporal_pattern import TaxonTemporalPattern
 from mockingbird.analytics.habitat_association import TaxonHabitatAssociation
 from mockingbird.analytics.weather_association import TaxonWeatherAssociation
 from mockingbird.analytics.source_activity import SourceActivityEntry, SourceQualitySignal
+from mockingbird.analytics.conditional_association import ConditionalAssociation
+from mockingbird.analytics.year_over_year_comparison import (
+    ComparablePeriod,
+    TaxonYearOverYearComparison,
+)
+from mockingbird.analytics.year_over_year_comparison import (
+    PlaceYearOverYearComparison as PlaceYearOverYearComparisonFact,
+)
 from mockingbird.api.schemas import (
     DashboardTodaySpecies,
     LabelCategory,
@@ -99,7 +107,12 @@ from mockingbird.api.schemas import (
     ReviewStatus,
     StreamVisitSummary,
     TaxonomyLabel,
+    PlaceYearOverYearAssociation,
+    PlaceYearOverYearPeriod,
+    PlaceYearOverYearResponse,
+    PlaceYearOverYearSpeciesEntry,
 )
+from mockingbird.api.schemas import PlaceYearOverYearComparison as PlaceYearOverYearComparisonResponse
 
 
 class HistoricalPlaceIntelligence(NamedTuple):
@@ -838,4 +851,92 @@ def place_biodiversity_summary_response(
         habitat_context=habitat_context,
         environmental_context=environmental_context,
         warnings=list(summary.warnings),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Year-over-Year Seasonality & Long-Term Place Memory v1 -- see
+# `mockingbird.analytics.year_over_year_comparison`. `ProductRepository.
+# place_year_over_year_comparison` is the only caller; it owns every
+# database query and hands this module only already-resolved `PeriodInput`/
+# `PeriodPresenceFacts`/comparison dataclasses, mirroring every other
+# reshaping function in this module.
+# ---------------------------------------------------------------------------
+
+
+def _year_over_year_period_response(period: ComparablePeriod) -> PlaceYearOverYearPeriod:
+    return PlaceYearOverYearPeriod(
+        start_date=period.start_date,
+        end_date=period.end_date,
+        is_complete=period.is_complete,
+        usable_day_count=period.usable_day_count,
+        monitored_seconds=period.monitored_seconds,
+        confirmed_wildlife_visit_count=period.confirmed_wildlife_visit_count,
+    )
+
+
+def _year_over_year_association_response(
+    association: ConditionalAssociation | None,
+) -> PlaceYearOverYearAssociation | None:
+    if association is None:
+        return None
+    return PlaceYearOverYearAssociation(
+        status=association.status,
+        presence_days_in_condition=association.presence_days_in_condition,
+        usable_days_in_condition=association.usable_days_in_condition,
+        presence_days_out_of_condition=association.presence_days_out_of_condition,
+        usable_days_out_of_condition=association.usable_days_out_of_condition,
+    )
+
+
+def place_year_over_year_comparison_response(
+    comparison: PlaceYearOverYearComparisonFact,
+) -> PlaceYearOverYearComparisonResponse:
+    return PlaceYearOverYearComparisonResponse(
+        policy_version=comparison.policy_version,
+        current_period=_year_over_year_period_response(comparison.current_period),
+        prior_period=_year_over_year_period_response(comparison.prior_period),
+        status=comparison.status,
+        overall_activity=comparison.overall_activity,
+        association=_year_over_year_association_response(comparison.association),
+        information_class=comparison.information_class,
+    )
+
+
+def _year_over_year_species_entry_response(
+    entry: TaxonYearOverYearComparison,
+) -> PlaceYearOverYearSpeciesEntry:
+    return PlaceYearOverYearSpeciesEntry(
+        label=entry.taxon.label,
+        display_name=entry.taxon.display_name,
+        category=entry.taxon.category,
+        is_species=entry.taxon.is_species,
+        status=entry.status,
+        activity_direction=entry.activity_direction,
+        association=_year_over_year_association_response(entry.association),
+        current_first_observed_date=entry.current_first_observed_date,
+        prior_first_observed_date=entry.prior_first_observed_date,
+        first_observed_timing_status=entry.first_observed_timing_status,
+        first_observed_day_difference=entry.first_observed_day_difference,
+        first_observed_is_material=entry.first_observed_is_material,
+    )
+
+
+def place_year_over_year_response(
+    *,
+    generated_at: datetime,
+    place: PlaceYearOverYearComparisonFact,
+    notable_species_changes: Sequence[TaxonYearOverYearComparison],
+) -> PlaceYearOverYearResponse:
+    """`place` carries the Place-wide comparison; `notable_species_changes`
+    should already be `select_notable_species_changes`'s own bounded,
+    ranked output -- this function performs no ranking/filtering of its
+    own, only reshaping."""
+
+    return PlaceYearOverYearResponse(
+        generated_at=generated_at,
+        place=place_year_over_year_comparison_response(place),
+        notable_species_changes=[
+            _year_over_year_species_entry_response(entry) for entry in notable_species_changes
+        ],
     )

@@ -52,7 +52,7 @@ const CATEGORY_OPTIONS: Array<{ value: CategoryFilter; label: string }> = [
 const KINDS_BY_GROUP: Record<PlaceStoryEventGroup, PlaceStoryEventKind[]> = {
   wildlife: ["first_seen", "return", "regularity_change", "noteworthy_activity", "diversity_milestone"],
   place: ["feature_change", "phenology"],
-  context: ["comparison_insight"],
+  context: ["comparison_insight", "year_over_year"],
   summary: ["period_summary"],
 };
 
@@ -72,6 +72,7 @@ const KIND_LABEL: Record<PlaceStoryEventKind, string> = {
   feature_change: "Place change",
   phenology: "Phenology",
   comparison_insight: "Before/after insight",
+  year_over_year: "Compared with last year",
   period_summary: "Recap",
 };
 
