@@ -24,7 +24,42 @@ protecting.
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
-- **Accepted HEAD:** `e57c911` -- the report commit for Authenticated
+- **Accepted HEAD:** `b6b4727` -- the report commit for Gate A
+  True-Latency Tail Closure & Final Lane R Decision v1 (see §3, above, and
+  [gate-a-true-latency-tail-closure-final-lane-r-decision-v1-report.md](gate-a-true-latency-tail-closure-final-lane-r-decision-v1-report.md)
+  for the complete record). Bounded RELEASE-CRITICAL Lane R
+  field-measurement and final-decision milestone, directly authorized
+  outside this file. Documentation/reconciliation only, zero production
+  code changed (one factual crowded-activity limitation sentence added to
+  `using-mockingbird.md`'s "Review" section). Classification **B**.
+  Reconciles the global recall release-authority decision (supplied by
+  ChatGPT) into the scheduler for the first time -- whole-scene recall is
+  now **ACCEPTED KNOWN LIMITATION, no numeric floor** -- and runs the
+  smallest sufficient live latency-tail proof the immediately-prior
+  correction called for: a fresh disposable instance at that milestone's
+  own accepted HEAD (`bf7ee89`), a valid 5/5-sample RTT-bounded Camera
+  Node calibration, and 100%/100%/100% ledger reconciliation, but the
+  live tranche itself produced only n=1 valid latency sample (of a
+  required ≥12) before an honest, disclosed stop -- the session started
+  at dusk, and scene-wide raw-detection activity (both animal- and
+  vehicle-class) is shown, quantified from the session's own ledger, to
+  have collapsed together from minute ~15 as real darkness set in,
+  confirmed in real time. The one sample obtained is further judged,
+  independently, likely not a real animal on direct visual review (an
+  unmoving shape at one exact feeder-perch position across 2+ minutes of
+  independent-recorder frames, consistent with a static feeder component
+  marginally misclassified under difficult low light) -- disclosed, not
+  counted toward tail convergence. **Gate A decision: OPEN -- TRUE
+  LATENCY TAIL EVIDENCE REMAINS** (narrowed from "OPEN -- RELEASE
+  DECISION REQUIRED": recall's own decision is now made; latency's tail
+  convergence is the sole remaining blocker). Lane R narrows to `OPEN --
+  RELEASE-CRITICAL -- TRUE LATENCY TAIL EVIDENCE REMAINS` (see §6.R,
+  below). No correctness defect found; nothing patched live. This
+  closure does **not** authorize External Pre-Release Acceptance, Final
+  Release Hardening, another field cohort, or any other next development
+  milestone -- see §3 for the complete reconciliation entry.
+- **Prior accepted HEAD (pre-Gate-A-True-Latency-Tail-Closure-Final-Lane
+  -R-Decision-v1):** `e57c911` -- the report commit for Authenticated
   Camera Node Golden-Path Capture & Preview Acceptance v1 (see §3, below,
   and
   [authenticated-camera-node-golden-path-capture-preview-acceptance-v1-report.md](authenticated-camera-node-golden-path-capture-preview-acceptance-v1-report.md)
@@ -2435,6 +2470,72 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-06 update (Gate A True-Latency Tail Closure & Final Lane R
+Decision v1, see §6.R):** bounded RELEASE-CRITICAL Lane R field
+-measurement and final-decision milestone, directly authorized outside
+this file, following a global release-authority decision (supplied by
+ChatGPT in this milestone's own governing brief) that resolves recall's
+own release-decision blocker. See
+[gate-a-true-latency-tail-closure-final-lane-r-decision-v1-report.md](gate-a-true-latency-tail-closure-final-lane-r-decision-v1-report.md)
+for the complete record. Classification **B**. Zero production code
+changed; one documentation addition (a short, factual crowded-activity
+limitation disclosure in `using-mockingbird.md`'s "Review" section, not
+previously present).
+
+**Recall reconciled, carried into the scheduler for the first time:**
+**WHOLE-SCENE RECALL: ACCEPTED KNOWN LIMITATION -- NO NUMERIC RECALL
+FLOOR YET.** The sustained/crowded ambiguous-boundary recall behavior is
+accepted for launch as a disclosed product limitation, per the supplied
+global decision -- this does not remove ambiguous-boundary misses from
+recall denominators, does not claim v14 had better than 64.7% conservative
+whole-scene recall, does not invent a numeric recall floor, does not claim
+the ambiguity mechanism is fixed, and does not authorize further
+ambiguous-boundary tuning. Observed whole-scene evidence stays fully
+visible: v12 conservative 14/16 = 87.5%; v14 conservative 11/17 = 64.7%;
+v14 broader 11/18 = 61.1%. This closes the "RELEASE DECISION REQUIRED"
+half of the immediately-prior correction's own Gate A disposition.
+
+**True latency: MORE EVIDENCE REQUIRED, unchanged -- this milestone's own
+central task was not achieved.** A live tranche ran against the real
+reference Camera Node (fresh disposable instance at this milestone's own
+starting accepted HEAD, `bf7ee89`; valid 5/5-sample RTT-bounded
+calibration; 100%/100%/100% ledger reconciliation across
+`raw_detections`/`track_generations`/`proposal_outcomes`) but produced
+only **n=1** valid RTT-normalized latency sample (269.3s) against the
+governing brief's own ≥12-sample stopping threshold -- honestly
+classified B, root-caused precisely to a dusk-timed session start
+overtaken by real darkness (quantified: scene-wide raw-detection counts,
+both `animal`- and `vehicle`-class, collapse together from minute ~15
+onward), not a product defect. The one sample obtained is, independently,
+judged likely **not** a real animal on direct visual cross-check against
+three independent-recorder frames spanning its own tracked window (an
+unmoving shape at one exact feeder-perch position for 2+ minutes,
+consistent with a static feeder component marginally misclassified under
+difficult low light, not a live bird) -- disclosed, not counted toward
+tail convergence. The already-accepted tail evidence is therefore
+unchanged: four sized, RTT-normalized cohorts (v9 n=24, v10 n=11, v11
+n=23 reconstructed, v14 n=14), maxima spanning 261.2-865.2 seconds, no
+fifth qualifying sample added.
+
+**Gate A decision: OPEN -- TRUE LATENCY TAIL EVIDENCE REMAINS** (narrowed
+from the immediately-prior "OPEN -- RELEASE DECISION REQUIRED": recall's
+own decision is now made; latency's own tail convergence is the sole
+remaining Gate A blocker). Lane R narrows to **OPEN -- RELEASE-CRITICAL --
+TRUE LATENCY TAIL EVIDENCE REMAINS** (see §6.R, below, for the updated
+status line). Six of the eight/nine tracked release dimensions remain
+genuinely READY FOR RELEASE BUDGET (false-Visit rate, fragmentation,
+duplicates, useful-evidence, evidence-survival, monitoring), unchanged.
+
+No correctness defect was found; nothing was patched live. This closure
+does **not** authorize External Pre-Release Acceptance, Final Release
+Hardening, another field cohort, another ambiguous-boundary investigation,
+or any other next development milestone. Disclosed, not actioned: an
+18.5GB disk-reclaim opportunity (two already-archived, `SAFE_TO_RECLAIM`
+Windows dev-roots from v13/v14) remains available on the shared Windows
+Host for a future session to run explicitly. **Authorization remains
+NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, returned here
+exactly as this milestone's own governing brief required.
 
 **2026-09-05 update (Gate A Whole-Scene Budget & Remaining-Evidence
 Correction v1, see §6.R):** bounded RELEASE-CRITICAL Lane R correction,
@@ -6526,7 +6627,41 @@ See the report for the complete finding-by-finding record.
 
 ### R. Complete Field Acceptance
 
-**Status:** OPEN -- RELEASE-CRITICAL -- RELEASE DECISION REQUIRED, per
+**Status:** OPEN -- RELEASE-CRITICAL -- TRUE LATENCY TAIL EVIDENCE
+REMAINS, per Gate A True-Latency Tail Closure & Final Lane R Decision v1
+(2026-09-06, see §3, above, and
+[gate-a-true-latency-tail-closure-final-lane-r-decision-v1-report.md](gate-a-true-latency-tail-closure-final-lane-r-decision-v1-report.md)).
+Narrowed from the "RELEASE DECISION REQUIRED" status immediately below:
+this milestone reconciles the supplied global recall release-authority
+decision into the scheduler -- whole-scene recall is now **ACCEPTED KNOWN
+LIMITATION, no numeric floor** (v12 87.5%, v14 64.7% conservative / 61.1%
+broader, unchanged and undiminished) -- closing recall's own half of the
+prior status. **True capture-to-visible latency remains the sole
+remaining Gate A blocker.** This milestone ran the smallest sufficient
+live proof the immediately-prior correction called for (a fresh
+disposable instance at that milestone's own accepted HEAD, valid
+5/5-sample RTT-bounded calibration, 100%/100%/100% ledger reconciliation
+across all three counterfactual artifacts) but natural activity produced
+only n=1 valid latency sample against the required ≥12 -- an honest,
+precisely root-caused Classification B (the live session started at
+dusk; scene-wide raw-detection activity, animal- and vehicle-class alike,
+is shown, quantified directly from the session's own ledger, to collapse
+together from minute ~15 as real darkness set in). The one sample
+obtained (269.3s) is further judged, independently, likely not a real
+animal on direct visual cross-check against three independent-recorder
+frames spanning its own tracked window -- disclosed, not counted toward
+convergence. **True latency therefore remains exactly as unconverged as
+the correction below left it**: four sized, RTT-normalized cohorts (v9
+n=24, v10 n=11, v11 n=23 reconstructed, v14 n=14), maxima spanning
+261.2-865.2 seconds, no fifth qualifying sample added. No correctness
+defect was found; nothing was patched live. Six of the eight/nine tracked
+release dimensions remain genuinely READY FOR RELEASE BUDGET, unchanged.
+Disclosed, not actioned: an 18.5GB disk-reclaim opportunity (two already
+-archived, `SAFE_TO_RECLAIM` Windows dev-roots from v13/v14) remains
+available for a future session.
+
+**Prior status (immediately preceding, 2026-09-05):** OPEN --
+RELEASE-CRITICAL -- RELEASE DECISION REQUIRED, per
 Gate A Whole-Scene Budget & Remaining-Evidence Correction v1 (2026-09-05,
 see §3, above, and
 [gate-a-whole-scene-budget-remaining-evidence-correction-v1-report.md](gate-a-whole-scene-budget-remaining-evidence-correction-v1-report.md)),

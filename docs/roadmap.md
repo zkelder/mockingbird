@@ -1139,6 +1139,30 @@ rate; fragmentation rate; duplicate-Visit rate; useful-evidence rate;
 per-subject evidence correctness; capture-to-user-visible-Visit latency;
 monitoring coverage.
 
+**2026-09-06 update:** Gate A True-Latency Tail Closure & Final Lane R
+Decision v1 (see
+[gate-a-true-latency-tail-closure-final-lane-r-decision-v1-report.md](gate-a-true-latency-tail-closure-final-lane-r-decision-v1-report.md))
+reconciles the global recall release-authority decision supplied outside
+this repository: whole-scene recall is now **ACCEPTED KNOWN LIMITATION --
+NO NUMERIC RECALL FLOOR YET**, closing the "RELEASE DECISION REQUIRED"
+half of the entry immediately below. This does not remove the
+ambiguous-boundary misses from any denominator, does not claim v14 had
+better than 64.7% conservative recall, and does not invent a numeric
+floor -- the honest range (v12 87.5%, v14 64.7% conservative/61.1%
+broader) stands exactly as recorded below. The same milestone ran the
+smallest sufficient live latency-tail proof the correction below called
+for -- a fresh disposable instance, valid RTT calibration, complete
+ledger reconciliation -- but natural activity produced only n=1 valid
+latency sample (of a required ≥12) before an honest, disclosed stop at
+dusk-into-darkness, and that one sample is itself independently judged
+likely not a real animal on direct visual review, so it is not counted
+toward tail convergence. **True latency therefore remains MORE EVIDENCE
+REQUIRED, exactly as the correction below left it** -- no fifth
+qualifying sample added. **Gate A: OPEN -- TRUE LATENCY TAIL EVIDENCE
+REMAINS** (narrowed from "OPEN -- RELEASE DECISION REQUIRED": recall is
+now decided; the unconverged latency tail is the sole remaining
+blocker). Classification B; zero production code changed.
+
 **2026-09-05 update, corrected:** Gate A Release-Budget & Evidence-
 Sufficiency Reconciliation v1 claimed explicit numeric release budgets
 across these dimensions and a Gate A **PASS**, on the strength of a recall
@@ -2628,8 +2652,18 @@ correctness fixes, and two dedicated ambiguous-boundary investigations
 have run since the prior "not yet established" framing this section
 carried through 2026-08-30):
 
-- **End-to-end Visit recall: no budget adopted -- RELEASE DECISION
-  REQUIRED.** Whole-scene conservative recall, with no failure-reason
+- **End-to-end Visit recall: ACCEPTED KNOWN LIMITATION -- NO NUMERIC
+  RECALL FLOOR YET (decided 2026-09-06, see Gate A True-Latency Tail
+  Closure & Final Lane R Decision v1).** A global release-authority
+  decision resolves the "RELEASE DECISION REQUIRED" framing immediately
+  below: the sustained/crowded ambiguous-boundary recall behavior is
+  accepted for launch as a disclosed product limitation. This does not
+  remove ambiguous-boundary misses from the denominator, does not claim
+  v14 had better than 64.7% conservative recall, and does not invent a
+  numeric floor -- the honest observed range immediately below remains
+  exactly as measured and is the figure disclosed to users (see
+  "User-facing limitation truth" in that milestone's own report).
+  Whole-scene conservative recall, with no failure-reason
   denominator exclusion, is measured on exactly two current-admission
   -stack, independently-re-derived, full-session cohorts: Representative
   Daylight Gate A Field Acceptance v12 (14/16 = 87.5%) and v14 (11/17 =
@@ -2716,6 +2750,19 @@ carried through 2026-08-30):
   called ready for a release budget merely because its median looks
   stable -- a >3x spread at the maximum, from only four sized samples, is
   a genuine open measurement gap, not a non-blocking footnote.
+  **2026-09-06 update:** Gate A True-Latency Tail Closure & Final Lane R
+  Decision v1 ran the smallest sufficient live proof this gap calls for
+  (fresh disposable instance, valid RTT calibration, complete ledger
+  reconciliation) but natural activity produced only n=1 valid sample
+  before an honestly disclosed dusk-into-darkness stop, and that one
+  sample is independently judged likely not a real animal on direct
+  visual review -- not counted toward convergence. **Still MORE EVIDENCE
+  REQUIRED, unchanged**; the four-cohort body above remains the complete
+  qualifying evidence. Next smallest step unchanged from the immediately
+  -prior correction's own recommendation: one more already-otherwise
+  -motivated representative *daylight* session (started with materially
+  more than 75 minutes of daylight remaining) would add a genuine 5th
+  sample.
 - **Minimum monitoring coverage: ≥ 97%** in the steady state. Nearly every
   cohort measured 97.5%-99.99%+; the two cohorts below a naive 99% floor
   (v9 97.95%, v11 97.5%) are each honestly explained (a recorder
