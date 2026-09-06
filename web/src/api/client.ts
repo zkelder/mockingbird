@@ -1462,11 +1462,15 @@ export const apiClient = {
   },
   // Year-over-Year Seasonality & Long-Term Place Memory v1: `year`/`month`
   // default to the current Place-local calendar month when omitted (the
-  // only mode the current UI actually uses).
-  getPlaceYearOverYear: (params: { year?: number; month?: number } = {}) => {
+  // only mode the Dashboard/Place Report cards use). `taxon` (Place Story
+  // Deep Dives & Representative Evidence v1) is additive -- a Taxon Story
+  // header's only way to get one taxon's own comparison even when it does
+  // not clear `notable_species_changes`'s bounded top-5 ranking.
+  getPlaceYearOverYear: (params: { year?: number; month?: number; taxon?: string } = {}) => {
     const searchParams = new URLSearchParams();
     if (params.year != null) searchParams.set("year", String(params.year));
     if (params.month != null) searchParams.set("month", String(params.month));
+    if (params.taxon) searchParams.set("taxon", params.taxon);
     const query = searchParams.toString();
     return request<PlaceYearOverYearResponse>(`/api/place/year-over-year${query ? `?${query}` : ""}`);
   },

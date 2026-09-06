@@ -3,8 +3,8 @@ import { apiClient } from "../api/client";
 import type { PlaceStoryEntry, PlaceStoryEventGroup, PlaceStoryEventKind } from "../api/types";
 import { EmptyState } from "../components/EmptyState";
 import { PageHeader } from "../components/PageHeader";
-import { StatusPill } from "../components/StatusPill";
-import { formatDate, formatMonthYear } from "../utils";
+import { PlaceStoryEntryCard } from "../components/PlaceStoryEntryCard";
+import { formatMonthYear } from "../utils";
 
 /**
  * Place Story & Seasonal Timeline v1 -- see docs/place-story-seasonal-
@@ -26,6 +26,11 @@ interface PlaceStoryPageProps {
   onOpenVisit: (visitId: string) => void;
   onOpenBirdLog: (label?: string) => void;
   onOpenPlaceActivityReport: () => void;
+  // Place Story Deep Dives & Representative Evidence v1: precise deep
+  // links to a taxon's/Feature's own dedicated Story, alongside (not
+  // instead of) the existing Bird Log/Place Report links.
+  onOpenTaxonStory: (label: string) => void;
+  onOpenFeatureStory: (featureId: string) => void;
   // Calm Attention & Notifications v1: an attention item's deep link opens
   // Place Story already scoped to the category group its own underlying
   // event belongs to (see `App.tsx`'s `openAlertAction`) -- more precise
@@ -56,26 +61,6 @@ const KINDS_BY_GROUP: Record<PlaceStoryEventGroup, PlaceStoryEventKind[]> = {
   summary: ["period_summary"],
 };
 
-const GROUP_TONE: Record<PlaceStoryEventGroup, "good" | "review" | "alert" | "quiet"> = {
-  wildlife: "good",
-  place: "review",
-  context: "quiet",
-  summary: "quiet",
-};
-
-const KIND_LABEL: Record<PlaceStoryEventKind, string> = {
-  first_seen: "First observation",
-  return: "Returned",
-  regularity_change: "Regularity change",
-  noteworthy_activity: "Notable activity",
-  diversity_milestone: "Biodiversity milestone",
-  feature_change: "Place change",
-  phenology: "Phenology",
-  comparison_insight: "Before/after insight",
-  year_over_year: "Compared with last year",
-  period_summary: "Recap",
-};
-
 function periodRange(preset: PeriodPreset): { start_at?: string; end_at?: string } {
   const now = new Date();
   const endAt = now.toISOString();
@@ -101,6 +86,8 @@ export function PlaceStoryPage({
   onOpenVisit,
   onOpenBirdLog,
   onOpenPlaceActivityReport,
+  onOpenTaxonStory,
+  onOpenFeatureStory,
   initialCategory,
 }: PlaceStoryPageProps) {
   const [period, setPeriod] = useState<PeriodPreset>("recent");
@@ -231,11 +218,13 @@ export function PlaceStoryPage({
               <h2>{group.heading}</h2>
               <ul className="place-story-entries">
                 {group.items.map((entry) => (
-                  <PlaceStoryCard
+                  <PlaceStoryEntryCard
                     entry={entry}
                     key={entry.id}
                     onOpenBirdLog={onOpenBirdLog}
+                    onOpenFeatureStory={onOpenFeatureStory}
                     onOpenPlaceActivityReport={onOpenPlaceActivityReport}
+                    onOpenTaxonStory={onOpenTaxonStory}
                     onOpenVisit={onOpenVisit}
                   />
                 ))}
@@ -255,52 +244,5 @@ export function PlaceStoryPage({
         </>
       )}
     </div>
-  );
-}
-
-interface PlaceStoryCardProps {
-  entry: PlaceStoryEntry;
-  onOpenVisit: (visitId: string) => void;
-  onOpenBirdLog: (label?: string) => void;
-  onOpenPlaceActivityReport: () => void;
-}
-
-function PlaceStoryCard({ entry, onOpenVisit, onOpenBirdLog, onOpenPlaceActivityReport }: PlaceStoryCardProps) {
-  return (
-    <li className="place-story-card">
-      <div className="place-story-card-heading">
-        <StatusPill label={KIND_LABEL[entry.kind]} tone={GROUP_TONE[entry.group]} />
-        <span className="place-story-card-date">
-          {formatDate(entry.event_date)}
-          {entry.event_end_date && entry.event_end_date !== entry.event_date
-            ? ` – ${formatDate(entry.event_end_date)}`
-            : ""}
-        </span>
-        {entry.information_class === "inferred" ? (
-          <span className="place-story-card-basis" title="An inferred insight, not a directly reviewed fact">
-            Inferred
-          </span>
-        ) : null}
-      </div>
-      <h3>{entry.title}</h3>
-      <p>{entry.summary}</p>
-      <div className="place-story-card-actions">
-        {entry.visit_id ? (
-          <button className="text-action" onClick={() => onOpenVisit(entry.visit_id!)} type="button">
-            View evidence
-          </button>
-        ) : null}
-        {entry.taxon_label ? (
-          <button className="text-action" onClick={() => onOpenBirdLog(entry.taxon_label!)} type="button">
-            {entry.taxon_display_name ?? "View"} in Bird Log
-          </button>
-        ) : null}
-        {entry.feature_id || entry.kind === "phenology" ? (
-          <button className="text-action" onClick={onOpenPlaceActivityReport} type="button">
-            View in Place Report
-          </button>
-        ) : null}
-      </div>
-    </li>
   );
 }

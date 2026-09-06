@@ -396,6 +396,86 @@ class TestSpeciesComparison:
 
 
 # ---------------------------------------------------------------------------
+# C2. Single-taxon comparison (Place Story Deep Dives & Representative
+# Evidence v1) -- a Taxon Story header needs one taxon's own comparison even
+# when it does not clear `notable_species_changes`'s bounded top-5 ranking.
+# Reuses `compute_species_year_over_year_comparisons`'s already-computed,
+# unranked result -- never a second per-taxon computation.
+# ---------------------------------------------------------------------------
+
+
+class TestTaxonComparison:
+    def test_taxon_param_returns_comparison_even_when_not_notable(self, repository: ProductRepository) -> None:
+        _fully_monitored_september(repository, year=CURRENT_YEAR)
+        _fully_monitored_september(repository, year=PRIOR_YEAR)
+        # Six real, well-evidenced species changes so house_finch's own
+        # genuinely stable presence is crowded out of the bounded top-5
+        # `notable_species_changes` list purely by `MAX_SPECIES_CHANGES_
+        # RETURNED`, not because it lacks a real comparison of its own.
+        for label in (
+            "blue_jay", "carolina_wren", "american_robin",
+            "carolina_chickadee", "tufted_titmouse", "downy_woodpecker",
+        ):
+            _confirmed_days(repository, prefix=f"{label}-cur", year=CURRENT_YEAR, days=list(range(1, 17)), label=label)
+            _confirmed_days(repository, prefix=f"{label}-pri", year=PRIOR_YEAR, days=list(range(1, 5)), label=label)
+        _confirmed_days(repository, prefix="stable-cur", year=CURRENT_YEAR, days=list(range(1, 11)), label="house_finch")
+        _confirmed_days(repository, prefix="stable-pri", year=PRIOR_YEAR, days=list(range(1, 10)), label="house_finch")
+
+        result = repository.place_year_over_year_comparison(
+            now=datetime(CURRENT_YEAR, 10, 2, tzinfo=UTC), year=CURRENT_YEAR, month=CURRENT_MONTH,
+            taxon="house_finch",
+        )
+        assert "house_finch" not in {entry.label for entry in result.notable_species_changes}, (
+            "fixture invariant broken: house_finch must NOT be notable for this test to be non-vacuous"
+        )
+        assert result.taxon_comparison is not None
+        assert result.taxon_comparison.label == "house_finch"
+        assert result.taxon_comparison.status == "no_material_difference"
+
+    def test_taxon_param_accepts_display_name_input(self, repository: ProductRepository) -> None:
+        _fully_monitored_september(repository, year=CURRENT_YEAR)
+        _fully_monitored_september(repository, year=PRIOR_YEAR)
+        _confirmed_days(repository, prefix="cur", year=CURRENT_YEAR, days=list(range(1, 17)), label="northern_cardinal")
+        _confirmed_days(repository, prefix="pri", year=PRIOR_YEAR, days=list(range(1, 5)), label="northern_cardinal")
+
+        result = repository.place_year_over_year_comparison(
+            now=datetime(CURRENT_YEAR, 10, 2, tzinfo=UTC), year=CURRENT_YEAR, month=CURRENT_MONTH,
+            taxon="Northern Cardinal",
+        )
+        assert result.taxon_comparison is not None
+        assert result.taxon_comparison.label == "northern_cardinal"
+        assert result.taxon_comparison.activity_direction == "higher"
+
+    def test_taxon_with_no_data_in_either_period_abstains_honestly(self, repository: ProductRepository) -> None:
+        _fully_monitored_september(repository, year=CURRENT_YEAR)
+        _fully_monitored_september(repository, year=PRIOR_YEAR)
+
+        result = repository.place_year_over_year_comparison(
+            now=datetime(CURRENT_YEAR, 10, 2, tzinfo=UTC), year=CURRENT_YEAR, month=CURRENT_MONTH,
+            taxon="northern_cardinal",
+        )
+        assert result.taxon_comparison is None
+
+    def test_unknown_taxon_input_abstains_rather_than_erroring(self, repository: ProductRepository) -> None:
+        result = repository.place_year_over_year_comparison(
+            now=datetime(CURRENT_YEAR, 10, 2, tzinfo=UTC), year=CURRENT_YEAR, month=CURRENT_MONTH,
+            taxon="not-a-real-taxonomy-label",
+        )
+        assert result.taxon_comparison is None
+
+    def test_omitting_taxon_leaves_taxon_comparison_none(self, repository: ProductRepository) -> None:
+        _fully_monitored_september(repository, year=CURRENT_YEAR)
+        _fully_monitored_september(repository, year=PRIOR_YEAR)
+        _confirmed_days(repository, prefix="cur", year=CURRENT_YEAR, days=list(range(1, 17)))
+        _confirmed_days(repository, prefix="pri", year=PRIOR_YEAR, days=list(range(1, 5)))
+
+        result = repository.place_year_over_year_comparison(
+            now=datetime(CURRENT_YEAR, 10, 2, tzinfo=UTC), year=CURRENT_YEAR, month=CURRENT_MONTH,
+        )
+        assert result.taxon_comparison is None
+
+
+# ---------------------------------------------------------------------------
 # D. Truth / correction safety
 # ---------------------------------------------------------------------------
 
@@ -570,6 +650,30 @@ class TestHttpRoundTrip:
         response = client.get("/api/place/year-over-year", params={"year": CURRENT_YEAR})
         assert response.status_code == 400
 
+    def test_api_taxon_param_round_trip(self, repository: ProductRepository) -> None:
+        request_year, comparison_prior_year = PRIOR_YEAR, PRIOR_YEAR - 1
+        _fully_monitored_september(repository, year=request_year)
+        _fully_monitored_september(repository, year=comparison_prior_year)
+        _confirmed_days(repository, prefix="cur", year=request_year, days=list(range(1, 17)), label="northern_cardinal")
+        _confirmed_days(repository, prefix="pri", year=comparison_prior_year, days=list(range(1, 5)), label="northern_cardinal")
+
+        client = LegacyAuthenticatedSyncTestClient(app)
+        response = client.get(
+            "/api/place/year-over-year",
+            params={"year": request_year, "month": CURRENT_MONTH, "taxon": "Northern Cardinal"},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["taxon_comparison"] is not None
+        assert body["taxon_comparison"]["label"] == "northern_cardinal"
+        assert body["taxon_comparison"]["activity_direction"] == "higher"
+
+    def test_api_omits_taxon_comparison_when_taxon_not_requested(self, repository: ProductRepository) -> None:
+        client = LegacyAuthenticatedSyncTestClient(app)
+        response = client.get("/api/place/year-over-year")
+        assert response.status_code == 200, response.text
+        assert response.json()["taxon_comparison"] is None
+
     def test_api_defaults_to_the_current_month_with_no_params(self, repository: ProductRepository) -> None:
         # No fixture history seeded beyond whatever this repository's own
         # unconditional demo seed provides -- this test only proves the
@@ -647,4 +751,33 @@ class TestPerformance:
         )
         assert small_count == large_count, (
             f"query count grew with unrelated historical depth: {small_count} -> {large_count}"
+        )
+
+    def test_taxon_param_adds_zero_extra_queries(self, repository: ProductRepository) -> None:
+        """Place Story Deep Dives & Representative Evidence v1: `taxon=`
+        reuses `compute_species_year_over_year_comparisons`'s own already-
+        computed, already-in-memory `species_comparisons` list -- a pure
+        Python filter, never a second query."""
+
+        _fully_monitored_september(repository, year=CURRENT_YEAR)
+        _fully_monitored_september(repository, year=PRIOR_YEAR)
+        _confirmed_days(repository, prefix="cur", year=CURRENT_YEAR, days=list(range(1, 17)), label="northern_cardinal")
+        _confirmed_days(repository, prefix="pri", year=PRIOR_YEAR, days=list(range(1, 5)), label="northern_cardinal")
+
+        engine = repository.session_factory().get_bind()  # type: ignore[attr-defined]
+        without_taxon = _count_queries(
+            engine,
+            lambda: repository.place_year_over_year_comparison(
+                now=datetime(CURRENT_YEAR, 10, 2, tzinfo=UTC), year=CURRENT_YEAR, month=CURRENT_MONTH,
+            ),
+        )
+        with_taxon = _count_queries(
+            engine,
+            lambda: repository.place_year_over_year_comparison(
+                now=datetime(CURRENT_YEAR, 10, 2, tzinfo=UTC), year=CURRENT_YEAR, month=CURRENT_MONTH,
+                taxon="northern_cardinal",
+            ),
+        )
+        assert with_taxon == without_taxon, (
+            f"taxon= added extra queries: {without_taxon} -> {with_taxon}"
         )

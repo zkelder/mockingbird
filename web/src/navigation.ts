@@ -23,6 +23,8 @@ export type Page =
   | "bird-log"
   | "place-activity-report"
   | "place-story"
+  | "taxon-story"
+  | "feature-story"
   | "alerts-inbox"
   | "analytics"
   | "ecological-destinations"
@@ -39,6 +41,12 @@ export interface AppRoute {
   visitId?: string | null;
   motionEvidenceId?: string | null;
   collectionId?: string | null;
+  // Place Story Deep Dives & Representative Evidence v1: the canonical
+  // taxonomy label (never a display string) a Taxon Story page is showing.
+  taxonLabel?: string | null;
+  // Place Story Deep Dives & Representative Evidence v1: the Place Feature
+  // id a Feature Story page is showing.
+  featureId?: string | null;
   recoveredFromUnknownPath?: boolean;
 }
 
@@ -123,6 +131,23 @@ export function readAppRoute(pathname = window.location.pathname): AppRoute {
     }
   }
 
+  // Place Story Deep Dives & Representative Evidence v1: /place-story/
+  // taxon/:label and /place-story/feature/:id -- bookmarkable, reload-safe
+  // deep-dive routes. An unresolvable label/id is not a routing concern:
+  // the page itself renders an honest not-found state (mirrors every other
+  // detail page's `error-panel` convention), matching this router's own
+  // "recover to dashboard only on a genuinely unrecognized path shape"
+  // discipline.
+  if (segments.length === 3 && segments[0] === "place-story") {
+    const identifier = decodeIdentifier(segments[2]);
+    if (identifier && segments[1] === "taxon") {
+      return { page: "taxon-story", taxonLabel: identifier };
+    }
+    if (identifier && segments[1] === "feature") {
+      return { page: "feature-story", featureId: identifier };
+    }
+  }
+
   return { page: "dashboard", recoveredFromUnknownPath: normalizedPath !== "/" };
 }
 
@@ -144,6 +169,12 @@ export function pathForAppRoute(route: AppRoute): string {
   }
   if (route.page === "camera-configuration" && route.streamId) {
     return `/cameras/${encodeURIComponent(route.streamId)}/edit`;
+  }
+  if (route.page === "taxon-story" && route.taxonLabel) {
+    return `/place-story/taxon/${encodeURIComponent(route.taxonLabel)}`;
+  }
+  if (route.page === "feature-story" && route.featureId) {
+    return `/place-story/feature/${encodeURIComponent(route.featureId)}`;
   }
   return pagePaths[route.page] ?? "/";
 }

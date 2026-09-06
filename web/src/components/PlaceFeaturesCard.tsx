@@ -29,6 +29,11 @@ interface PlaceFeaturesCardProps {
     payload: PlaceFeatureObservationLinkCreate,
   ) => Promise<string | null>;
   onRemoveObservationLink: (featureId: string, linkId: string) => Promise<string | null>;
+  // Place Story Deep Dives & Representative Evidence v1: tapping a Feature
+  // name in the calm view opens its own Feature Story -- optional so this
+  // card still renders (as a plain, non-interactive tag) for any caller
+  // that has not wired navigation.
+  onOpenFeatureStory?: (featureId: string) => void;
 }
 
 const FEATURE_TYPE_LABELS: Record<PlaceFeatureType, string> = {
@@ -89,6 +94,7 @@ export function PlaceFeaturesCard({
   onAddChangeEvent,
   onAddObservationLink,
   onRemoveObservationLink,
+  onOpenFeatureStory,
 }: PlaceFeaturesCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -264,11 +270,22 @@ export function PlaceFeaturesCard({
         {summary?.highlight ? <p className="meta-text">{summary.highlight}</p> : null}
         {activeFeatures.length > 0 ? (
           <div className="tag-row">
-            {activeFeatures.map((feature) => (
-              <span className="tag" key={feature.id}>
-                {feature.name}
-              </span>
-            ))}
+            {activeFeatures.map((feature) =>
+              onOpenFeatureStory ? (
+                <button
+                  className="tag"
+                  key={feature.id}
+                  onClick={() => onOpenFeatureStory(feature.id)}
+                  type="button"
+                >
+                  {feature.name}
+                </button>
+              ) : (
+                <span className="tag" key={feature.id}>
+                  {feature.name}
+                </span>
+              ),
+            )}
           </div>
         ) : (
           <p className="meta-text">No active features right now.</p>

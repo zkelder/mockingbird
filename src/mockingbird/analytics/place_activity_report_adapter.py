@@ -927,11 +927,17 @@ def place_year_over_year_response(
     generated_at: datetime,
     place: PlaceYearOverYearComparisonFact,
     notable_species_changes: Sequence[TaxonYearOverYearComparison],
+    taxon_comparison: TaxonYearOverYearComparison | None = None,
 ) -> PlaceYearOverYearResponse:
     """`place` carries the Place-wide comparison; `notable_species_changes`
     should already be `select_notable_species_changes`'s own bounded,
     ranked output -- this function performs no ranking/filtering of its
-    own, only reshaping."""
+    own, only reshaping. `taxon_comparison` (Place Story Deep Dives &
+    Representative Evidence v1) is an optional single taxon's own
+    comparison, reused verbatim through the identical `_year_over_year_
+    species_entry_response` reshaping every `notable_species_changes` entry
+    already goes through -- never a second response shape for the same
+    fact."""
 
     return PlaceYearOverYearResponse(
         generated_at=generated_at,
@@ -939,4 +945,9 @@ def place_year_over_year_response(
         notable_species_changes=[
             _year_over_year_species_entry_response(entry) for entry in notable_species_changes
         ],
+        taxon_comparison=(
+            _year_over_year_species_entry_response(taxon_comparison)
+            if taxon_comparison is not None
+            else None
+        ),
     )

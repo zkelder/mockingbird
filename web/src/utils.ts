@@ -222,6 +222,19 @@ export function formatMonthYear(value: string): string {
   );
 }
 
+/** Local-calendar-date rendering of a real instant (e.g. "first observed
+ * here on <date>" facts) -- distinct from `formatDate`'s UTC-pinned
+ * plain-date-*literal* handling (Place Story event dates, phenology
+ * intervals, which already are a bare calendar date with no instant to
+ * convert). This one input genuinely is a timestamp and must resolve to
+ * the viewer's own local calendar day, not be read back as if it were
+ * already a date string. */
+export function formatDateFromInstant(value: string): string {
+  return new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric" }).format(
+    new Date(value),
+  );
+}
+
 export function formatDateTime(value: string): string {
   return new Intl.DateTimeFormat(undefined, {
     month: "short",

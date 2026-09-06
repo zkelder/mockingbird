@@ -6553,19 +6553,24 @@ class ProductRepository:
                 stream_ids.append(stream_id)
         return stream_ids
 
-    def _feature_scoped_visit_facts(
+    def _feature_scoped_visit_rows(
         self,
         session: Session,
         feature: PlaceFeatureModel,
         *,
-        start_at: datetime,
         end_at: datetime,
-        taxonomy_index: dict[str, TaxonomyLabelModel],
+        start_at: datetime | None = None,
         links: Sequence[PlaceFeatureObservationLinkModel] | None = None,
-    ) -> list[VisitFact]:
-        """Visit facts within `[start_at, end_at)` across every one of this
-        Feature's own linked observation views, deduplicated across
-        cameras.
+    ) -> list[tuple[VisitModel, EventModel]]:
+        """The shared query + cross-camera-dedup core behind both
+        `_feature_scoped_visit_facts` (a bounded recent window, for yield/
+        before-after) and `_feature_representative_evidence` (Place Story
+        Deep Dives & Representative Evidence v1: this Feature's *entire*
+        history, mirroring Bird Log's own unbounded-history representative-
+        evidence precedent). `start_at=None` means "all time" -- every
+        existing caller of `_feature_scoped_visit_facts` always passes a
+        concrete `start_at` and is completely unaffected by this extraction
+        (behavior-preserving; see that method's own now-delegating body).
 
         Two things a single-link Feature never had to handle: (1) built as
         a per-link `OR` of precise clauses (a Zone-scoped link matches only
@@ -6579,12 +6584,12 @@ class ProductRepository:
         unmodified rather than a second duplicate-counting engine -- one
         real encounter recorded by two linked cameras counts once, not
         twice. A single-link Feature could never actually reach this
-        exclusion before this milestone (its one linked Source is
-        definitionally the only side of any cross-camera pair in scope),
-        so the prior absence of this call was a correct, previously-inert
-        simplification that multi-view linking now makes load-bearing --
-        see the governing brief's "Duplicate safety". `links`: see
-        `_feature_observation_scopes`."""
+        exclusion before Multi-Camera Place Feature Linking v1 (its one
+        linked Source is definitionally the only side of any cross-camera
+        pair in scope), so the prior absence of this call was a correct,
+        previously-inert simplification that multi-view linking now makes
+        load-bearing -- see that milestone's own "Duplicate safety".
+        `links`: see `_feature_observation_scopes`."""
 
         scopes = self._feature_observation_scopes(session, feature, links=links)
         if not scopes:
@@ -6595,19 +6600,44 @@ class ProductRepository:
             else EventModel.stream_id == stream_id
             for stream_id, zone_id in scopes
         ]
+        conditions = [
+            VisitModel.is_superseded.is_(False),
+            EventModel.started_at < end_at,
+            or_(*clauses),
+        ]
+        if start_at is not None:
+            conditions.append(EventModel.started_at >= start_at)
         query = (
             select(VisitModel, EventModel)
             .join(EventModel, VisitModel.event_id == EventModel.id)
-            .where(
-                VisitModel.is_superseded.is_(False),
-                EventModel.started_at >= start_at,
-                EventModel.started_at < end_at,
-                or_(*clauses),
-            )
+            .where(*conditions)
         )
-        rows = session.execute(
-            query.order_by(EventModel.started_at, EventModel.id, VisitModel.id)
-        ).all()
+        rows = list(
+            session.execute(query.order_by(EventModel.started_at, EventModel.id, VisitModel.id)).all()
+        )
+        excluded_visit_ids = self._associated_visit_ids_to_exclude_from_counting(
+            session, [visit.id for visit, _event in rows]
+        )
+        if excluded_visit_ids:
+            rows = [(visit, event) for visit, event in rows if visit.id not in excluded_visit_ids]
+        return rows
+
+    def _feature_scoped_visit_facts(
+        self,
+        session: Session,
+        feature: PlaceFeatureModel,
+        *,
+        start_at: datetime,
+        end_at: datetime,
+        taxonomy_index: dict[str, TaxonomyLabelModel],
+        links: Sequence[PlaceFeatureObservationLinkModel] | None = None,
+    ) -> list[VisitFact]:
+        """Visit facts within `[start_at, end_at)` across every one of this
+        Feature's own linked observation views, deduplicated across
+        cameras. See `_feature_scoped_visit_rows` for the shared query/dedup
+        core this delegates to -- unchanged behavior, pure extraction."""
+
+        rows = self._feature_scoped_visit_rows(session, feature, start_at=start_at, end_at=end_at, links=links)
 
         def resolve_taxon(label: str | None) -> TaxonFact | None:
             if not label:
@@ -6629,12 +6659,61 @@ class ProductRepository:
                     provisional_taxon=resolve_taxon(summary.suggested_label),
                 )
             )
-        excluded_visit_ids = self._associated_visit_ids_to_exclude_from_counting(
-            session, [fact.visit_id for fact in facts]
-        )
-        if excluded_visit_ids:
-            facts = [fact for fact in facts if fact.visit_id not in excluded_visit_ids]
         return facts
+
+    def _feature_representative_evidence(
+        self,
+        session: Session,
+        feature: PlaceFeatureModel,
+        *,
+        now: datetime,
+        links: Sequence[PlaceFeatureObservationLinkModel] | None = None,
+    ) -> RepresentativeEvidence | None:
+        """Place Story Deep Dives & Representative Evidence v1: the single
+        best already-persisted evidence image across every confirmed Visit
+        in this Feature's own linked observation views -- reuses the exact
+        Gate C selector (`mockingbird.analytics.representative_evidence.
+        select_representative_evidence`, via `_representative_evidence_
+        response`) unmodified, never a second "best image" engine. `None`
+        when the Feature has no observation links, no confirmed wildlife
+        Visit in scope, or every candidate's own media file is missing --
+        each an honest abstention, never an error or an unrelated frame
+        chosen to fill layout (see docs/representative-species-evidence-
+        contract.md "No-image semantics").
+
+        Scans this Feature's *entire* history (`start_at=None`), mirroring
+        Bird Log's own unbounded-history representative-evidence precedent
+        -- deliberately not `_feature_yield_summary`'s narrow recent
+        window, since "what did MockingBird actually see here" should not
+        go blank the moment a feeder's own 7-day yield window is quiet.
+        `_representative_evidence_response` itself bounds the candidate
+        pool to `MAX_REPRESENTATIVE_EVIDENCE_CANDIDATES` most-recent
+        summaries, so this is never an unbounded per-candidate scan."""
+
+        rows = self._feature_scoped_visit_rows(session, feature, end_at=now, links=links)
+        if not rows:
+            return None
+        # Scan most-recent-first and stop as soon as `MAX_REPRESENTATIVE_
+        # EVIDENCE_CANDIDATES` confirmed-wildlife summaries are found --
+        # `_representative_evidence_response` would only ever keep the last
+        # `MAX_REPRESENTATIVE_EVIDENCE_CANDIDATES` of them anyway (identical
+        # final selection, proven by `test_representative_evidence_query_
+        # count_does_not_grow_with_own_visit_count`), so building a
+        # `StreamVisitSummary` (several of its own queries) for older rows
+        # that could never survive that bound is pure waste for a Feature
+        # with a long history -- found by this milestone's own query-count
+        # measurement discipline, not assumed acceptable.
+        summaries: list[StreamVisitSummary] = []
+        for visit, event in reversed(rows):
+            summary = self._stream_visit_summary_from_models(session, visit, event)
+            if self._is_confirmed_wildlife_summary(session, summary):
+                summaries.append(summary)
+                if len(summaries) >= MAX_REPRESENTATIVE_EVIDENCE_CANDIDATES:
+                    break
+        if not summaries:
+            return None
+        summaries.reverse()  # restore ascending order for the response's own trailing `[-N:]` slice
+        return self._representative_evidence_response(session, summaries)
 
     def _feature_scoped_monitored_seconds(
         self, session: Session, stream_ids: list[str], *, start_at: datetime, end_at: datetime,
@@ -6924,10 +7003,14 @@ class ProductRepository:
             recent_yield = self._feature_yield_summary(
                 session, model, now=generation_moment, taxonomy_index=taxonomy_index, links=links,
             )
+            representative_evidence = self._feature_representative_evidence(
+                session, model, now=generation_moment, links=links,
+            )
             return PlaceFeatureDetail(
                 feature=self._place_feature_response(session, model, links=links),
                 changes=changes,
                 recent_yield=recent_yield,
+                representative_evidence=representative_evidence,
             )
 
     def get_place_features_summary(
@@ -34296,7 +34379,7 @@ class ProductRepository:
         is_complete: bool,
         prior_start_date: date,
         prior_end_date: date,
-    ) -> tuple[PlaceYearOverYearComparison, list[TaxonYearOverYearComparison]]:
+    ) -> tuple[PlaceYearOverYearComparison, list[TaxonYearOverYearComparison], list[TaxonYearOverYearComparison]]:
         """The query + compute core of Year-over-Year Seasonality &
         Long-Term Place Memory v1 -- see docs/year-over-year-seasonality-
         long-term-place-memory-v1-report.md. Reuses the caller's already-
@@ -34315,6 +34398,17 @@ class ProductRepository:
         anti-pattern this milestone's own governing brief and Place Story's
         own disclosed "period summaries" performance finding both warn
         against. See the report's "Performance" for measured proof.
+
+        Returns `(place_comparison, notable_species_changes, species_
+        comparisons)`. `species_comparisons` is the complete, unranked,
+        unbounded per-taxon list `compute_species_year_over_year_
+        comparisons` already computes internally -- `notable_species_
+        changes` is only `select_notable_species_changes`'s own bounded,
+        ranked *subset* of it (Place Story Deep Dives v1: a Taxon Story
+        needs one taxon's own comparison even when it did not make that
+        bounded top-5 list; see `place_year_over_year_comparison`'s
+        `taxon` parameter). Zero new computation: this was already
+        computed and simply discarded before this milestone.
         """
 
         def _local_midnight_utc(day: date) -> datetime:
@@ -34432,7 +34526,7 @@ class ProductRepository:
             prior_presence_dates_by_taxon=prior_presence.presence_dates_by_taxon,
         )
         notable_species_changes = select_notable_species_changes(species_comparisons)
-        return place_comparison, notable_species_changes
+        return place_comparison, notable_species_changes, species_comparisons
 
     def place_year_over_year_comparison(
         self,
@@ -34441,6 +34535,7 @@ class ProductRepository:
         year: int | None = None,
         month: int | None = None,
         local_timezone: tzinfo | None = None,
+        taxon: str | None = None,
     ) -> PlaceYearOverYearResponse:
         """Year-over-Year Seasonality & Long-Term Place Memory v1: compare
         one Place-local calendar month against the same calendar month one
@@ -34459,6 +34554,20 @@ class ProductRepository:
         every other Place read-model's identical live-query-always
         discipline -- a Reviewed correction is reflected on the very next
         call with no invalidation step.
+
+        `taxon` (Place Story Deep Dives & Representative Evidence v1):
+        optional, accepts a canonical label or any of this codebase's
+        ordinary display-name/alias inputs (resolved via `_taxonomy_label_
+        model_for_input`, the identical resolver `wildlife_journal_history`
+        already uses for the same "user-facing label input" case). When
+        given, the response's `taxon_comparison` carries that one taxon's
+        own comparison -- reusing `compute_species_year_over_year_
+        comparisons`'s already-computed, unranked result (see `_year_over_
+        year_comparison_facts_in_session`), never a second per-taxon
+        computation -- even when that taxon does not clear `notable_
+        species_changes`'s own bounded top-5 ranking. A taxon confirmed in
+        neither period, or not a real taxonomy label at all, yields `None`
+        honestly (a Taxon Story header must abstain, not fabricate).
         """
 
         generation_moment = now or datetime.now(UTC)
@@ -34483,22 +34592,38 @@ class ProductRepository:
                 ).all()
             )
             taxonomy_index = self._taxonomy_label_index(session)
-            place_comparison, notable_species_changes = self._year_over_year_comparison_facts_in_session(
-                session,
-                stream_ids=stream_ids,
-                taxonomy_index=taxonomy_index,
-                local_timezone=resolved_local_timezone,
-                current_start_date=current_start_date,
-                current_end_date=current_end_date,
-                is_complete=is_complete,
-                prior_start_date=prior_start_date,
-                prior_end_date=prior_end_date,
+            place_comparison, notable_species_changes, species_comparisons = (
+                self._year_over_year_comparison_facts_in_session(
+                    session,
+                    stream_ids=stream_ids,
+                    taxonomy_index=taxonomy_index,
+                    local_timezone=resolved_local_timezone,
+                    current_start_date=current_start_date,
+                    current_end_date=current_end_date,
+                    is_complete=is_complete,
+                    prior_start_date=prior_start_date,
+                    prior_end_date=prior_end_date,
+                )
             )
+            taxon_comparison: TaxonYearOverYearComparison | None = None
+            if taxon:
+                # `taxonomy_index` was already fetched above for the main
+                # comparison -- reuse it here rather than a second fresh
+                # full-table scan (see `_taxonomy_label_model_for_input`'s
+                # own "performance escape hatch" docstring).
+                taxonomy = self._taxonomy_label_model_for_input(session, taxon, taxonomy_index=taxonomy_index)
+                canonical_label = taxonomy.label if taxonomy is not None else None
+                if canonical_label is not None:
+                    taxon_comparison = next(
+                        (entry for entry in species_comparisons if entry.taxon.label == canonical_label),
+                        None,
+                    )
 
         return place_year_over_year_response(
             generated_at=_as_utc(generation_moment),
             place=place_comparison,
             notable_species_changes=notable_species_changes,
+            taxon_comparison=taxon_comparison,
         )
 
     def place_story(
@@ -34630,7 +34755,7 @@ class ProductRepository:
                 ) = self._year_over_year_resolve_period(
                     now=generation_moment, year=None, month=None, local_timezone=resolved_local_timezone,
                 )
-                yoy_place_comparison, yoy_notable_species_changes = (
+                yoy_place_comparison, yoy_notable_species_changes, _yoy_species_comparisons = (
                     self._year_over_year_comparison_facts_in_session(
                         session,
                         stream_ids=stream_ids,
@@ -34849,14 +34974,29 @@ class ProductRepository:
         for record in self._wildlife_insight_records(
             session, start_at=start_at, end_at=end_at, include_archived=include_archived
         ):
-            summary = record["summary"]
-            if summary.review_outcome == VisitReviewOutcome.confirmed_bird:
+            if self._is_confirmed_wildlife_summary(session, record["summary"]):
                 records.append(record)
-            elif summary.review_outcome == VisitReviewOutcome.non_bird and summary.reviewed_label:
-                taxonomy = self._taxonomy_label_model_for_input(session, summary.reviewed_label)
-                if taxonomy is not None and is_wildlife_category(taxonomy.category):
-                    records.append(record)
         return records
+
+    def _is_confirmed_wildlife_summary(self, session: Session, summary: StreamVisitSummary) -> bool:
+        """The one shared "is this Visit a confirmed wildlife encounter"
+        predicate behind `_wildlife_journal_confirmed_records` -- extracted
+        (Place Story Deep Dives & Representative Evidence v1) so `_feature_
+        representative_evidence` reuses the identical truth boundary rather
+        than re-deriving it: `VisitReviewOutcome.confirmed_bird` is
+        deliberately bird-only (see `_visit_review_outcome`), but MockingBird
+        is "bird-first but wildlife-native" (product-doctrine.md), so a
+        confirmed non-bird wildlife taxon (squirrel, deer, ...) must still
+        count -- re-resolved through the identical `is_wildlife_category`
+        boundary every other wildlife-inclusive surface in this codebase
+        already uses, never a second, narrower definition."""
+
+        if summary.review_outcome == VisitReviewOutcome.confirmed_bird:
+            return True
+        if summary.review_outcome == VisitReviewOutcome.non_bird and summary.reviewed_label:
+            taxonomy = self._taxonomy_label_model_for_input(session, summary.reviewed_label)
+            return taxonomy is not None and is_wildlife_category(taxonomy.category)
+        return False
 
     @staticmethod
     def _wildlife_journal_ordered_records(

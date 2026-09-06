@@ -5590,6 +5590,12 @@ export interface PlaceFeatureDetail {
   // null when the Feature has zero observation links -- yield cannot
   // honestly be computed without at least one.
   recent_yield?: PlaceFeatureYieldSummary | null;
+  // Place Story Deep Dives & Representative Evidence v1: the single best
+  // already-persisted evidence image across every confirmed Visit in this
+  // Feature's own linked camera/Zone views (all-time, not just recent_
+  // yield's bounded window). null is a fully honest outcome -- no links, no
+  // confirmed Visit in scope, or a missing media file -- never an error.
+  representative_evidence?: RepresentativeEvidence | null;
 }
 
 // A compact, Dashboard-safe bundle: how many active Features exist, how
@@ -5910,6 +5916,12 @@ export interface PlaceYearOverYearResponse {
   generated_at: string;
   place: PlaceYearOverYearComparison;
   notable_species_changes: PlaceYearOverYearSpeciesEntry[];
+  // Place Story Deep Dives & Representative Evidence v1: one taxon's own
+  // comparison, populated only when the request carried `taxon=` -- reuses
+  // the identical entry shape `notable_species_changes` already uses, even
+  // when that taxon did not clear the bounded top-5 ranking. null both when
+  // no taxon was requested and when that taxon has no comparable data.
+  taxon_comparison?: PlaceYearOverYearSpeciesEntry | null;
 }
 
 // --- Ecological Interoperability & Submission Workflows v1 ---------------

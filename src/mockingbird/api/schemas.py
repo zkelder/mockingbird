@@ -2462,6 +2462,13 @@ class RepresentativeEvidence(BaseModel):
     the contract doc); recomputed on every report read, so a reviewed
     correction is reflected on the very next read with no backfill.
 
+    Place Story Deep Dives & Representative Evidence v1 reuses this exact
+    shape, unmodified, for a Place Feature's own representative evidence
+    (`PlaceFeatureDetail.representative_evidence`) -- the candidate pool is
+    every confirmed Visit across that Feature's own linked camera/Zone
+    views instead of one taxon's Visits, but the selector and this response
+    shape are identical, never a second "best image" concept.
+
     `stream_id`/`stream_name` (Multi-Camera Place Experience v2): which
     camera/view produced this winning evidence -- a human-readable name,
     never a raw UUID surfaced as the label (see product-doctrine.md). Both
@@ -8758,6 +8765,18 @@ class PlaceFeatureDetail(BaseModel):
     honestly be computed without at least one. Otherwise computed across
     every one of the Feature's own linked views, unioned (coverage) and
     cross-camera-deduplicated (Visit counts)."""
+    representative_evidence: RepresentativeEvidence | None = None
+    """Place Story Deep Dives & Representative Evidence v1: the single best
+    already-persisted evidence image across every confirmed Visit in this
+    Feature's own linked camera/Zone views (all Feature history, not just
+    `recent_yield`'s bounded window -- mirrors Bird Log's own unbounded-
+    history representative-evidence precedent). Reuses the identical Gate C
+    selector `PlaceActivityReportTaxonEntry.representative_evidence`/
+    `WildlifeJournalLabelSummary.representative` already use, unmodified --
+    never a second "best image" engine. `None` is a fully honest outcome:
+    zero observation links, zero confirmed Visits in scope, or every
+    candidate's underlying media file missing -- never an error, and never
+    an unrelated frame chosen merely to fill layout."""
 
 
 class PlaceFeaturesSummary(BaseModel):
@@ -8959,6 +8978,15 @@ class PlaceYearOverYearResponse(BaseModel):
     generated_at: datetime
     place: PlaceYearOverYearComparison
     notable_species_changes: list[PlaceYearOverYearSpeciesEntry] = Field(default_factory=list, max_length=5)
+    # Place Story Deep Dives & Representative Evidence v1: one taxon's own
+    # comparison, populated only when the caller passed `?taxon=` -- reuses
+    # the identical `PlaceYearOverYearSpeciesEntry` shape `notable_species_
+    # changes` already uses, never a second per-taxon response type. `None`
+    # both when no `taxon` was requested and when that taxon has no
+    # comparable data (an honest abstention, not an error) -- a Taxon Story
+    # header must tell these apart from its own request, not from this
+    # field's shape.
+    taxon_comparison: PlaceYearOverYearSpeciesEntry | None = None
 
 
 # ---------------------------------------------------------------------------

@@ -18,7 +18,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 from starlette.testclient import TestClient
 
 from mockingbird.analytics.conditional_association import compute_conditional_association
@@ -57,9 +57,11 @@ from mockingbird.storage.models import (
     CameraSourceModel,
     EnvironmentalContextRecordModel,
     EventModel,
+    MediaAssetModel,
     MonitoringExposureIntervalModel,
     PlaceFeatureObservationLinkModel,
     StreamModel,
+    VisitEvidenceLinkModel,
     VisitModel,
     ZoneModel,
 )
@@ -1363,6 +1365,204 @@ def test_archived_camera_link_preserves_historical_comparison(repository: Produc
     assert detail.feature.observation_links[0].source_archived is True
 
 
+# --- Representative evidence (Place Story Deep Dives & Representative
+# Evidence v1) -- reuses the canonical Gate C selector unmodified; these
+# tests exercise the Feature-scoped candidate-gathering this milestone adds,
+# not the selector's own ranking logic (already covered by tests/test_
+# representative_evidence.py and test_place_activity_report_repository.py).
+
+
+def _attach_primary_evidence(
+    repository: ProductRepository, *, visit_id: str, captured_at: datetime,
+    stream_id: str = STREAM_ID, source_id: str = SOURCE_ID, missing_file: bool = False,
+) -> str:
+    """Attach one real, persisted, `is_primary` evidence frame to an
+    already-created Visit -- mirrors test_place_activity_report_
+    repository.py's identical `_attach_primary_evidence` helper (a real
+    backing file, since the representative-evidence selector honestly
+    checks `Path(local_path).is_file()`). Returns the created `media_asset_
+    id`."""
+
+    media_id = f"media-{visit_id}"
+    media_path = repository.media_root / f"{visit_id}.jpg"
+    if not missing_file:
+        media_path.parent.mkdir(parents=True, exist_ok=True)
+        media_path.write_bytes(b"fixture-jpeg-bytes")
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                MediaAssetModel(
+                    id=media_id, source_id=source_id, stream_id=stream_id, filename=f"{media_id}.jpg",
+                    content_type="image/jpeg", media_type="image", local_path=str(media_path),
+                    original_filename=f"{media_id}.jpg", file_size_bytes=12, created_at=captured_at,
+                    image_width=800, image_height=600,
+                )
+            )
+            session.add(
+                VisitEvidenceLinkModel(
+                    id=f"link-{visit_id}", visit_id=visit_id, media_asset_id=media_id, captured_at=captured_at,
+                    frame_sequence=0, sort_order=0, is_primary=True, evidence_role="identification",
+                    created_at=captured_at,
+                )
+            )
+    return media_id
+
+
+def test_feature_representative_evidence_selects_confirmed_visit(repository: ProductRepository) -> None:
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="water", name="Bird Bath", zone_id=ZONE_ID), acting_user=_acting_user()
+    )
+    at = datetime(2026, 6, 1, 10, tzinfo=UTC)
+    _add_visit(repository, visit_id="bath-visit", at=at)
+    _attach_primary_evidence(repository, visit_id="bath-visit", captured_at=at)
+    _confirm(repository, visit_id="bath-visit", label="northern_cardinal")
+
+    detail = repository.get_place_feature_detail(feature.id, now=at + timedelta(days=1), local_timezone=UTC)
+    assert detail.representative_evidence is not None
+    assert detail.representative_evidence.visit_id == "bath-visit"
+    assert detail.representative_evidence.evidence.media_asset_id == "media-bath-visit"
+
+
+def test_feature_representative_evidence_none_without_observation_links(repository: ProductRepository) -> None:
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="water", name="Bird Bath"), acting_user=_acting_user()
+    )
+    detail = repository.get_place_feature_detail(feature.id, now=datetime(2026, 6, 1, tzinfo=UTC), local_timezone=UTC)
+    assert detail.representative_evidence is None
+
+
+def test_feature_representative_evidence_none_when_no_confirmed_wildlife_visit(
+    repository: ProductRepository,
+) -> None:
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="water", name="Bird Bath", zone_id=ZONE_ID), acting_user=_acting_user()
+    )
+    at = datetime(2026, 6, 1, 10, tzinfo=UTC)
+    _add_visit(repository, visit_id="unreviewed", at=at)
+    _attach_primary_evidence(repository, visit_id="unreviewed", captured_at=at)
+    # Never confirmed -- an ordinary needs-review Visit must not become a
+    # Feature's representative evidence merely because it has an image.
+    detail = repository.get_place_feature_detail(feature.id, now=at + timedelta(days=1), local_timezone=UTC)
+    assert detail.representative_evidence is None
+
+
+def test_feature_representative_evidence_ignores_visits_outside_feature_scope(
+    repository: ProductRepository,
+) -> None:
+    """A confirmed Visit with real evidence on an *unlinked* Zone of the
+    same camera must never leak into this Feature's own representative
+    evidence -- Feature scope, not Place-wide scope."""
+
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="water", name="Bird Bath", zone_id=ZONE_ID), acting_user=_acting_user()
+    )
+    at = datetime(2026, 6, 1, 10, tzinfo=UTC)
+    _add_visit(repository, visit_id="elsewhere", at=at, zone_id=OTHER_ZONE_ID)
+    _attach_primary_evidence(repository, visit_id="elsewhere", captured_at=at)
+    _confirm(repository, visit_id="elsewhere", label="northern_cardinal")
+
+    detail = repository.get_place_feature_detail(feature.id, now=at + timedelta(days=1), local_timezone=UTC)
+    assert detail.representative_evidence is None
+
+
+def test_feature_representative_evidence_abstains_when_media_file_missing(repository: ProductRepository) -> None:
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="water", name="Bird Bath", zone_id=ZONE_ID), acting_user=_acting_user()
+    )
+    at = datetime(2026, 6, 1, 10, tzinfo=UTC)
+    _add_visit(repository, visit_id="deleted-media", at=at)
+    _attach_primary_evidence(repository, visit_id="deleted-media", captured_at=at, missing_file=True)
+    _confirm(repository, visit_id="deleted-media", label="northern_cardinal")
+
+    detail = repository.get_place_feature_detail(feature.id, now=at + timedelta(days=1), local_timezone=UTC)
+    assert detail.representative_evidence is None, "a missing media file must abstain, never a broken thumbnail"
+
+
+def test_feature_representative_evidence_spans_every_linked_camera_view(repository: ProductRepository) -> None:
+    """Multi-Camera Place Feature Linking v1: representative evidence must
+    consider every one of a Feature's linked views, not only its first."""
+
+    _add_second_camera(repository)
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="water", name="Bird Bath", zone_id=ZONE_ID), acting_user=_acting_user()
+    )
+    repository.add_place_feature_observation_link(
+        feature.id, PlaceFeatureObservationLinkCreate(zone_id=ZONE_ID_2), acting_user=_acting_user()
+    )
+    at = datetime(2026, 6, 1, 10, tzinfo=UTC)
+    _add_visit(repository, visit_id="second-camera-visit", at=at, stream_id=STREAM_ID_2, zone_id=ZONE_ID_2)
+    _attach_primary_evidence(
+        repository, visit_id="second-camera-visit", captured_at=at, stream_id=STREAM_ID_2, source_id=SOURCE_ID_2,
+    )
+    _confirm(repository, visit_id="second-camera-visit", label="northern_cardinal")
+
+    detail = repository.get_place_feature_detail(feature.id, now=at + timedelta(days=1), local_timezone=UTC)
+    assert detail.representative_evidence is not None
+    assert detail.representative_evidence.visit_id == "second-camera-visit"
+    assert detail.representative_evidence.stream_id == STREAM_ID_2
+
+
+def test_feature_representative_evidence_survives_camera_archival(repository: ProductRepository) -> None:
+    """Archiving preserves history (see docs/product-doctrine.md) --
+    mirrors test_archived_camera_link_preserves_historical_comparison for
+    representative evidence specifically."""
+
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="water", name="Bird Bath", source_id=SOURCE_ID), acting_user=_acting_user()
+    )
+    at = datetime(2026, 6, 1, 10, tzinfo=UTC)
+    _add_visit(repository, visit_id="pre-archive-visit", at=at)
+    _attach_primary_evidence(repository, visit_id="pre-archive-visit", captured_at=at)
+    _confirm(repository, visit_id="pre-archive-visit", label="northern_cardinal")
+
+    repository.update_camera_source(SOURCE_ID, CameraSourceUpdate(archived=True))
+
+    detail = repository.get_place_feature_detail(feature.id, now=at + timedelta(days=1), local_timezone=UTC)
+    assert detail.representative_evidence is not None
+    assert detail.representative_evidence.visit_id == "pre-archive-visit"
+
+
+def test_feature_representative_evidence_reflects_correction_on_next_read(repository: ProductRepository) -> None:
+    """No cache to invalidate -- a correction away from a confirmed taxon
+    is reflected on the very next `get_place_feature_detail` call, mirroring
+    test_reviewed_correction_moves_representative_eligibility_to_the_
+    corrected_taxon's Today/Bird Log precedent at Feature scope."""
+
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="water", name="Bird Bath", zone_id=ZONE_ID), acting_user=_acting_user()
+    )
+    at = datetime(2026, 6, 1, 10, tzinfo=UTC)
+    _add_visit(repository, visit_id="corrected-visit", at=at)
+    _attach_primary_evidence(repository, visit_id="corrected-visit", captured_at=at)
+    _confirm(repository, visit_id="corrected-visit", label="northern_cardinal")
+
+    before = repository.get_place_feature_detail(feature.id, now=at + timedelta(days=1), local_timezone=UTC)
+    assert before.representative_evidence is not None
+    assert before.representative_evidence.visit_id == "corrected-visit"
+
+    _confirm(repository, visit_id="corrected-visit", label="false_positive")
+
+    after = repository.get_place_feature_detail(feature.id, now=at + timedelta(days=1), local_timezone=UTC)
+    assert after.representative_evidence is None, "a corrected-away Visit must stop being representative immediately"
+
+
+def test_feature_detail_http_round_trip_includes_representative_evidence(repository: ProductRepository) -> None:
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="water", name="Bird Bath", zone_id=ZONE_ID), acting_user=_acting_user()
+    )
+    at = datetime(2026, 6, 1, 10, tzinfo=UTC)
+    _add_visit(repository, visit_id="http-visit", at=at)
+    _attach_primary_evidence(repository, visit_id="http-visit", captured_at=at)
+    _confirm(repository, visit_id="http-visit", label="northern_cardinal")
+
+    client = LegacyAuthenticatedSyncTestClient(app)
+    response = client.get(f"/api/place/features/{feature.id}/detail")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["representative_evidence"]["visit_id"] == "http-visit"
+    assert body["representative_evidence"]["evidence"]["media_asset_id"] == "media-http-visit"
+
+
 # --- Environmental Context x Place Story & Habitat Change Composition v1:
 # Feature before/after environmental-context composition ------------------
 
@@ -1841,3 +2041,99 @@ def test_place_features_summary_over_http(repository: ProductRepository) -> None
     assert response.status_code == 200
     body = response.json()
     assert body == {"active_feature_count": 0, "recent_change_count": 0, "highlight": None}
+
+
+# --- Performance (Place Story Deep Dives & Representative Evidence v1,
+# governing brief section 32): representative-evidence gathering must not
+# grow with unrelated Place history depth -- mirrors test_year_over_year_
+# comparison_repository.py's own `_count_queries` harness and identical
+# "query count does not grow with unrelated historical depth" methodology.
+
+
+def _count_queries(engine, fn) -> int:  # type: ignore[no-untyped-def]
+    count = 0
+
+    def _before_cursor_execute(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        nonlocal count
+        count += 1
+
+    event.listen(engine, "before_cursor_execute", _before_cursor_execute)
+    try:
+        fn()
+    finally:
+        event.remove(engine, "before_cursor_execute", _before_cursor_execute)
+    return count
+
+
+def test_representative_evidence_query_count_does_not_grow_with_unrelated_history(
+    repository: ProductRepository,
+) -> None:
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="water", name="Bird Bath", zone_id=ZONE_ID), acting_user=_acting_user()
+    )
+    at = datetime(2026, 6, 1, 10, tzinfo=UTC)
+    _add_visit(repository, visit_id="perf-bath-visit", at=at)
+    _attach_primary_evidence(repository, visit_id="perf-bath-visit", captured_at=at)
+    _confirm(repository, visit_id="perf-bath-visit", label="northern_cardinal")
+
+    def _read_detail() -> None:
+        detail = repository.get_place_feature_detail(feature.id, now=at + timedelta(days=1), local_timezone=UTC)
+        assert detail.representative_evidence is not None
+
+    small_history_query_count = _count_queries(repository.engine, _read_detail)
+
+    # A large amount of *unrelated* Place history: 100 confirmed Visits on
+    # a completely different, unlinked camera/Zone -- must never be scanned
+    # while resolving this Feature's own representative evidence.
+    _add_second_camera(repository)
+    for i in range(100):
+        visit_id = f"perf-unrelated-{i}"
+        unrelated_at = at - timedelta(days=i + 1)
+        _add_visit(repository, visit_id=visit_id, at=unrelated_at, stream_id=STREAM_ID_2, zone_id=ZONE_ID_2)
+        _attach_primary_evidence(repository, visit_id=visit_id, captured_at=unrelated_at, stream_id=STREAM_ID_2)
+        _confirm(repository, visit_id=visit_id, label="carolina_wren")
+
+    large_history_query_count = _count_queries(repository.engine, _read_detail)
+
+    assert large_history_query_count == small_history_query_count, (
+        f"query count grew with unrelated history: {small_history_query_count} -> {large_history_query_count}"
+    )
+
+
+def test_representative_evidence_query_count_does_not_grow_with_own_visit_count(
+    repository: ProductRepository,
+) -> None:
+    """The bounded `MAX_REPRESENTATIVE_EVIDENCE_CANDIDATES` cap (20, the
+    identical constant Today/Bird Log already use) means even this
+    Feature's *own* confirmed-Visit count does not change the query count
+    once it exceeds that bound -- proportional, never unbounded."""
+
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="water", name="Bird Bath", zone_id=ZONE_ID), acting_user=_acting_user()
+    )
+    base_at = datetime(2026, 1, 1, tzinfo=UTC)
+
+    def _seed_confirmed_visits(count: int, prefix: str) -> None:
+        for i in range(count):
+            visit_id = f"{prefix}-{i}"
+            at = base_at + timedelta(days=i)
+            _add_visit(repository, visit_id=visit_id, at=at)
+            _attach_primary_evidence(repository, visit_id=visit_id, captured_at=at)
+            _confirm(repository, visit_id=visit_id, label="northern_cardinal")
+
+    def _read_detail() -> None:
+        detail = repository.get_place_feature_detail(
+            feature.id, now=base_at + timedelta(days=200), local_timezone=UTC,
+        )
+        assert detail.representative_evidence is not None
+
+    _seed_confirmed_visits(25, "perf-many-a")
+    query_count_at_25 = _count_queries(repository.engine, _read_detail)
+
+    _seed_confirmed_visits(25, "perf-many-b")
+    query_count_at_50 = _count_queries(repository.engine, _read_detail)
+
+    assert query_count_at_50 == query_count_at_25, (
+        f"query count grew with this Feature's own Visit count past the bound: "
+        f"{query_count_at_25} -> {query_count_at_50}"
+    )

@@ -15696,6 +15696,7 @@ async def get_place_story(
 async def get_place_year_over_year_comparison(
     year: int | None = Query(default=None, ge=1970, le=9999),
     month: int | None = Query(default=None, ge=1, le=12),
+    taxon: str | None = Query(default=None),
 ) -> PlaceYearOverYearResponse:
     """Compare one Place-local calendar month's confirmed wildlife activity
     against the same calendar month one year earlier -- "how does this
@@ -15705,10 +15706,14 @@ async def get_place_year_over_year_comparison(
     `year`/`month` default to the current (possibly still in-progress)
     Place-local calendar month; both must be supplied together. Always
     computed fresh, never cached -- a Reviewed correction is reflected on
-    the very next call. Creates no review/Observation/product state."""
+    the very next call. Creates no review/Observation/product state.
+
+    `taxon` (Place Story Deep Dives & Representative Evidence v1): optional
+    label/display-name/alias input; populates the response's `taxon_
+    comparison` for a Taxon Story header without a second endpoint."""
 
     try:
-        return get_repository().place_year_over_year_comparison(year=year, month=month)
+        return get_repository().place_year_over_year_comparison(year=year, month=month, taxon=taxon)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 

@@ -67,6 +67,9 @@ interface DashboardPageProps {
   onOpenVisit: (visitId: string) => void;
   onOpenPlaceActivityReport: () => void;
   onOpenPlaceStory: () => void;
+  // Place Story Deep Dives & Representative Evidence v1.
+  onOpenFeatureStory: (featureId: string) => void;
+  onOpenTaxonStory: (label: string) => void;
   onOpenAlertsInbox: () => void;
 }
 
@@ -223,6 +226,8 @@ export function DashboardPage({
   onOpenVisit,
   onOpenPlaceActivityReport,
   onOpenPlaceStory,
+  onOpenFeatureStory,
+  onOpenTaxonStory,
   onOpenAlertsInbox,
 }: DashboardPageProps) {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
@@ -672,6 +677,7 @@ export function DashboardPage({
         onAddChangeEvent={addPlaceFeatureChangeEvent}
         onAddFeature={addPlaceFeature}
         onAddObservationLink={addPlaceFeatureObservationLink}
+        onOpenFeatureStory={onOpenFeatureStory}
         onRemoveFeature={removePlaceFeature}
         onRemoveObservationLink={removePlaceFeatureObservationLink}
         onUpdateFeature={updatePlaceFeature}
@@ -687,7 +693,7 @@ export function DashboardPage({
       {/* Year-over-Year Seasonality & Long-Term Place Memory v1: a fifth
           sibling card, same reasoning as the others above -- see
           docs/year-over-year-seasonality-long-term-place-memory-v1-report.md. */}
-      <YearOverYearCard comparison={yearOverYear} onOpenBirdLog={onOpenBirdLog} />
+      <YearOverYearCard comparison={yearOverYear} onOpenBirdLog={onOpenBirdLog} onOpenTaxonStory={onOpenTaxonStory} />
       {/* Everyday Discovery / Product Experience v2 (Phase G): Today's own
           report above only ever shows one busiest_zone winner and a single
           change sentence -- this links to the fuller exploration surface

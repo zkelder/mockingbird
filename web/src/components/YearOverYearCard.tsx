@@ -6,6 +6,12 @@ import { formatMonthYear } from "../utils";
 interface YearOverYearCardProps {
   comparison: PlaceYearOverYearResponse | null;
   onOpenBirdLog?: (label?: string) => void;
+  // Place Story Deep Dives & Representative Evidence v1: an additive deep
+  // link to that species' own Taxon Story -- kept alongside, not instead
+  // of, the existing Bird Log link (Bird Log remains the detailed
+  // occurrence log; Taxon Story is the calmer longitudinal view this
+  // year-over-year fact itself is drawn from).
+  onOpenTaxonStory?: (label: string) => void;
 }
 
 /**
@@ -27,7 +33,7 @@ interface YearOverYearCardProps {
  * direction is paired with plain-language text, and `StatusPill` always
  * uses the same non-judgmental "quiet" tone for both "higher" and "lower".
  */
-export function YearOverYearCard({ comparison, onOpenBirdLog }: YearOverYearCardProps) {
+export function YearOverYearCard({ comparison, onOpenBirdLog, onOpenTaxonStory }: YearOverYearCardProps) {
   if (!comparison) {
     return null;
   }
@@ -56,13 +62,18 @@ export function YearOverYearCard({ comparison, onOpenBirdLog }: YearOverYearCard
             <li key={entry.label}>
               <button
                 className="text-action"
-                disabled={!onOpenBirdLog}
-                onClick={() => onOpenBirdLog?.(entry.label)}
+                disabled={!onOpenTaxonStory}
+                onClick={() => onOpenTaxonStory?.(entry.label)}
                 type="button"
               >
                 {entry.display_name}
               </button>
               <span className="meta-text">{speciesChangeSentence(entry)}</span>
+              {onOpenBirdLog ? (
+                <button className="text-action" onClick={() => onOpenBirdLog(entry.label)} type="button">
+                  Bird Log
+                </button>
+              ) : null}
             </li>
           ))}
         </ul>
@@ -118,8 +129,11 @@ function placeSummary(
 /** Plain-language, association-only wording composed from raw status
  * fields (never a backend-provided sentence -- mirrors PlaceActivityReportPage's
  * `featureAssociationSentence`'s identical frontend-composition convention
- * for this surface). Never "arrived" -- detection is not proof of arrival. */
-function speciesChangeSentence(entry: PlaceYearOverYearSpeciesEntry): string {
+ * for this surface). Never "arrived" -- detection is not proof of arrival.
+ * Exported (Place Story Deep Dives & Representative Evidence v1) so a Taxon
+ * Story header composes the identical sentence for its own single taxon's
+ * comparison, rather than a second, potentially-drifting wording. */
+export function speciesChangeSentence(entry: PlaceYearOverYearSpeciesEntry): string {
   const parts: string[] = [];
   if (entry.status === "comparable" && entry.activity_direction) {
     parts.push(`observed ${entry.activity_direction} often this period`);

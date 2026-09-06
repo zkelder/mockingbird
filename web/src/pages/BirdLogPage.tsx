@@ -44,6 +44,8 @@ interface BirdLogPageProps {
   onOpenExports: () => void;
   onOpenCollections: () => void;
   onOpenPlaceActivityReport: () => void;
+  // Place Story Deep Dives & Representative Evidence v1.
+  onOpenTaxonStory: (label: string) => void;
 }
 
 interface JournalLocation {
@@ -387,6 +389,7 @@ export function BirdLogPage({
   onOpenReview,
   onOpenCollections,
   onOpenPlaceActivityReport,
+  onOpenTaxonStory,
 }: BirdLogPageProps) {
   const [journalLabel, setJournalLabel] = useState<string | null>(readJournalLabel);
   const [location, setLocation] = useState<JournalLocation>(readJournalLocation);
@@ -801,6 +804,11 @@ export function BirdLogPage({
       {activeHistory ? (
         <>
           <div className="journal-scope-note">{activeHistory.scope.start_date ?? "All recorded dates"}{activeHistory.scope.end_date ? ` to ${activeHistory.scope.end_date}` : ""}{activeHistory.scope.favorites_only ? " · favorites only" : ""}{activeHistory.scope.tag_id ? " · gallery tag filter" : ""} · local time ({activeHistory.scope.timezone_name})</div>
+          <div className="today-report-footer">
+            <button className="text-action" onClick={() => onOpenTaxonStory(activeHistory.label)} type="button">
+              See {activeHistory.display_name}&rsquo;s story
+            </button>
+          </div>
           {activeHistory.observation_count === 0 ? (
             <EmptyState
               title="No active confirmed observations in this scope"

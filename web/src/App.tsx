@@ -33,6 +33,7 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { DetectionProposalsPage } from "./pages/DetectionProposalsPage";
 import { EventDetailPage } from "./pages/EventDetailPage";
 import { ExportsPage } from "./pages/ExportsPage";
+import { FeatureStoryPage } from "./pages/FeatureStoryPage";
 import { FolderImportPage } from "./pages/FolderImportPage";
 import { LocalDataPage } from "./pages/LocalDataPage";
 import { ManualImportPage } from "./pages/ManualImportPage";
@@ -41,6 +42,7 @@ import { MotionEvidenceDetailPage } from "./pages/MotionEvidenceDetailPage";
 import { MotionEvidencePage } from "./pages/MotionEvidencePage";
 import { PlaceActivityReportPage } from "./pages/PlaceActivityReportPage";
 import { PlaceStoryPage } from "./pages/PlaceStoryPage";
+import { TaxonStoryPage } from "./pages/TaxonStoryPage";
 import {
   ReviewQueuePage,
   type ReviewQueueInitialContext,
@@ -202,6 +204,13 @@ export default function App() {
   const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(
     initialRoute.collectionId ?? null,
   );
+  // Place Story Deep Dives & Representative Evidence v1.
+  const [selectedTaxonLabel, setSelectedTaxonLabel] = useState<string | null>(
+    initialRoute.taxonLabel ?? null,
+  );
+  const [selectedFeatureStoryId, setSelectedFeatureStoryId] = useState<string | null>(
+    initialRoute.featureId ?? null,
+  );
   const [reviewQueueInitialContext, setReviewQueueInitialContext] =
     useState<ReviewQueueInitialContext | null>(null);
   const [visitCorrectionPrefill, setVisitCorrectionPrefill] =
@@ -251,6 +260,12 @@ export default function App() {
     }
     if (route.collectionId !== undefined) {
       setSelectedCollectionId(route.collectionId);
+    }
+    if (route.taxonLabel !== undefined) {
+      setSelectedTaxonLabel(route.taxonLabel);
+    }
+    if (route.featureId !== undefined) {
+      setSelectedFeatureStoryId(route.featureId);
     }
   }
 
@@ -525,6 +540,16 @@ export default function App() {
     applyRoute({ page: "bird-log" });
   }
 
+  // Place Story Deep Dives & Representative Evidence v1: a bookmarkable,
+  // reload-safe deep dive on one taxon/Feature -- see navigation.ts.
+  function openTaxonStory(label: string) {
+    navigate({ page: "taxon-story", taxonLabel: label });
+  }
+
+  function openFeatureStory(featureId: string) {
+    navigate({ page: "feature-story", featureId });
+  }
+
   function openAlertAction(action: ProductAlertAction) {
     if (action.action_type === "review_visit" && action.visit_id) {
       openVisit(action.visit_id);
@@ -549,10 +574,23 @@ export default function App() {
       return;
     }
     if (action.action_type === "open_place_story") {
-      // Calm Attention & Notifications v1, Phase 25: land already scoped
-      // to the right category group instead of an unfiltered timeline --
-      // Place Story has no per-taxon/per-Feature filter control today, so
-      // this is the most precise deep link available without adding one.
+      // Place Story Deep Dives & Representative Evidence v1: the
+      // underlying attention signal already carries a precise
+      // `taxon_label`/`feature_id` when its own Story event has one (see
+      // `ProductRepository.sync_attention_signals`) -- land directly on
+      // that taxon's/Feature's own Story instead of the coarser
+      // category-group timeline whenever it does.
+      if (action.taxon_label) {
+        openTaxonStory(action.taxon_label);
+        return;
+      }
+      if (action.feature_id) {
+        openFeatureStory(action.feature_id);
+        return;
+      }
+      // Calm Attention & Notifications v1, Phase 25: no precise taxon/
+      // Feature on this action -- land already scoped to the right
+      // category group instead of an unfiltered timeline.
       setPlaceStoryInitialCategory(placeStoryCategoryForKind(action.story_kind));
       window.history.pushState({}, "", "/place-story");
       applyRoute({ page: "place-story" });
@@ -669,6 +707,8 @@ export default function App() {
           onOpenVisit={openVisit}
           onOpenPlaceActivityReport={() => setPage("place-activity-report")}
           onOpenPlaceStory={() => setPage("place-story")}
+          onOpenFeatureStory={openFeatureStory}
+          onOpenTaxonStory={openTaxonStory}
           onOpenAlertsInbox={() => setPage("alerts-inbox")}
         />
       );
@@ -967,6 +1007,7 @@ export default function App() {
           onOpenExports={() => setPage("exports")}
           onOpenCollections={() => openCollections()}
           onOpenPlaceActivityReport={() => setPage("place-activity-report")}
+          onOpenTaxonStory={openTaxonStory}
         />
       );
     }
@@ -976,6 +1017,32 @@ export default function App() {
         <PlaceActivityReportPage
           sources={data.sources}
           onOpenBirdLog={openBirdLogLabel}
+          onOpenFeatureStory={openFeatureStory}
+          onOpenTaxonStory={openTaxonStory}
+          onOpenVisit={openVisit}
+        />
+      );
+    }
+
+    if (page === "taxon-story" && selectedTaxonLabel) {
+      return (
+        <TaxonStoryPage
+          onOpenBirdLog={openBirdLogLabel}
+          onOpenFeatureStory={openFeatureStory}
+          onOpenPlaceActivityReport={() => setPage("place-activity-report")}
+          onOpenVisit={openVisit}
+          taxonLabel={selectedTaxonLabel}
+        />
+      );
+    }
+
+    if (page === "feature-story" && selectedFeatureStoryId) {
+      return (
+        <FeatureStoryPage
+          featureId={selectedFeatureStoryId}
+          onOpenBirdLog={openBirdLogLabel}
+          onOpenPlaceActivityReport={() => setPage("place-activity-report")}
+          onOpenTaxonStory={openTaxonStory}
           onOpenVisit={openVisit}
         />
       );
@@ -986,7 +1053,9 @@ export default function App() {
         <PlaceStoryPage
           initialCategory={placeStoryInitialCategory}
           onOpenBirdLog={openBirdLogLabel}
+          onOpenFeatureStory={openFeatureStory}
           onOpenPlaceActivityReport={() => setPage("place-activity-report")}
+          onOpenTaxonStory={openTaxonStory}
           onOpenVisit={openVisit}
         />
       );

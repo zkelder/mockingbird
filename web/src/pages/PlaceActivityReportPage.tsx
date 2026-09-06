@@ -58,6 +58,9 @@ interface PlaceActivityReportPageProps {
    * straight to that species' own Bird Log history (mirrors the identical
    * pattern App.tsx already wires for Yard & Camera Map). */
   onOpenBirdLog: (label?: string) => void;
+  // Place Story Deep Dives & Representative Evidence v1.
+  onOpenTaxonStory: (label: string) => void;
+  onOpenFeatureStory: (featureId: string) => void;
 }
 
 type PlaceReportPreset = "today" | "last_7_days" | "last_30_days" | "this_year" | "custom";
@@ -484,7 +487,10 @@ function TaxonCard({
   );
 }
 
-const FEATURE_TYPE_DISPLAY_NAMES: Record<string, string> = {
+// Exported (Place Story Deep Dives & Representative Evidence v1) so
+// FeatureStoryPage.tsx composes the identical vocabulary/sentences rather
+// than a second, potentially-drifting wording for the same facts.
+export const FEATURE_TYPE_DISPLAY_NAMES: Record<string, string> = {
   feeder: "Feeder",
   water: "Water",
   nest_box: "Nest box",
@@ -494,7 +500,7 @@ const FEATURE_TYPE_DISPLAY_NAMES: Record<string, string> = {
   other: "Feature",
 };
 
-const CHANGE_EVENT_TYPE_DISPLAY_NAMES: Record<string, string> = {
+export const CHANGE_EVENT_TYPE_DISPLAY_NAMES: Record<string, string> = {
   added: "Added",
   removed: "Removed",
   moved: "Moved",
@@ -509,7 +515,7 @@ const CHANGE_EVENT_TYPE_DISPLAY_NAMES: Record<string, string> = {
  * before/after comparison -- never a causal claim, and never a raw
  * percentage from a small count (see docs/place-features-habitat-change-
  * v2-contract.md "Before/after analysis"). */
-function featureAssociationSentence(association: {
+export function featureAssociationSentence(association: {
   maturity: string;
   status?: string | null;
   window_days?: number | null;
@@ -538,7 +544,7 @@ function featureAssociationSentence(association: {
  * state stays quietly absent here, matching `EnvironmentalContextCard`'s own
  * "absence is silence, never an error banner" convention -- the wildlife
  * insight above always remains the primary, visually dominant fact. */
-function environmentalComparisonSentence(
+export function environmentalComparisonSentence(
   comparison: FeatureEnvironmentalComparison | null | undefined,
 ): string | null {
   if (!comparison || comparison.status !== "comparable") {
@@ -547,7 +553,13 @@ function environmentalComparisonSentence(
   return comparison.summary ?? null;
 }
 
-export function PlaceActivityReportPage({ sources, onOpenVisit, onOpenBirdLog }: PlaceActivityReportPageProps) {
+export function PlaceActivityReportPage({
+  sources,
+  onOpenVisit,
+  onOpenBirdLog,
+  onOpenTaxonStory,
+  onOpenFeatureStory,
+}: PlaceActivityReportPageProps) {
   const [preset, setPreset] = useState<PlaceReportPreset>("last_30_days");
   const [customStartDate, setCustomStartDate] = useState(localDateInputValue(localMidnight(new Date(), -29)));
   const [customEndDate, setCustomEndDate] = useState(localDateInputValue());
@@ -1000,7 +1012,7 @@ export function PlaceActivityReportPage({ sources, onOpenVisit, onOpenBirdLog }:
           different question from "activity in the period I chose above").
           Same component the Dashboard's own sibling card uses, so the two
           can never disagree. */}
-      <YearOverYearCard comparison={yearOverYear} onOpenBirdLog={onOpenBirdLog} />
+      <YearOverYearCard comparison={yearOverYear} onOpenBirdLog={onOpenBirdLog} onOpenTaxonStory={onOpenTaxonStory} />
 
       {/* Habitat & Phenology Foundation v1: deliberately outside the `report`
           conditional above -- a genuinely independent, period-agnostic
@@ -1080,6 +1092,13 @@ export function PlaceActivityReportPage({ sources, onOpenVisit, onOpenBirdLog }:
                           .join(", ")
                       : "no camera linked"}
                   </span>
+                  <button
+                    className="text-action"
+                    onClick={() => onOpenFeatureStory(feature.id)}
+                    type="button"
+                  >
+                    View {feature.name} story
+                  </button>
                   <button
                     className="text-action"
                     onClick={() => toggleFeatureDetail(feature.id)}
