@@ -8472,6 +8472,44 @@ EnvironmentalComparisonStatus = Literal[
 ]
 
 
+class PlaceFeatureObservationLink(BaseModel):
+    """One camera/Zone observation view of a Place Feature -- see
+    `PlaceFeatureObservationLinkModel` for the full field-by-field
+    rationale. `source_name`/`zone_name`/`source_archived` are joined in
+    fresh at read time (never stored redundantly), so a camera rename is
+    always reflected immediately and never breaks the link -- see the
+    governing brief's "Source / Stream identity"."""
+
+    id: str
+    source_id: str
+    source_name: str
+    source_archived: bool
+    zone_id: str | None = None
+    zone_name: str | None = None
+    created_at: datetime
+
+
+class PlaceFeatureObservationLinkCreate(BaseModel):
+    """At least one of `source_id`/`zone_id` is required -- unlike
+    `PlaceFeatureCreate`/`PlaceFeatureUpdate`'s own identical pair (where
+    both `None` validly means "no association yet"), a dedicated "add a
+    view" call with neither would add nothing. `zone_id`, when given, is
+    authoritative over `source_id` exactly as `PlaceFeatureModel`'s own
+    association resolution already works (see `ProductRepository.
+    _resolve_feature_association`), reapplied per link."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str | None = None
+    zone_id: str | None = None
+
+    @model_validator(mode="after")
+    def _require_source_or_zone(self) -> "PlaceFeatureObservationLinkCreate":
+        if self.source_id is None and self.zone_id is None:
+            raise ValueError("Provide a camera or Zone to link.")
+        return self
+
+
 class PlaceFeature(BaseModel):
     """A durable, user-recorded Place Feature -- see `PlaceFeatureModel`
     for the full field-by-field rationale. `information_class` is a single-
@@ -8487,12 +8525,26 @@ class PlaceFeature(BaseModel):
     installed_date: date | None = None
     removed_date: date | None = None
     source_id: str | None = None
+    """Compatibility mirror, not the source of truth: populated only when
+    this Feature has exactly one observation link (byte-identical to
+    every pre-multi-view Feature's own value), and `None` for zero or
+    two-or-more links -- see `observation_links` and
+    `PlaceFeatureModel`'s own updated docstring."""
     zone_id: str | None = None
+    """Compatibility mirror of `observation_links`'s single link, under
+    the identical rule as `source_id` above."""
     feeder_food_type: str | None = None
     information_class: Literal["reviewed"]
     provenance: str
     created_at: datetime
     updated_at: datetime
+    observation_links: list[PlaceFeatureObservationLink] = Field(default_factory=list)
+    """The canonical, possibly-plural relationship set (Multi-Camera Place
+    Feature Linking & Cross-View Habitat Context v1) -- zero, one, or many
+    camera/Zone views of this one Feature. Use
+    `POST .../observation-links`/`DELETE .../observation-links/{id}` to
+    add or remove a view; `source_id`/`zone_id` above are a read-only
+    compatibility mirror only."""
 
 
 class PlaceFeatureCreate(BaseModel):
@@ -8518,7 +8570,17 @@ class PlaceFeatureUpdate(BaseModel):
     this camera, no specific Zone drawn"). `removed_date` is deliberately
     not present here at all -- it is only ever set by recording a
     `event_type="removed"` change event (see `PlaceFeatureModel`'s
-    docstring)."""
+    docstring).
+
+    `source_id`/`zone_id` here are a legacy, full-replacement compatibility
+    operation, preserved unchanged from before multi-view linking existed:
+    setting either **replaces this Feature's entire observation-link set**
+    with exactly the one view given (or clears it to zero views, for
+    `source_id=""`) -- it is not an incremental add. A Feature that already
+    has more than one linked view should be edited with
+    `POST/DELETE .../observation-links` instead; using this field on such a
+    Feature is a deliberate, documented "collapse back to one view"
+    operation, never a silent one."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -8654,10 +8716,11 @@ class PlaceFeatureChangeEventWithComparison(BaseModel):
     event: PlaceFeatureChangeEvent
     comparison: PlaceFeatureAssociation | None = None
     """`None` only when the event's Feature has no camera/Zone association
-    to compare against (`feature_id=None`, or a Feature with neither
-    `source_id` nor `zone_id` set) -- distinct from a `maturity` of
-    `"too_soon"`/`"insufficient_coverage"`, which means an association *was*
-    attempted but is not yet trustworthy."""
+    to compare against (`feature_id=None`, or a Feature with zero
+    `observation_links`) -- distinct from a `maturity` of `"too_soon"`/
+    `"insufficient_coverage"`, which means an association *was* attempted
+    (across every one of the Feature's own linked views, unioned and
+    cross-camera-deduplicated) but is not yet trustworthy."""
     environmental_comparison: FeatureEnvironmentalComparison | None = None
     """`None` under the identical condition as `comparison` being `None`
     (no monitoring scope), plus one further case: `comparison.maturity` is
@@ -8691,8 +8754,10 @@ class PlaceFeatureDetail(BaseModel):
     feature: PlaceFeature
     changes: list[PlaceFeatureChangeEventWithComparison]
     recent_yield: PlaceFeatureYieldSummary | None = None
-    """`None` when the Feature has no camera/Zone association at all --
-    yield cannot honestly be computed without one."""
+    """`None` when the Feature has zero observation links -- yield cannot
+    honestly be computed without at least one. Otherwise computed across
+    every one of the Feature's own linked views, unioned (coverage) and
+    cross-camera-deduplicated (Visit counts)."""
 
 
 class PlaceFeaturesSummary(BaseModel):

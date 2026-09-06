@@ -9987,6 +9987,23 @@ a.secondary-action {
   color: #8a3220;
 }
 
+/* Multi-Camera Place Feature Linking & Cross-View Habitat Context v1: the
+   "Observed by" block for one Feature row -- forced onto its own line
+   within `.habitat-phenology-list li`'s own `flex-wrap` row (a plain flex
+   item here would otherwise be squeezed inline next to the name/buttons). */
+.place-feature-observed-by {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.place-feature-observed-by .detail-actions {
+  flex-basis: 100%;
+}
+
 /* The chip's own label, made clickable (opens the inline note editor)
    without looking like a generic button -- inherits the .tag's own text
    styling exactly. */

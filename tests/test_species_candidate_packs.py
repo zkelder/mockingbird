@@ -231,7 +231,7 @@ async def test_schema_v24_migrates_candidate_pack_storage_and_defaults_existing_
     )
     try:
         selection = migrated.get_stream_species_candidate_pack_selection(STREAM_ID)
-        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 58
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION == 59
         assert selection is not None
         assert selection.selected_pack_id is None
         assert selection.effective_pack.id == "backyard-core"

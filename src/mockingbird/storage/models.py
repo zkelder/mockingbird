@@ -1966,11 +1966,32 @@ class PlaceFeatureModel(Base):
     idiom); `source_id` is coarser ("which camera," with no specific Zone
     drawn yet) and, when `zone_id` is also set, is kept consistent with
     that Zone's own Stream's Source by the repository layer rather than
-    trusted independently from a client payload. A Feature currently
-    associates with at most one Zone/Source (Phase 28's documented v2
-    limitation: a Feature visible from two cameras can only be linked to
-    one for now; its yield/before-after figures are scoped to that one
-    linked view).
+    trusted independently from a client payload.
+
+    Multi-Camera Place Feature Linking & Cross-View Habitat Context v1
+    (schema 59) lifted the prior "at most one Zone/Source" limitation this
+    docstring used to document (Phase 28 of Place Features & Habitat
+    Change v2's own brief): the canonical, possibly-plural relationship
+    set now lives in `PlaceFeatureObservationLinkModel`, one row per
+    linked camera/Zone view, referencing this row's own `id` by
+    `feature_id`. **These two columns remain on this row as a
+    repository-maintained compatibility mirror, not the source of
+    truth**: `ProductRepository` keeps them equal to the Feature's own
+    single link's `(source_id, zone_id)` pair whenever it has exactly one
+    observation link, and resets both to `NULL` whenever it has zero or
+    two-or-more links -- an honest absence rather than an arbitrarily
+    "first" link standing in for a set, matching this codebase's own
+    abstention discipline (see docs/product-doctrine.md "Measured,
+    Inferred, and Reviewed"). Existing callers reading these two columns
+    directly (`_place_story_feature_events`'s own per-event `zone_id`/
+    `source_id` projection) therefore continue to work unmodified: a
+    migrated single-link Feature reads back exactly as before, and a
+    genuinely multi-link Feature honestly reports "no single camera/Zone"
+    on this row rather than an arbitrary one. See
+    `PlaceFeatureObservationLinkModel`'s own docstring for the canonical
+    relationship shape, and
+    docs/multi-camera-place-feature-linking-cross-view-habitat-context-v1-report.md
+    for the full contract.
 
     `feeder_food_type` is a small, bounded, feeder-specific field (Phase 8
     of the governing brief) -- meaningless but harmless for a non-feeder
@@ -2098,6 +2119,101 @@ class PlaceFeatureChangeEventModel(Base):
     actor_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PlaceFeatureObservationLinkModel(Base):
+    """One camera/Zone observation view of a Place Feature (Multi-Camera
+    Place Feature Linking & Cross-View Habitat Context v1, schema 59) --
+    see docs/multi-camera-place-feature-linking-cross-view-habitat-context-v1-report.md
+    "Observation-link contract". This is the canonical, possibly-plural
+    relationship set `PlaceFeatureModel`'s own `source_id`/`zone_id`
+    columns used to hold directly, singular-only, before this milestone
+    (see that model's docstring). "These cameras are different views of
+    the same thing," not "each camera has its own duplicate feeder" --
+    the Feature's own identity/lifecycle stays entirely on
+    `PlaceFeatureModel`; this table only ever adds or removes a *view* of
+    it, never a second Feature.
+
+    Column choice: `source_id` (not `stream_id`), deliberately matching
+    `PlaceFeatureModel.source_id`'s own existing FK target exactly, rather
+    than mechanically adopting the governing brief's own candidate schema's
+    literal naming. `zone_id` is the finer-grained, optional refinement,
+    exactly mirroring `PlaceFeatureModel`'s existing
+    two-column idiom and `ProductRepository._resolve_feature_association`'s
+    existing zone-authoritative-over-source validation, reapplied per
+    link instead of once per Feature. This keeps a migrated single-link
+    Feature's one backfilled row byte-identical in shape to what
+    `PlaceFeatureModel` already stored, and needs no lossy or ambiguous
+    Source-to-Stream translation during migration.
+
+    Duplicate prevention: a plain multi-column `UniqueConstraint`
+    spanning the nullable `zone_id` would not actually work -- SQLite,
+    like standard SQL, treats every `NULL` as distinct from every other
+    `NULL` in a unique index (see `EnvironmentalContextRecordModel`'s own
+    docstring, which documents this exact pitfall). Two partial unique
+    indexes cover both cases instead (mirroring the nullable-column
+    partial-index idiom `SpeciesSuggestionModel`'s own acoustic-
+    idempotency index already established): one for a real Zone-scoped
+    link, one for a bare Source-scoped link. Backstopped, not replaced,
+    by an app-level `.is_(None)`-aware existence check in the repository
+    layer (the same "index is a backstop, the query is the real guard"
+    convention that model's own commented index already uses) -- prevents
+    the identical (feature, camera, Zone) view from being linked twice
+    while allowing a Feature to hold two independent links against the
+    very same Source (e.g. two different drawn Zones on one camera, both
+    genuinely showing part of the same physical Feature).
+
+    Reviewed truth: `information_class`/`provenance`/`actor_user_id`
+    mirror `PlaceFeatureModel`'s identical fields and reasoning exactly --
+    a human explicitly saying "this camera/Zone also shows this Feature"
+    is the same "reviewed" epistemic tier as recording the Feature
+    itself; model inference must never silently create or remove a row
+    here (see docs/product-doctrine.md "Measured, Inferred, and
+    Reviewed" and the governing brief's "No automatic physical-object
+    inference"). No `updated_at`: a link is only ever added or removed,
+    never edited in place, mirroring `VisitEvidenceLinkModel`'s identical
+    "created_at only" precedent for the same reason.
+
+    Deletion: removing a link is always allowed and never deletes the
+    Feature, even when it is the Feature's only remaining link (Phase 15
+    of the governing brief: an observation-link change describes
+    monitoring configuration, never a physical habitat change, and must
+    never be confused with `PlaceFeatureChangeEventModel`'s own durable,
+    Reviewed change-event history). Conversely, hard-deleting a Feature
+    itself (`ProductRepository.remove_place_feature`, blocked only by
+    existing change-event history) cascades a bulk delete of this
+    Feature's own link rows in the same transaction -- a link carries no
+    historical weight of its own that would need `PlaceFeatureHasHistoryError`'s
+    protection, so leaving them behind as orphans would be a pure defect,
+    not a safety feature.
+    """
+
+    __tablename__ = "place_feature_observation_links"
+    __table_args__ = (
+        Index("ix_place_feature_observation_links_feature", "feature_id"),
+        Index("ix_place_feature_observation_links_source", "source_id"),
+        Index(
+            "uq_place_feature_observation_links_zoned",
+            "feature_id", "source_id", "zone_id",
+            unique=True,
+            sqlite_where=text("zone_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_place_feature_observation_links_unzoned",
+            "feature_id", "source_id",
+            unique=True,
+            sqlite_where=text("zone_id IS NULL"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    feature_id: Mapped[str] = mapped_column(ForeignKey("place_features.id"), nullable=False)
+    source_id: Mapped[str] = mapped_column(ForeignKey("camera_sources.id"), nullable=False)
+    zone_id: Mapped[str | None] = mapped_column(ForeignKey("zones.id"), nullable=True)
+    information_class: Mapped[str] = mapped_column(String, nullable=False)
+    provenance: Mapped[str] = mapped_column(String, nullable=False)
+    actor_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class EcologicalTaxonomyMappingModel(Base):

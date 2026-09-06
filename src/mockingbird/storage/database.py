@@ -10,6 +10,7 @@ import shutil
 import sys
 import tempfile
 from typing import Callable
+import uuid
 
 from sqlalchemy import (
     Column,
@@ -42,7 +43,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 58
+CURRENT_DATABASE_SCHEMA_VERSION = 59
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -1618,6 +1619,70 @@ def _migrate_to_field_acceptance_authentication(connection: Connection) -> None:
     Base.metadata.tables["field_acceptance_credentials"].create(bind=connection, checkfirst=True)
 
 
+def _migrate_to_place_feature_observation_links(connection: Connection) -> None:
+    """Multi-Camera Place Feature Linking & Cross-View Habitat Context v1:
+    add the additive `place_feature_observation_links` table (see
+    docs/multi-camera-place-feature-linking-cross-view-habitat-context-v1-report.md
+    "Schema / migration decision") and, unlike every purely-additive
+    migration above, backfill it: every existing `place_features` row with
+    a non-`NULL` `source_id` gets exactly one corresponding link row,
+    carrying over its own `source_id`/`zone_id`/`information_class`/
+    `provenance`/`actor_user_id` verbatim and reusing the Feature's own
+    `created_at` as the link's honest "this association has existed since
+    the Feature was created" timestamp -- the same Reviewed fact a human
+    already recorded, restructured into its new home, never invented or
+    guessed. A Feature whose `source_id` was already `NULL` (Place-wide
+    knowledge, no camera association) correctly gets zero link rows, not a
+    fabricated empty one.
+
+    This backfill is required, not optional, for this migration: unlike
+    `_migrate_to_cross_camera_visit_association`'s own "an upgraded
+    installation starts as cold as a brand-new one" precedent (nothing
+    real existed yet for that concept), an upgraded installation's
+    *existing* single-camera Features must migrate with zero semantic
+    change (see the governing brief's "Backward compatibility") -- there
+    is real pre-existing data to carry forward here. `PlaceFeatureModel.
+    source_id`/`zone_id` themselves are left untouched by this migration
+    (see that model's own updated docstring): they become a repository-
+    maintained compatibility mirror going forward, and already hold
+    exactly the right value for every migrated single-link Feature
+    without any column-level change.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Multi-Camera Place Feature Linking migration requires local SQLite storage."
+        )
+    Base.metadata.tables["place_feature_observation_links"].create(bind=connection, checkfirst=True)
+
+    features_table = Base.metadata.tables["place_features"]
+    links_table = Base.metadata.tables["place_feature_observation_links"]
+    existing_features = connection.execute(
+        select(
+            features_table.c.id,
+            features_table.c.source_id,
+            features_table.c.zone_id,
+            features_table.c.information_class,
+            features_table.c.provenance,
+            features_table.c.actor_user_id,
+            features_table.c.created_at,
+        ).where(features_table.c.source_id.is_not(None))
+    ).all()
+    for feature_row in existing_features:
+        connection.execute(
+            links_table.insert().values(
+                id=f"feature-link-{uuid.uuid4().hex[:16]}",
+                feature_id=feature_row.id,
+                source_id=feature_row.source_id,
+                zone_id=feature_row.zone_id,
+                information_class=feature_row.information_class,
+                provenance=feature_row.provenance,
+                actor_user_id=feature_row.actor_user_id,
+                created_at=feature_row.created_at,
+            )
+        )
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -1676,6 +1741,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     56: _migrate_to_notification_preferences,
     57: _migrate_to_ecological_interoperability,
     58: _migrate_to_field_acceptance_authentication,
+    59: _migrate_to_place_feature_observation_links,
 }
 
 

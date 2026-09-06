@@ -421,6 +421,8 @@ from mockingbird.api.schemas import (
     PlaceFeatureChangeEventUpdate,
     PlaceFeatureCreate,
     PlaceFeatureDetail,
+    PlaceFeatureObservationLink,
+    PlaceFeatureObservationLinkCreate,
     PlaceFeatureUpdate,
     PlaceFeaturesSummary,
     PlaceHabitatContext,
@@ -15539,6 +15541,51 @@ async def delete_place_feature(feature_id: str, request: Request) -> Response:
         raise HTTPException(status_code=409, detail=str(error)) from None
     if not removed:
         raise _not_found("Place Feature", feature_id)
+    return Response(status_code=204)
+
+
+@app.post(
+    "/api/place/features/{feature_id}/observation-links",
+    response_model=PlaceFeatureObservationLink,
+    status_code=201,
+)
+async def create_place_feature_observation_link(
+    feature_id: str, payload: PlaceFeatureObservationLinkCreate, request: Request
+) -> PlaceFeatureObservationLink:
+    """Add one camera/Zone observation view to an existing Feature -- see
+    docs/multi-camera-place-feature-linking-cross-view-habitat-context-v1-report.md.
+    Use this (not `PATCH .../features/{feature_id}`) to link an additional
+    view without disturbing any already-linked ones."""
+
+    current_user = current_user_or_401(request)
+    try:
+        link = get_repository().add_place_feature_observation_link(
+            feature_id, payload, acting_user=current_user
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    if link is None:
+        raise _not_found("Place Feature", feature_id)
+    return link
+
+
+@app.delete(
+    "/api/place/features/{feature_id}/observation-links/{link_id}", status_code=204
+)
+async def delete_place_feature_observation_link(
+    feature_id: str, link_id: str, request: Request
+) -> Response:
+    """Remove one observation view. Always allowed, even when it is the
+    Feature's last remaining link -- the Feature itself is never deleted
+    as a side effect (use `DELETE /api/place/features/{feature_id}` for
+    that, separately gated by change-event history)."""
+
+    current_user = current_user_or_401(request)
+    removed = get_repository().remove_place_feature_observation_link(
+        feature_id, link_id, acting_user=current_user
+    )
+    if not removed:
+        raise _not_found("Observation link", link_id)
     return Response(status_code=204)
 
 

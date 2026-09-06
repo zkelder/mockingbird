@@ -5404,6 +5404,26 @@ export type EnvironmentalComparisonStatus =
   | "insufficient_coverage"
   | "comparable";
 
+// Multi-Camera Place Feature Linking & Cross-View Habitat Context v1: one
+// camera/Zone observation view of a Place Feature. `source_name`/`zone_name`/
+// `source_archived` are joined in fresh at read time (never stored
+// redundantly), so a camera rename is always reflected immediately and never
+// breaks the link.
+export interface PlaceFeatureObservationLink {
+  id: string;
+  source_id: string;
+  source_name: string;
+  source_archived: boolean;
+  zone_id?: string | null;
+  zone_name?: string | null;
+  created_at: string;
+}
+
+export interface PlaceFeatureObservationLinkCreate {
+  source_id?: string | null;
+  zone_id?: string | null;
+}
+
 export interface PlaceFeature {
   id: string;
   feature_type: PlaceFeatureType;
@@ -5412,6 +5432,10 @@ export interface PlaceFeature {
   is_active: boolean;
   installed_date?: string | null;
   removed_date?: string | null;
+  // Compatibility mirror, not the source of truth: populated only when this
+  // Feature has exactly one observation link (byte-identical to every
+  // pre-multi-view Feature's own value), and null for zero or two-or-more
+  // links -- see `observation_links` below.
   source_id?: string | null;
   zone_id?: string | null;
   feeder_food_type?: string | null;
@@ -5419,6 +5443,10 @@ export interface PlaceFeature {
   provenance: string;
   created_at: string;
   updated_at: string;
+  // The canonical, possibly-plural relationship set -- zero, one, or many
+  // camera/Zone views of this one Feature. Use the dedicated observation-link
+  // add/remove API to change it; `source_id`/`zone_id` above are read-only.
+  observation_links: PlaceFeatureObservationLink[];
 }
 
 export interface PlaceFeatureCreate {
@@ -5442,6 +5470,12 @@ export interface PlaceFeatureCreate {
 // `installed_date` in the same request). `removed_date` is deliberately
 // not present here at all -- it is only ever set by recording an
 // `event_type: "removed"` change event.
+//
+// `source_id`/`zone_id` here are a legacy, full-replacement compatibility
+// operation: setting either **replaces this Feature's entire observation-
+// link set** with exactly the one view given (or clears it to zero views,
+// for `source_id: ""`) -- never an incremental add. Use the dedicated
+// observation-link add/remove API to link an additional view.
 export interface PlaceFeatureUpdate {
   feature_type?: PlaceFeatureType;
   name?: string;
@@ -5527,9 +5561,10 @@ export interface FeatureEnvironmentalComparison {
 
 export interface PlaceFeatureChangeEventWithComparison {
   event: PlaceFeatureChangeEvent;
-  // null only when the event's Feature has no camera/Zone association to
-  // compare against -- distinct from a maturity of "too_soon"/
-  // "insufficient_coverage", which means an association *was* attempted.
+  // null only when the event's Feature has zero observation links --
+  // distinct from a maturity of "too_soon"/"insufficient_coverage", which
+  // means an association *was* attempted (across every linked view, unioned
+  // and cross-camera-deduplicated).
   comparison?: PlaceFeatureAssociation | null;
   // null under the identical condition as `comparison` being null, plus one
   // further case: `comparison.maturity` is "too_soon"/"insufficient_coverage"
@@ -5552,8 +5587,8 @@ export interface PlaceFeatureYieldSummary {
 export interface PlaceFeatureDetail {
   feature: PlaceFeature;
   changes: PlaceFeatureChangeEventWithComparison[];
-  // null when the Feature has no camera/Zone association at all -- yield
-  // cannot honestly be computed without one.
+  // null when the Feature has zero observation links -- yield cannot
+  // honestly be computed without at least one.
   recent_yield?: PlaceFeatureYieldSummary | null;
 }
 

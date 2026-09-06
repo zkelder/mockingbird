@@ -1067,6 +1067,19 @@ export function PlaceActivityReportPage({ sources, onOpenVisit, onOpenBirdLog }:
                 <li key={feature.id}>
                   <strong>{feature.name}</strong> &middot; {FEATURE_TYPE_DISPLAY_NAMES[feature.feature_type]}
                   {!feature.is_active ? <StatusPill label="Inactive" tone="quiet" /> : null}
+                  <span className="meta-text place-feature-observed-by">
+                    Observed by:{" "}
+                    {feature.observation_links.length > 0
+                      ? feature.observation_links
+                          .map(
+                            (link) =>
+                              `${link.source_name}${link.source_archived ? " (archived)" : ""}${
+                                link.zone_name ? ` — ${link.zone_name}` : ""
+                              }`,
+                          )
+                          .join(", ")
+                      : "no camera linked"}
+                  </span>
                   <button
                     className="text-action"
                     onClick={() => toggleFeatureDetail(feature.id)}

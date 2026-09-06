@@ -800,6 +800,8 @@ from mockingbird.api.schemas import (
     PlaceFeatureChangeEventWithComparison,
     PlaceFeatureCreate,
     PlaceFeatureDetail,
+    PlaceFeatureObservationLink,
+    PlaceFeatureObservationLinkCreate,
     PlaceFeatureUpdate,
     PlaceFeatureYieldSummary,
     PlaceFeaturesSummary,
@@ -883,6 +885,7 @@ from mockingbird.storage.models import (
     MonitoringExposureIntervalModel,
     PlaceFeatureChangeEventModel,
     PlaceFeatureModel,
+    PlaceFeatureObservationLinkModel,
     PlaceHabitatFactModel,
     PlacePhenologyObservationModel,
     ProductAlertModel,
@@ -5729,7 +5732,11 @@ class ProductRepository:
     FEATURE_RECENT_CHANGE_WINDOW_DAYS = 7
 
     @staticmethod
-    def _place_feature_from_model(model: PlaceFeatureModel) -> PlaceFeature:
+    def _place_feature_from_model(
+        model: PlaceFeatureModel,
+        *,
+        observation_links: Sequence[PlaceFeatureObservationLink] = (),
+    ) -> PlaceFeature:
         return PlaceFeature(
             id=model.id,
             feature_type=model.feature_type,
@@ -5745,7 +5752,127 @@ class ProductRepository:
             provenance=model.provenance,
             created_at=_as_utc(model.created_at),
             updated_at=_as_utc(model.updated_at),
+            observation_links=list(observation_links),
         )
+
+    @staticmethod
+    def _place_feature_observation_link_response(
+        link: PlaceFeatureObservationLinkModel,
+        *,
+        source_by_id: dict[str, CameraSourceModel],
+        zone_by_id: dict[str, ZoneModel],
+    ) -> PlaceFeatureObservationLink:
+        source = source_by_id.get(link.source_id)
+        zone = zone_by_id.get(link.zone_id) if link.zone_id is not None else None
+        return PlaceFeatureObservationLink(
+            id=link.id,
+            source_id=link.source_id,
+            source_name=source.name if source is not None else "Unknown camera",
+            source_archived=source is not None and source.status == SourceStatus.archived.value,
+            zone_id=link.zone_id,
+            zone_name=zone.name if zone is not None else None,
+            created_at=_as_utc(link.created_at),
+        )
+
+    def _place_feature_observation_link_models(
+        self, session: Session, feature_id: str
+    ) -> list[PlaceFeatureObservationLinkModel]:
+        """Every observation-link row for one Feature, oldest-linked-first --
+        the raw ORM rows, for internal scope-resolution use; see
+        `_place_feature_observation_link_context` for the batched,
+        API-response-shaped equivalent used across many Features at once."""
+
+        return list(
+            session.scalars(
+                select(PlaceFeatureObservationLinkModel)
+                .where(PlaceFeatureObservationLinkModel.feature_id == feature_id)
+                .order_by(PlaceFeatureObservationLinkModel.created_at.asc())
+            ).all()
+        )
+
+    def _place_feature_observation_link_context(
+        self,
+        session: Session,
+        feature_ids: Sequence[str],
+        *,
+        links: Sequence[PlaceFeatureObservationLinkModel] | None = None,
+    ) -> tuple[
+        dict[str, list[PlaceFeatureObservationLinkModel]],
+        dict[str, CameraSourceModel],
+        dict[str, ZoneModel],
+    ]:
+        """Batched load of every observation link across `feature_ids` plus
+        the Sources/Zones they reference -- exactly three bounded queries
+        regardless of how many Features or links are in scope (never
+        Feature-count x link-count x Source/Zone-count), so a Place Report
+        listing many Features stays proportionate. See the governing
+        brief's "Performance".
+
+        `links`, when given (a caller that already fetched them, e.g.
+        `get_place_feature_detail`'s own single up-front fetch), skips the
+        links query entirely -- only the Source/Zone lookups run -- so a
+        Feature with several change events never re-queries the identical,
+        unchanging link rows once per event."""
+
+        links_by_feature: dict[str, list[PlaceFeatureObservationLinkModel]] = {
+            feature_id: [] for feature_id in feature_ids
+        }
+        if not feature_ids:
+            return links_by_feature, {}, {}
+        if links is None:
+            links = session.scalars(
+                select(PlaceFeatureObservationLinkModel)
+                .where(PlaceFeatureObservationLinkModel.feature_id.in_(feature_ids))
+                .order_by(PlaceFeatureObservationLinkModel.created_at.asc())
+            ).all()
+        source_ids: set[str] = set()
+        zone_ids: set[str] = set()
+        for link in links:
+            links_by_feature.setdefault(link.feature_id, []).append(link)
+            source_ids.add(link.source_id)
+            if link.zone_id is not None:
+                zone_ids.add(link.zone_id)
+        source_by_id = {
+            source.id: source
+            for source in (
+                session.scalars(
+                    select(CameraSourceModel).where(CameraSourceModel.id.in_(source_ids))
+                ).all()
+                if source_ids
+                else []
+            )
+        }
+        zone_by_id = {
+            zone.id: zone
+            for zone in (
+                session.scalars(select(ZoneModel).where(ZoneModel.id.in_(zone_ids))).all()
+                if zone_ids
+                else []
+            )
+        }
+        return links_by_feature, source_by_id, zone_by_id
+
+    def _place_feature_response(
+        self,
+        session: Session,
+        model: PlaceFeatureModel,
+        *,
+        links: Sequence[PlaceFeatureObservationLinkModel] | None = None,
+    ) -> PlaceFeature:
+        """Single-Feature convenience wrapper over the batched loader --
+        still bounded (two or three queries, matching that method's own
+        `links` contract)."""
+
+        links_by_feature, source_by_id, zone_by_id = self._place_feature_observation_link_context(
+            session, [model.id], links=links,
+        )
+        observation_links = [
+            self._place_feature_observation_link_response(
+                link, source_by_id=source_by_id, zone_by_id=zone_by_id
+            )
+            for link in links_by_feature.get(model.id, [])
+        ]
+        return self._place_feature_from_model(model, observation_links=observation_links)
 
     @staticmethod
     def _place_feature_change_event_from_model(
@@ -5767,13 +5894,29 @@ class ProductRepository:
 
     def list_place_features(self) -> list[PlaceFeature]:
         """Every recorded Place Feature, newest-created-first. An empty
-        list is a normal, honest "nothing recorded yet" outcome."""
+        list is a normal, honest "nothing recorded yet" outcome. Each
+        Feature's own `observation_links` are loaded via one batched
+        query across every Feature in scope, never per-Feature."""
 
         with self.session_factory() as session:
             models = session.scalars(
                 select(PlaceFeatureModel).order_by(PlaceFeatureModel.created_at.desc())
             ).all()
-            return [self._place_feature_from_model(model) for model in models]
+            links_by_feature, source_by_id, zone_by_id = self._place_feature_observation_link_context(
+                session, [model.id for model in models]
+            )
+            return [
+                self._place_feature_from_model(
+                    model,
+                    observation_links=[
+                        self._place_feature_observation_link_response(
+                            link, source_by_id=source_by_id, zone_by_id=zone_by_id
+                        )
+                        for link in links_by_feature.get(model.id, [])
+                    ],
+                )
+                for model in models
+            ]
 
     def _resolve_feature_association(
         self, session: Session, *, source_id: str | None, zone_id: str | None
@@ -5831,6 +5974,27 @@ class ProductRepository:
                 )
                 session.add(model)
                 session.flush()
+                # The Feature's first observation link, if a camera/Zone was
+                # given at creation time -- created directly as one row in
+                # the canonical link table (not via `_replace_feature_
+                # observation_links`, since there is nothing to replace yet)
+                # so a Feature created with a camera behaves identically to
+                # one linked immediately afterward via the dedicated
+                # add-link endpoint.
+                if source_id is not None:
+                    session.add(
+                        PlaceFeatureObservationLinkModel(
+                            id=f"feature-link-{uuid.uuid4().hex[:16]}",
+                            feature_id=model.id,
+                            source_id=source_id,
+                            zone_id=zone_id,
+                            information_class=place_feature_vocab.FEATURE_INFORMATION_CLASS,
+                            provenance=place_feature_vocab.FEATURE_PROVENANCE_MANUAL_ENTRY,
+                            actor_user_id=acting_user.id,
+                            created_at=now,
+                        )
+                    )
+                    session.flush()
                 self._record_audit_event_in_session(
                     session, now=now, actor_user_id=acting_user.id, actor_display_name=acting_user.display_name,
                     action="place_feature.feature_added", target_type="place_feature",
@@ -5863,7 +6027,7 @@ class ProductRepository:
                         action="place_feature.change_added", target_type="place_feature_change_event",
                         target_id=event.id, metadata={"feature_id": model.id, "event_type": "added"},
                     )
-                return self._place_feature_from_model(model)
+                return self._place_feature_response(session, model)
 
     def update_place_feature(
         self, feature_id: str, payload: PlaceFeatureUpdate, *, acting_user: CurrentUser
@@ -5894,24 +6058,46 @@ class ProductRepository:
                 # (no `zone_id` in the same request) sets the Source and
                 # clears any existing Zone link, so this row can never hold
                 # an inconsistent (source_id, zone_id) pair; `""` explicitly
-                # clears -- see `PlaceFeatureUpdate`'s own docstring.
+                # clears -- see `PlaceFeatureUpdate`'s own docstring. Each
+                # branch also replaces the Feature's *entire* observation-
+                # link set with exactly this one resolved (source_id,
+                # zone_id) pair (or clears it to zero links) -- this is a
+                # legacy, full-replacement compatibility operation, not an
+                # incremental add; see `PlaceFeatureUpdate`'s own docstring
+                # and `_replace_feature_observation_links`.
                 if payload.zone_id:
                     new_source_id, new_zone_id = self._resolve_feature_association(
                         session, source_id=None, zone_id=payload.zone_id,
                     )
                     model.source_id = new_source_id
                     model.zone_id = new_zone_id
+                    self._replace_feature_observation_links(
+                        session, feature_id, source_id=new_source_id, zone_id=new_zone_id,
+                        now=now, acting_user=acting_user,
+                    )
                 elif payload.source_id:
                     new_source_id, new_zone_id = self._resolve_feature_association(
                         session, source_id=payload.source_id, zone_id=None,
                     )
                     model.source_id = new_source_id
                     model.zone_id = new_zone_id
+                    self._replace_feature_observation_links(
+                        session, feature_id, source_id=new_source_id, zone_id=new_zone_id,
+                        now=now, acting_user=acting_user,
+                    )
                 elif payload.source_id == "":
                     model.source_id = None
                     model.zone_id = None
+                    self._replace_feature_observation_links(
+                        session, feature_id, source_id=None, zone_id=None,
+                        now=now, acting_user=acting_user,
+                    )
                 elif payload.zone_id == "":
                     model.zone_id = None
+                    self._replace_feature_observation_links(
+                        session, feature_id, source_id=model.source_id, zone_id=None,
+                        now=now, acting_user=acting_user,
+                    )
                 model.updated_at = now
                 session.flush()
                 self._record_audit_event_in_session(
@@ -5919,7 +6105,7 @@ class ProductRepository:
                     action="place_feature.feature_updated", target_type="place_feature",
                     target_id=model.id, metadata=None,
                 )
-                return self._place_feature_from_model(model)
+                return self._place_feature_response(session, model)
 
     def remove_place_feature(self, feature_id: str, *, acting_user: CurrentUser) -> bool:
         """Hard-deletes a Feature only when it has no recorded change-event
@@ -5949,6 +6135,15 @@ class ProductRepository:
                     action="place_feature.feature_removed", target_type="place_feature",
                     target_id=model.id, metadata={"feature_type": model.feature_type, "name": model.name},
                 )
+                # Observation links carry no historical weight of their own
+                # (Phase 15 of the governing brief: a link describes current
+                # monitoring configuration, never a Reviewed physical-habitat
+                # change) -- a hard-deleted Feature's own links are deleted
+                # alongside it in the same transaction rather than left as
+                # orphans; this is exactly why they are never counted toward
+                # `has_history` above.
+                for link in self._place_feature_observation_link_models(session, feature_id):
+                    session.delete(link)
                 session.delete(model)
                 return True
 
@@ -6015,6 +6210,166 @@ class ProductRepository:
             model.feeder_food_type = latest_food_changed.new_value
 
         model.updated_at = now
+
+    def _recompute_feature_association_mirror(
+        self, session: Session, feature_id: str, *, now: datetime
+    ) -> None:
+        """Keep `PlaceFeatureModel.source_id`/`zone_id`'s compatibility-
+        mirror columns in sync with the canonical link set after any
+        observation-link add/remove -- populated only when the Feature has
+        exactly one observation link (byte-identical to every migrated
+        single-link Feature's own pre-multi-view value), and honestly
+        `NULL`/`NULL` for zero or two-or-more links, never an arbitrary
+        "first" link standing in for a set (see `PlaceFeatureModel`'s own
+        docstring and docs/product-doctrine.md "Measured, Inferred, and
+        Reviewed"). A no-op when the Feature no longer exists."""
+
+        model = session.get(PlaceFeatureModel, feature_id)
+        if model is None:
+            return
+        links = self._place_feature_observation_link_models(session, feature_id)
+        if len(links) == 1:
+            model.source_id = links[0].source_id
+            model.zone_id = links[0].zone_id
+        else:
+            model.source_id = None
+            model.zone_id = None
+        model.updated_at = now
+
+    def _replace_feature_observation_links(
+        self,
+        session: Session,
+        feature_id: str,
+        *,
+        source_id: str | None,
+        zone_id: str | None,
+        now: datetime,
+        acting_user: CurrentUser,
+    ) -> None:
+        """Legacy singular-field compatibility only: `PlaceFeatureUpdate.
+        source_id`/`zone_id` are a full-replacement operation on the
+        canonical link set, not an incremental add -- matching that field's
+        own pre-multi-view "the whole association, replaced" semantics
+        exactly (see `PlaceFeatureUpdate`'s docstring). Deletes every
+        existing link for this Feature and, when `source_id` is given,
+        creates exactly one new link in its place. Use
+        `add_place_feature_observation_link`/`remove_place_feature_
+        observation_link` to edit a Feature's links incrementally instead.
+        Does not itself call `_recompute_feature_association_mirror`: the
+        caller (`update_place_feature`) already sets `model.source_id`/
+        `zone_id` to these identical values directly."""
+
+        for link in self._place_feature_observation_link_models(session, feature_id):
+            session.delete(link)
+        session.flush()
+        if source_id is not None:
+            session.add(
+                PlaceFeatureObservationLinkModel(
+                    id=f"feature-link-{uuid.uuid4().hex[:16]}",
+                    feature_id=feature_id,
+                    source_id=source_id,
+                    zone_id=zone_id,
+                    information_class=place_feature_vocab.FEATURE_INFORMATION_CLASS,
+                    provenance=place_feature_vocab.FEATURE_PROVENANCE_MANUAL_ENTRY,
+                    actor_user_id=acting_user.id,
+                    created_at=now,
+                )
+            )
+            session.flush()
+
+    def add_place_feature_observation_link(
+        self, feature_id: str, payload: PlaceFeatureObservationLinkCreate, *, acting_user: CurrentUser,
+    ) -> PlaceFeatureObservationLink | None:
+        """Add one camera/Zone observation view to an existing Feature --
+        the incremental counterpart to `_replace_feature_observation_links`.
+        `None` when the Feature does not exist. Raises `ValueError` for an
+        invalid/mismatched Source or Zone (`_resolve_feature_association`,
+        reused unmodified and reapplied per link) or for a duplicate of an
+        already-existing identical (Source, Zone) view on this Feature --
+        `PlaceFeatureObservationLinkCreate`'s own validator already rejects
+        a payload naming neither. Duplicate prevention is app-level here
+        (using an explicit `.is_(None)`-aware query, since SQLite treats
+        every `NULL` in a unique index as distinct from every other `NULL`
+        -- see `PlaceFeatureObservationLinkModel`'s own docstring); the two
+        partial unique indexes on that table are a backstop, not the
+        primary guard, matching this codebase's own established
+        `EnvironmentalContextRecordModel` precedent for the identical
+        pitfall."""
+
+        with self.session_factory() as session:
+            with session.begin():
+                feature = session.get(PlaceFeatureModel, feature_id)
+                if feature is None:
+                    return None
+                now = datetime.now(UTC)
+                source_id, zone_id = self._resolve_feature_association(
+                    session, source_id=payload.source_id, zone_id=payload.zone_id,
+                )
+                assert source_id is not None  # guaranteed by the create payload's own validator
+                duplicate_query = select(PlaceFeatureObservationLinkModel).where(
+                    PlaceFeatureObservationLinkModel.feature_id == feature_id,
+                    PlaceFeatureObservationLinkModel.source_id == source_id,
+                )
+                duplicate_query = duplicate_query.where(
+                    PlaceFeatureObservationLinkModel.zone_id == zone_id
+                    if zone_id is not None
+                    else PlaceFeatureObservationLinkModel.zone_id.is_(None)
+                )
+                if session.scalar(duplicate_query.limit(1)) is not None:
+                    raise ValueError("This camera/Zone view is already linked to this Feature.")
+                link = PlaceFeatureObservationLinkModel(
+                    id=f"feature-link-{uuid.uuid4().hex[:16]}",
+                    feature_id=feature_id,
+                    source_id=source_id,
+                    zone_id=zone_id,
+                    information_class=place_feature_vocab.FEATURE_INFORMATION_CLASS,
+                    provenance=place_feature_vocab.FEATURE_PROVENANCE_MANUAL_ENTRY,
+                    actor_user_id=acting_user.id,
+                    created_at=now,
+                )
+                session.add(link)
+                session.flush()
+                self._recompute_feature_association_mirror(session, feature_id, now=now)
+                self._record_audit_event_in_session(
+                    session, now=now, actor_user_id=acting_user.id, actor_display_name=acting_user.display_name,
+                    action="place_feature.observation_link_added", target_type="place_feature_observation_link",
+                    target_id=link.id,
+                    metadata={"feature_id": feature_id, "source_id": source_id, "zone_id": zone_id},
+                )
+                session.flush()
+                _links_by_feature, source_by_id, zone_by_id = self._place_feature_observation_link_context(
+                    session, [feature_id]
+                )
+                return self._place_feature_observation_link_response(
+                    link, source_by_id=source_by_id, zone_by_id=zone_by_id
+                )
+
+    def remove_place_feature_observation_link(
+        self, feature_id: str, link_id: str, *, acting_user: CurrentUser,
+    ) -> bool:
+        """Remove one observation link. Always allowed, even when it is the
+        Feature's last remaining link: removing a link never deletes the
+        Feature itself (Phase 8/15 of the governing brief) -- a Place-wide
+        Feature with zero links is an ordinary, already-supported state.
+        `False` when the Feature or link does not exist, or the link
+        belongs to a different Feature."""
+
+        now = datetime.now(UTC)
+        with self.session_factory() as session:
+            with session.begin():
+                link = session.get(PlaceFeatureObservationLinkModel, link_id)
+                if link is None or link.feature_id != feature_id:
+                    return False
+                self._record_audit_event_in_session(
+                    session, now=now, actor_user_id=acting_user.id, actor_display_name=acting_user.display_name,
+                    action="place_feature.observation_link_removed", target_type="place_feature_observation_link",
+                    target_id=link.id,
+                    metadata={"feature_id": feature_id, "source_id": link.source_id, "zone_id": link.zone_id},
+                )
+                session.delete(link)
+                session.flush()
+                self._recompute_feature_association_mirror(session, feature_id, now=now)
+                return True
 
     def list_place_feature_change_events(
         self, *, feature_id: str | None = None
@@ -6128,63 +6483,128 @@ class ProductRepository:
                     self._recompute_feature_derived_state(session, feature_id, now=now)
                 return True
 
-    def _feature_monitoring_stream_ids(
-        self, session: Session, feature: PlaceFeatureModel
-    ) -> list[str]:
-        """Every Stream this Feature's association resolves to: the single
-        Stream owning its linked Zone, or every non-archived Stream
-        belonging to its linked Source, or an empty list when the Feature
-        has no camera/Zone association at all."""
+    def _feature_observation_scopes(
+        self,
+        session: Session,
+        feature: PlaceFeatureModel,
+        *,
+        links: Sequence[PlaceFeatureObservationLinkModel] | None = None,
+    ) -> list[tuple[str, str | None]]:
+        """Every `(stream_id, zone_id)` resolution this Feature's own
+        linked observation views produce, in link-creation order --
+        `links`, when given, skips this method's own link-row fetch (see
+        `_place_feature_observation_link_context`'s identical parameter) --
+        `zone_id` is `None` for a link with no Zone (any Visit on that
+        whole Stream counts toward this Feature), or the link's own Zone
+        id (only a Visit in that exact Zone counts). Shared by
+        `_feature_monitoring_stream_ids` (the flat Stream-only union, for
+        coverage/usable-day scoping, where a whole Stream's own monitoring
+        coverage is the right granularity regardless of which Zone within
+        it a link names -- Zones have no separate exposure ledger of their
+        own) and `_feature_scoped_visit_facts` (the precise per-link Visit
+        filter, where two links naming two different Zones on the very
+        same Stream must never cross-contaminate each other's counts).
 
-        if feature.zone_id is not None:
-            zone = session.get(ZoneModel, feature.zone_id)
-            return [zone.stream_id] if zone is not None else []
-        if feature.source_id is not None:
+        Deliberately does not exclude an archived Source's Streams, unlike
+        this method's own pre-multi-view precedent (which only applied
+        that exclusion to a bare-Source link, leaving a Zone-linked
+        Feature's history always reachable -- an inconsistency this
+        milestone found and closed): archiving preserves history (see
+        docs/product-doctrine.md), and a Feature's own linked view is one
+        of the few remaining places this product would otherwise silently
+        make a real past encounter unreachable, rather than merely
+        defaulting a *current* view away. See docs/multi-camera-place-
+        feature-linking-cross-view-habitat-context-v1-report.md
+        "Archived-camera behavior"."""
+
+        resolved_links = (
+            links if links is not None else self._place_feature_observation_link_models(session, feature.id)
+        )
+        scopes: list[tuple[str, str | None]] = []
+        for link in resolved_links:
+            if link.zone_id is not None:
+                zone = session.get(ZoneModel, link.zone_id)
+                if zone is not None:
+                    scopes.append((zone.stream_id, link.zone_id))
+                continue
             rows = session.execute(
-                select(StreamModel.id)
-                .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
-                .where(
-                    StreamModel.source_id == feature.source_id,
-                    CameraSourceModel.status != SourceStatus.archived.value,
-                )
+                select(StreamModel.id).where(StreamModel.source_id == link.source_id)
             ).all()
-            return [row[0] for row in rows]
-        return []
+            scopes.extend((row[0], None) for row in rows)
+        return scopes
+
+    def _feature_monitoring_stream_ids(
+        self,
+        session: Session,
+        feature: PlaceFeatureModel,
+        *,
+        links: Sequence[PlaceFeatureObservationLinkModel] | None = None,
+    ) -> list[str]:
+        """Every Stream any of this Feature's observation links resolves
+        to, deduplicated, in first-seen order -- an empty list when the
+        Feature has zero observation links. `links`: see
+        `_feature_observation_scopes`."""
+
+        seen: set[str] = set()
+        stream_ids: list[str] = []
+        for stream_id, _zone_id in self._feature_observation_scopes(session, feature, links=links):
+            if stream_id not in seen:
+                seen.add(stream_id)
+                stream_ids.append(stream_id)
+        return stream_ids
 
     def _feature_scoped_visit_facts(
         self,
         session: Session,
         feature: PlaceFeatureModel,
-        stream_ids: list[str],
         *,
         start_at: datetime,
         end_at: datetime,
         taxonomy_index: dict[str, TaxonomyLabelModel],
+        links: Sequence[PlaceFeatureObservationLinkModel] | None = None,
     ) -> list[VisitFact]:
-        """Visit facts within `[start_at, end_at)` for exactly this
-        Feature's own scope -- its linked Zone only, when set, else every
-        Visit across its linked Source's Streams.
+        """Visit facts within `[start_at, end_at)` across every one of this
+        Feature's own linked observation views, deduplicated across
+        cameras.
 
-        Deliberately does not apply `_associated_visit_ids_to_exclude_
-        from_counting`'s cross-camera-duplicate exclusion, unlike
-        `place_activity_report` -- a documented, bounded simplification for
-        this single-Feature scope; see "Performance" in
-        docs/place-features-habitat-change-v2-report.md."""
+        Two things a single-link Feature never had to handle: (1) built as
+        a per-link `OR` of precise clauses (a Zone-scoped link matches only
+        that exact Zone; a bare-Source-scoped link matches any Visit on
+        any of that Source's Streams) rather than one flattened
+        `stream_id`/`zone_id` filter pair, so two links naming two
+        different Zones on the very same Stream never cross-contaminate;
+        (2) applies `_associated_visit_ids_to_exclude_from_counting` (the
+        identical primitive `place_activity_report`/Bird Log/historical-
+        baseline already use for the same Place-wide question), reused
+        unmodified rather than a second duplicate-counting engine -- one
+        real encounter recorded by two linked cameras counts once, not
+        twice. A single-link Feature could never actually reach this
+        exclusion before this milestone (its one linked Source is
+        definitionally the only side of any cross-camera pair in scope),
+        so the prior absence of this call was a correct, previously-inert
+        simplification that multi-view linking now makes load-bearing --
+        see the governing brief's "Duplicate safety". `links`: see
+        `_feature_observation_scopes`."""
 
-        if not stream_ids:
+        scopes = self._feature_observation_scopes(session, feature, links=links)
+        if not scopes:
             return []
+        clauses = [
+            and_(EventModel.stream_id == stream_id, VisitModel.zone_id == zone_id)
+            if zone_id is not None
+            else EventModel.stream_id == stream_id
+            for stream_id, zone_id in scopes
+        ]
         query = (
             select(VisitModel, EventModel)
             .join(EventModel, VisitModel.event_id == EventModel.id)
             .where(
                 VisitModel.is_superseded.is_(False),
-                EventModel.stream_id.in_(stream_ids),
                 EventModel.started_at >= start_at,
                 EventModel.started_at < end_at,
+                or_(*clauses),
             )
         )
-        if feature.zone_id is not None:
-            query = query.where(VisitModel.zone_id == feature.zone_id)
         rows = session.execute(
             query.order_by(EventModel.started_at, EventModel.id, VisitModel.id)
         ).all()
@@ -6209,32 +6629,39 @@ class ProductRepository:
                     provisional_taxon=resolve_taxon(summary.suggested_label),
                 )
             )
+        excluded_visit_ids = self._associated_visit_ids_to_exclude_from_counting(
+            session, [fact.visit_id for fact in facts]
+        )
+        if excluded_visit_ids:
+            facts = [fact for fact in facts if fact.visit_id not in excluded_visit_ids]
         return facts
 
     def _feature_scoped_monitored_seconds(
         self, session: Session, stream_ids: list[str], *, start_at: datetime, end_at: datetime,
     ) -> float | None:
-        """Summed healthy-monitored-seconds across every Stream in
-        `stream_ids` for `[start_at, end_at)`, reusing `_zone_insights_
-        exposure`'s exact per-Stream clipping/merge logic unmodified --
-        never a second coverage computation. `None` only when *no*
-        in-scope Stream has ever recorded any durable exposure history at
-        all (mirrors `_place_activity_coverage_summary`'s own "union, not
-        all-or-nothing" policy)."""
+        """Elapsed-time UNION of monitoring coverage across every Stream in
+        `stream_ids` for `[start_at, end_at)`, reusing `_place_activity_
+        coverage_summary` unmodified -- the identical primitive Today/Place
+        Activity Report and Zone Insights' own Place-wide aggregate already
+        use for the same "was this Place being watched by any camera at
+        this moment" question (see that method's own "Coverage policy"
+        docstring). Replaces this method's own pre-multi-view per-Stream
+        `sum()`, which double-counted overlapping wall-clock time once two
+        linked cameras could watch the same Feature at once -- the exact
+        bug Multi-Camera Place Experience v2 already found and fixed for
+        Zone Insights' own aggregate. A single-linked-Stream Feature (the
+        common case) sees no numeric change at all: a union of one
+        Stream's own intervals is identical to that Stream's own sum.
+        `None` only when *no* in-scope Stream has ever recorded any
+        durable exposure history at all (mirrors `_place_activity_coverage_
+        summary`'s own "union, not all-or-nothing" policy)."""
 
         if not stream_ids:
             return None
-        total = 0.0
-        any_history = False
-        for stream_id in stream_ids:
-            exposure = self._zone_insights_exposure(
-                session, stream_id=stream_id, start_at=start_at, end_at=end_at
-            )
-            if exposure.history_available_from is not None:
-                any_history = True
-            if exposure.healthy_seconds is not None:
-                total += exposure.healthy_seconds
-        return total if any_history else None
+        coverage, _streams_without_history = self._place_activity_coverage_summary(
+            session, stream_ids=stream_ids, period_start_at=start_at, period_end_at=end_at,
+        )
+        return coverage.monitored_seconds if coverage.history_available_from is not None else None
 
     def _feature_yield_summary(
         self,
@@ -6243,18 +6670,20 @@ class ProductRepository:
         *,
         now: datetime,
         taxonomy_index: dict[str, TaxonomyLabelModel],
+        links: Sequence[PlaceFeatureObservationLinkModel] | None = None,
     ) -> PlaceFeatureYieldSummary | None:
         """`None` when the Feature has no camera/Zone association at all --
         yield cannot honestly be computed without one (see
-        `PlaceFeatureDetail.recent_yield`'s own docstring)."""
+        `PlaceFeatureDetail.recent_yield`'s own docstring). `links`: see
+        `_feature_observation_scopes`."""
 
-        stream_ids = self._feature_monitoring_stream_ids(session, feature)
+        stream_ids = self._feature_monitoring_stream_ids(session, feature, links=links)
         if not stream_ids:
             return None
         window_days = self.FEATURE_YIELD_WINDOW_DAYS
         start_at = now - timedelta(days=window_days)
         visit_facts = self._feature_scoped_visit_facts(
-            session, feature, stream_ids, start_at=start_at, end_at=now, taxonomy_index=taxonomy_index,
+            session, feature, start_at=start_at, end_at=now, taxonomy_index=taxonomy_index, links=links,
         )
         monitored_seconds = self._feature_scoped_monitored_seconds(
             session, stream_ids, start_at=start_at, end_at=now
@@ -6279,6 +6708,7 @@ class ProductRepository:
         now: datetime,
         local_timezone: tzinfo,
         taxonomy_index: dict[str, TaxonomyLabelModel],
+        links: Sequence[PlaceFeatureObservationLinkModel] | None = None,
     ) -> FeatureChangeComparison:
         """One change event's before/after comparison, scoped to its own
         Feature's monitoring scope. `usable_dates` is anchored 366 days
@@ -6288,7 +6718,11 @@ class ProductRepository:
         conservative under-count for an event whose own pre-window would
         reach more than ~336 days into the past (this product's real
         history is far younger than that today -- see docs/place-features-
-        habitat-change-v2-report.md "Performance")."""
+        habitat-change-v2-report.md "Performance"). `links`: see
+        `_feature_observation_scopes` -- avoids re-fetching this Feature's
+        own (unchanging) link rows once per change event when a caller
+        already has them (`get_place_feature_detail`/`_place_story_feature_
+        events` both call this once per event)."""
 
         today = now.astimezone(local_timezone).date()
         usable_dates, _has_history, _total_seconds = self._historical_usable_dates(
@@ -6308,7 +6742,7 @@ class ProductRepository:
             + timedelta(days=2),
         )
         visit_facts = self._feature_scoped_visit_facts(
-            session, feature, stream_ids, start_at=start_at, end_at=end_at, taxonomy_index=taxonomy_index,
+            session, feature, start_at=start_at, end_at=end_at, taxonomy_index=taxonomy_index, links=links,
         )
         presence_dates = {
             visit.activity_started_at.astimezone(local_timezone).date()
@@ -6447,7 +6881,13 @@ class ProductRepository:
             if model is None:
                 return None
             taxonomy_index = self._taxonomy_label_index(session)
-            stream_ids = self._feature_monitoring_stream_ids(session, model)
+            # Fetched once, reused by every call below (stream-id
+            # resolution, each change event's own comparison, yield, and
+            # the final response's own observation_links) -- avoids
+            # re-querying this Feature's own unchanging link rows once per
+            # change event (see `_feature_observation_scopes`'s docstring).
+            links = self._place_feature_observation_link_models(session, feature_id)
+            stream_ids = self._feature_monitoring_stream_ids(session, model, links=links)
             event_models = session.scalars(
                 select(PlaceFeatureChangeEventModel)
                 .where(PlaceFeatureChangeEventModel.feature_id == feature_id)
@@ -6464,7 +6904,7 @@ class ProductRepository:
                     comparison = self._compute_feature_change_event_comparison(
                         session, model, stream_ids, event_model,
                         now=generation_moment, local_timezone=resolved_local_timezone,
-                        taxonomy_index=taxonomy_index,
+                        taxonomy_index=taxonomy_index, links=links,
                     )
                     comparison_response = self._feature_association_response(comparison)
                     if comparison.maturity in ("early_signal", "comparable"):
@@ -6482,10 +6922,10 @@ class ProductRepository:
                     )
                 )
             recent_yield = self._feature_yield_summary(
-                session, model, now=generation_moment, taxonomy_index=taxonomy_index,
+                session, model, now=generation_moment, taxonomy_index=taxonomy_index, links=links,
             )
             return PlaceFeatureDetail(
-                feature=self._place_feature_from_model(model),
+                feature=self._place_feature_response(session, model, links=links),
                 changes=changes,
                 recent_yield=recent_yield,
             )
@@ -6512,6 +6952,13 @@ class ProductRepository:
             ) or 0
 
             taxonomy_index = self._taxonomy_label_index(session)
+            # One batched fetch across every active Feature (never per
+            # Feature) -- see `_place_story_feature_events`'s identical
+            # discipline and the governing brief's "Performance".
+            active_feature_ids = [feature.id for feature in features if feature.is_active]
+            links_by_feature, _source_by_id, _zone_by_id = self._place_feature_observation_link_context(
+                session, active_feature_ids
+            )
             best_name: str | None = None
             best_rate = 0.0
             for feature in features:
@@ -6519,6 +6966,7 @@ class ProductRepository:
                     continue
                 yield_summary = self._feature_yield_summary(
                     session, feature, now=generation_moment, taxonomy_index=taxonomy_index,
+                    links=links_by_feature.get(feature.id, []),
                 )
                 if (
                     yield_summary is not None
@@ -16326,6 +16774,19 @@ class ProductRepository:
                     session.scalar(
                         select(func.count(DetectionProposalModel.id)).where(
                             DetectionProposalModel.zone_id == zone_id
+                        )
+                    )
+                    or 0,
+                    # Multi-Camera Place Feature Linking & Cross-View
+                    # Habitat Context v1: a real, pre-existing gap this
+                    # milestone found and closed -- a Zone linked to a
+                    # Place Feature's observation link was previously
+                    # deletable here with no guard at all, leaving a
+                    # dangling reference behind silently (see the
+                    # governing brief's "Zone correction / deletion").
+                    session.scalar(
+                        select(func.count(PlaceFeatureObservationLinkModel.id)).where(
+                            PlaceFeatureObservationLinkModel.zone_id == zone_id
                         )
                     )
                     or 0,
@@ -34241,6 +34702,13 @@ class ProductRepository:
 
         feature_events: list[PlaceStoryEvent] = []
         comparison_events: list[PlaceStoryEvent] = []
+        # One batched fetch across every distinct Feature these change
+        # events reference (never per event, never per feature) -- mirrors
+        # `list_place_features`'s own batched-loading discipline; see the
+        # governing brief's "Performance".
+        links_by_feature, _source_by_id, _zone_by_id = self._place_feature_observation_link_context(
+            session, list(feature_models.keys())
+        )
         stream_ids_by_feature: dict[str, list[str]] = {}
         for event_model in event_models:
             feature_model = feature_models.get(event_model.feature_id) if event_model.feature_id else None
@@ -34262,16 +34730,17 @@ class ProductRepository:
 
             if feature_model is None:
                 continue  # a Place-level change event has no Feature monitoring scope to compare against
+            feature_links = links_by_feature.get(feature_model.id, [])
             if feature_model.id not in stream_ids_by_feature:
                 stream_ids_by_feature[feature_model.id] = self._feature_monitoring_stream_ids(
-                    session, feature_model
+                    session, feature_model, links=feature_links
                 )
             stream_ids = stream_ids_by_feature[feature_model.id]
             if not stream_ids:
                 continue
             comparison = self._compute_feature_change_event_comparison(
                 session, feature_model, stream_ids, event_model,
-                now=now, local_timezone=local_timezone, taxonomy_index=taxonomy_index,
+                now=now, local_timezone=local_timezone, taxonomy_index=taxonomy_index, links=feature_links,
             )
             if comparison.maturity not in ("early_signal", "comparable"):
                 continue

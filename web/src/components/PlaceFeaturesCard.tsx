@@ -1,12 +1,15 @@
 import { useState } from "react";
 import type {
+  CameraSource,
   PlaceFeature,
   PlaceFeatureChangeEventCreate,
   PlaceFeatureChangeEventType,
   PlaceFeatureCreate,
+  PlaceFeatureObservationLinkCreate,
   PlaceFeatureType,
   PlaceFeatureUpdate,
   PlaceFeaturesSummary,
+  Stream,
   Zone,
 } from "../api/types";
 import { StatusPill } from "./StatusPill";
@@ -15,10 +18,17 @@ interface PlaceFeaturesCardProps {
   summary: PlaceFeaturesSummary | null;
   features: PlaceFeature[] | null;
   zones: Zone[] | null;
+  sources: CameraSource[] | null;
+  streams: Stream[] | null;
   onAddFeature: (payload: PlaceFeatureCreate) => Promise<void>;
   onUpdateFeature: (featureId: string, payload: PlaceFeatureUpdate) => Promise<void>;
   onRemoveFeature: (featureId: string) => Promise<string | null>;
   onAddChangeEvent: (payload: PlaceFeatureChangeEventCreate) => Promise<void>;
+  onAddObservationLink: (
+    featureId: string,
+    payload: PlaceFeatureObservationLinkCreate,
+  ) => Promise<string | null>;
+  onRemoveObservationLink: (featureId: string, linkId: string) => Promise<string | null>;
 }
 
 const FEATURE_TYPE_LABELS: Record<PlaceFeatureType, string> = {
@@ -42,16 +52,25 @@ const CHANGE_EVENT_TYPE_LABELS: Record<PlaceFeatureChangeEventType, string> = {
   other: "Other",
 };
 
+// Matches `StreamsPage.tsx`'s own canonical archived-camera option copy
+// exactly (" (archived)" appended to the name) -- the one established
+// precedent for showing an archived camera in a picker without hiding it.
+function sourceOptionLabel(source: CameraSource): string {
+  return source.status === "archived" ? `${source.name} (archived)` : source.name;
+}
+
 /**
  * Place Features & Habitat Change v2 (see docs/place-features-habitat-
- * change-v2-contract.md "Product surfaces"). A sibling of
+ * change-v2-contract.md "Product surfaces"), extended by Multi-Camera Place
+ * Feature Linking & Cross-View Habitat Context v1 to let one Feature be
+ * "Observed by" more than one camera/Zone view. A sibling of
  * `HabitatPhenologyCard`, same calm-view/inline-edit-toggle shape: a
  * restrained summary line plus active-feature tags when not editing, a
- * fuller CRUD surface (add/edit/deactivate/remove a Feature; record a
- * change) when editing. `onRemoveFeature` returns a user-safe error
- * message (never a raw exception) so a blocked hard-delete -- a Feature
- * with recorded history -- can explain "deactivate it instead" rather than
- * failing silently or throwing.
+ * fuller CRUD surface (add/edit/deactivate/remove a Feature; manage its
+ * observation links; record a change) when editing. `onRemoveFeature`/
+ * `onAddObservationLink`/`onRemoveObservationLink` return a user-safe error
+ * message (never a raw exception) so a blocked operation can explain itself
+ * rather than failing silently or throwing.
  *
  * Renders nothing while both fetches are still in flight (`summary` and
  * `features` both `null`), matching `HabitatPhenologyCard`'s identical
@@ -62,16 +81,21 @@ export function PlaceFeaturesCard({
   summary,
   features,
   zones,
+  sources,
+  streams,
   onAddFeature,
   onUpdateFeature,
   onRemoveFeature,
   onAddChangeEvent,
+  onAddObservationLink,
+  onRemoveObservationLink,
 }: PlaceFeaturesCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [featureType, setFeatureType] = useState<PlaceFeatureType>("feeder");
   const [featureName, setFeatureName] = useState("");
+  const [featureSourceId, setFeatureSourceId] = useState("");
   const [featureZoneId, setFeatureZoneId] = useState("");
   const [featureInstalledDate, setFeatureInstalledDate] = useState("");
   const [isSavingFeature, setIsSavingFeature] = useState(false);
@@ -84,6 +108,16 @@ export function PlaceFeaturesCard({
   const [changeNewValue, setChangeNewValue] = useState("");
   const [isSavingChange, setIsSavingChange] = useState(false);
 
+  // Multi-view observation-link editing: at most one Feature's own
+  // "add another view" mini-form is open at a time (mirrors this codebase's
+  // established one-thing-expanded-at-a-time convention, e.g. the Place
+  // Report page's own single `expandedFeatureId`).
+  const [addingViewForFeatureId, setAddingViewForFeatureId] = useState<string | null>(null);
+  const [newViewSourceId, setNewViewSourceId] = useState("");
+  const [newViewZoneId, setNewViewZoneId] = useState("");
+  const [isSavingView, setIsSavingView] = useState(false);
+  const [busyLinkId, setBusyLinkId] = useState<string | null>(null);
+
   if (summary === null && features === null) {
     return null;
   }
@@ -91,8 +125,14 @@ export function PlaceFeaturesCard({
   const allFeatures = features ?? [];
   const activeFeatures = allFeatures.filter((feature) => feature.is_active);
   const hasAnything = allFeatures.length > 0;
-  const zoneName = (zoneId: string | null | undefined) =>
-    zoneId ? zones?.find((zone) => zone.id === zoneId)?.name ?? null : null;
+  const allSources = sources ?? [];
+  const allStreams = streams ?? [];
+  const zonesForSource = (sourceId: string) =>
+    !sourceId
+      ? []
+      : (zones ?? []).filter((zone) =>
+          allStreams.some((stream) => stream.id === zone.stream_id && stream.source_id === sourceId),
+        );
   const showsNewValueField = changeEventType === "food_changed" || changeEventType === "vegetation_changed";
 
   const addFeature = async () => {
@@ -106,10 +146,12 @@ export function PlaceFeaturesCard({
       await onAddFeature({
         feature_type: featureType,
         name: featureName.trim(),
+        source_id: featureSourceId || undefined,
         zone_id: featureZoneId || undefined,
         installed_date: featureInstalledDate || undefined,
       });
       setFeatureName("");
+      setFeatureSourceId("");
       setFeatureZoneId("");
       setFeatureInstalledDate("");
     } catch {
@@ -139,6 +181,44 @@ export function PlaceFeaturesCard({
       setError(blockedReason);
     }
     setBusyFeatureId(null);
+  };
+
+  const startAddingView = (featureId: string) => {
+    setAddingViewForFeatureId(featureId);
+    setNewViewSourceId("");
+    setNewViewZoneId("");
+    setError(null);
+  };
+
+  const addView = async (featureId: string) => {
+    if (!newViewSourceId && !newViewZoneId) {
+      setError("Choose a camera or Zone to link.");
+      return;
+    }
+    setIsSavingView(true);
+    setError(null);
+    const blockedReason = await onAddObservationLink(featureId, {
+      source_id: newViewSourceId || undefined,
+      zone_id: newViewZoneId || undefined,
+    });
+    setIsSavingView(false);
+    if (blockedReason) {
+      setError(blockedReason);
+      return;
+    }
+    setAddingViewForFeatureId(null);
+    setNewViewSourceId("");
+    setNewViewZoneId("");
+  };
+
+  const removeView = async (featureId: string, linkId: string) => {
+    setBusyLinkId(linkId);
+    setError(null);
+    const blockedReason = await onRemoveObservationLink(featureId, linkId);
+    if (blockedReason) {
+      setError(blockedReason);
+    }
+    setBusyLinkId(null);
   };
 
   const addChange = async () => {
@@ -216,9 +296,6 @@ export function PlaceFeaturesCard({
               <li key={feature.id}>
                 <strong>{feature.name}</strong> &middot; {FEATURE_TYPE_LABELS[feature.feature_type]}
                 {!feature.is_active ? <StatusPill label="Inactive" tone="quiet" /> : null}
-                {zoneName(feature.zone_id) ? (
-                  <span className="meta-text">{zoneName(feature.zone_id)}</span>
-                ) : null}
                 <button
                   className="text-action"
                   disabled={busyFeatureId === feature.id}
@@ -235,6 +312,91 @@ export function PlaceFeaturesCard({
                 >
                   Remove
                 </button>
+                <div className="place-feature-observed-by">
+                  <span className="meta-text">Observed by:</span>
+                  {feature.observation_links.length > 0 ? (
+                    <div className="tag-row">
+                      {feature.observation_links.map((link) => (
+                        <span className="tag" key={link.id}>
+                          {link.source_name}
+                          {link.source_archived ? " (archived)" : ""}
+                          {link.zone_name ? ` — ${link.zone_name}` : ""}
+                          <button
+                            aria-label={`Stop observing ${feature.name} from ${link.source_name}`}
+                            className="tag-remove-button"
+                            disabled={busyLinkId === link.id}
+                            onClick={() => void removeView(feature.id, link.id)}
+                            type="button"
+                          >
+                            &times;
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="meta-text">No camera linked -- Place knowledge only.</span>
+                  )}
+                  {addingViewForFeatureId === feature.id ? (
+                    <div className="detail-actions">
+                      <label>
+                        Camera to add
+                        <select
+                          onChange={(event) => {
+                            setNewViewSourceId(event.target.value);
+                            setNewViewZoneId("");
+                          }}
+                          value={newViewSourceId}
+                        >
+                          <option value="">Choose a camera</option>
+                          {allSources.map((source) => (
+                            <option key={source.id} value={source.id}>
+                              {sourceOptionLabel(source)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {newViewSourceId ? (
+                        <label>
+                          Zone to add
+                          <select
+                            onChange={(event) => setNewViewZoneId(event.target.value)}
+                            value={newViewZoneId}
+                          >
+                            <option value="">Whole camera (no specific Zone)</option>
+                            {zonesForSource(newViewSourceId).map((zone) => (
+                              <option key={zone.id} value={zone.id}>
+                                {zone.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : null}
+                      <button
+                        className="secondary-action"
+                        disabled={isSavingView}
+                        onClick={() => void addView(feature.id)}
+                        type="button"
+                      >
+                        {isSavingView ? "Adding…" : "Add view"}
+                      </button>
+                      <button
+                        className="text-action"
+                        onClick={() => setAddingViewForFeatureId(null)}
+                        type="button"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      className="text-action"
+                      onClick={() => startAddingView(feature.id)}
+                      type="button"
+                    >
+                      + Add another view
+                    </button>
+                  )}
+                </div>
               </li>
             ))}
           </ul>
@@ -264,15 +426,34 @@ export function PlaceFeaturesCard({
               value={featureName}
             />
           </label>
-          {zones && zones.length > 0 ? (
+          {allSources.length > 0 ? (
             <label>
               Camera (optional)
+              <select
+                onChange={(event) => {
+                  setFeatureSourceId(event.target.value);
+                  setFeatureZoneId("");
+                }}
+                value={featureSourceId}
+              >
+                <option value="">Not linked to a camera</option>
+                {allSources.map((source) => (
+                  <option key={source.id} value={source.id}>
+                    {sourceOptionLabel(source)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          {featureSourceId ? (
+            <label>
+              Zone (optional)
               <select
                 onChange={(event) => setFeatureZoneId(event.target.value)}
                 value={featureZoneId}
               >
-                <option value="">Not linked to a camera</option>
-                {zones.map((zone) => (
+                <option value="">Whole camera (no specific Zone)</option>
+                {zonesForSource(featureSourceId).map((zone) => (
                   <option key={zone.id} value={zone.id}>
                     {zone.name}
                   </option>

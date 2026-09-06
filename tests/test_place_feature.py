@@ -31,11 +31,13 @@ from mockingbird.analytics.feature_yield import compute_feature_yield
 from mockingbird.analytics.place_activity_report import TaxonFact, VisitFact
 from mockingbird.api.main import app, configure_repository
 from mockingbird.api.schemas import (
+    CameraSourceUpdate,
     CurrentUser,
     EnvironmentalContextSettingsUpdate,
     PlaceFeatureChangeEventCreate,
     PlaceFeatureChangeEventUpdate,
     PlaceFeatureCreate,
+    PlaceFeatureObservationLinkCreate,
     PlaceFeatureUpdate,
     ReviewCorrectionCreate,
     UserRole,
@@ -46,12 +48,17 @@ from mockingbird.habitat.place_feature import (
     PLACE_FEATURE_CHANGE_EVENT_TYPES,
     PLACE_FEATURE_TYPES,
 )
-from mockingbird.repository.product_repository import PlaceFeatureHasHistoryError, ProductRepository
+from mockingbird.repository.product_repository import (
+    CrossCameraVisitAssociationModel,
+    PlaceFeatureHasHistoryError,
+    ProductRepository,
+)
 from mockingbird.storage.models import (
     CameraSourceModel,
     EnvironmentalContextRecordModel,
     EventModel,
     MonitoringExposureIntervalModel,
+    PlaceFeatureObservationLinkModel,
     StreamModel,
     VisitModel,
     ZoneModel,
@@ -63,6 +70,16 @@ STREAM_ID = "stream-place-feature"
 OTHER_STREAM_ID = "stream-place-feature-other"
 ZONE_ID = "zone-place-feature-feeder"
 OTHER_ZONE_ID = "zone-place-feature-other-source"
+
+# Multi-Camera Place Feature Linking & Cross-View Habitat Context v1: a
+# genuinely second camera (distinct Source), for cross-view/cross-camera
+# tests -- `OTHER_STREAM_ID`/`OTHER_ZONE_ID` above are a second Stream/Zone
+# on the *same* `SOURCE_ID`, not a second camera, so they cannot exercise
+# cross-camera duplicate-encounter dedup (which requires two different
+# Sources -- see `cross_camera_association.py`).
+SOURCE_ID_2 = "source-place-feature-2"
+STREAM_ID_2 = "stream-place-feature-2"
+ZONE_ID_2 = "zone-place-feature-2"
 
 
 @pytest.fixture
@@ -202,6 +219,77 @@ def _cover_days(repository: ProductRepository, *, start: date, days: int, stream
             repository, interval_id=f"exposure-{stream_id}-{day.isoformat()}",
             started_at=started_at, ended_at=started_at + timedelta(hours=23),
             stream_id=stream_id,
+        )
+
+
+def _add_second_camera(repository: ProductRepository) -> None:
+    """Seeds a genuinely second camera (`SOURCE_ID_2`/`STREAM_ID_2`), with
+    its own Zone (`ZONE_ID_2`) -- for multi-view/cross-camera tests. Not
+    part of the shared `repository` fixture itself so every pre-existing,
+    single-camera test's behavior is completely unaffected."""
+
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                CameraSourceModel(
+                    id=SOURCE_ID_2, name="Feature fixture camera 2", kind="manual_upload",
+                    status="connected", description="Place Features fixture (second camera).",
+                )
+            )
+            session.add(
+                StreamModel(
+                    id=STREAM_ID_2, source_id=SOURCE_ID_2, name="Feature fixture stream 2",
+                    description="Place Features fixture (second camera).", is_live=False,
+                )
+            )
+            session.add(
+                ZoneModel(
+                    id=ZONE_ID_2, stream_id=STREAM_ID_2, name="Feeder (second view)",
+                    zone_type="feeder", polygon_json="[]", is_active=True, monitoring_policy_json=None,
+                )
+            )
+
+
+def _associate_cross_camera(
+    repository: ProductRepository, *, visit_id_a: str, visit_id_b: str, tier: str = "associated",
+) -> None:
+    """Directly seeds one `cross_camera_visit_associations` row for a pair
+    of Visits from two different cameras -- mirrors `_reconcile_cross_
+    camera_association_for_event`'s own canonical lexicographic-order
+    convention rather than exercising the full live reconciliation
+    pipeline (out of this test file's own scope; see
+    `test_camera_source_multi_camera_maturity.py`/`test_multi_camera_
+    place_experience_scenario.py` for that)."""
+
+    primary_id, secondary_id = sorted((visit_id_a, visit_id_b))
+    now = datetime.now(UTC)
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                CrossCameraVisitAssociationModel(
+                    id=f"assoc-{visit_id_a}-{visit_id_b}", primary_visit_id=primary_id,
+                    secondary_visit_id=secondary_id, tier=tier, overlap_ms=1000, gap_ms=0,
+                    spatial_signal="matching_area_name", multi_subject=False,
+                    engine_version="cross-camera-association-v1", created_at=now, updated_at=now,
+                )
+            )
+
+
+def _place_feature_observation_link_models(
+    repository: ProductRepository, feature_id: str,
+) -> list[PlaceFeatureObservationLinkModel]:
+    """Raw link rows for one Feature, for direct assertions (e.g. proving a
+    hard-deleted Feature's own links were cascaded, not orphaned) -- the
+    repository's own public surface intentionally never exposes raw ORM
+    rows."""
+
+    with repository.session_factory() as session:
+        return list(
+            session.scalars(
+                select(PlaceFeatureObservationLinkModel).where(
+                    PlaceFeatureObservationLinkModel.feature_id == feature_id
+                )
+            ).all()
         )
 
 
@@ -608,6 +696,239 @@ def test_remove_place_feature_with_history_is_blocked(repository: ProductReposit
     assert len(repository.list_place_features()) == 1
 
 
+# --- Repository: Multi-view observation links (Multi-Camera Place Feature
+# Linking & Cross-View Habitat Context v1) ------------------------------------
+
+
+def test_add_observation_link_creates_second_view(repository: ProductRepository) -> None:
+    _add_second_camera(repository)
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="water", name="Bird Bath", zone_id=ZONE_ID), acting_user=_acting_user()
+    )
+    assert len(feature.observation_links) == 1
+    assert feature.source_id == SOURCE_ID and feature.zone_id == ZONE_ID
+
+    link = repository.add_place_feature_observation_link(
+        feature.id, PlaceFeatureObservationLinkCreate(zone_id=ZONE_ID_2), acting_user=_acting_user()
+    )
+    assert link.source_id == SOURCE_ID_2
+    assert link.zone_id == ZONE_ID_2
+    assert link.zone_name == "Feeder (second view)"
+    assert link.source_archived is False
+
+    refreshed = repository.get_place_feature_detail(feature.id).feature
+    assert len(refreshed.observation_links) == 2
+    assert {(link.source_id, link.zone_id) for link in refreshed.observation_links} == {
+        (SOURCE_ID, ZONE_ID), (SOURCE_ID_2, ZONE_ID_2),
+    }
+    # Honest absence, not an arbitrary "first" link, once there is more
+    # than one -- see `PlaceFeatureModel`'s own updated docstring.
+    assert refreshed.source_id is None
+    assert refreshed.zone_id is None
+
+
+def test_add_observation_link_via_bare_source(repository: ProductRepository) -> None:
+    _add_second_camera(repository)
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="feeder", name="Feeder"), acting_user=_acting_user()
+    )
+    link = repository.add_place_feature_observation_link(
+        feature.id, PlaceFeatureObservationLinkCreate(source_id=SOURCE_ID_2), acting_user=_acting_user()
+    )
+    assert link.source_id == SOURCE_ID_2
+    assert link.zone_id is None
+    assert link.zone_name is None
+
+
+def test_add_observation_link_to_missing_feature_returns_none(repository: ProductRepository) -> None:
+    assert repository.add_place_feature_observation_link(
+        "feature-missing", PlaceFeatureObservationLinkCreate(source_id=SOURCE_ID), acting_user=_acting_user()
+    ) is None
+
+
+def test_add_observation_link_with_unknown_zone_is_rejected(repository: ProductRepository) -> None:
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="feeder", name="Feeder"), acting_user=_acting_user()
+    )
+    with pytest.raises(ValueError):
+        repository.add_place_feature_observation_link(
+            feature.id, PlaceFeatureObservationLinkCreate(zone_id="zone-does-not-exist"),
+            acting_user=_acting_user(),
+        )
+
+
+def test_add_observation_link_with_mismatched_source_and_zone_is_rejected(repository: ProductRepository) -> None:
+    _add_second_camera(repository)
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="feeder", name="Feeder"), acting_user=_acting_user()
+    )
+    with pytest.raises(ValueError):
+        repository.add_place_feature_observation_link(
+            feature.id, PlaceFeatureObservationLinkCreate(zone_id=ZONE_ID, source_id=SOURCE_ID_2),
+            acting_user=_acting_user(),
+        )
+
+
+def test_observation_link_create_requires_source_or_zone() -> None:
+    with pytest.raises(ValueError):
+        PlaceFeatureObservationLinkCreate()
+
+
+def test_add_duplicate_observation_link_is_rejected(repository: ProductRepository) -> None:
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="feeder", name="Feeder", zone_id=ZONE_ID), acting_user=_acting_user()
+    )
+    with pytest.raises(ValueError):
+        repository.add_place_feature_observation_link(
+            feature.id, PlaceFeatureObservationLinkCreate(zone_id=ZONE_ID), acting_user=_acting_user()
+        )
+
+
+def test_add_duplicate_bare_source_observation_link_is_rejected(repository: ProductRepository) -> None:
+    """The nullable-`zone_id` case specifically -- SQLite's own NULL-is-
+    distinct semantics would let this slip past a naive unique index (see
+    `PlaceFeatureObservationLinkModel`'s docstring); the app-level check
+    must catch it too."""
+
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="feeder", name="Feeder", source_id=SOURCE_ID), acting_user=_acting_user()
+    )
+    with pytest.raises(ValueError):
+        repository.add_place_feature_observation_link(
+            feature.id, PlaceFeatureObservationLinkCreate(source_id=SOURCE_ID), acting_user=_acting_user()
+        )
+
+
+def test_feature_can_link_two_different_zones_on_the_same_source(repository: ProductRepository) -> None:
+    """Not a duplicate: two different Zones on one camera can both
+    genuinely show part of the same physical Feature (e.g. a vegetation
+    patch crossing two drawn Zones on one wide-angle view)."""
+
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                ZoneModel(
+                    id=OTHER_ZONE_ID, stream_id=STREAM_ID, name="Back hedge (west end)",
+                    zone_type="habitat_area", polygon_json="[]", is_active=True, monitoring_policy_json=None,
+                )
+            )
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="vegetation_patch", name="Back hedge", zone_id=ZONE_ID),
+        acting_user=_acting_user(),
+    )
+    link = repository.add_place_feature_observation_link(
+        feature.id, PlaceFeatureObservationLinkCreate(zone_id=OTHER_ZONE_ID),
+        acting_user=_acting_user(),
+    )
+    assert link is not None
+    refreshed = repository.get_place_feature_detail(feature.id).feature
+    assert len(refreshed.observation_links) == 2
+
+
+def test_remove_observation_link_recomputes_mirror(repository: ProductRepository) -> None:
+    _add_second_camera(repository)
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="water", name="Bird Bath", zone_id=ZONE_ID), acting_user=_acting_user()
+    )
+    link = repository.add_place_feature_observation_link(
+        feature.id, PlaceFeatureObservationLinkCreate(zone_id=ZONE_ID_2), acting_user=_acting_user()
+    )
+    assert repository.get_place_feature_detail(feature.id).feature.source_id is None  # 2 links: honest absence
+
+    assert repository.remove_place_feature_observation_link(feature.id, link.id, acting_user=_acting_user()) is True
+    refreshed = repository.get_place_feature_detail(feature.id).feature
+    assert len(refreshed.observation_links) == 1
+    # Exactly one link again -- the mirror repopulates, byte-identical to
+    # a Feature that was only ever linked once.
+    assert refreshed.source_id == SOURCE_ID
+    assert refreshed.zone_id == ZONE_ID
+
+
+def test_remove_last_observation_link_does_not_delete_feature(repository: ProductRepository) -> None:
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="water", name="Bird Bath", zone_id=ZONE_ID), acting_user=_acting_user()
+    )
+    [link] = feature.observation_links
+    assert repository.remove_place_feature_observation_link(feature.id, link.id, acting_user=_acting_user()) is True
+    refreshed = repository.get_place_feature_detail(feature.id)
+    assert refreshed is not None  # the Feature itself still exists
+    assert refreshed.feature.observation_links == []
+    assert refreshed.feature.source_id is None
+    assert refreshed.feature.zone_id is None
+
+
+def test_remove_missing_observation_link_returns_false(repository: ProductRepository) -> None:
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="feeder", name="Feeder"), acting_user=_acting_user()
+    )
+    assert repository.remove_place_feature_observation_link(
+        feature.id, "feature-link-missing", acting_user=_acting_user()
+    ) is False
+
+
+def test_remove_observation_link_belonging_to_a_different_feature_returns_false(
+    repository: ProductRepository,
+) -> None:
+    feature_a = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="feeder", name="Feeder A", zone_id=ZONE_ID), acting_user=_acting_user()
+    )
+    feature_b = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="feeder", name="Feeder B"), acting_user=_acting_user()
+    )
+    [link] = feature_a.observation_links
+    assert repository.remove_place_feature_observation_link(
+        feature_b.id, link.id, acting_user=_acting_user()
+    ) is False
+    # The link on Feature A must remain untouched.
+    assert len(repository.get_place_feature_detail(feature_a.id).feature.observation_links) == 1
+
+
+def test_hard_deleting_feature_cascades_observation_links(repository: ProductRepository) -> None:
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="feeder", name="Feeder", zone_id=ZONE_ID), acting_user=_acting_user()
+    )
+    assert len(_place_feature_observation_link_models(repository, feature.id)) == 1
+    assert repository.remove_place_feature(feature.id, acting_user=_acting_user()) is True
+    # The link row is gone, not orphaned.
+    assert _place_feature_observation_link_models(repository, feature.id) == []
+
+
+def test_update_place_feature_source_id_replaces_entire_link_set(repository: ProductRepository) -> None:
+    """Legacy singular-field compatibility: `PlaceFeatureUpdate` is a
+    full-replacement operation on the link set, documented as such, not a
+    silent data-loss surprise -- see `PlaceFeatureUpdate`'s own docstring."""
+
+    _add_second_camera(repository)
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="feeder", name="Feeder", zone_id=ZONE_ID), acting_user=_acting_user()
+    )
+    repository.add_place_feature_observation_link(
+        feature.id, PlaceFeatureObservationLinkCreate(zone_id=ZONE_ID_2), acting_user=_acting_user()
+    )
+    assert len(repository.get_place_feature_detail(feature.id).feature.observation_links) == 2
+
+    updated = repository.update_place_feature(
+        feature.id, PlaceFeatureUpdate(source_id=SOURCE_ID_2), acting_user=_acting_user()
+    )
+    assert updated.source_id == SOURCE_ID_2
+    assert updated.zone_id is None
+    assert len(updated.observation_links) == 1
+    assert updated.observation_links[0].source_id == SOURCE_ID_2
+
+
+def test_zone_deletion_blocked_when_linked_to_a_feature(repository: ProductRepository) -> None:
+    """A real, pre-existing gap this milestone found and closed: `delete_
+    zone` previously had no guard at all for a Zone referenced only by a
+    Place Feature's observation link -- see the governing brief's "Zone
+    correction / deletion"."""
+
+    repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="feeder", name="Feeder", zone_id=ZONE_ID), acting_user=_acting_user()
+    )
+    with pytest.raises(ValueError, match="zone_has_review_context"):
+        repository.delete_zone(ZONE_ID)
+
+
 # --- Repository: Change Event CRUD + dual-write reconciliation --------------
 
 
@@ -849,6 +1170,197 @@ def test_correcting_change_event_date_changes_comparison_on_next_read(repository
     )
     after = repository.get_place_feature_detail(feature.id, now=now, local_timezone=UTC)
     assert after.changes[0].comparison.maturity == "too_soon"
+
+
+# --- Cross-view analytics: duplicate safety + coverage union (Multi-Camera
+# Place Feature Linking & Cross-View Habitat Context v1) ----------------------
+
+
+def test_multi_view_yield_dedupes_a_confirmed_cross_camera_pair(repository: ProductRepository) -> None:
+    """The hard correctness requirement: one cardinal seen by two linked
+    cameras, already confirmed as the same biological encounter by the
+    accepted cross-camera association engine, must count once -- not
+    twice -- in this Feature's own recent yield."""
+
+    _add_second_camera(repository)
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="water", name="Bird Bath", zone_id=ZONE_ID), acting_user=_acting_user()
+    )
+    repository.add_place_feature_observation_link(
+        feature.id, PlaceFeatureObservationLinkCreate(zone_id=ZONE_ID_2), acting_user=_acting_user()
+    )
+    now = datetime(2026, 6, 8, tzinfo=UTC)
+    at = now - timedelta(days=1)
+    _add_visit(repository, visit_id="visit-cam-a", at=at, stream_id=STREAM_ID, zone_id=ZONE_ID)
+    _add_visit(repository, visit_id="visit-cam-b", at=at, stream_id=STREAM_ID_2, zone_id=ZONE_ID_2)
+    _confirm(repository, visit_id="visit-cam-a")
+    _confirm(repository, visit_id="visit-cam-b")
+    _associate_cross_camera(repository, visit_id_a="visit-cam-a", visit_id_b="visit-cam-b", tier="associated")
+
+    yield_summary = repository.get_place_feature_detail(feature.id, now=now, local_timezone=UTC).recent_yield
+    assert yield_summary.confirmed_wildlife_visit_count == 1
+
+
+def test_multi_view_yield_counts_independent_simultaneous_visits_twice(repository: ProductRepository) -> None:
+    """The other half of the same requirement: two genuinely independent
+    birds observed simultaneously by two linked cameras -- with no
+    cross-camera association recorded -- must remain two, not collapse to
+    one merely because they share a Feature and a moment in time."""
+
+    _add_second_camera(repository)
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="water", name="Bird Bath", zone_id=ZONE_ID), acting_user=_acting_user()
+    )
+    repository.add_place_feature_observation_link(
+        feature.id, PlaceFeatureObservationLinkCreate(zone_id=ZONE_ID_2), acting_user=_acting_user()
+    )
+    now = datetime(2026, 6, 8, tzinfo=UTC)
+    at = now - timedelta(days=1)
+    _add_visit(repository, visit_id="visit-cam-a2", at=at, stream_id=STREAM_ID, zone_id=ZONE_ID)
+    _add_visit(repository, visit_id="visit-cam-b2", at=at, stream_id=STREAM_ID_2, zone_id=ZONE_ID_2)
+    _confirm(repository, visit_id="visit-cam-a2", label="carolina_chickadee")
+    _confirm(repository, visit_id="visit-cam-b2", label="carolina_chickadee")
+    # Deliberately no `_associate_cross_camera` call -- no association row
+    # at all is the honest "independent" outcome (see `cross_camera_
+    # association.py`'s own "no row is persisted for an out-of-range or
+    # confirmed-differing-Area pair" convention).
+
+    yield_summary = repository.get_place_feature_detail(feature.id, now=now, local_timezone=UTC).recent_yield
+    assert yield_summary.confirmed_wildlife_visit_count == 2
+
+
+def test_multi_view_yield_does_not_dedupe_a_merely_possible_pair(repository: ProductRepository) -> None:
+    """A `"possible"` (not `"associated"`) cross-camera pair is genuine,
+    disclosed ambiguity -- not confident enough to exclude either side
+    from a count, matching `_associated_visit_ids_to_exclude_from_
+    counting`'s own "confirmed `associated` pairs only" contract."""
+
+    _add_second_camera(repository)
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="water", name="Bird Bath", zone_id=ZONE_ID), acting_user=_acting_user()
+    )
+    repository.add_place_feature_observation_link(
+        feature.id, PlaceFeatureObservationLinkCreate(zone_id=ZONE_ID_2), acting_user=_acting_user()
+    )
+    now = datetime(2026, 6, 8, tzinfo=UTC)
+    at = now - timedelta(days=1)
+    _add_visit(repository, visit_id="visit-cam-a3", at=at, stream_id=STREAM_ID, zone_id=ZONE_ID)
+    _add_visit(repository, visit_id="visit-cam-b3", at=at, stream_id=STREAM_ID_2, zone_id=ZONE_ID_2)
+    _confirm(repository, visit_id="visit-cam-a3")
+    _confirm(repository, visit_id="visit-cam-b3")
+    _associate_cross_camera(repository, visit_id_a="visit-cam-a3", visit_id_b="visit-cam-b3", tier="possible")
+
+    yield_summary = repository.get_place_feature_detail(feature.id, now=now, local_timezone=UTC).recent_yield
+    assert yield_summary.confirmed_wildlife_visit_count == 2
+
+
+def test_multi_view_coverage_is_union_not_sum(repository: ProductRepository) -> None:
+    """The other hard correctness requirement: two linked cameras
+    overlapping in wall-clock time must not make a Feature appear twice
+    as well monitored for the same interval -- mirrors the identical
+    Zone Insights aggregate-coverage fix from Multi-Camera Place
+    Experience v2, reapplied here."""
+
+    _add_second_camera(repository)
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="water", name="Bird Bath", zone_id=ZONE_ID), acting_user=_acting_user()
+    )
+    repository.add_place_feature_observation_link(
+        feature.id, PlaceFeatureObservationLinkCreate(zone_id=ZONE_ID_2), acting_user=_acting_user()
+    )
+    now = datetime(2026, 6, 8, tzinfo=UTC)
+    window_start = now - timedelta(days=7)
+    # Camera A: monitored for the first 2 of the last 3 hours before `now`.
+    _add_exposure(
+        repository, interval_id="exposure-union-a", started_at=now - timedelta(hours=3),
+        ended_at=now - timedelta(hours=1), stream_id=STREAM_ID,
+    )
+    # Camera B: monitored for the full last 3 hours -- a real 2-hour
+    # overlap with Camera A, not independent time.
+    _add_exposure(
+        repository, interval_id="exposure-union-b", started_at=now - timedelta(hours=3),
+        ended_at=now, stream_id=STREAM_ID_2,
+    )
+    yield_summary = repository.get_place_feature_detail(feature.id, now=now, local_timezone=UTC).recent_yield
+    assert yield_summary is not None
+    # Union of [now-3h, now-1h] and [now-3h, now] is exactly [now-3h, now]
+    # -- 3 hours, never the naive 5-hour sum (2h + 3h) of two independently
+    # summed, overlapping intervals.
+    assert yield_summary.monitored_seconds == pytest.approx(3 * 3600.0)
+    del window_start  # documents the 7-day yield window this fixture stays well inside of
+
+
+def test_multi_view_comparison_scopes_across_both_linked_views(repository: ProductRepository) -> None:
+    """Before/after comparison must see confirmed activity from *either*
+    linked camera, not only the one originally linked at creation time."""
+
+    _add_second_camera(repository)
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="feeder", name="Feeder", zone_id=ZONE_ID), acting_user=_acting_user()
+    )
+    repository.add_place_feature_observation_link(
+        feature.id, PlaceFeatureObservationLinkCreate(zone_id=ZONE_ID_2), acting_user=_acting_user()
+    )
+    effective = date(2026, 6, 1)
+    now = datetime(2026, 6, 8, tzinfo=UTC)
+    event = repository.add_place_feature_change_event(
+        PlaceFeatureChangeEventCreate(feature_id=feature.id, event_type="added", effective_date=effective),
+        acting_user=_acting_user(),
+    )
+    _cover_days(repository, start=effective - timedelta(days=7), days=14, stream_id=STREAM_ID)
+    _cover_days(repository, start=effective - timedelta(days=7), days=14, stream_id=STREAM_ID_2)
+    # Confirmed activity after the change, split across BOTH cameras --
+    # neither camera alone would clear a real "more common after" signal.
+    for offset in range(7):
+        day = effective + timedelta(days=offset)
+        at = datetime(day.year, day.month, day.day, 10, tzinfo=UTC)
+        if offset % 2 == 0:
+            _add_visit(repository, visit_id=f"visit-split-a-{offset}", at=at, stream_id=STREAM_ID, zone_id=ZONE_ID)
+            _confirm(repository, visit_id=f"visit-split-a-{offset}")
+        else:
+            _add_visit(
+                repository, visit_id=f"visit-split-b-{offset}", at=at, stream_id=STREAM_ID_2, zone_id=ZONE_ID_2,
+            )
+            _confirm(repository, visit_id=f"visit-split-b-{offset}")
+
+    detail = repository.get_place_feature_detail(feature.id, now=now, local_timezone=UTC)
+    comparison = next(c for c in detail.changes if c.event.id == event.id).comparison
+    assert comparison.maturity == "comparable"
+    assert comparison.status == "more_common_under_condition"
+
+
+def test_archived_camera_link_preserves_historical_comparison(repository: ProductRepository) -> None:
+    """Archiving preserves history (see docs/product-doctrine.md): a
+    Feature's own linked view stays reachable for historical before/after
+    comparison even after the camera it names is archived -- this
+    milestone found and closed a real inconsistency where a bare-Source
+    link (unlike a Zone-linked one) previously went silently quiet on
+    archival instead."""
+
+    feature = repository.add_place_feature(
+        PlaceFeatureCreate(feature_type="feeder", name="Feeder", source_id=SOURCE_ID), acting_user=_acting_user()
+    )
+    effective = date(2026, 6, 1)
+    now = datetime(2026, 6, 8, tzinfo=UTC)
+    event = repository.add_place_feature_change_event(
+        PlaceFeatureChangeEventCreate(feature_id=feature.id, event_type="added", effective_date=effective),
+        acting_user=_acting_user(),
+    )
+    _cover_days(repository, start=effective - timedelta(days=7), days=14)
+    for offset in range(7):
+        day = effective + timedelta(days=offset)
+        visit_id = f"visit-archived-cam-{offset}"
+        _add_visit(repository, visit_id=visit_id, at=datetime(day.year, day.month, day.day, 10, tzinfo=UTC))
+        _confirm(repository, visit_id=visit_id)
+
+    repository.update_camera_source(SOURCE_ID, CameraSourceUpdate(archived=True))
+
+    detail = repository.get_place_feature_detail(feature.id, now=now, local_timezone=UTC)
+    comparison = next(c for c in detail.changes if c.event.id == event.id).comparison
+    assert comparison is not None
+    assert comparison.maturity == "comparable"
+    assert comparison.status == "more_common_under_condition"
+    assert detail.feature.observation_links[0].source_archived is True
 
 
 # --- Environmental Context x Place Story & Habitat Change Composition v1:
@@ -1252,6 +1764,75 @@ def test_place_feature_change_event_unknown_feature_is_422_over_http(repository:
         json={"feature_id": "feature-missing", "event_type": "modified", "effective_date": "2026-01-01"},
     )
     assert response.status_code == 422
+
+
+def test_place_feature_observation_link_crud_over_http(repository: ProductRepository) -> None:
+    _add_second_camera(repository)
+    client = LegacyAuthenticatedSyncTestClient(app)
+    created = client.post(
+        "/api/place/features", json={"feature_type": "water", "name": "Bird Bath", "zone_id": ZONE_ID}
+    )
+    feature_id = created.json()["id"]
+
+    link_response = client.post(
+        f"/api/place/features/{feature_id}/observation-links", json={"zone_id": ZONE_ID_2}
+    )
+    assert link_response.status_code == 201
+    link_id = link_response.json()["id"]
+    assert link_response.json()["source_id"] == SOURCE_ID_2
+
+    detail = client.get(f"/api/place/features/{feature_id}/detail").json()
+    assert len(detail["feature"]["observation_links"]) == 2
+
+    removed = client.delete(f"/api/place/features/{feature_id}/observation-links/{link_id}")
+    assert removed.status_code == 204
+
+    detail_after = client.get(f"/api/place/features/{feature_id}/detail").json()
+    assert len(detail_after["feature"]["observation_links"]) == 1
+
+
+def test_place_feature_observation_link_mutations_require_authentication(
+    repository: ProductRepository,
+) -> None:
+    plain_client = TestClient(app)
+    assert plain_client.post(
+        "/api/place/features/feature-missing/observation-links", json={"source_id": SOURCE_ID}
+    ).status_code == 401
+    assert plain_client.delete(
+        "/api/place/features/feature-missing/observation-links/link-missing"
+    ).status_code == 401
+
+
+def test_place_feature_observation_link_duplicate_is_422_over_http(repository: ProductRepository) -> None:
+    client = LegacyAuthenticatedSyncTestClient(app)
+    created = client.post(
+        "/api/place/features", json={"feature_type": "feeder", "name": "Feeder", "zone_id": ZONE_ID}
+    )
+    feature_id = created.json()["id"]
+    response = client.post(
+        f"/api/place/features/{feature_id}/observation-links", json={"zone_id": ZONE_ID}
+    )
+    assert response.status_code == 422
+
+
+def test_place_feature_observation_link_missing_feature_is_404_over_http(
+    repository: ProductRepository,
+) -> None:
+    client = LegacyAuthenticatedSyncTestClient(app)
+    response = client.post(
+        "/api/place/features/feature-missing/observation-links", json={"source_id": SOURCE_ID}
+    )
+    assert response.status_code == 404
+
+
+def test_place_feature_observation_link_missing_link_is_404_over_http(
+    repository: ProductRepository,
+) -> None:
+    client = LegacyAuthenticatedSyncTestClient(app)
+    created = client.post("/api/place/features", json={"feature_type": "feeder", "name": "Feeder"})
+    feature_id = created.json()["id"]
+    response = client.delete(f"/api/place/features/{feature_id}/observation-links/link-missing")
+    assert response.status_code == 404
 
 
 def test_place_features_summary_over_http(repository: ProductRepository) -> None:

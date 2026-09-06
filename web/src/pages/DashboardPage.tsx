@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, apiClient } from "../api/client";
 import type {
+  CameraSource,
   DashboardSummary,
   DashboardVisitSummary,
   CameraHealthSummary,
@@ -11,6 +12,7 @@ import type {
   PlaceFeature,
   PlaceFeatureChangeEventCreate,
   PlaceFeatureCreate,
+  PlaceFeatureObservationLinkCreate,
   PlaceFeatureUpdate,
   PlaceFeaturesSummary,
   PlaceHabitatContext,
@@ -20,6 +22,7 @@ import type {
   PlacePhenologyObservationUpdate,
   PlaceYearOverYearResponse,
   StorageSummary,
+  Stream,
   StreamRuntimeStatus,
   Zone,
 } from "../api/types";
@@ -259,6 +262,12 @@ export function DashboardPage({
   const [placeFeatures, setPlaceFeatures] = useState<PlaceFeature[] | null>(null);
   const [placeFeaturesSummary, setPlaceFeaturesSummary] = useState<PlaceFeaturesSummary | null>(null);
   const [zones, setZones] = useState<Zone[] | null>(null);
+  // Multi-Camera Place Feature Linking & Cross-View Habitat Context v1:
+  // fetched here for the identical reason `zones` is above -- purely to
+  // populate PlaceFeaturesCard's camera/Zone-view picker with real names;
+  // not otherwise used by this page.
+  const [placeFeatureSources, setPlaceFeatureSources] = useState<CameraSource[] | null>(null);
+  const [placeFeatureStreams, setPlaceFeatureStreams] = useState<Stream[] | null>(null);
   // Year-over-Year Seasonality & Long-Term Place Memory v1: a sixth,
   // equally separate fetch -- see docs/year-over-year-seasonality-long-
   // term-place-memory-v1-report.md. Same absence-safety discipline as the
@@ -284,6 +293,8 @@ export function DashboardPage({
         nextPlaceFeatures,
         nextPlaceFeaturesSummary,
         nextZones,
+        nextPlaceFeatureSources,
+        nextPlaceFeatureStreams,
         nextYearOverYear,
       ] = await Promise.all([
         apiClient.getDashboardSummary(todayLocalDateString()),
@@ -296,6 +307,8 @@ export function DashboardPage({
         apiClient.getPlaceFeatures().catch(() => null),
         apiClient.getPlaceFeaturesSummary().catch(() => null),
         apiClient.getZones().catch(() => null),
+        apiClient.getSources().catch(() => null),
+        apiClient.getStreams().catch(() => null),
         apiClient.getPlaceYearOverYear().catch(() => null),
       ]);
       setSummary(nextSummary);
@@ -307,6 +320,8 @@ export function DashboardPage({
       setPlaceFeatures(nextPlaceFeatures);
       setPlaceFeaturesSummary(nextPlaceFeaturesSummary);
       setZones(nextZones);
+      setPlaceFeatureSources(nextPlaceFeatureSources);
+      setPlaceFeatureStreams(nextPlaceFeatureStreams);
       setYearOverYear(nextYearOverYear);
       if (monitoringStatuses) {
         setDurableStatusByStream(
@@ -458,6 +473,41 @@ export function DashboardPage({
     async (payload: PlaceFeatureChangeEventCreate) => {
       await apiClient.createPlaceFeatureChangeEvent(payload);
       await refreshPlaceFeatures();
+    },
+    [refreshPlaceFeatures],
+  );
+
+  // Multi-Camera Place Feature Linking & Cross-View Habitat Context v1:
+  // add/remove one observation view without disturbing any already-linked
+  // ones. Both return a user-safe explanation instead of throwing when
+  // rejected (422 -- an invalid/mismatched Zone or an already-linked
+  // duplicate view; see ProductRepository.add_place_feature_observation_
+  // link), mirroring `removePlaceFeature`'s identical discipline.
+  const addPlaceFeatureObservationLink = useCallback(
+    async (featureId: string, payload: PlaceFeatureObservationLinkCreate): Promise<string | null> => {
+      try {
+        await apiClient.addPlaceFeatureObservationLink(featureId, payload);
+        await refreshPlaceFeatures();
+        return null;
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 422) {
+          return error.message;
+        }
+        return "Could not link that view. Try again.";
+      }
+    },
+    [refreshPlaceFeatures],
+  );
+
+  const removePlaceFeatureObservationLink = useCallback(
+    async (featureId: string, linkId: string): Promise<string | null> => {
+      try {
+        await apiClient.removePlaceFeatureObservationLink(featureId, linkId);
+        await refreshPlaceFeatures();
+        return null;
+      } catch {
+        return "Could not remove that view. Try again.";
+      }
     },
     [refreshPlaceFeatures],
   );
@@ -621,8 +671,12 @@ export function DashboardPage({
         features={placeFeatures}
         onAddChangeEvent={addPlaceFeatureChangeEvent}
         onAddFeature={addPlaceFeature}
+        onAddObservationLink={addPlaceFeatureObservationLink}
         onRemoveFeature={removePlaceFeature}
+        onRemoveObservationLink={removePlaceFeatureObservationLink}
         onUpdateFeature={updatePlaceFeature}
+        sources={placeFeatureSources}
+        streams={placeFeatureStreams}
         summary={placeFeaturesSummary}
         zones={zones}
       />

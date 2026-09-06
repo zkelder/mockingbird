@@ -45,6 +45,21 @@ function feature(overrides: Record<string, unknown> = {}) {
     provenance: "user_manual_entry",
     created_at: NOW,
     updated_at: NOW,
+    observation_links: [],
+    ...overrides,
+  };
+}
+
+// Multi-Camera Place Feature Linking & Cross-View Habitat Context v1.
+function observationLink(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "link-e2e-1",
+    source_id: "source-e2e-1",
+    source_name: "Patio",
+    source_archived: false,
+    zone_id: "zone-e2e-1",
+    zone_name: "Bird Bath Zone",
+    created_at: NOW,
     ...overrides,
   };
 }
@@ -300,6 +315,88 @@ test("an insufficiently-monitored change reads as an honest restrained state, no
   await expect(
     page.getByText("Too soon to tell -- not enough time has passed since this change yet."),
   ).toBeVisible();
+});
+
+test("Manage features shows the Observed by chips for a linked Feature, with an archived suffix", async ({
+  page,
+}) => {
+  await completeSetup(page);
+  await mockFeaturesSummary(page, { active_feature_count: 1, recent_change_count: 0, highlight: null });
+  await mockFeaturesList(page, [
+    feature({
+      observation_links: [
+        observationLink(),
+        observationLink({
+          id: "link-e2e-2", source_id: "source-e2e-2", source_name: "Garden",
+          source_archived: true, zone_id: "zone-e2e-2", zone_name: "Pond Edge Zone",
+        }),
+      ],
+    }),
+  ]);
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Manage features" }).click();
+  const card = page.locator(".place-features-card");
+  await expect(card.getByText("Observed by:")).toBeVisible();
+  await expect(card.getByText("Patio — Bird Bath Zone")).toBeVisible();
+  await expect(card.getByText("Garden (archived) — Pond Edge Zone")).toBeVisible();
+});
+
+test("Manage features shows an honest 'no camera linked' state for a Place-wide Feature", async ({ page }) => {
+  await completeSetup(page);
+  await mockFeaturesSummary(page, { active_feature_count: 1, recent_change_count: 0, highlight: null });
+  await mockFeaturesList(page, [feature({ observation_links: [] })]);
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Manage features" }).click();
+  await expect(page.locator(".place-features-card").getByText("No camera linked -- Place knowledge only.")).toBeVisible();
+});
+
+test("+ Add another view reveals an accessible camera/Zone picker", async ({ page }) => {
+  await completeSetup(page);
+  await mockFeaturesSummary(page, { active_feature_count: 1, recent_change_count: 0, highlight: null });
+  await mockFeaturesList(page, [feature({ observation_links: [observationLink()] })]);
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Manage features" }).click();
+  await page.getByRole("button", { name: "+ Add another view" }).click();
+
+  const card = page.locator(".place-features-card");
+  // A `<select>` wrapped in its `<label>` computes its accessible name from
+  // the label's full text content, which browsers concatenate with the
+  // select's own option text -- `getByText` on the label's own static text
+  // is the robust check here, not an exact `getByLabel` match.
+  await expect(card.getByText("Camera to add")).toBeVisible();
+  await expect(card.getByRole("button", { name: "Add view" })).toBeVisible();
+  await expect(card.getByRole("button", { name: "Cancel" })).toBeVisible();
+});
+
+test("Place Report shows every linked view for a multi-camera Feature", async ({ page }) => {
+  await completeSetup(page);
+  await page.route("**/api/place/features", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        feature({
+          observation_links: [
+            observationLink(),
+            observationLink({
+              id: "link-e2e-3", source_id: "source-e2e-3", source_name: "Garden",
+              source_archived: false, zone_id: null, zone_name: null,
+            }),
+          ],
+        }),
+      ]),
+    }),
+  );
+  await page.route("**/api/place/feature-changes*", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) }),
+  );
+
+  await page.goto("/place-report");
+  await expect(page.getByRole("heading", { name: "Features & changes" })).toBeVisible();
+  await expect(page.getByText("Observed by: Patio — Bird Bath Zone, Garden")).toBeVisible();
 });
 
 test("the Place Features card stays usable at a narrow (mobile) viewport", async ({ page }) => {

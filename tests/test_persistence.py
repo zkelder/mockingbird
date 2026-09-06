@@ -24,7 +24,9 @@ from mockingbird.storage.models import (
     CameraSourceModel,
     EnvironmentalContextSettingsModel,
     MediaAssetModel,
+    PlaceFeatureModel,
     StreamModel,
+    ZoneModel,
 )
 
 STREAM_ID = "stream-backyard-feeder"
@@ -1833,5 +1835,139 @@ def test_schema_57_upgrades_to_current_with_field_acceptance_credentials(
                 "SELECT COUNT(*) FROM field_acceptance_credentials"
             ).scalar()
             assert row_count == 0, "upgrade must never fabricate a credential"
+    finally:
+        migrated.close()
+
+
+def test_schema_58_upgrades_to_current_with_place_feature_observation_links(
+    tmp_path: Path,
+) -> None:
+    """Multi-Camera Place Feature Linking & Cross-View Habitat Context v1:
+    a real database at the previously-current schema (v58) upgrades
+    cleanly through the one new additive `place_feature_observation_links`
+    table -- and, unlike every purely-additive migration before it (see
+    `_migrate_to_place_feature_observation_links`'s own docstring),
+    *backfills* it: an existing single-camera Feature (`source_id` set,
+    with or without a `zone_id`) must migrate to exactly one link row
+    carrying over its own association, provenance, and actor verbatim; a
+    Feature with no camera association at all (`source_id IS NULL`) must
+    migrate to zero link rows, not a fabricated one; and the Feature's own
+    pre-existing columns (name, type, association, provenance) must be
+    byte-identical after the upgrade -- this is the "existing single-
+    camera Features migrate without semantic change" backward-
+    compatibility proof the governing brief requires, not merely a
+    "table exists" check."""
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = repository_for(db_path)
+    pre_migration_source_id = "source-pre-migration-feature-link"
+    now = datetime(2026, 6, 1, tzinfo=UTC)
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                CameraSourceModel(
+                    id=pre_migration_source_id, name="Pre-migration camera", kind="manual_upload",
+                    status="connected", description="",
+                )
+            )
+            session.add(
+                StreamModel(
+                    id="stream-pre-migration-feature-link", source_id=pre_migration_source_id,
+                    name="Pre-migration stream", description="", is_live=False,
+                )
+            )
+            session.add(
+                ZoneModel(
+                    id="zone-pre-migration", stream_id="stream-pre-migration-feature-link", name="Feeder",
+                    zone_type="feeder", polygon_json="[]", is_active=True, monitoring_policy_json=None,
+                )
+            )
+            session.add(
+                PlaceFeatureModel(
+                    id="feature-pre-migration-zoned", feature_type="feeder", name="Sunflower feeder",
+                    note=None, is_active=True, installed_date=None, removed_date=None,
+                    source_id=pre_migration_source_id, zone_id="zone-pre-migration", feeder_food_type="Sunflower",
+                    information_class="reviewed", provenance="user_manual_entry", actor_user_id=None,
+                    created_at=now, updated_at=now,
+                )
+            )
+            session.add(
+                PlaceFeatureModel(
+                    id="feature-pre-migration-source-only", feature_type="water", name="Bird bath",
+                    note=None, is_active=True, installed_date=None, removed_date=None,
+                    source_id=pre_migration_source_id, zone_id=None, feeder_food_type=None,
+                    information_class="reviewed", provenance="user_manual_entry", actor_user_id=None,
+                    created_at=now, updated_at=now,
+                )
+            )
+            session.add(
+                PlaceFeatureModel(
+                    id="feature-pre-migration-unassociated", feature_type="habitat_area",
+                    name="Back hedge", note=None, is_active=True, installed_date=None, removed_date=None,
+                    source_id=None, zone_id=None, feeder_food_type=None,
+                    information_class="reviewed", provenance="user_manual_entry", actor_user_id=None,
+                    created_at=now, updated_at=now,
+                )
+            )
+    # Captured after seeding (not before): this migration's own upgrade must
+    # not change the Source count itself, whatever it already was.
+    existing_source_count = len(repository.list_sources())
+    repository.close()
+
+    engine = create_database_engine(f"sqlite:///{db_path}")
+    with engine.begin() as connection:
+        # A genuine v58 database never had this table at all -- simulate
+        # that exactly, not merely an empty one.
+        connection.exec_driver_sql("DROP TABLE place_feature_observation_links")
+        connection.exec_driver_sql("UPDATE mockingbird_schema SET version = 58 WHERE singleton_id = 1")
+    engine.dispose()
+
+    migrated = repository_for(db_path)
+    try:
+        assert migrated.schema_status.version == CURRENT_DATABASE_SCHEMA_VERSION
+        assert len(migrated.list_sources()) == existing_source_count
+
+        with migrated.engine.connect() as connection:
+            columns = {
+                row[1]
+                for row in connection.exec_driver_sql(
+                    "PRAGMA table_info(place_feature_observation_links)"
+                ).fetchall()
+            }
+            assert {
+                "id", "feature_id", "source_id", "zone_id", "information_class",
+                "provenance", "actor_user_id", "created_at",
+            } <= columns
+            total_link_count = connection.exec_driver_sql(
+                "SELECT COUNT(*) FROM place_feature_observation_links"
+            ).scalar()
+            # Exactly one link per associated Feature above; zero for the
+            # unassociated one -- never a fabricated row, never a missed one.
+            assert total_link_count == 2
+
+        zoned_links = migrated.get_place_feature_detail("feature-pre-migration-zoned").feature.observation_links
+        assert len(zoned_links) == 1
+        assert zoned_links[0].source_id == pre_migration_source_id
+        assert zoned_links[0].zone_id == "zone-pre-migration"
+        assert zoned_links[0].zone_name == "Feeder"
+
+        source_only_links = migrated.get_place_feature_detail(
+            "feature-pre-migration-source-only"
+        ).feature.observation_links
+        assert len(source_only_links) == 1
+        assert source_only_links[0].source_id == pre_migration_source_id
+        assert source_only_links[0].zone_id is None
+
+        unassociated_detail = migrated.get_place_feature_detail("feature-pre-migration-unassociated")
+        assert unassociated_detail.feature.observation_links == []
+        assert unassociated_detail.recent_yield is None
+
+        # Every migrated Feature's own compatibility-mirror columns read
+        # back exactly as they did pre-migration (exactly one link each).
+        zoned_feature = migrated.get_place_feature_detail("feature-pre-migration-zoned").feature
+        assert zoned_feature.source_id == pre_migration_source_id
+        assert zoned_feature.zone_id == "zone-pre-migration"
+        assert zoned_feature.name == "Sunflower feeder"
+        assert zoned_feature.feeder_food_type == "Sunflower"
     finally:
         migrated.close()

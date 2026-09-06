@@ -102,6 +102,8 @@ import type {
   PlaceFeatureChangeEventUpdate,
   PlaceFeatureCreate,
   PlaceFeatureDetail,
+  PlaceFeatureObservationLink,
+  PlaceFeatureObservationLinkCreate,
   PlaceFeatureUpdate,
   PlaceFeaturesSummary,
   PlaceHabitatContext,
@@ -1405,6 +1407,20 @@ export const apiClient = {
     }),
   deletePlaceFeature: (featureId: string) =>
     request<void>(`/api/place/features/${encodeURIComponent(featureId)}`, { method: "DELETE" }),
+  // Multi-Camera Place Feature Linking & Cross-View Habitat Context v1 --
+  // add/remove one camera/Zone observation view without disturbing any
+  // already-linked ones (unlike `updatePlaceFeature`'s legacy `source_id`/
+  // `zone_id` full-replacement fields).
+  addPlaceFeatureObservationLink: (featureId: string, payload: PlaceFeatureObservationLinkCreate) =>
+    request<PlaceFeatureObservationLink>(
+      `/api/place/features/${encodeURIComponent(featureId)}/observation-links`,
+      { method: "POST", body: JSON.stringify(payload) },
+    ),
+  removePlaceFeatureObservationLink: (featureId: string, linkId: string) =>
+    request<void>(
+      `/api/place/features/${encodeURIComponent(featureId)}/observation-links/${encodeURIComponent(linkId)}`,
+      { method: "DELETE" },
+    ),
   getPlaceFeatureDetail: (featureId: string) =>
     request<PlaceFeatureDetail>(`/api/place/features/${encodeURIComponent(featureId)}/detail`),
   getPlaceFeaturesSummary: () => request<PlaceFeaturesSummary>("/api/place/features-summary"),
