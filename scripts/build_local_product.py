@@ -289,6 +289,33 @@ WINDOWS_RUNTIME_REQUIREMENTS: tuple[str, ...] = (
     # `WINDOWS_BIOCLIP_RUNTIME_REQUIREMENTS`'s own `click` pin if that one is
     # ever intentionally re-validated and bumped.
     "click==8.4.2",
+    # Identical defect class to `idna`/`click` immediately above, newly
+    # reproduced (Representative Daylight True-Latency Tail Convergence v3's
+    # own preflight build, a real `deploy_windows_dev.py --commit e031291`
+    # run): not a direct MockingBird dependency -- pulled in transitively by
+    # `opencv-python-headless`'s own unbounded `numpy` requirement.
+    # `install_windows_runtime_dependencies` has no wheel cache for the core
+    # tier and always does a live online resolve, so without an explicit pin
+    # here it silently installs whatever numpy is newest on PyPI at build
+    # time (observed for real: 2.5.3, one release ahead of the pin below) --
+    # while `WINDOWS_GPU_RUNTIME_REQUIREMENTS` only loosely ranges numpy
+    # (`>=1.26,<3.0`) and is merely *incidentally* pinned to 2.5.2 by its own
+    # offline wheel cache's contents, and `WINDOWS_BIOCLIP_RUNTIME_
+    # REQUIREMENTS` already exact-pins numpy to that same 2.5.2 for its own
+    # reproducibility. Those independent `pip install --target` calls into
+    # the same flat site-packages then produce two different
+    # `numpy-*.dist-info/` directories whose `numpy.libs/` content silently
+    # stops matching either RECORD -- exactly the corruption class
+    # `verify_windows_gpu_runtime_dll_closure` exists to catch (and did: a
+    # real build failed outright on this exact shape before this pin
+    # existed, with `numpy.libs/libscipy_openblas64_-...dll` declared by
+    # RECORD but absent from disk). Exact-pinning it here, to precisely
+    # match the GPU/BioCLIP tiers' own resolved version, turns the later GPU
+    # and BioCLIP installs into a genuine no-op for this package, the same
+    # fix shape as `idna`/`click` above. Keep this in sync with
+    # `WINDOWS_BIOCLIP_RUNTIME_REQUIREMENTS`'s own `numpy` pin if that one is
+    # ever intentionally re-validated and bumped.
+    "numpy==2.5.2",
 )
 
 # The accepted Observation Engine's optional GPU detector stack (pyproject
