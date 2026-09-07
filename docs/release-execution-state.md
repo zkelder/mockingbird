@@ -3063,6 +3063,91 @@ exactly as open as stated.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
+**2026-09-07 update (Field Acceptance End-to-End Integration Proof v1, see
+§6.R):** bounded RELEASE-CRITICAL integration-and-correctness milestone,
+directly authorized outside this file. See
+[field-acceptance-end-to-end-integration-proof-v1-report.md](field-acceptance-end-to-end-integration-proof-v1-report.md)
+for the complete record. Classification **A**. Starting state verified
+exactly as expected (HEAD `2e7e8e0`, schema `v59`, Lane R `OPEN --
+RELEASE-CRITICAL -- TRUE LATENCY TAIL EVIDENCE REMAINS` and untouched,
+worktree safe, all seven preserved untracked detector files present and
+unchanged throughout).
+
+Closes all three integration limitations *Field Acceptance Tooling
+Correctness & Preflight Closure v1* itself named as out of its own bounded
+scope (its own §10, "Remaining limitations"), using one real, disposable,
+stdlib-only fake HTTP service (`tests/_field_acceptance_fake_service.py`)
+reachable by a real `subprocess` -- never a monkeypatch, never a mock of
+`WindowsHost`, never a parallel production API: **(A)**
+`field_acceptance_session_driver.py run`'s actual CLI entry point, proven
+end to end through a real subprocess for the target-reached path, the
+hard-75-minute-maximum path, an honest settlement-timeout failure (exit 1,
+no final snapshot ever written for it), and both credential-failure
+shapes (missing/invalid), all via the real, unmodified client's own error
+taxonomy. **(B)** `field_acceptance_recorder_readiness.py`'s `--dev-root`
+process-liveness branch, proven for the first time against a **genuinely
+running** disposable process (the same fake service) through the real,
+unmodified `deploy_windows_dev.real_windows_host()` -- real
+`powershell.exe`/`Get-NetTCPConnection`/`Invoke-WebRequest`, reachable
+from WSL2 via directly-confirmed live localhost-forwarding -- covering
+positive liveness, a genuinely stopped process, and the precise "a real
+running-but-unrelated process/stale pointer must never false-positive"
+shape, with zero false success in any negative case. **(C)** the complete
+field-tooling sequence (lifecycle init -> recorder readiness ->
+authenticated Observation start -> monotonic session driver, at the real,
+unmodified 45-minute/75-minute/12-sample `SessionDriverConfig` defaults,
+fake-clock-driven over genuine HTTP calls -> stop -> finalization settled
+-> final raw-ledger snapshot -> bounded collector shutdown -> real
+-subprocess reconciliation -> real-subprocess latency accounting ->
+cleanup), run as one bounded simulated scenario using the real, accepted
+tools throughout (a small, non-production test harness composing them,
+per this milestone's own governing brief's explicit allowance). Every
+specific behavior the governing brief named was directly proven: recorder
+failure prevents Observation start (the harness's own gate, never
+bypassed, confirmed by the fake service's own state never reaching
+"observing"); real advancing frames permit it; an early-met sample quota
+still waits the real 45-minute minimum; the real 75-minute maximum fires
+exactly, never late, at a deliberately non-dividing 37-second poll
+interval; finalization timing stays entirely separate from (never
+extends) the Observation's own 75-minute figure; a candidate created only
+during stop-finalization reaches the final snapshot, correctly classified
+`measured`+`fallback_measured`; a structurally-unavoidable coverage gap
+reconciles honestly `PARTIAL`, never rounded up; an admitted candidate
+with no capture-time anchor reconciles honestly
+`unavailable_capture_time`, never a crash; a dry-run cleanup verdict is
+byte-identical across two consecutive runs (idempotent), and every
+background thread/subprocess this milestone itself started is confirmed
+stopped/reaped, with zero orphans.
+
+**No integration defect was found or reproduced in production code** --
+all three limitations closed cleanly against real, unmodified accepted
+tooling on the first genuine end-to-end attempt; the only fixes this
+milestone made were to its own new test code (a stdout JSON-parsing
+assumption, a stop-timing-loop test-scenario mixup, a minimum-duration
+exactness assumption invalid under a non-dividing poll interval), none
+shipped to any production file. 4 new files (1 shared real-HTTP-service
+test fixture, 3 new `pytest.mark.slow` integration test files), 12 new
+tests, all passing, stable across every repeated run; 333 total
+directly-affected tests (the new 12 plus every pre-existing field
+-acceptance/lifecycle/driver/ledger/latency-accounting test file) passing
+with zero regressions; `ruff check` clean. All new tests correctly
+excluded from the Fast/Core gates (confirmed via `pytest -m "not slow"`,
+`12 deselected, 0 selected`); no full Core run performed or needed (no
+production code changed). No detector, classifier, tracker, admission,
+Visit-assembly, T0/T5-definition, clock-calibration-algorithm, evidence
+-selection, schema, or production-configuration change anywhere. No field
+session run; no deployment; no Camera Node contact; no physical hardware
+touched; no push.
+
+This closure does **not** declare Gate A passed, does **not** close Lane
+R (unchanged: `OPEN -- RELEASE-CRITICAL -- TRUE LATENCY TAIL EVIDENCE
+REMAINS`), and does **not** authorize the next Representative Field
+Acceptance tranche, External Pre-Release Acceptance, or Final Release
+Hardening. **Authorization remains NONE -- GLOBAL PRODUCT-ROADMAP
+RECONCILIATION REQUIRED**, returned here exactly as this milestone's own
+governing brief required, for the next external (ChatGPT) acceptance
+review to act on.
+
 **2026-09-07 update (Field Acceptance Tooling Correctness & Preflight
 Closure v1, see §6.R):** bounded, tooling-correctness-only milestone,
 directly authorized outside this file. See
