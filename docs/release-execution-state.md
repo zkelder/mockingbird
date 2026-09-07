@@ -130,6 +130,100 @@ record adds. This correction does **not** declare Gate A passed, does
 does **not** change current authorization from `NONE -- GLOBAL
 PRODUCT-ROADMAP RECONCILIATION REQUIRED`.
 
+**Corrected 2026-09-07 by Field Acceptance End-to-End Integration Proof v1**
+(see
+[field-acceptance-end-to-end-integration-proof-v1-report.md](field-acceptance-end-to-end-integration-proof-v1-report.md)),
+directly authorized outside this file as a bounded, integration-and
+-correctness-only milestone -- no field session, no deployment, no hardware
+touched. HEAD unchanged (`2e7e8e0` at start); schema unchanged (`v59`).
+Closes all three integration limitations the tooling-correctness milestone
+immediately above named as out of its own bounded scope, using one real,
+disposable, stdlib-only fake HTTP service reachable by a real subprocess:
+the actual `field_acceptance_session_driver.py run` CLI entry point (target
+-reached, hard-maximum, settlement-timeout, both credential-failure
+shapes); the `field_acceptance_recorder_readiness.py --dev-root`
+process-liveness branch against a genuinely running disposable process,
+through the real, unmodified `deploy_windows_dev.real_windows_host()`; and
+the complete field-tooling sequence (lifecycle init -> recorder readiness
+-> authenticated Observation start -> monotonic session driver at the real,
+unmodified 45/75-minute/12-sample defaults -> stop -> finalization settled
+-> final raw-ledger snapshot -> bounded collector shutdown -> reconciliation
+-> latency accounting -> cleanup), run as one bounded simulated scenario.
+**No integration defect was found or reproduced in production code** -- all
+three limitations closed cleanly on the first genuine end-to-end attempt;
+the only fixes were to this milestone's own new test code. 12 new tests,
+333 total directly-affected tests passing, zero regressions; `ruff check`
+clean; no production code changed anywhere. This closure does **not**
+declare Gate A passed, does **not** close Lane R (unchanged: `OPEN --
+RELEASE-CRITICAL -- TRUE LATENCY TAIL EVIDENCE REMAINS`), and does **not**
+authorize the next Representative Field Acceptance tranche, External
+Pre-Release Acceptance, or Final Release Hardening. **Authorization remains
+NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**Corrected 2026-09-07 by Representative Daylight True-Latency Tail
+Convergence v4** (see
+[representative-daylight-true-latency-tail-convergence-v4-report.md](representative-daylight-true-latency-tail-convergence-v4-report.md)),
+directly authorized outside this file as exactly one bounded Lane R field
+session. Starting state verified exactly as expected: HEAD `fcf236f`,
+schema `v59`, Lane R `OPEN` and untouched, worktree safe, all seven
+preserved untracked detector files present and unmodified throughout;
+authorization at start `NONE`. Classification **B**. A genuine 75-minute
+daylight session ran end-to-end (17:03:26-18:19:58 EDT) on the accepted,
+unchanged production stack (MDv5a/ONNX/CUDA, `score_threshold: 0.1`),
+using -- for the first time in a real field session -- the fully-hardened
+tooling chain the two milestones immediately above closed and proved:
+the recorder-readiness gate confirmed genuine advancing frames before the
+session was allowed to continue, and the monotonic session driver enforced
+the exact 45/75-minute/12-sample contract and the correct stop ->
+settle -> snapshot ordering automatically (no operator vigilance required,
+unlike every prior real cohort through v3). Produced 11 admitted
+candidates / **11 procedurally valid** RTT-normalized latency samples (zero
+invalid of any kind, the first Lane R cohort with none) -- one short of the
+≥12-sample target, for a second consecutive session. Ledger reconciliation
+was fully `COMPLETE` for the first time in this milestone family's own
+history (zero gaps in `raw_detections`/`track_generations`/
+`proposal_outcomes`, not merely zero *known* missing records), and the
+independent acceptance recorder ran cleanly the entire session (1,335
+frames, zero gaps exceeding 10 seconds) -- directly closing, in a real
+field session for the first time, the exact recorder-verification gap v3's
+own Defect #3 exposed. Median: 94.5s, reinforcing convergence across five
+intact cohorts now (82.9-115.7s span, unchanged bounds). p90: 258.7s, back
+inside the pre-v3 173.9-235.5s-adjacent band, easing but not resolving v3's
+own divergence finding (five cohorts' p90 values still span 173.9-385.1s,
+more than 2.2x). Max: 429.4s, inside the already-established
+261.2-742.3s range for a second consecutive cohort. The sole >300-second
+sample (429.4s) was fully traced to the same already-accepted
+Visit-Continuity/ambiguous-boundary-arbitration mechanism, this time
+corroborated by both the raw ledger (a 69-generation, 32-proposal contested
+component) and, for the first time alongside an intact live cohort, real
+independent-recorder frames showing genuine activity at the scene's own
+feeder. One substantive finding disclosed rather than smoothed over: one
+admitted candidate (candidate-005) is, on direct visual review of the
+recorder's own frames, more likely a person and an accompanying small pet
+passing through frame than a wild bird -- the same already-documented
+person/domestic-pet confound class *Hard-Negative Visit Admission Precision
+& Species-Escalation Correctness v1* and *Representative Daylight Gate A
+Field Acceptance v9* already characterized, not a new mechanism; its own
+latency measurement is retained unmodified in every statistic, per this
+project's own abstention-over-fabrication discipline. One new, minor,
+disclosed-not-fixed tooling gap found: `field_acceptance_instance_
+lifecycle.py mark-archived --evidence-archive` does not resolve a
+Windows-style path the same way `--dev-root` now does (the Tooling
+Correctness milestone's own fix covers only `--dev-root`) -- a WSL-style
+path workaround succeeded immediately, evidence was archived successfully,
+not fixed here per this milestone's own bounded field-evidence scope. No
+correctness defect was found or reproduced anywhere in the product; zero
+production code changed. **Gate A decision: unchanged -- OPEN, TRUE LATENCY
+TAIL EVIDENCE REMAINS.** No numeric budget is proposed or adopted -- the
+median is now more strongly supported than ever, but the ≥12-sample target
+was still not met and the p90 tail, while less divergent than v3 left it,
+has not yet converged to a single defensible band. This closure does
+**not** authorize another field tranche, External Pre-Release Acceptance,
+Final Release Hardening, or any other next development milestone.
+**Authorization remains NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION
+REQUIRED**, returned here exactly as this milestone's own governing
+directive required.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
@@ -3062,6 +3156,65 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-07 update (Representative Daylight True-Latency Tail Convergence
+v4, see §6.R):** bounded RELEASE-CRITICAL Lane R field-evidence milestone,
+directly authorized outside this file. See
+[representative-daylight-true-latency-tail-convergence-v4-report.md](representative-daylight-true-latency-tail-convergence-v4-report.md)
+for the complete record. Classification **B**. Starting state verified
+exactly as expected (HEAD `fcf236f`, schema `v59`, Lane P `CLOSED`, Lane R
+`OPEN` and untouched, worktree safe, all seven preserved untracked detector
+files present and unchanged throughout).
+
+**The daylight gate passed** (three-clock cross-check, ~3.5 hours before
+dusk) and a genuine 75-minute live session ran on the accepted production
+stack (MDv5a/ONNX/CUDA, `score_threshold: 0.1`, unchanged), for the first
+time using the fully-hardened recorder-readiness gate and monotonic session
+driver *Field Acceptance Tooling Correctness & Preflight Closure v1* built
+and *Field Acceptance End-to-End Integration Proof v1* proved -- both
+worked exactly as designed in a real field session for the first time: the
+recorder-readiness gate confirmed genuine advancing frames before the
+session was allowed to continue, and the session driver enforced the exact
+45/75-minute/12-sample contract and the correct stop -> settle -> snapshot
+ordering automatically, without operator vigilance. Produced 11 admitted
+candidates / **11 procedurally valid** RTT-normalized latency samples (zero
+invalid of any kind) -- short of the ≥12-sample target for a second
+consecutive session, but the cleanest evidence body of any Lane R cohort to
+date: ledger reconciliation was fully `COMPLETE` for the first time in this
+milestone family's history (zero gaps, not merely zero known-missing
+records), and the independent recorder ran with zero gaps exceeding 10
+seconds across the entire session -- directly closing, live, the exact
+recorder-verification gap v3's own Defect #3 exposed. Median: 94.5s,
+reinforcing convergence across five intact cohorts now (82.9-115.7s span,
+unchanged bounds). p90: 258.7s, back inside the pre-v3 band, easing but not
+resolving v3's own divergence finding (five cohorts' p90 values still span
+173.9-385.1s). Max: 429.4s, inside the already-established 261.2-742.3s
+range for a second consecutive cohort. The sole >300-second sample was
+fully traced to the same already-accepted Visit-Continuity/ambiguous
+-boundary-arbitration mechanism (a 69-generation, 32-proposal contested
+component), corroborated this time by real independent-recorder frames as
+well as the raw ledger. One substantive finding disclosed rather than
+smoothed over: one admitted candidate is, on direct visual review of the
+recorder's own frames, more likely a person and an accompanying small pet
+than a wild bird -- the same already-documented person/domestic-pet
+confound class already characterized elsewhere, not a new mechanism; its
+own latency measurement is retained unmodified in every statistic. One new,
+minor, disclosed-not-fixed tooling gap found (`mark-archived
+--evidence-archive`'s own Windows-style-path resolution, a workaround
+exists). No correctness defect was found in the product; nothing was
+patched; zero production code changed.
+
+**Gate A decision: unchanged -- OPEN, TRUE LATENCY TAIL EVIDENCE
+REMAINS.** No numeric budget is proposed or adopted (the median is now more
+strongly supported than ever across five cohorts, but the ≥12-sample target
+was still not met and the p90 tail, while less divergent than v3 left it,
+has not yet converged to a single defensible band -- adopting a budget now
+would mean setting it on the same or weaker evidence than the standing
+instruction already declined to act on). This closure does **not**
+authorize another field tranche, External Pre-Release Acceptance, Final
+Release Hardening, or any other next development milestone. **Authorization
+remains NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, returned
+here exactly as this milestone's own governing directive required.
 
 **2026-09-07 update (Field Acceptance End-to-End Integration Proof v1, see
 §6.R):** bounded RELEASE-CRITICAL integration-and-correctness milestone,
@@ -7948,6 +8101,60 @@ milestone: the ≥12-sample threshold itself (v3 reached 9); the tail's
 upper-percentile (p90) region, which v3's own session left less converged
 than before it, not more.** No new field evidence; no latency budget
 proposed; Lane R's own status line above is unmodified by this entry.
+
+**Integration-readiness delta (2026-09-07, Field Acceptance End-to-End
+Integration Proof v1) -- substantive status unchanged, this record is
+additive only.** See
+[field-acceptance-end-to-end-integration-proof-v1-report.md](field-acceptance-end-to-end-integration-proof-v1-report.md).
+Closed, with 12 new real-subprocess/real-fake-service tests, all three
+integration limitations the tooling-correctness milestone above named as
+out of its own scope: the actual `field_acceptance_session_driver.py run`
+CLI entry point; the recorder-readiness `--dev-root` process-liveness
+branch against a genuinely running process; and the complete field-tooling
+sequence end to end as one bounded simulated scenario. No integration
+defect found or reproduced in production code. No new field evidence; no
+latency budget proposed; Lane R's own status line above is unmodified by
+this entry.
+
+**Updated, additional evidence, narrows both named blockers without
+closing either (2026-09-07, Representative Daylight True-Latency Tail
+Convergence v4):** the next attempt at this exact field action was
+directly authorized and ran the first real field session using the
+fully-hardened recorder-readiness gate and monotonic session driver the two
+entries immediately above built and proved -- both worked exactly as
+designed. Daylight gate passed (three-clock cross-check, ~3.5 hours before
+dusk); 75-minute session on the unchanged accepted production stack.
+Result: 11 admitted candidates, **11 procedurally valid** RTT-normalized
+samples (zero invalid) -- short of the ≥12-sample target for a second
+consecutive session (median 94.5s, reinforcing convergence across five
+intact cohorts at 82.9-115.7s; p90 258.7s, back inside the pre-v3 band,
+easing but not resolving v3's own divergence finding; max 429.4s, inside
+the already-established 261.2-742.3s range for a second consecutive
+cohort). Ledger reconciliation was fully `COMPLETE` for the first time in
+this milestone family's own history, and the independent recorder ran with
+zero gaps exceeding 10 seconds all session -- directly closing, live, the
+exact recorder-verification gap v3's own Defect #3 exposed. The sole
+>300-second sample was fully traced to the same already-accepted
+arbitration/sustained-activity mechanism, corroborated by real
+independent-recorder frames for the first time alongside an intact live
+cohort. One admitted candidate is, on direct visual review, more likely a
+disclosed person/domestic-pet confound than a wild bird (already
+-characterized class, not new; its latency measurement is retained
+unmodified). See
+[representative-daylight-true-latency-tail-convergence-v4-report.md](representative-daylight-true-latency-tail-convergence-v4-report.md)
+for the complete record, including the full per-sample table and causal
+classification. **The status line above stands exactly as written -- Lane
+R remains OPEN, TRUE LATENCY TAIL EVIDENCE REMAINS.** No latency budget is
+proposed or adopted. **Concrete remaining blockers for the next Lane R
+field tranche, both narrower than before, neither closed: the ≥12-sample
+threshold itself (v3 reached 9, this session reached 11); the tail's
+upper-percentile (p90) region, which this session's own 258.7s eases back
+toward the pre-v3 band without yet forming, across all five intact
+cohorts, a single convergent band the way the medians already have.** One
+new, minor, disclosed-not-fixed tooling gap found:
+`field_acceptance_instance_lifecycle.py mark-archived --evidence-archive`
+does not resolve a Windows-style path the way `--dev-root` now does (a
+WSL-style path workaround succeeded immediately).
 
 **Prior status (immediately preceding, 2026-09-05):** OPEN --
 RELEASE-CRITICAL -- RELEASE DECISION REQUIRED, per
