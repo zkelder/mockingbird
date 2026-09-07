@@ -94,6 +94,42 @@ invent a latency budget, does **not** start External Pre-Release
 Acceptance or Final Release Hardening, and does **not** change current
 authorization from `NONE`.
 
+**Corrected 2026-09-07 by Field Acceptance Tooling Correctness & Preflight
+Closure v1** (see
+[field-acceptance-tooling-correctness-preflight-closure-v1-report.md](field-acceptance-tooling-correctness-preflight-closure-v1-report.md)),
+directly authorized outside this file as a bounded, tooling-correctness
+-only milestone -- no field session, no deployment, no hardware touched.
+HEAD unchanged (`4e46952`); schema unchanged (`v59`). Closes five concrete
+procedural gaps *Representative Daylight True-Latency Tail Convergence
+v3* exposed: (A) a `--dev-root` path-resolution inconsistency across
+`field_acceptance_instance_lifecycle.py`'s own subcommands, fixed by
+routing every one of them through the same already-accepted
+`deploy_windows_dev.resolve_dev_root_path` `preflight` already used; (B) a
+Windows-style `MOCKINGBIRD_DEV_ACCEPTANCE_RECORDING_DIR` value silently
+mistranslating to a garbage path with no error (v3's own Defect #3), fixed
+in `deploy_windows_dev.py`, plus a new, independently-testable
+pre-Observation recorder-readiness gate
+(`scripts/field_acceptance_recorder_readiness.py`) the next field
+procedure must run and honor (`STOP BEFORE OBSERVATION` on failure); (C) a
+hard, monotonic-clock-enforced 45-minute-minimum/75-minute-maximum/
+≥12-sample-target session-stop contract, previously only ever driven by
+operator judgment, now a tested, bounded polling loop
+(`scripts/field_acceptance_session_driver.py`); (D) an enforced
+Observation-stop -> finalization-settled -> final-raw-ledger-snapshot
+ordering (same new driver script), previously vigilance-dependent (v3's
+own report narrates the operator personally catching and correcting this
+by hand); (E) a documentation/reporting clarification of the already
+-correct `fallback_measured` terminology (admission-arbitration fallback,
+never a timestamp fallback) -- zero logic change. 42 new deterministic
+tests across 6 files; 404 total directly-affected tests passing, zero
+regressions (including the real, `pip`-install-backed packaging suite).
+**Lane R's own substantive status is unchanged and this milestone does
+not touch it** -- see §6.R, below, for the tooling-readiness delta this
+record adds. This correction does **not** declare Gate A passed, does
+**not** close Lane R, does **not** authorize another field session, and
+does **not** change current authorization from `NONE -- GLOBAL
+PRODUCT-ROADMAP RECONCILIATION REQUIRED`.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
@@ -3026,6 +3062,38 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-07 update (Field Acceptance Tooling Correctness & Preflight
+Closure v1, see §6.R):** bounded, tooling-correctness-only milestone,
+directly authorized outside this file. See
+[field-acceptance-tooling-correctness-preflight-closure-v1-report.md](field-acceptance-tooling-correctness-preflight-closure-v1-report.md)
+for the complete record. Classification **A**. Starting state verified
+exactly as expected (HEAD `4e46952`, schema `v59`, Lane R `OPEN` and
+untouched, worktree safe, all seven preserved untracked detector files
+present and unchanged throughout). Closed exactly the five concrete
+procedural gaps *Representative Daylight True-Latency Tail Convergence
+v3* named: a `--dev-root` path-resolution inconsistency across
+`field_acceptance_instance_lifecycle.py`'s own subcommands (one canonical
+resolution boundary now, reused everywhere); a Windows-style acceptance
+-recorder directory silently mistranslating with no error (fixed in
+`deploy_windows_dev.py`) plus a new independent pre-Observation
+recorder-readiness hard gate (`field_acceptance_recorder_readiness.py`,
+fails closed with `STOP BEFORE OBSERVATION`); a hard, monotonic-clock
+-enforced session-stop contract and an enforced post-finalization
+ledger-snapshot ordering, both newly implemented and tested in
+`field_acceptance_session_driver.py` (no such tracked, tested driver
+existed before this milestone -- every prior session drove both by
+operator judgment); and a documentation/reporting clarification of the
+already-correct `fallback_measured` terminology (zero logic change). 42
+new deterministic tests; 404 total directly-affected tests passing
+(including the real packaging-assembly suite), zero regressions;
+`ruff check` clean across every touched/new file. No product, perception,
+classifier, schema, T0/T5-contract, or clock-calibration-algorithm change.
+No field session run; no deployment; no hardware touched; no push. This
+milestone does **not** declare Gate A passed, does **not** close Lane R,
+and does **not** authorize another field session -- current authorization
+returns here exactly to `NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION
+REQUIRED`, per its own governing directive.
 
 **2026-09-07 update (Representative Daylight True-Latency Tail
 Convergence v3, see §6.R):** bounded RELEASE-CRITICAL Lane R field
@@ -7770,6 +7838,31 @@ remains OPEN, TRUE LATENCY TAIL EVIDENCE REMAINS.** No latency budget is
 proposed or adopted. Disclosed, not actioned: the SAFE_TO_RECLAIM
 disk-reclaim opportunity has grown to three archived dev-roots (~24.3GB,
 now including this milestone's own archived instance).
+
+**Tooling-readiness delta (2026-09-07, Field Acceptance Tooling
+Correctness & Preflight Closure v1) -- substantive status unchanged, this
+record is additive only.** See
+[field-acceptance-tooling-correctness-preflight-closure-v1-report.md](field-acceptance-tooling-correctness-preflight-closure-v1-report.md).
+Closed, with deterministic tests, exactly the five concrete procedural
+gaps the v3 session above exposed: the `--dev-root` path-format
+inconsistency that produced v3's own Defect #2 workaround; the
+Windows-style acceptance-recorder-directory mistranslation that produced
+v3's own Defect #3 (no independent recorder frames all session), now
+additionally guarded by a new, independent, bounded pre-Observation
+readiness gate (`scripts/field_acceptance_recorder_readiness.py`) the
+*next* field procedure must run and honor before committing to a full
+session (`STOP BEFORE OBSERVATION` on failure, never merely a warning);
+no tracked, tested session-stop-timing driver existed anywhere in this
+repository before this milestone (every real cohort through v3 drove the
+45-minute-minimum/75-minute-maximum/≥12-sample-target contract, and the
+post-stop-finalization ledger-snapshot ordering, by operator judgment
+alone) -- both are now enforced, tested code
+(`scripts/field_acceptance_session_driver.py`). **Concrete remaining
+blockers for the next Lane R field tranche, none removed by this
+milestone: the ≥12-sample threshold itself (v3 reached 9); the tail's
+upper-percentile (p90) region, which v3's own session left less converged
+than before it, not more.** No new field evidence; no latency budget
+proposed; Lane R's own status line above is unmodified by this entry.
 
 **Prior status (immediately preceding, 2026-09-05):** OPEN --
 RELEASE-CRITICAL -- RELEASE DECISION REQUIRED, per
