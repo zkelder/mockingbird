@@ -8790,6 +8790,55 @@ class PlaceFeaturesSummary(BaseModel):
     highlight: str | None = None
 
 
+class PlaceFeatureComparisonRow(BaseModel):
+    """Place Feature Comparison & Habitat Outcomes v1: one Feature's own
+    comparable facts, for a Place-wide overview -- see
+    docs/place-feature-comparison-habitat-outcomes-v1-contract.md
+    "Core deliverable A." Every field is reused, unmodified, from an
+    already-accepted single-Feature primitive; nothing here is computed
+    only for this row. `latest_change` deliberately carries only this
+    Feature's single most-recent change event (never its full history --
+    that stays one click away at this Feature's own Story/detail page)
+    so a Place-wide overview stays proportionate to Feature count, not
+    to total change-event count across every Feature."""
+
+    feature: PlaceFeature
+    recent_yield: PlaceFeatureYieldSummary | None = None
+    """`None` under the identical condition as `PlaceFeatureDetail.recent_
+    yield` -- zero observation links. Never a fabricated zero rate."""
+    latest_change: PlaceFeatureChangeEventWithComparison | None = None
+    """`None` when this Feature has no recorded change events at all --
+    an honest "nothing recorded yet," distinct from a change event
+    existing whose own `comparison` is `None`/`too_soon`."""
+    representative_evidence: RepresentativeEvidence | None = None
+    """Identical selection/semantics to `PlaceFeatureDetail.representative_
+    evidence` -- the single best already-persisted evidence image across
+    this Feature's entire history, never a second "best image" engine."""
+
+
+class PlaceFeatureComparisonOverview(BaseModel):
+    """Place Feature Comparison & Habitat Outcomes v1: the bounded,
+    Place-wide comparison surface -- see docs/place-feature-comparison-
+    habitat-outcomes-v1-contract.md. `features` is Core Deliverable A
+    (one row per Feature); `change_outcomes` is Core Deliverable B (one
+    entry per Reviewed change event that has an attempted before/after
+    comparison -- i.e. its own Feature had at least one observation link
+    at the time of the request, so a comparison was at least attempted,
+    whatever its `maturity` turned out to be). Computed fresh from
+    current rows on every call, never persisted -- a correction to any
+    underlying Feature, change event, or observation link is reflected
+    on the very next call with no invalidation step, mirroring
+    `PlaceFeatureDetail`'s identical correction-safety property.
+    Deliberately not paginated: Features and their manually-recorded
+    change events are both realistically small-N per Place (a person
+    must deliberately record each one), unlike Visits -- see the
+    contract's own "Non-goals reaffirmed" section."""
+
+    generated_at: datetime
+    features: list[PlaceFeatureComparisonRow]
+    change_outcomes: list[PlaceFeatureChangeEventWithComparison]
+
+
 class TaxonPlaceContext(BaseModel):
     """Restrained, non-causal habitat/environmental context associated with
     one taxon's single most recent reviewed observation at this Place --

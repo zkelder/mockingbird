@@ -61,6 +61,8 @@ interface PlaceActivityReportPageProps {
   // Place Story Deep Dives & Representative Evidence v1.
   onOpenTaxonStory: (label: string) => void;
   onOpenFeatureStory: (featureId: string) => void;
+  // Place Feature Comparison & Habitat Outcomes v1.
+  onOpenFeatureComparison: () => void;
 }
 
 type PlaceReportPreset = "today" | "last_7_days" | "last_30_days" | "this_year" | "custom";
@@ -559,6 +561,7 @@ export function PlaceActivityReportPage({
   onOpenBirdLog,
   onOpenTaxonStory,
   onOpenFeatureStory,
+  onOpenFeatureComparison,
 }: PlaceActivityReportPageProps) {
   const [preset, setPreset] = useState<PlaceReportPreset>("last_30_days");
   const [customStartDate, setCustomStartDate] = useState(localDateInputValue(localMidnight(new Date(), -29)));
@@ -1072,6 +1075,11 @@ export function PlaceActivityReportPage({
                 recorded changes -- not limited to the period above.
               </span>
             </div>
+            {placeFeatures.length > 0 ? (
+              <button className="text-action" onClick={onOpenFeatureComparison} type="button">
+                Compare Features
+              </button>
+            ) : null}
           </div>
           {placeFeatures.length > 0 ? (
             <ul className="habitat-phenology-list">

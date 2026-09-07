@@ -5607,6 +5607,37 @@ export interface PlaceFeaturesSummary {
   highlight?: string | null;
 }
 
+// Place Feature Comparison & Habitat Outcomes v1: one Feature's own
+// comparable facts, for a Place-wide overview. Every field is reused,
+// unmodified, from an already-accepted single-Feature primitive.
+export interface PlaceFeatureComparisonRow {
+  feature: PlaceFeature;
+  // null when the Feature has zero observation links -- never a fabricated
+  // zero rate.
+  recent_yield?: PlaceFeatureYieldSummary | null;
+  // Only this Feature's single most-recent change event -- its full
+  // timeline stays one click away at its own Feature Story. null when the
+  // Feature has no recorded change events at all.
+  latest_change?: PlaceFeatureChangeEventWithComparison | null;
+  representative_evidence?: RepresentativeEvidence | null;
+}
+
+// The bounded, Place-wide comparison surface. `features` is one row per
+// Feature; `change_outcomes` is one entry per Reviewed change event that
+// had at least one observation link at request time (so a comparison was
+// at least attempted, whatever its maturity turned out to be) -- a change
+// event belonging to a currently-unlinked Feature is excluded here but
+// still appears as that Feature's own `latest_change` above, with
+// `comparison: null`. Computed fresh on every call, never persisted -- a
+// correction to any underlying fact is reflected on the very next call.
+// Deliberately not paginated: both lists are realistically small-N per
+// Place (a person must deliberately record each Feature/change event).
+export interface PlaceFeatureComparisonOverview {
+  generated_at: string;
+  features: PlaceFeatureComparisonRow[];
+  change_outcomes: PlaceFeatureChangeEventWithComparison[];
+}
+
 // Biodiversity & Place Intelligence v1 -- see
 // docs/biodiversity-place-intelligence-v1-contract.md. Restrained,
 // non-causal habitat/environmental context tied to one taxon's single

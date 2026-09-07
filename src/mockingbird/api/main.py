@@ -419,6 +419,7 @@ from mockingbird.api.schemas import (
     PlaceFeatureChangeEvent,
     PlaceFeatureChangeEventCreate,
     PlaceFeatureChangeEventUpdate,
+    PlaceFeatureComparisonOverview,
     PlaceFeatureCreate,
     PlaceFeatureDetail,
     PlaceFeatureObservationLink,
@@ -15609,6 +15610,17 @@ async def get_place_features_summary() -> PlaceFeaturesSummary:
     `PlaceFeaturesSummary`'s own docstring."""
 
     return get_repository().get_place_features_summary()
+
+
+@app.get("/api/place/feature-comparison", response_model=PlaceFeatureComparisonOverview)
+async def get_place_feature_comparison_overview() -> PlaceFeatureComparisonOverview:
+    """Place Feature Comparison & Habitat Outcomes v1: a bounded, Place-wide
+    comparison surface over every recorded Feature and every Reviewed
+    change event with an attempted before/after comparison. See
+    `PlaceFeatureComparisonOverview`'s own docstring and
+    docs/place-feature-comparison-habitat-outcomes-v1-contract.md."""
+
+    return get_repository().get_place_feature_comparison_overview()
 
 
 @app.get("/api/place/feature-changes", response_model=list[PlaceFeatureChangeEvent])

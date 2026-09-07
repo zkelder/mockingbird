@@ -9824,6 +9824,79 @@ a.secondary-action {
   }
 }
 
+/* Place Feature Comparison & Habitat Outcomes v1: a calm, card-per-row
+   comparison list -- deliberately not a `<table>`, so it stacks cleanly on
+   narrow viewports without horizontal scrolling (see the `@media` rules
+   below), mirroring `.zone-insights-row`'s own responsive discipline. */
+.feature-comparison-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.feature-comparison-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 14px;
+  border: 1px solid #dce3d8;
+  border-radius: 12px;
+  padding: 12px;
+  background: #fff;
+}
+
+.feature-comparison-outcome-row {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.feature-comparison-thumb {
+  min-width: 0;
+}
+
+/* Overrides `.journal-label-image`'s own larger (150-210px) sizing, via
+   descendant selectors only -- `RepresentativeThumbnail` itself is reused
+   completely unmodified, no new thumbnail component. */
+.feature-comparison-thumb .journal-label-image,
+.feature-comparison-thumb .journal-label-image img,
+.feature-comparison-thumb .journal-thumbnail-fallback {
+  width: 72px;
+  height: 72px;
+  min-height: 72px;
+  font-size: 0.68rem;
+  padding: 4px;
+}
+
+.feature-comparison-body {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.feature-comparison-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.feature-comparison-latest-change {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (max-width: 680px) {
+  .feature-comparison-row {
+    grid-template-columns: 1fr;
+  }
+
+  .feature-comparison-thumb {
+    width: 72px;
+  }
+}
+
 /* MockingBird Installable Local Product v1: guided first-run onboarding. */
 .onboarding-wizard {
   max-width: 760px;

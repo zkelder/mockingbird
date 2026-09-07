@@ -33,6 +33,7 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { DetectionProposalsPage } from "./pages/DetectionProposalsPage";
 import { EventDetailPage } from "./pages/EventDetailPage";
 import { ExportsPage } from "./pages/ExportsPage";
+import { FeatureComparisonPage } from "./pages/FeatureComparisonPage";
 import { FeatureStoryPage } from "./pages/FeatureStoryPage";
 import { FolderImportPage } from "./pages/FolderImportPage";
 import { LocalDataPage } from "./pages/LocalDataPage";
@@ -1017,8 +1018,19 @@ export default function App() {
         <PlaceActivityReportPage
           sources={data.sources}
           onOpenBirdLog={openBirdLogLabel}
+          onOpenFeatureComparison={() => setPage("feature-comparison")}
           onOpenFeatureStory={openFeatureStory}
           onOpenTaxonStory={openTaxonStory}
+          onOpenVisit={openVisit}
+        />
+      );
+    }
+
+    if (page === "feature-comparison") {
+      return (
+        <FeatureComparisonPage
+          onOpenFeatureStory={openFeatureStory}
+          onOpenPlaceActivityReport={() => setPage("place-activity-report")}
           onOpenVisit={openVisit}
         />
       );

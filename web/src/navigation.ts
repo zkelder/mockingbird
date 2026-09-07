@@ -25,6 +25,7 @@ export type Page =
   | "place-story"
   | "taxon-story"
   | "feature-story"
+  | "feature-comparison"
   | "alerts-inbox"
   | "analytics"
   | "ecological-destinations"
@@ -69,6 +70,12 @@ const pagePaths: Partial<Record<Page, string>> = {
   "bird-log": "/bird-log",
   "place-activity-report": "/place-report",
   "place-story": "/place-story",
+  // Place Feature Comparison & Habitat Outcomes v1: a static, unparameterized
+  // page (a Place-wide comparison, not one Feature's own detail) -- nested
+  // under place-report to signal the relationship, not added to
+  // productNavItems/advancedNavItems (see App.tsx), matching Feature/Taxon
+  // Story's own "reachable by deep link, not a nav destination" precedent.
+  "feature-comparison": "/place-report/compare",
   "alerts-inbox": "/alerts",
   analytics: "/analytics",
   "ecological-destinations": "/ecological-destinations",

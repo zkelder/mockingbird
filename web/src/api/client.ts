@@ -100,6 +100,7 @@ import type {
   PlaceFeatureChangeEvent,
   PlaceFeatureChangeEventCreate,
   PlaceFeatureChangeEventUpdate,
+  PlaceFeatureComparisonOverview,
   PlaceFeatureCreate,
   PlaceFeatureDetail,
   PlaceFeatureObservationLink,
@@ -1424,6 +1425,10 @@ export const apiClient = {
   getPlaceFeatureDetail: (featureId: string) =>
     request<PlaceFeatureDetail>(`/api/place/features/${encodeURIComponent(featureId)}/detail`),
   getPlaceFeaturesSummary: () => request<PlaceFeaturesSummary>("/api/place/features-summary"),
+  // Place Feature Comparison & Habitat Outcomes v1 -- see docs/place-
+  // feature-comparison-habitat-outcomes-v1-contract.md.
+  getPlaceFeatureComparison: () =>
+    request<PlaceFeatureComparisonOverview>("/api/place/feature-comparison"),
   getPlaceFeatureChangeEvents: (featureId?: string) => {
     const searchParams = new URLSearchParams();
     if (featureId) searchParams.set("feature_id", featureId);

@@ -798,6 +798,8 @@ from mockingbird.api.schemas import (
     PlaceFeatureChangeEventCreate,
     PlaceFeatureChangeEventUpdate,
     PlaceFeatureChangeEventWithComparison,
+    PlaceFeatureComparisonOverview,
+    PlaceFeatureComparisonRow,
     PlaceFeatureCreate,
     PlaceFeatureDetail,
     PlaceFeatureObservationLink,
@@ -6939,6 +6941,53 @@ class ProductRepository:
             summary=summarize_environmental_period_comparison(period, include_neutral=True),
         )
 
+    def _feature_change_event_with_comparison(
+        self,
+        session: Session,
+        feature: PlaceFeatureModel,
+        stream_ids: list[str],
+        event_model: PlaceFeatureChangeEventModel,
+        *,
+        now: datetime,
+        local_timezone: tzinfo,
+        taxonomy_index: dict[str, TaxonomyLabelModel],
+        links: Sequence[PlaceFeatureObservationLinkModel] | None = None,
+    ) -> PlaceFeatureChangeEventWithComparison:
+        """One change event's full response bundle: the event itself, its
+        own before/after comparison, and (only once that comparison reached
+        a real window) its environmental-period composition. Extracted,
+        behavior-preserving, from `get_place_feature_detail`'s own per-event
+        loop body (Place Feature Comparison & Habitat Outcomes v1) so
+        `get_place_feature_comparison_overview`'s Place-wide loop computes
+        the identical per-event bundle without a second, duplicated
+        composition. `comparison`/`environmental_comparison` are both
+        `None` when `stream_ids` is empty -- no monitoring scope exists to
+        compare against yet, distinct from a comparison being attempted and
+        landing on `too_soon`/`insufficient_coverage`. `links`: see
+        `_feature_observation_scopes`."""
+
+        comparison_response = None
+        environmental_comparison_response = None
+        if stream_ids:
+            comparison = self._compute_feature_change_event_comparison(
+                session, feature, stream_ids, event_model,
+                now=now, local_timezone=local_timezone,
+                taxonomy_index=taxonomy_index, links=links,
+            )
+            comparison_response = self._feature_association_response(comparison)
+            if comparison.maturity in ("early_signal", "comparable"):
+                env_status, period = self._feature_environmental_period_comparison(
+                    session, comparison, local_timezone=local_timezone,
+                )
+                environmental_comparison_response = self._feature_environmental_comparison_response(
+                    comparison, env_status, period,
+                )
+        return PlaceFeatureChangeEventWithComparison(
+            event=self._place_feature_change_event_from_model(event_model),
+            comparison=comparison_response,
+            environmental_comparison=environmental_comparison_response,
+        )
+
     def get_place_feature_detail(
         self, feature_id: str, *, now: datetime | None = None, local_timezone: tzinfo | None = None,
     ) -> PlaceFeatureDetail | None:
@@ -6975,31 +7024,14 @@ class ProductRepository:
                     PlaceFeatureChangeEventModel.created_at.desc(),
                 )
             ).all()
-            changes: list[PlaceFeatureChangeEventWithComparison] = []
-            for event_model in event_models:
-                comparison_response = None
-                environmental_comparison_response = None
-                if stream_ids:
-                    comparison = self._compute_feature_change_event_comparison(
-                        session, model, stream_ids, event_model,
-                        now=generation_moment, local_timezone=resolved_local_timezone,
-                        taxonomy_index=taxonomy_index, links=links,
-                    )
-                    comparison_response = self._feature_association_response(comparison)
-                    if comparison.maturity in ("early_signal", "comparable"):
-                        env_status, period = self._feature_environmental_period_comparison(
-                            session, comparison, local_timezone=resolved_local_timezone,
-                        )
-                        environmental_comparison_response = self._feature_environmental_comparison_response(
-                            comparison, env_status, period,
-                        )
-                changes.append(
-                    PlaceFeatureChangeEventWithComparison(
-                        event=self._place_feature_change_event_from_model(event_model),
-                        comparison=comparison_response,
-                        environmental_comparison=environmental_comparison_response,
-                    )
+            changes: list[PlaceFeatureChangeEventWithComparison] = [
+                self._feature_change_event_with_comparison(
+                    session, model, stream_ids, event_model,
+                    now=generation_moment, local_timezone=resolved_local_timezone,
+                    taxonomy_index=taxonomy_index, links=links,
                 )
+                for event_model in event_models
+            ]
             recent_yield = self._feature_yield_summary(
                 session, model, now=generation_moment, taxonomy_index=taxonomy_index, links=links,
             )
@@ -7068,6 +7100,105 @@ class ProductRepository:
                 active_feature_count=active_count,
                 recent_change_count=recent_change_count,
                 highlight=highlight,
+            )
+
+    def get_place_feature_comparison_overview(
+        self, *, now: datetime | None = None, local_timezone: tzinfo | None = None,
+    ) -> PlaceFeatureComparisonOverview:
+        """Place Feature Comparison & Habitat Outcomes v1: the bounded,
+        Place-wide comparison surface -- see docs/place-feature-comparison-
+        habitat-outcomes-v1-contract.md. Every Feature's own observation
+        links are loaded in one batched pass (the identical technique
+        `list_place_features`/`get_place_features_summary` already use),
+        and every change event across every Feature in scope is loaded in
+        one further batched pass -- never one query per Feature, and never
+        Feature-count x per-Feature-detail-cost the way independently
+        calling `get_place_feature_detail` once per Feature would be.
+
+        Deliverable A (`features`, one row per Feature) computes only each
+        Feature's own single most-recent change event's comparison, not its
+        full history -- unlike `get_place_feature_detail`, which
+        intentionally computes every event for one Feature's own dedicated
+        page; a Feature's full timeline stays one click away at its own
+        Feature Story. Deliverable B (`change_outcomes`) computes a
+        comparison for every change event across every Feature that had at
+        least one observation link at request time, each exactly once,
+        reusing `_feature_change_event_with_comparison` (the identical
+        per-event composition `get_place_feature_detail` uses) -- a change
+        event belonging to a currently-zero-link Feature is excluded from
+        `change_outcomes` (no comparison was even attempted for it) but
+        still appears as that Feature's own `latest_change` in `features`,
+        with `comparison=None`, matching the existing "no camera or Zone is
+        linked" convention the Place Report page already renders."""
+
+        generation_moment = now or datetime.now(UTC)
+        resolved_local_timezone = local_timezone or resolve_host_local_timezone(generation_moment)
+        with self.session_factory() as session:
+            feature_models = list(
+                session.scalars(
+                    select(PlaceFeatureModel).order_by(PlaceFeatureModel.created_at.desc())
+                ).all()
+            )
+            feature_ids = [model.id for model in feature_models]
+            taxonomy_index = self._taxonomy_label_index(session)
+            links_by_feature, _source_by_id, _zone_by_id = self._place_feature_observation_link_context(
+                session, feature_ids,
+            )
+            # One batched fetch of every change event across every Feature
+            # in scope, newest-effective-date-first -- never one query per
+            # Feature. Place-wide events (`feature_id IS NULL`) have no
+            # Feature to scope a comparison against and already render
+            # separately on the Place Report page; out of scope here.
+            events_by_feature: dict[str, list[PlaceFeatureChangeEventModel]] = {
+                feature_id: [] for feature_id in feature_ids
+            }
+            if feature_ids:
+                all_event_models = session.scalars(
+                    select(PlaceFeatureChangeEventModel)
+                    .where(PlaceFeatureChangeEventModel.feature_id.in_(feature_ids))
+                    .order_by(
+                        PlaceFeatureChangeEventModel.effective_date.desc(),
+                        PlaceFeatureChangeEventModel.created_at.desc(),
+                    )
+                ).all()
+                for event_model in all_event_models:
+                    events_by_feature[event_model.feature_id].append(event_model)
+
+            rows: list[PlaceFeatureComparisonRow] = []
+            change_outcomes: list[PlaceFeatureChangeEventWithComparison] = []
+            for model in feature_models:
+                links = links_by_feature.get(model.id, [])
+                stream_ids = self._feature_monitoring_stream_ids(session, model, links=links)
+                event_outcomes = [
+                    self._feature_change_event_with_comparison(
+                        session, model, stream_ids, event_model,
+                        now=generation_moment, local_timezone=resolved_local_timezone,
+                        taxonomy_index=taxonomy_index, links=links,
+                    )
+                    for event_model in events_by_feature.get(model.id, [])
+                ]
+                if stream_ids:
+                    change_outcomes.extend(event_outcomes)
+
+                recent_yield = self._feature_yield_summary(
+                    session, model, now=generation_moment, taxonomy_index=taxonomy_index, links=links,
+                )
+                representative_evidence = self._feature_representative_evidence(
+                    session, model, now=generation_moment, links=links,
+                )
+                rows.append(
+                    PlaceFeatureComparisonRow(
+                        feature=self._place_feature_response(session, model, links=links),
+                        recent_yield=recent_yield,
+                        latest_change=event_outcomes[0] if event_outcomes else None,
+                        representative_evidence=representative_evidence,
+                    )
+                )
+
+            return PlaceFeatureComparisonOverview(
+                generated_at=generation_moment,
+                features=rows,
+                change_outcomes=change_outcomes,
             )
 
     def reset_demo_data(self) -> LocalDataStatus:
