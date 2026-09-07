@@ -3871,6 +3871,58 @@ exercise, unaffected by this milestone's own representative-evidence
 contract, which answers the same underlying need a different, already-
 sufficient way).
 
+**2026-09-06 update (Place Feature Comparison & Habitat Outcomes v1):**
+closes the "a ranked feature-comparison view" gap named repeatedly above
+(Place Features & Habitat Change v2's own report; Environmental Context x
+Place Story & Habitat Change Composition v1; Multi-Camera Place Feature
+Linking v1; Place Story Deep Dives & Representative Evidence v1, itself
+calling it an "explicit non-goal") -- a deliberately-authorized, one-time,
+bounded reopening of product development for exactly this one
+previously-deferred, non-release-blocking opportunity (the same-day Global
+Remaining Product-Development & Release-Queue Reconciliation v1 had
+classified it `D -- enrichment`), not a resumption of general product
+development. See
+[place-feature-comparison-habitat-outcomes-v1-contract.md](place-feature-comparison-habitat-outcomes-v1-contract.md)
+and
+[place-feature-comparison-habitat-outcomes-v1-report.md](place-feature-comparison-habitat-outcomes-v1-report.md).
+Zero schema change (stays v59); zero new analytics/statistics modules. One
+new repository method,
+`ProductRepository.get_place_feature_comparison_overview`, composes four
+already-accepted primitives (`feature_change_comparison`, `feature_yield`,
+`environmental_period_comparison`, `representative_evidence`) across every
+Feature in one batched pass -- the identical batched-link-context
+technique `list_place_features`/`get_place_features_summary` already use,
+hoisted one level further -- plus one pure, behavior-preserving
+extraction, `_feature_change_event_with_comparison`, shared with
+`get_place_feature_detail` (proven behavior-preserving: all 97 pre-existing
+`test_place_feature.py` tests pass unchanged). New `GET /api/place/
+feature-comparison`; a new page, `FeatureComparisonPage.tsx`
+(`/place-report/compare`, reachable via a new "Compare Features" link on
+the Place Report page, not a new nav destination), with two sections --
+one row per Feature (yield rate, latest change, representative evidence)
+and one entry per Reviewed change event with an attempted comparison --
+each sortable/filterable by factual, non-judgmental dimensions only (never
+raw Visit count, never an implied quality ranking); a new maturity badge is
+the first place in this product to visually distinguish `early_signal`
+from `comparable` (the underlying sentence helper's own identical wording
+for both remains a separately-disclosed, unfixed gap, unaffected). Measured,
+not assumed: the batched overview costs 21.0-21.5% fewer queries and ~19%
+less wall-clock time than calling `get_place_feature_detail` independently
+once per Feature, at realistic 5- and 8-Feature scales. 25 new backend
+tests (24 unit/repository/HTTP/performance plus one comprehensive
+product-shaped scenario: three Features, two cameras with different
+monitoring effort, a cross-camera duplicate, an independent pair, mixed
+change-event maturity, persisted environmental context, a species
+correction, an archived camera, and an expired media file, all proven to
+propagate/compose correctly under an enforced Local Only guarantee); 14 new
+Playwright e2e tests plus the 70 directly-adjacent existing ones, all
+passing with zero regressions. No pre-existing defect found. Explicitly not
+built, recorded as still open: batching `StreamVisitSummary` construction
+across many Visits (the larger remaining share of the measured query
+cost); the pre-existing `early_signal`/`comparable` sentence-wording gap
+itself; a second comparison entry point on the Dashboard's
+`PlaceFeaturesCard`.
+
 ### 5. Land Management / Agriculture
 
 An application of Place Intelligence, not a separate product architecture

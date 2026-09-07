@@ -2973,6 +2973,46 @@ exactly as open as stated.
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
 
+**2026-09-06 update (Place Feature Comparison & Habitat Outcomes v1):** a
+deliberately-authorized, one-time, bounded reopening of product
+development for exactly one named, previously-deferred opportunity ("a
+ranked feature-comparison view") that the same-day Global Remaining
+Product-Development & Release-Queue Reconciliation v1 (below) had itself
+examined and classified `D -- enrichment` -- not release-blocking, and
+explicitly flagged "do NOT automatically authorize... by adjacency" -- the
+owner's explicit, separate governing brief for exactly this one item
+overrides that conclusion for this milestone only. See
+[place-feature-comparison-habitat-outcomes-v1-report.md](place-feature-comparison-habitat-outcomes-v1-report.md)
+for the complete record. Classification **A**. Schema unchanged (`v59`):
+one new repository method composes four already-accepted primitives
+(before/after comparison, yield, environmental composition, representative
+evidence) across every Feature in one batched pass, zero new statistical
+engine; one pure, behavior-preserving extraction shared with the
+pre-existing `get_place_feature_detail`. New `GET /api/place/feature-
+comparison`; a new page (`/place-report/compare`, reachable via a new link
+on the Place Report page, not a new nav destination) with a Comparable
+Feature Overview and a Habitat Change Outcomes list, both sortable/
+filterable by factual, non-judgmental dimensions only. Measured (not
+assumed): 21.0-21.5% fewer queries and ~19% less wall-clock time than
+calling `get_place_feature_detail` independently once per Feature, at
+realistic 5- and 8-Feature scales. 25 new backend tests (including one
+comprehensive product-shaped scenario: three Features, two cameras with
+different monitoring effort, a cross-camera duplicate, an independent
+pair, mixed change maturity, persisted environmental context, a species
+correction, an archived camera, an expired media file) plus 14 new
+Playwright e2e tests, all passing; 172 directly-affected backend tests and
+84 directly-adjacent e2e tests re-run with zero regressions; Fast gate
+1801/0 failed; Core gate 5897 passed / 4 failed / 3 skipped / 23
+deselected / 11 xfailed (45m18s) -- all 4 failures independently
+confirmed pre-existing/unrelated via `git stash push -u` isolation (3
+reproduce byte-identically on the clean baseline; the 4th, an unrelated
+Camera Node capture-contention test, passes cleanly alone -- a
+concurrent-load timing flake). No pre-existing defect found. **This closure does not reopen any other lane, does not authorize a
+second product-development milestone, and does not change Lane R or Lane
+P.** `CURRENT PHASE` returns unchanged to `FEATURE FREEZE -- EVIDENCE,
+RELEASE READINESS & HOUSEKEEPING`. **Authorization remains NONE -- GLOBAL
+PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
 **2026-09-06 update (Environmental Context x Place Story & Habitat Change
 Composition v1):** a deliberately-authorized, one-time, bounded reopening
 of product development for exactly one named product relationship
@@ -6690,11 +6730,22 @@ Feature-detail bundle, Place Story's own already-working `taxon=`/
 `feature_id=` filters) via one shared, extracted Story-card component;
 representative evidence reuses the canonical Gate C selector unmodified,
 extended to a Feature's own linked camera views via a new, multi-camera-
-aware, cross-camera-deduplicated candidate-gathering path.
-Substantial product-roadmap opportunity still remains (a ranked feature-
-comparison view; Place Story period summaries; a year/month picker over
-the year-over-year card; week-level or named-seasonal-period comparison --
-see that report's and
+aware, cross-camera-deduplicated candidate-gathering path. Place Feature
+Comparison & Habitat Outcomes v1 (2026-09-06) closed the "a ranked
+feature-comparison view" opportunity named here (a deliberately-authorized,
+bounded reopening of this specific, previously `D -- enrichment`-classified
+backlog item, not a resumption of general product development) -- see
+[place-feature-comparison-habitat-outcomes-v1-report.md](place-feature-comparison-habitat-outcomes-v1-report.md):
+one new repository method composes four already-accepted primitives
+(before/after comparison, yield, environmental composition, representative
+evidence) across every Feature in one batched pass, zero new statistical
+engine, measured 21.0-21.5% fewer queries than calling `get_place_feature_
+detail` independently once per Feature.
+Substantial product-roadmap opportunity still remains (Place Story period
+summaries; a year/month picker over the year-over-year card; week-level or
+named-seasonal-period comparison; batching `StreamVisitSummary`
+construction across many Visits, the larger remaining share of the
+comparison overview's own measured query cost -- see that report's and
 [place-features-habitat-change-v2-report.md](place-features-habitat-change-v2-report.md)'s
 and
 [place-yard-intelligence-v2-report.md](place-yard-intelligence-v2-report.md)'s
@@ -9746,7 +9797,26 @@ each session that touches this repository.
 
 ## 14. Validation baselines
 
-**Latest accepted Core checkpoint (Ambiguous-Boundary Real-Subject Recall
+**Latest accepted Core checkpoint (Place Feature Comparison & Habitat
+Outcomes v1):** 5897 passed / **4 failed** / 3 skipped / 23 deselected
+(`slow`-marked) / 11 xfailed, 276 warnings -- `scripts/verify_core.py`'s
+own `pytest -m "not slow"` convention, run once as one bare background
+pass (2718.89s / 45m18s). All 4 failures independently confirmed
+pre-existing/unrelated this session, not merely assumed:
+`test_place_biodiversity_summary_repository.py::test_api_route_returns_
+the_summary`, `::test_human_correction_updates_place_biodiversity_
+intelligence_correctly`, and `test_place_change_summary_repository.py::
+test_api_round_trip_exposes_change_detection_fields` (the identical
+`AssertionError: assert 'insufficient_recent_coverage' ==
+'higher_recent_presence'` this section's own prior checkpoint already
+named) all reproduce byte-identically against this exact starting commit
+via `git stash push -u` isolation; `test_camera_node_capture_
+contention.py::test_analysis_stream_disconnect_during_inflight_capture_
+releases_camera_lock` (unrelated Camera Node code, untouched by this
+milestone) passes cleanly in isolation -- a concurrent-load timing flake,
+not a deterministic one. No schema change (v59, unchanged).
+
+**Prior accepted Core checkpoint (Ambiguous-Boundary Real-Subject Recall
 Correctness v1):** 5679 passed / **1 failed** / 3 skipped / 23 deselected
 (`slow`-marked) / 11 xfailed, 236 warnings -- `scripts/verify_core.py`'s
 own `pytest -m "not slow"` convention, run once as one bare foreground
