@@ -640,8 +640,24 @@ convergent band the way the medians already have.
   `deploy_windows_dev.py --dev-root ... --stop` → `"Stopped fcf236f
   (verified)."`
 - Periodic ledger collector and the health monitor were both stopped
-  explicitly and cleanly immediately after Observation settled — no
-  orphaned collector/driver/monitor process left running.
+  explicitly immediately after Observation settled. **Self-caught cleanup
+  gap, disclosed and fixed**: killing the WSL-side `powershell.exe` wrapper
+  process for the collector (both the discarded first attempt and the real
+  one) did **not** terminate the actual native-Windows `python.exe` child
+  process each had spawned across the WSL↔Windows process boundary — a
+  final post-cleanup process sweep (`Get-CimInstance Win32_Process` on the
+  Windows host) found **two** orphaned `field_acceptance_ledger_snapshot.py
+  collect` processes still polling the (already-stopped) product API every
+  600s. Both were identified by their exact command line, confirmed to be
+  this milestone's own (no unrelated process touched), and terminated
+  (`Stop-Process -Force`); a repeat sweep confirmed zero remaining
+  Windows-side python/powershell processes and zero mockingbird-related
+  processes of any kind. **Lesson for future field sessions using this same
+  WSL→Windows-python routing**: terminating the WSL-side launcher process
+  is not sufficient by itself to stop a spawned native-Windows child
+  process; the actual Windows-side process must be independently confirmed
+  stopped (e.g. via `Get-CimInstance Win32_Process`/`Stop-Process` on the
+  Windows host), not merely the WSL-side wrapper.
 - Instance lifecycle: `init` (run late, after deploy rather than
   immediately following it — a minor process-order slip on my own part,
   harmless since `init` has no ordering dependency on anything that
