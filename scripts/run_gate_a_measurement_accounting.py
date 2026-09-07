@@ -251,7 +251,10 @@ def main(argv: list[str] | None = None) -> int:
         f"invalid_negative={latency_summary.invalid_negative_count}, "
         f"implausible={latency_summary.implausible_count}, "
         f"invalid_clock_mapping={latency_summary.invalid_clock_mapping_count}, "
-        f"fallback_measured={latency_summary.fallback_measured_count}"
+        f"fallback_measured={latency_summary.fallback_measured_count} "
+        "(fallback_measured is a SUBSET of measured -- an admitted ambiguous-boundary-arbitration fallback "
+        "member, never a fallback/approximate TIMESTAMP; see capture_to_visible_latency.build_latency_summary's "
+        "own docstring)"
     )
     print(
         f"  median_ms={latency_summary.median_ms}, p90_ms={latency_summary.p90_ms}, "

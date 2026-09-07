@@ -114,6 +114,22 @@ manifest says.
     python scripts/field_acceptance_instance_lifecycle.py preflight --dev-root <new-root> \\
         --recorder-max-bytes 4000000000
 
+## `--dev-root` path convention
+
+Every subcommand above accepts `--dev-root` in either of two equivalent
+forms, uniformly (Field Acceptance Tooling Correctness & Preflight Closure
+v1): a WSL-visible path (`/mnt/c/Users/<you>/AppData/Local/<Name>`), or a
+Windows-style drive-letter/UNC path (`C:\\Users\\<you>\\AppData\\Local\\
+<Name>`) exactly as it would appear inside a real Windows shell -- both
+resolve to the identical real target. This was **not** true before this
+milestone: only `preflight` accepted both forms; every other subcommand
+(`init` above all) silently CWD-anchored a Windows-style string into
+relative garbage instead of translating it (see Representative Daylight
+True-Latency Tail Convergence v3's own Defect #2). An input that looks
+Windows-style but cannot actually be translated (no `wslpath` available, an
+unmounted drive letter) fails closed with a clear, actionable error --
+never a guess, never a silently wrong filesystem.
+
 Exit code is 0 for a successful/safe outcome (including an honest "not
 reclaimable yet" ``assess``/dry-run ``cleanup`` -- those are correct
 answers, not failures) and 1 for a real error or a fail-closed refusal --
@@ -321,6 +337,55 @@ def _resolve(path: Path) -> Path:
     return Path(path).resolve()
 
 
+def _resolve_dev_root(
+    dev_root: Path,
+    *,
+    is_native_windows: bool | None = None,
+    wsl_translate_fn: "Callable[[str], str | None] | None" = None,
+) -> Path:
+    """Field Acceptance Tooling Correctness & Preflight Closure v1: the one
+    canonical `--dev-root` resolution boundary every command in this file
+    uses -- delegates entirely to `deploy_windows_dev.resolve_dev_root_path`
+    (loaded via this module's own established `_dwd()` reuse convention),
+    the same already-accepted, already-tested primitive `storage_preflight_
+    report`'s own `preflight` command has used since Field Acceptance
+    Evidence Integrity & Storage Preflight Correctness v1.
+
+    Fixes Representative Daylight True-Latency Tail Convergence v3's own
+    Defect #2: every command *other* than `preflight` (`init`/`status`/
+    `assess`/`complete`/`mark-archived`/`cleanup`) used to call bare
+    `_resolve()` (`Path(dev_root).resolve()`) directly on `dev_root` --
+    which, off native Windows, silently CWD-anchors a Windows-style
+    (`C:\\Users\\...`) `--dev-root` string instead of translating it via
+    `wslpath -u`, exactly the same-shaped bug `resolve_dev_root_path`'s own
+    docstring already documents having been fixed for `deploy_windows_dev.
+    py main()` itself. `init` rejecting the very same path string
+    `preflight` had, minutes earlier, correctly accepted -- producing a
+    garbled error concatenating the WSL cwd with the raw backslash string
+    -- was exactly this: one tool, two subcommands, two different `--dev-
+    root` conventions. Routing every command through this one function
+    closes that inconsistency for good: there is now exactly one input
+    -path convention for this whole tool, not one per subcommand.
+
+    `is_native_windows`/`wsl_translate_fn` are hermetic test seams only
+    (mirroring `storage_preflight_report`'s own identical two parameters) --
+    real callers (the CLI, via `main()`) never pass them, so production
+    always gets the real `os.name`/real `wslpath -u` behavior. Raises this
+    module's own `InstanceLifecycleError` (never a raw `deploy_windows_dev.
+    DeploymentError` leaking through) with the same clear, actionable
+    message `resolve_dev_root_path` already produces for an untranslatable
+    Windows-style path -- mirrors `storage_preflight_report`'s own existing
+    `except dwd["DeploymentError"]` re-raise convention exactly."""
+
+    dwd = _dwd()
+    try:
+        return dwd["resolve_dev_root_path"](  # type: ignore[operator]
+            dev_root, is_native_windows=is_native_windows, wsl_translate_fn=wsl_translate_fn,
+        )
+    except dwd["DeploymentError"] as error:  # type: ignore[misc]
+        raise InstanceLifecycleError(str(error)) from error
+
+
 def refuse_unsafe_root(resolved: Path, *, windows_host: Any, dwd: dict[str, object]) -> None:
     """Raise `InstanceLifecycleError` for every target this tool must never
     treat as a disposable field-acceptance instance root, regardless of
@@ -410,10 +475,16 @@ def _find_escaping_links(root: Path) -> list[Path]:
 
 
 def init_instance(
-    *, dev_root: Path, windows_host: Any, notes: str = "", force: bool = False,
+    *,
+    dev_root: Path,
+    windows_host: Any,
+    notes: str = "",
+    force: bool = False,
+    is_native_windows: bool | None = None,
+    wsl_translate_fn: "Callable[[str], str | None] | None" = None,
 ) -> InstanceManifest:
     dwd = _dwd()
-    resolved = _resolve(dev_root)
+    resolved = _resolve_dev_root(dev_root, is_native_windows=is_native_windows, wsl_translate_fn=wsl_translate_fn)
     refuse_unsafe_root(resolved, windows_host=windows_host, dwd=dwd)
     if not _looks_like_deploy_tool_root(resolved, dwd):
         raise InstanceLifecycleError(
@@ -547,10 +618,15 @@ def _probe_observation_active(streams_client: Any) -> bool | None:
 
 
 def assess_instance(
-    *, dev_root: Path, windows_host: Any, check_observation: bool = True,
+    *,
+    dev_root: Path,
+    windows_host: Any,
+    check_observation: bool = True,
+    is_native_windows: bool | None = None,
+    wsl_translate_fn: "Callable[[str], str | None] | None" = None,
 ) -> AssessmentResult:
     dwd = _dwd()
-    resolved = _resolve(dev_root)
+    resolved = _resolve_dev_root(dev_root, is_native_windows=is_native_windows, wsl_translate_fn=wsl_translate_fn)
     manifest = read_manifest(resolved)
     identity_confirmed = (
         manifest is not None
@@ -670,9 +746,15 @@ def assess_instance(
 # ---------------------------------------------------------------------------
 
 
-def complete_instance(*, dev_root: Path, windows_host: Any) -> InstanceManifest:
+def complete_instance(
+    *,
+    dev_root: Path,
+    windows_host: Any,
+    is_native_windows: bool | None = None,
+    wsl_translate_fn: "Callable[[str], str | None] | None" = None,
+) -> InstanceManifest:
     dwd = _dwd()
-    resolved = _resolve(dev_root)
+    resolved = _resolve_dev_root(dev_root, is_native_windows=is_native_windows, wsl_translate_fn=wsl_translate_fn)
     manifest = read_manifest(resolved)
     if manifest is None or manifest.dev_root != str(resolved):
         raise InstanceLifecycleError(f"{resolved} has no matching field-acceptance manifest -- run 'init' first.")
@@ -725,8 +807,14 @@ def verify_archive_contract(path: Path) -> tuple[bool, list[str]]:
     return not missing, missing
 
 
-def mark_archived(*, dev_root: Path, evidence_archive: Path) -> InstanceManifest:
-    resolved = _resolve(dev_root)
+def mark_archived(
+    *,
+    dev_root: Path,
+    evidence_archive: Path,
+    is_native_windows: bool | None = None,
+    wsl_translate_fn: "Callable[[str], str | None] | None" = None,
+) -> InstanceManifest:
+    resolved = _resolve_dev_root(dev_root, is_native_windows=is_native_windows, wsl_translate_fn=wsl_translate_fn)
     manifest = read_manifest(resolved)
     if manifest is None or manifest.dev_root != str(resolved):
         raise InstanceLifecycleError(f"{resolved} has no matching field-acceptance manifest -- run 'init' first.")
@@ -781,8 +869,19 @@ class CleanupPlan:
         return asdict(self)
 
 
-def plan_cleanup(*, dev_root: Path, windows_host: Any) -> CleanupPlan:
-    resolved = _resolve(dev_root)
+def plan_cleanup(
+    *,
+    dev_root: Path,
+    windows_host: Any,
+    is_native_windows: bool | None = None,
+    wsl_translate_fn: "Callable[[str], str | None] | None" = None,
+) -> CleanupPlan:
+    resolved = _resolve_dev_root(dev_root, is_native_windows=is_native_windows, wsl_translate_fn=wsl_translate_fn)
+    # `resolved` is already a real, fully-resolved absolute path at this
+    # point -- `assess_instance`'s own internal `_resolve_dev_root` call on
+    # it is a safe, idempotent no-op (it never again looks like a
+    # Windows-style drive/UNC string), so no test seam needs threading
+    # through this specific call.
     assessment = assess_instance(dev_root=resolved, windows_host=windows_host, check_observation=False)
     if assessment.verdict != SAFE_TO_RECLAIM:
         return CleanupPlan(
@@ -803,9 +902,16 @@ def plan_cleanup(*, dev_root: Path, windows_host: Any) -> CleanupPlan:
     )
 
 
-def execute_cleanup(*, dev_root: Path, windows_host: Any, destroy: bool) -> CleanupPlan:
+def execute_cleanup(
+    *,
+    dev_root: Path,
+    windows_host: Any,
+    destroy: bool,
+    is_native_windows: bool | None = None,
+    wsl_translate_fn: "Callable[[str], str | None] | None" = None,
+) -> CleanupPlan:
     dwd = _dwd()
-    resolved = _resolve(dev_root)
+    resolved = _resolve_dev_root(dev_root, is_native_windows=is_native_windows, wsl_translate_fn=wsl_translate_fn)
     plan = plan_cleanup(dev_root=resolved, windows_host=windows_host)
     if not destroy or plan.blocked:
         return plan
@@ -1001,8 +1107,17 @@ def storage_preflight_report(
 # ---------------------------------------------------------------------------
 
 
-def status_report(*, dev_root: Path, windows_host: Any) -> dict[str, Any]:
-    assessment = assess_instance(dev_root=dev_root, windows_host=windows_host)
+def status_report(
+    *,
+    dev_root: Path,
+    windows_host: Any,
+    is_native_windows: bool | None = None,
+    wsl_translate_fn: "Callable[[str], str | None] | None" = None,
+) -> dict[str, Any]:
+    assessment = assess_instance(
+        dev_root=dev_root, windows_host=windows_host,
+        is_native_windows=is_native_windows, wsl_translate_fn=wsl_translate_fn,
+    )
     return assessment.as_dict()
 
 

@@ -709,6 +709,144 @@ def test_storage_preflight_nested_nonexistent_target_resolves_to_correct_ancesto
 
 
 # ---------------------------------------------------------------------------
+# Field Acceptance Tooling Correctness & Preflight Closure v1: dev-root
+# path-resolution consistency across every subcommand, not just `preflight`.
+# Representative Daylight True-Latency Tail Convergence v3's own Defect #2:
+# `init` rejected the identical Windows-style `--dev-root` string
+# `preflight` had, minutes earlier, correctly translated
+# (`"resolution_method": "translated_from_windows_drive_path"`) -- producing
+# a garbled error concatenating the WSL cwd with the raw backslash string.
+# `init_instance`/`assess_instance`/`complete_instance`/`mark_archived`/
+# `plan_cleanup`/`execute_cleanup` now all resolve `--dev-root` through the
+# exact same `_resolve_dev_root` -> `deploy_windows_dev.resolve_dev_root_
+# path` boundary `preflight` already used -- these tests confirm the fix at
+# the same tools a real field session actually runs.
+# ---------------------------------------------------------------------------
+
+
+def test_init_accepts_a_windows_style_dev_root_matching_preflights_own_translation(
+    fake_host: WindowsHost, tmp_path: Path,
+) -> None:
+    """The exact Representative Daylight True-Latency Tail Convergence v3
+    workaround, closed: `init` now accepts the identical Windows-style
+    string `preflight` already accepted, and resolves to the identical
+    real target -- never a second, silently-diverging translation."""
+
+    windows_style = r"C:\Users\zachk\AppData\Local\MockingBirdLatencyConvergenceV3"
+    fake_mount_root = tmp_path / "mnt-sim" / "c-sim"
+    translated = fake_mount_root / "Users" / "zachk" / "AppData" / "Local" / "MockingBirdLatencyConvergenceV3"
+    _make_deploy_tool_root(translated, windows_host=fake_host, git_commit="d" * 40, build_id="build-v3")
+
+    manifest = init_instance(
+        dev_root=Path(windows_style), windows_host=fake_host,
+        is_native_windows=False, wsl_translate_fn=lambda _raw: str(translated),
+    )
+
+    assert manifest.dev_root == str(translated.resolve())
+    assert manifest.created_by_commit == "d" * 40
+    assert (translated / MANIFEST_FILENAME).is_file()
+    assert str(ROOT) not in manifest.dev_root  # never the repo checkout / CWD -- the pre-fix garbled shape
+
+
+def test_init_fails_closed_for_a_windows_style_dev_root_with_no_translation_available(
+    fake_host: WindowsHost,
+) -> None:
+    """Never silently CWD-anchors a Windows-style path into relative
+    garbage (the exact pre-fix defect) -- fails closed with the same
+    clear, actionable `InstanceLifecycleError` `preflight` already gives
+    for this identical situation, never a bare traceback and never a
+    fabricated manifest somewhere unexpected."""
+
+    with pytest.raises(InstanceLifecycleError, match="wslpath"):
+        init_instance(
+            dev_root=Path(r"C:\Users\zachk\AppData\Local\MockingBirdMissingTranslation"),
+            windows_host=fake_host, is_native_windows=False, wsl_translate_fn=lambda _raw: None,
+        )
+
+
+def test_init_handles_a_windows_style_dev_root_containing_spaces(fake_host: WindowsHost, tmp_path: Path) -> None:
+    """Governing brief §3: 'valid paths with spaces handled safely.'
+    Spaces are ordinary characters to `wslpath` (invoked via an argv list,
+    never a shell string) -- this proves the whole path survives end to
+    end, manifest included, not merely that translation itself does not
+    crash."""
+
+    windows_style = r"C:\Users\zach k\AppData\Local\Field Acceptance V3"
+    fake_mount_root = tmp_path / "mnt-sim" / "c-sim"
+    translated = fake_mount_root / "Users" / "zach k" / "AppData" / "Local" / "Field Acceptance V3"
+    _make_deploy_tool_root(translated, windows_host=fake_host)
+
+    manifest = init_instance(
+        dev_root=Path(windows_style), windows_host=fake_host,
+        is_native_windows=False, wsl_translate_fn=lambda _raw: str(translated),
+    )
+
+    assert manifest.dev_root == str(translated.resolve())
+    assert (translated / MANIFEST_FILENAME).is_file()
+
+
+def test_init_is_idempotent_across_two_spellings_of_the_same_real_directory(
+    fake_host: WindowsHost, tmp_path: Path,
+) -> None:
+    """Governing brief §3: 'idempotent initialization.' A Windows-style
+    spelling and the equivalent already-WSL-visible spelling of the *same*
+    real directory must resolve to the identical manifest location -- the
+    second `init` (without --force) correctly recognizes 'already marked'
+    rather than silently creating a second, divergent manifest reachable
+    only through the other spelling."""
+
+    real_root = tmp_path / "MockingBirdFieldAcceptanceIdempotent"
+    _make_deploy_tool_root(real_root, windows_host=fake_host)
+
+    first = init_instance(dev_root=real_root, windows_host=fake_host)  # ordinary WSL-visible spelling
+    with pytest.raises(InstanceLifecycleError, match="already marked"):
+        init_instance(
+            dev_root=Path(r"C:\Users\zachk\AppData\Local\MockingBirdFieldAcceptanceIdempotent"),
+            windows_host=fake_host, is_native_windows=False, wsl_translate_fn=lambda _raw: str(real_root),
+        )
+    assert read_manifest(real_root).created_at == first.created_at
+
+
+def test_assess_complete_and_cleanup_also_accept_a_windows_style_dev_root(
+    fake_host: WindowsHost, tmp_path: Path,
+) -> None:
+    """The fix is tool-wide, not scoped to `init` alone -- every lifecycle
+    transition a real field session runs end to end accepts the identical
+    Windows-style spelling, closing 'one documented, canonical input-path
+    convention' for the whole tool."""
+
+    fake_mount_root = tmp_path / "mnt-sim" / "c-sim"
+    translated = fake_mount_root / "Users" / "zachk" / "AppData" / "Local" / "MockingBirdWideCheck"
+    windows_style = Path(r"C:\Users\zachk\AppData\Local\MockingBirdWideCheck")
+    translate = lambda _raw: str(translated)  # noqa: E731
+    _make_deploy_tool_root(translated, windows_host=fake_host)
+
+    init_instance(dev_root=windows_style, windows_host=fake_host, is_native_windows=False, wsl_translate_fn=translate)
+    assessed = assess_instance(
+        dev_root=windows_style, windows_host=fake_host, is_native_windows=False, wsl_translate_fn=translate,
+    )
+    assert assessed.identity_confirmed is True
+
+    completed = complete_instance(
+        dev_root=windows_style, windows_host=fake_host, is_native_windows=False, wsl_translate_fn=translate,
+    )
+    assert completed.lifecycle_state == LIFECYCLE_COMPLETED
+
+    archive = _make_evidence_archive(tmp_path)
+    archived = mark_archived(
+        dev_root=windows_style, evidence_archive=archive, is_native_windows=False, wsl_translate_fn=translate,
+    )
+    assert archived.lifecycle_state == LIFECYCLE_ARCHIVED
+
+    plan = execute_cleanup(
+        dev_root=windows_style, windows_host=fake_host, destroy=True,
+        is_native_windows=False, wsl_translate_fn=translate,
+    )
+    assert plan.destroyed is True
+    assert not translated.exists()
+
+
+# ---------------------------------------------------------------------------
 # Cache separation / shared-cache safety
 # ---------------------------------------------------------------------------
 

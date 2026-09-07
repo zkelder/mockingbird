@@ -413,6 +413,41 @@ def test_reconcile_ledger_never_reports_complete_for_a_genuinely_partial_recover
     assert report.overall_status == "PARTIAL"
 
 
+def test_reconcile_ledger_equal_recovered_and_recorded_counts_still_reports_partial_when_a_real_gap_exists() -> None:
+    """Field Acceptance Tooling Correctness & Preflight Closure v1
+    (governing brief §6): 'Require an explicit completeness verdict based
+    on actual snapshot coverage, not merely equal record counts.' Two
+    non-corroborating checkpoints together recover exactly as many unique
+    records as the session's own true final total (5 == 5) -- a naive
+    'recovered count == recorded count' check would call this COMPLETE --
+    but their own reported retained-offset windows ([0, 400] and [600,
+    1000]) leave a real, unproven 200ms gap between them. The count
+    matching is coincidental (the two payloads' own `recorded_count`
+    values deliberately do *not* independently corroborate the same final
+    total -- 3 and 5 -- so the 'two-or-more-independent-payloads-agree'
+    trailing-rule shortcut in `_accumulate_artifact` never fires here);
+    only the interval-gap analysis -- already the real, pre-existing logic
+    this asserts, not a change -- catches it."""
+
+    payload_a = _ledger_payload(
+        raw_detections=[{"source_offset_ms": 50}, {"source_offset_ms": 150}, {"source_offset_ms": 350}],
+        raw_recorded_count=3, oldest_retained_ms=0, newest_retained_ms=400, session_last_offset_ms=1000,
+    )
+    payload_b = _ledger_payload(
+        raw_detections=[{"source_offset_ms": 650}, {"source_offset_ms": 950}],
+        raw_recorded_count=5, oldest_retained_ms=600, newest_retained_ms=1000, session_last_offset_ms=1000,
+    )
+
+    report = reconcile_ledger([payload_a, payload_b], stream_id="s1")
+
+    artifact = report.artifacts["raw_detections"]
+    assert artifact.recovered_unique_count == 5
+    assert artifact.final_recorded_count == 5  # counts are equal ...
+    assert artifact.gaps_ms == [(400, 600)]  # ... but a real, uncovered window still exists
+    assert artifact.status == "PARTIAL"  # never rounded up to COMPLETE merely because the counts matched
+    assert report.overall_status == "PARTIAL"
+
+
 def test_reconcile_ledger_deduplicates_overlapping_snapshots_deterministically() -> None:
     """Governing brief §10: 'duplicate/overlap snapshots reconcile
     deterministically.' Two overlapping periodic snapshots that both

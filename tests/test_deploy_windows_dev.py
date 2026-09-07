@@ -1259,6 +1259,48 @@ def test_launch_release_sends_acceptance_recording_dir_through_to_windows_path(
     assert calls[0]["extra_env"]["MOCKINGBIRD_ACCEPTANCE_RECORDING_DIR"] == "WIN:/mnt/c/MockingBirdDev/acceptance-recordings"
 
 
+def test_launch_release_accepts_a_windows_style_acceptance_recording_dir_verbatim(
+    tmp_path: Path, fake_host: WindowsHost, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Field Acceptance Tooling Correctness & Preflight Closure v1
+    (Representative Daylight True-Latency Tail Convergence v3's own Defect
+    #3): the real, reproduced field defect -- an operator set this dev
+    -shell variable to a *Windows-style* path (`C:\\Users\\...`, an easy
+    mistake once `field_acceptance_instance_lifecycle.py`'s own
+    `--dev-root` already accepts that spelling), and the pre-fix code
+    routed it through `to_windows_path` (real `wslpath -w`) anyway, which
+    silently strips the backslashes and returns a garbage relative
+    filename for that input -- confirmed by real testing, with no error
+    and exit code 0. Fixed: an already-Windows-style input is detected and
+    used verbatim, never re-translated -- proven here with a
+    `to_windows_path` that would visibly corrupt the value if it were
+    (wrongly) called on this input at all."""
+
+    monkeypatch.setenv("MOCKINGBIRD_DEV_ACCEPTANCE_RECORDING_DIR", r"C:\Users\zachk\AppData\Local\acceptance-recording")
+    bundle = make_bundle(tmp_path / "build", git_commit="a" * 40, build_id="id1")
+    release_dir = tmp_path / "releases" / "aaaaaaa"
+    shutil.copytree(bundle, release_dir)
+    userdata_dir = tmp_path / "LOCALAPPDATA" / DEV_ROOT_DIRNAME / USERDATA_DIRNAME
+
+    def _corrupting_to_windows_path(path: Path) -> str:
+        # Mirrors the real, confirmed `wslpath -w` behavior on an
+        # already-Windows-style input: backslashes vanish, no separator
+        # survives. If `launch_release` ever again routes a Windows-style
+        # input through this seam, this test fails loudly on the assertion
+        # below rather than passing by coincidence.
+        return str(path).replace("\\", "").replace(":", "")
+
+    host = dataclasses.replace(fake_host, to_windows_path=_corrupting_to_windows_path)
+
+    launch_release(release_dir, host=DEFAULT_HOST, port=DEFAULT_PORT, userdata_dir=userdata_dir, windows_host=host)
+
+    calls = host.launch_release.calls  # type: ignore[attr-defined]
+    assert (
+        calls[0]["extra_env"]["MOCKINGBIRD_ACCEPTANCE_RECORDING_DIR"]
+        == r"C:\Users\zachk\AppData\Local\acceptance-recording"
+    )
+
+
 def test_launch_release_suppresses_bytecode_writes_into_the_shared_runtime_cache(
     tmp_path: Path, fake_host: WindowsHost,
 ) -> None:

@@ -541,6 +541,56 @@ def test_fallback_latency_after_clock_normalization_uses_the_admitted_members_ow
     assert sample.latency_min_ms == pytest.approx(10_980.0)
 
 
+def test_summary_fallback_measured_count_is_a_subset_of_measured_never_a_lesser_calibration_state() -> None:
+    """Field Acceptance Tooling Correctness & Preflight Closure v1
+    (governing brief §7): `fallback_measured_count` is a strict *subset*
+    accounting of `measured_count` -- an admitted ambiguous-boundary
+    -arbitration fallback member, never a fallback/approximate timestamp
+    of its own. Proven at the `LatencySummary` level (not merely per
+    -sample, see `test_fallback_latency_after_clock_normalization_...`
+    above): one ordinary and one fallback-admitted sample, both under real
+    RTT-bounded clock calibration, must both count as `measured`, only the
+    fallback one counts toward `fallback_measured_count`, and the fallback
+    one's own `clock_calibration_state` is genuinely `"normalized"` --
+    never silently promoted from, or conflated with, some lesser/
+    uncalibrated state merely because its *admission* used a fallback
+    arbitration path."""
+
+    ordinary_generation = _generation("gen-ordinary", start_captured_at=NOW, start_ms=0, end_ms=1_000)
+    fallback_generation = _generation(
+        "gen-fallback", start_captured_at=NOW + timedelta(seconds=100), start_ms=100_000, end_ms=101_000,
+    )
+    ordinary_outcome = _outcome(
+        "p-ordinary", generation_ids=("gen-ordinary",), visit_id="visit-ordinary",
+        decided_at=NOW + timedelta(seconds=4), start_ms=0, end_ms=1_000,
+    )
+    fallback_outcome = _outcome(
+        "p-fallback", generation_ids=("gen-fallback",), visit_id="visit-fallback",
+        decided_at=NOW + timedelta(seconds=120),
+        reason="eligible_assembled_proposal_ambiguous_boundary_arbitration_winner:fallback_position_1",
+        start_ms=100_000, end_ms=101_000,
+    )
+    calibrations = [
+        _rtt_calibration(1_000.0, source_offset_ms=0, calibrated_at=NOW),
+        _rtt_calibration(2_000.0, source_offset_ms=100_000, calibrated_at=NOW + timedelta(seconds=90)),
+    ]
+
+    samples = build_latency_samples(
+        [ordinary_outcome, fallback_outcome], [ordinary_generation, fallback_generation],
+        rtt_calibrations=calibrations, clock_calibration_required=True,
+    )
+    summary = build_latency_summary(samples)
+
+    assert summary.sample_count == 2
+    assert summary.measured_count == 2  # both -- fallback admission is never a reason to exclude a sample
+    assert summary.fallback_measured_count == 1  # a strict subset of measured_count, never a separate state
+
+    fallback_sample = next(sample for sample in samples if sample.is_fallback)
+    assert fallback_sample.state == "measured"
+    assert fallback_sample.clock_calibration_state == "normalized"  # a genuine RTT-bounded anchor, never degraded
+    assert fallback_sample.latency_ms is not None
+
+
 def test_stop_finalized_candidate_still_normalizes_correctly_under_clock_calibration() -> None:
     t0 = NOW
     generations = [_generation("gen-1", start_captured_at=t0, start_ms=0, end_ms=500)]

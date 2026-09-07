@@ -1526,20 +1526,47 @@ def launch_release(release_dir: Path, *, host: str, port: int, userdata_dir: Pat
     recording_dir = os.environ.get("MOCKINGBIRD_DEV_ACCEPTANCE_RECORDING_DIR")
     if recording_dir:
         # Same reasoning as `MOCKINGBIRD_HOME` two lines below: this dev
-        # shell's own value is WSL-visible (typically `/mnt/c/...`), but it
-        # becomes a real Windows process's own environment variable, read
-        # back by `acceptance_recorder`'s native Windows `pathlib`/`open()`
-        # calls. A bare passthrough silently resolves relative to whatever
-        # drive the launched process's own current directory happens to be
-        # on instead of raising -- found live, the same way the
-        # `MOCKINGBIRD_HOME` defect above was found: a real field-acceptance
-        # session set this to a WSL path, the recorder's own output
-        # directory was never created, and no error surfaced anywhere
-        # (`BoundedFrameSampleRecorder` only skips recording when the
-        # env var is unset entirely -- an unwritable/wrong-drive path is
+        # shell's own value is *documented* as WSL-visible (typically
+        # `/mnt/c/...`), but it becomes a real Windows process's own
+        # environment variable, read back by `acceptance_recorder`'s native
+        # Windows `pathlib`/`open()` calls. A bare passthrough silently
+        # resolves relative to whatever drive the launched process's own
+        # current directory happens to be on instead of raising -- found
+        # live, the same way the `MOCKINGBIRD_HOME` defect above was found.
+        #
+        # Field Acceptance Tooling Correctness & Preflight Closure v1
+        # (closes Representative Daylight True-Latency Tail Convergence
+        # v3's own Defect #3): that same "assume WSL-visible" assumption is
+        # itself never validated -- a real field session set this env var
+        # to a *Windows-style* path (`C:\Users\...`, an easy operator
+        # mistake once `field_acceptance_instance_lifecycle.py`'s own
+        # `--dev-root` already accepts that spelling), and `to_windows_path`
+        # (`wslpath -w`) silently strips the backslashes and returns a
+        # garbage relative filename for that input -- confirmed by real
+        # testing (`wslpath -w 'C:\Users\...\acceptance-recording'` ->
+        # `CUserszachkAppDataLocalMockingBirdLatencyConvergenceV3acceptance
+        # -recording`), with **no error and exit code 0**.
+        # `BoundedFrameSampleRecorder` only skips recording when the env
+        # var is unset *entirely* -- an unwritable/wrong-drive path is
         # indistinguishable from "not opted in" without directly checking
-        # the filesystem, exactly what caught this).
-        extra_env["MOCKINGBIRD_ACCEPTANCE_RECORDING_DIR"] = windows_host.to_windows_path(Path(recording_dir))
+        # the filesystem -- so the recorder believed it was enabled and
+        # silently produced no usable directory: no independent visual
+        # -evidence frames were available for that entire field session,
+        # discovered only after the fact, not before Observation. Detect
+        # and accept *both* real spellings deterministically, rather than
+        # trusting `wslpath -w`'s own exit code alone for an input it was
+        # never designed to accept:
+        if _looks_like_windows_drive_path(recording_dir):
+            # Already exactly what the launched Windows process needs --
+            # routing this through `wslpath -w` is exactly the mistake
+            # above; use it verbatim, never re-translated.
+            extra_env["MOCKINGBIRD_ACCEPTANCE_RECORDING_DIR"] = recording_dir
+        else:
+            # Unchanged from before this milestone: a genuinely WSL-visible
+            # input goes through the real `to_windows_path` seam exactly as
+            # it always has (see `test_launch_release_sends_acceptance_
+            # recording_dir_through_to_windows_path`).
+            extra_env["MOCKINGBIRD_ACCEPTANCE_RECORDING_DIR"] = windows_host.to_windows_path(Path(recording_dir))
     # End-to-End Bird Encounter Recall Closure v1: same dev-shell-opt-in
     # forwarding shape as the directory var above, for the three further
     # optional cadence/bound overrides `acceptance_recorder.

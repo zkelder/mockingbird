@@ -493,7 +493,32 @@ def build_latency_summary(samples: Sequence[LatencySample]) -> LatencySummary:
     was calibration across this whole window," for an auditor who does not
     want to read every sample's own bound individually (this milestone's
     own §23 reporting requirement). `None` when no such sample exists,
-    never fabricated as zero."""
+    never fabricated as zero.
+
+    `fallback_measured_count` (Field Acceptance Tooling Correctness &
+    Preflight Closure v1 -- terminology audit, no logic change): a strict
+    *subset* of `measured_count`, never a state of its own and never a
+    lesser/degraded kind of measurement. "Fallback" here means exactly one
+    thing -- `LatencySample.is_fallback`, itself read straight from
+    `outcome.reason`'s own `:fallback_position_N` suffix
+    (`_fallback_position`, above) -- i.e. this admitted candidate won an
+    ambiguous-boundary arbitration contest as a *non-top-ranked* member
+    after the top-ranked member(s) failed, not that its *timestamp* is any
+    kind of fallback/approximate value. There is no separate "fallback
+    timestamp" concept anywhere in this module (or this codebase): every
+    `fallback_measured` sample's own T0 was resolved by the exact same
+    `_resolve_t0`/`_normalize_t0`/`_resolve_latency` path as every other
+    sample, off the *admitted* member's own `constituent_generation_ids`
+    (never a sibling's, never the failed original winner's -- see
+    `_resolve_t0`'s own docstring and `test_fallback_latency_after_clock_
+    normalization_uses_the_admitted_members_own_capture_time_not_the_
+    failed_winners`) -- so a `fallback_measured` sample can be, and often
+    is, `clock_calibration_state == "normalized"` (a genuine RTT-bounded
+    anchor) exactly like any other measured sample, never silently
+    promoted from some lesser calibration state. See representative-
+    daylight-gate-a-field-acceptance-v9-report.md's own "Fallback
+    admission" section for the same distinction, stated the same way, the
+    first time this project reported this count."""
 
     measured = sorted(sample.latency_ms for sample in samples if sample.state == "measured")  # type: ignore[type-var]
     fallback_measured = sum(1 for sample in samples if sample.state == "measured" and sample.is_fallback)
