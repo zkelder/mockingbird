@@ -270,8 +270,9 @@ own established capstone-scenario convention.
   `test_multi_camera_place_feature_linking_scenario.py` (1),
   `test_place_story_deep_dives_product_shaped_scenario.py` (1),
   `test_conditional_association.py` (14), `test_environmental_period_
-  comparison.py` (18), `test_representative_evidence.py` (10) — **172
-  passed, 0 failed** together.
+  comparison.py` (24), `test_representative_evidence.py` (10) — **172
+  passed, 0 failed** together (counts independently verified via
+  `pytest --collect-only`).
 - **Backend lint:** `ruff check` on every touched/new backend file. Zero
   new findings in the three touched files (`schemas.py`: 0 before and
   after; `main.py`/`product_repository.py`: findings present both before
