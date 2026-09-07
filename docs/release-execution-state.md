@@ -67,6 +67,33 @@ tranche, does **not** invent a latency budget, does **not** start
 External Pre-Release Acceptance or Final Release Hardening, and does
 **not** change current authorization from `NONE`.
 
+**Corrected 2026-09-07 by Representative Daylight True-Latency Tail
+Convergence v3** (see
+[representative-daylight-true-latency-tail-convergence-v3-report.md](representative-daylight-true-latency-tail-convergence-v3-report.md)),
+directly authorized outside this file as exactly one bounded Lane R field
+session. HEAD `f222217` (one commit ahead of the `e031291` starting
+baseline: a genuine, reproduced, packaging-only `numpy` version-drift
+defect blocked deployment outright and was fixed with the same minimal
+pin-shape already used for `idna`/`click` in `WINDOWS_RUNTIME_REQUIREMENTS`,
+validated by its own 12 directly-relevant tests, before any field
+deployment -- zero detector/classifier/threshold/tracker/admission/Visit
+-assembly/schema/production-configuration change). Schema unchanged
+(`v59`). A genuine daylight session ran end-to-end (08:45:55-14:03:50 EDT,
+76 minutes, at the 75-minute maximum) and produced 10 admitted candidates
+/ 9 procedurally valid RTT-normalized latency samples -- short of the
+≥12-sample target. Median converges more tightly than ever across five
+cohorts now (82.9-115.7s, this session's own 112.2s landing almost exactly
+on v9's 111.8s); the maximum (482.4s) falls inside the already-established
+261.2-742.3s intact-cohort range; but this session's own p90 (385.1s) is a
+new high outside every prior cohort's own 173.9-318.5s p90 band, leaving
+the tail's upper-percentile region less resolved, not more. **Lane R
+remains exactly `OPEN -- RELEASE-CRITICAL -- TRUE LATENCY TAIL EVIDENCE
+REMAINS`** (see §6.R, below, for the complete updated record). This
+correction does **not** authorize Lane R's next tranche, does **not**
+invent a latency budget, does **not** start External Pre-Release
+Acceptance or Final Release Hardening, and does **not** change current
+authorization from `NONE`.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
@@ -2999,6 +3026,65 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-07 update (Representative Daylight True-Latency Tail
+Convergence v3, see §6.R):** bounded RELEASE-CRITICAL Lane R field
+-evidence milestone, directly authorized outside this file. See
+[representative-daylight-true-latency-tail-convergence-v3-report.md](representative-daylight-true-latency-tail-convergence-v3-report.md)
+for the complete record. Classification **B**. Starting state verified
+exactly as expected (HEAD `e031291`, schema `v59`, Lane P `CLOSED`, Lane R
+`OPEN` and untouched, worktree safe, all seven preserved untracked
+detector files present and unchanged throughout).
+
+**One real, reproducible defect found and fixed before any deployment**:
+`WINDOWS_RUNTIME_REQUIREMENTS` (`scripts/build_local_product.py`) had no
+`numpy` pin, so its live PyPI resolve drifted to `numpy==2.5.3` while the
+offline GPU-tier wheel cache remained fixed at `2.5.2`, producing a
+disk/RECORD mismatch (`verify_windows_gpu_runtime_dll_closure` correctly
+failed the build outright) -- the identical defect class, and identical
+fix shape, as the already-documented `idna==3.18`/`click==8.4.2` pins
+immediately above it. Fixed with a matching exact pin, validated by all 12
+directly-relevant tests in `tests/test_local_product_packaging.py`,
+committed separately (`f222217`) before deployment. Packaging/build
+-tooling only -- zero product-behavior change. Two further minor,
+non-blocking gaps (a CLI path-format inconsistency in
+`field_acceptance_instance_lifecycle.py init`; an operator path-format
+mistake that left the independent acceptance-frame recorder inactive this
+session) were found and disclosed, not fixed, per this milestone's own
+field-evidence (not code-campaign) scope.
+
+**The daylight gate passed** (two-clock cross-check, ~10.5 hours before
+dusk) and a genuine 76-minute live session ran on the accepted production
+stack (MDv5a/ONNX/CUDA, `score_threshold: 0.1`, unchanged), producing 10
+admitted candidates / **9 procedurally valid** RTT-normalized latency
+samples (1 `invalid_clock_mapping`, an early-session edge case identical
+in class to v9's own) -- **short of the ≥12-sample target**. Median:
+112.2s, tightly converged with four prior cohorts (82.9-115.7s span across
+five cohorts now). p90: 385.1s (max 385,083ms) -- a new high outside every
+prior cohort's own 173.9-318.5s band, driven by only the top two samples
+at this sample size. Max: 482.4s, inside the already-established
+261.2-742.3s intact-cohort range. The two >300s samples (360.8s, 482.4s)
+were both fully traced to the ledger's own track-generation/proposal
+-outcome records (arbitration + continuity/quiet-period + evidence
+-availability, the same already-accepted Visit-Continuity mechanism
+v9/v10/v11/v14 have each already named) -- no new mechanism, no
+correctness defect. RTT-bounded calibration performed perfectly throughout
+(381/381 batches, zero clock jumps); ledger reconciliation found zero
+known missing records (small boundary-artifact-only coverage gaps,
+honestly reported as `PARTIAL` rather than rounded up to `COMPLETE`).
+
+**Gate A decision: unchanged -- OPEN, TRUE LATENCY TAIL EVIDENCE
+REMAINS.** No numeric budget is proposed or adopted (median is now more
+strongly supported than ever, but the tail's upper-percentile region is,
+honestly, less converged after this session than before it -- adopting a
+p90/tail budget now would mean setting it on weaker evidence than exists
+today). No correctness defect was found; nothing was patched; recall
+remains the unchanged, already-accepted known limitation. This closure
+does **not** authorize another field tranche, External Pre-Release
+Acceptance, Final Release Hardening, or any other next development
+milestone. **Authorization remains NONE -- GLOBAL PRODUCT-ROADMAP
+RECONCILIATION REQUIRED**, returned here exactly as this milestone's own
+governing directive required.
 
 **2026-09-06 update (Place Feature Comparison & Habitat Outcomes v1):** a
 deliberately-authorized, one-time, bounded reopening of product
@@ -7658,6 +7744,32 @@ DAYLIGHT. Zero new samples; the existing tail evidence above is unchanged.
 See
 [representative-daylight-true-latency-tail-convergence-v2-report.md](representative-daylight-true-latency-tail-convergence-v2-report.md).
 The status line above stands exactly as written.
+
+**Updated, additional evidence, no qualitative change (2026-09-07,
+Representative Daylight True-Latency Tail Convergence v3):** the next
+attempt at exactly this field action was directly authorized and this
+time reached a full live session -- daylight gate passed (two-clock
+cross-check, ~10.5 hours before dusk), one real packaging defect (a
+`numpy` version-pin drift in `WINDOWS_RUNTIME_REQUIREMENTS`, identical
+class to the already-fixed `idna`/`click` pins) found and fixed before
+deployment (`f222217`), 76-minute session on the unchanged accepted
+production stack. Result: 10 admitted candidates, **9 procedurally valid**
+RTT-normalized samples -- short of the ≥12-sample target (median 112.2s,
+tightly converging across five cohorts now at 82.9-115.7s; p90 385.1s, a
+new high outside every prior cohort's own 173.9-318.5s band; max 482.4s,
+inside the already-established 261.2-742.3s range). Both >300s samples
+were fully traced to the ledger's own arbitration/continuity records -- no
+new mechanism, no correctness defect. See
+[representative-daylight-true-latency-tail-convergence-v3-report.md](representative-daylight-true-latency-tail-convergence-v3-report.md)
+for the complete record, including the full per-sample table, causal
+classification, and the honest observation that this session's own p90
+finding leaves the tail's upper-percentile region *less* converged than
+before it, even though the median and the outright maximum are both
+reassuring. **The status line above stands exactly as written -- Lane R
+remains OPEN, TRUE LATENCY TAIL EVIDENCE REMAINS.** No latency budget is
+proposed or adopted. Disclosed, not actioned: the SAFE_TO_RECLAIM
+disk-reclaim opportunity has grown to three archived dev-roots (~24.3GB,
+now including this milestone's own archived instance).
 
 **Prior status (immediately preceding, 2026-09-05):** OPEN --
 RELEASE-CRITICAL -- RELEASE DECISION REQUIRED, per
