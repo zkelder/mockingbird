@@ -40,6 +40,33 @@ Final Release Hardening, or any product-development milestone -- see §6,
 "Global remaining execution queue," for the complete lane-by-lane
 picture this phase label now reflects.
 
+**Reconfirmed 2026-09-07 by Global Product & Release Readiness
+Reconciliation v2** (see
+[global-product-release-readiness-reconciliation-v2-report.md](global-product-release-readiness-reconciliation-v2-report.md)).
+Read-only global sequencing pass, HEAD `5e36989`, schema `v59`. Six
+milestones accepted since v1 (MIT Source License Adoption & Lane P
+Mechanical Closure v1, then five Place-Intelligence-family enrichment
+milestones through Place Feature Comparison & Habitat Outcomes v1) were
+independently re-verified against direct repository evidence, not
+assumed: Lane P is now genuinely `CLOSED` (real `LICENSE` file,
+`pyproject.toml`/`web/package.json` metadata, corrected `README.md`, all
+confirmed on disk); Lane R remains exactly `OPEN -- RELEASE-CRITICAL --
+TRUE LATENCY TAIL EVIDENCE REMAINS`, untouched by any of the six
+milestones, with zero new field evidence since *Representative Daylight
+True-Latency Tail Convergence v2* (blocked at a hard pre-deployment
+daylight gate, 2026-09-05 night); every one of the five enrichment
+milestones deliberately picked up an item this file's own v1 correction
+had already classified `D -- enrichment`, which is evidence the freeze
+held, not evidence it was breached. The feature-freeze finding above is
+**reaffirmed, not weakened**. This correction also found and fixes §16
+("Transition checkpoint," below), which recorded a stale `763fe22` HEAD
+from the 2026-08-26 Multi-Camera Place Experience v2 checkpoint,
+including a now-false "LICENSE still genuinely absent" line -- corrected
+in place, see §16. This correction does **not** authorize Lane R's next
+tranche, does **not** invent a latency budget, does **not** start
+External Pre-Release Acceptance or Final Release Hardening, and does
+**not** change current authorization from `NONE`.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
@@ -10249,6 +10276,30 @@ Never copy a Claude "next natural milestone" suggestion directly into the
 authorization field.
 
 ## 16. Transition checkpoint
+
+**Staleness correction, 2026-09-07, by Global Product & Release
+Readiness Reconciliation v2** (see
+[global-product-release-readiness-reconciliation-v2-report.md](global-product-release-readiness-reconciliation-v2-report.md)):
+everything below in this section is dated to the 2026-08-26 Multi-Camera
+Place Experience v2 checkpoint and was never updated through the
+roughly twenty milestones accepted since -- treat it as historical
+narrative, not current state. **Current facts, verified directly
+2026-09-07:** Accepted HEAD `5e36989` ("Place Feature Comparison &
+Habitat Outcomes v1: report correction"); schema `v59` (v58 -> v59 via
+Multi-Camera Place Feature Linking & Cross-View Habitat Context v1's
+`place_feature_observation_links` table); Lane P `CLOSED` -- a real
+`LICENSE` file (MIT) exists, contradicting this section's own "LICENSE:
+still genuinely absent" line below; Lane R unchanged at `OPEN --
+RELEASE-CRITICAL -- TRUE LATENCY TAIL EVIDENCE REMAINS`; current
+authorized implementation milestone remains `NONE` (the "GLOBAL
+PRODUCT-ROADMAP RECONCILIATION REQUIRED" qualifier below is itself
+stale -- that reconciliation, and a second one, have both since run; see
+`## CURRENT PHASE`, above, and the v2 report for the complete current
+picture). See §§1, 4-6, and 14, above, for the sections of this document
+that were kept current through each intervening milestone's own
+reconciliation commit. The stacked history below is preserved unedited,
+consistent with this document's own convention of correcting forward
+rather than rewriting accepted history in place.
 
 - **Accepted HEAD:** `763fe22` (Multi-Camera Place Experience v2
   implementation commit)
