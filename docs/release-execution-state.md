@@ -273,6 +273,49 @@ instruction not to self-authorize the recommended next action.
 **Authorization remains NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION
 REQUIRED**, unchanged.
 
+**Corrected 2026-09-07 by Lane R Release-Budget Adjudication & Gate A
+Decision v1** (see
+[lane-r-release-budget-adjudication-gate-a-decision-v1-report.md](lane-r-release-budget-adjudication-gate-a-decision-v1-report.md)),
+a bounded, read-only release-decision milestone, directly authorized
+outside this file -- no field session, no deployment, no product/schema
+change. HEAD unchanged (`ab48255`); schema unchanged (`v59`).
+Independently verified every decisive fact the immediately-prior
+milestone's own accumulated-evidence report relied on -- cohort
+membership/exclusion rules, the v10 p90 correction (independently
+recomputed from v10's own published per-sample table: 201.5s, confirmed by
+all five standard percentile conventions), the `target_sample_count: int =
+12` per-session stopping heuristic's exact origin in
+`scripts/field_acceptance_session_driver.py` (confirmed by direct source
+inspection, not a statistical minimum or release-gate requirement), the
+bootstrap uncertainty method, every `>300`-second causal classification,
+and -- read directly from the rejected report's own primary text, not
+only the correction's characterization of it -- the exact two defects
+that invalidated the 2026-09-05 Gate A "PASS" (a recall budget stated
+verbatim as "excluding the disclosed limitation," and a latency tail table
+whose own published max range, "261.2s-307.4s," omits v10's own
+already-accepted 742.3-second maximum). No decisive calculation was found
+wrong. **This milestone's own accepted budget repeats neither defect**:
+recall is not re-touched (already separately closed 2026-09-06, preserved
+unchanged), and the adopted latency budget discloses both 742.3s and the
+reconstructed 865.2s prominently rather than omitting either. Classification
+**A -- GATE A PASS, LANE R CLOSED.** Accepted budget: typical latency
+~80-115s (numeric, pooled median 103.9s, bootstrap 90% CI
+[80.3s, 114.8s]); upper-tail behavior qualitative, not a tight SLA
+(observed per-cohort p90 174-385s; pooled bootstrap p90 90% CI
+[198.6s, 331.8s]); a 20-minute (1,200s) architectural decision-horizon
+ceiling reference, not a statistically-fit maximum; sustained/crowded
+-activity latency disclosed together with the already-accepted recall
+limitation as one product characteristic. All eight Gate A dimensions plus
+multi-subject correctness now carry an accepted disposition -- see §6.R,
+below, for the complete dimension-by-dimension record. This closure does
+**not** start External Pre-Release Acceptance or Final Release Hardening
+-- both remain separately gated and unauthorized by this milestone -- and
+does **not** update `roadmap.md`'s own still-stale Gate A prose, which
+this milestone's own governing directive scoped out of its documentation
+delta (disclosed explicitly, not silently left inconsistent); reconciling
+it is next global-roadmap-reconciliation work. **Authorization remains
+NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, unchanged.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
@@ -3205,6 +3248,46 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-07 update (Lane R Release-Budget Adjudication & Gate A Decision
+v1, see §6.R):** bounded, read-only release-decision milestone, directly
+authorized outside this file as the explicit adjudication the immediately
+-prior milestone (below) deferred to "the next global reconciliation." See
+[lane-r-release-budget-adjudication-gate-a-decision-v1-report.md](lane-r-release-budget-adjudication-gate-a-decision-v1-report.md)
+for the complete record. HEAD unchanged (`ab48255`); schema unchanged
+(`v59`); no field session, no deployment, no product/schema/tooling code
+changed. Independently re-verified, against primary sources rather than
+restating the prior milestone's own summary: cohort membership/exclusion
+rules; the v10 p90 correction (independently recomputed from v10's own
+11 published per-sample values -- 201.5s, confirmed by all five standard
+percentile conventions, not merely accepted on faith); the `≥12`-sample
+criterion's exact origin (`target_sample_count: int = 12`, a per-session
+stopping heuristic in `scripts/field_acceptance_session_driver.py`, not a
+statistical minimum, confirmed by direct source inspection); the bootstrap
+uncertainty method; every `>300`-second causal classification; and, read
+directly from the rejected 2026-09-05 PASS report's own text, the exact
+two defects that invalidated it (a recall budget explicitly "excluding the
+disclosed limitation" from its own denominator; a latency tail table whose
+own stated max range omits v10's already-accepted 742.3-second maximum).
+No decisive calculation was found wrong. **Classification A -- GATE A
+PASS, LANE R CLOSED.** Accepted budget: typical latency ~80-115s (pooled
+median 103.9s, bootstrap 90% CI [80.3s, 114.8s]); upper-tail behavior
+qualitative, not a tight SLA (observed per-cohort p90 174-385s; pooled
+bootstrap p90 90% CI [198.6s, 331.8s]); a 20-minute architectural
+decision-horizon ceiling reference, not a statistically-fit maximum;
+sustained/crowded-activity latency disclosed together with the
+already-accepted recall limitation. This budget repeats neither
+disqualifying defect of the rejected 2026-09-05 PASS: recall is not
+re-touched (already separately closed 2026-09-06), and both 742.3s and the
+reconstructed 865.2s are disclosed prominently, never omitted. All eight
+Gate A dimensions plus multi-subject correctness now carry an accepted
+disposition -- see §6.R, below, for the complete record. **Does not**
+start External Pre-Release Acceptance or Final Release Hardening -- both
+remain separately gated, unauthorized by this milestone -- and does
+**not** update `roadmap.md`'s own now-stale Gate A prose, explicitly
+scoped out of this milestone's documentation delta and disclosed rather
+than silently left inconsistent. **Authorization remains NONE -- GLOBAL
+PRODUCT-ROADMAP RECONCILIATION REQUIRED**, unchanged.
 
 **2026-09-07 update (Lane R Accumulated Latency Evidence &
 Release-Budget Decision v1, see §6.R):** bounded, read-only
@@ -8087,38 +8170,57 @@ See the report for the complete finding-by-finding record.
 
 ### R. Complete Field Acceptance
 
-**Status:** OPEN -- RELEASE-CRITICAL -- TRUE LATENCY TAIL EVIDENCE
-REMAINS, per Gate A True-Latency Tail Closure & Final Lane R Decision v1
-(2026-09-06, see §3, above, and
-[gate-a-true-latency-tail-closure-final-lane-r-decision-v1-report.md](gate-a-true-latency-tail-closure-final-lane-r-decision-v1-report.md)).
-Narrowed from the "RELEASE DECISION REQUIRED" status immediately below:
-this milestone reconciles the supplied global recall release-authority
-decision into the scheduler -- whole-scene recall is now **ACCEPTED KNOWN
-LIMITATION, no numeric floor** (v12 87.5%, v14 64.7% conservative / 61.1%
-broader, unchanged and undiminished) -- closing recall's own half of the
-prior status. **True capture-to-visible latency remains the sole
-remaining Gate A blocker.** This milestone ran the smallest sufficient
-live proof the immediately-prior correction called for (a fresh
-disposable instance at that milestone's own accepted HEAD, valid
-5/5-sample RTT-bounded calibration, 100%/100%/100% ledger reconciliation
-across all three counterfactual artifacts) but natural activity produced
-only n=1 valid latency sample against the required ≥12 -- an honest,
-precisely root-caused Classification B (the live session started at
-dusk; scene-wide raw-detection activity, animal- and vehicle-class alike,
-is shown, quantified directly from the session's own ledger, to collapse
-together from minute ~15 as real darkness set in). The one sample
-obtained (269.3s) is further judged, independently, likely not a real
-animal on direct visual cross-check against three independent-recorder
-frames spanning its own tracked window -- disclosed, not counted toward
-convergence. **True latency therefore remains exactly as unconverged as
-the correction below left it**: four sized, RTT-normalized cohorts (v9
-n=24, v10 n=11, v11 n=23 reconstructed, v14 n=14), maxima spanning
-261.2-865.2 seconds, no fifth qualifying sample added. No correctness
-defect was found; nothing was patched live. Six of the eight/nine tracked
-release dimensions remain genuinely READY FOR RELEASE BUDGET, unchanged.
-Disclosed, not actioned: an 18.5GB disk-reclaim opportunity (two already
--archived, `SAFE_TO_RECLAIM` Windows dev-roots from v13/v14) remains
-available for a future session.
+**Status:** CLOSED, per Lane R Release-Budget Adjudication & Gate A
+Decision v1 (2026-09-07, see §3, above, and
+[lane-r-release-budget-adjudication-gate-a-decision-v1-report.md](lane-r-release-budget-adjudication-gate-a-decision-v1-report.md)).
+Closed from `OPEN -- RELEASE-CRITICAL -- TRUE LATENCY TAIL EVIDENCE
+REMAINS`, the status recorded by Gate A True-Latency Tail Closure & Final
+Lane R Decision v1 (2026-09-06) and reconfirmed unchanged by every session
+narrated immediately below through Lane R Accumulated Latency Evidence &
+Release-Budget Decision v1 (2026-09-07). That accumulated-evidence
+milestone pooled all five intact, live-measured true-latency cohorts
+(v9, v10, v14, Convergence v3, v4 -- 69 raw samples, six independent
+calendar days), independently recomputed every statistic from raw data,
+found and disclosed one non-material correction (v10's own published p90,
+183.3s, corrected to 201.5s), and used a bootstrap-resampling analysis to
+show the per-cohort p90 scatter long cited as "non-convergence" is
+statistically consistent with ordinary small-sample noise around one
+stable distribution -- then proposed, but explicitly declined to
+self-adopt, a specific three-part budget for external acceptance. This
+adjudication milestone independently re-verified every decisive fact in
+that proposal against primary sources (including, read directly rather
+than merely characterized, the rejected 2026-09-05 PASS's own two
+disqualifying defects -- a recall denominator that excluded a known
+failure mode, and a latency tail table that omitted v10's own 742.3-second
+maximum) and found no decisive calculation wrong. **Accepted budget:**
+typical latency ~80-115s (numeric, pooled median 103.9s, bootstrap 90% CI
+[80.3s, 114.8s]); upper-tail behavior disclosed qualitatively, not as a
+tight SLA (observed per-cohort p90 174-385s; pooled bootstrap p90 90% CI
+[198.6s, 331.8s]); a 20-minute (1,200s) architectural decision-horizon
+ceiling reference, not a statistically-fit maximum (every observed maximum
+to date, 742.3s live-measured / 865.2s reconstructed-only, sits at
+62-72% of it); sustained/crowded-activity latency disclosed together with
+the already-accepted recall limitation as one product characteristic.
+**Whole-scene recall stands exactly as the 2026-09-06 decision left it**
+(v12 87.5%, v14 64.7% conservative / 61.1% broader, accepted known
+limitation, no numeric floor) -- not re-litigated by this closure. **All
+eight Gate A dimensions plus multi-subject Visit correctness now carry an
+accepted disposition** -- six numeric budgets (false-Visit rate ≤15%,
+fragmentation ≤5%, duplicates ≤2%, useful-evidence ≥85%, evidence-loss
+≤15%, monitoring ≥97%, all unchanged from the 2026-09-05 correction below),
+recall's accepted known-limitation status, true latency's budget above,
+and multi-subject correctness (closed 2026-08-19/20, Phase 1/2/4). No
+correctness defect was found anywhere in this evidence body. **This
+closure does not start External Pre-Release Acceptance or Final Release
+Hardening** -- both remain the correct next lanes in sequence but neither
+is authorized by this milestone -- and does **not** update `roadmap.md`'s
+own Gate A/"Numeric release budgets" prose, which still reads `OPEN`/"no
+budget adopted" as of its own 2026-09-06 entries and is now stale relative
+to this decision; reconciling that prose is explicitly out of this bounded
+milestone's own scope and is disclosed here, not silently left
+inconsistent. Disclosed, not actioned: an 18.5GB+ disk-reclaim opportunity
+(archived, `SAFE_TO_RECLAIM` Windows dev-roots from v13/v14/Convergence v3)
+remains available for a future session.
 
 **Reconfirmed, no change (2026-09-06, Representative Daylight
 True-Latency Tail Convergence v2):** an attempt to obtain the next
@@ -10269,6 +10371,39 @@ as the recall decision above required.** The status line at the top of
 this section stands exactly as written -- Lane R remains OPEN, TRUE
 LATENCY TAIL EVIDENCE REMAINS. No field cohort, External Pre-Release
 Acceptance, or Final Release Hardening is authorized by this closure.
+
+**Closed 2026-09-07 (Lane R Release-Budget Adjudication & Gate A Decision
+v1)** -- see
+[lane-r-release-budget-adjudication-gate-a-decision-v1-report.md](lane-r-release-budget-adjudication-gate-a-decision-v1-report.md)
+and the rewritten status line at the top of this section. This is the
+"next global reconciliation" the entry immediately above deferred to.
+Read-only; no field session, no deployment, no product/schema/tooling
+code changed. Independently re-verified every decisive fact the entry
+above relied on directly against primary sources -- the v10 p90
+correction (recomputed from v10's own 11 published per-sample values via
+five standard percentile conventions, confirming 201.5s exactly), the
+`≥12`-sample criterion's exact origin in
+`scripts/field_acceptance_session_driver.py` (`target_sample_count: int =
+12`, a per-session stopping heuristic, confirmed by direct source
+inspection, not a statistical minimum), the bootstrap uncertainty method,
+every `>300`-second causal classification, and -- read directly from its
+own primary text, not only the correction's characterization -- the
+rejected 2026-09-05 PASS's exact two disqualifying defects (a recall
+budget stated verbatim as "excluding the disclosed limitation"; a latency
+tail table whose own stated max range, "261.2s-307.4s," omits v10's
+already-accepted 742.3-second maximum). No decisive calculation was found
+wrong. **Accepted the proposed budget exactly as recommended, repeating
+neither disqualifying defect**: recall is not re-touched (already
+separately closed 2026-09-06); both 742.3s and the reconstructed 865.2s
+are disclosed prominently in the adopted ceiling reasoning, never omitted.
+**Gate A: PASS. Lane R: CLOSED.** All eight Gate A dimensions plus
+multi-subject Visit correctness now carry an accepted disposition -- see
+the rewritten status line above for the complete accepted budget and
+`roadmap.md`'s own now-stale-and-disclosed Gate A prose. Does **not**
+start External Pre-Release Acceptance or Final Release Hardening -- both
+remain separately gated and unauthorized by this milestone. Authorization
+remains **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**,
+unchanged.
 
 ### S. Actual Final Release Hardening
 
