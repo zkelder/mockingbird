@@ -224,6 +224,55 @@ Final Release Hardening, or any other next development milestone.
 REQUIRED**, returned here exactly as this milestone's own governing
 directive required.
 
+**Corrected 2026-09-07 by Lane R Accumulated Latency Evidence &
+Release-Budget Decision v1** (see
+[lane-r-accumulated-latency-evidence-release-budget-decision-v1-report.md](lane-r-accumulated-latency-evidence-release-budget-decision-v1-report.md)),
+a bounded, read-only evidence-and-decision milestone, directly authorized
+outside this file -- no field session, no deployment, no product/schema
+change. HEAD unchanged (`0a776c8`); schema unchanged (`v59`). Pooled all
+five intact, live-measured true-latency cohorts to date (v9, v10, v14,
+Representative Daylight True-Latency Tail Convergence v3, and v4 -- 69
+raw samples across six independent calendar days) and independently
+recomputed every statistic directly from raw per-sample data rather than
+prose summaries, reproducing every prior published figure exactly except
+one: **v10's own report states p90 183.3s; every standard percentile
+convention applied to v10's own 11 published per-sample values yields
+201.5s instead** -- a disclosed, non-material field-acceptance-report
+accounting slip (183.3s is candidate-005's own individual value, not the
+90th percentile), never a product defect, and unrepeated in any prior
+document's own conclusions since it changes no previously-stated band. A
+bootstrap-resampling analysis (a transparent, standard method, not
+invented to force a result) found that the per-cohort p90 scatter
+repeatedly cited since the 2026-09-05 correction as "non-convergence"
+(173.9-385.1s across cohorts) is fully consistent with ordinary
+small-sample estimation noise around a single stable underlying
+distribution at these sample sizes (9-24) -- every individual cohort's
+own observed p90 falls inside its own bootstrap 90% interval computed
+from the pooled set. The median remains tightly convergent (pooled
+103.9s, bootstrap 90% CI 80.3-114.8s); the pooled p90 itself retains
+real, quantified uncertainty (90% CI 198.6-331.8s), not erased by this
+finding. Every >300-second sample across every cohort (five in the
+primary pooled set, plus v11's reconstructed maximum) was re-confirmed to
+trace to the same already-accepted Visit-Continuity/ambiguous-boundary
+mechanism -- no new or pathological cause was found; no new perception
+investigation was launched. Both explicit v4 acceptance qualifications
+were resolved: the 75-minute Observation duration is accurate to the
+session driver's own internal accounting (75.000 minutes, 31ms over); a
+further ~64-93 seconds of wall-clock footprint is ordinary
+stop-dispatch/settlement/snapshot overhead, correctly excluded from the
+reported duration; recorder readiness was proven before Observation start
+for v4 specifically, for the first time mechanically rather than by
+operator attestation. **Classification A -- a specific, narrow,
+recommended budget structure (typical latency numeric; upper-tail
+qualitative; ceiling architectural, not statistically-fit) is proposed
+for external release-authority acceptance, exactly as the recall decision
+required.** This report does **not** itself close Lane R or declare Gate
+A passed -- it recommends a decision for the next global reconciliation
+to accept, correct, or reject, per its own governing directive's explicit
+instruction not to self-authorize the recommended next action.
+**Authorization remains NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION
+REQUIRED**, unchanged.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
@@ -3156,6 +3205,37 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-07 update (Lane R Accumulated Latency Evidence &
+Release-Budget Decision v1, see §6.R):** bounded, read-only
+RELEASE-CRITICAL Lane R evidence-and-decision milestone, directly
+authorized outside this file. See
+[lane-r-accumulated-latency-evidence-release-budget-decision-v1-report.md](lane-r-accumulated-latency-evidence-release-budget-decision-v1-report.md)
+for the complete record. Classification **A** (a recommendation, not a
+self-executed closure). HEAD unchanged (`0a776c8`); schema unchanged
+(`v59`); no field session, no deployment, no product/schema/tooling code
+changed. Pooled and independently recomputed the five intact,
+live-measured true-latency cohorts (v9, v10, v14, Convergence v3, v4 --
+69 raw samples) directly from raw per-sample data; found and disclosed
+one non-material evidence-integrity correction (v10's own published p90,
+183.3s, does not match any standard percentile computation on its own
+per-sample table -- the correct figure is 201.5s, inside every
+previously-stated cross-cohort band); used a bootstrap-resampling
+analysis to show the repeatedly-cited per-cohort p90 "non-convergence" is
+consistent with ordinary small-sample noise around one stable
+distribution, not a moving target, while the pooled p90 itself retains
+real, quantified uncertainty (90% CI 198.6-331.8s); reconfirmed every
+>300-second sample across every cohort traces to the same already-accepted
+Visit-Continuity mechanism, no new defect; resolved both explicit v4
+acceptance qualifications (§3.A/§3.B of the report) cleanly. **Proposes,
+for the next external (ChatGPT) reconciliation's acceptance: a specific,
+narrow budget (typical latency ~80-115s numeric; upper-tail qualitative,
+not a tight SLA; a 20-minute architectural ceiling reference, not a
+statistically-fit maximum).** This milestone does **not** itself declare
+Gate A passed or Lane R closed, does **not** authorize External
+Pre-Release Acceptance or Final Release Hardening, and does **not**
+change current authorization from `NONE`. See §6.R, below, for the
+complete updated evidence record this closure adds.
 
 **2026-09-07 update (Representative Daylight True-Latency Tail Convergence
 v4, see §6.R):** bounded RELEASE-CRITICAL Lane R field-evidence milestone,
@@ -10143,6 +10223,52 @@ substance. Authorization remains **NONE -- GLOBAL PRODUCT-ROADMAP
 RECONCILIATION REQUIRED**; does not authorize another admission change,
 another field cohort, External Pre-Release Acceptance, or Final Release
 Hardening.
+
+**Updated, evidence reconstructed and a specific budget recommended, not
+adopted (2026-09-07, Lane R Accumulated Latency Evidence &
+Release-Budget Decision v1)** -- see
+[lane-r-accumulated-latency-evidence-release-budget-decision-v1-report.md](lane-r-accumulated-latency-evidence-release-budget-decision-v1-report.md).
+Read-only; no field session, no deployment. Pooled the five intact,
+live-measured true-latency cohorts to date (v9 n=24, v10 n=11, v14 n=14,
+Convergence v3 n=9, Convergence v4 n=11 -- 69 raw samples, six
+independent calendar days) and independently recomputed every statistic
+directly from raw per-sample JSON/tables rather than trusting prior
+summaries: pooled median 103.9s (bootstrap 90% CI 80.3-114.8s), p90
+259.2s (bootstrap 90% CI 198.6-331.8s), max 742.3s (v10; v11's own
+reconstructed 865.2s remains disclosed as supporting-only, not
+independently re-verified). **Found and disclosed one non-material
+evidence-integrity correction**: v10's own report states p90 183.3s; every
+standard percentile method applied to v10's own 11 published per-sample
+values instead yields 201.5s (183.3s is candidate-005's own individual
+value, not the 90th percentile) -- carried forward unverified through
+five subsequent documents, including this section's own prior entries and
+`roadmap.md`'s "Numeric release budgets"; the correction changes no prior
+conclusion (201.5s still falls inside every previously-stated band).
+**A bootstrap-resampling analysis found that the per-cohort p90 scatter
+this section's own prior entries repeatedly cited as "non-convergence"
+(173.9-385.1s) is statistically consistent with ordinary small-sample
+estimation noise at these cohort sizes (9-24), not evidence of a moving
+target** -- every individual cohort's own observed p90 falls inside its
+own bootstrap 90% interval drawn from the pooled set; the median, by
+contrast, is genuinely tightly convergent. Every >300-second sample
+across every cohort was reconfirmed to trace to the same already-accepted
+Visit-Continuity/ambiguous-boundary mechanism (no new perception
+investigation launched; no new defect found). Both explicit v4 acceptance
+qualifications from the entry above were resolved cleanly: the 75-minute
+duration is accurate to the driver's own internal accounting; recorder
+readiness was proven before Observation start for v4 specifically.
+**Proposes a specific, narrow budget for external release-authority
+acceptance**: typical latency ~80-115s (numeric); upper-tail behavior
+disclosed qualitatively, not as a tight SLA; a 20-minute architectural
+decision-horizon ceiling reference, not a statistically-fit maximum;
+sustained/crowded-activity latency and recall disclosed together as one
+product characteristic. **This milestone does not itself adopt this
+budget, close Lane R, or declare Gate A passed -- it is a recommendation
+for the next global reconciliation to accept, correct, or reject, exactly
+as the recall decision above required.** The status line at the top of
+this section stands exactly as written -- Lane R remains OPEN, TRUE
+LATENCY TAIL EVIDENCE REMAINS. No field cohort, External Pre-Release
+Acceptance, or Final Release Hardening is authorized by this closure.
 
 ### S. Actual Final Release Hardening
 
