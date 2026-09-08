@@ -1,5 +1,30 @@
 # Local MVP Readiness Checklist
 
+**Superseded, 2026-09-08, by *External Acceptance Entry Readiness &
+Uninstall Closure v1*** (disclosed first as a documentation-currency
+finding by
+[release-gate-reconciliation-external-acceptance-preparation-v1-report.md](release-gate-reconciliation-external-acceptance-preparation-v1-report.md)
+§3; see
+[external-acceptance-entry-readiness-uninstall-closure-v1-report.md](external-acceptance-entry-readiness-uninstall-closure-v1-report.md)
+for the closure record): this is historical record of the Phase 15D
+local-demo gate from 2026-07-04, never updated since. Its own "Explicit
+non-goals for MVP" list, below, states RTSP, USB camera, live playback,
+and continuous/automatic monitoring from live sources are *not*
+included -- all four are now real, shipped, documented capabilities (see
+[using-mockingbird.md](using-mockingbird.md) "Add a camera" and "Start
+observing"). Its own "Phase 15D"/"Phase 15E"/"Phase 16"/"Phase 17"
+numbering also predates, and does not match, [roadmap.md](roadmap.md)'s
+current Gate-lettered release structure. Do not use this document to
+judge current release scope, current capability, or what remains
+deferred -- it is preserved unedited below for historical accuracy only,
+not rewritten to match current state. [roadmap.md](roadmap.md) is the
+current authoritative source for release scope;
+[using-mockingbird.md](using-mockingbird.md) for current product
+capability; [release-execution-state.md](release-execution-state.md) for
+current release-readiness/authorization state.
+
+---
+
 ## Purpose
 
 Phase 15D defines the current local MVP readiness gate. It is for local demo and

@@ -478,7 +478,17 @@ def test_assemble_windows_bundle_produces_a_python_and_pip_free_user_experience(
     assert "pythonw.exe" in launcher
     assert "-m mockingbird" in launcher
     assert ", 0, False" in launcher
-    assert (bundle_dir / "README-FIRST.txt").is_file()
+    readme_text = (bundle_dir / "README-FIRST.txt").read_text(encoding="utf-8")
+    # External Acceptance Entry Readiness & Uninstall Closure v1: the
+    # in-box README is the *only* uninstall documentation an unpacked
+    # end user actually has (docs/using-mockingbird.md is not shipped
+    # inside the bundle) -- it must state plainly that the application
+    # folder and the local data folder are two separate, independently
+    # removable things, not merely that data lives "somewhere local."
+    assert "To remove MockingBird" in readme_text
+    assert readme_text.count("%LOCALAPPDATA%\\MockingBird") >= 2
+    assert "separate from this application" in readme_text or "separate local data" in readme_text
+    assert "Revoke current pairing" in readme_text
     # Release Licensing, Distribution & Third-Party Legal Closure v1: every
     # official bundle ships the repository's own third-party notices file,
     # not only a copy an interested user would have to go find in the

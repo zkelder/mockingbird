@@ -17,6 +17,27 @@ execution. Current authorization to begin Gate G remains `NONE` -- see
 sections below name a concrete owner decision this plan cannot
 self-authorize; those are called out explicitly, not silently assumed.
 
+**2026-09-08 update (External Acceptance Entry Readiness & Uninstall
+Closure v1):** bounded entry-readiness milestone, directly authorized
+outside this file. **Status here is otherwise unchanged: Gate G remains
+PLAN ONLY, not started** -- no participant recruited, no cohort fixed, no
+session run, no authorization change. Two concrete items this plan named
+as open now have movement:
+
+- **§8's uninstall gap is closed** -- confirmed, documented, and proven on
+  real native-Windows hardware; see the dated correction in §8, below, and
+  [external-acceptance-entry-readiness-uninstall-closure-v1-report.md](external-acceptance-entry-readiness-uninstall-closure-v1-report.md)
+  for the full investigation and evidence.
+- **A proposed cohort/consent/findings-intake contract** now exists for
+  owner approval -- see "Proposed cohort/consent/intake decisions (2026-
+  09-08 addendum)," below, inserted immediately before the consolidated
+  owner-decisions list. It is a **proposal only**: nothing in it is
+  approved by this update, no participant is recruited or contacted, and
+  no account or private-repository access is created or granted.
+
+Every other owner decision this plan names remains exactly as open as it
+was before this update.
+
 ---
 
 ## 1. Purpose and entry criteria
@@ -319,6 +340,21 @@ For any participant with 2+ cameras:
   implicitly.** This is flagged as a concrete pre-Gate-G documentation
   action, not a blocker requiring new engineering.
 
+  **2026-09-08 update (RESOLVED):** confirmed and documented, exactly as
+  recommended above -- see [using-mockingbird.md](using-mockingbird.md)
+  "Uninstall" for the participant-facing procedure (stop MockingBird;
+  delete the application folder, which preserves data by construction;
+  separately and explicitly delete the local data folder,
+  `%LOCALAPPDATA%\MockingBird`, to also remove data permanently) and
+  [external-acceptance-entry-readiness-uninstall-closure-v1-report.md](external-acceptance-entry-readiness-uninstall-closure-v1-report.md)
+  for the investigation and real native-Windows proof (stopping first is
+  a real, enforced Windows file-lock behavior, not merely a courtesy; the
+  application and data folders are independently removable by
+  construction; reinstalling anywhere reconnects automatically to
+  preserved data). This was a genuine, confirmed documentation gap, as
+  this section already said -- no new uninstall command or mechanism was
+  built or is needed.
+
 ---
 
 ## 9. Privacy and consent
@@ -556,19 +592,51 @@ formula.
 
 ---
 
+## Proposed cohort/consent/intake decisions (2026-09-08 addendum)
+
+Added by *External Acceptance Entry Readiness & Uninstall Closure v1*,
+directly authorized outside this file to prepare (not approve) concrete
+proposed answers to owner-decision items 1 and 2 below, plus the §13
+findings-intake-channel flag. **Every value below is PROPOSED, for owner
+approval -- none is decided by this addendum, none authorizes
+recruitment, and nothing here creates an account, contacts a person, or
+grants private-repository access.** Where a numeric or procedural target
+is already governed elsewhere in this plan or in `roadmap.md`, this
+addendum reuses it rather than inventing a new one; where none exists, it
+says so rather than guessing.
+
+| Decision | Proposed value | Basis |
+|---|---|---|
+| Cohort size (item 1) | **3-5 independent participants** | Sits inside this plan's own §2 advisory range ("small, single digits to low double digits") and `roadmap.md`'s own constraint ("small external cohort... not hundreds"); still an owner decision, not fixed by this proposal alone. |
+| Recruitment channel (item 1) | **Direct trusted contacts, or relevant nature/birding communities** -- no public beta announcement | Matches §1's own repeated instruction that Gate G must never be described, or recruited for, as a public beta. |
+| Participant mix (item 1) | Prioritize non-developer users and varied supported native-Windows hardware where practical | Reuses this plan's own §2/§3 diversity axes verbatim (GPU/CPU variety, camera/Source-type variety, technical-sophistication mix); adds nothing new. |
+| Local Only posture | Confirmed as a first-class acceptance path for every participant | Reuses §4 verbatim; not a new decision, restated here for completeness of the consolidated contract. |
+| Findings intake (§13's own flagged decision) | A private-repository issue process, or the existing private issue-tracking mechanism already used for accepted-milestone tracking -- with participant information restricted/redacted per §16 | Reuses §13's own instruction not to build a new issue-management platform; still requires the owner to designate the specific channel/repository and confirm participant-information handling before recruitment. |
+| Consent mechanism (item 2) | **Explicit written opt-in** before any collection or installation, rather than a plain-language acknowledgment alone | This addendum's own proposed answer to item 2 (previously fully open either way); §9's plaintext-camera-credential and unreleased-product disclosures should be part of what a participant affirmatively acknowledges in writing, given real camera/property imagery and real, if small, privacy exposure are involved. |
+
+**Not addressed by this addendum, deliberately** -- these remain exactly
+as open as before, with no proposed value: item 3 (numeric onboarding-
+time/acceptance target), item 4 (severity/count exit formula), item 6
+(the go/no-go itself), and item 9 in the reconciliation report's own list
+(the BirdNET commercial-adjacent legal review). None of these is
+governed by an existing document, and this milestone's own brief does not
+ask for one to be invented.
+
 ## Owner decisions this plan cannot self-authorize (consolidated)
 
 1. Exact cohort headcount, participant identities, and recruitment
-   channel (§2).
+   channel (§2) -- **proposed, not approved**: see the addendum above.
 2. Whether a formal written consent form is required, versus a
-   plain-language acknowledgment (§9).
+   plain-language acknowledgment (§9) -- **proposed, not approved**: see
+   the addendum above.
 3. Any numeric onboarding-time or acceptance target, if the owner wants
    one beyond the qualitative criteria in §14 (§5, §14).
 4. The exact severity/count formula (if any) for the exit decision,
    versus a direct qualitative release-authority judgment against the
    findings ledger (§14).
-5. Confirming and documenting the exact uninstall procedure before
-   relying on it in front of participants (§8) -- a small, concrete,
-   pre-Gate-G action, not a plan gap.
+5. ~~Confirming and documenting the exact uninstall procedure before
+   relying on it in front of participants (§8)~~ -- **RESOLVED, 2026-09-08**:
+   see §8's dated update, above, and
+   [external-acceptance-entry-readiness-uninstall-closure-v1-report.md](external-acceptance-entry-readiness-uninstall-closure-v1-report.md).
 6. The actual go/no-go to begin recruitment and execution -- this
    document prepares the plan; it does not authorize starting it.

@@ -702,3 +702,55 @@ silently re-run until green.
 - NAS/external-storage migration, mobile/PWA, a full update-manager,
   release packaging -- explicitly out of this milestone's scope per the
   brief's own exclusion list.
+
+## Uninstall contract (Phase P, closed 2026-09-08)
+
+Closed by *External Acceptance Entry Readiness & Uninstall Closure v1* --
+see
+[external-acceptance-entry-readiness-uninstall-closure-v1-report.md](external-acceptance-entry-readiness-uninstall-closure-v1-report.md)
+for the full investigation and real native-Windows validation evidence.
+This phase was not part of this contract's own original scope (uninstall
+is not named anywhere above); it is added here, dated, because it belongs
+structurally alongside this contract's existing install/update/backup/
+recovery/privacy coverage, and a later session should find it here rather
+than only in a Gate-G-adjacent planning document.
+
+**Finding:** uninstall was a genuine, confirmed documentation gap, not a
+missing product capability. The packaged product has no installer/
+registry/service footprint (`docs/local-product-packaging-design.md`'s
+"unpack and run" decision), so the application folder and the local data
+folder (`%LOCALAPPDATA%\MockingBird`, independent of the application
+folder's own location -- `mockingbird.runtime.resolve_runtime_home`) were
+already two separate, independently removable things by construction; no
+new removal mechanism was built or is needed.
+
+**What closed it:** a documented, two-level procedure (delete the
+application folder -- safe, preserves data; separately, explicitly delete
+the local data folder -- destructive, permanent) added to
+[using-mockingbird.md](using-mockingbird.md) "Uninstall"; a small
+existing-documentation-accuracy fix to the in-box `README-FIRST.txt` (the
+only uninstall documentation an unpacked end user actually has, since
+`using-mockingbird.md` itself is not shipped inside the bundle) that had
+previously left "this folder" and the local data folder ambiguous; and a
+new regression test
+(`test_resolve_runtime_home_default_is_independent_of_the_application_directory`)
+locking in the underlying independence invariant. Proven on real
+native-Windows hardware, not merely asserted: stopping first is required
+(Windows refuses to delete a folder a running process holds open);
+deleting the application folder alone leaves the data folder intact;
+unpacking a fresh copy elsewhere reconnects to the exact same preserved
+data automatically; explicitly deleting the data folder afterward removes
+it completely. See the closure report's "Validation" section for the
+exact commands and evidence.
+
+**Camera Node state:** the already-existing "Revoke current pairing"/
+"Forget this Camera Node" UI (Phase I, above) is the correct pre-uninstall
+disconnect step; a Host uninstall does not, and is not expected to, reach
+the physical Camera Node device itself -- that device's own removal
+remains `scripts/install_camera_node.py`'s own separate, already-disclosed
+scope (no uninstall subcommand exists there either; not built by this
+phase, since it is Camera Node lifecycle, not Host uninstall).
+
+**Not built, and not needed:** an in-app "delete everything" button (see
+"Roadmap non-goals" in `roadmap.md`: "No new administration page merely
+for lifecycle or engineering controls").

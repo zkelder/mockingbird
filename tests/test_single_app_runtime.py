@@ -124,6 +124,56 @@ def test_runtime_home_override_is_stable_outside_workspace(tmp_path: Path, monke
     assert resolve_runtime_home(workspace_root=None) == configured_home.resolve()
 
 
+def test_resolve_runtime_home_default_is_independent_of_the_application_directory(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """External Acceptance Entry Readiness & Uninstall Closure v1.
+
+    The packaged product has no installer/registry/service -- "uninstall"
+    is deleting the unpacked application folder, optionally followed by
+    deleting the separate user-data folder. That is only a safe,
+    well-defined two-level procedure (delete the app; optionally also
+    delete the data) if the data location is genuinely independent of
+    wherever the application happens to be unpacked. This regression test
+    locks that invariant in at the unit level, on this test runner's own
+    OS default branch (`XDG_DATA_HOME`/`~/.local/share/mockingbird`): with
+    no `MOCKINGBIRD_HOME` override and `workspace_root=None` (the packaged
+    artifact has no `pyproject.toml`/`web` sibling for `find_workspace_root`
+    to find, unlike a development checkout), the resolved runtime home
+    never depends on the application directory or current working
+    directory. `pathlib.Path` dispatches on the real `os.name` at
+    construction time, so the equivalent `nt`/`%LOCALAPPDATA%` branch
+    cannot be faithfully exercised this way on a POSIX test runner
+    (`Path(...)` raises `NotImplementedError: cannot instantiate
+    'WindowsPath' on your system` the moment `os.name` is monkeypatched) --
+    that exact Windows-specific instance of this same contract (identical
+    code shape, just `LOCALAPPDATA` instead of `XDG_DATA_HOME`, see
+    `resolve_runtime_home`) is proven instead by real native-Windows
+    evidence in
+    docs/external-acceptance-entry-readiness-uninstall-closure-v1-report.md,
+    not simulated here.
+    """
+
+    monkeypatch.delenv(APP_HOME_ENV_VAR, raising=False)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    fake_home = tmp_path / "home" / "someone"
+    fake_home.mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+    application_directory_a = fake_home / "Desktop" / "MockingBird-linux-x64"
+    application_directory_b = fake_home / "Downloads" / "MockingBird-linux-x64 (2)"
+    expected_runtime_home = fake_home / ".local" / "share" / "mockingbird"
+
+    assert resolve_runtime_home(workspace_root=None) == expected_runtime_home
+    # Unpacking (or re-unpacking, e.g. after upgrading or reinstalling) the
+    # application anywhere at all resolves to the exact same data location --
+    # never a path derived from the application directory itself.
+    for application_directory in (application_directory_a, application_directory_b):
+        application_directory.mkdir(parents=True)
+        monkeypatch.chdir(application_directory)
+        assert resolve_runtime_home(workspace_root=None) == expected_runtime_home
+
+
 def test_print_preflight_reports_an_ordinary_already_current_launch_unchanged(capsys) -> None:
     """Release Engineering Foundation v1 must not change the message an
     ordinary, non-upgrading launch has always printed."""

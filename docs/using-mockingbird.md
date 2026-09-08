@@ -309,6 +309,58 @@ if a very old version's data cannot be updated automatically, MockingBird
 says so plainly rather than guessing, and the same "Backup and restore"
 recovery path still applies.
 
+## Uninstall
+
+MockingBird has no separate installer, so there is nothing for Windows'
+own "Uninstall a program" list to do -- removing it is a matter of
+deleting the right folder(s) yourself. (If you're replacing MockingBird
+with a newer version rather than removing it, see "Upgrading MockingBird,"
+above, instead -- upgrading does not require removing anything first.)
+
+1. **Stop MockingBird first.** Close its browser tab, then use Task
+   Manager to end the "pythonw.exe" process (or restart your computer).
+   Windows will not let you delete files MockingBird is still running
+   from.
+2. **Delete the application folder** -- the one containing
+   `Start MockingBird.vbs`. This removes MockingBird itself. Your
+   cameras, Zones, reviewed history, media, and backups are **not**
+   stored inside it, so this alone does not touch your data -- unpacking
+   a fresh copy later (a reinstall, or a newer version, anywhere on your
+   computer) automatically picks up exactly where you left off.
+3. **To also permanently remove your data**, separately delete
+   MockingBird's local data folder -- shown on the Local Data page, and
+   normally `%LOCALAPPDATA%\MockingBird` unless you changed where
+   MockingBird keeps its data. This is a deliberate, separate step on
+   purpose: do it only once you are sure, since it cannot be undone
+   unless you kept a backup copy somewhere else first (see "Backup and
+   restore," above).
+
+A few things a full removal does not need to touch, and does not affect:
+
+- **Your paired MockingBird Camera Node.** Deleting the Host's own data
+  does not reach across your network to change anything on the Node
+  itself -- it simply becomes unable to reach a MockingBird that no
+  longer exists, which is safe. If you'd rather cleanly disconnect it
+  first, open that camera's settings and choose **Revoke current
+  pairing** before you uninstall. To fully decommission the physical
+  Camera Node device itself (not just the pairing), see the
+  [Camera Node install guide](camera-node-install-guide.md) -- removing
+  the Host does not do this for you.
+- **The optional detection/species model files.** Both are MIT-licensed
+  and bundled inside the application folder itself, not your data
+  folder, so deleting that folder removes them with no separate license
+  step needed -- see [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
+- **ffmpeg**, if you installed it separately for a network/USB camera or
+  video import -- MockingBird never installs it and has nothing to do
+  with removing it.
+
+There is no in-app "delete everything" button. That matches MockingBird's
+local-first, appliance-style design (see "Installation and appliance
+experience are product features" in
+[product-doctrine.md](product-doctrine.md)): your data is exactly as
+portable and as deletable as any other folder on your own computer, never
+locked behind a special tool.
+
 ## If something goes wrong
 
 - **A camera shows "Needs attention"**: open that camera for a plain-language
