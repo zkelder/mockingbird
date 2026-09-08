@@ -420,6 +420,63 @@ either, and **does not** reopen Gate A -- see §6.S, below. **Authorization
 remains NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, for the
 next external (ChatGPT) acceptance review to act on.
 
+**Corrected 2026-09-08 by External Pre-Release Acceptance -- Private
+Cohort v1** (see
+[external-pre-release-acceptance-private-cohort-v1-report.md](external-pre-release-acceptance-private-cohort-v1-report.md)),
+a bounded Gate G setup milestone, directly authorized outside this file.
+HEAD unchanged (`2fe2729`) until this milestone's own reconciliation
+commit; schema unchanged (`v59`); no product/schema/tooling code changed;
+no participant contacted; no build distributed externally; no push.
+Verified the expected baseline exactly (HEAD, schema, Gate A `PASS`/Lane R
+`CLOSED`, Lane P `CLOSED`, Gate G prepared/not started, authorization
+`NONE`, worktree clean except the seven preserved untracked files, no
+active writer) and directly confirmed zero production code has changed
+since the immediately-prior milestone's own real-hardware uninstall proof
+(`git diff --stat 6cebe0a..2fe2729` touches only this file). **Built and
+independently verified a real, current internal acceptance candidate**
+-- not merely cited historical evidence: a full, unskipped
+`build_local_product.py` run at HEAD `2fe2729` (`git_commit`
+`2fe27292e73a1dab9dcf71fa00bc004a3cd8e83d`, `source_clean: true`) produced
+`MockingBird-windows-x64.zip` (18,727 files, 4,922,804,306 bytes); every
+MDv5a/BioCLIP-2 asset SHA-256 matched the accepted constants; the
+independent `verify_release_artifact.py` passed cleanly; launched on real
+native-Windows hardware (Windows 10 Pro `10.0.19045`, RTX 4060 Ti),
+`GET /api/product/instance` self-reported the identical `git_commit`/
+`build_id` as the build's own manifest; a bounded Local Only TCP
+-connection spot-check found no non-loopback connection; restarting
+against the same data home after a forceful stop proved recovery
+(byte-identical database before/after). **One real, reproducible, non
+-release-blocking Doctor defect was found and disclosed, not fixed**: a
+fresh instance's Storage check reports `FAIL`/`BLOCKING` from the moment
+the server has started even once -- before a participant reaches the
+first-run wizard's own Storage step, not after -- because the intended
+"not started yet" `PASS` branch is gated on database-file existence, not
+wizard completion; root-caused to `_interpret_storage`
+(`src/mockingbird/diagnostics/doctor.py`), classified Sev-2, smallest
+correction proposed, not implemented (bounded scope). A secondary,
+non-blocking observation: neither of the product's own two documented stop
+methods produced a shutdown Doctor considers clean -- disclosed, not
+escalated, zero data risk. **Prepared all nine required participant
+materials** (invitation, written consent, install/first-run/correction
+-evidence-trust/backup-recovery-uninstall guides, known limitations,
+findings template, withdrawal/data-handling) in a new companion document,
+grounded only in already-governed facts, promising no guaranteed species
+identification, numeric latency SLA, cloud dependency, or surveillance
+capability -- see
+[external-pre-release-acceptance-private-cohort-v1-participant-materials.md](external-pre-release-acceptance-private-cohort-v1-participant-materials.md).
+**No participant was contacted, recruited, or named; no account or
+findings channel was created; no build was distributed.** 507 tests
+passing fresh this session, zero regressions; `ruff` clean; full Core
+deliberately not run (zero product/schema/tooling code changed). This
+milestone **stops at the owner approval checkpoint** its own governing
+directive requires (see the report's §5) rather than proceeding to Gate G
+execution. **Does not** mark External Pre-Release Acceptance executed or
+passed, **does not** mark Final Release Hardening started, **does not**
+authorize either, and **does not** reopen Gate A -- see §6.S, below.
+**Authorization remains NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION
+REQUIRED**, pending the owner approval checkpoint named above before any
+external action.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
@@ -3352,6 +3409,38 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-08 update (External Pre-Release Acceptance -- Private Cohort
+v1):** bounded Gate G setup milestone, directly authorized outside this
+file. See
+[external-pre-release-acceptance-private-cohort-v1-report.md](external-pre-release-acceptance-private-cohort-v1-report.md).
+HEAD unchanged (`2fe2729`) until this milestone's own reconciliation
+commit; schema unchanged (`v59`); no product/schema code changed; no
+field session; no participant contacted; no build distributed; no push.
+Verified baseline exactly as expected and confirmed zero production code
+has changed since the immediately-prior milestone's own real-hardware
+proofs. Built, independently verified, and launched on real native
+-Windows hardware a current internal acceptance candidate at HEAD
+`2fe2729` (exact build/model/asset identity confirmed three independent
+ways: the manifest, the independent verifier, and the running instance's
+own self-report); proved recovery after an unclean stop; found and
+disclosed one real, reproducible, non-release-blocking Doctor defect
+(Storage check `FAIL`/`BLOCKING` on a normal pre-wizard-completion
+instance, Sev-2, not fixed here) plus one secondary non-blocking
+observation (no documented stop method produces a shutdown Doctor
+considers clean). Prepared all nine required participant materials as a
+new companion document -- a proposal only, matching the operating
+decisions this milestone's own governing directive supplied (3-5
+participants, private/trusted-contact recruitment, explicit written
+consent, no numeric onboarding/exit target invented). **Stops at the
+owner approval checkpoint** the governing directive requires (report §5):
+no participant contacted or recruited, no account or findings channel
+created, no build distributed, no Gate G execution performed, no findings
+fabricated. **Does not** mark External Pre-Release Acceptance executed or
+passed, **does not** mark Final Release Hardening started, **does not**
+authorize either, and **does not** reopen Gate A -- see §6.S, below.
+**Authorization remains NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION
+REQUIRED**, pending the owner approval checkpoint named above.
 
 **2026-09-08 update (External Acceptance Entry Readiness & Uninstall
 Closure v1):** bounded release-readiness milestone, directly authorized
@@ -10620,6 +10709,30 @@ fixed, no finding collected, no owner approval granted for any proposed
 value. This lane's own status remains **LAST**; current authorization to
 begin Gate G execution or this lane remains `NONE`.
 
+**2026-09-08 update (internal candidate built and verified; Gate G still
+not started):** *External Pre-Release Acceptance -- Private Cohort v1*
+(see
+[external-pre-release-acceptance-private-cohort-v1-report.md](external-pre-release-acceptance-private-cohort-v1-report.md))
+built a real, current internal acceptance candidate from the accepted
+baseline (HEAD `2fe2729`) and independently verified it three ways (build
+manifest, independent `verify_release_artifact.py`, and the running
+instance's own `GET /api/product/instance` self-report on real
+native-Windows hardware) -- the concrete "internal release-candidate
+builds" mechanic this lane's own framing paragraph, above, already
+anticipates. Proved recovery after an unclean stop; found and disclosed
+one real, non-release-blocking Doctor defect (Sev-2, Storage check false
+`FAIL` on a normal pre-wizard-completion instance) and one secondary
+non-blocking observation (no documented stop method yields a shutdown
+Doctor considers clean) -- neither touches any Gate A dimension. Prepared
+all nine Gate G participant materials this gate's own plan calls for, as
+a proposal only. **Gate G itself remains not started**: no participant
+recruited, no cohort fixed, no finding collected from an actual
+participant, no build distributed, no owner approval granted for any
+proposed value -- this milestone's own report presents a complete owner
+approval checkpoint (its §5) rather than proceeding past it. This lane's
+own status remains **LAST**; current authorization to begin Gate G
+execution or this lane remains `NONE`.
+
 ## 7. One-release doctrine
 
 MockingBird's public release target is a trustworthy single-site/home
@@ -10775,6 +10888,31 @@ rather than cleaned up; re-verify their presence untouched at the start of
 each session that touches this repository.
 
 ## 14. Validation baselines
+
+**External Pre-Release Acceptance -- Private Cohort v1 did not run a full
+Core checkpoint** -- disclosed explicitly here so this is never mistaken
+for one. Zero product/schema/tooling code changed (its only artifacts are
+two new documentation files, a build-owned `dist/` output already
+excluded from version control, and this file); a Core run would not
+exercise anything beyond what the immediately-prior, already-fully-Core
+-clean milestone already covered, and would not exercise the real
+native-Windows build/launch/recovery/Doctor evidence that actually bears
+on this milestone's own claims. It ran Tier 1 (every directly relevant
+test file, fresh this session, not merely cited: `test_single_app_
+runtime.py` 21 passed, `test_local_product_packaging.py` 85 passed,
+`test_version_provenance.py` + `test_verify_release_artifact.py` 17
+passed) + Tier 2 (`test_deploy_windows_dev.py`, `test_install_camera_
+node.py`, `test_camera_node_packaging.py`, `test_local_backup_
+recovery.py`, `test_cross_install_backup_restore.py`, `test_clean_
+install_acceptance.py`, `test_upgrade_path_acceptance.py`, `test_
+doctor.py`: 384 passed) -- **507 passed, 0 failed**, zero new `ruff`
+findings on every file this milestone's own verification touched. Its own
+real native-Windows evidence (build identity confirmed three independent
+ways, recovery after an unclean stop, the disclosed Sev-2 Doctor finding)
+is the validation that actually bears on its claims -- see
+[external-pre-release-acceptance-private-cohort-v1-report.md](external-pre-release-acceptance-private-cohort-v1-report.md)
+§3 and §9. The "Latest accepted Core checkpoint" below remains the most
+recent actual full-suite number.
 
 **External Acceptance Entry Readiness & Uninstall Closure v1 did not run
 a full Core checkpoint** -- disclosed explicitly here so this is never
