@@ -316,6 +316,43 @@ delta (disclosed explicitly, not silently left inconsistent); reconciling
 it is next global-roadmap-reconciliation work. **Authorization remains
 NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, unchanged.
 
+**Corrected 2026-09-07 by Release-Gate Reconciliation & External
+Acceptance Preparation v1** (see
+[release-gate-reconciliation-external-acceptance-preparation-v1-report.md](release-gate-reconciliation-external-acceptance-preparation-v1-report.md)),
+a bounded, read-only release-readiness/governance reconciliation
+milestone, directly authorized outside this file -- no field session, no
+deployment, no product/schema/tooling code change, no push. HEAD
+unchanged (`aeff038`); schema unchanged (`v59`). Verified the expected
+baseline exactly: HEAD, schema v59, Lane R `CLOSED`, Lane P `CLOSED`,
+current authorization `NONE`, worktree clean except the seven preserved
+untracked detector files (reconfirmed present and unmodified), no active
+writer. Reconciled `roadmap.md`'s own Gate A / "Numeric release budgets"
+prose to the accepted 2026-09-07 Gate A PASS / Lane R CLOSED decision --
+explicitly scoped out of *Lane R Release-Budget Adjudication & Gate A
+Decision v1*'s own documentation delta and disclosed there as a known gap
+(see §6.R, above) -- by appending dated corrections that preserve, not
+rewrite, the historical OPEN / rejected-PASS narrative already in
+`roadmap.md`, exactly as this file's own convention already treats
+superseded narrative. Performed a complete remaining-execution-queue
+classification across all nineteen lettered lanes, re-derived from
+*Global Product & Release Readiness Reconciliation v2*'s own complete
+lane-status table plus the accepted delta since it: **zero new
+release-critical dependency found**; Lane R's own closure is the only
+material change to that table since v2 (recall, and the six
+already-`READY` Gate A dimensions, are unchanged); every remaining
+release-critical residual (Lanes L, F, E) is small, already disclosed,
+and gated on hardware or external-network access this sandbox cannot
+supply, unchanged since v2. Prepared -- without starting -- the concrete
+Gate G (External Pre-Release Acceptance) plan named as the last of Gate
+G's three entry preconditions in v2's own predecessor report: see
+[external-pre-release-acceptance-gate-g-plan-v1.md](external-pre-release-acceptance-gate-g-plan-v1.md).
+**This closure does not mark External Pre-Release Acceptance as executed
+or passed, does not mark Final Release Hardening as started, and does
+not authorize either.** `CURRENT PHASE` remains exactly `FEATURE FREEZE
+-- EVIDENCE, RELEASE READINESS & HOUSEKEEPING`. **Authorization remains
+NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, for the next
+external (ChatGPT) acceptance review to act on.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
@@ -3248,6 +3285,33 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-07 update (Release-Gate Reconciliation & External Acceptance
+Preparation v1):** bounded, read-only release-readiness/governance
+reconciliation, directly authorized outside this file. See
+[release-gate-reconciliation-external-acceptance-preparation-v1-report.md](release-gate-reconciliation-external-acceptance-preparation-v1-report.md).
+HEAD unchanged (`aeff038`); schema unchanged (`v59`); no field session,
+no deployment, no product/schema/tooling code changed, no push. Verified
+baseline exactly as expected (HEAD, schema, Lane R `CLOSED`, Lane P
+`CLOSED`, authorization `NONE`, worktree clean except the seven preserved
+untracked files, no active writer). Reconciled `roadmap.md`'s Gate A /
+"Numeric release budgets" prose (stale since the immediately-prior
+milestone's own disclosed, out-of-scope gap) to the accepted Gate A PASS
+/ Lane R CLOSED decision, by dated addition, preserving the historical
+OPEN/rejected-PASS narrative unrewritten. Re-derived the complete
+nineteen-lane remaining-execution-queue classification from *Global
+Product & Release Readiness Reconciliation v2*'s own table: no new
+release-critical dependency found; Lane R's closure is the only material
+change since v2; Lanes L/F/E residuals unchanged, small, disclosed,
+hardware/network-gated. Prepared, without starting, the Gate G (External
+Pre-Release Acceptance) cohort/findings-intake plan named as the last of
+that gate's three entry preconditions -- see
+[external-pre-release-acceptance-gate-g-plan-v1.md](external-pre-release-acceptance-gate-g-plan-v1.md).
+**Does not** mark External Pre-Release Acceptance executed or passed,
+**does not** mark Final Release Hardening started, and **does not**
+authorize either -- see §6.S, below. **Authorization remains NONE --
+GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, for the next external
+(ChatGPT) acceptance review to act on.
 
 **2026-09-07 update (Lane R Release-Budget Adjudication & Gate A Decision
 v1, see §6.R):** bounded, read-only release-decision milestone, directly
@@ -10425,6 +10489,20 @@ closure; clean-install repetition; internal release-candidate builds (an
 engineering mechanic, not a separate product stage). External Pre-Release
 Acceptance -> Final Release Hardening -> the one public launch -- no
 separate beta release precedes it.
+
+**2026-09-07 update (Gate G plan prepared, not started):** *Release-Gate
+Reconciliation & External Acceptance Preparation v1* reconciles
+`roadmap.md`'s Gate A prose to this lane's own already-accepted `CLOSED`
+status (§6.R, above) and prepares -- without starting -- the concrete
+Gate G (External Pre-Release Acceptance) plan this lane's own
+precondition names: see
+[external-pre-release-acceptance-gate-g-plan-v1.md](external-pre-release-acceptance-gate-g-plan-v1.md)
+and
+[release-gate-reconciliation-external-acceptance-preparation-v1-report.md](release-gate-reconciliation-external-acceptance-preparation-v1-report.md).
+Gate G itself remains **not started**: no participant recruited, no
+cohort fixed, no finding collected. This lane's own status remains
+**LAST**; current authorization to begin Gate G execution or this lane
+remains `NONE`.
 
 ## 7. One-release doctrine
 
