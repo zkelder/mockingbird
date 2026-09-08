@@ -353,6 +353,73 @@ not authorize either.** `CURRENT PHASE` remains exactly `FEATURE FREEZE
 NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, for the next
 external (ChatGPT) acceptance review to act on.
 
+**Corrected 2026-09-08 by External Acceptance Entry Readiness &
+Uninstall Closure v1** (see
+[external-acceptance-entry-readiness-uninstall-closure-v1-report.md](external-acceptance-entry-readiness-uninstall-closure-v1-report.md)),
+a bounded release-readiness milestone, directly authorized outside this
+file, resolving the two concrete Gate G entry dependencies the
+immediately-prior milestone named. HEAD `871c7ba` -> `6cebe0a`; schema
+unchanged (`v59`); no product/schema code changed (one packaging-text
+constant plus one new regression test); no field session; no deployment
+beyond disposable, fully-cleaned-up test instances; no participant
+contacted; no push. Verified the expected baseline exactly (HEAD, schema,
+Lane R `CLOSED`, Lane P `CLOSED`, Gate G prepared/not started, current
+authorization `NONE`, worktree clean except the seven preserved untracked
+detector files, no active writer). **Closed the uninstall gap**: bounded
+archaeology confirmed it was exactly the documentation-only gap the prior
+two milestones believed but had not verified -- the packaged product has
+no installer/registry/service footprint, so the application folder and
+the local data folder (`%LOCALAPPDATA%\MockingBird`) are already two
+separate, independently removable things by construction
+(`mockingbird.runtime.resolve_runtime_home`); no new uninstall mechanism
+was built or needed. Documented a two-level procedure in
+`using-mockingbird.md` (delete the application folder -- safe, preserves
+data; separately, explicitly delete the local data folder -- destructive,
+permanent); fixed one genuine, small documentation-accuracy defect found
+in the in-box `README-FIRST.txt` (the only uninstall documentation an
+unpacked end user actually has); added a new dated "Uninstall contract"
+phase to `appliance-storage-privacy-recovery-v1-contract.md`; added one
+new regression test. **Proved every claim on real native-Windows
+hardware**, not merely documented: stopping first is a real, OS-enforced
+requirement (`Access to the path 'cv2.pyd' is denied` -- a genuine loaded
+-module file lock, not assumed); a failed delete-while-running attempt
+does not damage the running installation; deleting the application
+folder alone leaves data intact; unpacking a fresh copy at a *different*
+path reconnects automatically to the exact same preserved data
+(`instance_id` byte-identical before and after); the explicit destructive
+step removes both completely. **A real near-miss was caught and
+disclosed, not smoothed over**: a bash `$env:` quoting bug in an early
+verification check produced a false "absent" reading for the real
+`%LOCALAPPDATA%\MockingBird`, which holds genuine leftover data from
+prior milestones' own real native-Windows acceptance sessions
+(8/9-9/1/2026, the same class of archived-Windows-dev-root evidence
+§6.R's own disclosed 18.5GB+ housekeeping item already names -- confirmed
+here to also include the production-path variant, not only
+`MockingBirdDev`). Caught and corrected before any write or delete
+occurred; every subsequent destructive real-hardware operation ran only
+against a disposable path via `MOCKINGBIRD_HOME` override (mirroring
+`deploy_windows_dev.py`'s own established isolation convention); both
+real folders reconfirmed byte-identical -- same files, sizes, timestamps
+-- after every step and at final cleanup. Zero operator data was ever at
+risk. **Also closed**: `docs/local-mvp-readiness-checklist.md` marked
+superseded, dated, historical body preserved unedited (this milestone's
+own explicit authorization, resolving consolidated owner-decision #8).
+**Prepared, without approving**, a private Gate G cohort/consent/
+findings-intake contract (3-5 participants; direct trusted contacts or
+relevant communities, no public announcement; explicit written consent;
+a private-repository/existing issue mechanism for findings) as a new
+addendum to `external-pre-release-acceptance-gate-g-plan-v1.md` --
+**nothing in it is approved by this milestone**; no participant
+recruited or contacted; no account or private-repository access created.
+106 Tier 1 + 388 Tier 2 tests passing, zero regressions; `ruff` clean on
+every changed file; full Core deliberately not run (narrow, additive,
+documentation-shaped footprint -- see the report's §6 "Tier 3 decision").
+**Does not** mark External Pre-Release Acceptance executed or passed,
+**does not** mark Final Release Hardening started, **does not** authorize
+either, and **does not** reopen Gate A -- see §6.S, below. **Authorization
+remains NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, for the
+next external (ChatGPT) acceptance review to act on.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
@@ -3285,6 +3352,30 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-08 update (External Acceptance Entry Readiness & Uninstall
+Closure v1):** bounded release-readiness milestone, directly authorized
+outside this file. See
+[external-acceptance-entry-readiness-uninstall-closure-v1-report.md](external-acceptance-entry-readiness-uninstall-closure-v1-report.md).
+HEAD `871c7ba` -> `6cebe0a`; schema unchanged (`v59`); no product/schema
+code changed; no field session; no deployment beyond disposable, fully
+-cleaned-up test instances; no participant contacted; no push. Verified
+baseline exactly as expected. Closed both concrete Gate G entry
+dependencies the immediately-prior milestone named: the uninstall
+documentation gap (confirmed genuine and documentation-only, not a
+missing capability; documented and proven on real native-Windows
+hardware -- see the CURRENT PHASE narrative, above, and §6.S, below) and
+the stale `local-mvp-readiness-checklist.md` (marked superseded, history
+preserved). Prepared, without approving, a private Gate G cohort/consent/
+findings-intake contract as a new addendum to
+[external-pre-release-acceptance-gate-g-plan-v1.md](external-pre-release-acceptance-gate-g-plan-v1.md)
+-- a proposal only; nothing in it is approved, no participant is
+recruited, and no private-repository access is created. **Does not** mark
+External Pre-Release Acceptance executed or passed, **does not** mark
+Final Release Hardening started, **does not** authorize either, and
+**does not** reopen Gate A -- see §6.S, below. **Authorization remains
+NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, for the next
+external (ChatGPT) acceptance review to act on.
 
 **2026-09-07 update (Release-Gate Reconciliation & External Acceptance
 Preparation v1):** bounded, read-only release-readiness/governance
@@ -7946,6 +8037,16 @@ unaffected by this milestone. See
 and
 [camera-node-upgrade-compatibility-recovery-v1-report.md](camera-node-upgrade-compatibility-recovery-v1-report.md).
 
+**2026-09-08 note:** Host **uninstall** (never part of this lane's own
+original scope, which covered install/update/recovery only) is now
+separately documented and proven -- see the new "Uninstall contract
+(Phase P)" in
+[appliance-storage-privacy-recovery-v1-contract.md](appliance-storage-privacy-recovery-v1-contract.md)
+and
+[external-acceptance-entry-readiness-uninstall-closure-v1-report.md](external-acceptance-entry-readiness-uninstall-closure-v1-report.md).
+This lane's own two disclosed residuals (`rollback()`'s systemd-template
+and directory-swap gaps, immediately above) are untouched and unaffected.
+
 ### M. Storage / Retention UX
 
 **Status:** CLOSED -- RELEASE-CRITICAL. Integrated acceptance performed
@@ -10504,6 +10605,21 @@ cohort fixed, no finding collected. This lane's own status remains
 **LAST**; current authorization to begin Gate G execution or this lane
 remains `NONE`.
 
+**2026-09-08 update (entry-readiness dependencies closed, Gate G still
+not started):** *External Acceptance Entry Readiness & Uninstall Closure
+v1* closed the two concrete entry dependencies this section's own
+2026-09-07 update left open: the uninstall procedure is now confirmed,
+documented, and proven on real native-Windows hardware (see the CURRENT
+PHASE narrative, above, and
+[external-acceptance-entry-readiness-uninstall-closure-v1-report.md](external-acceptance-entry-readiness-uninstall-closure-v1-report.md)),
+and a private Gate G cohort/consent/findings-intake contract is now
+proposed (not approved) in
+[external-pre-release-acceptance-gate-g-plan-v1.md](external-pre-release-acceptance-gate-g-plan-v1.md).
+**Gate G remains not started**: no participant recruited, no cohort
+fixed, no finding collected, no owner approval granted for any proposed
+value. This lane's own status remains **LAST**; current authorization to
+begin Gate G execution or this lane remains `NONE`.
+
 ## 7. One-release doctrine
 
 MockingBird's public release target is a trustworthy single-site/home
@@ -10659,6 +10775,31 @@ rather than cleaned up; re-verify their presence untouched at the start of
 each session that touches this repository.
 
 ## 14. Validation baselines
+
+**External Acceptance Entry Readiness & Uninstall Closure v1 did not run
+a full Core checkpoint** -- disclosed explicitly here so this is never
+mistaken for one, matching this section's own established convention
+(see "Gate A Measurement Closure v1," below). Per its own documented
+Tier 3 decision (one packaging-text constant plus one new test; zero
+application/schema/API/frontend logic changed -- not warranted for a
+footprint this narrow, and a Core run would not have exercised the real
+Windows file-lock/native-hardware behavior that actually mattered for
+this milestone's own claims), it ran Tier 1 (every directly touched/new
+test file in full: `test_single_app_runtime.py` 21 passed,
+`test_local_product_packaging.py` 85 passed) + Tier 2 (every immediately
+affected packaging/lifecycle subsystem: 388 passed across
+`test_deploy_windows_dev.py`, `test_install_camera_node.py`,
+`test_camera_node_packaging.py`, `test_local_backup_recovery.py`,
+`test_cross_install_backup_restore.py`, `test_clean_install_
+acceptance.py`, `test_upgrade_path_acceptance.py`, `test_version_
+provenance.py`, `test_doctor.py`) -- **494 passed, 0 failed**, zero new
+`ruff` findings on every changed file. Its own real-hardware evidence
+(native-Windows file-lock behavior, disposable-instance data
+persistence/reconnection) is the validation that actually bears on its
+claims -- see
+[external-acceptance-entry-readiness-uninstall-closure-v1-report.md](external-acceptance-entry-readiness-uninstall-closure-v1-report.md)
+§4 and §6. The "Latest accepted Core checkpoint" below remains the most
+recent actual full-suite number.
 
 **Latest accepted Core checkpoint (Place Feature Comparison & Habitat
 Outcomes v1):** 5897 passed / **4 failed** / 3 skipped / 23 deselected
