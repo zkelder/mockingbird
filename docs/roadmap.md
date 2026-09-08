@@ -1163,6 +1163,53 @@ rate; fragmentation rate; duplicate-Visit rate; useful-evidence rate;
 per-subject evidence correctness; capture-to-user-visible-Visit latency;
 monitoring coverage.
 
+**2026-09-07 update (GATE A: PASS -- LANE R: CLOSED):** *Lane R
+Release-Budget Adjudication & Gate A Decision v1* (see
+[lane-r-release-budget-adjudication-gate-a-decision-v1-report.md](lane-r-release-budget-adjudication-gate-a-decision-v1-report.md),
+independently re-verifying the evidence and proposed budget assembled by
+*Lane R Accumulated Latency Evidence & Release-Budget Decision v1*, see
+[lane-r-accumulated-latency-evidence-release-budget-decision-v1-report.md](lane-r-accumulated-latency-evidence-release-budget-decision-v1-report.md))
+closes the true-latency-tail item the 2026-09-06 update immediately below
+left as Gate A's sole remaining blocker. **Gate A: PASS. Lane R: CLOSED.**
+This section's own prose is reconciled here, by *Release-Gate
+Reconciliation & External Acceptance Preparation v1* -- the adjudication
+milestone's own documentation delta explicitly scoped `roadmap.md` out of
+its bounded edit and disclosed the resulting staleness rather than
+leaving it silently inconsistent (see
+[release-execution-state.md](release-execution-state.md) §6.R). Accepted
+budget in full, reconciling the "True capture-to-visible latency" entry
+in "Numeric release budgets," below, to match: typical capture-to-visible
+latency **roughly 80-115 seconds** (numeric; pooled median 103.9s across
+69 samples / 5 intact cohorts / 6 independent calendar days; bootstrap
+90% CI [80.3s, 114.8s]); upper-tail behavior disclosed **qualitatively,
+not as a numeric SLA** (observed per-cohort p90 174-385s; pooled
+bootstrap p90 90% CI [198.6s, 331.8s] -- roughly 1 in 10 Visits takes
+materially longer, especially during sustained/crowded activity); the
+existing 20-minute (1,200s) component-decision-horizon design bound cited
+only as an **architectural reference, never a measured or
+statistically-fit maximum** (every observed maximum to date -- 742.3s
+live-measured, 865.2s reconstructed-only -- sits at 62-72% of it).
+**Whole-scene Visit recall is unchanged and not re-litigated by this
+closure** -- it stands exactly as the 2026-09-06 update below left it
+(v12 87.5%, v14 64.7% conservative / 61.1% broader, accepted known
+limitation, no numeric floor); the sustained/crowded ambiguous-boundary
+mechanism behind both the recall limitation and the latency tail is
+disclosed as one product characteristic, not two, exactly as the
+adjudication itself frames it. The six already-`READY` dimensions in
+"Numeric release budgets," below (false-Visit rate, fragmentation,
+duplicates, useful-evidence, evidence-loss, monitoring coverage) are
+**unchanged by this closure** -- no denominator, budget, or accepted
+limitation was altered; only the one remaining open dimension (true
+latency) was closed, using evidence already gathered rather than a new
+field session. All eight Gate A dimensions plus multi-subject Visit
+correctness now carry an accepted disposition; no correctness defect was
+found anywhere in the evidence body. **This closure does not start
+External Pre-Release Acceptance (Gate G, below) or Final Release
+Hardening** -- both remain separately gated and are not authorized by
+this reconciliation; see Gate G, below, for the acceptance-plan
+groundwork this same reconciliation pass prepares, without beginning
+execution.
+
 **2026-09-06 update:** Gate A True-Latency Tail Closure & Final Lane R
 Decision v1 (see
 [gate-a-true-latency-tail-closure-final-lane-r-decision-v1-report.md](gate-a-true-latency-tail-closure-final-lane-r-decision-v1-report.md))
@@ -2647,6 +2694,25 @@ real product launch, and it should be polished, trustworthy, credible,
 and production-minded, backed by the non-software readiness in "Public
 release readiness," below.
 
+**2026-09-07 update (plan prepared, not started):** Gate A's PASS (above)
+resolves the first of this gate's three concrete entry preconditions
+named by *Global Remaining Product-Development & Release-Queue
+Reconciliation v1* ("External Pre-Release readiness criteria"): Lane R
+closing, Lane P's mechanical LICENSE adoption (already resolved
+2026-09-06), and a cohort/findings-intake plan actually being scoped.
+*Release-Gate Reconciliation & External Acceptance Preparation v1*
+prepares the third precondition -- a concrete, executable acceptance plan
+-- without starting execution: see
+[external-pre-release-acceptance-gate-g-plan-v1.md](external-pre-release-acceptance-gate-g-plan-v1.md)
+for entry criteria, cohort/hardware coverage, the installation-through
+-findings-intake test plan, acceptance criteria, and the explicit owner
+decisions the plan cannot self-authorize (participant recruitment,
+numeric acceptance targets where none is governed, and the go/no-go
+itself). **Gate G remains not started: no participant has been
+recruited, no cohort size is fixed, and no finding has been collected.**
+Current authorization to begin execution remains `NONE` -- see
+[release-execution-state.md](release-execution-state.md) §3/§6.
+
 ### Numeric release budgets
 
 Where a valid numeric threshold already exists, it is preserved here rather
@@ -2794,6 +2860,27 @@ carried through 2026-08-30):
   -motivated representative *daylight* session (started with materially
   more than 75 minutes of daylight remaining) would add a genuine 5th
   sample.
+
+  **2026-09-07 update: BUDGET ADOPTED.** *Lane R Release-Budget
+  Adjudication & Gate A Decision v1* accepted, on the pooled evidence of
+  all five intact cohorts to date (v9, v10, v14, Representative Daylight
+  True-Latency Tail Convergence v3, v4 -- 69 samples, six independent
+  calendar days), the three-part budget stated in Gate A's own
+  "2026-09-07 update," above: typical latency ~80-115s (numeric, pooled
+  median 103.9s); upper tail qualitative, not a fitted SLA (per-cohort p90
+  174-385s); the 20-minute architectural bound cited as a reference, never
+  a measured maximum. This is a deliberately narrower structure than a
+  single tight percentile figure -- it does not resolve the >3x
+  maximum-vs-median spread noted above by tightening it, it discloses that
+  spread honestly instead. See
+  [lane-r-release-budget-adjudication-gate-a-decision-v1-report.md](lane-r-release-budget-adjudication-gate-a-decision-v1-report.md)
+  for the complete adjudication, including the independent recomputation
+  that corrected v10's own previously-published p90 (183.3s -> 201.5s,
+  non-material) and the bootstrap analysis showing the per-cohort p90
+  scatter above is ordinary small-sample noise around one stable
+  distribution, not evidence of non-convergence. **Lane R: CLOSED.** See
+  [release-execution-state.md](release-execution-state.md) §6.R for the
+  complete record.
 - **Minimum monitoring coverage: ≥ 97%** in the steady state. Nearly every
   cohort measured 97.5%-99.99%+; the two cohorts below a naive 99% floor
   (v9 97.95%, v11 97.5%) are each honestly explained (a recorder
