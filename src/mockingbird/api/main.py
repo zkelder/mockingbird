@@ -217,6 +217,7 @@ from mockingbird.api.schemas import (
     ProductConnectionInfo,
     ProductHealthStatus,
     ProductInstanceIdentity,
+    ProductShutdownResponse,
     ReviewLabel,
     ReviewCorrectionCreate,
     ReviewCorrectionResult,
@@ -11120,6 +11121,56 @@ async def get_product_connection_info() -> ProductConnectionInfo:
         network_access_allowed=network_access_allowed,
         is_loopback_only=is_loopback_only,
         local_network_url=local_network_url,
+    )
+
+
+@app.post("/api/product/shutdown", response_model=ProductShutdownResponse)
+async def post_product_shutdown() -> ProductShutdownResponse:
+    """Ask this running MockingBird process to stop itself gracefully.
+
+    Release Reliability & First-Run Recovery v1: the product's own two
+    previously-documented stop methods (closing the browser tab, which
+    never reaches the backend process at all; and ending `pythonw.exe`/
+    `python.exe` in Task Manager, an external OS-level termination no
+    Python-level shutdown hook can reliably intercept -- confirmed
+    directly, not assumed, against real native-Windows hardware) both left
+    the next launch honestly, but alarmingly, reporting "did not shut down
+    cleanly" every time, even for an entirely deliberate, normal stop. This
+    is the smallest coherent fix: a real, in-app way to stop that a user
+    triggers *while MockingBird is still running*, so it can shut itself
+    down through its own existing, already-correct graceful path (see
+    `_app_lifespan`'s teardown in this module -- unchanged by this
+    endpoint) rather than being terminated from outside.
+
+    Flips `uvicorn.Server.should_exit` (see runtime.py's own `run()`,
+    which publishes the real running `Server` on `app.state.uvicorn_server`
+    at launch) -- uvicorn's own documented, in-process stop mechanism,
+    noticed by its main loop on its very next iteration. This is the exact
+    same graceful shutdown sequence an interactive terminal's Ctrl+C
+    already triggers today, including the existing `mark_clean_shutdown()`
+    call at the very end of `_app_lifespan`'s teardown -- never a second,
+    parallel shutdown path, and never called directly from here: if any
+    step of that existing teardown were to fail or hang, the run must
+    still, correctly, not be marked clean.
+
+    `accepted=False`, never a crash, when no real `Server` is available
+    (`app.state.uvicorn_server` is only ever set by the real launch path in
+    runtime.py -- a bare development/test import of this module has
+    nothing to signal) -- the same honest "cannot confirm/act on this"
+    degrade `ProductInstanceIdentity`/`ProductConnectionInfo` already use
+    for their own launch-only facts, immediately above.
+    """
+
+    server = getattr(app.state, "uvicorn_server", None)
+    if server is None:
+        return ProductShutdownResponse(
+            accepted=False,
+            message="MockingBird is not running under a process that can be stopped this way.",
+        )
+    server.should_exit = True
+    return ProductShutdownResponse(
+        accepted=True,
+        message="MockingBird is shutting down. It's safe to close this tab now.",
     )
 
 

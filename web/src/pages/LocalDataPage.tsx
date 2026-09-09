@@ -56,6 +56,9 @@ export function LocalDataPage({
   const [isLoading, setIsLoading] = useState(true);
   const [isResetting, setIsResetting] = useState(false);
   const [isConfirmingReset, setIsConfirmingReset] = useState(false);
+  const [isConfirmingShutdown, setIsConfirmingShutdown] = useState(false);
+  const [isShuttingDown, setIsShuttingDown] = useState(false);
+  const [shutdownMessage, setShutdownMessage] = useState<string | null>(null);
   const [backups, setBackups] = useState<LocalBackupSummary[]>([]);
   const [unreadableBackupCount, setUnreadableBackupCount] = useState(0);
   const [isLoadingBackups, setIsLoadingBackups] = useState(true);
@@ -388,6 +391,41 @@ export function LocalDataPage({
       setError(caught instanceof Error ? caught.message : "Could not reset demo data.");
     } finally {
       setIsResetting(false);
+    }
+  }
+
+  // Release Reliability & First-Run Recovery v1: the real, in-app graceful
+  // stop -- closing this browser tab never reaches the backend process at
+  // all, and ending python.exe/pythonw.exe in Task Manager is an external
+  // OS-level termination no Python-level shutdown hook can reliably
+  // intercept, so either one honestly (but, for a perfectly normal stop,
+  // alarmingly) reports "did not shut down cleanly" on the next launch.
+  // This asks the still-running process to stop itself through its own
+  // existing graceful shutdown path instead.
+  async function shutDownMockingBird() {
+    if (!isConfirmingShutdown) {
+      setIsConfirmingShutdown(true);
+      setShutdownMessage("Confirm to stop MockingBird. It will need to be started again manually.");
+      return;
+    }
+
+    setIsShuttingDown(true);
+    try {
+      const result = await apiClient.shutdownProduct();
+      if (result.accepted) {
+        setShutdownMessage(result.message);
+      } else {
+        setIsConfirmingShutdown(false);
+        setShutdownMessage(result.message);
+      }
+    } catch {
+      // A closed connection is the *expected* success signal here (the
+      // process just stopped serving), not a failure to report -- never
+      // alarm the user over the very thing they just asked to happen.
+      setIsConfirmingShutdown(false);
+      setShutdownMessage("MockingBird is shutting down. It's safe to close this tab now.");
+    } finally {
+      setIsShuttingDown(false);
     }
   }
 
@@ -1078,6 +1116,48 @@ export function LocalDataPage({
                   onClick={() => {
                     setIsConfirmingReset(false);
                     setMessage(null);
+                  }}
+                >
+                  Cancel
+                </button>
+              ) : null}
+            </div>
+          </section>
+
+          <section className="panel local-data-card">
+            <div className="section-heading">
+              <h2>Shut Down MockingBird</h2>
+              <StatusPill label="Local process only" tone="quiet" />
+            </div>
+            <p>
+              Stops MockingBird cleanly. Your local data is never affected. Closing this browser
+              tab does not stop MockingBird -- use this instead of ending the process in Task
+              Manager, so the next launch does not need to recover from an unexpected stop.
+            </p>
+            {shutdownMessage ? (
+              <div className="notice-panel">
+                <span>{shutdownMessage}</span>
+              </div>
+            ) : null}
+            <div className="local-data-actions">
+              <button
+                className={isConfirmingShutdown ? "primary-action" : "secondary-action"}
+                disabled={isShuttingDown}
+                onClick={() => void shutDownMockingBird()}
+              >
+                {isShuttingDown
+                  ? "Shutting down..."
+                  : isConfirmingShutdown
+                    ? "Confirm shut down"
+                    : "Shut down MockingBird"}
+              </button>
+              {isConfirmingShutdown ? (
+                <button
+                  className="secondary-action"
+                  disabled={isShuttingDown}
+                  onClick={() => {
+                    setIsConfirmingShutdown(false);
+                    setShutdownMessage(null);
                   }}
                 >
                   Cancel

@@ -12,6 +12,7 @@ docs/camera-node-installer-design.md.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from datetime import UTC, datetime, timedelta
 import json
 import os
@@ -28,7 +29,7 @@ from mockingbird.storage.models import CameraSourceModel, StreamModel
 from mockingbird_node.app import create_node_app
 from mockingbird_node.config import CameraNodeConfig
 from mockingbird_node.providers import CompositeCameraProvider, NodeCamera, V4L2CameraProvider
-from mockingbird_node import identity, selftest, watchdog
+from mockingbird_node import hardware_health, identity, selftest, watchdog
 
 
 @pytest.fixture
@@ -161,6 +162,65 @@ def test_self_test_degrades_when_provider_enumeration_raises(tmp_path: Path) -> 
     assert result.status == "degraded"
     assert result.providers_initialized is False
     assert "provider_enumeration_failed" in result.reasons
+
+
+def test_self_test_degrades_when_storage_is_critically_low(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        hardware_health,
+        "read_storage_health",
+        lambda _directory: hardware_health.StorageHealth(
+            total_bytes=10_000_000_000, free_bytes=1_000_000, storage_health_tier="critical"
+        ),
+    )
+    result = selftest.run_startup_self_test(
+        provider=_FakeProvider([_FakeCamera("available")]),
+        pairing_state_path=tmp_path / "state" / "pairing.json",
+        storage_directory=tmp_path,
+    )
+    assert result.status == "degraded"
+    assert "storage_critically_low" in result.reasons
+
+
+def test_self_test_does_not_check_storage_when_no_directory_is_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`storage_directory=None` must never fabricate a `passed` or a
+    `degraded` -- it simply is not checked, matching this module's
+    established "honestly not confirmed" convention."""
+
+    def _fail_if_called(_directory: Path) -> hardware_health.StorageHealth:
+        raise AssertionError("storage must not be probed when no directory is configured")
+
+    monkeypatch.setattr(hardware_health, "read_storage_health", _fail_if_called)
+    result = selftest.run_startup_self_test(
+        provider=_FakeProvider([_FakeCamera("available")]),
+        pairing_state_path=tmp_path / "state" / "pairing.json",
+    )
+    assert result.status == "passed"
+
+
+def test_self_test_degrades_when_hardware_quality_is_currently_critical(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        hardware_health,
+        "read_hardware_quality",
+        lambda: hardware_health.HardwareQuality(
+            undervoltage_active=True,
+            throttled_active=True,
+            undervoltage_occurred=True,
+            throttled_occurred=True,
+            temperature_celsius=85.0,
+        ),
+    )
+    result = selftest.run_startup_self_test(
+        provider=_FakeProvider([_FakeCamera("available")]),
+        pairing_state_path=tmp_path / "state" / "pairing.json",
+    )
+    assert result.status == "degraded"
+    assert "hardware_quality_critical" in result.reasons
 
 
 def test_self_test_reports_unwritable_pairing_state_path() -> None:
@@ -428,6 +488,33 @@ async def test_health_endpoint_exposes_boot_identity_and_selftest_fields(tmp_pat
     assert body["self_test"]["status"] in {"passed", "degraded"}
     assert body["self_test"]["camera_available"] is True  # synthetic camera is always available
     assert body["watchdog"]["enabled"] is False  # no NOTIFY_SOCKET in this test process
+    # Release Reliability & First-Run Recovery v1 (additive; every field
+    # above this line is unchanged). `storage` is a real, freshly-probed
+    # fact (this test's own pairing-state directory genuinely exists);
+    # `hardware` is `None` off Raspberry Pi (this test host).
+    assert body["storage"]["storage_health_tier"] in {
+        "healthy",
+        "getting_low",
+        "action_recommended",
+        "critical",
+    }
+    assert isinstance(body["storage"]["total_bytes"], int)
+    assert body["hardware"] is None or isinstance(body["hardware"], dict)
+
+
+@pytest.mark.anyio
+async def test_health_endpoint_storage_is_none_without_a_configured_directory(monkeypatch) -> None:
+    """`config.pairing_state_path` is not set at all in this environment
+    variable shape (mirrors a caller that never configured one) -- honestly
+    `None`, never a fabricated probe of some unrelated default path."""
+
+    monkeypatch.delenv("MOCKINGBIRD_NODE_PAIRING_STATE_PATH", raising=False)
+    config = dataclasses.replace(_synthetic_config(), pairing_state_path=None)
+    app = create_node_app(config)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/node/v1/health")
+    assert response.json()["storage"] is None
 
 
 @pytest.mark.anyio

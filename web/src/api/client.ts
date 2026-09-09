@@ -80,6 +80,7 @@ import type {
   HealthStatus,
   LocalCameraFrameCaptureResponse,
   ProductConnectionInfo,
+  ProductShutdownResponse,
   LiveCameraSessionStatus,
   ObservationSessionStatus,
   SceneConfusorLearningStatus,
@@ -478,6 +479,8 @@ export const apiClient = {
   baseUrl: API_BASE_URL,
   getHealth: () => request<HealthStatus>("/health"),
   getProductConnectionInfo: () => request<ProductConnectionInfo>("/api/product/connection"),
+  shutdownProduct: () =>
+    request<ProductShutdownResponse>("/api/product/shutdown", { method: "POST" }),
   getTaxonomyLabels: () => request<TaxonomyLabel[]>("/api/taxonomy/labels"),
   getTaxonomyLabel: (label: string) =>
     request<TaxonomyLabel>(`/api/taxonomy/labels/${encodeURIComponent(label)}`),

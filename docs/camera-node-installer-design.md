@@ -1503,3 +1503,59 @@ See
 [camera-node-upgrade-compatibility-recovery-v1-report.md](camera-node-upgrade-compatibility-recovery-v1-report.md)
 for the classification and the complete acceptance record, including real
 hardware acceptance and any honestly-disclosed remaining limitations.
+
+## Storage/media-health and hardware-quality visibility (Release Reliability & First-Run Recovery v1, 2026-09-08)
+
+Closes the two remaining named gaps in Gate E's "Field-failure acceptance
+matrix" (`release-execution-state.md` §6.R at the time): "nothing today
+checks the node's own free space, write pressure, or... filesystem/storage
+health," and no undervoltage/throttling/CPU-temperature telemetry existed
+at all. New `mockingbird_node/hardware_health.py`, mirroring `identity.py`'s
+own "read-only, best-effort, never fabricate a value the real platform
+cannot confirm" shape exactly:
+
+- **Storage.** `read_storage_health(directory)` reuses the Host's own
+  already-accepted graduated healthy/getting_low/action_recommended/
+  critical ladder and threshold values (`mockingbird.storage.database`) --
+  duplicated, not imported, matching this package's established
+  cross-boundary convention (see `doctor.py`'s own `_DOCTOR_NODE_API_
+  VERSION`/`_DOCTOR_TRANSPORT_PROTOCOL_VERSION` precedent): `mockingbird_
+  node` is a separate, deliberately slim installable package and must not
+  depend on the main `mockingbird` package. Probes the Node's own pairing/
+  config state directory -- the one local storage consumer every supported
+  install has regardless of whether the opt-in transport spool is
+  configured (the spool already has its own independent, already-accepted
+  `min_free_bytes` write-refusal for the remote/intermittent-WAN case;
+  this is deliberately not that).
+- **Hardware quality.** `read_hardware_quality()` reads `vcgencmd
+  get_throttled`/`measure_temp`, capability-gated on `shutil.which
+  ("vcgencmd")` -- `None` entirely off Raspberry Pi, matching this
+  product's "unsupported is hidden or plainly explained, never shown as
+  if it might work" doctrine. Distinguishes a *currently* active
+  undervoltage/throttling condition from one that merely *occurred* at
+  some point since boot -- only the former marks the Node degraded (a
+  resolved historical event must not misreport as an ongoing problem).
+  Parsing verified directly against real captured output from the
+  reference Pi (`throttled=0x0`, `temp=47.7'C`) before being written, not
+  guessed from documentation alone.
+
+**Bounded, actionable storage-pressure response** (the golden-path Camera
+Node has no local storage consumer of its own besides pairing/config state
+and optional logs): a `critical` storage tier, or a currently-active
+hardware-quality problem, now degrades `run_startup_self_test`'s own
+result (new reason codes `storage_critically_low` / `hardware_quality_
+critical`) -- the same already-established, already-product-visible
+mechanism a missing camera already uses, not a new alerting channel. Both
+facts are additionally exposed as new, freshly-probed-per-request
+`storage`/`hardware` fields on `/node/v1/health` (unlike `self_test`, a
+one-time startup snapshot -- storage/hardware conditions genuinely change
+over a Node's uptime).
+
+**Deliberately not built:** persisting these facts durably on the Host
+(`CameraSourceModel`'s own checkpointed boot-identity columns) -- the
+Host's existing Camera Node Doctor check reads only the database, never a
+live `/node/v1/health` poll (confirmed directly against `doctor.py`), and
+adding a new checkpoint cadence plus a schema migration for two visibility
+facts was judged materially larger than this milestone's own bounded
+scope. Host-side durable surfacing, if a future need for it is
+demonstrated, remains open follow-up work, not silently dropped.

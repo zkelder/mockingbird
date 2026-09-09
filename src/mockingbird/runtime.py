@@ -423,13 +423,32 @@ def run(argv: list[str] | None = None) -> int:
         app.state.bind_port = args.port
         app.state.network_access_allowed = args.host not in _LOOPBACK_HOSTS
 
-        uvicorn.run(
+        # Release Reliability & First-Run Recovery v1: `uvicorn.run(...)`
+        # (the prior form here) is itself only a convenience wrapper around
+        # exactly this `Config`+`Server` construction -- it never exposes
+        # the `Server` it builds internally. Keeping our own reference and
+        # publishing it on `app.state` (mirroring `bind_host`/`bind_port`
+        # immediately above -- the one place that actually knows the real
+        # running server) is what lets `POST /api/product/shutdown` (see
+        # api/main.py) ask this *same* process to stop itself gracefully
+        # from inside a request handler: flipping `Server.should_exit` is
+        # uvicorn's own documented in-process stop mechanism, noticed by
+        # its main loop on its very next iteration, and drives the exact
+        # same graceful shutdown sequence (including the FastAPI `lifespan`
+        # teardown that already calls `mark_clean_shutdown()` last) that an
+        # interactive terminal's Ctrl+C already triggers today -- never a
+        # second, parallel shutdown path. This is the only reason a
+        # `Server` reference is kept at all; nothing else here reads it.
+        config = uvicorn.Config(
             app,
             host=args.host,
             port=args.port,
             log_level="info",
             log_config=uvicorn_log_config(log_path),
         )
+        server = uvicorn.Server(config)
+        app.state.uvicorn_server = server
+        server.run()
         return 0
     except Exception:
         _logger.exception("MockingBird failed to start.")

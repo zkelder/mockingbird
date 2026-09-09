@@ -22,6 +22,8 @@ from pathlib import Path
 import threading
 from typing import Any, Callable
 
+from . import hardware_health
+
 
 #: Bounds `provider.cameras()` as a whole (every enabled provider, e.g. a
 #: composite of `picamera2`+`v4l2`, enumerated sequentially -- see
@@ -112,6 +114,7 @@ def run_startup_self_test(
     provider: Any,
     pairing_state_path: Path | None = None,
     timeout_seconds: float = DEFAULT_SELF_TEST_TIMEOUT_SECONDS,
+    storage_directory: Path | None = None,
 ) -> StartupSelfTestResult:
     reasons: list[str] = []
 
@@ -134,7 +137,27 @@ def run_startup_self_test(
     if writable is False:
         reasons.append("pairing_state_path_unwritable")
 
-    if not providers_initialized or writable is False or not camera_available:
+    # Release Reliability & First-Run Recovery v1: the previously-missing
+    # "does this Node's own local storage/hardware condition need
+    # attention" signal -- see hardware_health.py's own module docstring.
+    # `storage_directory=None` (no caller-supplied probe location) is
+    # honestly "not checked," never a fabricated "healthy."
+    storage_health_tier: str | None = None
+    if storage_directory is not None:
+        storage_health_tier = hardware_health.read_storage_health(storage_directory).storage_health_tier
+        if storage_health_tier == "critical":
+            reasons.append("storage_critically_low")
+    hardware_quality = hardware_health.read_hardware_quality()
+    if hardware_quality is not None and hardware_quality.is_critical:
+        reasons.append("hardware_quality_critical")
+
+    if (
+        not providers_initialized
+        or writable is False
+        or not camera_available
+        or storage_health_tier == "critical"
+        or (hardware_quality is not None and hardware_quality.is_critical)
+    ):
         status = "degraded"
     else:
         status = "passed"

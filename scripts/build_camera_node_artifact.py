@@ -34,12 +34,17 @@ NODE_PACKAGE = ROOT / "src" / "mockingbird_node"
 #: at `python -m mockingbird_node` startup -- every fresh install *and* every
 #: upgrade using the pre-fix builder was completely broken. See "Existing
 #: state" in docs/camera-node-upgrade-compatibility-recovery-v1-report.md.
+#: Release Reliability & First-Run Recovery v1: `hardware_health.py` (new)
+#: hit the identical class of gap a third time -- caught by this same test
+#: before landing, not shipped and discovered later like the two instances
+#: above.
 NODE_FILES = (
     "__init__.py",
     "__main__.py",
     "app.py",
     "atomic_io.py",
     "config.py",
+    "hardware_health.py",
     "identity.py",
     "providers.py",
     "selftest.py",

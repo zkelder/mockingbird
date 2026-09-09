@@ -6888,6 +6888,23 @@ class ProductConnectionInfo(BaseModel):
     local_network_url: str | None = None
 
 
+class ProductShutdownResponse(BaseModel):
+    """Result of asking this running MockingBird process to stop itself
+    gracefully -- Release Reliability & First-Run Recovery v1's own
+    graceful-stop/shutdown-status UX contract. See `POST
+    /api/product/shutdown`'s own docstring for the full mechanism.
+
+    `accepted=False` is the honest degrade for a process not started
+    through the real launch path (a bare development/test import of
+    `api.main.app`, which never has a real `uvicorn.Server` to signal) --
+    never a crash, and never a false claim that shutdown was requested
+    when nothing can actually act on it.
+    """
+
+    accepted: bool
+    message: str
+
+
 class StorageCleanupCategorySummary(BaseModel):
     category: str
     media_count: int = Field(ge=0)

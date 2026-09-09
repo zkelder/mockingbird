@@ -467,7 +467,12 @@ def test_real_launch_prepares_the_crash_marker_and_logging_before_serving(
     )
     # Never actually bind a port or block forever in a test.
     monkeypatch.setattr(runtime_module, "port_is_available", lambda _host, _port: True)
-    monkeypatch.setattr(runtime_module.uvicorn, "run", lambda *args, **kwargs: None)
+    # Release Reliability & First-Run Recovery v1: `runtime.run()` now
+    # constructs `uvicorn.Config`+`uvicorn.Server` explicitly rather than
+    # calling `uvicorn.run(...)` (see runtime.py and
+    # test_windows_launcher_instance_identity.py's `_prepare_runtime_env`
+    # for the full rationale) -- mock `Server.run` itself instead.
+    monkeypatch.setattr(runtime_module.uvicorn.Server, "run", lambda self: None)
 
     result = run(["--no-browser", "--port", "8199", "--skip-frontend-build"])
 

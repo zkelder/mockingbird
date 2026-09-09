@@ -2464,6 +2464,26 @@ field (for example `vcgencmd`'s throttling bitmask) stays a Pi provider
 detail surfaced through a generic capability, never a core product
 semantic every platform must implement.
 
+**2026-09-08 update (Release Reliability & First-Run Recovery v1):** both
+cases above are closed for the visibility half of each -- new
+`mockingbird_node/hardware_health.py` adds `read_storage_health` (reusing
+the Host's own already-accepted graduated storage-tier thresholds,
+capability-gated to the Node's own pairing/config directory) and
+`read_hardware_quality` (`vcgencmd`-based undervoltage/throttling/
+temperature, `None` off Raspberry Pi, verified directly against the real
+reference Pi before and after being written -- see
+[release-reliability-first-run-recovery-v1-report.md](release-reliability-first-run-recovery-v1-report.md)).
+Both surface as new, freshly-probed `/node/v1/health` fields and degrade
+`run_startup_self_test`'s own result when critical, reusing the
+already-product-visible self-test/health-degradation mechanism a missing
+camera already uses -- not a new alerting channel, and not a schema
+change. Explicitly not built: reboot reason (still open); durable Host-side
+persistence of either fact (the Host's own Camera Node Doctor check reads
+only the database, never a live health poll -- adding a checkpoint cadence
+plus a schema migration for two visibility facts was judged materially
+larger than this bounded milestone's own scope, recorded as open follow-up,
+not dropped).
+
 **Replacement.** The terminal rung when nothing above recovers the node:
 treat the field node itself as replaceable, reuse the same fast re-pair/
 reprovision workflow named under Gate D, above, and preserve host-side

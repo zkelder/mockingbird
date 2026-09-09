@@ -21,6 +21,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from sqlalchemy import select
 
 from mockingbird.diagnostics import doctor
 from mockingbird.diagnostics.doctor import (
@@ -33,8 +34,9 @@ from mockingbird.diagnostics.doctor import (
     resolve_doctor_environment,
     run_doctor,
 )
+from mockingbird.api.schemas import CameraSourceCreate
 from mockingbird.repository.product_repository import ProductRepository
-from mockingbird.storage.database import DB_URL_ENV_VAR
+from mockingbird.storage.database import DB_URL_ENV_VAR, create_database_engine
 from mockingbird.storage.models import CameraSourceModel, StreamModel
 
 # Forbidden substrings mirroring the existing precedent
@@ -393,9 +395,150 @@ def test_interpret_storage_missing_root_before_first_launch_is_informational() -
 
 
 def test_interpret_storage_missing_root_on_established_install_is_blocking() -> None:
-    result = doctor._interpret_storage({"media_root_exists": False}, database_exists=True)
+    """A genuinely established install: the database exists *and* at least
+    one Source has been configured, so something has actually had a reason
+    to write to the media root by now."""
+
+    result = doctor._interpret_storage(
+        {"media_root_exists": False, "has_any_source_configured": True}, database_exists=True
+    )
     assert result.status == DoctorStatus.FAIL
     assert result.recoverability == DoctorRecoverability.BLOCKING
+
+
+def test_interpret_storage_missing_root_before_any_camera_added_is_informational() -> None:
+    """Release Reliability & First-Run Recovery v1: the exact disclosed
+    defect this milestone closes. `database_exists=True` alone (the
+    database file is created at server-process startup, before the
+    first-run wizard's Storage step is ever reached -- see
+    `runtime_state.prepare_runtime_state`) must not, by itself, make a
+    perfectly normal pre-wizard-completion instance report a `FAIL`/
+    `BLOCKING` "genuine problem." Nothing has had a reason to write to the
+    media root yet, since no Source/camera has been configured."""
+
+    result = doctor._interpret_storage(
+        {"media_root_exists": False, "has_any_source_configured": False}, database_exists=True
+    )
+    assert result.status == DoctorStatus.PASS
+    assert result.recoverability == DoctorRecoverability.INFORMATIONAL
+
+
+def test_interpret_storage_missing_root_with_unconfirmed_source_state_is_informational() -> None:
+    """`has_any_source_configured is None` (the database was unreachable
+    when this fact was gathered, e.g. no `Engine` at all) must never be
+    treated as "yes, established" -- that would risk escalating to
+    BLOCKING on a fact this check could not actually confirm. Absent
+    entirely from `gathered` (as every pre-existing caller of this
+    function does) degrades the same way."""
+
+    result = doctor._interpret_storage({"media_root_exists": False}, database_exists=True)
+    assert result.status == DoctorStatus.PASS
+    assert result.recoverability == DoctorRecoverability.INFORMATIONAL
+
+
+def test_gather_has_any_source_configured_reflects_real_database_state(tmp_path: Path) -> None:
+    """`_gather_has_any_source_configured` against a real SQLite database
+    (not a hand-built dict) -- `False` right after a bare `ProductRepository`
+    construction (confirmed directly: this already seeds one walkthrough
+    demo Source, `source-backyard-demo`, which must not itself count as "a
+    real camera is configured"), `True` the moment a real one is added, and
+    `None` with no engine at all."""
+
+    db_path = tmp_path / "data" / "mockingbird.sqlite3"
+    repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=tmp_path / "media")
+    try:
+        engine = create_database_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.connect() as connection:
+                assert connection.execute(
+                    select(CameraSourceModel.id)
+                ).first() is not None, "expected the seeded demo Source to be present"
+            assert doctor._gather_has_any_source_configured(engine) is False
+            repository.create_camera_source(CameraSourceCreate(name="Feeder Cam"))
+            assert doctor._gather_has_any_source_configured(engine) is True
+        finally:
+            engine.dispose()
+        assert doctor._gather_has_any_source_configured(None) is None
+    finally:
+        repository.close()
+
+
+def test_gather_storage_reports_has_any_source_configured(tmp_path: Path) -> None:
+    """`_gather_storage` itself surfaces the new fact end to end (not only
+    the helper in isolation), reusing the exact `engine` the Database check
+    already opened -- never a second connection."""
+
+    db_path = tmp_path / "data" / "mockingbird.sqlite3"
+    media_root = tmp_path / "media"
+    repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=media_root)
+    try:
+        engine = create_database_engine(f"sqlite:///{db_path}")
+        try:
+            gathered = doctor._gather_storage(
+                media_root=media_root, database_directory=db_path.parent, engine=engine
+            )
+            assert gathered["has_any_source_configured"] is False
+            repository.create_camera_source(CameraSourceCreate(name="Feeder Cam"))
+            gathered = doctor._gather_storage(
+                media_root=media_root, database_directory=db_path.parent, engine=engine
+            )
+            assert gathered["has_any_source_configured"] is True
+        finally:
+            engine.dispose()
+    finally:
+        repository.close()
+
+
+def test_run_doctor_storage_check_is_informational_for_a_real_pre_wizard_instance(
+    tmp_path: Path,
+) -> None:
+    """End-to-end regression test for the exact disclosed defect this
+    milestone closes (External Pre-Release Acceptance -- Private Cohort v1
+    §3.7): a real database exists (created the moment the server process
+    starts, per `runtime_state.prepare_runtime_state` -- well before the
+    first-run wizard's Storage step is ever reached), zero Sources are
+    configured yet, and the media root has therefore never been created.
+    `run_doctor` must report this as informational, never `FAIL`/
+    `BLOCKING` -- a brand-new participant running Doctor mid-setup (exactly
+    what this product's own participant materials ask them to do) must not
+    see an alarming "genuine problem" during entirely normal first-run
+    setup."""
+
+    data_dir = tmp_path / "data"
+    db_path = data_dir / "mockingbird.sqlite3"
+    media_root = data_dir / "media" / "imports"
+    # Deliberately never created -- matches `ProductRepository.__init__`'s
+    # own "does not eagerly create the media root" behavior on a real fresh
+    # launch, confirmed directly rather than assumed.
+    repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=media_root)
+    repository.close()
+    assert not media_root.exists()
+
+    report = run_doctor(runtime_home=tmp_path)
+    storage_check = next(check for check in report.checks if check.code == DoctorCheckCode.STORAGE)
+    assert storage_check.status == DoctorStatus.PASS
+    assert storage_check.recoverability == DoctorRecoverability.INFORMATIONAL
+
+
+def test_run_doctor_storage_check_is_blocking_once_a_source_exists_and_root_is_missing(
+    tmp_path: Path,
+) -> None:
+    """The genuine-problem case this milestone must continue to catch:
+    once a Source is configured, a still-missing media root is a real,
+    actionable defect, not first-run noise."""
+
+    data_dir = tmp_path / "data"
+    db_path = data_dir / "mockingbird.sqlite3"
+    media_root = data_dir / "media" / "imports"
+    repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=media_root)
+    repository.create_camera_source(CameraSourceCreate(name="Feeder Cam"))
+    repository.close()
+    assert not media_root.exists()
+
+    report = run_doctor(runtime_home=tmp_path)
+    storage_check = next(check for check in report.checks if check.code == DoctorCheckCode.STORAGE)
+    assert storage_check.status == DoctorStatus.FAIL
+    assert storage_check.recoverability == DoctorRecoverability.BLOCKING
 
 
 def test_interpret_storage_not_writable_is_blocking() -> None:

@@ -20,6 +20,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from .config import CameraNodeConfig
+from . import hardware_health
 from .identity import ServiceClock, read_boot_id, read_os_uptime_seconds, resolve_service_version
 from .providers import (
     CameraProvider,
@@ -371,7 +372,17 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
     boot_id = read_boot_id()
     service_version = resolve_service_version()
     self_test_result = run_startup_self_test(
-        provider=provider, pairing_state_path=config.pairing_state_path,
+        provider=provider,
+        pairing_state_path=config.pairing_state_path,
+        # Release Reliability & First-Run Recovery v1: the Node's own local
+        # state directory is the one local storage consumer that exists on
+        # every supported install regardless of whether the opt-in
+        # transport spool is configured (see hardware_health.py's own
+        # module docstring) -- the same directory `_pairing_state_writable`
+        # immediately above already probes for writability.
+        storage_directory=(
+            config.pairing_state_path.parent if config.pairing_state_path is not None else None
+        ),
     )
     watchdog_progress = WatchdogProgress(
         enabled=bool(notify_socket_path() and watchdog_ping_interval_seconds()),
@@ -614,6 +625,23 @@ def create_node_app(config: CameraNodeConfig | None = None, *, provider: CameraP
             "service_version": service_version,
             "self_test": self_test_result.as_payload(),
             "watchdog": watchdog_progress.as_payload(now_monotonic=time.monotonic()),
+            # Release Reliability & First-Run Recovery v1 (additive; every
+            # field above this line is unchanged). Freshly read on every
+            # request -- unlike `self_test`, a one-time startup snapshot,
+            # storage/hardware conditions genuinely change over a Node's
+            # uptime. `storage` is `None` only when no probe directory was
+            # configured at all (see the `run_startup_self_test` call
+            # above); `hardware` is `None` off Raspberry Pi (or without
+            # `vcgencmd` on PATH) -- see hardware_health.py's own module
+            # docstring for why neither is ever fabricated.
+            "storage": (
+                hardware_health.read_storage_health(config.pairing_state_path.parent).as_payload()
+                if config.pairing_state_path is not None
+                else None
+            ),
+            "hardware": (
+                hardware_quality.as_payload() if (hardware_quality := hardware_health.read_hardware_quality()) else None
+            ),
             # Camera Node <-> Host RTT-Bounded Clock Calibration v1
             # (additive; every field above this line is unchanged). Reusing
             # this existing request/response envelope for absolute clock

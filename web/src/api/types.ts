@@ -205,6 +205,16 @@ export interface ProductConnectionInfo {
   local_network_url: string | null;
 }
 
+// Release Reliability & First-Run Recovery v1: result of asking this
+// running MockingBird process to stop itself gracefully -- see the
+// backend's ProductShutdownResponse docstring (api/schemas.py).
+// `accepted: false` is the honest degrade for a process not started
+// through the real launch path; never a crash.
+export interface ProductShutdownResponse {
+  accepted: boolean;
+  message: string;
+}
+
 // Appliance / Storage / Privacy / Recovery v1: mirrors the backend's shared
 // `mockingbird.diagnostics.error_taxonomy` shape. Attached today only to
 // database-write failures (`SQLAlchemyError`) that reach the API boundary

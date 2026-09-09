@@ -642,6 +642,9 @@ for _method, _path in [
     ("POST", "/api/streams/{stream_id}/observation/stop"),
     ("POST", "/api/streams/{stream_id}/audio-capture/start"),
     ("POST", "/api/streams/{stream_id}/audio-capture/stop"),
+    # Release Reliability & First-Run Recovery v1: stopping the entire Host
+    # is at least as consequential as any camera/storage control above.
+    ("POST", "/api/product/shutdown"),
 ]:
     _administrator(_method, _path)
 
