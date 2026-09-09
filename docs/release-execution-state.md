@@ -477,6 +477,43 @@ authorize either, and **does not** reopen Gate A -- see §6.S, below.
 REQUIRED**, pending the owner approval checkpoint named above before any
 external action.
 
+**2026-09-08 update (Release Reliability & First-Run Recovery v1):**
+authorized directly by the external (ChatGPT) global-roadmap reconciliation
+following its review of the read-only reconciliation at HEAD `d58569f`. See
+[release-reliability-first-run-recovery-v1-report.md](release-reliability-first-run-recovery-v1-report.md).
+Closed three small, disclosed, non-blocking gaps: the Storage-check false
+-`FAIL` disclosed immediately above (root-caused and fixed -- `_interpret
+_storage` now also honestly checks whether any real Source has ever been
+configured, not raw database-file existence alone); a real graceful-stop
+mechanism (new `POST /api/product/shutdown`, Administrator-tier, flips the
+real `uvicorn.Server.should_exit` `runtime.py` now publishes on
+`app.state`, driving the identical existing teardown a terminal's Ctrl+C
+already triggers -- neither prior stop method was changed); and Gate E's
+two named Camera Node visibility gaps (storage/media-health,
+undervoltage/throttling/temperature), closed for their visibility half via
+new `mockingbird_node/hardware_health.py`, degrading `run_startup_self_
+test` when critical. **Two real, previously-unknown regressions were
+found and fixed by this milestone's own validation, not shipped**: a
+test-suite hang (`runtime.py`'s new `Server` construction silently bypassed
+two tests' `uvicorn.run` mocks, fixed by mocking `Server.run` instead) and
+a Camera Node packaging omission (`hardware_health.py` missing from
+`NODE_FILES`, the identical class of gap this manifest has now caught a
+third time). All verified on real hardware, not simulated: items 1-2 proven
+end to end on real native-Windows hardware (a real process actually exited
+after the new shutdown call; the real marker read clean immediately after;
+Doctor's Storage check read `PASS` on a genuinely fresh instance); item 3's
+parsing verified directly against the real reference Camera Node before
+and after being written. Fast gate 1801/1801 passed; Core gate 5969
+passed/4 failed/4 skipped/35 deselected/11 xfailed, all four failures
+independently confirmed the same long-documented, pre-existing,
+environment-sensitive flakes recorded in §14, in files this milestone never
+touched. No product/schema/detector/identification-policy change; schema
+unchanged (`v59`); no push. **Does not** reopen Gate A, start Gate G, or
+start Final Release Hardening, and **does not** self-authorize a
+subsequent milestone. **Authorization remains NONE -- GLOBAL
+PRODUCT-ROADMAP RECONCILIATION REQUIRED**, returned for the next external
+(ChatGPT) acceptance review.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
@@ -3409,6 +3446,63 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-08 update (Release Reliability & First-Run Recovery v1):**
+bounded release-readiness milestone, authorized directly by the external
+(ChatGPT) global-roadmap reconciliation following its review of the
+read-only reconciliation at HEAD `d58569f`. See
+[release-reliability-first-run-recovery-v1-report.md](release-reliability-first-run-recovery-v1-report.md).
+HEAD unchanged (`d58569f`) until this milestone's own reconciliation
+commit; schema unchanged (`v59`); no product/schema/detector/
+identification-policy code changed beyond the three named fixes below; no
+field session; no deployment beyond disposable, fully-cleaned-up
+real-hardware verification; no push. Verified baseline exactly as
+expected. Closed three items named across recent acceptance work: (1) the
+Storage-check false-`FAIL` on a normal pre-wizard instance disclosed by the
+immediately-following entry's own §3.7 -- root-caused and fixed
+(`_interpret_storage` now also checks whether any real Source has ever
+been configured, excluding the seeded demo Source, not raw database-file
+existence alone); (2) a real graceful-stop mechanism (new
+`POST /api/product/shutdown`, Administrator-tier, flips the real
+`uvicorn.Server.should_exit` `runtime.py` now publishes on `app.state`,
+driving the exact same existing `_app_lifespan` teardown a terminal's
+Ctrl+C already triggers -- neither prior documented stop method was
+changed), plus a matching "Shut Down MockingBird" control on the Local
+Data/Settings page; (3) Gate E's two named Camera Node visibility gaps
+(storage/media-health, undervoltage/throttling/temperature) via new
+`mockingbird_node/hardware_health.py`, exposed on `/node/v1/health` and
+degrading `run_startup_self_test` when critical. **Two real,
+previously-unknown regressions were found and fixed by this milestone's
+own validation, not shipped**: a real test-suite hang (`runtime.py`'s new
+`Server` construction silently bypassed two existing tests' `uvicorn.run`
+mocks -- caught live when the Fast gate itself hung, fixed by mocking
+`Server.run` instead) and a real Camera Node packaging omission
+(`hardware_health.py` missing from `NODE_FILES`, the identical class of
+gap this manifest has now caught a third time -- a real deployed Node
+would have raised `ModuleNotFoundError`). All three items verified against
+real hardware, not simulated: items 1-2 proven end to end on a disposable,
+hot-patched copy of a real native-Windows dev-deployment release (a real
+OS process actually exited after the new shutdown call; the real marker
+read `{"state": "clean"}` immediately after; Doctor's Storage check read
+`PASS` on a genuinely fresh, zero-camera instance; the real dev-deployment
+release was restored to its exact prior state afterward); item 3's parsing
+verified directly against the real reference Camera Node (over SSH, no
+production service touched) both before and after being written. Fast
+gate: 1801 passed, 0 failed. Core gate: 5969 passed / 4 failed / 4 skipped
+/ 35 deselected / 11 xfailed -- all four failures independently
+re-confirmed the same long-documented, pre-existing, environment-sensitive
+flakes recorded in §14 (the `test_place_biodiversity_summary_repository.py`
+pair and `test_place_change_summary_repository.py`'s own recurring
+date-sensitive fixture issue; `test_transport_worker.py`'s previously
+-documented load-induced timing flake), in files this milestone never
+touched; a fifth, single-run-only failure
+(`test_observation_camera_node_live.py`) was independently confirmed
+non-reproducible in isolation and in a second complete Core run, not a
+regression. `ruff` clean; frontend `tsc`/`vite build` clean. **Does not**
+reopen Gate A, start Gate G, or start Final Release Hardening, and
+**does not** self-authorize a subsequent milestone. **Authorization
+remains NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, returned
+for the next external (ChatGPT) acceptance review.
 
 **2026-09-08 update (External Pre-Release Acceptance -- Private Cohort
 v1):** bounded Gate G setup milestone, directly authorized outside this
@@ -10939,7 +11033,44 @@ claims -- see
 §4 and §6. The "Latest accepted Core checkpoint" below remains the most
 recent actual full-suite number.
 
-**Latest accepted Core checkpoint (Place Feature Comparison & Habitat
+**Latest accepted Core checkpoint (Release Reliability & First-Run
+Recovery v1):** 5969 passed / **4 failed** / 4 skipped / 35 deselected
+(`slow`-marked) / 11 xfailed, run twice this milestone (a first attempt
+independently confirmed the `test_camera_node_packaging.py` failure below
+was real and reproducible before the fix; a second complete run, 2321.59s
+/ 38m41s, is the accepted figure here). All 4 failures independently
+re-confirmed the identical pre-existing, long-documented,
+real-wall-clock-date/load-timing-sensitive flakes this section has now
+recorded across ten-plus prior milestone checkpoints, in files this
+milestone never touched: the `test_place_biodiversity_summary_
+repository.py` pair, `test_place_change_summary_repository.py::test_api_
+round_trip_exposes_change_detection_fields` (this section's own
+recurring `'insufficient_recent_coverage' == 'higher_recent_presence'`
+pair), and `test_transport_worker.py::test_sticky_diagnostic_set_on_
+protocol_incompatibility_and_cleared_on_next_success` (a previously
+-documented load-induced timing flake, Calm Attention & Notifications
+v1/Mobile & Remote Experience v1 checkpoints). A fifth, single-run-only
+failure (`test_observation_camera_node_live.py`, a file this milestone
+did not itself edit, though it does exercise Camera Node code this
+milestone's own changes touch adjacent parts of) was independently
+confirmed non-reproducible in isolation (53/53 passed) and in the second
+complete run (53/53 passed again) -- a genuine, non-reproducible,
+load-dependent flake, not a regression. Two real, previously-unknown
+defects were found and fixed before this figure was accepted, not left in
+it: a test-suite hang (two tests' `uvicorn.run` mocks silently bypassed by
+this milestone's own `runtime.py` change, fixed by mocking `Server.run`
+instead) and a Camera Node packaging omission
+(`test_camera_node_packaging.py::test_node_files_cover_the_real_internal_
+import_closure` caught `hardware_health.py` missing from `NODE_FILES`,
+fixed) -- see
+[release-reliability-first-run-recovery-v1-report.md](release-reliability-first-run-recovery-v1-report.md)
+for the complete record of both. No schema change (v59, unchanged). This
+sandbox measured markedly slower than its own documented ~9-minute Core
+baseline both times this milestone ran it (system load average 4.5+
+observed directly, no memory pressure) -- disclosed as environmental, not
+a product regression.
+
+**Prior accepted Core checkpoint (Place Feature Comparison & Habitat
 Outcomes v1):** 5897 passed / **4 failed** / 3 skipped / 23 deselected
 (`slow`-marked) / 11 xfailed, 276 warnings -- `scripts/verify_core.py`'s
 own `pytest -m "not slow"` convention, run once as one bare background
