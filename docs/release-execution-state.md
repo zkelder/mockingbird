@@ -514,6 +514,97 @@ subsequent milestone. **Authorization remains NONE -- GLOBAL
 PRODUCT-ROADMAP RECONCILIATION REQUIRED**, returned for the next external
 (ChatGPT) acceptance review.
 
+**2026-09-09 update (Product Operations & First-Observation Completion
+v1):** authorized directly by the external (ChatGPT) global-roadmap
+reconciliation following its acceptance of Release Reliability &
+First-Run Recovery v1 at `7b7e282`, schema v59 -- superseding the previous
+broad "Hardware & Recovery Acceptance" authorization and the unstarted
+"Storage Pressure & Survival Completion" authorization. The sole
+authorized implementation milestone; not itself a reconciliation. See
+[product-operations-first-observation-completion-v1-report.md](product-operations-first-observation-completion-v1-report.md)
+and its own
+[contract](product-operations-first-observation-completion-v1-contract.md).
+Four parallel investigation agents plus direct governing-doc reading found
+three of five scoped areas already substantially complete: the
+first-observation product loop (independently re-verified, zero
+reproduced defects); storage survival's core mechanics (disk-pressure
+ladder, transactional rollback, bounded retention/spool/cleanup-history/
+logs -- independently re-confirming Lane M's `CLOSED` status against
+direct code evidence, not re-trusting the prior claim). The real, concrete
+gaps closed: **Doctor had zero API/UI exposure** (a mature, well-tested,
+CLI-only engine) -- new `GET /api/product/doctor` (Administrator-tier,
+thin passthrough around the existing, unmodified `run_doctor()`) and a new
+`DoctorPage.tsx` (PASS/WARN/FAIL/SKIPPED presentation, calm recovery
+-action links to existing Local Data/Cameras surfaces), reachable from
+primary nav (Administrator-gated). **Two independent audits converged
+unprompted on the identical gap**: Camera Node storage/hardware-quality
+facts (shipped by the immediately-prior milestone) never reached a human
+anywhere -- closed by a bounded, live, on-demand, non-persisting `GET
+/api/streams/{id}/camera-node-hardware-health` (mirrors the existing
+"Check the picture" pattern; no schema migration, no change to Doctor's
+own read-only/DB-only design invariant), surfaced on the Camera
+Configuration page and verified against the real reference Camera Node
+(real network I/O; an honest `storage`/`hardware` -> `None` degrade
+confirmed for the reference Pi's own currently-installed build, which
+predates those fields). **A genuine, reproduced cross-surface honesty
+defect, fixed**: three of four surfaces reading
+`_camera_health_summary_from_models` disagreed about a
+camera-connected-but-detector-failed Camera Node Stream -- the Dashboard
+correctly alarmed while Camera Configuration and Yard Map showed a stale
+calm "stopped" state for the identical Stream at the identical moment, one
+click apart; closed by threading the same `ObservationEngineSessionManager`
+bridge `dashboard_summary` alone had into the other two call sites via a
+new, single-fetch, behavior-preserving-at-the-original-call-site helper.
+`ObservationControlPanel`'s own needs-attention detail box was separately
+found hardcoded to the wrong subsystem's message and fixed. Both fixes
+were proven RED (failing against the unmodified baseline, via `git stash`
+bisection) before GREEN. **One real fault-injection test added**: a
+literal `OSError(errno.ENOSPC, ...)` injected at the real Host media-write
+function, proving atomic rollback/typed-failure/no-retry through the real,
+unmodified persistence path -- closes a branch previously marked
+`# pragma: no cover - defensive repository boundary` in production code,
+genuinely new coverage. **One real, previously-unknown defect was found
+and fixed by this milestone's own Core-gate validation, not shipped**: the
+new fault-injection test's own absolute-zero-Visit-count assertion was
+wrong (`ProductRepository.__init__` unconditionally seeds two demo Visits
+into any fresh database, confirmed by direct root-cause investigation) --
+a bug in the new test itself, never in production code; fixed by comparing
+before/after counts, re-verified non-vacuous by direct scratch proof.
+**Real hardware verification performed, not simulated**: native-Windows
+(a genuinely fresh, disposable dev-root, exact commit `5a4858b` confirmed
+both by the deploy tool and independently by `/api/product/instance`) --
+Doctor's 16 checks returned correctly (`DEGRADED` from one honest
+`Application: WARN`, `Storage: PASS` on a fresh unconfigured instance);
+the hardware-health endpoint correctly degraded for a non-Camera-Node
+Stream; the graceful-shutdown endpoint's real process exit re-confirmed.
+The real reference Camera Node's own `/node/v1/health` was queried live
+over the LAN. All disposable artifacts cleaned up; the persistent shared
+Windows dev deployment and the reference Pi left exactly as found.
+Backend Tier 1/2: 337 passed, 0 failed. Full existing + 9 new Playwright
+e2e: 184 passed / 2 failed, both independently confirmed pre-existing via
+`git stash` bisection against the unmodified baseline --
+`reviewed-product-loop.spec.ts` (already long-documented) and a
+newly-noticed `notification-preferences.spec.ts` gap (Calm Attention/
+Notifications' Place Story deep-link scoping, Lane D territory),
+disclosed here for the first time, not fixed, out of this milestone's
+bounded scope. `ruff check` zero new findings (confirmed by bisection);
+`tsc`/`vite build` clean. Core gate: a first attempt (started 23:56 EDT,
+crossing local midnight mid-run) found 6 failures -- 5 individually
+confirmed identical against the unmodified baseline or an already
+-documented flaky-test file via direct bisection/root-cause tracing, the
+6th this milestone's own new-test bug above; a second attempt (same
+calendar day) found 5 failures with the bug still present; the accepted,
+final attempt, with the test fix applied: **5985 passed / 1 failed
+(confirmed pre-existing) / 4 skipped / 35 deselected / 11 xfailed -- zero
+failures attributable to this milestone's changes across all three
+attempts.** No detector/tracker/identification-policy change; no schema
+change (`v59` unchanged); no deletion policy invented or changed; no push.
+Implementation commit `5a4858b`. **Does not** reopen Gate A, start Gate G,
+or start Final Release Hardening, and **does not** self-authorize a
+subsequent milestone. **Authorization remains NONE -- GLOBAL
+PRODUCT-ROADMAP RECONCILIATION REQUIRED**, returned for the next external
+(ChatGPT) acceptance review.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
@@ -7681,7 +7772,18 @@ see Lane G.
 **Diagnostics / Storage / Recovery Foundations.** Substantial accepted
 work: health/diagnostics; Doctor/support concepts; storage health;
 retention; backup/restore; recovery. Final integrated product acceptance
-remains open (see Lane R, below).
+remains open (see Lane R, below). **2026-09-09 update (Product Operations
+& First-Observation Completion v1):** Doctor's own CLI-only limitation is
+closed -- a real authenticated `GET /api/product/doctor` and a new
+`DoctorPage.tsx` now expose it, unmodified underneath, with calm recovery
+-action links to existing controls. Camera Node storage/hardware-quality
+visibility (shipped Node-side by the immediately-prior milestone but
+unreachable by any human) is also closed, via a bounded live check rather
+than Doctor itself. See the top-of-file dated entry and
+[product-operations-first-observation-completion-v1-report.md](product-operations-first-observation-completion-v1-report.md)
+for the full record. Whole-product integrated acceptance (Lane R) is
+unaffected by this note and remains its own separate, already-closed
+status.
 
 **Research / Conservation.** Substantial accepted work: conservation
 reporting; effort/coverage; research-safe eligibility/export; Camtrap DP;
@@ -11033,7 +11135,29 @@ claims -- see
 §4 and §6. The "Latest accepted Core checkpoint" below remains the most
 recent actual full-suite number.
 
-**Latest accepted Core checkpoint (Release Reliability & First-Run
+**Latest accepted Core checkpoint (Product Operations &
+First-Observation Completion v1):** 5985 passed / **1 failed** / 4
+skipped / 35 deselected (`slow`-marked) / 11 xfailed, 43m51s -- the
+accepted, final of three attempts this milestone ran (see the top-of-file
+dated entry for the full three-attempt record: a first attempt found 6
+failures crossing local midnight mid-run, 5 individually bisected/
+root-caused to the unmodified baseline or an already-documented flaky
+-test file, the 6th this milestone's own new fault-injection test's own
+bug, found and fixed by this very validation, never in production code; a
+second attempt, same calendar day, found 5 with the bug still present;
+this accepted final attempt has the fix applied). The one remaining
+failure, `test_place_change_summary_repository.py::test_api_round_trip_
+exposes_change_detection_fields`, is the identical pre-existing,
+long-documented flake named in the immediately-prior checkpoint below,
+independently re-confirmed via direct `git stash` bisection against the
+unmodified baseline this same session (not merely cited) --
+`test_place_biodiversity_summary_repository.py`'s own pair, flaky by
+nature rather than deterministic, did not reproduce this particular run.
+No schema change (v59, unchanged). See
+[product-operations-first-observation-completion-v1-report.md](product-operations-first-observation-completion-v1-report.md)
+§7 for the complete record.
+
+**Prior accepted Core checkpoint (Release Reliability & First-Run
 Recovery v1):** 5969 passed / **4 failed** / 4 skipped / 35 deselected
 (`slow`-marked) / 11 xfailed, run twice this milestone (a first attempt
 independently confirmed the `test_camera_node_packaging.py` failure below

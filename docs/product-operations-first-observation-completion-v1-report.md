@@ -414,14 +414,56 @@ detail box), then against the fix (all passed).
 
 ### Real hardware
 
-[PENDING -- see §8.]
+Confirmed via real deployment and real network I/O, not simulated -- see
+§8.
 
 ---
 
 ## 8. Real hardware validation
 
-[PENDING -- to be filled in: native-Windows Doctor page + shutdown
-re-confirmation; reference Camera Node live hardware-health check.]
+**Native Windows** (real GPU hardware, `deploy_windows_dev.py`, exact
+commit `5a4858b` confirmed both by the deploy tool's own report and
+independently by `GET /api/product/instance`'s self-reported `git_commit`):
+a genuinely fresh, disposable dev-root (never the persistent shared dev
+deployment, cleaned up completely afterward) proved, over real HTTP
+against the real running process:
+
+- `GET /api/product/doctor`: 16 checks returned (matches the documented
+  count exactly), `overall_status: DEGRADED` correctly derived from one
+  real `WARN` (`Application`, the already-disclosed "still starting"
+  transient state -- see §10), every other check `PASS` on this genuinely
+  fresh, unconfigured instance, including `Storage: PASS` (confirms the
+  immediately-prior milestone's Storage-check honesty fix still holds
+  live, not merely by inspection).
+- `GET /api/streams/{id}/camera-node-hardware-health` against the
+  instance's own default (non-Camera-Node) Stream: `applicable: false`,
+  the correct honest degrade, over real HTTP.
+- `POST /api/product/shutdown`: `accepted: true`; the real OS process
+  stopped answering HTTP immediately after, confirming the graceful
+  -shutdown mechanism (unmodified by this milestone, but adjacent code was
+  touched) still works correctly end to end.
+
+**Real reference Camera Node** (the project's actual reference Raspberry
+Pi, reached live over the LAN, no mocking): the exact,
+unmodified `CameraNodeClient.health()` call my new endpoint uses was
+exercised directly against the real device's real `/node/v1/health`
+response. Finding, not merely a pass/fail: this specific reference Pi's
+own currently-installed build predates the immediately-prior milestone's
+`hardware_health.py` (its real response has no `storage`/`hardware` keys
+at all) -- proving, on genuine real-world hardware rather than only a
+synthetic test case, that my endpoint's defensive parsing degrades
+correctly (`reachable: true`, `storage: None`, `hardware: None`, never a
+crash or a fabricated value) for the realistic case of an
+older-build Camera Node in the field. Read-only (`/node/v1/health` sends
+no credential and mutates nothing); the device's own state was
+unaffected.
+
+All disposable artifacts (the Windows dev-root, the throwaway
+administrator account, the reference-Pi-pointed test repository) were
+created in isolated, temporary locations and fully cleaned up; the
+persistent shared Windows dev deployment and the reference Pi were both
+left exactly as found (port 8000 free before and after; the Pi's own
+installed build and pairing state untouched).
 
 ---
 
@@ -493,20 +535,52 @@ Lane R/packaging-acceptance artifact.
 - Orphan-media detection and the Doctor cleanup-outcome signal remain
   open, low-materiality, deliberately-not-reopened items (§4), unchanged
   from before this milestone.
-- [Any full-Core or real-hardware findings to be added here before this
-  report is finalized.]
+- **The real reference Camera Node's own installed build predates the
+  storage/hardware-quality fields** (§8) -- a real-world, disclosed
+  finding, not a defect: the live-check endpoint correctly degrades to
+  `storage: None`/`hardware: None` for it today. Upgrading that shared
+  device's installed build is separately covered by the already-accepted
+  Camera Node upgrade workflow (Lane L), out of this milestone's own
+  bounded scope.
+- Doctor's own already-disclosed, out-of-scope limitation (§7, "Real
+  hardware"/native-Windows evidence): the `Application` check can
+  legitimately read `WARN` ("still starting") on a genuinely healthy,
+  just-launched instance -- observed directly again this milestone,
+  unchanged, not a new or newly-discovered gap, and explicitly out of
+  Doctor's own bounded, read-only-and-side-effect-free scope to fix.
 
 ---
 
 ## 11. Classification
 
-**A** -- [to be confirmed once full Core and real-hardware validation are
-complete]: real, reproduced defects were found and fixed with rigorous
-RED -> GREEN proof (not merely asserted); genuinely missing product
--integration surface (Doctor API/UI, Camera Node hardware-health
-visibility) was built, bounded and precedented, closing a gap two
-independent audits converged on unprompted; substantial areas already
-complete were verified, not reimplemented, with evidence rather than
-re-trusted prior claims; one previously-uncovered defensive code path
-gained real test coverage. No detector/tracker/identification policy
-reopened; no schema change; no deletion policy invented; no push.
+**A** -- real, reproduced defects (two cross-surface health-honesty
+gaps) were found and fixed with rigorous RED -> GREEN proof, not merely
+asserted; genuinely missing product-integration surface (Doctor API/UI,
+Camera Node hardware-health visibility) was built, bounded and
+precedented, closing a gap two independent audits converged on
+unprompted; substantial areas already complete (the first-observation
+loop, storage survival's core mechanics) were independently verified, not
+reimplemented, with direct evidence rather than re-trusted prior claims;
+one previously-uncovered (`# pragma: no cover`) defensive code path
+gained real, genuine test coverage; a real defect in this milestone's own
+new test was found and fixed by its own Core-gate validation, disclosed
+in full rather than smoothed over. Every real-hardware claim (native
+-Windows Doctor/shutdown/hardware-health; the live reference Camera Node)
+is backed by an actual deployment and actual network I/O, not simulated.
+Zero regressions across three full Core attempts (the accepted, final
+attempt: 5985 passed / 1 failed, confirmed pre-existing) and the full
+existing + new Playwright e2e suite (184 passed / 2 failed, both
+confirmed pre-existing). No detector/tracker/identification policy
+reopened; no schema change; no deletion policy invented; not pushed.
+
+---
+
+## 12. Current HEAD, schema, and commit
+
+- **HEAD:** `5a4858b2ddd2dbdb0e8b5bd2e7b5d1258fe3d13c` (implementation
+  commit; a companion reconciliation commit updating
+  `docs/release-execution-state.md` follows).
+- **Schema:** unchanged, `v59` -> `v59` (no migration).
+- **Branch:** `main`, not pushed.
+- **Worktree:** clean except the seven preserved untracked detector files
+  (confirmed present, untracked, unmodified throughout this milestone).
