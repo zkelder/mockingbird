@@ -280,8 +280,22 @@ export function ObservationControlPanel({
                 ) : null}
               </div>
               {needsAttention ? (
+                // Product Operations & First-Observation Completion v1:
+                // this used to always read `status.camera_message`,
+                // regardless of which subsystem actually failed -- for a
+                // connected camera whose *engine* (detector/GPU/model)
+                // failed to load, it showed the reassuring "Camera Node is
+                // paired and configured." right below the real failure
+                // text this same panel's own top-line `status.message`
+                // already, correctly, displays (see `_EngineSession.
+                // snapshot`'s "headline whichever subsystem is actually
+                // blocking" precedence, engine_runtime.py). Reusing
+                // `status.message` here -- already resolved with that
+                // exact precedence -- fixes the engine-failure case and
+                // leaves the camera-failure case unchanged (there,
+                // `status.message` already equals `status.camera_message`).
                 <div className="continuity-message">
-                  <span>{status.camera_message}</span>
+                  <span>{status.message}</span>
                 </div>
               ) : null}
               {status.counts.proposals_observed > 0 && status.counts.candidates_created === 0 ? (

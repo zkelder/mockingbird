@@ -54,6 +54,7 @@ import { SpeciesSuggestionsPage } from "./pages/SpeciesSuggestionsPage";
 import { StreamDetailPage } from "./pages/StreamDetailPage";
 import { StreamsPage } from "./pages/StreamsPage";
 import { UsersPage } from "./pages/UsersPage";
+import { DoctorPage } from "./pages/DoctorPage";
 import { YardMapPage } from "./pages/YardMapPage";
 import { VisitDetailPage } from "./pages/VisitDetailPage";
 import { WorkerStatusPage } from "./pages/WorkerStatusPage";
@@ -115,6 +116,11 @@ const productNavItems: Array<{ page: Page; label: string; minRole?: UserRole }> 
   { page: "ecological-destinations", label: "Ecological Destinations" },
   { page: "settings", label: "Settings" },
   { page: "users", label: "Users", minRole: "administrator" },
+  // Product Operations & First-Observation Completion v1: Doctor's own
+  // report includes local filesystem paths and Camera Node structural
+  // facts -- Administrator-gated server-side (see api/auth.py), mirrored
+  // here so the nav never shows an entry a Viewer/Reviewer cannot open.
+  { page: "doctor", label: "Doctor", minRole: "administrator" },
 ];
 
 const ROLE_RANK: Record<UserRole, number> = { viewer: 0, reviewer: 1, administrator: 2 };
@@ -675,6 +681,10 @@ export default function App() {
   function renderPage() {
     if (page === "users" && currentUser) {
       return <UsersPage currentUser={currentUser} />;
+    }
+
+    if (page === "doctor" && currentUser) {
+      return <DoctorPage onNavigate={setPage} />;
     }
 
     if (isLoading && page !== "dashboard") {

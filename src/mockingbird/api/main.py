@@ -44,6 +44,7 @@ from mockingbird.api.camera_node_transport import (
     TRANSPORT_PROTOCOL_VERSION,
     build_camera_node_transport_router,
 )
+from mockingbird.diagnostics.doctor import DoctorReport, run_doctor
 from mockingbird.diagnostics.error_taxonomy import (
     ErrorComponent,
     ErrorCorrelation,
@@ -110,6 +111,9 @@ from mockingbird.api.schemas import (
     CameraHealthIncidentListResponse,
     CameraHealthListResponse,
     CameraHealthState,
+    CameraNodeHardwareHealthResponse,
+    CameraNodeLiveHardwareQuality,
+    CameraNodeLiveStorageHealth,
     ClassifierReadinessReport,
     ClassifierManifestFileExportRequest,
     ClassifierManifestFileExportResponse,
@@ -10748,6 +10752,97 @@ async def list_camera_health(
     )
 
 
+@dataclass(frozen=True)
+class _EngineTerminalStatus:
+    engine_active: bool
+    engine_terminally_unavailable: bool
+    engine_unavailable_message: str | None
+
+
+def _resolve_engine_terminal_status(
+    stream_id: str,
+    provider_key: str | None,
+) -> _EngineTerminalStatus:
+    """Whether a Camera Node Stream's Observation Engine session is
+    currently observing, and whether it has permanently given up right now
+    (plus its real failure message) -- one bounded, single-fetch read of
+    `ObservationEngineSessionManager.status`.
+
+    `provider_key` takes a bare string rather than a whole provider
+    -configuration object on purpose: this function's only interest in its
+    caller's configuration is that one field, and this product resolves it
+    from at least two differently-shaped objects across the three call
+    sites this function now serves (`SourceProviderConfiguration` from
+    `_dashboard_runtime_by_stream`'s per-Source lookup;
+    `StreamLivePlaybackConfig.provider_key` from a per-Stream lookup) --
+    decoupling from either shape keeps this function reusable without
+    inventing a shared base type neither object already has a reason to
+    share.
+
+    Product Operations & First-Observation Completion v1: factored out of
+    `_dashboard_runtime_by_stream`'s own identical inline computation
+    (behavior there is unchanged by this refactor -- same single status
+    fetch, same branching) so `get_stream_camera_health`/`get_camera_
+    configuration_edit`/the Yard Map can share the `engine_terminally_
+    unavailable`/`engine_unavailable_message` half too. Before this, only
+    the Dashboard threaded this fact into `_camera_health_summary_from_
+    models` (see that method's own docstring), so a camera-connected-but
+    -detector-failed Camera Node Stream showed the real "Camera
+    unavailable" alert only on the Dashboard, while Camera Configuration
+    and Yard Map showed a stale calm "stopped" state for the identical
+    Stream at the identical moment -- a real, reproducible cross-surface
+    contradiction one click apart ("Edit camera setup" reachable directly
+    from the Dashboard tile showing the alert).
+
+    Mirrors the exact "genuinely terminal" test `unified_status.py`'s
+    per-Stream Observation panel already uses implicitly (a non-
+    "observing" state with a real failure behind it): `state="error"` (an
+    immediate pairing/engine-load failure) or the bounded retry policy's
+    own exhausted-recovery marker, `stopped_reason="camera_unavailable"`
+    (never set for an explicit user Stop or a natural session end -- see
+    `AnalysisStreamRetryPolicy`/`_EngineSession` in `engine_runtime.py`). A
+    reconnect still in its bounded retry window deliberately stays
+    non-terminal here, matching that policy's own "do not alarm on a
+    benign reconnect" design.
+    """
+
+    if provider_key != "camera_node":
+        return _EngineTerminalStatus(False, False, None)
+    engine_status = get_observation_engine_session_manager().status(stream_id)
+    engine_active = bool(engine_status and engine_status.observing)
+    if engine_status is None or not (
+        engine_status.state == "error" or engine_status.stopped_reason == "camera_unavailable"
+    ):
+        return _EngineTerminalStatus(engine_active, False, None)
+    # Lane C Sparse-State Honesty & First-Hour Narrative Closure v1's own
+    # camera-connected-wins-only-if-disconnected precedence
+    # (`_EngineSession.snapshot`'s "headline whichever subsystem is
+    # actually blocking" contract, engine_runtime.py) -- never a stale
+    # success string for a different subsystem.
+    message = (
+        engine_status.engine_message if engine_status.camera_connected else engine_status.camera_message
+    )
+    return _EngineTerminalStatus(engine_active, True, message)
+
+
+def _engine_terminal_status_by_stream(
+    repository: ProductRepository,
+) -> dict[str, _EngineTerminalStatus]:
+    """The same bridge `_dashboard_runtime_by_stream` builds, bounded to
+    just the engine-terminal-unavailability half -- the Yard Map (and any
+    future all-Streams consumer of `_camera_health_summary_from_models`)
+    needs no live-view/source-monitor status, so this stays synchronous
+    (no `await`) rather than duplicating that function's fuller async
+    fetch. Product Operations & First-Observation Completion v1."""
+
+    result: dict[str, _EngineTerminalStatus] = {}
+    for stream in repository.list_streams()[:50]:
+        configuration = repository.get_source_provider_configuration(stream.source_id)
+        provider_key = configuration.provider_key if configuration is not None else None
+        result[stream.id] = _resolve_engine_terminal_status(stream.id, provider_key)
+    return result
+
+
 async def _dashboard_runtime_by_stream(
     repository: ProductRepository,
 ) -> dict[str, DashboardStreamRuntimeStatus]:
@@ -10756,7 +10851,6 @@ async def _dashboard_runtime_by_stream(
     runtime_by_stream: dict[str, DashboardStreamRuntimeStatus] = {}
     live_manager = get_live_camera_session_manager()
     source_monitor_manager = get_source_monitor_manager()
-    engine_manager = get_observation_engine_session_manager()
     for stream in repository.list_streams()[:50]:
         live_snapshot = live_manager.status(stream.id)
         source_monitor = await source_monitor_manager.status(stream.id)
@@ -10789,51 +10883,15 @@ async def _dashboard_runtime_by_stream(
         # "Observing X of Y cameras", TodayReportPanel's monitoring-started
         # empty state, LiveCameraOverview's activity/session facts) to
         # undercount a real, working Camera Node observation session.
-        engine_active = False
-        # Mirrors the exact "genuinely terminal" test unified_status.py's
-        # per-Stream Observation panel already uses implicitly (a non-
-        # "observing" state with a real failure behind it): `state="error"`
-        # (an immediate pairing/engine-load failure) or the bounded retry
-        # policy's own exhausted-recovery marker,
-        # `stopped_reason="camera_unavailable"` (never set for an explicit
-        # user Stop, which uses "user_stopped", or a natural session end,
-        # "session_ended" -- see AnalysisStreamRetryPolicy/_EngineSession in
-        # engine_runtime.py). A reconnect still in its bounded retry window
-        # deliberately stays `observing`/non-terminal here, matching that
-        # policy's own "do not alarm on a benign reconnect" design.
-        engine_terminally_unavailable = False
-        engine_unavailable_message = None
-        if configuration is not None and configuration.provider_key == "camera_node":
-            engine_status = engine_manager.status(stream.id)
-            engine_active = bool(engine_status and engine_status.observing)
-            if engine_status is not None and (
-                engine_status.state == "error"
-                or engine_status.stopped_reason == "camera_unavailable"
-            ):
-                engine_terminally_unavailable = True
-                # Lane C Sparse-State Honesty & First-Hour Narrative Closure
-                # v1: this used to be `engine_status.camera_message or
-                # engine_status.message`. `camera_message` is set
-                # unconditionally, early -- before the engine/detector load
-                # is even attempted -- and is never cleared once the camera
-                # itself connects, so it stays truthy (and the `or` always
-                # picked it) even when the *engine* is what actually failed
-                # (missing model bundle, unsupported GPU) while the camera
-                # stayed perfectly reachable. That silently replaced the
-                # real failure with a stale "Camera Node is paired and
-                # configured." success message. Reuse the exact same
-                # camera-connected-wins-only-if-disconnected precedence
-                # `_EngineSession.snapshot`'s own "headline whichever
-                # subsystem is actually blocking" contract already defines
-                # (engine_runtime.py) instead of re-deriving a second, wrong
-                # one here: current truth for whichever subsystem is really
-                # blocking, never a stale success string for a different
-                # subsystem.
-                engine_unavailable_message = (
-                    engine_status.engine_message
-                    if engine_status.camera_connected
-                    else engine_status.camera_message
-                )
+        # See `_resolve_engine_terminal_status`'s own docstring for the full
+        # "genuinely terminal" contract this reuses (factored out of this
+        # exact inline computation; behavior here is unchanged).
+        engine_terminal_status = _resolve_engine_terminal_status(
+            stream.id, configuration.provider_key if configuration is not None else None
+        )
+        engine_active = engine_terminal_status.engine_active
+        engine_terminally_unavailable = engine_terminal_status.engine_terminally_unavailable
+        engine_unavailable_message = engine_terminal_status.engine_unavailable_message
 
         if source_active:
             monitor_control = "source_monitor"
@@ -11174,6 +11232,32 @@ async def post_product_shutdown() -> ProductShutdownResponse:
     )
 
 
+@app.get("/api/product/doctor", response_model=DoctorReport)
+async def get_product_doctor_report() -> DoctorReport:
+    """Product Operations & First-Observation Completion v1: the first
+    authenticated HTTP/UI surface for MockingBird Doctor
+    (`diagnostics/doctor.py`), previously CLI-only (`python -m mockingbird
+    doctor`). A thin, read-only wrapper -- `run_doctor()` is called
+    unmodified and its own `DoctorReport` is returned directly as the
+    response model (already a Pydantic `BaseModel`; no second schema, per
+    this module's existing "import, never duplicate" reuse convention).
+
+    Runs in a worker thread (`asyncio.to_thread`, matching this module's
+    existing convention for other bounded synchronous calls, e.g.
+    `node_compatibility.probe_node_compatibility` below): Doctor's own
+    per-check timeouts (5s normal, 15s for the detector-model integrity
+    check) mean a genuinely unhealthy install could take several real
+    seconds, which must not block the event loop for other requests.
+
+    `runtime_home=current_runtime_home()` diagnoses the *actual* running
+    instance's own resolved data directory -- `None` for a bare test/dev
+    import, which Doctor's own default resolution already handles exactly
+    like the CLI does (see `resolve_doctor_environment`), never a crash.
+    """
+
+    return await asyncio.to_thread(run_doctor, runtime_home=current_runtime_home())
+
+
 @app.get("/api/streams/{stream_id}", response_model=Stream)
 async def get_stream(stream_id: str) -> Stream:
     stream = get_repository().get_stream(stream_id)
@@ -11227,8 +11311,23 @@ def _camera_configuration_http_error(error: Exception) -> HTTPException:
 async def get_camera_configuration_edit(
     stream_id: str,
 ) -> CameraConfigurationEditResponse:
+    repository = get_repository()
+    # Product Operations & First-Observation Completion v1: same bridge
+    # `_dashboard_runtime_by_stream` uses, resolved here for one Stream
+    # rather than all of them -- see `_resolve_engine_terminal_status`'s
+    # own docstring. Never raises/404s on its own: a `None` config (a
+    # genuinely missing Stream) degrades to "not a Camera Node," and the
+    # real 404 below still fires from the actual edit lookup, unchanged.
+    live_playback_config = repository.get_stream_live_playback_config(stream_id)
+    engine_terminal_status = _resolve_engine_terminal_status(
+        stream_id, live_playback_config.provider_key if live_playback_config is not None else None
+    )
     try:
-        configuration = get_repository().get_camera_configuration_edit(stream_id)
+        configuration = repository.get_camera_configuration_edit(
+            stream_id,
+            engine_terminally_unavailable=engine_terminal_status.engine_terminally_unavailable,
+            engine_unavailable_message=engine_terminal_status.engine_unavailable_message,
+        )
     except ValueError as error:
         raise _camera_configuration_http_error(error) from None
     if configuration is None:
@@ -11388,7 +11487,20 @@ async def get_stream_runtime_status(stream_id: str) -> StreamRuntimeStatusRespon
     response_model=CameraHealthDetailResponse,
 )
 async def get_stream_camera_health(stream_id: str) -> CameraHealthDetailResponse:
-    detail = get_repository().get_stream_camera_health(stream_id)
+    repository = get_repository()
+    # Product Operations & First-Observation Completion v1: see the
+    # identical bridge in `get_camera_configuration_edit`, immediately
+    # above -- this closes the same gap for this route's own direct
+    # caller (and any other future consumer of this endpoint) too.
+    live_playback_config = repository.get_stream_live_playback_config(stream_id)
+    engine_terminal_status = _resolve_engine_terminal_status(
+        stream_id, live_playback_config.provider_key if live_playback_config is not None else None
+    )
+    detail = repository.get_stream_camera_health(
+        stream_id,
+        engine_terminally_unavailable=engine_terminal_status.engine_terminally_unavailable,
+        engine_unavailable_message=engine_terminal_status.engine_unavailable_message,
+    )
     if detail is None:
         raise _not_found("Stream", stream_id)
     return _camera_health_with_pending_node_recovery(detail)
@@ -11409,6 +11521,98 @@ async def list_stream_camera_health_incidents(
         items=detail.incidents,
         limit=limit,
         message="Showing bounded recent camera health history.",
+    )
+
+
+def _parse_camera_node_live_storage(raw: object) -> CameraNodeLiveStorageHealth | None:
+    """Defensively extract `hardware_health.StorageHealth.as_payload()`'s
+    shape from a live, network-sourced `/node/v1/health` response. Never
+    raises -- a malformed or missing shape (an older Node predating this
+    field, or a genuinely unexpected response) degrades to `None`, the same
+    honest "could not confirm" this whole feature already uses throughout,
+    never a 500 from an untrusted device's response shape."""
+
+    if not isinstance(raw, dict):
+        return None
+    total_bytes, free_bytes, tier = raw.get("total_bytes"), raw.get("free_bytes"), raw.get("storage_health_tier")
+    if not isinstance(total_bytes, int) or not isinstance(free_bytes, int) or not isinstance(tier, str):
+        return None
+    return CameraNodeLiveStorageHealth(total_bytes=total_bytes, free_bytes=free_bytes, storage_health_tier=tier)
+
+
+def _parse_camera_node_live_hardware(raw: object) -> CameraNodeLiveHardwareQuality | None:
+    """The `hardware_health.HardwareQuality.as_payload()` counterpart to
+    `_parse_camera_node_live_storage`, above -- identical defensive
+    contract. Each field is independently optional (`bool | None` /
+    `float | None`, matching the Node's own per-field degrade), so only
+    the presence and type of the four boolean-or-`None` keys and the one
+    float-or-`None` key are checked, never that every field is populated."""
+
+    if not isinstance(raw, dict):
+        return None
+    bool_or_none_fields = ("undervoltage_active", "throttled_active", "undervoltage_occurred", "throttled_occurred")
+    values: dict[str, Any] = {}
+    for field_name in bool_or_none_fields:
+        value = raw.get(field_name)
+        if value is not None and not isinstance(value, bool):
+            return None
+        values[field_name] = value
+    temperature = raw.get("temperature_celsius")
+    if temperature is not None and not isinstance(temperature, (int, float)):
+        return None
+    values["temperature_celsius"] = float(temperature) if temperature is not None else None
+    return CameraNodeLiveHardwareQuality(**values)
+
+
+@app.get(
+    "/api/streams/{stream_id}/camera-node-hardware-health",
+    response_model=CameraNodeHardwareHealthResponse,
+)
+async def get_stream_camera_node_hardware_health(
+    stream_id: str,
+) -> CameraNodeHardwareHealthResponse:
+    """Product Operations & First-Observation Completion v1: a bounded,
+    live, on-demand check of a paired Camera Node's own storage/hardware
+    -quality facts, human-visible for the first time -- see
+    `CameraNodeHardwareHealthResponse`'s own docstring for the full
+    rationale and why this deliberately sits outside Doctor's read-only/
+    DB-only design rather than extending it.
+
+    Resolves the live Node address/credential the exact same way
+    `start_stream_observation`'s field-acceptance compatibility check
+    already does (`StreamLivePlaybackConfig.camera_node_base_address`),
+    then calls the existing, unmodified `CameraNodeClient.health()` in a
+    worker thread -- no new Node-side code, no persistence, no schema
+    change. Never raises for an unreachable/non-Camera-Node/malformed
+    -response case; each degrades to an honest, typed result instead.
+    """
+
+    configuration = _stream_live_playback_config_or_404(stream_id, require_active_source=True)
+    if not configuration.camera_node_base_address:
+        return CameraNodeHardwareHealthResponse(
+            applicable=False,
+            reachable=False,
+            message="This camera is not a Camera Node, so hardware/storage checks do not apply.",
+            checked_at=datetime.now(UTC),
+        )
+
+    try:
+        raw = await asyncio.to_thread(get_camera_node_client().health, configuration.camera_node_base_address)
+    except (CameraNodeClientError, OSError):
+        return CameraNodeHardwareHealthResponse(
+            applicable=True,
+            reachable=False,
+            message="Could not reach the Camera Node just now. This is often temporary.",
+            checked_at=datetime.now(UTC),
+        )
+
+    return CameraNodeHardwareHealthResponse(
+        applicable=True,
+        reachable=True,
+        message="Camera Node reached.",
+        storage=_parse_camera_node_live_storage(raw.get("storage")),
+        hardware=_parse_camera_node_live_hardware(raw.get("hardware")),
+        checked_at=datetime.now(UTC),
     )
 
 
@@ -13907,7 +14111,24 @@ def _yard_map_http_error(error: ValueError, *, item: str = "Yard Map") -> HTTPEx
 async def get_yard_map(
     range: str = Query(default="today", pattern="^(today|last_24_hours|last_7_days)$"),
 ) -> YardMapResponse:
-    return get_repository().yard_map(activity_range=range)
+    repository = get_repository()
+    # Product Operations & First-Observation Completion v1: see
+    # `get_camera_configuration_edit`'s identical bridge, above -- closes
+    # the same gap for the Yard Map, which previously showed a stale calm
+    # "stopped" state for a camera-connected-but-detector-failed Camera
+    # Node Stream the Dashboard already, correctly, alarms on.
+    # A plain `(bool, str | None)` tuple, not the private `_EngineTerminalStatus`
+    # dataclass, crosses into the repository layer -- mirroring `dashboard_
+    # summary`'s own established convention of a schemas.py type at that
+    # boundary, this stays a plain built-in shape rather than reaching an
+    # API-layer-only type across the layering boundary.
+    engine_terminal_status_by_stream = {
+        stream_id: (status.engine_terminally_unavailable, status.engine_unavailable_message)
+        for stream_id, status in _engine_terminal_status_by_stream(repository).items()
+    }
+    return repository.yard_map(
+        activity_range=range, engine_terminal_status_by_stream=engine_terminal_status_by_stream
+    )
 
 
 @app.post("/api/yard-map/blank", response_model=YardMapResponse, status_code=201)

@@ -487,11 +487,18 @@ button {
 .event-card,
 .error-panel,
 .notice-panel,
-.all-reviewed-panel {
+.all-reviewed-panel,
+.doctor-check-row {
   border: 1px solid #d6ddd1;
   border-radius: 8px;
   background: #fbfcf8;
   box-shadow: 0 1px 2px rgb(31 51 41 / 0.08);
+}
+
+.doctor-check-row {
+  display: grid;
+  gap: 8px;
+  padding: 16px 18px;
 }
 
 .dashboard-hero {

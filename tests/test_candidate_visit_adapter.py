@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
+import errno
 import json
 from pathlib import Path
 
@@ -442,6 +443,76 @@ def test_non_contention_failure_is_not_retried(
     status = repository.get_observation_authority_state(stream_id=STREAM_ID)
     assert status.failure_count == 1
     assert status.last_failure_code == "observation_candidate_visit_persistence_failed"
+
+
+def test_disk_full_write_failure_rolls_back_atomically_and_is_not_retried(
+    repository: ProductRepository, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Product Operations & First-Observation Completion v1: closes the one
+    real test-depth gap an independent storage-survival audit found --
+    every existing test above proves the *mechanism* generically (a bare
+    `ValueError` with the right code, injected at
+    `create_candidate_visit_from_proposal` itself); none proves it
+    specifically for the real shape a genuinely full disk produces. This
+    injects a literal `OSError(errno.ENOSPC, ...)` at the real Host
+    media-write function (`_write_media_file` -- the exact function the
+    audit named), and lets the real, unmodified
+    `create_candidate_visit_from_proposal` / `_create_candidate_visit_locked`
+    transactional write path and the real `CandidateVisitAuthorityAdapter`
+    run for real underneath it -- proving, not merely arguing, that a
+    disk-full condition: (1) fails the whole attempt atomically (zero
+    partial rows survive -- SQLAlchemy's `session.begin()` rollback), (2)
+    surfaces as the same typed `"failed"` outcome, never a crash, and (3)
+    is never retried (an `OSError`-shaped failure is not the classified
+    -retryable SQLite-contention code)."""
+
+    tracklet = _tracklet("gen-1", 0, 4500)
+    proposal = assemble_visit_episodes((tracklet,)).proposals[0]
+    _activate(repository)
+
+    def _table_counts() -> tuple[int, int, int]:
+        from sqlalchemy import func, select
+
+        with repository.session_factory() as session:
+            return (
+                session.scalar(select(func.count(ObservationCandidateVisitModel.proposal_id))) or 0,
+                session.scalar(select(func.count(VisitModel.id))) or 0,
+                session.scalar(select(func.count(MediaAssetModel.id))) or 0,
+            )
+
+    # `ProductRepository.__init__` unconditionally seeds two demo Visits
+    # (`demo_data.seed_product_data()`, confirmed by direct inspection --
+    # never zero) on a genuinely fresh database, so the correct atomicity
+    # proof is "the counts did not change," never "the counts are zero" --
+    # a naive absolute-zero assertion here is a real bug in *this test*,
+    # not evidence of a production defect (caught by this milestone's own
+    # real Core-gate run, not assumed).
+    before_ledger_count, before_visit_count, before_media_count = _table_counts()
+
+    def _disk_full(self: ProductRepository, filename: str, content: bytes) -> tuple[str, Path]:
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(ProductRepository, "_write_media_file", _disk_full)
+
+    outcome = _adapter(repository).attempt_candidate(
+        proposal, evidence_candidates=_evidence_candidates(),
+        evidence_bytes={"shadow-burst:hash-id": JPEG_BYTES}, observed_at=NOW,
+    )
+
+    assert outcome.outcome == "failed"
+    assert not outcome.created
+
+    status = repository.get_observation_authority_state(stream_id=STREAM_ID)
+    assert status.failure_count == 1  # exactly one attempt -- never retried
+
+    # The core survival proof: atomic rollback left zero *new* rows -- no
+    # candidate-visit ledger row, Visit, or MediaAsset from the failed
+    # attempt, never a corrupt/half-written record, and never a regression
+    # against whatever legitimately existed before this attempt.
+    after_ledger_count, after_visit_count, after_media_count = _table_counts()
+    assert after_ledger_count == before_ledger_count
+    assert after_visit_count == before_visit_count
+    assert after_media_count == before_media_count
 
 
 def test_transient_persistence_contention_recovers_via_bounded_retry(

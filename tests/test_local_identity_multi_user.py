@@ -420,6 +420,15 @@ async def test_viewer_can_read_but_cannot_review_or_administer(client: httpx.Asy
         users_attempt = await viewer_client.get("/api/admin/users")
         assert users_attempt.status_code == 403
 
+        # Product Operations & First-Observation Completion v1: Doctor's own
+        # report (local filesystem paths, schema/migration state, Camera
+        # Node structural facts) is Administrator-tier, matching the
+        # existing "Storage / retention / backup / recovery" bucket it was
+        # registered alongside (see auth.py) -- never a Viewer-readable
+        # operational surface.
+        doctor_attempt = await viewer_client.get("/api/product/doctor")
+        assert doctor_attempt.status_code == 403
+
 
 async def test_reviewer_can_review_but_cannot_administer(client: httpx.AsyncClient) -> None:
     await client.post(

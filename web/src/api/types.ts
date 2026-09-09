@@ -215,6 +215,64 @@ export interface ProductShutdownResponse {
   message: string;
 }
 
+// Product Operations & First-Observation Completion v1: the first
+// authenticated HTTP/UI surface for MockingBird Doctor -- mirrors
+// `diagnostics/doctor.py`'s own `DoctorReport`/`DoctorCheckResult`
+// field-for-field (see docs/mockingbird-doctor-operational-health-contract.md
+// "Contract"). `SKIPPED` is a real, honest outcome (a dependent check could
+// not run, e.g. the database itself is unreachable), never an error.
+export type DoctorStatus = "PASS" | "WARN" | "FAIL" | "SKIPPED";
+export type DoctorOverallStatus = "HEALTHY" | "DEGRADED" | "UNHEALTHY";
+export type DoctorRecoverability = "blocking" | "degraded" | "informational";
+
+export interface DoctorCheckResult {
+  code: string;
+  component: string;
+  status: DoctorStatus;
+  summary: string;
+  detail: string | null;
+  recoverability: DoctorRecoverability | null;
+  user_action: string | null;
+  diagnostic_context: Record<string, unknown> | null;
+  duration_ms: number;
+}
+
+export interface DoctorReport {
+  overall_status: DoctorOverallStatus;
+  generated_at: string;
+  app_version: string;
+  duration_ms: number;
+  checks: DoctorCheckResult[];
+}
+
+// A bounded, live, on-demand, non-persisting check of a paired Camera
+// Node's own storage/hardware-quality facts -- mirrors the backend's
+// `CameraNodeHardwareHealthResponse` (api/schemas.py). `applicable: false`
+// for a Stream that is not a Camera Node at all; `reachable: false` is a
+// normal, expected outcome (offline, network hiccup), never an error.
+export interface CameraNodeLiveStorageHealth {
+  total_bytes: number;
+  free_bytes: number;
+  storage_health_tier: string;
+}
+
+export interface CameraNodeLiveHardwareQuality {
+  undervoltage_active: boolean | null;
+  throttled_active: boolean | null;
+  undervoltage_occurred: boolean | null;
+  throttled_occurred: boolean | null;
+  temperature_celsius: number | null;
+}
+
+export interface CameraNodeHardwareHealthResponse {
+  applicable: boolean;
+  reachable: boolean;
+  message: string;
+  storage: CameraNodeLiveStorageHealth | null;
+  hardware: CameraNodeLiveHardwareQuality | null;
+  checked_at: string;
+}
+
 // Appliance / Storage / Privacy / Recovery v1: mirrors the backend's shared
 // `mockingbird.diagnostics.error_taxonomy` shape. Attached today only to
 // database-write failures (`SQLAlchemyError`) that reach the API boundary

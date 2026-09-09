@@ -645,6 +645,20 @@ for _method, _path in [
     # Release Reliability & First-Run Recovery v1: stopping the entire Host
     # is at least as consequential as any camera/storage control above.
     ("POST", "/api/product/shutdown"),
+    # Product Operations & First-Observation Completion v1: Doctor's own
+    # report includes local filesystem paths, schema/migration state, and
+    # Camera Node structural/boot-identity facts -- more operational depth
+    # than an ordinary Viewer needs day to day, and its own recovery
+    # actions (this page links to Local Data's backup/cleanup controls,
+    # already Administrator-tier above) are held to the same tier so the
+    # page never suggests an action a Viewer/Reviewer cannot actually take.
+    ("GET", "/api/product/doctor"),
+    # Live, on-demand, non-persisting Camera Node hardware/storage check --
+    # reads the same secret=True pairing address/credential fields the
+    # Camera Node pairing/preview endpoints above already do, so it is held
+    # to the identical tier as those, not Doctor's own read-only DB-only
+    # design (which this endpoint deliberately sits outside of).
+    ("GET", "/api/streams/{stream_id}/camera-node-hardware-health"),
 ]:
     _administrator(_method, _path)
 

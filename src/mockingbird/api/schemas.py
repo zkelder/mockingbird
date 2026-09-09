@@ -6905,6 +6905,60 @@ class ProductShutdownResponse(BaseModel):
     message: str
 
 
+class CameraNodeLiveStorageHealth(BaseModel):
+    """One Camera Node's own local storage (pairing/config state directory
+    -- never the media pipeline, which this product does not route through
+    a Camera Node's own disk). Mirrors `mockingbird_node.hardware_health.
+    StorageHealth.as_payload()`'s field names exactly -- a direct pass
+    -through, never a second computation of the tier."""
+
+    total_bytes: int
+    free_bytes: int
+    storage_health_tier: str
+
+
+class CameraNodeLiveHardwareQuality(BaseModel):
+    """A Camera Node's own `vcgencmd`-derived undervoltage/throttling/
+    temperature facts. Mirrors `mockingbird_node.hardware_health.
+    HardwareQuality.as_payload()`'s field names exactly. Every field is
+    independently `None` when that specific fact could not be confirmed --
+    never fabricated, matching this product's capability-aware-UX
+    doctrine."""
+
+    undervoltage_active: bool | None
+    throttled_active: bool | None
+    undervoltage_occurred: bool | None
+    throttled_occurred: bool | None
+    temperature_celsius: float | None
+
+
+class CameraNodeHardwareHealthResponse(BaseModel):
+    """Product Operations & First-Observation Completion v1: a bounded,
+    live, on-demand, non-persisting check of a paired Camera Node's own
+    storage/hardware-quality facts -- the human-visibility half of Release
+    Reliability & First-Run Recovery v1's `hardware_health.py`, which
+    shipped real facts on `/node/v1/health` that nothing on the Host ever
+    read. Mirrors `CameraSetupPage`'s existing "Check the picture" bounded
+    -live-check pattern, not Doctor's own read-only/DB-only design (Doctor
+    itself is unmodified and untouched by this endpoint).
+
+    `applicable=False` for a Stream that is not a paired Camera Node Stream
+    at all (hardware/storage checks do not apply to RTSP/local/other
+    providers). `applicable=True, reachable=False` when the Node could not
+    be reached just now -- a normal, expected outcome (offline, network
+    hiccup), never surfaced as an error. `storage`/`hardware` are `None`
+    exactly when the Node's own response has them `None` (no probe
+    directory configured; off Raspberry Pi) -- never fabricated.
+    """
+
+    applicable: bool
+    reachable: bool
+    message: str
+    storage: CameraNodeLiveStorageHealth | None = None
+    hardware: CameraNodeLiveHardwareQuality | None = None
+    checked_at: datetime
+
+
 class StorageCleanupCategorySummary(BaseModel):
     category: str
     media_count: int = Field(ge=0)

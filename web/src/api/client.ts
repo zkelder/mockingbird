@@ -81,6 +81,8 @@ import type {
   LocalCameraFrameCaptureResponse,
   ProductConnectionInfo,
   ProductShutdownResponse,
+  DoctorReport,
+  CameraNodeHardwareHealthResponse,
   LiveCameraSessionStatus,
   ObservationSessionStatus,
   SceneConfusorLearningStatus,
@@ -481,6 +483,11 @@ export const apiClient = {
   getProductConnectionInfo: () => request<ProductConnectionInfo>("/api/product/connection"),
   shutdownProduct: () =>
     request<ProductShutdownResponse>("/api/product/shutdown", { method: "POST" }),
+  getDoctorReport: () => request<DoctorReport>("/api/product/doctor"),
+  getStreamCameraNodeHardwareHealth: (streamId: string) =>
+    request<CameraNodeHardwareHealthResponse>(
+      `/api/streams/${encodeURIComponent(streamId)}/camera-node-hardware-health`,
+    ),
   getTaxonomyLabels: () => request<TaxonomyLabel[]>("/api/taxonomy/labels"),
   getTaxonomyLabel: (label: string) =>
     request<TaxonomyLabel>(`/api/taxonomy/labels/${encodeURIComponent(label)}`),

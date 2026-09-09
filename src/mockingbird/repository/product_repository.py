@@ -12620,8 +12620,19 @@ class ProductRepository:
     def get_camera_configuration_edit(
         self,
         stream_id: str,
+        *,
+        engine_terminally_unavailable: bool = False,
+        engine_unavailable_message: str | None = None,
     ) -> CameraConfigurationEditResponse | None:
-        """Read one existing Stream's editable setup without returning saved settings."""
+        """Read one existing Stream's editable setup without returning saved settings.
+
+        `engine_terminally_unavailable`/`engine_unavailable_message`: see
+        `get_stream_camera_health`'s identical parameters, which this
+        method threads straight through to its own internal call below --
+        Product Operations & First-Observation Completion v1 closes the
+        "Edit camera setup" page's own copy of the same cross-surface
+        health-honesty gap.
+        """
 
         with self.session_factory() as session:
             stream = session.get(StreamModel, stream_id)
@@ -12693,7 +12704,11 @@ class ProductRepository:
 
         monitoring_policy = self.get_stream_monitoring_policy(stream_id)
         runtime = self.get_stream_runtime_status(stream_id)
-        health = self.get_stream_camera_health(stream_id)
+        health = self.get_stream_camera_health(
+            stream_id,
+            engine_terminally_unavailable=engine_terminally_unavailable,
+            engine_unavailable_message=engine_unavailable_message,
+        )
         if monitoring_policy is None or runtime is None or health is None:
             return None
         return CameraConfigurationEditResponse(
@@ -15230,8 +15245,26 @@ class ProductRepository:
         stream_id: str,
         *,
         incident_limit: int = CAMERA_HEALTH_HISTORY_LIMIT,
+        engine_terminally_unavailable: bool = False,
+        engine_unavailable_message: str | None = None,
     ) -> CameraHealthDetailResponse | None:
-        """Read bounded health only; it never reconciles, probes, or starts a camera."""
+        """Read bounded health only; it never reconciles, probes, or starts a camera.
+
+        `engine_terminally_unavailable`/`engine_unavailable_message` mirror
+        `dashboard_summary`'s own identical bridge parameter (see
+        `_camera_health_summary_from_models`'s docstring): a Camera Node
+        Stream's canonical `ObservationEngineSessionManager` truth, which
+        this repository layer cannot read directly, carried in from the API
+        layer. Defaulting to `False`/`None` preserves this method's own
+        prior behavior exactly for any caller that does not (yet) pass
+        them. Product Operations & First-Observation Completion v1: added
+        so this method's own two real callers -- the `/camera-health` route
+        and `get_camera_configuration_edit` (Camera Configuration page) --
+        can finally agree with the Dashboard about a camera-connected-but
+        -detector-failed Camera Node Stream, instead of showing a stale
+        calm "stopped" state for the identical Stream at the identical
+        moment the Dashboard already, correctly, alarms on.
+        """
 
         bounded_limit = max(1, min(incident_limit, CAMERA_HEALTH_HISTORY_LIMIT))
         try:
@@ -15263,6 +15296,8 @@ class ProductRepository:
                 now=datetime.now(UTC),
                 open_activity_session_count=open_sessions,
                 latest_visit_at=latest_visit_at,
+                engine_terminally_unavailable=engine_terminally_unavailable,
+                engine_unavailable_message=engine_unavailable_message,
             )
             incidents = [
                 self._camera_health_incident_from_model(incident)
@@ -17740,6 +17775,8 @@ class ProductRepository:
         stream: StreamModel,
         *,
         start_at: datetime,
+        engine_terminally_unavailable: bool = False,
+        engine_unavailable_message: str | None = None,
     ) -> YardMapActivitySummary:
         policy = session.get(StreamMonitoringPolicyModel, stream.id)
         checkpoint = session.get(StreamRuntimeCheckpointModel, stream.id)
@@ -17815,6 +17852,8 @@ class ProductRepository:
             now=datetime.now(UTC),
             open_activity_session_count=1 if open_activity else 0,
             latest_visit_at=latest.activity_started_at if latest else None,
+            engine_terminally_unavailable=engine_terminally_unavailable,
+            engine_unavailable_message=engine_unavailable_message,
         )
         return YardMapActivitySummary(
             monitoring_desired_state=desired_state,
@@ -17834,7 +17873,22 @@ class ProductRepository:
         *,
         activity_range: str = "today",
         now: datetime | None = None,
+        engine_terminal_status_by_stream: dict[str, tuple[bool, str | None]] | None = None,
     ) -> YardMapResponse:
+        """`engine_terminal_status_by_stream`: the same API-layer-bridged
+        `ObservationEngineSessionManager` truth `dashboard_summary`'s own
+        `runtime_by_stream` parameter carries in (see
+        `_camera_health_summary_from_models`'s docstring) -- a per-Stream
+        `(engine_terminally_unavailable, engine_unavailable_message)`
+        tuple. Product Operations & First-Observation Completion v1: added
+        so the Yard Map agrees with the Dashboard about a camera-connected
+        -but-detector-failed Camera Node Stream instead of showing a stale
+        calm "stopped" state for the identical Stream at the identical
+        moment. Defaulting to `None`/empty preserves this method's own
+        prior behavior exactly for any caller that does not (yet) pass it.
+        """
+
+        engine_terminal_status_by_stream = engine_terminal_status_by_stream or {}
         current_time = _as_utc(now or datetime.now(UTC))
         start_at = self._yard_map_range_start(activity_range, current_time)
         with self.session_factory() as session:
@@ -17862,21 +17916,31 @@ class ProductRepository:
                 .order_by(CameraSourceModel.name.collate("NOCASE"), StreamModel.name.collate("NOCASE"), StreamModel.id)
                 .limit(50)
             ).all()
-            streams = [
-                YardMapStreamItem(
-                    id=stream.id,
-                    name=stream.name,
-                    source_name=source.name,
-                    is_live=stream.is_live,
-                    placement=(
-                        self._yard_map_stream_placement(stream_placements[stream.id])
-                        if stream.id in stream_placements
-                        else None
-                    ),
-                    activity=self._yard_map_activity_summary(session, stream, start_at=start_at),
+            streams = []
+            for stream, source in stream_rows:
+                engine_terminally_unavailable, engine_unavailable_message = (
+                    engine_terminal_status_by_stream.get(stream.id, (False, None))
                 )
-                for stream, source in stream_rows
-            ]
+                streams.append(
+                    YardMapStreamItem(
+                        id=stream.id,
+                        name=stream.name,
+                        source_name=source.name,
+                        is_live=stream.is_live,
+                        placement=(
+                            self._yard_map_stream_placement(stream_placements[stream.id])
+                            if stream.id in stream_placements
+                            else None
+                        ),
+                        activity=self._yard_map_activity_summary(
+                            session,
+                            stream,
+                            start_at=start_at,
+                            engine_terminally_unavailable=engine_terminally_unavailable,
+                            engine_unavailable_message=engine_unavailable_message,
+                        ),
+                    )
+                )
             active_stream_ids = {stream.id for stream, _source in stream_rows}
             zones = [
                 YardMapZoneItem(

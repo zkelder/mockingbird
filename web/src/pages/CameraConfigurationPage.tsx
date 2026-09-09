@@ -4,10 +4,25 @@ import type {
   CameraConfigurationEditResponse,
   CameraConfigurationImpactPreview,
   CameraConfigurationSecretAction,
+  CameraNodeHardwareHealthResponse,
   CameraNodePairResponse,
 } from "../api/types";
 import { StatusPill } from "../components/StatusPill";
-import { cameraHealthLabel, cameraHealthTone, formatDateTime, formatLabel } from "../utils";
+import { cameraHealthLabel, cameraHealthTone, formatBytes, formatDateTime, formatLabel } from "../utils";
+
+// Product Operations & First-Observation Completion v1: the same graduated
+// storage-tier labels ProductHealthPanel.tsx already uses for the Host's
+// own disk -- duplicated, not imported (each surface reads a different
+// underlying fact: the Host's own disk there, a Camera Node's own disk
+// here), matching this product's established cross-boundary convention
+// (see mockingbird_node/hardware_health.py's own identical duplication of
+// the Host's threshold values, for the same reason).
+const CAMERA_NODE_STORAGE_TIER_LABEL: Record<string, string> = {
+  healthy: "Healthy",
+  getting_low: "Getting low",
+  action_recommended: "Action recommended",
+  critical: "Critically low",
+};
 
 interface CameraConfigurationPageProps {
   streamId: string;
@@ -103,6 +118,12 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
   // docs/camera-node-reprovision-recovery-design.md.
   const [confirmReplacement, setConfirmReplacement] = useState(false);
   const [replacementReason, setReplacementReason] = useState("");
+  // Product Operations & First-Observation Completion v1: bounded, live,
+  // on-demand -- never polled automatically, matching "Check the picture"'s
+  // own established human-initiated pattern in CameraSetupPage.tsx.
+  const [hardwareHealth, setHardwareHealth] = useState<CameraNodeHardwareHealthResponse | null>(null);
+  const [isCheckingHardwareHealth, setIsCheckingHardwareHealth] = useState(false);
+  const [hardwareHealthError, setHardwareHealthError] = useState<string | null>(null);
 
   const canSave = Boolean(preview?.validation.can_apply && preview.changed_fields.length > 0);
   const secretFields = useMemo(
@@ -144,6 +165,20 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
   useEffect(() => {
     void load();
   }, [streamId]);
+
+  async function checkHardwareHealth() {
+    setIsCheckingHardwareHealth(true);
+    setHardwareHealthError(null);
+    try {
+      setHardwareHealth(await apiClient.getStreamCameraNodeHardwareHealth(streamId));
+    } catch (caught) {
+      setHardwareHealthError(
+        caught instanceof Error ? caught.message : "Could not check the Camera Node right now.",
+      );
+    } finally {
+      setIsCheckingHardwareHealth(false);
+    }
+  }
 
   // Repair's "Pair or repair Node" durably persists its credential the
   // instant the Node accepts it -- before this page ever gets a chance to
@@ -388,6 +423,65 @@ export function CameraConfigurationPage({ streamId, onCancel, onSaved }: CameraC
         <span className="meta-text">{configuration.health.message}</span>
         <button className="secondary-action" onClick={onCancel} type="button">Open Stream Detail</button>
       </section>
+
+      {configuration.provider_key === "camera_node" ? (
+        <section className="panel page-stack" aria-label="Camera Node hardware">
+          <div className="section-heading">
+            <div>
+              <h2>Camera Node hardware</h2>
+              <span className="meta-text">
+                A live, on-demand check of this Camera Node's own storage and hardware quality --
+                separate from the camera health above.
+              </span>
+            </div>
+          </div>
+          <button
+            className="secondary-action"
+            disabled={isCheckingHardwareHealth}
+            onClick={() => void checkHardwareHealth()}
+            type="button"
+          >
+            {isCheckingHardwareHealth ? "Checking…" : "Check Camera Node hardware"}
+          </button>
+          {hardwareHealthError ? <div className="error-panel">{hardwareHealthError}</div> : null}
+          {hardwareHealth && !hardwareHealthError ? (
+            !hardwareHealth.reachable ? (
+              <span className="meta-text">{hardwareHealth.message}</span>
+            ) : (
+              <div className="monitoring-continuity-facts">
+                {hardwareHealth.storage ? (
+                  <span>
+                    <strong>Storage</strong>{" "}
+                    {CAMERA_NODE_STORAGE_TIER_LABEL[hardwareHealth.storage.storage_health_tier] ??
+                      formatLabel(hardwareHealth.storage.storage_health_tier)}{" "}
+                    ({formatBytes(hardwareHealth.storage.free_bytes)} free of{" "}
+                    {formatBytes(hardwareHealth.storage.total_bytes)})
+                  </span>
+                ) : (
+                  <span className="meta-text">Storage: not available for this Node.</span>
+                )}
+                {hardwareHealth.hardware ? (
+                  <>
+                    <span>
+                      <strong>Power</strong>{" "}
+                      {hardwareHealth.hardware.undervoltage_active ? "Undervoltage detected" : "Normal"}
+                    </span>
+                    <span>
+                      <strong>Temperature</strong>{" "}
+                      {hardwareHealth.hardware.temperature_celsius !== null
+                        ? `${hardwareHealth.hardware.temperature_celsius.toFixed(1)}°C`
+                        : "Unknown"}
+                    </span>
+                  </>
+                ) : (
+                  <span className="meta-text">Hardware quality: not available for this Node.</span>
+                )}
+                <span className="meta-text">Checked {formatDateTime(hardwareHealth.checked_at)}</span>
+              </div>
+            )
+          ) : null}
+        </section>
+      ) : null}
 
       {history.length ? <section className="panel page-stack"><h2>Recent configuration history</h2>{history.map((changedFields, index) => <span className="meta-text" key={`${changedFields.join("-")}-${index}`}>{changedFields.join(", ") || "Configuration revision"}</span>)}</section> : null}
     </div>
