@@ -65,10 +65,15 @@ plainly instead of failing the whole install.
 That's it -- there is nothing to install first. The folder already contains
 everything MockingBird needs to run.
 
-To close MockingBird, close its browser tab. To fully stop it, use Task
-Manager to end the "pythonw.exe" process, or simply shut down/restart your
-computer -- MockingBird does not need to be manually stopped first, and your
-data is safe either way.
+To close MockingBird, close its browser tab -- MockingBird keeps running in
+the background either way, and your data is always safe. To fully stop it,
+open **Local Data** and choose **Shut Down MockingBird**: this is the
+preferred way, since it lets MockingBird close cleanly and avoids the
+"did not shut down cleanly last time" note on your next start (see "If
+something goes wrong," below). Ending the "pythonw.exe" process from Task
+Manager, or shutting down/restarting your computer, also works and never
+risks your data -- MockingBird just cannot tell those apart from a crash
+until you start it again.
 
 ## First-run setup
 
@@ -76,14 +81,17 @@ The first time you start MockingBird, it walks you through a short guided
 setup instead of showing an empty screen:
 
 1. **Welcome** -- a short explanation of what MockingBird does.
-2. **Storage** -- where MockingBird keeps its data on this computer, how
+2. **Account** -- create your sign-in as this MockingBird's first
+   Administrator. You're signed in immediately once this is done; there is
+   no separate sign-in step afterward.
+3. **Storage** -- where MockingBird keeps its data on this computer, how
    much space it is using, and whether that location is writable. MockingBird
    creates and manages this location itself; there is nothing to configure.
-3. **Add a camera** -- choose the kind of camera you have, enter what it
+4. **Add a camera** -- choose the kind of camera you have, enter what it
    asks for, test the connection, and mark the part of the picture that
    matters (a feeder, a birdbath, a driveway). See "Add a camera" below for
    what each camera type needs.
-4. **Start observing** -- once your camera is set up, you can start
+5. **Start observing** -- once your camera is set up, you can start
    observing right away, or finish setup and start later from Cameras.
 
 You can finish setup without adding a camera and add one later. This guided
@@ -97,10 +105,16 @@ camera type as available now, needing setup, or not supported yet -- it
 never shows a placeholder option as if it already worked.
 
 **MockingBird Camera Node** (a small companion program for a Raspberry Pi or
-similar device with a camera attached):
+similar device with a camera attached). Getting the Camera Node program onto
+that device is a more technical, one-time step than the rest of this guide --
+see the [Camera Node install guide](camera-node-install-guide.md) for
+exactly how, including installing it as a supervised background service that
+starts automatically and survives a reboot (the recommended way for a
+Camera Node that should keep running unattended, rather than starting it by
+hand each time). Once it's running:
 
-1. On that device, start the Camera Node program. It prints a short-lived
-   pairing code to that device's own screen.
+1. On that device, the Camera Node program prints a short-lived pairing code
+   to that device's own screen.
 2. In MockingBird, choose **MockingBird Camera Node**, enter that device's
    network address and the pairing code, then choose which camera view to
    use.
@@ -110,12 +124,6 @@ similar device with a camera attached):
 Your Camera Node's pairing stays local to your network; MockingBird never
 shows or asks for its underlying access credential directly -- pairing
 handles that for you.
-
-For a Camera Node that should keep running unattended and survive a
-reboot, see the more technical
-[Camera Node install guide](camera-node-install-guide.md) for installing
-it as a supervised background service instead of starting it by hand each
-time.
 
 **A network camera** -- MockingBird can discover many ONVIF-compatible
 cameras on your network and configure them automatically (host, port, and
@@ -147,6 +155,11 @@ failing in a confusing way) and links to where to get it.
 After choosing a live camera, drag on the preview to mark the area that
 matters (where birds actually land, for example) -- this helps MockingBird
 focus on what you care about.
+
+MockingBird does not read or change a camera's own brightness/exposure
+settings -- if the picture looks too dark or too bright, adjust that on the
+camera itself (or its own app), the same as you would for any other use of
+that camera.
 
 ## Start observing
 
@@ -186,16 +199,19 @@ ordinary, everyday activity is unaffected.
 Alongside identifying birds it sees, MockingBird can optionally identify
 birds it *hears*, using a well-known research project called BirdNET. This
 is not included in MockingBird by default -- it needs a microphone and a
-separate, one-time setup step for a developer/technical user (see
-[README.md](../README.md)), because the underlying BirdNET model is
-licensed for non-commercial use only, under different terms than
-MockingBird itself. MockingBird never installs or downloads it for you
-automatically, the same way it never installs `ffmpeg` for you (see "Add a
-camera," above) -- both stay separate, optional programs you obtain
-yourself. See [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) for
-exactly what is and is not included with MockingBird, and why. If it isn't
-set up, everything else works exactly the same; you simply don't get an
-automatic guess for a sound-only detection until you identify it yourself.
+separate, one-time setup step for a developer/technical user (a single
+`pip install` command, given in full in
+[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)), because the
+underlying BirdNET model is licensed for non-commercial use only, under
+different terms than MockingBird itself. MockingBird never installs or
+downloads it for you automatically, the same way it never installs
+`ffmpeg` for you (see "Add a camera," above) -- both stay separate,
+optional programs you obtain yourself. See
+[THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md) for the exact command,
+and for exactly what is and is not included with MockingBird, and why. If
+it isn't set up, everything else works exactly the same; you simply don't
+get an automatic guess for a sound-only detection until you identify it
+yourself.
 
 ## Use MockingBird on your phone
 
@@ -254,10 +270,13 @@ If something needs more than the Dashboard's own status area to describe,
 two additional tools exist alongside MockingBird -- normally only needed
 for a support conversation, not everyday use:
 
-- **MockingBird Doctor** (`python -m mockingbird doctor` from a terminal in
-  MockingBird's folder) runs one bounded check of your database, storage,
-  paired Camera Node, and detector/species-identification setup, and prints
-  a plain-language summary of anything that needs attention.
+- **MockingBird Doctor** runs one bounded check of your database, storage,
+  paired Camera Node, and detector/species-identification setup, and shows
+  a plain-language summary of anything that needs attention. Open
+  **Doctor** from the menu for the same report in your browser (an
+  Administrator sign-in), or run `python -m mockingbird doctor` from a
+  terminal in MockingBird's folder for the identical check outside a
+  browser -- useful when scripting or when MockingBird itself won't start.
 - **A support bundle** (`python -m mockingbird support-bundle`) writes one
   small file safe to share for support -- it never includes camera
   passwords, pairing secrets, or media, only Doctor's own check results, a
@@ -368,7 +387,9 @@ locked behind a special tool.
   re-pairing).
 - **MockingBird did not shut down cleanly last time**: the status area says
   so after a crash or a forced shutdown; your data is unaffected; nothing
-  further is needed.
+  further is needed. To avoid seeing this after a deliberate stop, use
+  **Shut Down MockingBird** in Local Data next time (see "Install and start
+  (Windows)," above) instead of ending the process or closing your computer.
 - **MockingBird won't start, or shows a message about its local database**:
   MockingBird checks its database before opening and refuses to start
   rather than risk existing data if that check fails -- it never silently

@@ -50,6 +50,7 @@ import os
 from pathlib import Path
 import re
 import runpy
+import shutil
 import subprocess
 import tomllib
 import zipfile
@@ -116,6 +117,13 @@ compute_frontend_source_fingerprint = _MODULE["compute_frontend_source_fingerpri
 verify_frontend_dist_freshness = _MODULE["verify_frontend_dist_freshness"]
 write_frontend_source_fingerprint = _MODULE["write_frontend_source_fingerprint"]
 FRONTEND_SOURCE_FINGERPRINT_FILENAME = _MODULE["FRONTEND_SOURCE_FINGERPRINT_FILENAME"]
+generate_release_sbom = _MODULE["generate_release_sbom"]
+write_release_sbom = _MODULE["write_release_sbom"]
+sign_release_artifact = _MODULE["sign_release_artifact"]
+SbomResult = _MODULE["SbomResult"]
+SigningResult = _MODULE["SigningResult"]
+ACCEPTED_BIOCLIP_MODEL_LICENSE = _MODULE["ACCEPTED_BIOCLIP_MODEL_LICENSE"]
+ACCEPTED_BIOCLIP_MODEL_VERSION = _MODULE["ACCEPTED_BIOCLIP_MODEL_VERSION"]
 
 
 def _fake_fresh_frontend_dist(*, dist_dir: Path, web_root: Path = WEB_ROOT) -> tuple[bool, str]:
@@ -2142,6 +2150,232 @@ def test_build_local_product_dirty_source_records_a_best_effort_commit(
     assert manifest["source_state"] == "dirty:unverified-working-tree"
     assert manifest["build_identity"]["git_commit"] == "d" * 40
     assert manifest["build_identity"]["source_clean"] is False
+
+
+# --- Final Release Hardening & Launch Readiness v1: SBOM / signing --------
+
+
+def test_generate_release_sbom_lists_every_installed_package_with_name_and_version(tmp_path: Path) -> None:
+    site_packages = tmp_path / "site-packages"
+    site_packages.mkdir()
+    _fake_wheel(tmp_path, package_name="fakepkg")
+    (site_packages / "fakepkg").mkdir()
+    (site_packages / "fakepkg-1.0.0.dist-info").mkdir()
+    (site_packages / "fakepkg-1.0.0.dist-info" / "METADATA").write_text(
+        "Metadata-Version: 2.4\nName: fakepkg\nVersion: 1.0.0\nLicense-Expression: MIT\n",
+        encoding="utf-8",
+    )
+
+    sbom = generate_release_sbom(site_packages=site_packages, app_version="1.0.0")
+
+    assert sbom["bomFormat"] == "CycloneDX"
+    assert sbom["specVersion"] == "1.5"
+    assert sbom["metadata"]["component"] == {"type": "application", "name": "mockingbird", "version": "1.0.0"}
+    fakepkg_components = [c for c in sbom["components"] if c["name"] == "fakepkg"]
+    assert len(fakepkg_components) == 1
+    assert fakepkg_components[0]["version"] == "1.0.0"
+    assert fakepkg_components[0]["licenses"] == [{"license": {"name": "MIT"}}]
+    assert fakepkg_components[0]["purl"] == "pkg:pypi/fakepkg@1.0.0"
+    # The embedded CPython runtime itself is always listed, even with zero
+    # installed packages.
+    runtime_components = [c for c in sbom["components"] if c["name"] == "cpython-embeddable"]
+    assert len(runtime_components) == 1
+
+
+def test_generate_release_sbom_falls_back_to_a_legacy_license_classifier(tmp_path: Path) -> None:
+    site_packages = tmp_path / "site-packages"
+    (site_packages / "legacypkg-2.0.dist-info").mkdir(parents=True)
+    (site_packages / "legacypkg-2.0.dist-info" / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: legacypkg\nVersion: 2.0\n"
+        "Classifier: License :: OSI Approved :: Apache Software License\n",
+        encoding="utf-8",
+    )
+
+    sbom = generate_release_sbom(site_packages=site_packages, app_version="1.0.0")
+
+    component = next(c for c in sbom["components"] if c["name"] == "legacypkg")
+    assert component["licenses"] == [{"license": {"name": "Apache Software License"}}]
+
+
+def test_generate_release_sbom_never_fails_on_a_malformed_metadata_file(tmp_path: Path) -> None:
+    site_packages = tmp_path / "site-packages"
+    dist_info = site_packages / "brokenpkg-1.0.dist-info"
+    dist_info.mkdir(parents=True)
+    # Not valid UTF-8 -- must not raise, and the package must still be listed.
+    (dist_info / "METADATA").write_bytes(b"\xff\xfe not utf-8 metadata")
+
+    sbom = generate_release_sbom(site_packages=site_packages, app_version="1.0.0")
+
+    names = [c["name"] for c in sbom["components"]]
+    assert "brokenpkg" in names
+
+
+def test_generate_release_sbom_includes_packaged_models_only_when_included(tmp_path: Path) -> None:
+    site_packages = tmp_path / "site-packages"
+    site_packages.mkdir()
+    included_model = ModelBundleProvenance(
+        included=True, model_key=ACCEPTED_MODEL_KEY, model_version="MDv5a.0.1-onnx-opset18",
+        decoder_key=ACCEPTED_MODEL_DECODER, license_name=ACCEPTED_MODEL_LICENSE,
+        source_model_sha256=ACCEPTED_SOURCE_MODEL_SHA256, onnx_model_sha256=ACCEPTED_ONNX_MODEL_SHA256,
+    )
+    included_bioclip = BioClipBundleProvenance(
+        included=True, model_weights_sha256=ACCEPTED_BIOCLIP_MODEL_WEIGHTS_SHA256,
+        model_config_sha256=ACCEPTED_BIOCLIP_MODEL_CONFIG_SHA256, labels_sha256=ACCEPTED_BIOCLIP_LABELS_SHA256,
+        embedding_cache_sha256=ACCEPTED_BIOCLIP_EMBEDDING_CACHE_SHA256,
+    )
+
+    sbom_with_models = generate_release_sbom(
+        site_packages=site_packages, app_version="1.0.0",
+        model_bundle_provenance=included_model, bioclip_bundle_provenance=included_bioclip,
+    )
+    sbom_without_models = generate_release_sbom(
+        site_packages=site_packages, app_version="1.0.0",
+        model_bundle_provenance=ModelBundleProvenance(included=False, reason="no_model_bundle_source_supplied"),
+        bioclip_bundle_provenance=BioClipBundleProvenance(included=False, reason="no_bioclip_bundle_source_supplied"),
+    )
+
+    names_with = {c["name"] for c in sbom_with_models["components"]}
+    names_without = {c["name"] for c in sbom_without_models["components"]}
+    assert {"megadetector-v5a-onnx", "bioclip-2"} <= names_with
+    assert not ({"megadetector-v5a-onnx", "bioclip-2"} & names_without)
+    model_component = next(c for c in sbom_with_models["components"] if c["name"] == "megadetector-v5a-onnx")
+    assert model_component["hashes"] == [{"alg": "SHA-256", "content": ACCEPTED_ONNX_MODEL_SHA256}]
+    assert model_component["licenses"] == [{"license": {"name": "MIT"}}]
+    bioclip_component = next(c for c in sbom_with_models["components"] if c["name"] == "bioclip-2")
+    assert bioclip_component["version"] == ACCEPTED_BIOCLIP_MODEL_VERSION
+    assert bioclip_component["licenses"] == [{"license": {"name": ACCEPTED_BIOCLIP_MODEL_LICENSE}}]
+
+
+def test_write_release_sbom_writes_a_real_file_and_returns_its_hash(tmp_path: Path) -> None:
+    sbom = generate_release_sbom(site_packages=tmp_path / "empty-site-packages", app_version="1.0.0")
+
+    sbom_path, result = write_release_sbom(output_dir=tmp_path, sbom=sbom)
+
+    assert sbom_path == tmp_path / "sbom.json"
+    assert sbom_path.is_file()
+    assert result.file_name == "sbom.json"
+    assert result.sha256 == hashlib.sha256(sbom_path.read_bytes()).hexdigest()
+    # Zero installed packages still yields the always-present CPython
+    # runtime component.
+    assert result.component_count == 1
+
+
+def test_write_manifest_records_sbom_and_default_unsigned_signing(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "bundle"
+    bundle_dir.mkdir()
+    zip_path = write_deterministic_zip(bundle_dir, tmp_path / "out.zip")
+    sbom_result = SbomResult(component_count=5, file_name="sbom.json", sha256="a" * 64)
+    (tmp_path / "sbom.json").write_text("{}", encoding="utf-8")
+
+    manifest_path, checksums_path = write_manifest(
+        output_dir=tmp_path, bundle_dir=bundle_dir, zip_path=zip_path,
+        source_state="git:deadbeef", sbom_result=sbom_result,
+    )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["sbom"] == {
+        "format": "CycloneDX", "spec_version": "1.5", "file": "sbom.json",
+        "component_count": 5, "sha256": "a" * 64,
+    }
+    # No `signing_result` was passed -- the honest, non-fatal default.
+    assert manifest["signing"] == {"requested": False, "key_id": None}
+    checksums_text = checksums_path.read_text(encoding="utf-8")
+    assert "sbom.json" in checksums_text
+
+
+def test_write_manifest_records_a_requested_signing_key(tmp_path: Path) -> None:
+    bundle_dir = tmp_path / "bundle"
+    bundle_dir.mkdir()
+    zip_path = write_deterministic_zip(bundle_dir, tmp_path / "out.zip")
+
+    manifest_path, _ = write_manifest(
+        output_dir=tmp_path, bundle_dir=bundle_dir, zip_path=zip_path,
+        source_state="git:deadbeef", signing_result=SigningResult(requested=True, key_id="ABCDEF1234567890"),
+    )
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["signing"] == {"requested": True, "key_id": "ABCDEF1234567890"}
+
+
+def test_sign_release_artifact_with_no_key_is_honest_and_non_fatal(tmp_path: Path) -> None:
+    result = sign_release_artifact(output_dir=tmp_path, key_id=None)
+
+    assert result == SigningResult(requested=False, key_id=None)
+    assert not (tmp_path / "SHA256SUMS.asc").exists()
+
+
+def test_sign_release_artifact_refuses_when_no_checksums_file_exists(tmp_path: Path) -> None:
+    with pytest.raises(LocalProductBuildError, match="SHA256SUMS"):
+        sign_release_artifact(output_dir=tmp_path, key_id="some-key")
+
+
+def test_sign_release_artifact_raises_on_a_real_gpg_failure_with_an_unknown_key(tmp_path: Path) -> None:
+    """A configured key that cannot actually sign must fail the whole build,
+    never silently ship an unsigned artifact while claiming a key was used."""
+
+    (tmp_path / "SHA256SUMS").write_text("deadbeef  fake.zip\n", encoding="utf-8")
+
+    with pytest.raises(LocalProductBuildError, match="signing failed"):
+        sign_release_artifact(output_dir=tmp_path, key_id="0xNONEXISTENTKEYID")
+
+
+@pytest.mark.skipif(shutil.which("gpg") is None, reason="requires a real local gpg binary")
+def test_sign_release_artifact_produces_a_real_verifiable_detached_signature(tmp_path: Path) -> None:
+    """A genuine, disposable-keyring end-to-end proof: generate a throwaway
+    GPG key (never a real project/owner key), sign a real SHA256SUMS with
+    it, and verify the produced signature really validates -- not merely
+    that gpg exited zero."""
+
+    gnupg_home = tmp_path / "gnupghome"
+    gnupg_home.mkdir(mode=0o700)
+    env = {**os.environ, "GNUPGHOME": str(gnupg_home)}
+    # Plain `--batch --gen-key` with an explicit RSA key spec (not
+    # `--quick-generate-key`'s "default" curve, which fails with "Unknown
+    # elliptic curve" against this environment's libgcrypt build) --
+    # `%no-protection` skips passphrase protection so no pinentry/TTY is
+    # needed in this headless test environment.
+    key_spec = (
+        "%no-protection\n"
+        "Key-Type: RSA\n"
+        "Key-Length: 2048\n"
+        "Name-Real: test-fixture-key\n"
+        "Name-Email: test-fixture@example.invalid\n"
+        "Expire-Date: 1d\n"
+        "%commit\n"
+    )
+    key_generation = subprocess.run(
+        ["gpg", "--batch", "--gen-key"],
+        input=key_spec, env=env, capture_output=True, text=True, check=False,
+    )
+    assert key_generation.returncode == 0, key_generation.stderr
+
+    output_dir = tmp_path / "release"
+    output_dir.mkdir()
+    (output_dir / "SHA256SUMS").write_text("deadbeef  fake.zip\n", encoding="utf-8")
+
+    # sign_release_artifact itself always invokes the ambient `gpg` on PATH;
+    # point it at this disposable keyring via the environment rather than a
+    # parameter this function deliberately does not expose (the real
+    # operator flow uses their own default, non-test keyring).
+    original_gnupghome = os.environ.get("GNUPGHOME")
+    os.environ["GNUPGHOME"] = str(gnupg_home)
+    try:
+        result = sign_release_artifact(output_dir=output_dir, key_id="test-fixture@example.invalid")
+    finally:
+        if original_gnupghome is None:
+            os.environ.pop("GNUPGHOME", None)
+        else:
+            os.environ["GNUPGHOME"] = original_gnupghome
+
+    assert result.requested is True
+    signature_path = output_dir / "SHA256SUMS.asc"
+    assert signature_path.is_file()
+
+    verification = subprocess.run(
+        ["gpg", "--verify", str(signature_path), str(output_dir / "SHA256SUMS")],
+        env=env, capture_output=True, text=True, check=False,
+    )
+    assert verification.returncode == 0, verification.stderr
 
 
 # --- MIT Source License Adoption & Lane P Mechanical Closure v1 ------------

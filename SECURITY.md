@@ -9,10 +9,10 @@ problems quickly and fix them responsibly.
 
 ## Supported versions
 
-MockingBird is pre-1.0 software. Until a stable 1.0 release, only the
-latest commit on the `main` branch (and the most recent tagged release, if
-one exists) is supported with security fixes. There is no long-term-support
-branch yet.
+MockingBird does not yet have a track record of tagged releases. Until one
+exists, only the latest commit on the `main` branch (and the most recent
+tagged release, if one exists) is supported with security fixes. There is
+no long-term-support branch yet.
 
 ## Reporting a vulnerability
 
@@ -56,10 +56,22 @@ when the issue is in their code rather than in how MockingBird uses it.
 - Denial-of-service reports against a purely local, single-user desktop
   process (see "Product boundaries" -- MockingBird is not designed as an
   internet-facing service).
-- Missing security hardening that MockingBird already documents as not yet
-  implemented (see `docs/roadmap.md`, "Security / release questions") --
-  we would rather you tell us those are still missing than treat a
-  duplicate report as new.
+- Security-relevant behavior MockingBird already discloses as a known,
+  deliberate current posture rather than an oversight -- we would rather
+  you know these are already tracked than treat a duplicate report as new:
+  - MockingBird serves plain HTTP by default and does not add TLS itself;
+    reaching it from another device is only supported over a private
+    network (Tailscale/WireGuard or similar), never a router port forward
+    -- see "Use MockingBird away from home" in
+    [docs/using-mockingbird.md](docs/using-mockingbird.md).
+  - Camera/ONVIF/RTSP credentials are stored only in MockingBird's own
+    local database on your machine (never on a MockingBird-operated
+    server), but are not encrypted at rest there today -- protect the
+    device MockingBird runs on the same way you would any device holding
+    those credentials.
+  - Privacy Zones exclude marked areas from triggering evidence capture;
+    they are not a guarantee that every retained frame has that area's
+    pixels redacted.
 
 ## What to expect
 

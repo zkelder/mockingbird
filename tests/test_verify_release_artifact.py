@@ -36,11 +36,18 @@ def _write_valid_artifact(
     source_clean: bool | None = True,
     source_state: str = "git:" + "a" * 40,
     build_identity_present: bool = True,
+    sbom_contents: bytes | None = b'{"bomFormat": "CycloneDX", "components": []}',
 ) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     zip_path = output_dir / "MockingBird-windows-x64.zip"
     zip_path.write_bytes(zip_contents)
     zip_sha256 = _sha256_bytes(zip_contents)
+
+    sbom_sha256 = None
+    if sbom_contents is not None:
+        sbom_path = output_dir / "sbom.json"
+        sbom_path.write_bytes(sbom_contents)
+        sbom_sha256 = _sha256_bytes(sbom_contents)
 
     build_identity = (
         {
@@ -70,6 +77,12 @@ def _write_valid_artifact(
         "bioclip_runtime_requirements": [],
         "bioclip_model_bundle": {"included": False, "reason": "not_evaluated"},
         "build_identity": build_identity,
+        "sbom": (
+            {"format": "CycloneDX", "spec_version": "1.5", "file": "sbom.json", "component_count": 0, "sha256": sbom_sha256}
+            if sbom_sha256 is not None
+            else {"format": "CycloneDX", "spec_version": "1.5", "file": "", "component_count": 0, "sha256": ""}
+        ),
+        "signing": {"requested": False, "key_id": None},
         "bundle_file_count": 3,
         "bundle_total_bytes": 12345,
         "zip_sha256": zip_sha256,
@@ -77,9 +90,12 @@ def _write_valid_artifact(
     manifest_path = output_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
+    checksums_lines = f"{zip_sha256}  {zip_path.name}\n{_sha256_bytes(manifest_path.read_bytes())}  {manifest_path.name}\n"
+    if sbom_sha256 is not None:
+        checksums_lines += f"{sbom_sha256}  sbom.json\n"
     checksums_path = output_dir / "SHA256SUMS"
     checksums_path.write_text(
-        f"{zip_sha256}  {zip_path.name}\n{_sha256_bytes(manifest_path.read_bytes())}  {manifest_path.name}\n",
+        checksums_lines,
         encoding="utf-8",
     )
 
@@ -149,6 +165,26 @@ def test_checksums_entry_mismatch_is_rejected(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ReleaseArtifactVerificationError, match="does not match its actual contents"):
+        verify_release_artifact(tmp_path)
+
+
+def test_tampered_sbom_bytes_are_rejected(tmp_path: Path) -> None:
+    """SHA256SUMS' own entry-by-entry check must cover every listed file --
+    not only the always-present zip/manifest pair -- so a tampered sbom.json
+    is caught the same way a tampered zip already is."""
+
+    _write_valid_artifact(tmp_path)
+    (tmp_path / "sbom.json").write_bytes(b"tampered sbom contents")
+
+    with pytest.raises(ReleaseArtifactVerificationError, match="does not match its actual contents"):
+        verify_release_artifact(tmp_path)
+
+
+def test_sbom_listed_in_checksums_but_missing_from_disk_is_rejected(tmp_path: Path) -> None:
+    _write_valid_artifact(tmp_path)
+    (tmp_path / "sbom.json").unlink()
+
+    with pytest.raises(ReleaseArtifactVerificationError, match="does not exist"):
         verify_release_artifact(tmp_path)
 
 

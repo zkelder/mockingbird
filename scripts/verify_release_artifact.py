@@ -48,6 +48,8 @@ REQUIRED_MANIFEST_FIELDS = (
     "bioclip_runtime_requirements",
     "bioclip_model_bundle",
     "build_identity",
+    "sbom",
+    "signing",
     "bundle_file_count",
     "bundle_total_bytes",
     "zip_sha256",
@@ -122,13 +124,26 @@ def verify_release_artifact(output_dir: Path, *, allow_dirty_source: bool = Fals
 
     checksums = _parse_checksums(checksums_path)
     for path in (zip_path, manifest_path):
-        recorded = checksums.get(path.name)
-        if recorded is None:
+        if path.name not in checksums:
             raise ReleaseArtifactVerificationError(f"SHA256SUMS has no entry for {path.name}")
-        actual = _sha256(path)
+
+    # Verify *every* entry SHA256SUMS actually lists against the real file on
+    # disk -- not only the two always-present ones above. A release that
+    # lists a further file (sbom.json, once generate_release_sbom/
+    # write_manifest add one) must have that entry verified too, matching
+    # this function's own module docstring ("every SHA256SUMS entry matches
+    # its actual file's bytes"), never silently skipped merely because this
+    # loop predates that file existing.
+    for name, recorded in checksums.items():
+        candidate = output_dir / name
+        if not candidate.is_file():
+            raise ReleaseArtifactVerificationError(
+                f"SHA256SUMS lists {name!r}, which does not exist at {candidate}"
+            )
+        actual = _sha256(candidate)
         if recorded != actual:
             raise ReleaseArtifactVerificationError(
-                f"SHA256SUMS entry for {path.name} does not match its actual contents "
+                f"SHA256SUMS entry for {name} does not match its actual contents "
                 f"(recorded {recorded}, actual {actual})"
             )
 
@@ -152,10 +167,18 @@ def verify_release_artifact(output_dir: Path, *, allow_dirty_source: bool = Fals
                 "(expected a 'git:<hash>' prefix)"
             )
 
+    # SHA256SUMS.asc presence is reported, never cryptographically verified
+    # here: doing that would require assuming or importing some public key,
+    # which this generic verifier -- run in CI and by any downstream
+    # consumer, never only the owner -- cannot legitimately do. Real
+    # signature verification is a downstream/owner action against the
+    # actually-published public key (see "Release-artifact signing" in
+    # docs/local-product-packaging-design.md).
+    signature_note = ", signed (SHA256SUMS.asc present)" if (output_dir / "SHA256SUMS.asc").is_file() else ", unsigned"
     print(
         f"OK: {zip_path.name} ({manifest['bundle_file_count']} files, "
         f"{manifest['bundle_total_bytes']:,} bytes), version {manifest['version']}, "
-        f"source {manifest['source_state']}"
+        f"source {manifest['source_state']}{signature_note}"
     )
 
 

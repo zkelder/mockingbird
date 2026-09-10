@@ -111,5 +111,6 @@ jobs:
           path: |
             dist/manifest.json
             dist/SHA256SUMS
+            dist/sbom.json
           retention-days: 14
           if-no-files-found: error

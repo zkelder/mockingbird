@@ -14,7 +14,20 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mockingbird"
-version = "0.1.0"
+# Final Release Hardening & Launch Readiness v1: bumped from the "0.1.0"
+# dev-scaffolding default that had never been revisited since the project's
+# earliest commits. "0.1.0" under ordinary SemVer convention communicates
+# "early, unstable, anything may change" -- the opposite of this repository's
+# own current, evidence-based state (feature freeze, Gate A PASS/Lane R
+# CLOSED, Lane P CLOSED) and the one public MockingBird release this
+# milestone hardens. `1.0.0` is the smallest coherent change that gives the
+# release artifact an intentional public version rather than a leftover
+# placeholder; it is a version-number choice only, not a new versioning
+# architecture -- see `tests/test_version_provenance.py` for the existing
+# single-source-of-truth contract this value feeds (kept in sync by hand with
+# `mockingbird.__init__._DEV_CHECKOUT_FALLBACK_VERSION`,
+# `mockingbird_node.__version__`, and `web/package.json`).
+version = "1.0.0"
 description = "Local-first outdoor video intelligence API."
 readme = "README.md"
 requires-python = ">=3.11"

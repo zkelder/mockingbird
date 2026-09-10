@@ -495,6 +495,82 @@ BioCLIP inference logic, the crop resolver, or same-frame evidence at all.
   restart or a redeploy by construction rather than by remembering to
   reinject anything.
 
+## Release-artifact SBOM and signing (Final Release Hardening & Launch Readiness v1)
+
+Roadmap's "Public release readiness" list names "release artifacts/
+versioning/checksums/SBOM/signing where practical" as a real, previously
+-deferred item. Checksums (`SHA256SUMS`) and provenance (`manifest.json`)
+already existed; this milestone adds the remaining two, each only as far as
+this project's existing toolchain makes practical and maintainable --
+no new build-time dependency, no PKI/signing-infrastructure project.
+
+**SBOM.** `generate_release_sbom`/`write_release_sbom` produce a real,
+minimal CycloneDX 1.5 `sbom.json` next to `manifest.json`/`SHA256SUMS`,
+hand-built with the standard library `email` parser reading every installed
+package's own real `*.dist-info/METADATA` (name, version, and license --
+preferring the modern PEP 639 `License-Expression`, falling back to a
+`License ::` classifier, then the legacy free-text `License` field) -- the
+same source `importlib.metadata` itself resolves from, never a
+requirements-list guess. Also lists the embedded CPython runtime and,
+only when a build actually packaged one, the two redistributed model
+artifacts (MDv5a ONNX, BioCLIP 2) with their already-accepted SHA-256 and
+license. Unconditional and never optional, unlike the model bundles
+themselves: every official build gets one. `write_manifest` records a
+`sbom` field (format/file/component count/hash) and `SHA256SUMS` gains a
+third entry for it; `verify_release_artifact.py`'s own checksum loop was
+generalized to verify *every* entry it lists, not only the historical
+zip/manifest pair, so a tampered or missing `sbom.json` is caught the same
+way a tampered zip already was.
+
+**Signing.** `sign_release_artifact` produces a detached, ASCII-armored GPG
+signature over `SHA256SUMS` (`SHA256SUMS.asc`) -- the standard "sign the
+checksums file, not each large binary" open-source convention, so one small
+signature covers the zip, manifest, and sbom together. Never invents,
+guesses, or defaults to an ambient keyring key: a key id must be passed
+explicitly (`build_local_product.py --sign-key-id <id>`, or the
+`MOCKINGBIRD_RELEASE_SIGNING_KEY_ID` environment variable). No key
+configured -- the default for every build to date, including this
+milestone's own release candidate -- is an honestly-reported, non-fatal
+state recorded in `manifest.json`'s new `signing` field
+(`{"requested": false, "key_id": null}`); a *configured* key that fails to
+sign raises `LocalProductBuildError` and fails the whole build, the same
+"the operator explicitly asked for this" contract every other non-optional
+step in this script already follows. `manifest.json`'s `signing` field
+records build-time *intent* only (whether a key was configured and which
+one), resolved before signing is attempted -- it cannot self-report signing
+*outcome* over its own already-finalized bytes without becoming circular.
+The outcome is instead proven externally: a real `SHA256SUMS.asc` existing
+alongside `SHA256SUMS` and verifying against it.
+`verify_release_artifact.py` only reports whether `SHA256SUMS.asc` is
+present (informational); it deliberately never attempts cryptographic
+verification itself, since that would require assuming or importing some
+public key, and this verifier runs generically in CI and for any downstream
+consumer, never only the owner.
+
+**Owner-facing signing procedure (not performed by this milestone -- no
+real key exists yet).** Generating or holding a release signing key is an
+owner decision this repository's own automation must not make for itself.
+When the owner is ready to sign real public releases:
+
+1. Generate a real GPG keypair offline and keep the private key secure
+   (a hardware key or an offline machine is stronger than a laptop
+   keyring, but either is a real improvement over no signing at all):
+   `gpg --full-generate-key` (RSA 4096 or ed25519).
+2. Publish the **public** key and its fingerprint somewhere a downloader
+   can independently verify belongs to the project (the GitHub release
+   notes, a dedicated page linked from `README.md`, and/or a public
+   keyserver) -- never only inside the artifact it is meant to authenticate.
+3. Build with `--sign-key-id <fingerprint>` (or set
+   `MOCKINGBIRD_RELEASE_SIGNING_KEY_ID`); the build fails loudly if signing
+   does not succeed, so a release is never silently shipped half-signed.
+4. Publish `SHA256SUMS.asc` alongside `SHA256SUMS`/the zip. A downloader
+   verifies with `gpg --verify SHA256SUMS.asc SHA256SUMS` after importing
+   the published public key, then checks the zip's own hash against the
+   now-trusted `SHA256SUMS`.
+5. Keep the private key offline between releases; a compromised signing
+   key is worse than no signing key, since it lets a real attacker's
+   artifact appear authentic.
+
 ## Files allowed
 
 - `src/mockingbird/storage/models.py`, `storage/database.py` (schema 29);
@@ -526,6 +602,17 @@ BioCLIP inference logic, the crop resolver, or same-frame evidence at all.
   independent BioCLIP model cache tier; deployment-time runtime
   verification; no packaging/deploy mechanism invented, the existing one
   reused a second time);
+- Final Release Hardening & Launch Readiness v1 additionally touched
+  `pyproject.toml`/`src/mockingbird/__init__.py`/
+  `src/mockingbird_node/__init__.py`/`web/package.json`/
+  `web/package-lock.json` (version bump only -- see
+  `tests/test_version_provenance.py`'s existing single-source-of-truth
+  contract, unchanged in shape), `scripts/build_local_product.py` (SBOM
+  generation, optional release signing -- see "Release-artifact SBOM and
+  signing," above), `scripts/verify_release_artifact.py` (generalized
+  checksum-entry verification, new required manifest fields), and
+  `.github/workflows/ci.yml` (uploads `sbom.json` from the structural
+  packaging-smoke build too);
 - tests, and this document plus the linked normal-user guide.
 
 ## Non-goals

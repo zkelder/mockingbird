@@ -157,8 +157,10 @@ import argparse
 import csv
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from email.parser import Parser as EmailParser
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import secrets
@@ -167,6 +169,7 @@ import subprocess
 import sys
 import tempfile
 from typing import Callable, Sequence
+import uuid
 from urllib.request import urlopen
 import zipfile
 
@@ -465,6 +468,13 @@ ACCEPTED_BIOCLIP_MODEL_CONFIG_SHA256 = "1bf947e96e943fe50efd5c3e26c37f843a2fa3c3
 # -cache validation, not this build).
 ACCEPTED_BIOCLIP_LABELS_SHA256 = "b90cea20b5d4ac992fdfc170bcca4b346de0e23ee8d25e78900d4800ae7fa442"
 ACCEPTED_BIOCLIP_EMBEDDING_CACHE_SHA256 = "0260d5bb59e9878f7789018dbc56e85513abcd799801d010041f375f6913b23f"
+# The same doctrine-recorded provenance record's own license/version facts
+# (docs/model-selection.md's "Supported local BioCLIP 2 artifact"), used only
+# by `generate_release_sbom` below -- kept as named constants rather than
+# inline literals for the same "never invent, always cite the accepted
+# record" reason every `ACCEPTED_*` constant in this file already follows.
+ACCEPTED_BIOCLIP_MODEL_LICENSE = "MIT"
+ACCEPTED_BIOCLIP_MODEL_VERSION = "1.0.0"
 
 # Same local-artifact convention as `DEFAULT_MODEL_BUNDLE_SOURCE` above
 # (never a repository-tracked path); this is the actual existing developer
@@ -685,6 +695,8 @@ class LocalProductArtifact:
     manifest_path: Path
     checksums_path: Path
     build_identity: BuildIdentity
+    sbom_path: Path
+    signing_result: SigningResult
 
 
 @dataclass(frozen=True)
@@ -766,6 +778,54 @@ class NativeRuntimeVerification:
             "verified_dlls": list(self.verified_dlls),
             "dll_directories": list(self.dll_directories),
         }
+
+
+@dataclass(frozen=True)
+class SbomResult:
+    """What `generate_release_sbom`/`write_release_sbom` actually produced --
+    recorded in `manifest.json` like `ModelBundleProvenance`. Unlike the
+    model bundles, an SBOM is never optional: every official build gets
+    one, generated purely from what is actually installed (never invented),
+    so `component_count` is always positive for a real bundle."""
+
+    component_count: int
+    file_name: str
+    sha256: str
+
+    def as_manifest_dict(self) -> dict[str, object]:
+        return {
+            "format": "CycloneDX",
+            "spec_version": "1.5",
+            "file": self.file_name,
+            "component_count": self.component_count,
+            "sha256": self.sha256,
+        }
+
+
+@dataclass(frozen=True)
+class SigningResult:
+    """What `sign_release_artifact` actually did -- recorded in
+    `manifest.json` like `ModelBundleProvenance`/`NativeRuntimeVerification`.
+
+    Records *intent* only (whether a signing key was configured for this
+    build and which one), resolved and written before the signature itself
+    is ever attempted -- `manifest.json` cannot self-report the *outcome*
+    of signing over its own already-finalized bytes without becoming
+    circular. The outcome is instead proven externally: a real
+    `SHA256SUMS.asc` detached signature file existing alongside
+    `SHA256SUMS` and verifying against it (see `sign_release_artifact`'s
+    own docstring). `requested=False` (no key configured) is this build's
+    default, honestly-reported, non-fatal state -- an unsigned release
+    artifact is an explicitly supported product state today, exactly like
+    a build with no local model bundle, never silently invented and never
+    a build failure.
+    """
+
+    requested: bool
+    key_id: str | None = None
+
+    def as_manifest_dict(self) -> dict[str, object]:
+        return {"requested": self.requested, "key_id": self.key_id}
 
 
 @dataclass(frozen=True)
@@ -1516,6 +1576,225 @@ def package_license(*, bundle_dir: Path, license_source: Path = LICENSE_SOURCE) 
     return destination
 
 
+def _dist_info_metadata_fields(metadata_text: str) -> dict[str, object]:
+    """Parse a `*.dist-info/METADATA` file's RFC 822-style headers into the
+    handful of fields `generate_release_sbom` needs, using only the
+    standard library `email` parser -- the same format `importlib.metadata`
+    itself reads `METADATA` with, never a hand-rolled regex over an ad hoc
+    subset of the spec.
+    """
+
+    message = EmailParser().parsestr(metadata_text)
+    return {
+        "name": message.get("Name", ""),
+        "version": message.get("Version", ""),
+        "license_expression": message.get("License-Expression", ""),
+        "license": message.get("License", ""),
+        "classifiers": message.get_all("Classifier") or [],
+    }
+
+
+def _component_license(fields: dict[str, object]) -> str | None:
+    """The most specific real license fact a package's own `METADATA`
+    states, preferring the modern PEP 639 `License-Expression` (an SPDX
+    expression, exactly what this project's own `pyproject.toml` now uses)
+    over a `License ::` classifier over the free-text legacy `License`
+    field -- `None`, never a guess, when a package states none of them."""
+
+    expression = fields.get("license_expression")
+    if isinstance(expression, str) and expression.strip():
+        return expression.strip()
+    classifiers = fields.get("classifiers")
+    if isinstance(classifiers, list):
+        for classifier in classifiers:
+            if isinstance(classifier, str) and classifier.startswith("License :: "):
+                return classifier.rsplit("::", 1)[-1].strip()
+    legacy = fields.get("license")
+    if isinstance(legacy, str) and legacy.strip() and legacy.strip().upper() != "UNKNOWN":
+        return legacy.strip()
+    return None
+
+
+def generate_release_sbom(
+    *,
+    site_packages: Path,
+    app_version: str,
+    embedded_python_version: str = EMBED_PYTHON_VERSION,
+    model_bundle_provenance: ModelBundleProvenance | None = None,
+    bioclip_bundle_provenance: BioClipBundleProvenance | None = None,
+) -> dict[str, object]:
+    """Build a minimal, real CycloneDX 1.5 software bill of materials for
+    the assembled bundle: every Python package actually installed into
+    `site_packages` (name/version/license, read from that package's own
+    real `*.dist-info/METADATA` -- the same source `importlib.metadata`
+    itself resolves from, never a requirements-list guess), the embedded
+    CPython runtime, and -- only when a build actually packaged one -- the
+    two redistributed model artifacts with their accepted SHA-256 and
+    license.
+
+    Hand-built with the standard library only, no new build-time
+    dependency: a minimal CycloneDX component only requires `type`/`name`,
+    which this always supplies; every other field is either read directly
+    from a package's own real metadata or one of this project's own
+    already-accepted, doctrine-recorded `ACCEPTED_*` constants -- never
+    invented. Never raises for one unreadable/malformed `METADATA` file --
+    that package is still listed (by its dist-info directory name) with
+    whatever fields could be read, rather than failing the whole release
+    build over one dependency's metadata quirk.
+    """
+
+    components: list[dict[str, object]] = []
+    for dist_info_dir in sorted(site_packages.glob("*.dist-info")):
+        metadata_path = dist_info_dir / "METADATA"
+        fields: dict[str, object] = {}
+        if metadata_path.is_file():
+            try:
+                fields = _dist_info_metadata_fields(
+                    metadata_path.read_text(encoding="utf-8", errors="replace")
+                )
+            except (OSError, UnicodeDecodeError):
+                fields = {}
+        name = fields.get("name") or _normalized_distribution_name(dist_info_dir.name) or dist_info_dir.name
+        version = fields.get("version") or None
+        component: dict[str, object] = {"type": "library", "name": name}
+        if isinstance(version, str) and version:
+            component["version"] = version
+            component["purl"] = f"pkg:pypi/{name}@{version}"
+            component["bom-ref"] = f"pkg:pypi/{name}@{version}"
+        else:
+            component["bom-ref"] = f"pkg:pypi/{name}"
+        license_text = _component_license(fields)
+        if license_text:
+            component["licenses"] = [{"license": {"name": license_text}}]
+        components.append(component)
+
+    components.append(
+        {
+            "type": "framework",
+            "name": "cpython-embeddable",
+            "version": embedded_python_version,
+            "bom-ref": f"cpython-embeddable@{embedded_python_version}",
+        }
+    )
+
+    if model_bundle_provenance is not None and model_bundle_provenance.included:
+        component = {
+            "type": "machine-learning-model",
+            "name": "megadetector-v5a-onnx",
+            "version": model_bundle_provenance.model_version or "unknown",
+            "bom-ref": "megadetector-v5a-onnx",
+            "licenses": [{"license": {"name": model_bundle_provenance.license_name or "unknown"}}],
+        }
+        if model_bundle_provenance.onnx_model_sha256:
+            component["hashes"] = [{"alg": "SHA-256", "content": model_bundle_provenance.onnx_model_sha256}]
+        components.append(component)
+
+    if bioclip_bundle_provenance is not None and bioclip_bundle_provenance.included:
+        component = {
+            "type": "machine-learning-model",
+            "name": "bioclip-2",
+            "version": ACCEPTED_BIOCLIP_MODEL_VERSION,
+            "bom-ref": "bioclip-2",
+            "licenses": [{"license": {"name": ACCEPTED_BIOCLIP_MODEL_LICENSE}}],
+        }
+        if bioclip_bundle_provenance.model_weights_sha256:
+            component["hashes"] = [{"alg": "SHA-256", "content": bioclip_bundle_provenance.model_weights_sha256}]
+        components.append(component)
+
+    return {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "serialNumber": f"urn:uuid:{uuid.uuid4()}",
+        "version": 1,
+        "metadata": {
+            "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "component": {"type": "application", "name": "mockingbird", "version": app_version},
+        },
+        "components": components,
+    }
+
+
+def write_release_sbom(*, output_dir: Path, sbom: dict[str, object]) -> tuple[Path, SbomResult]:
+    """Write `sbom` (from `generate_release_sbom`) to `<output_dir>/sbom.json`,
+    the same "next to manifest.json/SHA256SUMS" convention every other
+    release-provenance file in this script already follows."""
+
+    sbom_path = output_dir / "sbom.json"
+    sbom_path.write_text(json.dumps(sbom, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    components = sbom.get("components", [])
+    return sbom_path, SbomResult(
+        component_count=len(components) if isinstance(components, list) else 0,
+        file_name=sbom_path.name,
+        sha256=_sha256(sbom_path),
+    )
+
+
+def sign_release_artifact(*, output_dir: Path, key_id: str | None, gpg_executable: str = "gpg") -> SigningResult:
+    """Produce a detached, ASCII-armored GPG signature over `SHA256SUMS`
+    (`SHA256SUMS.asc`) -- the same "sign the checksums file, not each
+    large binary individually" convention widely used across the
+    open-source release ecosystem, so one small signature covers every
+    file `SHA256SUMS` itself lists (the zip, `manifest.json`, and
+    `sbom.json`).
+
+    `key_id` is never invented, guessed, or defaulted to whatever happens
+    to exist in an ambient keyring: it must be passed explicitly (CLI
+    `--sign-key-id`, or the `MOCKINGBIRD_RELEASE_SIGNING_KEY_ID`
+    environment variable). No key configured (`key_id=None`) is this
+    function's default, honestly-reported, non-fatal state -- an unsigned
+    release artifact is an explicitly supported product state today,
+    exactly like a build with no local model bundle, never silently
+    invented and never a build failure. Once a real key *is* named,
+    signing is treated as a requirement the operator explicitly asked for:
+    a `gpg` failure then raises `LocalProductBuildError` -- failing the
+    whole release build, never a warning -- rather than silently shipping
+    an artifact that looks signed-capable but is not.
+
+    Generating or holding a real release signing key is an owner decision
+    this function cannot and must not make on its own -- see "Release
+    -artifact signing" in docs/local-product-packaging-design.md for the
+    owner-facing key-generation/custody/publication/verification procedure
+    this machinery assumes.
+    """
+
+    if not key_id:
+        return SigningResult(requested=False)
+
+    checksums_path = output_dir / "SHA256SUMS"
+    if not checksums_path.is_file():
+        raise LocalProductBuildError(
+            f"Cannot sign a release artifact with no {checksums_path} to sign -- "
+            "run write_manifest first."
+        )
+    signature_path = output_dir / "SHA256SUMS.asc"
+    if signature_path.exists():
+        signature_path.unlink()
+    completed = subprocess.run(
+        [
+            gpg_executable,
+            "--batch",
+            "--yes",
+            "--local-user",
+            key_id,
+            "--detach-sign",
+            "--armor",
+            "--output",
+            str(signature_path),
+            str(checksums_path),
+        ],
+        cwd=output_dir,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0 or not signature_path.is_file():
+        raise LocalProductBuildError(
+            f"Release-artifact signing failed (gpg exit {completed.returncode}) with key "
+            f"{key_id!r}: {completed.stderr.strip()}"
+        )
+    return SigningResult(requested=True, key_id=key_id)
+
+
 def _iter_installed_dll_entries(site_packages: Path) -> list[tuple[Path, int | None]]:
     """Every `.dll` file actually declared by an installed package's own
     `RECORD`, resolved to an absolute path under `site_packages`, paired with
@@ -2019,6 +2298,8 @@ def write_manifest(
     bioclip_bundle_provenance: BioClipBundleProvenance | None = None,
     bioclip_runtime_included: bool | None = None,
     build_identity: BuildIdentity | None = None,
+    sbom_result: SbomResult | None = None,
+    signing_result: SigningResult | None = None,
 ) -> tuple[Path, Path]:
     version = _source_version()
     files = _iter_files_sorted(bundle_dir)
@@ -2066,6 +2347,16 @@ def write_manifest(
         # invoking `write_manifest` directly (existing tests exercising it
         # in isolation) can omit it.
         "build_identity": build_identity.as_manifest_dict() if build_identity is not None else None,
+        "sbom": (
+            sbom_result.as_manifest_dict()
+            if sbom_result is not None
+            else SbomResult(component_count=0, file_name="", sha256="").as_manifest_dict()
+        ),
+        "signing": (
+            signing_result.as_manifest_dict()
+            if signing_result is not None
+            else SigningResult(requested=False).as_manifest_dict()
+        ),
         "bundle_file_count": len(files),
         "bundle_total_bytes": sum(path.stat().st_size for path in files),
         "zip_sha256": _sha256(zip_path),
@@ -2073,11 +2364,18 @@ def write_manifest(
     manifest_path = output_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
+    # Every file a real release actually ships gets a checksum entry --
+    # the sbom (when generated) alongside the zip/manifest already covered
+    # here, so `verify_release_artifact.py`'s own generalized entry-by-entry
+    # check (see that script) has something real to verify for it too.
+    checksummed_paths = [zip_path, manifest_path]
+    if sbom_result is not None and sbom_result.file_name:
+        sbom_path = output_dir / sbom_result.file_name
+        if sbom_path.is_file():
+            checksummed_paths.append(sbom_path)
     checksums_path = output_dir / "SHA256SUMS"
     checksums_path.write_text(
-        "".join(
-            f"{_sha256(path)}  {path.name}\n" for path in (zip_path, manifest_path) if path.exists()
-        ),
+        "".join(f"{_sha256(path)}  {path.name}\n" for path in checksummed_paths if path.exists()),
         encoding="utf-8",
     )
     return manifest_path, checksums_path
@@ -2107,9 +2405,10 @@ def build_local_product(
     bioclip_wheel_cache_dir: Path | None = DEFAULT_BIOCLIP_WHEEL_CACHE_DIR,
     allow_dirty_source: bool = False,
     allow_stale_frontend: bool = False,
+    sign_key_id: str | None = None,
 ) -> LocalProductArtifact:
     """Run the complete build: frontend -> clean source snapshot -> wheel ->
-    Windows bundle -> zip.
+    Windows bundle -> zip -> SBOM -> manifest/checksums -> optional signing.
 
     By default (`allow_dirty_source=False`, the only mode a real release
     should ever use) the wheel is built from a `git archive` snapshot of
@@ -2205,6 +2504,15 @@ def build_local_product(
     )
 
     zip_path = write_deterministic_zip(bundle_dir, output_dir / "MockingBird-windows-x64.zip")
+
+    sbom = generate_release_sbom(
+        site_packages=bundle_dir / "python" / "site-packages",
+        app_version=build_identity.app_version,
+        model_bundle_provenance=model_provenance,
+        bioclip_bundle_provenance=bioclip_provenance,
+    )
+    sbom_path, sbom_result = write_release_sbom(output_dir=output_dir, sbom=sbom)
+
     manifest_path, checksums_path = write_manifest(
         output_dir=output_dir,
         bundle_dir=bundle_dir,
@@ -2217,13 +2525,28 @@ def build_local_product(
         bioclip_bundle_provenance=bioclip_provenance,
         bioclip_runtime_included=include_bioclip_runtime,
         build_identity=build_identity,
+        sbom_result=sbom_result,
+        signing_result=SigningResult(requested=sign_key_id is not None, key_id=sign_key_id),
     )
+
+    # Signing runs last, over the now-final SHA256SUMS (which itself already
+    # covers the zip, manifest.json, and sbom.json) -- see
+    # `sign_release_artifact`'s own docstring for why signature *outcome*
+    # cannot be self-reported inside manifest.json without becoming
+    # circular. No key configured (the default) is a honestly-reported,
+    # non-fatal no-op; a configured key that fails to sign raises and fails
+    # this whole build, matching every other "the operator explicitly asked
+    # for this" contract in this script.
+    signing_result = sign_release_artifact(output_dir=output_dir, key_id=sign_key_id)
+
     return LocalProductArtifact(
         bundle_dir=bundle_dir,
         zip_path=zip_path,
         manifest_path=manifest_path,
         checksums_path=checksums_path,
         build_identity=build_identity,
+        sbom_path=sbom_path,
+        signing_result=signing_result,
     )
 
 
@@ -2322,6 +2645,18 @@ def main() -> None:
             "install (via BIOCLIP_PYTORCH_CPU_INDEX_URL) if this directory does not exist."
         ),
     )
+    parser.add_argument(
+        "--sign-key-id",
+        default=os.environ.get("MOCKINGBIRD_RELEASE_SIGNING_KEY_ID"),
+        help=(
+            "GPG key id/fingerprint to sign SHA256SUMS with (produces SHA256SUMS.asc); "
+            "defaults to the MOCKINGBIRD_RELEASE_SIGNING_KEY_ID environment variable. "
+            "Omitted by default: an unsigned artifact is an honestly-reported, supported "
+            "product state, never invented -- see 'Release-artifact signing' in "
+            "docs/local-product-packaging-design.md for the owner-facing key procedure. "
+            "A key that fails to sign fails this whole build, never silently."
+        ),
+    )
     arguments = parser.parse_args()
     artifact = build_local_product(
         arguments.output_dir,
@@ -2335,8 +2670,14 @@ def main() -> None:
         bioclip_wheel_cache_dir=arguments.bioclip_wheel_cache_dir,
         allow_dirty_source=arguments.allow_dirty_source,
         allow_stale_frontend=arguments.allow_stale_frontend,
+        sign_key_id=arguments.sign_key_id,
     )
     print(artifact.zip_path)
+    print(artifact.sbom_path)
+    if artifact.signing_result.requested:
+        print(f"Signed with key {artifact.signing_result.key_id}: {artifact.zip_path.parent / 'SHA256SUMS.asc'}")
+    else:
+        print("Unsigned (no --sign-key-id/MOCKINGBIRD_RELEASE_SIGNING_KEY_ID configured).")
 
 
 if __name__ == "__main__":

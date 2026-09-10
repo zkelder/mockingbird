@@ -111,18 +111,6 @@ Automatic cleanup is off by default; it performs a fresh bounded local policy
 pass only when enabled, never accepts browser-supplied media lists, and shares
 the local maintenance window with backup and restore work.
 
-## Active development checkout
-
-Active MockingBird development is WSL-native at
-`/home/zkelder/projects/mockingbird-active`. Cross-install restore completed
-successfully. Windows DirectShow uses a locally configured Windows
-`ffmpeg.exe`; native controls and a daylight 3840 x 2160 capture were verified
-from WSL. Driver-managed exposure values are not readable or persisted by
-MockingBird, so local exposure calibration remains field setup rather than an
-application feature. Representative field-truth collection is next. Installing
-Playwright Chromium in WSL remains an optional local environment task.
-
-
 ## Start the local app
 
 Requires Python 3.11+ and Node.js/npm for the initial frontend build.

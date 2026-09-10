@@ -22,22 +22,29 @@ architectural requirement.
 
 ## 1. Obtain the artifact
 
-On a development machine with this repository checked out:
+If you downloaded MockingBird as a release, the Camera Node artifact
+(`camera-node-artifact/`, containing the wheel, `requirements.txt`,
+`camera-node.env.example`, `manifest.json`, and `SHA256SUMS`) is provided
+as its own labeled download alongside the main `MockingBird-windows-x64.zip`
+-- unpack it and skip to copying it to the Node device, below.
+`manifest.json`'s `provenance.git_commit` records exactly which commit
+produced it, matching the main download's own build.
+
+To build it yourself instead -- from a specific commit, or if you're
+working from a repository checkout rather than a release download:
 
 ```sh
 python3 scripts/build_camera_node_artifact.py dist/camera-node-artifact
 ```
 
-This produces `dist/camera-node-artifact/` containing the wheel,
-`requirements.txt`, `camera-node.env.example`, `manifest.json`, and
-`SHA256SUMS`. `manifest.json`'s `provenance.git_commit` records exactly
-which commit produced it. Copy that whole directory to the Node device
-through any transport you trust -- `scp`, a USB drive, a shared folder.
-There is no remote-fetch or `curl | sh` path; the installer only ever acts
-on files already present on the device.
+This produces the identical `dist/camera-node-artifact/` shape described
+above. Either way, copy that whole directory to the Node device through any
+transport you trust -- `scp`, a USB drive, a shared folder. There is no
+remote-fetch or `curl | sh` path; the installer only ever acts on files
+already present on the device.
 
 ```sh
-scp -r dist/camera-node-artifact/ your-node-device:/home/you/camera-node-artifact
+scp -r camera-node-artifact/ your-node-device:/home/you/camera-node-artifact
 ```
 
 ## 2. Install
