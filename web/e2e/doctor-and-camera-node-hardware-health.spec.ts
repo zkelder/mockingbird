@@ -23,7 +23,11 @@ test("Doctor shows real check results and a working recovery link", async ({ pag
   const rows = page.locator(".doctor-check-row");
   await expect(rows).toHaveCount(await rows.count());
   expect(await rows.count()).toBeGreaterThan(10);
-  await expect(page.getByText("Database", { exact: true }).first()).toBeVisible();
+  // Whole-Product Polish v1: "Database" used to label two different check
+  // rows (connectivity and schema) identically, reading like a rendering
+  // glitch -- now distinguished; see doctor.py's _interpret_database_* pair.
+  await expect(page.getByText("Database connection", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Database schema", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Storage", { exact: true }).first()).toBeVisible();
 
   // Refresh re-fetches without erroring.

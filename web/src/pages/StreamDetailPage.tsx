@@ -40,6 +40,11 @@ import { StreamPanel } from "../components/StreamPanel";
 import { VisitEvidenceSequence } from "../components/VisitEvidenceSequence";
 import { formatDateTime, formatLabel } from "../utils";
 
+// This Stream's compact "Review Queue" side panel is a glance-only preview
+// (see the "queue-mini" boxes below) next to a button to the real, full
+// Review Queue page -- not itself meant to be the complete list.
+const STREAM_REVIEW_PREVIEW_COUNT = 5;
+
 interface StreamDetailPageProps {
   streamId: string;
   reviewQueue: ReviewQueueItem[];
@@ -617,6 +622,14 @@ export function StreamDetailPage({
   const [detail, setDetail] = useState<StreamDetailState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  // Whole-Product Polish v1: "Stream events" below used to render every
+  // fetched event (up to 50) inline, unpaginated -- a real, reproduced
+  // usability defect (this one Stream's own page grew past 20,000px tall
+  // in hands-on testing). All 50 still load in one request as before; only
+  // how many render up front changes, mirroring the "Show inactive saved
+  // cameras"/"Show demo and test data" reveal-more convention
+  // LiveCameraOverview already uses for the identical problem shape.
+  const [visibleEventCount, setVisibleEventCount] = useState(10);
   const [candidatePacks, setCandidatePacks] = useState<SpeciesCandidatePack[]>([]);
   const [candidatePackSelection, setCandidatePackSelection] =
     useState<StreamSpeciesCandidatePackSelection | null>(null);
@@ -954,6 +967,7 @@ export function StreamDetailPage({
       setLiveViewReloadToken(0);
       setLiveViewError(null);
       setLiveMediaSize(null);
+      setVisibleEventCount(10);
       setShowLiveZones(true);
       setLiveSession(null);
       setLiveSessionError(null);
@@ -4461,7 +4475,7 @@ export function StreamDetailPage({
                   moving in the wind.
                 </span>
                 <span>
-                  Neither zone redacts or removes footage — a photo saved because of activity
+                  Neither zone redacts or removes saved photos — a photo saved because of activity
                   elsewhere in view can still show this area.
                 </span>
               </div>
@@ -4485,12 +4499,26 @@ export function StreamDetailPage({
                     <span>Needs review. Bird Log updates after correction.</span>
                   </div>
                 ) : null}
-                {streamReviewItems.map((item) => (
+                {/* Whole-Product Polish v1: this compact preview widget (see
+                    "queue-mini" -- distinct from the full Review Queue page
+                    the button below opens) used to render every matching
+                    item with no cap; a Stream with a large backlog (171 in
+                    hands-on testing) made this one small side panel taller
+                    than the rest of the page combined. A short, honestly
+                    labeled preview plus the existing "Open Review Queue"
+                    escape hatch serves the same "do I have work here"
+                    glance without the runaway length. */}
+                {streamReviewItems.slice(0, STREAM_REVIEW_PREVIEW_COUNT).map((item) => (
                   <div className="queue-mini" key={item.id}>
                     <strong>{item.title}</strong>
                     <span>{item.reason}</span>
                   </div>
                 ))}
+                {streamReviewItems.length > STREAM_REVIEW_PREVIEW_COUNT ? (
+                  <span className="meta-text">
+                    +{streamReviewItems.length - STREAM_REVIEW_PREVIEW_COUNT} more waiting
+                  </span>
+                ) : null}
                 <button className="secondary-action" onClick={() => onOpenReview()}>
                   Open Review Queue
                 </button>
@@ -4725,11 +4753,14 @@ export function StreamDetailPage({
         <div className="section-heading">
           <div>
             <h2>Stream events</h2>
-            <span className="meta-text">Newest activity for this Stream</span>
+            <span className="meta-text">
+              Newest activity for this Stream
+              {detail.events.length > 0 ? ` · showing ${Math.min(visibleEventCount, detail.events.length)} of ${detail.events.length}` : ""}
+            </span>
           </div>
         </div>
         <div className="event-list">
-          {detail.events.map((event) => {
+          {detail.events.slice(0, visibleEventCount).map((event) => {
             const visits = detail.visitsByEvent[event.id] ?? [];
             const primaryZone =
               detail.zones.find((zone) => zone.id === event.primary_zone_id) ?? null;
@@ -4774,6 +4805,17 @@ export function StreamDetailPage({
             );
           })}
         </div>
+        {detail.events.length > visibleEventCount ? (
+          <div className="panel-actions">
+            <button
+              className="secondary-action"
+              onClick={() => setVisibleEventCount((current) => current + 20)}
+              type="button"
+            >
+              Show more events ({detail.events.length - visibleEventCount} more)
+            </button>
+          </div>
+        ) : null}
       </section>
     </div>
   );

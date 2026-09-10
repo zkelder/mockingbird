@@ -214,7 +214,10 @@ export function FeatureComparisonPage({
     return (
       <div className="page feature-comparison-page">
         <PageHeader eyebrow="Compare" headingRef={headingRef} title="Compare Features" />
-        <EmptyState description={error ?? "Something went wrong."} title="Something went wrong" />
+        <EmptyState
+          description={error ?? "Could not load Feature comparison right now. Try refreshing the page."}
+          title="Could not load Feature comparison"
+        />
       </div>
     );
   }

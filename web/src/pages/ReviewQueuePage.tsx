@@ -342,7 +342,7 @@ function reviewQueueTargetId(item: ReviewQueueItem): string {
 }
 
 function reviewItemZoneName(item: ReviewQueueItem): string {
-  return item.zone_name ?? item.primary_zone_name ?? item.zone_id ?? item.primary_zone_id ?? "No zone";
+  return item.zone_name ?? item.primary_zone_name ?? item.zone_id ?? item.primary_zone_id ?? "No Zone";
 }
 
 function reviewItemZoneLabel(item: ReviewQueueItem): string {
@@ -2667,11 +2667,11 @@ export function ReviewQueuePage({
             Show legacy and test activity
           </label>
           <details className="review-diagnostic-details">
-            <summary>Developer evidence filters</summary>
+            <summary>Advanced evidence filters</summary>
             <ReviewFilterTabs
               activeFilter={reviewFilter}
               filters={reviewFilters}
-              label="Developer review evidence groups"
+              label="Advanced review evidence groups"
               onChange={setReviewFilter}
             />
             <label className="review-triage-order">
@@ -3772,7 +3772,7 @@ function ProductReviewCard({
       )}
       <div className="review-product-card-copy">
         <div className="queue-card-heading">
-          <div>
+          <div className="queue-card-heading-text">
             <strong>{productReviewTitle(item, taxonomyLabels)}</strong>
             <span className="meta-text">
               {capturedAt ? formatDateTime(capturedAt) : "Capture time unavailable"} · {location}
@@ -3830,7 +3830,7 @@ function ProductReviewCard({
           ) : null}
         </div>
         <details className="review-diagnostic-details">
-          <summary>Developer evidence</summary>
+          <summary>Advanced evidence</summary>
           <div className="review-diagnostic-grid">
             <span>Queue item: {item.id}</span>
             <span>Track generation: {item.track_generation_id ?? "not recorded"}</span>

@@ -119,6 +119,33 @@ def test_product_health_counts_cameras_needing_attention(
     assert "camera" in body["message"].lower()
 
 
+def test_product_health_singular_camera_message_is_grammatical(
+    isolated_repository: ProductRepository,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression test for a real subject-verb agreement bug: the singular
+    # branch (exactly one camera needing attention) previously read "1
+    # camera need attention." -- the noun pluralized correctly but the verb
+    # never did. Only reachable when the count is exactly 1, so the
+    # multi-camera test above (which asserts only a loose substring) never
+    # caught it.
+    monkeypatch.setattr(
+        isolated_repository,
+        "dashboard_summary",
+        lambda *_args, **_kwargs: _fake_dashboard_summary(
+            camera_states=[CameraHealthState.healthy, CameraHealthState.camera_unavailable],
+            configured=2,
+            monitored=1,
+        ),
+    )
+
+    response = _get("/api/product/health")
+
+    body = response.json()
+    assert body["cameras"]["needs_attention_count"] == 1
+    assert body["message"] == "1 camera needs attention."
+
+
 def test_product_health_reports_storage_not_writable(
     isolated_repository: ProductRepository,
     monkeypatch: pytest.MonkeyPatch,

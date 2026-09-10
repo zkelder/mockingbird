@@ -59,7 +59,7 @@ export function SignInPage({ onSignedIn }: SignInPageProps) {
           <span className="brand-mark">MB</span>
           <div>
             <strong>MockingBird</strong>
-            <span>{installationName ?? "Outdoor video intelligence"}</span>
+            <span>{installationName ?? "Local wildlife observatory"}</span>
           </div>
         </div>
         <h1>Sign in</h1>

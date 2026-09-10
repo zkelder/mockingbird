@@ -71,6 +71,7 @@ interface DashboardPageProps {
   onOpenFeatureStory: (featureId: string) => void;
   onOpenTaxonStory: (label: string) => void;
   onOpenAlertsInbox: () => void;
+  onOpenLocalData: () => void;
 }
 
 const DASHBOARD_REFRESH_INTERVAL_MS = 30_000;
@@ -229,6 +230,7 @@ export function DashboardPage({
   onOpenFeatureStory,
   onOpenTaxonStory,
   onOpenAlertsInbox,
+  onOpenLocalData,
 }: DashboardPageProps) {
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [report, setReport] = useState<PlaceActivityReportResponse | null>(null);
@@ -891,7 +893,7 @@ export function DashboardPage({
           instead of leading the page, matching the milestone's priority
           order (product-doctrine.md: this is a nature observatory, not an
           operations dashboard). */}
-      <ProductHealthPanel storageSummary={storageSummary} />
+      <ProductHealthPanel onOpenLocalData={onOpenLocalData} storageSummary={storageSummary} />
 
       <section className="panel dashboard-recent-activity">
         <div className="section-heading">

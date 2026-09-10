@@ -613,7 +613,7 @@ def _interpret_database_connectivity(gathered: dict[str, Any], *, database_path:
     if not gathered.get("database_exists"):
         return DoctorCheckResult(
             code=DoctorCheckCode.DATABASE_CONNECTIVITY,
-            component="Database",
+            component="Database connection",
             status=DoctorStatus.PASS,
             summary="No database has been created yet.",
             detail="This is expected before MockingBird's first launch.",
@@ -624,7 +624,7 @@ def _interpret_database_connectivity(gathered: dict[str, Any], *, database_path:
     if integrity_check != "ok":
         return DoctorCheckResult(
             code=DoctorCheckCode.DATABASE_CONNECTIVITY,
-            component="Database",
+            component="Database connection",
             status=DoctorStatus.FAIL,
             summary="The database failed a basic integrity check.",
             detail=f"SQLite integrity check reported: {integrity_check}",
@@ -638,7 +638,7 @@ def _interpret_database_connectivity(gathered: dict[str, Any], *, database_path:
         context["foreign_key_violation_tables"] = gathered.get("foreign_key_violation_tables", [])
         return DoctorCheckResult(
             code=DoctorCheckCode.DATABASE_CONNECTIVITY,
-            component="Database",
+            component="Database connection",
             status=DoctorStatus.WARN,
             summary="The database is usable, but a background reference check found a stale internal link.",
             detail=(
@@ -650,7 +650,7 @@ def _interpret_database_connectivity(gathered: dict[str, Any], *, database_path:
         )
     return DoctorCheckResult(
         code=DoctorCheckCode.DATABASE_CONNECTIVITY,
-        component="Database",
+        component="Database connection",
         status=DoctorStatus.PASS,
         summary="Database is reachable and passed a basic integrity check.",
         diagnostic_context=context,
@@ -668,7 +668,7 @@ def _interpret_database_schema(gathered: dict[str, Any]) -> DoctorCheckResult:
     if version is None or not database_schema_version_is_compatible(version):
         return DoctorCheckResult(
             code=DoctorCheckCode.DATABASE_SCHEMA,
-            component="Database",
+            component="Database schema",
             status=DoctorStatus.FAIL,
             summary="The database schema is not compatible with this version of MockingBird.",
             detail=(
@@ -683,7 +683,7 @@ def _interpret_database_schema(gathered: dict[str, Any]) -> DoctorCheckResult:
     if version < CURRENT_DATABASE_SCHEMA_VERSION:
         return DoctorCheckResult(
             code=DoctorCheckCode.DATABASE_SCHEMA,
-            component="Database",
+            component="Database schema",
             status=DoctorStatus.WARN,
             summary="The database schema is older than this MockingBird version expects.",
             detail="It will be migrated automatically the next time the application starts normally.",
@@ -693,7 +693,7 @@ def _interpret_database_schema(gathered: dict[str, Any]) -> DoctorCheckResult:
         )
     return DoctorCheckResult(
         code=DoctorCheckCode.DATABASE_SCHEMA,
-        component="Database",
+        component="Database schema",
         status=DoctorStatus.PASS,
         summary="Database schema is current.",
         diagnostic_context=context,
@@ -1548,7 +1548,10 @@ def _interpret_camera_node_transport(gathered: dict[str, Any], *, now: datetime)
             status=DoctorStatus.PASS,
             summary="No paired Camera Node has remote transport configured.",
             recoverability=DoctorRecoverability.INFORMATIONAL,
-            detail="Remote / Intermittent-WAN Transport Foundation v1 is available but not in use.",
+            detail=(
+                "An optional feature that lets a Camera Node catch up automatically after a "
+                "lost connection is available, but not currently in use."
+            ),
         )
     context: dict[str, Any] = {"sources": []}
     worst_status = DoctorStatus.PASS
@@ -2329,7 +2332,7 @@ def run_doctor(
 
     connectivity_check, connectivity_gathered = _execute_check_returning_gathered(
         code=DoctorCheckCode.DATABASE_CONNECTIVITY,
-        component="Database",
+        component="Database connection",
         gather=lambda: _gather_database_connectivity(environment.db_url),
         interpret=lambda gathered: _interpret_database_connectivity(
             gathered, database_path=sqlite_database_path(environment.db_url)
@@ -2351,7 +2354,7 @@ def run_doctor(
         checks.append(
             _execute_check(
                 code=DoctorCheckCode.DATABASE_SCHEMA,
-                component="Database",
+                component="Database schema",
                 gather=lambda: _gather_database_schema(engine),
                 interpret=_interpret_database_schema,
                 timeout_seconds=timeout_seconds,
@@ -2362,7 +2365,7 @@ def run_doctor(
         checks.append(
             _execute_check(
                 code=DoctorCheckCode.DATABASE_SCHEMA,
-                component="Database",
+                component="Database schema",
                 gather=None,
                 interpret=_interpret_database_schema,
                 skip_reason="Skipped because the database is unavailable.",

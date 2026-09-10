@@ -104,17 +104,17 @@ const initialData: AppData = {
 // ROUTE_POLICY); this is UX calm, not the authorization boundary itself.
 // Omitted `minRole` means every signed-in role (Viewer floor) sees it.
 const productNavItems: Array<{ page: Page; label: string; minRole?: UserRole }> = [
-  { page: "dashboard", label: "Dashboard" },
+  { page: "dashboard", label: "Today" },
   { page: "streams", label: "Cameras" },
   { page: "import", label: "Import Media" },
-  { page: "review", label: "Review", minRole: "reviewer" },
+  { page: "review", label: "Review Queue", minRole: "reviewer" },
   { page: "bird-log", label: "Bird Log" },
   { page: "place-activity-report", label: "Place Report" },
   { page: "place-story", label: "Place Story" },
-  { page: "activity-library", label: "Activity" },
+  { page: "activity-library", label: "Activity Library" },
   { page: "analytics", label: "Insights" },
   { page: "ecological-destinations", label: "Ecological Destinations" },
-  { page: "settings", label: "Settings" },
+  { page: "settings", label: "Local Data" },
   { page: "users", label: "Users", minRole: "administrator" },
   // Product Operations & First-Observation Completion v1: Doctor's own
   // report includes local filesystem paths and Camera Node structural
@@ -161,7 +161,6 @@ const advancedNavItems: Array<{ page: Page; label: string }> = [
   { page: "species-suggestions", label: "Species Suggestions" },
   { page: "classifier-readiness", label: "Classifier Readiness" },
   { page: "classifier-manifest", label: "Classifier Manifest" },
-  { page: "settings", label: "Local Data" },
 ];
 
 const advancedPages = new Set<Page>([
@@ -721,6 +720,7 @@ export default function App() {
           onOpenFeatureStory={openFeatureStory}
           onOpenTaxonStory={openTaxonStory}
           onOpenAlertsInbox={() => setPage("alerts-inbox")}
+          onOpenLocalData={() => setPage("settings")}
         />
       );
     }
@@ -960,6 +960,7 @@ export default function App() {
       return (
         <VisitDetailPage
           visitId={selectedVisitId}
+          isDeveloperMode={isDeveloperMode}
           onOpenStream={openStream}
           onOpenEvent={openEvent}
           onOpenVisit={openVisit}
@@ -1234,7 +1235,7 @@ export default function App() {
           <span className="brand-mark">MB</span>
           <div>
             <strong>MockingBird</strong>
-            <span>Outdoor video intelligence</span>
+            <span>Local wildlife observatory</span>
           </div>
         </div>
         <AlertsControl onAction={openAlertAction} onOpenInbox={() => setPage("alerts-inbox")} />

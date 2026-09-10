@@ -3077,6 +3077,18 @@ a.secondary-action {
   gap: 8px;
 }
 
+/* The title (<strong>) and the capture-time/location <span> beside it are
+   both inline by default; on this card's wide text column (see
+   .review-product-card's grid above) they had enough room to flow onto one
+   line with no separator, reading as one run-together sentence ("...not
+   confirmedAug 2, 2:31 PM..."). Force them onto their own lines instead of
+   relying on incidental word-wrap. */
+.queue-card-heading-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .review-product-facts {
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   color: #4f5f55;

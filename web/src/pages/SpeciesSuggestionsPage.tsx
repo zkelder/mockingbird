@@ -516,7 +516,7 @@ export function SpeciesSuggestionsPage({
                 </span>
               </div>
               {editingCandidatePack ? (
-                <span className="meta-text">{editingCandidatePack.status}</span>
+                <span className="meta-text">{formatLabel(editingCandidatePack.status)}</span>
               ) : null}
             </div>
             <div className="species-suggestion-form-grid">

@@ -599,7 +599,7 @@ export function BirdLogPage({
           description="Confirmed wildlife from current reviewed corrections. Suggestions and unresolved activity stay in review context."
           actions={
             <>
-              <button className="secondary-action" onClick={() => navigatePath("/analytics")} type="button">Wildlife Insights</button>
+              <button className="secondary-action" onClick={() => navigatePath("/analytics")} type="button">Insights</button>
               <button className="secondary-action" onClick={onOpenReview} type="button">Review Queue</button>
               <button className="secondary-action" onClick={onOpenCollections} type="button">Collections</button>
               <button className="secondary-action" onClick={onOpenPlaceActivityReport} type="button">Full Place Report</button>

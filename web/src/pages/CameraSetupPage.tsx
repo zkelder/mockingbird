@@ -12,7 +12,7 @@ import type {
   ZoneActivitySensitivity,
   ZoneType,
 } from "../api/types";
-import { withTimeout } from "../utils";
+import { formatLabel, withTimeout } from "../utils";
 
 interface CameraSetupPageProps {
   onComplete: (streamId: string) => void;
@@ -635,7 +635,7 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
                 <span className="meta-text">{nodeSetup.display_name}</span>
                 <label>Camera view<select onChange={(event) => selectNodeCamera(event.target.value)} value={selectedNodeCameraId}>
                   <option value="">Choose a camera</option>
-                  {nodeSetup.cameras.map((camera) => <option disabled={camera.status !== "available" || !camera.snapshot_supported} key={camera.camera_id} value={camera.camera_id}>{camera.display_name} — {camera.status.replace(/_/g, " ")}</option>)}
+                  {nodeSetup.cameras.map((camera) => <option disabled={camera.status !== "available" || !camera.snapshot_supported} key={camera.camera_id} value={camera.camera_id}>{camera.display_name} — {formatLabel(camera.status)}</option>)}
                 </select></label>
                 <button className="secondary-action" disabled={!selectedNodeCameraId || isLoadingNodePreview} onClick={() => void previewNodeCamera()} type="button">{isLoadingNodePreview ? "Loading picture…" : "Check the picture"}</button>
                 {nodePreviewUrl ? <img alt="Camera Node picture" className="camera-node-preview" src={nodePreviewUrl} /> : null}
@@ -684,7 +684,7 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
         <label>Camera name<input onChange={(event) => { setCameraName(event.target.value); cameraNameIsDefault.current = false; }} onBlur={() => saveNodeDraft({ camera_name: cameraName })} value={cameraName} /></label>
         <label>Name this view<input onChange={(event) => { setStreamName(event.target.value); streamNameIsDefault.current = false; }} onBlur={() => saveNodeDraft({ stream_name: streamName })} placeholder={streamNameIsDefault.current ? `${cameraName} view` : ""} value={streamName} /></label>
         <button className="secondary-action" disabled={!selected || isValidating} onClick={() => void validateSetup()} type="button">{isValidating ? "Checking…" : "Check camera settings"}</button>
-        {validation ? <div className="notice-panel"><strong>{validation.status.replace(/_/g, " ")}</strong><span>{validation.message}</span></div> : null}
+        {validation ? <div className="notice-panel"><strong>{formatLabel(validation.status)}</strong><span>{validation.message}</span></div> : null}
         {setupPreviewSupported ? <>
           <button className="secondary-action" disabled={isLoadingSetupPreview} onClick={() => void previewSetupFrame()} type="button">{isLoadingSetupPreview ? "Loading picture…" : "Check the picture"}</button>
           <span className="meta-text">This picture is one explicit, transient check. It is not saved, does not create activity, and monitoring stays off until you choose otherwise.</span>

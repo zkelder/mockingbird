@@ -48,7 +48,7 @@ export function AnalyticsPage({
   onOpenBirdLog,
 }: AnalyticsPageProps) {
   if (!analytics) {
-    return <div className="panel">Analytics are unavailable.</div>;
+    return <div className="panel">Insights are unavailable.</div>;
   }
 
   const speciesEntries = sortedEntries(analytics.species_counts);
@@ -70,7 +70,7 @@ export function AnalyticsPage({
     <div className="page-stack">
       <PageHeader
         eyebrow="Local summaries"
-        title="Analytics"
+        title="Insights"
         description="Summaries come from reviewable outdoor activity and corrected labels."
         actions={
           <>

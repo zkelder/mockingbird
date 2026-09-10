@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiClient } from "../api/client";
+import { formatLabel } from "../utils";
 import type {
   ActivityLibraryFilters,
   CameraSource,
@@ -187,7 +188,7 @@ export function ZoneInsightsPanel({
         {summary.zone_count === 0 ? <EmptyState title="No applicable Zones match this range" description="Choose a wider range or inspect captured activity in the Activity Library." /> : <>
           <div className="zone-insights-sort"><label>Sort comparison<select onChange={(event) => setSort(event.target.value as SortKey)} value={sort}><option value="automatic">Best supported rate, then Visits</option><option value="confirmed">Confirmed Visits</option><option value="rate">Visits per monitored hour</option><option value="dwell">Total dwell time</option><option value="richness">Species richness</option><option value="review">Review coverage</option></select></label></div>
           <section className="zone-insights-table" aria-label="Zone comparison">{sortedZones.map((zone) => <article className="zone-insights-row" key={zone.zone_id}>
-            <div className="zone-insights-zone"><strong>{zone.zone_name}</strong><span>{zone.zone_type} · {zone.stream_name}</span><span className={"zone-insights-quality quality-" + zone.metrics.data_quality_status}>{qualityLabel(zone.metrics.data_quality_status)}</span></div>
+            <div className="zone-insights-zone"><strong>{zone.zone_name}</strong><span>{formatLabel(zone.zone_type)} · {zone.stream_name}</span><span className={"zone-insights-quality quality-" + zone.metrics.data_quality_status}>{qualityLabel(zone.metrics.data_quality_status)}</span></div>
             <div><span>Healthy time</span><strong>{hours(zone.metrics.healthy_monitored_hours)}</strong></div>
             <div><span>Confirmed Visits</span><button className="text-action" onClick={() => onOpenActivityLibrary(zone.confirmed_activity_drilldown.filters)} type="button">{zone.metrics.confirmed_bird_visit_count}</button></div>
             <div><span>Visits / hour</span><strong>{rate(zone.metrics.confirmed_bird_visits_per_monitored_hour)}</strong></div>

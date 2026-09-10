@@ -153,7 +153,10 @@ export function FeatureStoryPage({
     return (
       <div className="page feature-story-page">
         <PageHeader eyebrow="Remember" headingRef={headingRef} title="Not available" />
-        <EmptyState description={detailError ?? "Something went wrong."} title="Something went wrong" />
+        <EmptyState
+          description={detailError ?? "Could not load this Feature's story right now. Try refreshing the page."}
+          title="Could not load this Feature"
+        />
       </div>
     );
   }

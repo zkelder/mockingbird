@@ -16,7 +16,7 @@ import type {
 import { EmptyState } from "../components/EmptyState";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { cameraHealthLabel, cameraHealthTone, formatDateTime } from "../utils";
+import { cameraHealthLabel, cameraHealthTone, formatDateTime, formatLabel } from "../utils";
 
 interface YardMapPageProps {
   onOpenStream: (streamId: string) => void;
@@ -528,7 +528,7 @@ export function YardMapPage({
                 style={{ left: `${zone.placement!.x * 100}%`, top: `${zone.placement!.y * 100}%` }}
                 type="button"
               >
-                <span>{zone.zone_type}</span>
+                <span>{formatLabel(zone.zone_type)}</span>
                 <strong>{zone.name}</strong>
               </button>
             )) : null}

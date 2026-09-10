@@ -33,6 +33,13 @@ import { formatDateTime, formatLabel, formatTimeOfDay, formatWeatherLine } from 
 
 interface VisitDetailPageProps {
   visitId: string;
+  // Whole-Product Polish v1: the "create mock suggestion" tool below is
+  // test/demo scaffolding (its own on-page copy says so) with no place in
+  // an ordinary reviewer's workflow -- gated behind the same Developer Mode
+  // toggle App.tsx already uses to hide its other advanced/technical
+  // surfaces. Defaults to hidden so a caller that forgets to pass it never
+  // regresses to the old always-on behavior.
+  isDeveloperMode?: boolean;
   onOpenStream: (streamId: string) => void;
   onOpenEvent: (eventId: string) => void;
   onOpenVisit: (visitId: string) => void;
@@ -66,6 +73,7 @@ function newReviewRequestKey(prefix: string): string {
 
 export function VisitDetailPage({
   visitId,
+  isDeveloperMode = false,
   onOpenStream,
   onOpenEvent,
   onOpenVisit,
@@ -1555,28 +1563,30 @@ export function VisitDetailPage({
                 tone={speciesSuggestions.length > 0 ? "evidence" : "quiet"}
               />
             </div>
-            <div className="mock-suggestion-action">
-              <label>
-                Mock label
-                <input
-                  value={mockSuggestedLabel}
-                  onChange={(event) => setMockSuggestedLabel(event.target.value)}
-                  placeholder="optional; defaults to unknown_bird"
-                />
-              </label>
-              <button
-                className="secondary-action"
-                disabled={isCreatingMockSuggestion}
-                onClick={() => void createMockSuggestion()}
-                type="button"
-              >
-                {isCreatingMockSuggestion ? "Creating..." : "Create mock suggestion"}
-              </button>
-              <span className="field-helper">
-                Creates demo SpeciesSuggestion evidence only. It does not run a model or create
-                reviewed truth.
-              </span>
-            </div>
+            {isDeveloperMode ? (
+              <div className="mock-suggestion-action">
+                <label>
+                  Mock label
+                  <input
+                    value={mockSuggestedLabel}
+                    onChange={(event) => setMockSuggestedLabel(event.target.value)}
+                    placeholder="optional; defaults to unknown_bird"
+                  />
+                </label>
+                <button
+                  className="secondary-action"
+                  disabled={isCreatingMockSuggestion}
+                  onClick={() => void createMockSuggestion()}
+                  type="button"
+                >
+                  {isCreatingMockSuggestion ? "Creating..." : "Create mock suggestion"}
+                </button>
+                <span className="field-helper">
+                  Developer Mode only. Creates demo SpeciesSuggestion evidence only. It does not
+                  run a model or create reviewed truth.
+                </span>
+              </div>
+            ) : null}
             {correctionSuggestionId ? (
               <div className="suggestion-prefill-summary">
                 <div>

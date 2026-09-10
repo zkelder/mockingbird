@@ -11078,7 +11078,7 @@ async def get_product_health() -> ProductHealthStatus:
     elif needs_attention_count > 0:
         message = (
             f"{needs_attention_count} camera{'s' if needs_attention_count != 1 else ''} "
-            "need attention."
+            f"need{'s' if needs_attention_count == 1 else ''} attention."
         )
     elif storage.storage_warning:
         message = storage.storage_warning

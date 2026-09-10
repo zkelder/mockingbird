@@ -910,7 +910,9 @@ export function PlaceActivityReportPage({
               <p className="meta-text">
                 Built from {plural(report.historical_baseline.usable_day_count, "well-monitored day")} of history
                 {report.historical_baseline.distinct_taxa_count > 0
-                  ? ` across ${plural(report.historical_baseline.distinct_taxa_count, "kind of wildlife")}`
+                  ? ` across ${report.historical_baseline.distinct_taxa_count} kind${
+                      report.historical_baseline.distinct_taxa_count === 1 ? "" : "s"
+                    } of wildlife`
                   : ""}.
               </p>
               {overallBadge ? (

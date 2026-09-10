@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { apiClient } from "../api/client";
 import type { ProductHealthStatus, StorageSummary } from "../api/types";
 import { StatusPill } from "./StatusPill";
@@ -11,6 +11,14 @@ interface ProductHealthPanelProps {
    * loaded simply omits the facts that depend on it, matching this panel's
    * existing "unreadable status is a silent no-op" convention. */
   storageSummary?: StorageSummary | null;
+  /** Whole-Product Polish v1: this panel's own backup-nudge links used to be
+   * plain `<a href="/local-data">` tags -- a real, working link, but one
+   * that triggered a full browser reload instead of this app's normal
+   * instant client-side navigation (every other in-app link goes through a
+   * callback like this one). Optional so a caller that genuinely has no
+   * navigation context available still gets a plain link rather than a
+   * dead button. */
+  onOpenLocalData?: () => void;
 }
 
 /**
@@ -28,7 +36,28 @@ interface ProductHealthPanelProps {
  * Data's job) to also show total storage usage, the graduated 4-tier
  * storage_health_tier reading, and a plain-language category breakdown.
  */
-export function ProductHealthPanel({ storageSummary }: ProductHealthPanelProps = {}) {
+// Every one of this panel's three "go to Local Data" mentions below reuses
+// this instead of its own `<a href>` -- a real in-app link either way, but
+// one that navigates instantly like the rest of the app when a callback is
+// available, rather than a full browser reload.
+function LocalDataLink({
+  children,
+  onOpenLocalData,
+}: {
+  children: ReactNode;
+  onOpenLocalData?: () => void;
+}) {
+  if (onOpenLocalData) {
+    return (
+      <button className="text-action" onClick={onOpenLocalData} type="button">
+        {children}
+      </button>
+    );
+  }
+  return <a href="/local-data">{children}</a>;
+}
+
+export function ProductHealthPanel({ storageSummary, onOpenLocalData }: ProductHealthPanelProps = {}) {
   const [health, setHealth] = useState<ProductHealthStatus | null>(null);
 
   useEffect(() => {
@@ -116,7 +145,7 @@ export function ProductHealthPanel({ storageSummary }: ProductHealthPanelProps =
           {health.backup.has_backup ? (
             health.backup.last_backup_verified ? "Verified" : "Not yet verified"
           ) : health.backup.suggest_first_backup ? (
-            <a href="/local-data">Create your first backup</a>
+            <LocalDataLink onOpenLocalData={onOpenLocalData}>Create your first backup</LocalDataLink>
           ) : (
             "None yet"
           )}
@@ -138,7 +167,7 @@ export function ProductHealthPanel({ storageSummary }: ProductHealthPanelProps =
           <span>
             You haven't created a backup yet. Your local data (Streams, Zones, reviewed Visits,
             and history) can be protected in one click from{" "}
-            <a href="/local-data">Local Data</a>.
+            <LocalDataLink onOpenLocalData={onOpenLocalData}>Local Data</LocalDataLink>.
           </span>
         </div>
       ) : null}
@@ -152,7 +181,8 @@ export function ProductHealthPanel({ storageSummary }: ProductHealthPanelProps =
           <span>
             MockingBird updated your data on this start (format {health.database_migrated_from_version}{" "}
             &rarr; {health.database_schema_version}). A backup from just before the update was made
-            automatically and is available in <a href="/local-data">Local Data</a>.
+            automatically and is available in{" "}
+            <LocalDataLink onOpenLocalData={onOpenLocalData}>Local Data</LocalDataLink>.
           </span>
         </div>
       ) : null}
