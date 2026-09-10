@@ -35,8 +35,27 @@ not carried into this table.
 - Camera Node `rollback()` does not restore an already-changed systemd unit template, and
   has a narrower directory-swap crash-window gap.
 - No orphan-media/no-DB-owner detection anywhere in the product (Lane M, low materiality).
-- Doctor's `Application` check can transiently read `WARN` while a live instance is still
-  mid-shutdown (inherent to Doctor's own read-only/side-effect-free design).
+- Doctor's `Application` check reads `WARN` ("The previous MockingBird run did not shut
+  down cleanly") for the *entire* lifetime of any running instance, not merely a brief
+  mid-shutdown window as its own originating reports characterized it — **reproduced live
+  on the real built artifact this milestone** (two independent Doctor calls, both on a
+  currently-healthy instance, both showed this WARN). Root cause, traced precisely this
+  pass: `runtime.prepare_runtime_state` reads the marker file, computes whether the *prior*
+  run was clean, and unconditionally overwrites it to `{"state": "starting"}` for the
+  *current* run — but that computed prior-run verdict is used once for a startup console
+  line and then discarded, never persisted anywhere (`app.state` included) for
+  `doctor._peek_previous_shutdown_state` to read later. Doctor's own read-only peek at the
+  marker file therefore cannot distinguish "a live, healthy instance is currently running"
+  from "a process crashed while marked as running" — both read as the literal string
+  `"starting"` — so the WARN fires for the ordinary case of "the app is open right now,"
+  not only after a genuine crash. Not fixed this pass: the real fix (capturing the prior
+  -run verdict at boot and threading it to the API-invoked Doctor handler via `app.state`,
+  which only the API path — not the separate-process CLI form — could even use) touches the
+  boot sequence, `doctor.py`, and `api/main.py` together and needs new test coverage; it is
+  a real, well-scoped candidate for a small dedicated follow-up, not a one-line fix, and two
+  dedicated prior milestones already looked at this exact symptom and deliberately deferred
+  it. Recorded here with the precise mechanism (not previously identified this exactly) so a
+  future pass does not have to re-diagnose it.
 - Camera Node live hardware-health check degrades to `storage: None`/`hardware: None` for
   the real reference Pi specifically (its installed build predates those fields — a fact
   about that one device, not a defect).

@@ -1,15 +1,25 @@
 # Final Release Hardening & Launch Readiness v1 — Report
 
-**Status:** implementation-time record. This report is extended by this
-milestone's own reconciliation commit with the real-build and real-hardware
-evidence gathered after this commit (the release artifact must be built
-from a clean, committed HEAD — see "Release-build source integrity" in
-`docs/local-product-packaging-design.md` — so that evidence necessarily
-follows this commit, mirroring the existing two-commit convention this
-project already uses for every prior milestone).
+**Status:** complete. Extended (this section onward reflects the
+reconciliation pass) with the real-build and real-hardware evidence
+gathered after the implementation commit `b3889f8`, which the release
+build requires to already exist (a clean, committed HEAD — see
+"Release-build source integrity" in
+`docs/local-product-packaging-design.md`) — mirroring the existing
+two-commit convention this project already uses for every prior milestone.
 
-**Classification:** to be assigned at reconciliation, pending the
-real-build/hardware-validation evidence below being added.
+**Classification: A.** No product/schema/detector/identification-policy
+code changed; a real release-candidate artifact was built, independently
+verified, and exercised end to end (install → first run → Account →
+Doctor → health → graceful shutdown → restart → data-persistence
+recovery) on real native-Windows hardware from the built artifact itself
+(not dev-deployment tooling); the real reference Camera Node confirmed
+wire-protocol/checksum compatibility via a genuine, non-destructive
+preflight; Tier 3 Core ran clean relative to baseline; one real,
+previously-imprecisely-characterized defect was found and precisely
+root-caused (not fixed — see §6) by this milestone's own real-hardware
+validation, consistent with this project's repeated pattern of validation
+surfacing genuine findings rather than rubber-stamping.
 
 Directly authorized (this is the final engineering/hardening pass for the
 one public MockingBird release, following ChatGPT's acceptance of *Product
@@ -72,8 +82,16 @@ snapshot of a verified-clean commit (`verify_clean_tracked_source`/
 `export_clean_source_tree`), so no local secret, dev database, or
 machine-specific file can enter the package regardless of what sits in a
 working tree at build time — confirmed structurally, and re-confirmed by
-inspecting the real assembled bundle after building (§4 of the
-reconciliation extension, below).
+directly inspecting the real assembled bundle after building: the bundle
+root holds exactly the four expected files (`LICENSE`,
+`THIRD_PARTY_NOTICES.md`, `README-FIRST.txt`, `Start MockingBird.vbs`)
+plus `python/`; a targeted grep of MockingBird's own shipped code (not the
+much larger third-party dependency tree) for local paths, private-key
+markers, `.env`/`.sqlite3`/`.db` files, and stray `.git`/`.orig` artifacts
+found nothing — the one incidental hit (a training-data-governance JSON
+registry recording a reviewer-eligibility username, `src/mockingbird/
+training/wildlife_source_registry_v0_2.json`) is ordinary, already-tracked
+product data, not a credential, secret, or machine-specific path.
 
 **New this milestone — SBOM.** `generate_release_sbom`/`write_release_sbom`
 produce a real, minimal CycloneDX 1.5 `sbom.json`, hand-built with the
@@ -122,20 +140,56 @@ itself is *not* clean, and why that is pre-existing, not introduced here).
 
 ## 3. Install / first-run / recovery polish (governing brief §4)
 
-No release-blocking defect was found in this pass requiring a product-code
-fix (see §7, defect triage, below) — the accepted end-to-end path (install →
-first run → configure source → health → observation → review/correction →
-shutdown → restart → recovery) was exercised via direct code inspection and
-cross-referenced against the two most recent accepted milestones that
-already validated most of it end to end on real hardware (*Release
-Reliability & First-Run Recovery v1*, *Product Operations &
-First-Observation Completion v1*) rather than re-proving already-accepted
-behavior from scratch. The real, built-artifact walk of this exact path on
-real native-Windows hardware is recorded in this report's reconciliation
-extension, below (governing brief §8 requires it against the *built
-artifact*, not the dev-deployment tooling this project's memory already
-flags as a distinct, narrower thing from a genuine packaged-artifact
-launch).
+Exercised the actual end-to-end path against the actual built artifact on
+real native-Windows hardware (Windows 10 Pro, RTX 4060 Ti — the same
+reference machine prior milestones used; distinct from, and a stronger
+proof than, the `deploy_windows_dev.py` dev-deployment tooling this
+project's own memory already flags as a narrower thing from a genuine
+packaged-artifact launch). Extracted `MockingBird-windows-x64.zip` to a
+fresh disposable path (`C:\MockingBirdReleaseCandidateTest-<timestamp>`,
+never an existing dev tree) with a disposable `MOCKINGBIRD_HOME`, launched
+`python.exe -m mockingbird`, and drove the real HTTP API end to end with a
+single PowerShell script (`Invoke-RestMethod` with session-cookie
+persistence) run over the WSL↔Windows UNC bridge (`\\wsl.localhost\...`) —
+the file transfer mechanism this sandbox actually has, since there is no
+literal browser-click automation available against the real Windows
+desktop from here:
+
+1. **Identity proof.** The bundle's own `build_info.json` (`git_commit`,
+   `app_version`), `manifest.json`'s `build_identity`, and the *running*
+   instance's own `GET /api/product/instance` response all matched exactly
+   (`git_commit=b3889f857e4c9c28e9ae2980bcf2b5def4eb0360`,
+   `build_id=1ba554c0bb3ab50d`, `app_version=1.0.0`) — three independent
+   sources agreeing, the same three-way check prior milestones established
+   as the standard proof "this running process really is this exact build."
+2. **Clean install.** Ready 2 seconds after launch, no dev-tree dependency,
+   no error.
+3. **First-run / Account.** `POST /api/setup/administrator` created the
+   first Administrator and returned an authenticated session in one call,
+   exactly as the onboarding wizard's own contract describes.
+4. **Health / Doctor.** `GET /api/product/doctor`: 16 checks, `overall_status
+   = DEGRADED` from exactly one honest `Application: WARN` (see §6 for the
+   precise root cause found and recorded, not fixed) — every other check
+   `PASS`, including `GPU / CUDA: CUDA execution provider is available`
+   and `Detector model`/`Species identification` both present and verified.
+   `GET /api/product/health`: `ready=true`, `storage_writable=true`,
+   `message="Local storage space is running low"` — independently confirmed
+   **accurate**, not a false positive: this shared test machine's `C:` drive
+   genuinely had 23.12 GB free of ~465 GB (4.97%), under the documented
+   <5%-of-total threshold.
+5. **Graceful shutdown.** `POST /api/product/shutdown` → `accepted=true`;
+   the real OS process exited within 2 seconds; `runtime_state.json`
+   immediately read `{"state": "clean"}`.
+6. **Restart / recovery.** Relaunched against the same disposable data
+   home; ready again in seconds; signed back in with the account created in
+   step 3 — **data persisted correctly across a real graceful
+   restart**; Doctor ran again cleanly (see §6 for the one caveat).
+7. **Cleanup.** The disposable app folder and data folder were both
+   removed; the shared test machine's free space was verified unchanged
+   (23.12 GB before and after) — no residue left on shared hardware.
+
+No release-blocking defect was found. One real, precisely-root-caused
+defect was found and is recorded, not fixed, in §6.
 
 ## 4. Documentation and support contract (governing brief §5)
 
@@ -168,8 +222,8 @@ Real gaps found and fixed:
   artifact has ever been published. Reframed Step 1 around downloading the
   artifact that ships alongside the main release (this milestone's own
   release-candidate build includes it as a labeled companion download — see
-  §5 of the reconciliation extension), with building from source presented
-  as the technical/developer alternative it actually is.
+  §7, below), with building from source presented as the technical/
+  developer alternative it actually is.
 - **A leaked internal status note.** `README.md`'s "Active development
   checkout" section stated this exact sandbox's own absolute WSL path and a
   work-in-progress status log — not durable public documentation for a
@@ -222,15 +276,16 @@ section per milestone rather than rewriting prior content, plus a matching
 No new hardware-validation campaign launched. Existing accepted evidence
 (Platform / Runtime Portability & Support Truth Closure v1's five-term
 vocabulary) is unchanged and was not re-litigated. This milestone's own
-real-hardware work (native-Windows artifact validation, a bounded reference
--Pi health check) is scoped narrowly to validating the *packaging output*
-this milestone changed, not a fresh general compatibility sweep — recorded
-in the reconciliation extension, below. Every deferred/unsupported item
-named in the governing brief (native mobile, broad multi-site, remote LTE/
-solar, Apple Silicon beyond the existing accepted-evidence precedent, AMD
-GPU, CPU visual-detector fallback, unvalidated macOS) remains exactly as
-deferred/unsupported as before this milestone; none was touched, tested, or
-promoted.
+real-hardware work — native-Windows artifact validation (§3, above) and a
+bounded reference-Pi preflight check (§7, below) — is scoped narrowly to
+validating the *packaging output* this milestone changed, never a fresh
+general compatibility sweep: no new platform was tested, no existing
+Validated/Structurally-supported/Unverified/Unsupported/Deferred status
+changed. Every deferred/unsupported item named in the governing brief
+(native mobile, broad multi-site, remote LTE/solar, Apple Silicon beyond
+the existing accepted-evidence precedent, AMD GPU, CPU visual-detector
+fallback, unvalidated macOS) remains exactly as deferred/unsupported as
+before this milestone; none was touched, tested, or promoted.
 
 ## 6. Known defect triage (governing brief §7)
 
@@ -271,7 +326,32 @@ scope," and `pairing_state_path` (unlike the two paths already fixed)
 be copied — it would require designing and validating a new bottom-of-
 chain default this milestone did not set out to invent, against a
 real-hardware-validated component, for a scenario the supported path never
-exercises. See `docs/final-release-hardening-launch-readiness-v1-defect-triage.md`
+exercises.
+
+**One item was refined by this milestone's own real-hardware validation
+(§3, above), not merely cited.** Doctor's `Application` check reading
+`WARN` ("did not shut down cleanly") was already disclosed twice by name
+as "an inherent property of running Doctor concurrently with a live
+instance" — this milestone's own real-artifact test reproduced it twice
+(fresh launch and post-restart, both healthy) and traced the *precise*
+mechanism: `runtime.prepare_runtime_state` computes whether the *prior*
+run was clean, uses that fact once for a startup console line, then
+discards it — never persisting it anywhere `doctor._peek_previous_
+shutdown_state`'s later, necessarily-read-only re-read of the marker file
+could recover. Practical effect, more severe than "transient"/
+"mid-shutdown" suggests: the WARN fires for the *entire* lifetime of any
+running instance, not a brief window, since the marker unconditionally
+reads `"starting"` from boot until actual shutdown regardless of whether
+the instance is healthy. Not fixed this pass — a real fix touches the boot
+sequence, `doctor.py`, and `api/main.py` together (threading the
+boot-time verdict through `app.state` for the API-invoked path
+specifically; the separate-process CLI form cannot use it) and needs new
+test coverage, more than a "cheap, well-understood" one-line change, and
+two dedicated prior milestones already looked at this exact symptom and
+deliberately deferred it. Recorded precisely here as a well-scoped
+candidate for a small, real, worthwhile follow-up.
+
+See `docs/final-release-hardening-launch-readiness-v1-defect-triage.md`
 for the complete classified list of all 42 items.
 
 ## 7. Release-candidate validation (governing brief §8)
@@ -318,7 +398,117 @@ already-documented "load-induced, not reproducible in isolation" nature) —
 unchanged); no product/detector/tracker/identification-policy code changed
 anywhere in this milestone.
 
-**Built-artifact / native-Windows-hardware / Pi validation:** recorded in
-this report's reconciliation extension, added after this commit (the
-release build requires a clean, already-committed source tree — see §1's
-opening note).
+**Built-artifact validation.** `python scripts/build_local_product.py
+dist/final-release-hardening-v1-candidate` (full GPU + BioCLIP runtime,
+network-resolved core tier, offline wheel caches for the two large tiers)
+succeeded cleanly from the implementation commit's own clean tree:
+18,728 files, 4,922,838,692 bytes, `source_clean=true`,
+`native_cuda_runtime.checked=true` (26 required DLLs verified present,
+including the historically-critical `cublasLt64_13.dll`), both model
+bundles included and hash-verified, `sbom.json` generated (58 components),
+unsigned (honest default, no key configured). `python
+scripts/verify_release_artifact.py dist/final-release-hardening-v1-candidate`
+passed cleanly, including the newly-generalized per-entry checksum check
+and the new signature-presence report: `OK: MockingBird-windows-x64.zip
+(18728 files, 4,922,838,692 bytes), version 1.0.0, source
+git:b3889f857e4c9c28e9ae2980bcf2b5def4eb0360, unsigned`. Native-Windows
+hardware exercise of this exact artifact is recorded in §3, above.
+
+**Camera Node artifact + reference-Pi validation (governing brief §8's
+"relevant Node interaction").** `python3 scripts/build_camera_node_artifact.py
+dist/final-release-hardening-v1-candidate/camera-node-artifact` produced
+`mockingbird_camera_node-1.0.0-py3-none-any.whl` from the identical clean
+commit (`git_commit=b3889f857e4c9c28e9ae2980bcf2b5def4eb0360,
+source_clean=true`; wire-protocol constants unchanged:
+`node_api_version=v1`, `transport_protocol_version=transport/v1`).
+Confirmed the real reference Camera Node (the same device prior
+milestones used, reachable and healthy for the whole of this session) via
+its own real, non-destructive `--preflight` check — never an actual
+upgrade, which would touch this shared device's live, already-accepted
+pairing for no reason this milestone's own bounded scope needs:
+
+```
+ok: candidate_checksums: every file in SHA256SUMS matches its recorded checksum.
+ok: wire_protocol_compatibility: current (matches the currently-installed build's wire protocol)
+ok: disk_space: 114,365,300,736 bytes free (need at least 300,000,000 to safely stage a candidate build).
+Preflight passed; no changes were made.
+```
+
+Temporary files copied to the Pi for this check were removed immediately
+after; the device's own installed build, pairing, and configuration were
+never touched.
+
+## 8. Security/licensing/package-content checks — summary
+
+See §2 (SBOM/signing, license/notice inclusion, non-redistribution guards)
+and §3's bundle-content spot-check, above, for the complete record;
+consolidated here per the governing brief's own output list: LICENSE
+(MIT) ✓; THIRD_PARTY_NOTICES.md accurate for what is actually distributed
+✓; BirdNET weights not redistributed (guarded, unconditionally verified at
+build time) ✓; ffmpeg not bundled (guarded, unconditionally verified at
+build time) ✓; version/build identity visible and correct, confirmed three
+independent ways on real hardware ✓; no credentials/secrets/dev paths/test
+databases/private keys/machine-specific config in the shipped bundle ✓;
+dependency/build manifests sufficient to reproduce and inspect the release
+(pinned requirements, `manifest.json`, and the new `sbom.json`) ✓;
+artifact signing machinery present and tested, real signing not yet
+performed (no owner key exists) — see §9 for the explicit owner step.
+
+## 9. Release outputs
+
+1. **Release-candidate artifact identity:** `MockingBird-windows-x64.zip`,
+   `git_commit=b3889f857e4c9c28e9ae2980bcf2b5def4eb0360`,
+   `build_id=1ba554c0bb3ab50d`, `app_version=1.0.0`, `source_clean=true`,
+   `zip_sha256=b5b1dc42b98554ec70afc37619ef9ba80dc8fdf2dee2294eb9ac0eda5fc16611`.
+   Companion: `mockingbird_camera_node-1.0.0-py3-none-any.whl` (Camera Node
+   artifact), same commit.
+2. **Final HEAD and schema:** implementation commit `b3889f8`; schema `v59`,
+   **unchanged** (no product/schema code touched this milestone).
+3. **Implementation/reconciliation commits:** `b3889f8` (implementation);
+   this reconciliation commit (report/defect-triage extension +
+   `release-execution-state.md` update) follows.
+4. **Artifact build evidence:** §7, above (both artifacts).
+5. **Clean-install evidence:** §3, above (fresh disposable path, no dev-tree
+   dependency, ready in 2 seconds).
+6. **First-run/product-loop evidence:** §3, above (Account → Doctor →
+   health, all against the real running artifact).
+7. **Shutdown/restart/recovery evidence:** §3, above (graceful shutdown,
+   clean marker, restart, data persisted and verified by re-authenticating).
+8. **Final Core result:** §7, above — 5995 passed / 4 failed (all
+   independently re-confirmed pre-existing) / 4 skipped / 35 deselected /
+   11 xfailed.
+9. **Native-Windows validation result:** §3, above — full real-hardware
+   pass; one precisely-diagnosed, non-blocking Doctor finding refined (§6).
+10. **Relevant Pi validation result:** §7, above — real, non-destructive
+    preflight passed (checksums, wire-protocol, disk space); no change made
+    to the shared device.
+11. **Security/licensing/package-content checks:** §8, above.
+12. **Documentation changes:** §4, above (7 real gaps fixed).
+13. **Known limitations:** `docs/final-release-hardening-launch-readiness-v1-defect-triage.md`
+    (42 items classified; 0 release blockers) plus the refined Doctor
+    `Application`-check finding (§6).
+14. **Owner-only steps still required before publication:**
+    - Generate and securely hold a real release-signing GPG keypair, and
+      publish the public key/fingerprint, if signing is desired — the
+      machinery is ready and tested; no real key exists and none was
+      fabricated (see §2 and "Release-artifact signing" in
+      `docs/local-product-packaging-design.md`).
+    - The standing BirdNET commercial-adjacent legal question remains open
+      with no engineering action available (unchanged by this milestone).
+    - Optionally: review the `1.0.0` version-number choice (§1) — trivially
+      reversible before publishing.
+    - Optionally: decide whether to publish the Camera Node artifact as a
+      standing labeled companion download going forward (this milestone
+      builds and documents it as such; it does not itself create a GitHub
+      Release or any public distribution channel).
+    - The actual decision to publish/announce the release — explicitly not
+      this milestone's call, and nothing was pushed or distributed.
+15. **Release-readiness verdict: READY FOR OWNER RELEASE DECISION.** No
+    release blocker was found anywhere in this pass. Every open item is an
+    already-disclosed, deliberate trade-off, a genuinely out-of-scope
+    future opportunity, or environment-sensitive test debt — none of which
+    blocks a public launch of the artifact validated above. The one
+    substantive polish opportunity this milestone's own real-hardware
+    testing surfaced (Doctor's `Application` check) is cosmetic/diagnostic,
+    not functional or safety-relevant, and is precisely scoped for a small
+    future follow-up rather than blocking this decision.

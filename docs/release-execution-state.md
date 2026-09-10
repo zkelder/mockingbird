@@ -605,6 +605,95 @@ subsequent milestone. **Authorization remains NONE -- GLOBAL
 PRODUCT-ROADMAP RECONCILIATION REQUIRED**, returned for the next external
 (ChatGPT) acceptance review.
 
+**2026-09-10 update (Final Release Hardening & Launch Readiness v1):**
+authorized directly by the external (ChatGPT) global-roadmap reconciliation
+following its acceptance of Product Operations & First-Observation
+Completion v1 at classification A, schema v59 -- this project's own last
+engineering/hardening pass before the one public release, per this file's
+own Lane S framing ("Actual Final Release Hardening," see §6.S, below).
+Classification **A**. See
+[final-release-hardening-launch-readiness-v1-report.md](final-release-hardening-launch-readiness-v1-report.md)
+and
+[final-release-hardening-launch-readiness-v1-defect-triage.md](final-release-hardening-launch-readiness-v1-defect-triage.md).
+Implementation commit `b3889f8`; schema unchanged (`v59`); no product/
+schema/detector/identification-policy code changed anywhere in this
+milestone. Verified the expected baseline exactly (HEAD `fa83eec`, schema
+v59, Gate A `PASS`/Lane R `CLOSED`, Lane P `CLOSED`, Gate G prepared/not
+started, worktree clean except the seven preserved untracked detector
+files, no active competing writer -- one other interactive session was
+found not marked offline and confirmed idle directly with the user before
+proceeding). **Versioning:** bumped the never-revisited "0.1.0"
+dev-scaffolding version to "1.0.0" across the existing single-source-of
+-truth contract (`pyproject.toml`, both packages' `__init__.py`,
+`web/package.json`/lock) -- confirmed independent of the Host<->Camera Node
+wire-protocol gate; grepped for stale post-bump literals and fixed one real
+hit (`SECURITY.md`'s "pre-1.0" framing, which the bump would otherwise have
+made false). **Supply-chain hardening:** new unconditional CycloneDX 1.5
+SBOM generation (`generate_release_sbom`, stdlib-only, real installed
+-package metadata) and new opt-in GPG release signing
+(`sign_release_artifact`, honest unsigned default, no real key exists or
+was fabricated -- the complete owner-facing key-generation/publication
+procedure is documented, not executed); `verify_release_artifact.py`
+generalized to check every `SHA256SUMS` entry, not only the historical zip/
+manifest pair. **Documentation:** a dedicated investigation found and fixed
+seven real public-documentation gaps (a stale first-run-steps list missing
+the Account step; two brand-new, undocumented controls -- the Doctor UI
+page and the graceful shutdown control, the latter now the documented
+preferred stop method; a dead BirdNET-setup cross-reference; a Camera Node
+install guide mislabeled "normal-user" while requiring a repository
+checkout; a leaked personal WSL-path/status paragraph in `README.md`,
+deleted; a broken `SECURITY.md` policy citation, replaced with three
+concrete disclosures). **Defect triage:** a dedicated investigation
+compiled 42 previously-disclosed, not-yet-fixed items across every accepted
+milestone since 2026-08-24; **zero release blockers**, zero FIX NOW items
+taken (every remaining item is an already-disclosed deliberate trade-off,
+genuinely out-of-scope, or an environment-sensitive flake); two items
+independently reconfirmed already fixed by the immediately-prior two
+milestones (Doctor Storage false-`FAIL`; no-clean-shutdown gap), and one
+stale memory note ("no login rate-limiting") found already closed by an
+earlier accepted milestone. **One item was refined, not fixed, by this
+milestone's own real-hardware validation**: Doctor's `Application` check's
+"did not shut down cleanly" `WARN` -- already disclosed twice by name as
+"an inherent property of running Doctor concurrently with a live
+instance" -- was reproduced live on the real built artifact and traced to
+its precise mechanism (`runtime.prepare_runtime_state` computes the prior
+run's verdict once at boot for a console line, then discards it, so
+Doctor's own later read-only re-check of the marker necessarily sees only
+`"starting"` for the entire lifetime of any running instance, not a brief
+window); a real fix touches the boot sequence, Doctor, and the API surface
+together and needs new tests, more than a cheap one-line change, so it
+remains a well-scoped, precisely-documented candidate for a small future
+follow-up rather than fixed here. **Validation:** 107 packaging/verify
+-artifact tests plus a 621-test adjacent sweep, 0 failed; frontend
+`tsc`/`vite build` clean; full Core (Tier 3, run once): 5995 passed / 4
+failed / 4 skipped / 35 deselected / 11 xfailed, 45m29s, all 4 failures
+independently reconfirmed via `git stash` bisection as the identical,
+long-documented pre-existing flakes in §14, zero attributable to this
+milestone; a full-repo `ruff check .` (never wired into any gate) surfaces
+163 pre-existing findings, independently confirmed 100% pre-existing via
+the same bisection technique, 0 introduced. **Real hardware, not
+simulated:** built both the Host artifact (`MockingBird-windows-x64.zip`,
+18,728 files, GPU+BioCLIP runtime included, all required CUDA/cuDNN DLLs
+verified present, both model bundles hash-verified) and the Camera Node
+artifact from the identical clean commit; independently verified via
+`verify_release_artifact.py`; exercised the complete real path (install ->
+first run -> Account -> Doctor -> health -> graceful shutdown -> restart ->
+data-persistence recovery) on real native-Windows hardware (Windows 10
+Pro, RTX 4060 Ti) against the built artifact itself, with three-way
+identity confirmation (`build_info.json`/`manifest.json`/the running
+instance's own `GET /api/product/instance` all agreeing); confirmed the
+real reference Camera Node's wire-protocol/checksum compatibility with the
+new artifact via a genuine, non-destructive `--preflight` check (no
+upgrade performed, the device's live pairing untouched). No push; nothing
+publicly distributed. **Release-readiness verdict: READY FOR OWNER RELEASE
+DECISION** (see the report's §9 for the complete owner-only-steps list --
+principally: generate/hold a real signing key if signing is desired, and
+the actual decision to publish). **Does not** call the product publicly
+released, **does not** distribute it, **does not** push, **does not**
+self-authorize a subsequent milestone. **Authorization remains NONE --
+GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, returned for the next
+external (ChatGPT) acceptance review and the owner's own release decision.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
@@ -3537,6 +3626,36 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-10 update (Final Release Hardening & Launch Readiness v1):**
+directly authorized final engineering/hardening pass for the one public
+MockingBird release, authorized directly by the external (ChatGPT)
+global-roadmap reconciliation following its acceptance of Product
+Operations & First-Observation Completion v1 at classification A. See
+[final-release-hardening-launch-readiness-v1-report.md](final-release-hardening-launch-readiness-v1-report.md)
+for the complete record (also reconciled into the top-of-file `CURRENT
+PHASE` entry, above). Classification **A**. Implementation commit
+`b3889f8`; schema unchanged (`v59`); no product/schema/detector/
+identification-policy code changed. Versioning bumped `0.1.0` -> `1.0.0`;
+release-artifact SBOM generation and opt-in signing machinery added (no
+real signing key exists, none fabricated); seven real public-documentation
+gaps fixed; 42 previously-disclosed defects triaged (zero release
+blockers, zero taken as FIX NOW); one already-disclosed Doctor `Application`
+-check limitation was reproduced live and precisely root-caused (not
+fixed). Built and independently verified both the Host artifact and the
+Camera Node artifact from this exact commit; exercised the complete
+install -> first-run -> Account -> Doctor -> health -> shutdown -> restart
+-> recovery path on real native-Windows hardware against the built
+artifact itself; confirmed real reference-Camera-Node wire-protocol/
+checksum compatibility via a non-destructive preflight (no upgrade
+performed). Full Core: 5995 passed / 4 failed (all independently
+reconfirmed pre-existing) / 4 skipped / 35 deselected / 11 xfailed. No
+push; nothing distributed. **Release-readiness verdict: READY FOR OWNER
+RELEASE DECISION.** **Does not** call the product publicly released,
+**does not** distribute it, **does not** push, and **does not**
+self-authorize a subsequent milestone. **Authorization remains NONE --
+GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, returned for the next
+external (ChatGPT) acceptance review and the owner's own release decision.
 
 **2026-09-08 update (Release Reliability & First-Run Recovery v1):**
 bounded release-readiness milestone, authorized directly by the external
@@ -10929,6 +11048,34 @@ approval checkpoint (its §5) rather than proceeding past it. This lane's
 own status remains **LAST**; current authorization to begin Gate G
 execution or this lane remains `NONE`.
 
+**2026-09-10 update (Final Release Hardening & Launch Readiness v1
+executed):** this lane's own framing paragraph, above, is now substantially
+enacted -- see
+[final-release-hardening-launch-readiness-v1-report.md](final-release-hardening-launch-readiness-v1-report.md).
+Versioning given an intentional public identity (`0.1.0` -> `1.0.0`);
+release-artifact SBOM/signing machinery added (unconditional SBOM, opt-in
+signing -- no real key exists, none fabricated, the owner-facing key
+procedure is documented); seven real public-documentation gaps closed;
+known-defect triage completed across 42 items (zero release blockers, zero
+FIX NOW); the real Host and Camera Node artifacts built from a clean commit
+and independently verified; the complete install/first-run/health/
+shutdown/restart/recovery path exercised on real native-Windows hardware
+against the *built artifact itself*; the real reference Camera Node's
+wire-protocol/checksum compatibility confirmed via a non-destructive
+preflight (no upgrade performed, live pairing untouched). One real,
+already-twice-disclosed Doctor `Application`-check limitation was
+reproduced live and precisely root-caused (not fixed -- a real fix touches
+the boot sequence/Doctor/API surface together and needs new tests). **Gate
+G remains not started** -- this milestone did not recruit a participant,
+fix a cohort, or distribute a build, matching its own governing brief's
+explicit "do not start a private cohort" instruction. This lane's own
+status remains **LAST**; current authorization to begin Gate G execution
+remains `NONE`. **Release-readiness verdict: READY FOR OWNER RELEASE
+DECISION** -- the owner-only steps remaining (a real signing key if
+desired; the standing BirdNET commercial-adjacent legal question; the
+publish/announce decision itself) are named explicitly in the report's §9
+and are not, and cannot be, resolved by this or any engineering milestone.
+
 ## 7. One-release doctrine
 
 MockingBird's public release target is a trustworthy single-site/home
@@ -11135,7 +11282,30 @@ claims -- see
 §4 and §6. The "Latest accepted Core checkpoint" below remains the most
 recent actual full-suite number.
 
-**Latest accepted Core checkpoint (Product Operations &
+**Latest accepted Core checkpoint (Final Release Hardening & Launch
+Readiness v1):** 5995 passed / **4 failed** / 4 skipped / 35 deselected
+(`slow`-marked) / 11 xfailed, 2729s (45m29s) -- run once (this milestone
+changed no product/schema/detector code; packaging/versioning/documentation
+changes are cross-cutting enough to still warrant Tier 3, per its own
+governing brief). All 4 failures independently re-confirmed via direct
+`git stash` bisection against the unmodified baseline this same session
+(not merely cited): `test_place_biodiversity_summary_repository.py`'s own
+pair and `test_place_change_summary_repository.py::test_api_round_trip_
+exposes_change_detection_fields` reproduced the identical assertion
+failure standalone against the stashed baseline; `test_transport_worker.py
+::test_sticky_diagnostic_set_on_protocol_incompatibility_and_cleared_on_
+next_success` passed standalone against the same stashed baseline,
+matching its own already-documented load-induced/non-reproducible-in
+-isolation nature. No schema change (v59, unchanged). Also newly measured
+and disclosed this checkpoint: a full-repo `ruff check .` (never wired
+into Fast/Core/Full/CI) surfaces 163 findings, independently confirmed
+100% pre-existing via the identical bisection technique -- every prior
+"ruff clean" claim in this file's own history was necessarily scoped to
+the files each milestone touched, never a full-repo sweep. See
+[final-release-hardening-launch-readiness-v1-report.md](final-release-hardening-launch-readiness-v1-report.md)
+§7 for the complete record.
+
+**Prior accepted Core checkpoint (Product Operations &
 First-Observation Completion v1):** 5985 passed / **1 failed** / 4
 skipped / 35 deselected (`slow`-marked) / 11 xfailed, 43m51s -- the
 accepted, final of three attempts this milestone ran (see the top-of-file
