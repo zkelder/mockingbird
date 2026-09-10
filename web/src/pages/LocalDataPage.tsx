@@ -702,7 +702,8 @@ export function LocalDataPage({
             ) : null}
 
             {storageSettings ? (
-              <>
+              <details className="advanced-details">
+                <summary>Retention settings</summary>
                 <div className="notice-panel">
                   <strong>Safe default</strong>
                   <span>Automatic cleanup starts off. Active primary evidence, unresolved work, reviewed wildlife, export context, incomplete files, and uncertain links are retained.</span>
@@ -814,7 +815,7 @@ export function LocalDataPage({
                   <span>Last automatic maintenance</span>
                   <strong>{storageSettings.last_automatic_run_at ? formatBackupTime(storageSettings.last_automatic_run_at) : "Not run"}</strong>
                 </div>
-              </>
+              </details>
             ) : null}
 
             <div className="local-data-actions">
@@ -855,7 +856,11 @@ export function LocalDataPage({
             ) : null}
 
             {cleanupHistory.length > 0 ? (
-              <div className="backup-list">
+              <details className="advanced-details" open={cleanupHistory.length <= 3}>
+                <summary>
+                  Cleanup history ({cleanupHistory.length})
+                </summary>
+                <div className="backup-list">
                 {cleanupHistory.map((batch) => (
                   <article className="backup-card" key={batch.batch_id}>
                     <div className="section-heading">
@@ -913,7 +918,8 @@ export function LocalDataPage({
                     ) : null}
                   </article>
                 ))}
-              </div>
+                </div>
+              </details>
             ) : null}
           </section>
 
@@ -975,7 +981,13 @@ export function LocalDataPage({
               </div>
             ) : null}
 
-            <div className="backup-list">
+            {backups.length > 0 ? (
+              <details className="advanced-details" open={backups.length <= 3}>
+                <summary>
+                  {backups.length} local backup{backups.length === 1 ? "" : "s"} -- verify, download, or
+                  restore
+                </summary>
+                <div className="backup-list">
               {backups.map((backup) => {
                 const isConfirmingRestore = confirmingRestoreId === backup.id;
                 const isVerifying = backupOperation === `verify:${backup.id}`;
@@ -1076,7 +1088,9 @@ export function LocalDataPage({
                   </article>
                 );
               })}
-            </div>
+                </div>
+              </details>
+            ) : null}
           </section>
 
           <section className="panel local-data-card">

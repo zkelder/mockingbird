@@ -72,6 +72,10 @@ export function ModelAdaptersPage({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  // Render cap only -- `evaluation.items` is built from the same unbounded
+  // `detection_proposals` table as Detection Proposals, with no backend
+  // limit. Mirrors StreamDetailPage's "Show more events" convention.
+  const [visibleEvaluationCount, setVisibleEvaluationCount] = useState(15);
 
   const adapterById = useMemo(
     () => new Map(adapters.map((adapter) => [adapter.id, adapter])),
@@ -105,6 +109,7 @@ export function ModelAdaptersPage({
       setAdapters(nextAdapters);
       setMediaAssets(nextMediaAssets);
       setEvaluation(nextEvaluation);
+      setVisibleEvaluationCount(15);
       setSelectedAdapterId((current) =>
         current && nextAdapters.some((adapter) => adapter.id === current)
           ? current
@@ -318,6 +323,12 @@ export function ModelAdaptersPage({
             </div>
             <EvidenceBadge label="Readiness signal" tone="truth" />
           </div>
+          {evaluation.items.length > 0 ? (
+            <span className="meta-text">
+              Showing {Math.min(visibleEvaluationCount, evaluation.items.length)} of{" "}
+              {evaluation.items.length}
+            </span>
+          ) : null}
           <div className="adapter-evaluation-grid">
             <div>
               <span className="meta-text">Proposals</span>
@@ -349,7 +360,7 @@ export function ModelAdaptersPage({
             </div>
           </div>
           <div className="adapter-evaluation-list">
-            {evaluation.items.map((item) => (
+            {evaluation.items.slice(0, visibleEvaluationCount).map((item) => (
               <EvaluationItemCard
                 item={item}
                 key={item.proposal_id}
@@ -365,6 +376,17 @@ export function ModelAdaptersPage({
               />
             ) : null}
           </div>
+          {evaluation.items.length > visibleEvaluationCount ? (
+            <div className="panel-actions">
+              <button
+                className="secondary-action"
+                onClick={() => setVisibleEvaluationCount((current) => current + 20)}
+                type="button"
+              >
+                Show more evidence ({evaluation.items.length - visibleEvaluationCount} more)
+              </button>
+            </div>
+          ) : null}
         </section>
       ) : null}
 

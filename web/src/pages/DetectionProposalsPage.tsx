@@ -75,6 +75,11 @@ export function DetectionProposalsPage({
   const [actionId, setActionId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Render cap only, mirroring StreamDetailPage's "Show more events"
+  // convention -- `list_detection_proposals` has no backend limit and this
+  // is a manual/developer-driven table with no retention cap, so it can
+  // grow unbounded over a long-lived local install.
+  const [visibleProposalCount, setVisibleProposalCount] = useState(15);
 
   const mediaById = useMemo(
     () => new Map(mediaAssets.map((asset) => [asset.id, asset])),
@@ -146,6 +151,10 @@ export function DetectionProposalsPage({
   useEffect(() => {
     void loadPageData();
   }, [streams]);
+
+  useEffect(() => {
+    setVisibleProposalCount(15);
+  }, [proposalFilter]);
 
   useEffect(() => {
     setSelectedZoneId((current) =>
@@ -511,8 +520,14 @@ export function DetectionProposalsPage({
             ))}
           </div>
           {isLoading ? <span className="meta-text">Loading detection proposals...</span> : null}
+          {!isLoading && filteredProposals.length > 0 ? (
+            <span className="meta-text">
+              Showing {Math.min(visibleProposalCount, filteredProposals.length)} of{" "}
+              {filteredProposals.length}
+            </span>
+          ) : null}
           <div className="media-list detection-proposal-list">
-            {filteredProposals.map((proposal) => {
+            {filteredProposals.slice(0, visibleProposalCount).map((proposal) => {
               const asset = mediaById.get(proposal.media_asset_id);
               const stream = streamById.get(proposal.stream_id);
               const zone = proposal.zone_id ? zoneById.get(proposal.zone_id) : null;
@@ -610,6 +625,17 @@ export function DetectionProposalsPage({
                 </article>
               );
             })}
+            {!isLoading && filteredProposals.length > visibleProposalCount ? (
+              <div className="panel-actions">
+                <button
+                  className="secondary-action"
+                  onClick={() => setVisibleProposalCount((current) => current + 20)}
+                  type="button"
+                >
+                  Show more proposals ({filteredProposals.length - visibleProposalCount} more)
+                </button>
+              </div>
+            ) : null}
             {!isLoading && proposals.length === 0 ? (
               <EmptyState
                 title="No detection proposals yet"

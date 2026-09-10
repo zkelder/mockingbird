@@ -110,9 +110,9 @@ export function AnalyticsPage({
           detail="correction work"
         />
         <MetricCard
-          label="Zones"
+          label="Active zones"
           value={Object.keys(analytics.zone_activity_counts).length}
-          detail="activity contexts"
+          detail="have recorded activity"
         />
       </section>
       <section className="metric-grid">

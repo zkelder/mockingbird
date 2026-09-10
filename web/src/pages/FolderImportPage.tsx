@@ -66,6 +66,12 @@ export function FolderImportPage({
   const [isLoadingZones, setIsLoadingZones] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Render caps only -- a folder preview walks every file in the chosen
+  // directory with no limit (trail-camera SD-card dumps realistically hold
+  // hundreds to thousands of files). Mirrors StreamDetailPage's "Show more
+  // events" convention.
+  const [visibleSupportedCount, setVisibleSupportedCount] = useState(15);
+  const [visibleSkippedCount, setVisibleSkippedCount] = useState(15);
 
   const sourceNames = useMemo(
     () => new Map(sources.map((source) => [source.id, source.name])),
@@ -133,6 +139,8 @@ export function FolderImportPage({
     try {
       const nextPreview = await apiClient.previewFolderImport({ folder_path: trimmedPath });
       setPreview(nextPreview);
+      setVisibleSupportedCount(15);
+      setVisibleSkippedCount(15);
       setMessage(
         `${nextPreview.supported_count} supported file${
           nextPreview.supported_count === 1 ? "" : "s"
@@ -333,7 +341,7 @@ export function FolderImportPage({
               <StatusPill label={`${preview.supported_count} ready`} tone="good" />
             </div>
             <div className="folder-file-list">
-              {preview.supported_files.map((candidate) => (
+              {preview.supported_files.slice(0, visibleSupportedCount).map((candidate) => (
                 <div className="folder-file-row" key={candidate.path}>
                   <div>
                     <strong>{candidate.filename}</strong>
@@ -348,6 +356,17 @@ export function FolderImportPage({
                   description="Supported folder imports are JPG, PNG, WebP, MP4, and MOV files in this folder."
                 />
               ) : null}
+              {preview.supported_files.length > visibleSupportedCount ? (
+                <div className="panel-actions">
+                  <button
+                    className="secondary-action"
+                    onClick={() => setVisibleSupportedCount((current) => current + 20)}
+                    type="button"
+                  >
+                    Show more files ({preview.supported_files.length - visibleSupportedCount} more)
+                  </button>
+                </div>
+              ) : null}
             </div>
           </div>
 
@@ -357,7 +376,7 @@ export function FolderImportPage({
               <StatusPill label={`${preview.skipped_count} skipped`} tone="quiet" />
             </div>
             <div className="folder-file-list">
-              {preview.skipped_files.map((skipped) => (
+              {preview.skipped_files.slice(0, visibleSkippedCount).map((skipped) => (
                 <div className="folder-file-row" key={`${skipped.filename}-${skipped.reason}`}>
                   <div>
                     <strong>{skipped.filename}</strong>
@@ -367,6 +386,17 @@ export function FolderImportPage({
               ))}
               {preview.skipped_files.length === 0 ? (
                 <span className="meta-text">No unsupported files in this preview.</span>
+              ) : null}
+              {preview.skipped_files.length > visibleSkippedCount ? (
+                <div className="panel-actions">
+                  <button
+                    className="secondary-action"
+                    onClick={() => setVisibleSkippedCount((current) => current + 20)}
+                    type="button"
+                  >
+                    Show more files ({preview.skipped_files.length - visibleSkippedCount} more)
+                  </button>
+                </div>
               ) : null}
             </div>
           </div>
@@ -411,6 +441,12 @@ export function FolderImportPage({
               </article>
             ))}
           </div>
+          {importedRows.length > 6 ? (
+            <span className="meta-text">
+              +{importedRows.length - 6} more imported -- open Review Queue or Dataset Exports above to
+              see all {importedRows.length}.
+            </span>
+          ) : null}
         </section>
       ) : null}
     </div>

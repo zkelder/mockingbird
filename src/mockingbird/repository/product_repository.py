@@ -39997,9 +39997,27 @@ class ProductRepository:
         visits = self._visits_for_eventless_query(session)
         review_labels = self.list_review_labels_from_session(session)
 
+        # An Event's own `review_status` becomes a rollup mirror of its
+        # child Visit(s) the moment any Visit exists for it (see
+        # `_recompute_visit_review_truth`'s "all child Visits reviewed ->
+        # Event reviewed" rule; `_recompute_event_only_review_truth` only
+        # ever runs for a Visit-less Event). Counting a Visit-owning
+        # Event's needs_review flag here, on top of its own Visit(s)'
+        # needs_review flags, double-counts the same reviewable task --
+        # this was the root cause of a real product discrepancy (this
+        # metric read 354 against the curated Review Queue's 177). Mirror
+        # `_review_queue_items`'s own "eventless" loop, which applies this
+        # identical exclusion: only a genuinely Visit-less ("eventless")
+        # Event -- activity never promoted to an animal-centered Visit,
+        # e.g. "Motion ignored in privacy zone" -- is an independently
+        # reviewable task in its own right.
         needs_review_count = sum(
-            event.review_status == ReviewStatus.needs_review for event in events
-        ) + sum(visit.review_status == ReviewStatus.needs_review for visit in visits)
+            visit.review_status == ReviewStatus.needs_review for visit in visits
+        ) + sum(
+            event.review_status == ReviewStatus.needs_review
+            for event in events
+            if event.id not in event_ids_with_any_visits
+        )
 
         species_counts: Counter[str] = Counter()
         for visit in visits:

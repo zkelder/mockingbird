@@ -67,6 +67,12 @@ export function ClassifierManifestPage({
   const [exportError, setExportError] = useState<string | null>(null);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [exportAction, setExportAction] = useState<"dry_run" | "create" | null>(null);
+  // Render caps only -- the manifest walks every reviewed/dataset-ready
+  // Visit with no limit, so both lists grow with the size of the whole
+  // locally reviewed dataset. Mirrors StreamDetailPage's "Show more events"
+  // convention.
+  const [visibleExampleCount, setVisibleExampleCount] = useState(15);
+  const [visibleSkippedCount, setVisibleSkippedCount] = useState(15);
 
   async function loadManifest() {
     setIsLoading(true);
@@ -74,6 +80,8 @@ export function ClassifierManifestPage({
     setMessage(null);
     try {
       setManifest(await apiClient.getClassifierTrainingManifest());
+      setVisibleExampleCount(15);
+      setVisibleSkippedCount(15);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not load classifier manifest.");
     } finally {
@@ -476,7 +484,12 @@ export function ClassifierManifestPage({
           <EvidenceBadge label="Reviewed correction truth" tone="truth" />
         </div>
         {manifest.examples.length > 0 ? (
-          <div className="manifest-example-table" role="table" aria-label="Classifier manifest examples">
+          <>
+            <span className="meta-text">
+              Showing {Math.min(visibleExampleCount, manifest.examples.length)} of{" "}
+              {manifest.examples.length}
+            </span>
+            <div className="manifest-example-table" role="table" aria-label="Classifier manifest examples">
             <div className="manifest-example-row manifest-example-head" role="row">
               <span role="columnheader">Label and split</span>
               <span role="columnheader">Visit/Event</span>
@@ -484,7 +497,7 @@ export function ClassifierManifestPage({
               <span role="columnheader">Context</span>
               <span role="columnheader">Quality</span>
             </div>
-            {manifest.examples.map((example) => (
+            {manifest.examples.slice(0, visibleExampleCount).map((example) => (
               <div className="manifest-example-row" key={example.example_id} role="row">
                 <div role="cell">
                   <strong>{formatLabel(example.label)}</strong>
@@ -522,7 +535,19 @@ export function ClassifierManifestPage({
                 </div>
               </div>
             ))}
-          </div>
+            </div>
+            {manifest.examples.length > visibleExampleCount ? (
+              <div className="panel-actions">
+                <button
+                  className="secondary-action"
+                  onClick={() => setVisibleExampleCount((current) => current + 20)}
+                  type="button"
+                >
+                  Show more examples ({manifest.examples.length - visibleExampleCount} more)
+                </button>
+              </div>
+            ) : null}
+          </>
         ) : (
           <EmptyState
             title="No manifest examples yet"
@@ -593,26 +618,43 @@ export function ClassifierManifestPage({
           </div>
         </div>
         {manifest.skipped_records.length > 0 ? (
-          <div className="manifest-skipped-list">
-            {manifest.skipped_records.map((record) => (
-              <article className="record-card" key={record.record_id}>
-                <div className="section-heading">
-                  <div>
-                    <span className="meta-text">{record.record_type}</span>
-                    <h3>{formatLabel(record.reason)}</h3>
+          <>
+            <span className="meta-text">
+              Showing {Math.min(visibleSkippedCount, manifest.skipped_records.length)} of{" "}
+              {manifest.skipped_records.length}
+            </span>
+            <div className="manifest-skipped-list">
+              {manifest.skipped_records.slice(0, visibleSkippedCount).map((record) => (
+                <article className="record-card" key={record.record_id}>
+                  <div className="section-heading">
+                    <div>
+                      <span className="meta-text">{record.record_type}</span>
+                      <h3>{formatLabel(record.reason)}</h3>
+                    </div>
+                    <EvidenceBadge label="Skipped" tone="review" />
                   </div>
-                  <EvidenceBadge label="Skipped" tone="review" />
-                </div>
-                <div className="record-meta-grid">
-                  <span>Visit {compactId(record.visit_id)}</span>
-                  <span>Event {compactId(record.event_id)}</span>
-                  <span>Media {compactId(record.media_asset_id)}</span>
-                  <span>Label {record.label ? formatLabel(record.label) : "None"}</span>
-                </div>
-                {record.detail ? <p className="meta-text">{record.detail}</p> : null}
-              </article>
-            ))}
-          </div>
+                  <div className="record-meta-grid">
+                    <span>Visit {compactId(record.visit_id)}</span>
+                    <span>Event {compactId(record.event_id)}</span>
+                    <span>Media {compactId(record.media_asset_id)}</span>
+                    <span>Label {record.label ? formatLabel(record.label) : "None"}</span>
+                  </div>
+                  {record.detail ? <p className="meta-text">{record.detail}</p> : null}
+                </article>
+              ))}
+            </div>
+            {manifest.skipped_records.length > visibleSkippedCount ? (
+              <div className="panel-actions">
+                <button
+                  className="secondary-action"
+                  onClick={() => setVisibleSkippedCount((current) => current + 20)}
+                  type="button"
+                >
+                  Show more records ({manifest.skipped_records.length - visibleSkippedCount} more)
+                </button>
+              </div>
+            ) : null}
+          </>
         ) : (
           <EmptyState
             title="No skipped records"

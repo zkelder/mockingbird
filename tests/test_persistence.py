@@ -173,6 +173,53 @@ def test_analytics_summary_reflects_persisted_correction_state(tmp_path: Path) -
     assert analytics.species_counts["carolina_wren"] == 1
 
 
+def test_analytics_needs_review_count_matches_review_queue_on_seed_data(
+    tmp_path: Path,
+) -> None:
+    """Cross-surface consistency (Product Polish & UX Refinement v2): the
+    seeded `event-bird-feeder-001` owns `visit-bird-feeder-001` and both
+    carry `needs_review` -- the Event's status is a rollup mirror of its
+    Visit's (see `_recompute_visit_review_truth`), not a second
+    independently reviewable task. Before the fix, `analytics_summary()`
+    double-counted this one real reviewable task as 2; the curated Review
+    Queue always correctly showed 1."""
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = repository_for(db_path)
+
+    analytics = repository.analytics_summary()
+    queue = repository.review_queue_items()
+
+    assert len(queue) == 1
+    assert queue[0].visit_id == BIRD_VISIT_ID
+    assert analytics.needs_review_count == len(queue)
+
+
+def test_analytics_needs_review_count_tracks_review_queue_after_correction(
+    tmp_path: Path,
+) -> None:
+    """The same cross-surface invariant must keep holding across a state
+    transition, not just at one snapshot -- reviewing the one seeded
+    needs-review Visit should drop both numbers to 0 together."""
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = repository_for(db_path)
+
+    repository.create_review_label(
+        ReviewCorrectionCreate(
+            target_type="visit",
+            target_id=BIRD_VISIT_ID,
+            label="northern_cardinal",
+            review_origin="human",
+        )
+    )
+
+    reloaded_repository = repository_for(db_path)
+    analytics = reloaded_repository.analytics_summary()
+    queue = reloaded_repository.review_queue_items()
+
+    assert not queue
+    assert analytics.needs_review_count == 0
+
+
 def test_repeated_initialization_does_not_duplicate_seed_records(
     tmp_path: Path,
 ) -> None:

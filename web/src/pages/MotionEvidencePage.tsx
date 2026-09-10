@@ -160,6 +160,13 @@ export function MotionEvidencePage({
   const [actionId, setActionId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Advanced/developer surface, but `motion_evidence` rows also accumulate
+  // from ordinary live-camera monitoring (see `_evaluate_live_stream_motion`),
+  // so this list is not bounded by developer-tool usage alone. Render cap
+  // only, mirroring StreamDetailPage's "Show more events" convention -- all
+  // evidence is already fetched either way, and bulk selection below still
+  // operates over the full filtered set, not just what's rendered.
+  const [visibleEvidenceCount, setVisibleEvidenceCount] = useState(15);
 
   const sourceById = useMemo(() => new Map(sources.map((source) => [source.id, source])), [sources]);
   const streamById = useMemo(() => new Map(streams.map((stream) => [stream.id, stream])), [streams]);
@@ -291,6 +298,10 @@ export function MotionEvidencePage({
       current.filter((id) => evidenceById.get(id)?.status === "pending"),
     );
   }, [evidenceById]);
+
+  useEffect(() => {
+    setVisibleEvidenceCount(15);
+  }, [statusFilter, zoneFilter]);
 
   useEffect(() => {
     setEventTitle(
@@ -1226,7 +1237,10 @@ export function MotionEvidencePage({
       {!isLoading && sortedEvidence.length > 0 ? (
         <div className="motion-evidence-layout">
           <section className="motion-evidence-list" aria-label="Advanced evidence list">
-            {sortedEvidence.map((item) => (
+            <span className="meta-text">
+              Showing {Math.min(visibleEvidenceCount, sortedEvidence.length)} of {sortedEvidence.length}
+            </span>
+            {sortedEvidence.slice(0, visibleEvidenceCount).map((item) => (
               <article
                 className={
                   selectedEvidence?.id === item.id
@@ -1317,6 +1331,17 @@ export function MotionEvidencePage({
                 ) : null}
               </article>
             ))}
+            {sortedEvidence.length > visibleEvidenceCount ? (
+              <div className="panel-actions">
+                <button
+                  className="secondary-action"
+                  onClick={() => setVisibleEvidenceCount((current) => current + 20)}
+                  type="button"
+                >
+                  Show more evidence ({sortedEvidence.length - visibleEvidenceCount} more)
+                </button>
+              </div>
+            ) : null}
           </section>
 
           <section className="panel motion-evidence-detail">
