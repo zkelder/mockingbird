@@ -13,12 +13,12 @@ from .config import CameraNodeConfig
 #: reads directly; see that function's own docstring. Keep in sync with
 #: `pyproject.toml`'s `[project].version` (the artifact builder stamps the
 #: same value into the wheel it produces from that same source of truth).
-#: Final Release Hardening & Launch Readiness v1: bumped from "0.1.0" to
-#: "1.0.0" -- see `pyproject.toml`'s own comment for the reasoning. This is
-#: a package-version bump only; `NODE_API_VERSION`/`TRANSPORT_PROTOCOL_
+#: Final Release Candidate Corrections v1: restored to "0.1.0" -- see
+#: `pyproject.toml`'s own comment for the reasoning. This is a
+#: package-version change only; `NODE_API_VERSION`/`TRANSPORT_PROTOCOL_
 #: VERSION` (mockingbird_node/app.py, transport_client.py) are separate,
 #: unchanged wire-protocol literals never derived from this value.
-__version__ = "1.0.0"
+__version__ = "0.1.0"
 
 
 def create_node_app(*args: object, **kwargs: object):

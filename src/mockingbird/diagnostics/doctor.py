@@ -472,7 +472,27 @@ def _peek_previous_shutdown_state(runtime_home: Path) -> bool | None:
     `prepare_runtime_state`'s own docstring). Doctor must stay read-only, so
     it duplicates only the read half, using the module's own public
     filename constant.
+
+    Final Release Candidate Corrections v1: a raw peek at the marker file
+    cannot tell "the previous run crashed" apart from "this very process is
+    the current run, and simply has not shut down yet" -- `prepare_runtime_
+    state` unconditionally rewrites the marker to `{"state": "starting"}` at
+    boot, so both cases read identically for the *entire* lifetime of a
+    running instance, not merely a brief window. Whenever `runtime_home` is
+    the exact data directory this process itself booted against,
+    `runtime_state.previous_shutdown_was_clean()` already holds the real
+    answer -- computed once at boot, before the marker was overwritten --
+    exactly the fact `GET /api/product/health`'s own `previous_shutdown_
+    clean` field already reads this same way (see api/main.py). Prefer that
+    live, correct fact for that case. A different `runtime_home` (Doctor
+    examining a directory this process did not itself launch against) or a
+    process that never called `prepare_runtime_state` at all (the
+    separate-process CLI form, or a bare test) has no such in-memory fact
+    available and keeps the original raw peek, unchanged.
     """
+
+    if runtime_home == runtime_state.current_runtime_home():
+        return runtime_state.previous_shutdown_was_clean()
 
     import json
 

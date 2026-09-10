@@ -14,9 +14,9 @@ __all__ = ["__version__"]
 #: existing convention exactly. Keep in sync with `pyproject.toml`'s
 #: `[project].version` by hand -- a regression test
 #: (`tests/test_version_provenance.py`) enforces this.
-#: Final Release Hardening & Launch Readiness v1: bumped from "0.1.0" to
-#: "1.0.0" -- see `pyproject.toml`'s own comment for the reasoning.
-_DEV_CHECKOUT_FALLBACK_VERSION = "1.0.0"
+#: Final Release Candidate Corrections v1: restored to "0.1.0" -- see
+#: `pyproject.toml`'s own comment for the reasoning.
+_DEV_CHECKOUT_FALLBACK_VERSION = "0.1.0"
 
 
 def _resolve_version() -> str:

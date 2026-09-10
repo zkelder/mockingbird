@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 
+from mockingbird import runtime_state
 from mockingbird.diagnostics import doctor
 from mockingbird.diagnostics.doctor import (
     DoctorCheckCode,
@@ -898,6 +899,80 @@ def test_interpret_application_surfaces_compatibility_constants() -> None:
     assert result.diagnostic_context["backup_format_version"] == 1
     assert result.diagnostic_context["camera_node_api_version"] == "v1"
     assert result.diagnostic_context["transport_protocol_version"] == "transport/v1"
+
+
+# Final Release Candidate Corrections v1: `prepare_runtime_state`
+# unconditionally rewrites the marker file to `{"state": "starting"}` at
+# boot (see its own docstring) -- a raw peek at that file therefore reads
+# identically for "the previous run crashed" and "this very process is the
+# current run and simply has not shut down yet," for the entire lifetime of
+# a healthy running instance. These three tests reproduce that mechanism
+# directly (not a hand-built `gathered` dict, unlike the compatibility-
+# constants test above) and pin the fix: prefer the already-correct
+# boot-time verdict (`runtime_state.previous_shutdown_was_clean()`) when
+# `runtime_home` is this process's own, real `current_runtime_home()` --
+# exactly the fact `GET /api/product/health`'s own `previous_shutdown_clean`
+# field already reads this same way (see api/main.py).
+
+
+def test_peek_previous_shutdown_state_prefers_the_live_boot_time_verdict_for_this_process_own_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runtime_state, "_runtime_home", None)
+    monkeypatch.setattr(runtime_state, "_previous_shutdown_clean", None)
+
+    (tmp_path / runtime_state.RUNTIME_STATE_FILENAME).write_text(
+        json.dumps({"state": "clean"}), encoding="utf-8"
+    )
+    assert runtime_state.prepare_runtime_state(tmp_path) is True  # the previous run really was clean
+
+    # The marker itself now says "starting" -- indistinguishable, by a raw
+    # file read alone, from a genuine crash. The correct answer must come
+    # from the boot-time verdict computed above, not a fresh peek.
+    assert json.loads((tmp_path / runtime_state.RUNTIME_STATE_FILENAME).read_text())["state"] == "starting"
+    assert doctor._peek_previous_shutdown_state(tmp_path) is True
+
+
+def test_run_doctor_application_check_passes_for_a_healthy_instance_after_a_clean_previous_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end regression for the real user-facing defect: Doctor must
+    not report "did not shut down cleanly" for the entire runtime of a
+    normally running instance whose previous run actually shut down fine."""
+
+    monkeypatch.setattr(runtime_state, "_runtime_home", None)
+    monkeypatch.setattr(runtime_state, "_previous_shutdown_clean", None)
+
+    (tmp_path / runtime_state.RUNTIME_STATE_FILENAME).write_text(
+        json.dumps({"state": "clean"}), encoding="utf-8"
+    )
+    assert runtime_state.prepare_runtime_state(tmp_path) is True
+
+    report = run_doctor(runtime_home=tmp_path)
+    application_check = next(check for check in report.checks if check.code == DoctorCheckCode.APPLICATION)
+    assert application_check.status == DoctorStatus.PASS
+
+
+def test_run_doctor_application_check_still_warns_for_a_genuinely_unclean_previous_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real prior crash must remain distinguishable and actionable -- the
+    fix above must narrow the false-WARN case, never suppress a genuine one."""
+
+    monkeypatch.setattr(runtime_state, "_runtime_home", None)
+    monkeypatch.setattr(runtime_state, "_previous_shutdown_clean", None)
+
+    # No `mark_clean_shutdown()` ever happened for this data directory --
+    # the previous run never reached its own shutdown path (a crash, a
+    # forced kill, or a power loss).
+    (tmp_path / runtime_state.RUNTIME_STATE_FILENAME).write_text(
+        json.dumps({"state": "starting"}), encoding="utf-8"
+    )
+    assert runtime_state.prepare_runtime_state(tmp_path) is False
+
+    report = run_doctor(runtime_home=tmp_path)
+    application_check = next(check for check in report.checks if check.code == DoctorCheckCode.APPLICATION)
+    assert application_check.status == DoctorStatus.WARN
 
 
 # --------------------------------------------------------------------------
