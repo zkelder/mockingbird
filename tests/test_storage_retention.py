@@ -962,6 +962,16 @@ def test_storage_visit_is_wildlife_matches_the_shared_wildlife_taxonomy_predicat
     rather than silently falling outside this guard. The untaxonomized
     fallback (no matching taxonomy row) is unrelated to this consolidation
     and is checked unchanged at the end.
+
+    Wildlife Semantic Consistency v1 (see docs/wildlife-semantic-
+    consistency-v1-contract.md): `"unknown"` is the one deliberate
+    exception to "matches `is_wildlife_category` exactly" -- a reviewed
+    "unknown_bird"/"unknown_animal"/"ambiguous" correction is confirmed
+    wildlife presence for storage/retention purposes even though it is
+    intentionally never a wildlife *taxon* for reporting purposes (see
+    `is_wildlife_category`'s own docstring: callers needing this recognize
+    it "through their own dedicated confirmed-but-unresolved handling,"
+    which this retention check now is).
     """
 
     now = datetime.now(UTC)
@@ -978,7 +988,11 @@ def test_storage_visit_is_wildlife_matches_the_shared_wildlife_taxonomy_predicat
         ("test-wildlife-vehicle", LabelCategory.vehicle.value, False),
         ("test-wildlife-object", LabelCategory.object.value, False),
         ("test-wildlife-false-positive", LabelCategory.false_positive.value, False),
-        ("test-wildlife-unknown", LabelCategory.unknown.value, False),
+        # Confirmed wildlife presence, species honestly unresolved -- the
+        # one deliberate divergence from `is_wildlife_category` itself
+        # (which returns False for "unknown" by design). See the docstring
+        # above.
+        ("test-wildlife-unknown", LabelCategory.unknown.value, True),
     ]
     with repository.session_factory() as session:
         with session.begin():
@@ -1027,7 +1041,10 @@ def test_storage_visit_is_wildlife_matches_the_shared_wildlife_taxonomy_predicat
             assert visit is not None
             result = repository._storage_visit_is_wildlife(session, visit)
             assert result is expected, f"category={category} expected wildlife={expected}"
-            assert result is is_wildlife_category(category)
+            # Agrees with the shared `is_wildlife_category` predicate for
+            # every category except the one deliberate, documented
+            # exception ("unknown" -- see this test's own docstring).
+            assert result is (is_wildlife_category(category) or category == LabelCategory.unknown.value)
 
     with repository.session_factory() as session:
         with session.begin():

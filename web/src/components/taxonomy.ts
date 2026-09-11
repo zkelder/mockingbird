@@ -45,6 +45,19 @@ export function isUnknownAnimalLabel(value: string | null | undefined, labels: T
   return key === "unknown_animal" || findTaxonomyLabel(value, labels)?.category === "unknown";
 }
 
+// Wildlife Semantic Consistency v1: is this reviewed label "confirmed
+// wildlife present, species honestly unresolved" ("unknown_bird"/
+// "unknown_animal"/"ambiguous" -- taxonomy category "unknown"; see
+// docs/wildlife-semantic-consistency-v1-contract.md)? Category-based, like
+// `isUnknownAnimalLabel` above, so it also catches "unknown_bird"/
+// "ambiguous", not just the literal "unknown_animal" string. Distinct from
+// `isBirdReviewLabel`, which returns true for "unknown_bird" for a
+// different purpose (does this belong to the bird-review UI/workflow at
+// all) and must not be read as "species confirmed."
+export function isUnidentifiedWildlifeLabel(value: string | null | undefined, labels: TaxonomyLabel[]): boolean {
+  return findTaxonomyLabel(value, labels)?.category === "unknown";
+}
+
 export function isUnknownBirdLabel(value: string | null | undefined, labels: TaxonomyLabel[]): boolean {
   return taxonomyKey(value ?? "") === "unknown_bird";
 }

@@ -121,6 +121,10 @@ export type ReviewStatus = "needs_review" | "reviewed" | "rejected";
 export type VisitReviewOutcome =
   | "needs_review"
   | "confirmed_bird"
+  // Wildlife Semantic Consistency v1: a reviewed "unknown_bird"/"unknown_
+  // animal"/"ambiguous" correction -- confirmed wildlife presence, species
+  // honestly unresolved. Never produced as "ambiguous" below any longer.
+  | "confirmed_unidentified_wildlife"
   | "false_positive"
   | "blank"
   | "ambiguous"
@@ -4929,6 +4933,12 @@ export interface WildlifeJournalOverviewResponse {
   // Place-wide baseline maturity, as of now -- see
   // docs/historical-baseline-maturity-contract.md.
   baseline_maturity: "insufficient" | "developing" | "established";
+  // Wildlife Semantic Consistency v1: reviewed "unknown_bird"/"unknown_
+  // animal"/"ambiguous" Visits -- confirmed wildlife presence, species
+  // honestly unresolved, deliberately never a `labels` entry. A Bird Log
+  // with zero `labels` but a positive count here must not be described as
+  // "no confirmed wildlife observations."
+  confirmed_species_unresolved_visit_count: number;
 }
 
 // Bird Log's provisional counterpart to the confirmed-only Wildlife Journal

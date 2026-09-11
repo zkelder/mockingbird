@@ -233,8 +233,25 @@ class ReviewStatus(str, Enum):
 class VisitReviewOutcome(str, Enum):
     needs_review = "needs_review"
     confirmed_bird = "confirmed_bird"
+    # Wildlife Semantic Consistency v1 (see docs/wildlife-semantic-
+    # consistency-v1-contract.md): a reviewed "unknown_bird"/"unknown_
+    # animal"/"ambiguous" correction (taxonomy category "unknown") is a
+    # human explicitly confirming wildlife presence while honestly
+    # abstaining on species/kind -- real confirmed wildlife activity, never
+    # a named taxon (product-doctrine.md's Review Decision vocabulary; the
+    # same fact `analytics.place_activity_report`'s `CONFIRMED_SPECIES_
+    # UNRESOLVED`/`confirmed_species_unresolved_visit_count` already
+    # recognizes for the Today digest). `_visit_review_outcome` now returns
+    # this instead of `ambiguous` below for that case, so every other
+    # reader of `StreamVisitSummary.review_outcome` (Bird Log, Local Data,
+    # Dashboard) agrees with Today instead of independently re-deriving --
+    # or failing to re-derive -- the same distinction.
+    confirmed_unidentified_wildlife = "confirmed_unidentified_wildlife"
     false_positive = "false_positive"
     blank = "blank"
+    # No longer produced by `_visit_review_outcome` (superseded by
+    # `confirmed_unidentified_wildlife` above); kept defined, unused, as a
+    # stable additive API value rather than removed.
     ambiguous = "ambiguous"
     non_bird = "non_bird"
     reviewed_other = "reviewed_other"
@@ -6273,6 +6290,17 @@ class WildlifeJournalOverviewResponse(BaseModel):
     # first-ever label honestly ("First confirmed record so far" vs. "New to
     # your reviewed history") without a second round trip.
     baseline_maturity: Literal["insufficient", "developing", "established"] = "insufficient"
+    # Wildlife Semantic Consistency v1 (see docs/wildlife-semantic-
+    # consistency-v1-contract.md): reviewed "unknown_bird"/"unknown_animal"/
+    # "ambiguous" Visits -- real, human-confirmed wildlife presence with
+    # species honestly unresolved. Deliberately never fabricated into a
+    # `labels` entry (there is no named taxon to attach a historical_status/
+    # representative photo to), but must not be silently invisible either --
+    # counted here honestly, the same fact `PlaceActivityReportResponse.
+    # confirmed_species_unresolved_visit_count` already reports for Today,
+    # so a Bird Log with zero named `labels` but a positive count here is
+    # never described as "no confirmed wildlife observations."
+    confirmed_species_unresolved_visit_count: int = Field(default=0, ge=0)
 
 
 class LikelySpeciesOverviewResponse(BaseModel):

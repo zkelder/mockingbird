@@ -125,6 +125,14 @@ function outcomeLabel(visit: DashboardVisitSummary): string {
       ? `Confirmed bird: ${formatLabel(visit.reviewed_label)}`
       : "Confirmed bird observation";
   }
+  if (visit.review_outcome === "confirmed_unidentified_wildlife") {
+    // Wildlife Semantic Consistency v1: same wording Today's own report
+    // panel already uses for this exact fact (see TodayReportPanel.tsx) --
+    // never "Ambiguous or unknown outcome" (the pre-fix bucket this used to
+    // fall into), which reads as unconfirmed when a human explicitly
+    // confirmed wildlife presence and only abstained on species.
+    return "Confirmed wildlife — species not yet identified";
+  }
   if (visit.review_outcome === "non_bird") {
     return visit.reviewed_label
       ? `Reviewed activity: ${formatLabel(visit.reviewed_label)}`

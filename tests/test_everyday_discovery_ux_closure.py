@@ -788,6 +788,12 @@ async def test_bird_log_reflects_all_confirmed_scenarios_honestly(
     # unresolved, a distinct concept from a named taxon (product-doctrine.md)
     # -- never fabricated into a fake species entry here.
     assert "unknown_bird" not in labels
+    # Wildlife Semantic Consistency v1: still real, honestly counted --
+    # never silently dropped just because it has no `labels` entry. Before
+    # this fix, "pf-unknown" resolved to `VisitReviewOutcome.ambiguous` and
+    # was invisible to Bird Log entirely, contradicting Today's own
+    # `confirmed_species_unresolved_visit_count` for the identical Visit.
+    assert overview.json()["confirmed_species_unresolved_visit_count"] == 1
     # Still-provisional Visit has no reviewed truth at all yet.
     assert not any(
         visit_id == "pf-provisional"

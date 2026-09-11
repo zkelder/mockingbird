@@ -18551,7 +18551,13 @@ class ProductRepository:
             }
         if review_filter == ActivityLibraryReviewFilter.blank:
             return summary.review_outcome == VisitReviewOutcome.blank
-        return summary.review_outcome == VisitReviewOutcome.ambiguous
+        # ActivityLibraryReviewFilter.ambiguous_unknown. Wildlife Semantic
+        # Consistency v1: `_visit_review_outcome` now returns `confirmed_
+        # unidentified_wildlife`, not `ambiguous`, for this exact case (see
+        # its own docstring) -- matching that here keeps this in-memory
+        # check agreed with the query-level `ambiguous_keys` filter above,
+        # which already matches these Visits by label unchanged.
+        return summary.review_outcome == VisitReviewOutcome.confirmed_unidentified_wildlife
 
     def list_activity_library_saved_views(self) -> list[ActivityLibrarySavedView]:
         with self.session_factory() as session:
@@ -18908,7 +18914,22 @@ class ProductRepository:
         `_taxonomy_label_model_for_input` so a report-scoped caller
         resolving many Visits pays for one preloaded table scan instead of
         one fresh scan per reviewed Visit with a real species label. See
-        `_stream_visit_summary_from_models`'s docstring."""
+        `_stream_visit_summary_from_models`'s docstring.
+
+        Wildlife Semantic Consistency v1 (see docs/wildlife-semantic-
+        consistency-v1-contract.md): "unknown_bird"/"unknown_animal"/
+        "ambiguous" (taxonomy category "unknown") return `confirmed_
+        unidentified_wildlife`, not `ambiguous` -- a human explicitly
+        confirmed wildlife presence while honestly abstaining on species,
+        the same real confirmed-wildlife fact `analytics.place_activity_
+        report`'s `CONFIRMED_SPECIES_UNRESOLVED`/`confirmed_species_
+        unresolved_visit_count` already recognizes for Today. This is the
+        one shared resolver every other reader of `StreamVisitSummary.
+        review_outcome` (Bird Log, Local Data, Dashboard) keys off, so
+        fixing it here is what makes them agree with Today instead of each
+        independently re-deriving -- or failing to re-derive -- the same
+        distinction.
+        """
 
         if review_status == ReviewStatus.needs_review:
             return VisitReviewOutcome.needs_review
@@ -18923,7 +18944,7 @@ class ProductRepository:
         if key in {"blank", "empty", "no_activity", "no_animal"}:
             return VisitReviewOutcome.blank
         if key in {"ambiguous", "unknown_bird", "unknown_animal", "unknown"}:
-            return VisitReviewOutcome.ambiguous
+            return VisitReviewOutcome.confirmed_unidentified_wildlife
         if key in {"non_bird", "non_bird_activity"}:
             return VisitReviewOutcome.non_bird
 
@@ -18933,6 +18954,14 @@ class ProductRepository:
         if taxonomy is not None:
             if taxonomy.category == LabelCategory.bird.value:
                 return VisitReviewOutcome.confirmed_bird
+            if taxonomy.category == LabelCategory.unknown.value:
+                # Future-proofing symmetry with the hardcoded `key` check
+                # above: a custom taxonomy row a user creates under category
+                # "unknown" that is not literally spelled "ambiguous"/
+                # "unknown_bird"/"unknown_animal" still resolves honestly,
+                # matching `research.eligibility`'s identical category-first
+                # check rather than a closed label-string list.
+                return VisitReviewOutcome.confirmed_unidentified_wildlife
             if taxonomy.category == LabelCategory.false_positive.value:
                 return VisitReviewOutcome.false_positive
             return VisitReviewOutcome.non_bird
@@ -21558,6 +21587,22 @@ class ProductRepository:
         retention guard until this method is separately updated. The
         untaxonomized fallback below is unrelated (no taxonomy row to read
         a category from) and is unchanged.
+
+        Wildlife Semantic Consistency v1 (see docs/wildlife-semantic-
+        consistency-v1-contract.md): `is_wildlife_category` deliberately
+        returns `False` for category `"unknown"` ("unknown_bird"/
+        "unknown_animal"/"ambiguous") -- see that predicate's own docstring,
+        which explicitly defers to "each caller's own dedicated confirmed-
+        but-unresolved handling." This is that handling for storage/
+        retention purposes: a reviewed Visit honestly confirming wildlife
+        presence while abstaining on species is real confirmed wildlife
+        evidence for retention/summary purposes, exactly like a named
+        taxon, even though it is intentionally never a wildlife *taxon*
+        for reporting purposes (place_activity_report.py). Before this,
+        the taxonomy-matched branch silently overrode the untaxonomized
+        fallback's own correct `"unknown_bird"` entry below, undercounting
+        Local Data's "reviewed wildlife" summary and shortening this
+        evidence's retention window to the "reviewed other" schedule.
         """
 
         label = (visit.reviewed_label or visit.subject_label or "").strip()
@@ -21565,7 +21610,7 @@ class ProductRepository:
             select(TaxonomyLabelModel).where(TaxonomyLabelModel.label == label)
         )
         if taxonomy is not None:
-            return is_wildlife_category(taxonomy.category)
+            return is_wildlife_category(taxonomy.category) or taxonomy.category == LabelCategory.unknown.value
         return label in {"bird", "unknown_bird", "wildlife"}
 
     def _storage_visit_required_by_export(self, session: Session, visit: VisitModel) -> bool:
@@ -32300,8 +32345,15 @@ class ProductRepository:
                         in {VisitReviewOutcome.blank, VisitReviewOutcome.false_positive}
                         for record in current_records
                     ),
+                    # Wildlife Semantic Consistency v1: `_visit_review_
+                    # outcome` now returns `confirmed_unidentified_wildlife`,
+                    # not `ambiguous`, for a reviewed "unknown_bird"/
+                    # "unknown_animal"/"ambiguous" correction (see its own
+                    # docstring) -- matching that here keeps this count
+                    # unchanged rather than silently dropping to 0.
                     ambiguous_or_unknown_count=sum(
-                        record["summary"].review_outcome == VisitReviewOutcome.ambiguous
+                        record["summary"].review_outcome
+                        == VisitReviewOutcome.confirmed_unidentified_wildlife
                         for record in current_records
                     ),
                     rejected_count=sum(
@@ -33814,13 +33866,33 @@ class ProductRepository:
             # `_wildlife_insight_records`'s comment). The unfiltered
             # default (`payload.stream_id is None`) is byte-identical to
             # before: current-active-observatory records only.
+            all_insight_records = self._wildlife_insight_records(
+                session, start_at=None, end_at=None, include_archived=payload.stream_id is not None
+            )
             records = [
                 record
-                for record in self._wildlife_journal_confirmed_records(
-                    session, include_archived=payload.stream_id is not None
-                )
-                if payload.stream_id is None or record["summary"].stream_id == payload.stream_id
+                for record in all_insight_records
+                if self._is_confirmed_wildlife_summary(session, record["summary"])
+                and (payload.stream_id is None or record["summary"].stream_id == payload.stream_id)
             ]
+            # Wildlife Semantic Consistency v1 (see docs/wildlife-semantic-
+            # consistency-v1-contract.md): a reviewed "unknown_bird"/
+            # "unknown_animal"/"ambiguous" correction is real, human-
+            # confirmed wildlife presence with species honestly unresolved
+            # (`VisitReviewOutcome.confirmed_unidentified_wildlife`) -- the
+            # same fact `place_activity_report.py`'s `confirmed_species_
+            # unresolved_visit_count` already counts for Today. Deliberately
+            # excluded from `records`/`grouped` below, same as before (never
+            # fabricated into a fake per-species label -- `_is_confirmed_
+            # wildlife_summary`'s own existing contract, unchanged), but
+            # must not be silently invisible here either -- counted
+            # honestly instead of dropped.
+            confirmed_species_unresolved_visit_count = sum(
+                1
+                for record in all_insight_records
+                if record["summary"].review_outcome == VisitReviewOutcome.confirmed_unidentified_wildlife
+                and (payload.stream_id is None or record["summary"].stream_id == payload.stream_id)
+            )
             grouped: dict[str, list[dict[str, Any]]] = {}
             for record in records:
                 grouped.setdefault(record["label"], []).append(record)
@@ -33921,7 +33993,10 @@ class ProductRepository:
                     reverse=True,
                 )
             return WildlifeJournalOverviewResponse(
-                order=payload.order, labels=summaries[:100], baseline_maturity=baseline_maturity
+                order=payload.order,
+                labels=summaries[:100],
+                baseline_maturity=baseline_maturity,
+                confirmed_species_unresolved_visit_count=confirmed_species_unresolved_visit_count,
             )
 
     def wildlife_journal_history(

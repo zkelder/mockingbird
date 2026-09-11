@@ -276,7 +276,7 @@ test_identification_eligibility_regression_2026_08_21.py`.
 the identification/species-suggestion test family; full Core
 independently reconfirms this change (see §8).
 
-### 3.5 Cross-surface disagreement on "confirmed wildlife" for unresolved species (FOUND, DELIBERATELY NOT FIXED)
+### 3.5 Cross-surface disagreement on "confirmed wildlife" for unresolved species (FOUND, FIXED -- see docs/wildlife-semantic-consistency-v1-contract.md)
 
 **Symptom.** After reviewing the imported Visit as "Unknown Bird," the
 **same underlying fact** reads differently across three real product
@@ -605,9 +605,10 @@ reasoning as "Getting started") and the minor terminology note (§3.8).
 
 ## 10. Remaining known release-experience issues
 
-1. Cross-surface "confirmed wildlife" disagreement for `unknown_bird`/
-   `unknown_animal` reviewed labels (§3.5) -- the most significant open
-   item, recommend a dedicated follow-up investigation/decision.
+1. ~~Cross-surface "confirmed wildlife" disagreement for `unknown_bird`/
+   `unknown_animal` reviewed labels (§3.5)~~ -- **closed** by "Reviewed
+   Wildlife Semantic Consistency v1"; see
+   docs/wildlife-semantic-consistency-v1-contract.md.
 2. `StreamsPage.tsx`'s "Analyze image (demo)" panel is the same
    unconditional-visibility anti-pattern already fixed once this
    milestone on Import Media (§3.3) -- recommend a small, dedicated

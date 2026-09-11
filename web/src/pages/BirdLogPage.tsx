@@ -637,7 +637,35 @@ export function BirdLogPage({
         ) : null}
         {error ? <div className="error-panel">{error}</div> : null}
         {isLoading && !overview ? <div className="panel">Loading Bird Log…</div> : null}
-        {overview?.labels.length === 0 && !isLoading ? (
+        {/*
+          Wildlife Semantic Consistency v1 (see docs/wildlife-semantic-
+          consistency-v1-contract.md): a reviewed "unknown_bird"/"unknown_
+          animal"/"ambiguous" Visit is real, human-confirmed wildlife
+          presence with species honestly unresolved -- never fabricated
+          into a `labels` entry (there is no named taxon), but must not be
+          silently invisible either. Shown as its own honestly-labeled
+          panel, distinct from the per-species grid below, so a Bird Log
+          with zero named species but a real confirmed encounter is never
+          described as "no confirmed wildlife observations."
+        */}
+        {overview && overview.confirmed_species_unresolved_visit_count > 0 ? (
+          <section className="panel journal-unidentified-panel" aria-label="Confirmed wildlife with unidentified species">
+            <div className="section-heading">
+              <div>
+                <h2>Unidentified wildlife</h2>
+                <span className="meta-text">
+                  Wildlife presence confirmed by review; species not yet identified. Not a named
+                  species entry below.
+                </span>
+              </div>
+              <StatusPill
+                label={`${overview.confirmed_species_unresolved_visit_count} confirmed`}
+                tone="good"
+              />
+            </div>
+          </section>
+        ) : null}
+        {overview?.labels.length === 0 && !overview?.confirmed_species_unresolved_visit_count && !isLoading ? (
           <EmptyState
             title={streams.length === 0 ? "No cameras connected yet" : "No confirmed wildlife observations yet"}
             description={streams.length === 0 ? "Add a camera or local media Source, then review outdoor activity." : "Review a Visit to create a confirmed local wildlife observation. Suggestions are not Bird Log entries."}

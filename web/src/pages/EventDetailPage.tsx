@@ -7,7 +7,12 @@ import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { StatusPill } from "../components/StatusPill";
 import { TaxonomyBadge } from "../components/TaxonomyBadge";
-import { displayTaxonomyLabel, findTaxonomyLabel, isBirdReviewLabel } from "../components/taxonomy";
+import {
+  displayTaxonomyLabel,
+  findTaxonomyLabel,
+  isBirdReviewLabel,
+  isUnidentifiedWildlifeLabel,
+} from "../components/taxonomy";
 import { formatDateTime, formatLabel } from "../utils";
 
 interface EventDetailPageProps {
@@ -120,7 +125,15 @@ export function EventDetailPage({
   const visitsNeedingSpeciesReview = speciesVisits.filter(
     (visit) => visit.review_status === "needs_review" || !visit.reviewed_label,
   );
-  const reviewedSpeciesVisits = speciesVisits.filter((visit) => visit.reviewed_label);
+  // Wildlife Semantic Consistency v1 (see docs/wildlife-semantic-
+  // consistency-v1-contract.md): a reviewed "unknown_bird"/"unknown_
+  // animal"/"ambiguous" Visit has confirmed wildlife presence, not a
+  // confirmed *species* -- excluded from this count so "Reviewed species"
+  // only ever counts a genuinely identified species, matching the per-
+  // visit card wording below.
+  const reviewedSpeciesVisits = speciesVisits.filter(
+    (visit) => visit.reviewed_label && !isUnidentifiedWildlifeLabel(visit.reviewed_label, taxonomyLabels),
+  );
   const isMotionEvidenceEvent = detail.event.event_type === "motion_evidence";
   const webhookProvenance = detail.motion_evidence
     ? getWebhookEvidenceProvenance(detail.motion_evidence)
@@ -367,7 +380,11 @@ export function EventDetailPage({
           <div>
             <span className="meta-text">Dataset export</span>
             <strong>
-              {detail.dataset_ready ? "Ready for species dataset export" : "Resolve species first"}
+              {detail.dataset_ready
+                ? reviewedSpeciesVisits.length > 0
+                  ? "Ready for species dataset export"
+                  : "Ready for wildlife dataset export"
+                : "Resolve species first"}
             </strong>
           </div>
         </div>
@@ -376,6 +393,8 @@ export function EventDetailPage({
             {speciesVisits.map((visit) => {
               const visitLabel = visit.reviewed_label ?? visit.species_guess ?? visit.subject_label;
               const preview = detail.visit_previews?.[visit.id];
+              const isUnidentifiedWildlifeVisit =
+                Boolean(visit.reviewed_label) && isUnidentifiedWildlifeLabel(visit.reviewed_label, taxonomyLabels);
               return (
                 <button
                   className="detail-link-card"
@@ -394,7 +413,13 @@ export function EventDetailPage({
                   ) : null}
                   <span>{displayTaxonomyLabel(visitLabel, taxonomyLabels)}</span>
                   <TaxonomyBadge label={findTaxonomyLabel(visitLabel, taxonomyLabels)} value={visitLabel} />
-                  <strong>{visit.reviewed_label ? "Reviewed species" : "Resolve species"}</strong>
+                  <strong>
+                    {!visit.reviewed_label
+                      ? "Resolve species"
+                      : isUnidentifiedWildlifeVisit
+                        ? "Wildlife confirmed"
+                        : "Reviewed species"}
+                  </strong>
                 </button>
               );
             })}

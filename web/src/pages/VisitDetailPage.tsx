@@ -27,7 +27,12 @@ import { TaxonomyLabelInput } from "../components/TaxonomyLabelInput";
 import { TaxonomyBadge } from "../components/TaxonomyBadge";
 import { VisitEvidenceSequence } from "../components/VisitEvidenceSequence";
 import { RefinedCropEditor } from "../components/RefinedCropEditor";
-import { displayTaxonomyLabel, findTaxonomyLabel, isBirdReviewLabel } from "../components/taxonomy";
+import {
+  displayTaxonomyLabel,
+  findTaxonomyLabel,
+  isBirdReviewLabel,
+  isUnidentifiedWildlifeLabel,
+} from "../components/taxonomy";
 import { explainMultimodalAssociation } from "../components/suggestionExplanation";
 import { formatDateTime, formatLabel, formatTimeOfDay, formatWeatherLine } from "../utils";
 
@@ -647,12 +652,21 @@ export function VisitDetailPage({
     isBirdReviewLabel(detail.visit.reviewed_label, taxonomyLabels) ||
     isBirdReviewLabel(detail.visit.species_guess, taxonomyLabels) ||
     isBirdReviewLabel(detail.visit.subject_label, taxonomyLabels);
+  // Wildlife Semantic Consistency v1 (see docs/wildlife-semantic-
+  // consistency-v1-contract.md): a reviewed "unknown_bird"/"unknown_
+  // animal"/"ambiguous" label is confirmed wildlife presence, not a
+  // confirmed species -- `isSpeciesVisit` above intentionally still covers
+  // it (it still belongs in the species-review workflow/correction form),
+  // but text claiming the *species* is confirmed must not.
+  const isUnidentifiedWildlifeVisit = isUnidentifiedWildlifeLabel(detail.visit.reviewed_label, taxonomyLabels);
   // Lightweight Likely/Confirmed distinction (Automatic Species Suggestion
   // v1): human-reviewed truth always wins, so a reviewed_label present here
   // is always Confirmed; an automatic species_guess with no reviewed_label
   // yet is a provisional AI suggestion, never truth.
   const identificationBadge = detail.visit.reviewed_label
-    ? { label: "Confirmed", tone: "good" as const }
+    ? isUnidentifiedWildlifeVisit
+      ? { label: "Wildlife confirmed — species unknown", tone: "good" as const }
+      : { label: "Confirmed", tone: "good" as const }
     : detail.visit.species_guess
       ? { label: "Likely — AI suggestion", tone: "quiet" as const }
       : null;
@@ -799,7 +813,9 @@ export function VisitDetailPage({
         <StatusPill
           label={
             detail.dataset_ready && isSpeciesVisit
-              ? "Ready for species dataset export"
+              ? isUnidentifiedWildlifeVisit
+                ? "Ready for wildlife dataset export"
+                : "Ready for species dataset export"
               : detail.dataset_ready
                 ? "Ready for local dataset export"
                 : isSpeciesVisit
@@ -1321,13 +1337,21 @@ export function VisitDetailPage({
             </span>
           </div>
           <EvidenceBadge
-            label={detail.dataset_ready && isSpeciesVisit ? "Ready for species dataset export" : "Resolve species"}
+            label={
+              detail.dataset_ready && isSpeciesVisit
+                ? isUnidentifiedWildlifeVisit
+                  ? "Ready for wildlife dataset export"
+                  : "Ready for species dataset export"
+                : "Resolve species"
+            }
             tone={detail.dataset_ready ? "truth" : "review"}
           />
         </div>
         <div className="species-state-grid">
           <div>
-            <span className="meta-text">{isSpeciesVisit ? "Reviewed species" : "Reviewed label"}</span>
+            <span className="meta-text">
+              {isSpeciesVisit ? (isUnidentifiedWildlifeVisit ? "Wildlife confirmed" : "Reviewed species") : "Reviewed label"}
+            </span>
             <strong>
               {detail.visit.reviewed_label
                 ? displayTaxonomyLabel(detail.visit.reviewed_label, taxonomyLabels)
@@ -1349,7 +1373,9 @@ export function VisitDetailPage({
             <strong>
               {detail.dataset_ready
                 ? isSpeciesVisit
-                  ? "Ready for species dataset export"
+                  ? isUnidentifiedWildlifeVisit
+                    ? "Ready for wildlife dataset export"
+                    : "Ready for species dataset export"
                   : "Ready for local dataset export"
                 : isSpeciesVisit
                   ? "Resolve species"
