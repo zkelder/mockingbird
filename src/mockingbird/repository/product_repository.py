@@ -28354,6 +28354,20 @@ class ProductRepository:
                 elif last_summary.status in {
                     ReviewIdentificationStatus.no_proposal,
                     ReviewIdentificationStatus.proposal_created,
+                    # Identification Eligibility + Abstention v1's own honest
+                    # "not enough support to name a species" outcome -- see
+                    # that status's own docstring in api/schemas.py. Omitted
+                    # here previously, so it fell through to the `else`
+                    # catch-all below and was misreported as `"failed"`
+                    # (reserved for a genuine adapter/runtime problem),
+                    # contradicting the enum's own documented distinction
+                    # between honest uncertainty and a malfunction. Found
+                    # live during Release Experience Rehearsal v1: a real
+                    # BioCLIP run on an uncropped, full-frame manual-media
+                    # import correctly abstained (top candidate well below
+                    # the confidence floor) and the Identification Assistant
+                    # reported it as "failed" anyway.
+                    ReviewIdentificationStatus.identification_uncertain,
                 }:
                     terminal_status = "no_result"
                 elif last_summary.status in {

@@ -387,6 +387,43 @@ async def test_visit_140_real_score_produces_no_forced_species_name(
     assert result["species_suggestion"] is None
 
 
+async def test_identification_assistant_run_reports_honest_abstention_not_failed(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Release Experience Rehearsal v1: found live on a real packaged
+    artifact -- an ambiguous/low-confidence (but real, non-error) BioCLIP
+    result on a full-frame manual-media import produced `identification_
+    uncertain` from the single-shot boundary (proven above), but the
+    Identification Assistant's own convenience wrapper
+    (`start_visit_identification_assistant`, the "Suggest species" action on
+    the Visit detail page) mapped that same honest outcome to its `"failed"`
+    terminal status -- indistinguishable from a genuine adapter/runtime
+    problem, and contradicting `ReviewIdentificationStatus.identification_
+    uncertain`'s own documented "honest uncertainty rather than a
+    malfunction" contract. This is the wiring gap that let it happen; the
+    fix maps this status into the already-existing, correctly-calm
+    `"no_result"` terminal status instead."""
+
+    await deactivate_default_ignore_zone(client)
+    imported = await import_review_image(client, title="Assistant abstention regression")
+    visit_id = imported["visit"]["id"]
+    mark_bioclip_available(monkeypatch, tmp_path)
+    mock_bioclip_run(
+        monkeypatch,
+        bioclip_prediction(("red bellied woodpecker (Melanerpes carolinus)", None, None, 0.5986)),
+    )
+
+    response = await client.post(
+        f"/api/visits/{visit_id}/identification-assistant",
+        json={"idempotency_key": "assistant-abstention-regression-001"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["run"]["status"] == "no_result"
+    assert body["run"]["error_code"] is None
+
+
 # --- Item 10: ordinary Visit creation/review continues when abstained ------
 
 

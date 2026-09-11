@@ -336,10 +336,12 @@ deleting the right folder(s) yourself. (If you're replacing MockingBird
 with a newer version rather than removing it, see "Upgrading MockingBird,"
 above, instead -- upgrading does not require removing anything first.)
 
-1. **Stop MockingBird first.** Close its browser tab, then use Task
-   Manager to end the "pythonw.exe" process (or restart your computer).
-   Windows will not let you delete files MockingBird is still running
-   from.
+1. **Stop MockingBird first.** Open **Local Data** and choose **Shut Down
+   MockingBird** (the same preferred method as "Install and start
+   (Windows)," above) -- or close its browser tab and use Task Manager to
+   end the "pythonw.exe" process, or restart your computer, if MockingBird
+   itself won't open. Windows will not let you delete files MockingBird is
+   still running from.
 2. **Delete the application folder** -- the one containing
    `Start MockingBird.vbs`. This removes MockingBird itself. Your
    cameras, Zones, reviewed history, media, and backups are **not**

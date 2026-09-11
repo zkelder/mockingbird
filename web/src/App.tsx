@@ -802,6 +802,7 @@ export default function App() {
           onOpenDetectionProposals={() => setPage("detection-proposals")}
           onOpenReview={() => openReviewQueue()}
           onImportComplete={() => loadAppData({ showLoading: false })}
+          isDeveloperMode={isDeveloperMode}
         />
       );
     }

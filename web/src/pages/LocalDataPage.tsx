@@ -697,7 +697,15 @@ export function LocalDataPage({
                     {storageSummary.unresolved_visit_evidence_count} unresolved · {storageSummary.reviewed_bird_wildlife_evidence_count} reviewed wildlife · {storageSummary.reviewed_non_bird_blank_ambiguous_evidence_count} reviewed other
                   </strong>
                 </div>
-                {storageSummary.storage_warning ? <div className="notice-panel">{storageSummary.storage_warning}</div> : null}
+                {storageSummary.storage_warning ? (
+                  // See OnboardingWizard's identical fix: `critical` means new
+                  // evidence may soon fail to save and deserves the same
+                  // error-panel severity as a genuine failure, not the calm
+                  // notice-panel every tier previously shared.
+                  <div className={storageSummary.storage_health_tier === "critical" ? "error-panel" : "notice-panel"}>
+                    {storageSummary.storage_warning}
+                  </div>
+                ) : null}
               </>
             ) : null}
 

@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { apiClient, ApiError } from "../api/client";
-import type { CurrentUser, LocalDataStatus, SetupState, StorageSummary } from "../api/types";
+import type { CurrentUser, LocalDataStatus, ObservationSessionStatus, SetupState, StorageSummary } from "../api/types";
 import { CameraSetupPage } from "../pages/CameraSetupPage";
 import { ObservationControlPanel } from "./ObservationControlPanel";
 import { formatBytes, parentDirectory } from "../utils";
@@ -327,7 +327,13 @@ function StorageStep({ onContinue }: { onContinue: () => void }) {
           MockingBird cannot write to its data folder. Fix folder permissions, then continue.
         </div>
       ) : storage?.storage_warning ? (
-        <div className="notice-panel">
+        // Storage/Privacy/Recovery v1 Phase C's `critical` tier means new
+        // evidence may soon fail to save -- distinct from, and more urgent
+        // than, an early `getting_low`/`action_recommended` heads-up, so it
+        // reuses the same `error-panel` treatment as the not-writable case
+        // above instead of the calm `notice-panel` every tier previously
+        // shared.
+        <div className={storage.storage_health_tier === "critical" ? "error-panel" : "notice-panel"}>
           <span>{storage.storage_warning}</span>
         </div>
       ) : null}
@@ -347,18 +353,38 @@ function StorageStep({ onContinue }: { onContinue: () => void }) {
 }
 
 function ObserveStep({ streamId, onFinish }: { streamId: string; onFinish: () => void }) {
+  // `null` = not yet known (first poll still in flight) -- deliberately
+  // defaults to the live-observing copy below rather than flashing the
+  // no-runtime copy first, since most Sources do support observing.
+  const [runtimeAvailable, setRuntimeAvailable] = useState<boolean | null>(null);
+  const handleStatus = useCallback((status: ObservationSessionStatus | null) => {
+    setRuntimeAvailable(status?.runtime_available ?? null);
+  }, []);
+
   return (
     <div className="page-stack">
       <section className="panel page-stack">
         <h2>Your camera is ready</h2>
-        <p>
-          Start observing when you would like MockingBird to watch this camera. Sightings will
-          show up in Today and Bird Log as they happen; open Review Queue any time you want to
-          work through suggestions in one place. Nothing here is permanent, and you can start or
-          stop observing any time from Cameras.
-        </p>
+        {runtimeAvailable === false ? (
+          <p>
+            This camera type doesn&rsquo;t watch for activity on its own here, so there is no
+            Start observing step for it. If this is a recorded/imported Source, use{" "}
+            <strong>Import Media</strong> (in the main menu) whenever you&rsquo;re ready to add
+            video or image files -- MockingBird analyzes them the same way a live camera&rsquo;s
+            activity is analyzed. Sightings will show up in Today and Bird Log; open Review Queue
+            any time you want to work through suggestions in one place. Nothing here is
+            permanent, and you can add or adjust Sources any time from Cameras.
+          </p>
+        ) : (
+          <p>
+            Start observing when you would like MockingBird to watch this camera. Sightings will
+            show up in Today and Bird Log as they happen; open Review Queue any time you want to
+            work through suggestions in one place. Nothing here is permanent, and you can start or
+            stop observing any time from Cameras.
+          </p>
+        )}
       </section>
-      <ObservationControlPanel streamId={streamId} />
+      <ObservationControlPanel streamId={streamId} onStatus={handleStatus} />
       <section className="panel-actions">
         <button className="primary-action" onClick={onFinish} type="button">
           Finish setup

@@ -108,7 +108,8 @@ export function IdentificationAssistant({
 
       {assistant?.run ? (
         <span className="meta-text">
-          Latest explicit request: {String(assistant.run.status ?? "recorded")} · {String(assistant.run.request_origin ?? "user-triggered")}
+          Latest explicit request: {formatLabel(String(assistant.run.status ?? "recorded"))} ·{" "}
+          {formatLabel(String(assistant.run.request_origin ?? "user-triggered"))}
         </span>
       ) : null}
       {assistant?.suggestions.length ? (

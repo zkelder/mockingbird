@@ -91,6 +91,18 @@ export function ProductHealthPanel({ storageSummary, onOpenLocalData }: ProductH
         action_recommended: "Action recommended",
         critical: "Critically low",
       }[health.storage_health_tier];
+  // `healthy`/`getting_low` stay plain text, matching the calm-by-default
+  // convention "not configured" (acoustic, below) already uses -- neither
+  // is worth an alarming pill. `action_recommended`/`critical`/not-writable
+  // are genuinely worth a glance-able visual distinction, previously
+  // indistinguishable from "Healthy" here (text-only, no color at all).
+  const storageStateTone: "review" | "alert" | null = !health.storage_writable
+    ? "alert"
+    : health.storage_health_tier === "critical"
+      ? "alert"
+      : health.storage_health_tier === "action_recommended"
+        ? "review"
+        : null;
 
   // Whole-Product UI / Accessibility / Performance Closure v1: acoustic is
   // always optional -- "Not configured" is the calm, common, expected state
@@ -126,7 +138,8 @@ export function ProductHealthPanel({ storageSummary, onOpenLocalData }: ProductH
       </div>
       <div className="monitoring-continuity-facts">
         <span>
-          <strong>Storage</strong> {storageStateLabel}
+          <strong>Storage</strong>{" "}
+          {storageStateTone ? <StatusPill label={storageStateLabel} tone={storageStateTone} /> : storageStateLabel}
         </span>
         {totalUsageBytes != null ? (
           <span>

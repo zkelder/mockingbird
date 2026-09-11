@@ -90,9 +90,14 @@ function learningStatusLabel(status: SceneConfusorLearningStatus | null): string
 export function ObservationControlPanel({
   streamId,
   onOpenCameraSetup,
+  onStatus,
 }: {
   streamId: string;
   onOpenCameraSetup?: () => void;
+  // Lets a caller (e.g. the onboarding wizard's final step) react to
+  // `runtime_available` without a second, independently-polled fetch of
+  // the same status this panel already owns.
+  onStatus?: (status: ObservationSessionStatus | null) => void;
 }) {
   const [status, setStatus] = useState<ObservationSessionStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -113,6 +118,7 @@ export function ObservationControlPanel({
       if (mountedRef.current) {
         setStatus(next);
         setError(null);
+        onStatus?.(next);
       }
     } catch {
       if (mountedRef.current) {
@@ -123,7 +129,10 @@ export function ObservationControlPanel({
         setIsLoading(false);
       }
     }
-  }, [streamId]);
+    // `onStatus` must be a stable (e.g. useCallback-memoized) reference from
+    // the caller -- an inline arrow here would retrigger the effect below on
+    // every render and restart the poll loop.
+  }, [streamId, onStatus]);
 
   useEffect(() => {
     mountedRef.current = true;

@@ -28,6 +28,12 @@ interface ManualImportPageProps {
   onOpenDetectionProposals: () => void;
   onOpenReview: () => void;
   onImportComplete: () => Promise<void>;
+  // Release Experience Rehearsal v1: the "Browser local smoke path" panel
+  // below (synthetic demo-proposal evidence, for local smoke testing only)
+  // previously rendered unconditionally for every user on this page --
+  // gated the same way VisitDetailPage already gates its own analogous
+  // demo-evidence action, instead of a normal user ever seeing it.
+  isDeveloperMode?: boolean;
 }
 
 interface LastImportContext {
@@ -48,6 +54,7 @@ export function ManualImportPage({
   onOpenDetectionProposals,
   onOpenReview,
   onImportComplete,
+  isDeveloperMode = false,
 }: ManualImportPageProps) {
   const [selectedStreamId, setSelectedStreamId] = useState(streams[0]?.id ?? "");
   const [zones, setZones] = useState<Zone[]>([]);
@@ -468,6 +475,7 @@ export function ManualImportPage({
             <StatusPill label={`${result.review_queue_count} needs review`} tone="review" />
           </div>
           <MediaAssetPreview asset={result.media_asset} compact />
+          {isDeveloperMode ? (
           <div className="import-smoke-panel">
             <div className="section-heading">
               <div>
@@ -591,6 +599,7 @@ export function ManualImportPage({
               </ul>
             </div>
           </div>
+          ) : null}
         </section>
       ) : null}
 

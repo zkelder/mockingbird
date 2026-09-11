@@ -629,7 +629,16 @@ export function DashboardPage({
         </div>
       ) : null}
       {storageSummary?.storage_warning ? (
-        <div className="dashboard-refresh-notice" role="status">
+        // Same fix as OnboardingWizard/LocalDataPage: `critical` (new
+        // evidence may soon fail to save) reuses the existing
+        // dashboard-action-error treatment instead of the calm
+        // dashboard-refresh-notice every tier previously shared.
+        <div
+          className={
+            storageSummary.storage_health_tier === "critical" ? "dashboard-action-error" : "dashboard-refresh-notice"
+          }
+          role="status"
+        >
           <span>{storageSummary.storage_warning}</span>
         </div>
       ) : null}
