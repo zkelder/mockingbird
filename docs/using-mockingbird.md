@@ -65,6 +65,18 @@ plainly instead of failing the whole install.
 That's it -- there is nothing to install first. The folder already contains
 everything MockingBird needs to run.
 
+**About the Windows warning you may see first.** MockingBird's release
+files are not (yet) signed with a paid code-signing certificate, so
+Windows SmartScreen may show a blue "Windows protected your PC" screen the
+first time you unpack the download or run **Start MockingBird.vbs**,
+naming an "unrecognized app." This is Windows being cautious about a
+program it has not seen many people run yet, not a sign anything is
+wrong. If you downloaded MockingBird from its official source and want to
+continue, click **More info**, then **Run anyway**. This is the one place
+in this guide where you decide for yourself whether to trust the source
+you downloaded from -- MockingBird cannot, and should not, make that
+decision for you.
+
 To close MockingBird, close its browser tab -- MockingBird keeps running in
 the background either way, and your data is always safe. To fully stop it,
 open **Local Data** and choose **Shut Down MockingBird**: this is the
