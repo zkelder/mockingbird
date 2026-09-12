@@ -9,7 +9,13 @@ from sqlalchemy import select
 
 from mockingbird.api.main import app, configure_repository
 from mockingbird.repository.product_repository import ProductRepository
-from mockingbird.storage.models import MediaAssetModel, StreamModel
+from mockingbird.storage.models import (
+    EventModel,
+    MediaAssetModel,
+    StreamModel,
+    VisitEvidenceLinkModel,
+    VisitModel,
+)
 from tests.conftest import LegacyAuthenticatedTestClient
 
 
@@ -95,3 +101,86 @@ async def test_storage_retention_preview_is_server_owned_and_stale_execution_is_
     assert execute.status_code == 409
     assert "Generate a new preview" in execute.json()["detail"]
     assert first_path.exists()
+
+
+# --- Manual Import Evidence Integrity v1: end-to-end over the real HTTP API -
+
+
+async def test_storage_summary_endpoint_does_not_orphan_a_real_manual_import(
+    client: httpx.AsyncClient,
+) -> None:
+    """The exact user-facing symptom, proven over the real API a browser
+    actually calls: a manually imported Visit's media must not appear
+    orphaned in `GET /api/settings/storage-retention/summary` (the Local
+    Data page's data source)."""
+    import_response = await client.post(
+        "/api/media/import",
+        files={"file": ("evidence-integrity.jpg", b"manual-import-api-bytes", "image/jpeg")},
+        data={"subject_label": "unknown_bird"},
+    )
+    assert import_response.status_code == 201
+
+    summary_response = await client.get("/api/settings/storage-retention/summary")
+    assert summary_response.status_code == 200
+    summary = summary_response.json()
+    assert summary["orphaned_managed_media_count"] == 0
+    assert summary["active_visit_media_count"] == 1
+
+
+async def test_evidence_link_repair_endpoints_report_then_require_confirm_then_apply(
+    client: httpx.AsyncClient,
+    repository: ProductRepository,
+) -> None:
+    path = _add_orphaned_media(repository, "repair-api-media")
+    with repository.session_factory() as session:
+        with session.begin():
+            asset = session.get(MediaAssetModel, "repair-api-media")
+            assert asset is not None
+            session.add(
+                EventModel(
+                    id="repair-api-event",
+                    stream_id=asset.stream_id,
+                    title="legacy imported media (API repair test)",
+                    event_type="manual_media_import",
+                    started_at=asset.created_at,
+                    ended_at=asset.created_at,
+                    primary_zone_id=None,
+                    review_status="needs_review",
+                )
+            )
+            session.add(
+                VisitModel(
+                    id="repair-api-visit",
+                    event_id="repair-api-event",
+                    subject_label="unknown_animal",
+                    species_guess=None,
+                    confidence=None,
+                    reviewed_label=None,
+                    review_status="needs_review",
+                    representative_media_path=asset.local_path,
+                    zone_id=None,
+                    is_superseded=False,
+                )
+            )
+
+    report_response = await client.get("/api/media/evidence-link-repair-report")
+    assert report_response.status_code == 200
+    report = report_response.json()
+    entry = next(e for e in report["entries"] if e["visit_id"] == "repair-api-visit")
+    assert entry["outcome"] == "would_repair"
+
+    unconfirmed = await client.post("/api/media/evidence-link-repair", json={"confirm": False})
+    assert unconfirmed.status_code == 400
+
+    applied_response = await client.post("/api/media/evidence-link-repair", json={"confirm": True})
+    assert applied_response.status_code == 200
+    applied = applied_response.json()
+    applied_entry = next(e for e in applied["entries"] if e["visit_id"] == "repair-api-visit")
+    assert applied_entry["outcome"] == "repaired"
+
+    with repository.session_factory() as session:
+        links = session.scalars(
+            select(VisitEvidenceLinkModel).where(VisitEvidenceLinkModel.visit_id == "repair-api-visit")
+        ).all()
+        assert len(links) == 1
+    assert path.exists()

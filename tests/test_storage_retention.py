@@ -1205,6 +1205,24 @@ def test_newly_seeded_mammal_taxonomy_labels_are_wildlife_retention_protected(
 # forever while any referencing Visit remains active (mirroring
 # active_visit_primary_evidence), eligible only once every referencing
 # Visit is superseded and old enough (mirroring superseded_only_evidence).
+#
+# Manual Import Evidence Integrity v1 (see docs/manual-import-evidence-
+# integrity-v1-contract.md) closed the actual root cause `_create_media_
+# product_records` never materializing a VisitEvidenceLink at all: a
+# manual/folder import now gets a real one (via the same `_ensure_visit_
+# evidence_links` `curate_visit_evidence`/`split_visit`/etc. already use),
+# same transaction as the rest of the import. `_create_imported_visit`
+# below now produces a Visit *with* a link, so the "while active" tests
+# just below exercise the ordinary linked-evidence categories
+# (`unresolved_visit_evidence`, `active_visit_primary_evidence`) instead of
+# the `legacy_representative_evidence` fallback -- still fully protected,
+# just via the same path any other Visit-linked evidence takes. The
+# superseded-side tests and the shared-asset test below are unaffected:
+# they still exercise (or, for the shared-asset case, partly exercise) the
+# `legacy_representative_evidence` fallback, which remains exactly as it
+# was for genuinely unlinked (pre-fix, or not-yet-repaired) historical
+# data -- see `_storage_legacy_representative_visits` and its new
+# "extra_active_legacy_visits" guard in `_storage_retention_evaluation`.
 
 
 def test_manual_imported_media_is_protected_while_visit_is_active(
@@ -1216,7 +1234,10 @@ def test_manual_imported_media_is_protected_while_visit_is_active(
 
     assert preview.eligible_media_count == 0
     protected = {item.category for item in preview.protected_counts}
-    assert "legacy_representative_evidence" in protected
+    # Manual Import Evidence Integrity v1: this Visit now has a real
+    # VisitEvidenceLink, so it's protected as ordinary unresolved (needs-
+    # review) evidence -- not the legacy no-link fallback.
+    assert "unresolved_visit_evidence" in protected
     assert path.exists()
 
 
@@ -1232,7 +1253,9 @@ def test_folder_imported_media_is_protected_while_visit_is_active(
 
     assert preview.eligible_media_count == 0
     protected = {item.category for item in preview.protected_counts}
-    assert "legacy_representative_evidence" in protected
+    # Manual Import Evidence Integrity v1: see the matching comment in
+    # test_manual_imported_media_is_protected_while_visit_is_active.
+    assert "unresolved_visit_evidence" in protected
     assert path.exists()
 
 
@@ -1265,7 +1288,10 @@ def test_reviewed_imported_visit_media_stays_protected_indefinitely(
 
     assert preview.eligible_media_count == 0
     protected = {item.category for item in preview.protected_counts}
-    assert "legacy_representative_evidence" in protected
+    # Manual Import Evidence Integrity v1: a real, is_primary=True
+    # VisitEvidenceLink now exists, so this is ordinary primary-evidence
+    # protection (regardless of review state) -- not the legacy fallback.
+    assert "active_visit_primary_evidence" in protected
     assert path.exists()
 
 
@@ -2052,3 +2078,390 @@ def test_integrated_cleanup_pass_resolves_all_three_defects_correctly(
         assert imported_visit.is_superseded is True
         imported_asset = session.get(MediaAssetModel, import_asset_id)
         assert imported_asset is not None  # retained forever as an audit trail
+
+
+# --- Manual Import Evidence Integrity v1 ------------------------------------
+#
+# The actual root cause behind the "Defect 1" block above: `_create_media_
+# product_records` set `representative_media_path` but never materialized a
+# VisitEvidenceLink at all, so `storage_summary()` (which -- unlike the
+# retention evaluator above -- had no legacy-representative fallback of its
+# own) could describe a legitimate, reviewed imported Visit's media as
+# orphaned. See docs/manual-import-evidence-integrity-v1-contract.md.
+
+
+def _create_legacy_unlinked_visit(
+    repository: ProductRepository,
+    *,
+    visit_id: str,
+    media_id: str,
+    review_status: str = "needs_review",
+    reviewed_label: str | None = None,
+    age_days: int = 45,
+) -> Path:
+    """Simulate a Visit created by the pre-fix `_create_media_product_
+    records`: a real MediaAsset and Visit with `representative_media_path`
+    set, but deliberately no VisitEvidenceLink -- exactly the shape every
+    manual/folder import had before Manual Import Evidence Integrity v1,
+    and what `repair_visit_evidence_links` exists to repair. Never uses
+    `_create_imported_visit`, which (correctly, post-fix) always creates a
+    real link now."""
+
+    path = _add_media(repository, media_id=media_id, age_days=age_days)
+    with repository.session_factory() as session:
+        with session.begin():
+            asset = session.get(MediaAssetModel, media_id)
+            assert asset is not None
+            session.add(
+                EventModel(
+                    id=f"{visit_id}-event",
+                    stream_id=asset.stream_id,
+                    title="Legacy imported media observation",
+                    event_type="manual_media_import",
+                    started_at=asset.created_at,
+                    ended_at=asset.created_at,
+                    primary_zone_id=None,
+                    review_status=review_status,
+                )
+            )
+            session.add(
+                VisitModel(
+                    id=visit_id,
+                    event_id=f"{visit_id}-event",
+                    subject_label=reviewed_label or "unknown_animal",
+                    species_guess=None,
+                    confidence=None,
+                    reviewed_label=reviewed_label,
+                    review_status=review_status,
+                    representative_media_path=asset.local_path,
+                    zone_id=None,
+                    is_superseded=False,
+                )
+            )
+    return path
+
+
+def test_manual_import_creates_a_real_visit_evidence_link(
+    repository: ProductRepository,
+) -> None:
+    """The root fix: `create_media_import` must materialize the same
+    VisitEvidenceLink every other Visit-creation path does, in the same
+    transaction, not merely set `representative_media_path`."""
+    visit_id, asset_id, _path = _create_imported_visit(repository, label="root-fix-manual")
+
+    with repository.session_factory() as session:
+        links = session.scalars(
+            select(VisitEvidenceLinkModel).where(VisitEvidenceLinkModel.visit_id == visit_id)
+        ).all()
+        assert len(links) == 1
+        assert links[0].media_asset_id == asset_id
+        assert links[0].is_primary is True
+        # The role `_visit_evidence_frames_from_visit`'s own legacy,
+        # single-asset fallback assigns (`asset.evidence_role or
+        # "monitoring_frame"`) -- the same one the evidence gallery already
+        # used for this exact shape before this fix.
+        assert links[0].evidence_role == "monitoring_frame"
+
+
+def test_folder_import_creates_a_real_visit_evidence_link(
+    repository: ProductRepository,
+    tmp_path: Path,
+) -> None:
+    visit_id, asset_id, _path = _create_imported_visit(
+        repository, label="root-fix-folder", folder=True, tmp_path=tmp_path
+    )
+
+    with repository.session_factory() as session:
+        links = session.scalars(
+            select(VisitEvidenceLinkModel).where(VisitEvidenceLinkModel.visit_id == visit_id)
+        ).all()
+        assert len(links) == 1
+        assert links[0].media_asset_id == asset_id
+        assert links[0].is_primary is True
+
+
+def test_unreviewed_manual_import_is_not_orphaned_in_storage_summary(
+    repository: ProductRepository,
+) -> None:
+    _create_imported_visit(repository, label="summary-unreviewed")
+
+    summary = repository.storage_summary()
+
+    assert summary.active_visit_media_count == 1
+    assert summary.orphaned_managed_media_count == 0
+    assert summary.unresolved_visit_evidence_count == 1
+
+
+def test_reviewed_named_species_manual_import_is_not_orphaned_in_storage_summary(
+    repository: ProductRepository,
+) -> None:
+    """The exact fixture ChatGPT asked to be verified: a reviewed
+    named-species import must not be misreported as orphaned."""
+    visit_id, _asset_id, _path = _create_imported_visit(repository, label="summary-named-species")
+    with repository.session_factory() as session:
+        with session.begin():
+            visit = session.get(VisitModel, visit_id)
+            assert visit is not None
+            visit.review_status = "reviewed"
+            visit.reviewed_label = "northern_cardinal"
+
+    summary = repository.storage_summary()
+
+    assert summary.active_visit_media_count == 1
+    assert summary.orphaned_managed_media_count == 0
+    assert summary.unresolved_visit_evidence_count == 0
+    assert summary.reviewed_bird_wildlife_evidence_count == 1
+
+
+def test_reviewed_unidentified_wildlife_manual_import_is_not_orphaned_in_storage_summary(
+    repository: ProductRepository,
+) -> None:
+    """Independent of the named-species case above: a reviewed
+    confirmed-wildlife-but-unidentified-species import (Wildlife Semantic
+    Consistency v1's `confirmed_unidentified_wildlife`) must not be
+    misreported as orphaned either."""
+    visit_id, _asset_id, _path = _create_imported_visit(
+        repository, label="summary-unidentified-wildlife"
+    )
+    with repository.session_factory() as session:
+        with session.begin():
+            visit = session.get(VisitModel, visit_id)
+            assert visit is not None
+            visit.review_status = "reviewed"
+            visit.reviewed_label = "unknown_bird"
+
+    summary = repository.storage_summary()
+
+    assert summary.active_visit_media_count == 1
+    assert summary.orphaned_managed_media_count == 0
+    assert summary.reviewed_bird_wildlife_evidence_count == 1
+
+
+def test_genuinely_orphaned_media_is_still_orphaned_in_storage_summary(
+    repository: ProductRepository,
+) -> None:
+    """Regression guard on the fix itself: a real orphan (no Visit, no
+    link, no representative_media_path, no non-Visit reference at all)
+    must still be reported as orphaned -- the fix must not blind
+    `storage_summary()` to genuine orphans while it stops misreporting
+    legitimate imported evidence."""
+    _add_media(repository, media_id="summary-genuine-orphan", age_days=1)
+
+    summary = repository.storage_summary()
+
+    assert summary.orphaned_managed_media_count == 1
+    assert summary.active_visit_media_count == 0
+
+
+def test_failed_manual_import_leaves_no_evidence_link_or_orphaned_records(
+    repository: ProductRepository,
+) -> None:
+    """Transactionality: a rejected import (unsupported content type) must
+    not leave a stray MediaAsset, Visit, Event, or VisitEvidenceLink
+    behind -- the whole `_create_media_product_records` insert is one
+    transaction, and `_ensure_visit_evidence_links` participates in it,
+    not a separate one. (A fresh repository seeds two demo Visits of its
+    own with no real media asset behind them -- this asserts no *change*
+    from that baseline, not an absolute zero.)"""
+    with repository.session_factory() as session:
+        visit_count_before = session.scalar(select(func.count(VisitModel.id)))
+        event_count_before = session.scalar(select(func.count(EventModel.id)))
+
+    with pytest.raises(ValueError, match="unsupported_content_type"):
+        repository.create_media_import(
+            content=b"not-a-real-image",
+            original_filename="bad.exe",
+            content_type="application/x-msdownload",
+            subject_label="unknown_animal",
+        )
+
+    with repository.session_factory() as session:
+        assert session.scalar(select(func.count(MediaAssetModel.id))) == 0
+        assert session.scalar(select(func.count(VisitModel.id))) == visit_count_before
+        assert session.scalar(select(func.count(EventModel.id))) == event_count_before
+        assert session.scalar(select(func.count(VisitEvidenceLinkModel.id))) == 0
+
+    summary = repository.storage_summary()
+    assert summary.orphaned_managed_media_count == 0
+    assert summary.active_visit_media_count == 0
+
+
+# --- Existing-data repair: report + confirm-gated apply ---------------------
+
+
+def test_evidence_link_repair_report_is_read_only_and_finds_legacy_import(
+    repository: ProductRepository,
+) -> None:
+    """A fresh repository's own two seeded demo Visits also have a
+    `representative_media_path` (a `demo://...` URI with no backing
+    MediaAsset) and no link, so they legitimately show up in this report
+    too, correctly flagged `ambiguous_no_asset_match` -- this only asserts
+    on the one Visit this test itself created."""
+    path = _create_legacy_unlinked_visit(
+        repository, visit_id="legacy-report-visit", media_id="legacy-report-media"
+    )
+
+    report = repository.visit_evidence_link_repair_report()
+
+    assert report.applied is False
+    assert report.repaired_count == 0
+    entry = next(e for e in report.entries if e.visit_id == "legacy-report-visit")
+    assert entry.outcome == "would_repair"
+    assert entry.media_asset_id == "legacy-report-media"
+
+    # Read-only: still no link, and the file/media/Visit are all untouched.
+    with repository.session_factory() as session:
+        links = session.scalars(
+            select(VisitEvidenceLinkModel).where(VisitEvidenceLinkModel.visit_id == "legacy-report-visit")
+        ).all()
+        assert links == []
+    assert path.exists()
+
+
+def test_evidence_link_repair_requires_explicit_confirm(
+    repository: ProductRepository,
+) -> None:
+    _create_legacy_unlinked_visit(
+        repository, visit_id="legacy-confirm-visit", media_id="legacy-confirm-media"
+    )
+
+    with pytest.raises(ValueError, match="visit_evidence_link_repair_confirmation_required"):
+        repository.repair_visit_evidence_links()
+
+    with repository.session_factory() as session:
+        links = session.scalars(
+            select(VisitEvidenceLinkModel).where(VisitEvidenceLinkModel.visit_id == "legacy-confirm-visit")
+        ).all()
+        assert links == []
+
+
+def test_evidence_link_repair_apply_creates_link_and_fixes_storage_summary(
+    repository: ProductRepository,
+) -> None:
+    _create_legacy_unlinked_visit(
+        repository,
+        visit_id="legacy-apply-visit",
+        media_id="legacy-apply-media",
+        review_status="reviewed",
+        reviewed_label="blue_jay",
+    )
+    # Presentation parity already protects this pre-repair (see the next
+    # test) -- assert the repair itself now, independent of that fallback.
+
+    report = repository.repair_visit_evidence_links(confirm=True)
+
+    assert report.applied is True
+    assert report.repaired_count == 1
+    entry = next(e for e in report.entries if e.visit_id == "legacy-apply-visit")
+    assert entry.outcome == "repaired"
+    with repository.session_factory() as session:
+        links = session.scalars(
+            select(VisitEvidenceLinkModel).where(VisitEvidenceLinkModel.visit_id == "legacy-apply-visit")
+        ).all()
+        assert len(links) == 1
+        assert links[0].media_asset_id == "legacy-apply-media"
+        assert links[0].is_primary is True
+
+    summary = repository.storage_summary()
+    assert summary.orphaned_managed_media_count == 0
+    assert summary.active_visit_media_count == 1
+
+    # Idempotent: running it again is a safe no-op, not a duplicate link.
+    second_report = repository.repair_visit_evidence_links(confirm=True)
+    assert second_report.repaired_count == 0
+    assert second_report.already_linked_count == 1
+    with repository.session_factory() as session:
+        links = session.scalars(
+            select(VisitEvidenceLinkModel).where(VisitEvidenceLinkModel.visit_id == "legacy-apply-visit")
+        ).all()
+        assert len(links) == 1
+
+
+def test_storage_summary_already_correct_for_legacy_import_before_any_repair(
+    repository: ProductRepository,
+) -> None:
+    """Presentation parity does not wait on the repair tool: even before
+    anyone runs `repair_visit_evidence_links`, `storage_summary()` must
+    already agree with `_storage_retention_evaluation`'s own truth about
+    this exact same pre-fix shape."""
+    _create_legacy_unlinked_visit(
+        repository,
+        visit_id="legacy-presummary-visit",
+        media_id="legacy-presummary-media",
+        review_status="reviewed",
+        reviewed_label="blue_jay",
+    )
+
+    summary = repository.storage_summary()
+
+    assert summary.orphaned_managed_media_count == 0
+    assert summary.active_visit_media_count == 1
+
+
+def test_evidence_link_repair_never_guesses_across_ambiguous_asset_match(
+    repository: ProductRepository,
+) -> None:
+    """Defensive: `local_path` carries no database uniqueness constraint.
+    If it ever names more than one MediaAsset, the repair must report it
+    for review rather than silently linking to whichever row a query
+    happens to return first."""
+    path = _add_media(repository, media_id="ambiguous-asset-one", age_days=10)
+    with repository.session_factory() as session:
+        with session.begin():
+            original = session.get(MediaAssetModel, "ambiguous-asset-one")
+            assert original is not None
+            session.add(
+                MediaAssetModel(
+                    id="ambiguous-asset-two",
+                    source_id=original.source_id,
+                    stream_id=original.stream_id,
+                    filename=original.filename,
+                    content_type=original.content_type,
+                    media_type=original.media_type,
+                    local_path=original.local_path,
+                    original_filename=original.original_filename,
+                    file_size_bytes=original.file_size_bytes,
+                    created_at=original.created_at,
+                )
+            )
+            session.add(
+                EventModel(
+                    id="ambiguous-asset-event",
+                    stream_id=original.stream_id,
+                    title="ambiguous asset match check",
+                    event_type="manual_media_import",
+                    started_at=original.created_at,
+                    ended_at=original.created_at,
+                    primary_zone_id=None,
+                    review_status="needs_review",
+                )
+            )
+            session.add(
+                VisitModel(
+                    id="ambiguous-asset-visit",
+                    event_id="ambiguous-asset-event",
+                    subject_label="unknown_animal",
+                    species_guess=None,
+                    confidence=None,
+                    reviewed_label=None,
+                    review_status="needs_review",
+                    representative_media_path=original.local_path,
+                    zone_id=None,
+                    is_superseded=False,
+                )
+            )
+
+    report = repository.visit_evidence_link_repair_report()
+    entry = next(e for e in report.entries if e.visit_id == "ambiguous-asset-visit")
+    assert entry.outcome == "ambiguous_multiple_asset_match"
+    assert entry.media_asset_id is None
+
+    applied = repository.repair_visit_evidence_links(confirm=True)
+    applied_entry = next(e for e in applied.entries if e.visit_id == "ambiguous-asset-visit")
+    assert applied_entry.outcome == "ambiguous_multiple_asset_match"
+    with repository.session_factory() as session:
+        links = session.scalars(
+            select(VisitEvidenceLinkModel).where(VisitEvidenceLinkModel.visit_id == "ambiguous-asset-visit")
+        ).all()
+        assert links == []  # never guessed -- left for review
+    assert path.exists()

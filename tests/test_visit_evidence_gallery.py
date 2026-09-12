@@ -31,7 +31,7 @@ from tests.conftest import LegacyAuthenticatedSyncTestClient
 
 from mockingbird.api.main import app, configure_repository
 from mockingbird.repository.product_repository import ProductRepository
-from mockingbird.storage.models import EventModel, VisitEvidenceLinkModel, VisitModel
+from mockingbird.storage.models import EventModel, MediaAssetModel, VisitEvidenceLinkModel, VisitModel
 
 
 SOURCE_ID = "source-backyard-demo"
@@ -362,38 +362,79 @@ def test_single_evidence_frame_visit_has_no_recommendation_to_show(
     assert effective_primary["would_change_automatically"] is False
 
 
-def test_legacy_zero_link_visit_reports_no_effective_primary(
+def test_manual_import_reports_effective_primary_via_its_new_link(
     evidence_repository: ProductRepository,
 ) -> None:
-    """Older Visits with no `visit_evidence_links` rows at all (evidence
-    resolved only through `representative_media_path`) legitimately have no
-    `effective_primary` preview -- the gallery must treat that as "nothing to
-    recommend," never crash or silently invent one.
+    """Manual Import Evidence Integrity v1: `/api/media/import` now
+    materializes a real VisitEvidenceLink (see `_ensure_visit_evidence_
+    links` in `_create_media_product_records`), so a freshly imported
+    Visit behaves exactly like `test_single_evidence_frame_visit_has_no_
+    recommendation_to_show` above -- one real, linked frame, a normal
+    (non-None) `effective_primary` agreeing with the persisted primary.
+    Before that fix this asserted `effective_primary is None`; see
+    `test_legacy_zero_link_visit_reports_no_effective_primary` just below
+    for that genuinely-unlinked shape, now reproduced only by hand.
     """
 
-    visit_id = "visit-gallery-legacy-single"
-    with evidence_repository.session_factory() as session:
-        with session.begin():
-            event = EventModel(
-                id="event-gallery-legacy-single",
-                stream_id=STREAM_ID,
-                title="Legacy manual media visit",
-                event_type="manual_media_import",
-                started_at=datetime.now(UTC),
-                ended_at=datetime.now(UTC),
-                primary_zone_id=None,
-                review_status="needs_review",
-            )
-            session.add(event)
     result = client.post(
         "/api/media/import",
         files={"file": ("legacy.jpg", _jpeg(200, 200, 90), "image/jpeg")},
         data={"stream_id": STREAM_ID, "subject_label": "unknown_bird"},
     )
     assert result.status_code == 201
-    legacy_visit_id = result.json()["visit"]["id"]
+    visit_id = result.json()["visit"]["id"]
+    asset_id = result.json()["media_asset"]["id"]
 
-    response = client.get(f"/api/visits/{legacy_visit_id}/detail")
+    response = client.get(f"/api/visits/{visit_id}/detail")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["evidence_frames"]) == 1
+    effective_primary = body["effective_primary"]
+    assert effective_primary is not None
+    assert effective_primary["persisted_primary_media_asset_id"] == asset_id
+    assert effective_primary["recommended_effective_primary_media_asset_id"] == asset_id
+    assert effective_primary["would_change_automatically"] is False
+
+
+def test_legacy_zero_link_visit_reports_no_effective_primary(
+    evidence_repository: ProductRepository,
+) -> None:
+    """A genuinely-unlinked historical Visit (representative_media_path
+    set, no VisitEvidenceLink -- the shape every manual/folder import had
+    before Manual Import Evidence Integrity v1, and what `repair_visit_
+    evidence_links` repairs) legitimately has no `effective_primary`
+    preview -- the gallery must treat that as "nothing to recommend,"
+    never crash or silently invent one. No current product code path
+    produces this shape anymore, so it is reproduced by hand rather than
+    through `/api/media/import` (see the previous test for that, now-
+    linked, current behavior)."""
+
+    visit_id = "visit-gallery-legacy-zero-link"
+    _seed_visit(evidence_repository, visit_id, zone_id=None)
+    media_path = evidence_repository.media_root / "legacy-zero-link.jpg"
+    media_path.parent.mkdir(parents=True, exist_ok=True)
+    media_path.write_bytes(_jpeg(200, 200, 90))
+    with evidence_repository.session_factory() as session:
+        with session.begin():
+            asset = MediaAssetModel(
+                id="asset-gallery-legacy-zero-link",
+                source_id=SOURCE_ID,
+                stream_id=STREAM_ID,
+                filename=media_path.name,
+                content_type="image/jpeg",
+                media_type="image",
+                local_path=str(media_path),
+                original_filename=media_path.name,
+                file_size_bytes=media_path.stat().st_size,
+                created_at=datetime.now(UTC),
+            )
+            session.add(asset)
+            session.flush()
+            visit = session.get(VisitModel, visit_id)
+            assert visit is not None
+            visit.representative_media_path = asset.local_path
+
+    response = client.get(f"/api/visits/{visit_id}/detail")
     assert response.status_code == 200
     body = response.json()
     assert len(body["evidence_frames"]) == 1

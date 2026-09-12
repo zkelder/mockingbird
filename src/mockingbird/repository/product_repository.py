@@ -700,6 +700,8 @@ from mockingbird.api.schemas import (
     VisitCurationSequencePreview,
     VisitEvidenceCurationRequest,
     VisitEvidenceCurationResponse,
+    VisitEvidenceLinkRepairEntry,
+    VisitEvidenceLinkRepairReport,
     RefinedCropCreateRequest,
     RefinedCropResponse,
     RepresentativeEvidence,
@@ -20822,6 +20824,25 @@ class ProductRepository:
                 ).all()
                 visits = [session.get(VisitModel, link.visit_id) for link in links]
                 visit_models = [visit for visit in visits if visit is not None]
+                # Manual Import Evidence Integrity v1 (see docs/manual-
+                # import-evidence-integrity-v1-contract.md): fold in any
+                # Visit this asset has no VisitEvidenceLink to but that
+                # still names it via the older `representative_media_path`
+                # field -- every manual/folder import before this fix, and
+                # any Visit sharing an asset only that way. Without this, an
+                # asset a legitimate reviewed Visit depends on could be
+                # summarized as orphaned (or as merely superseded while a
+                # different Visit is still active) purely because its own
+                # VisitEvidenceLink doesn't exist yet, disagreeing with
+                # `_storage_retention_evaluation`'s matching, already-
+                # authoritative rule -- exactly the defect this milestone
+                # closes.
+                linked_visit_ids = {visit.id for visit in visit_models}
+                visit_models = visit_models + [
+                    visit
+                    for visit in self._storage_legacy_representative_visits(session, asset)
+                    if visit.id not in linked_visit_ids
+                ]
                 active_visits = [visit for visit in visit_models if not visit.is_superseded]
                 if active_visits:
                     active_count += 1
@@ -21575,6 +21596,196 @@ class ProductRepository:
         )
         return any(session.scalar(query.limit(1)) is not None for query in reference_queries)
 
+    def _storage_legacy_representative_visits(
+        self, session: Session, asset: MediaAssetModel
+    ) -> list[VisitModel]:
+        """Visits whose `representative_media_path` still names this asset
+        directly, with no VisitEvidenceLink of its own.
+
+        Manual Import Evidence Integrity v1 (see docs/manual-import-
+        evidence-integrity-v1-contract.md): every manual/folder media
+        import created before that fix -- and any other historical Visit-
+        creation path that set `representative_media_path` without also
+        creating a VisitEvidenceLink -- can have a real, reviewed Visit
+        depending on this exact asset with no VisitEvidenceLink to show
+        for it. `_storage_retention_evaluation` already treated this
+        possibility as first-class (protected forever while any such Visit
+        is active, eligible only once every one is superseded -- the same
+        rule any other Visit-linked evidence gets); this shared query is
+        what lets `_compute_storage_summary` agree with that same rule
+        instead of independently declaring the media orphaned. Ambiguity
+        (this call site never had to resolve any) is intentionally left to
+        the caller: a `local_path` naming more than one asset, or more than
+        one Visit sharing this asset, is returned as-is rather than guessed
+        down to one.
+        """
+        return list(
+            session.scalars(
+                select(VisitModel).where(VisitModel.representative_media_path == asset.local_path)
+            ).all()
+        )
+
+    def visit_evidence_link_repair_report(self) -> VisitEvidenceLinkRepairReport:
+        """Read-only: every Visit with a `representative_media_path` but no
+        VisitEvidenceLink of its own, and what a repair would do about each
+        one. Never mutates anything -- see `repair_visit_evidence_links`
+        for the confirm-gated write side. Manual Import Evidence Integrity
+        v1 (see docs/manual-import-evidence-integrity-v1-contract.md):
+        every manual/folder media import created before that fix is
+        exactly this shape, and so is any other historical Visit-creation
+        path that set `representative_media_path` without also creating a
+        VisitEvidenceLink."""
+
+        with self.session_factory() as session:
+            return self._visit_evidence_link_repair_scan(session, apply=False)
+
+    def repair_visit_evidence_links(self, *, confirm: bool = False) -> VisitEvidenceLinkRepairReport:
+        """Apply the repair `visit_evidence_link_repair_report` describes.
+
+        Additive only: creates a VisitEvidenceLink exactly where the
+        established evidence/provenance model (`_ensure_visit_evidence_
+        links` -- the same materializer `curate_visit_evidence`,
+        `create_refined_visit_crop`, `promote_visit_crop_history`, and
+        `split_visit` already rely on) says one belongs, for a Visit whose
+        media it can resolve without guessing. Never deletes, never
+        rewrites `representative_media_path` or any reviewed truth, and
+        never touches a Visit whose ownership is ambiguous -- those are
+        reported for review, not silently assigned (see
+        `VisitEvidenceLinkRepairEntry.outcome`). Idempotent: a Visit
+        already linked (whether from a prior run of this repair, or from
+        a fresh import that no longer needs it) is reported `already_
+        linked` and left untouched.
+        """
+
+        if not confirm:
+            raise ValueError("visit_evidence_link_repair_confirmation_required")
+        with self.session_factory() as session:
+            with session.begin():
+                report = self._visit_evidence_link_repair_scan(session, apply=True)
+        if report.repaired_count:
+            self.invalidate_storage_summary_cache()
+        return report
+
+    def _visit_evidence_link_repair_scan(
+        self, session: Session, *, apply: bool
+    ) -> VisitEvidenceLinkRepairReport:
+        entries: list[VisitEvidenceLinkRepairEntry] = []
+        repaired_count = already_linked_count = ambiguous_count = 0
+        candidates = session.scalars(
+            select(VisitModel)
+            .where(VisitModel.representative_media_path.is_not(None))
+            .order_by(VisitModel.id)
+        ).all()
+        for visit in candidates:
+            existing_links = self._visit_evidence_link_models(session, visit.id)
+            if existing_links:
+                already_linked_count += 1
+                entries.append(
+                    VisitEvidenceLinkRepairEntry(
+                        visit_id=visit.id,
+                        event_id=visit.event_id,
+                        media_asset_id=existing_links[0].media_asset_id,
+                        outcome="already_linked",
+                        detail="Visit already has a VisitEvidenceLink; nothing to repair.",
+                    )
+                )
+                continue
+            matching_assets = session.scalars(
+                select(MediaAssetModel).where(
+                    MediaAssetModel.local_path == visit.representative_media_path
+                )
+            ).all()
+            if not matching_assets:
+                ambiguous_count += 1
+                entries.append(
+                    VisitEvidenceLinkRepairEntry(
+                        visit_id=visit.id,
+                        event_id=visit.event_id,
+                        media_asset_id=None,
+                        outcome="ambiguous_no_asset_match",
+                        detail="representative_media_path names no known media asset; left for review.",
+                    )
+                )
+                continue
+            if len(matching_assets) > 1:
+                # Never seen in practice (every asset's local_path is
+                # derived from its own unique id -- see `_write_media_
+                # file`) but `local_path` carries no database uniqueness
+                # constraint of its own, so this is treated as genuinely
+                # ambiguous rather than picking whichever row the query
+                # happens to return first.
+                ambiguous_count += 1
+                entries.append(
+                    VisitEvidenceLinkRepairEntry(
+                        visit_id=visit.id,
+                        event_id=visit.event_id,
+                        media_asset_id=None,
+                        outcome="ambiguous_multiple_asset_match",
+                        detail="representative_media_path matches more than one media asset; left for review.",
+                    )
+                )
+                continue
+            event = session.get(EventModel, visit.event_id)
+            if event is None:
+                ambiguous_count += 1
+                entries.append(
+                    VisitEvidenceLinkRepairEntry(
+                        visit_id=visit.id,
+                        event_id=visit.event_id,
+                        media_asset_id=matching_assets[0].id,
+                        outcome="ambiguous_missing_event",
+                        detail="This Visit's Event no longer exists; left for review.",
+                    )
+                )
+                continue
+            if not apply:
+                entries.append(
+                    VisitEvidenceLinkRepairEntry(
+                        visit_id=visit.id,
+                        event_id=visit.event_id,
+                        media_asset_id=matching_assets[0].id,
+                        outcome="would_repair",
+                        detail="Would create a VisitEvidenceLink to this Visit's representative media.",
+                    )
+                )
+                continue
+            new_links = self._ensure_visit_evidence_links(session, visit=visit, event=event)
+            if new_links:
+                repaired_count += 1
+                entries.append(
+                    VisitEvidenceLinkRepairEntry(
+                        visit_id=visit.id,
+                        event_id=visit.event_id,
+                        media_asset_id=new_links[0].media_asset_id,
+                        outcome="repaired",
+                        detail="Created a VisitEvidenceLink to this Visit's representative media.",
+                    )
+                )
+            else:
+                # The asset exists but `_ensure_visit_evidence_links` still
+                # found nothing derivable for it (for example, the asset's
+                # own stream_id no longer matches its Visit's Event) --
+                # surfaced for review rather than silently reported as fixed.
+                ambiguous_count += 1
+                entries.append(
+                    VisitEvidenceLinkRepairEntry(
+                        visit_id=visit.id,
+                        event_id=visit.event_id,
+                        media_asset_id=matching_assets[0].id,
+                        outcome="ambiguous_no_evidence_derivable",
+                        detail="No evidence could be derived for this Visit; left for review.",
+                    )
+                )
+        return VisitEvidenceLinkRepairReport(
+            applied=apply,
+            generated_at=datetime.now(UTC),
+            candidate_count=len(candidates),
+            repaired_count=repaired_count,
+            already_linked_count=already_linked_count,
+            ambiguous_count=ambiguous_count,
+            entries=entries,
+        )
+
     def _storage_visit_is_wildlife(self, session: Session, visit: VisitModel) -> bool:
         """Fail-closed retention check: does this Visit's label mean wildlife?
 
@@ -21708,9 +21919,7 @@ class ProductRepository:
             # regardless of review state), and eligible only once every
             # referencing Visit is superseded, on the same
             # superseded_evidence_age_days clock superseded_only_evidence uses.
-            legacy_representative_visits = session.scalars(
-                select(VisitModel).where(VisitModel.representative_media_path == asset.local_path)
-            ).all()
+            legacy_representative_visits = self._storage_legacy_representative_visits(session, asset)
             if legacy_representative_visits and not links:
                 if all(visit.is_superseded for visit in legacy_representative_visits):
                     if age_days >= settings.superseded_evidence_age_days:
@@ -21732,6 +21941,29 @@ class ProductRepository:
                         protected_counts["superseded_evidence_too_recent"] += 1
                         protected_bytes["superseded_evidence_too_recent"] += size
                     continue
+                protected_counts["legacy_representative_evidence"] += 1
+                protected_bytes["legacy_representative_evidence"] += size
+                continue
+            # Manual Import Evidence Integrity v1: the branch above only
+            # ever fires for an asset with zero real VisitEvidenceLinks at
+            # all. `representative_media_path` carries no uniqueness
+            # constraint of its own, so a *different* Visit than the one(s)
+            # actually linked to this asset could still name it here (see
+            # `test_legacy_representative_media_shared_by_two_visits_
+            # protected_until_all_superseded`) -- and the links-only logic
+            # below has no way to learn that Visit exists. Fold any such
+            # Visit that is still active into the same protected-forever
+            # guarantee `active_visit_primary_evidence` gives a linked
+            # primary frame, rather than letting an asset's own links
+            # (possibly all superseded, possibly none) decide its fate
+            # while an unrelated active Visit still depends on it.
+            linked_visit_ids = {visit.id for visit in visits}
+            extra_active_legacy_visits = [
+                visit
+                for visit in legacy_representative_visits
+                if visit.id not in linked_visit_ids and not visit.is_superseded
+            ]
+            if extra_active_legacy_visits:
                 protected_counts["legacy_representative_evidence"] += 1
                 protected_bytes["legacy_representative_evidence"] += size
                 continue
@@ -37472,6 +37704,25 @@ class ProductRepository:
         )
         session.add_all([asset_model, event_model, visit_model])
         session.flush()
+        # Manual Import Evidence Integrity v1 (see docs/manual-import-
+        # evidence-integrity-v1-contract.md): every other Visit-creation path
+        # in this file pairs `representative_media_path` with a real
+        # VisitEvidenceLinkModel row -- this one didn't, so a manually
+        # imported (or folder-imported) Visit's own media had no durable
+        # evidence-ownership record at all. `storage_summary()` and the
+        # retention evaluator both derive ownership from VisitEvidenceLink,
+        # not from `representative_media_path`, so the imported media could
+        # be misreported as orphaned even while a legitimate reviewed Visit
+        # depended on it. `_ensure_visit_evidence_links` is the established,
+        # already-exercised (curate_visit_evidence, create_refined_visit_
+        # crop, promote_visit_crop_history, split_visit) materializer for
+        # exactly this "Visit has representative media but no link yet"
+        # shape -- reusing it here (rather than inserting a bespoke link)
+        # keeps this on the one evidence/provenance model instead of a
+        # second parallel one. It is a same-transaction, additive-only
+        # insert: no existing field, file, or truth is touched, and a
+        # failed/rolled-back import leaves no link behind either.
+        self._ensure_visit_evidence_links(session, visit=visit_model, event=event_model)
         self._sync_review_alert(session, visit_model, created_at)
         self._sync_storage_alert(session, created_at)
 

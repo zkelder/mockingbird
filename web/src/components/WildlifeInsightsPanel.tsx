@@ -332,7 +332,13 @@ export function WildlifeInsightsPanel({
                 <div><strong>Confirmed wildlife</strong><span>{summary.headline.reviewed_wildlife_observation_count} latest reviewed bird observations.</span></div>
                 <div><strong>Reviewed non-bird activity</strong><span>{summary.headline.reviewed_non_bird_activity_count} people, pets, vehicles, squirrels, or similar activity under existing semantics.</span></div>
                 <div><strong>Unresolved activity</strong><button className="text-action" onClick={() => onOpenActivityLibrary(filtersForDrilldown(summary.unresolved_activity_drilldown))} type="button">{summary.headline.unresolved_visit_count} needs-review Visits</button></div>
-                <div><strong>Review-quality outcomes</strong><span>{summary.review_context.blank_or_false_count} blank/false · {summary.review_context.ambiguous_or_unknown_count} ambiguous/unknown · {summary.review_context.pending_suggestion_evidence_count} pending suggestion evidence</span></div>
+                {/* Manual Import Evidence Integrity v1 / Wildlife Semantic Consistency v1: this count is
+                    entirely confirmed_unidentified_wildlife (reviewed, wildlife presence confirmed, species
+                    honestly unresolved) -- see docs/wildlife-semantic-consistency-v1-contract.md's own
+                    disclosed-not-fixed note. "ambiguous/unknown" read like genuine uncertainty about a
+                    Visit that was in fact reviewed and confirmed; word it the way every other fixed surface
+                    already does instead. No change to what is counted, only how it reads. */}
+                <div><strong>Review-quality outcomes</strong><span>{summary.review_context.blank_or_false_count} blank/false · {summary.review_context.ambiguous_or_unknown_count} confirmed wildlife, species unresolved · {summary.review_context.pending_suggestion_evidence_count} pending suggestion evidence</span></div>
               </section>
             </>
           )}

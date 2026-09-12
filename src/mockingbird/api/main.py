@@ -229,6 +229,8 @@ from mockingbird.api.schemas import (
     ReviewStatus,
     VisitEvidenceCurationRequest,
     VisitEvidenceCurationResponse,
+    VisitEvidenceLinkRepairReport,
+    VisitEvidenceLinkRepairRequest,
     RefinedCropCreateRequest,
     RefinedCropResponse,
     VisitMergeCandidatesResponse,
@@ -14277,6 +14279,38 @@ async def import_folder_media(payload: FolderImportCreate) -> FolderImportResult
         return get_repository().import_folder_media(payload)
     except ValueError as error:
         raise _folder_import_error(error) from error
+
+
+@app.get(
+    "/api/media/evidence-link-repair-report",
+    response_model=VisitEvidenceLinkRepairReport,
+)
+async def evidence_link_repair_report() -> VisitEvidenceLinkRepairReport:
+    """Manual Import Evidence Integrity v1: read-only report of every Visit
+    missing the VisitEvidenceLink a manual/folder media import (or any other
+    Visit-creation path) should have created. Never mutates anything; see
+    the paired POST below for the confirm-gated repair itself."""
+    return get_repository().visit_evidence_link_repair_report()
+
+
+@app.post(
+    "/api/media/evidence-link-repair",
+    response_model=VisitEvidenceLinkRepairReport,
+)
+async def repair_evidence_links(
+    payload: VisitEvidenceLinkRepairRequest | None = None,
+) -> VisitEvidenceLinkRepairReport:
+    try:
+        return get_repository().repair_visit_evidence_links(
+            confirm=payload.confirm if payload is not None else False
+        )
+    except ValueError as error:
+        if str(error) == "visit_evidence_link_repair_confirmation_required":
+            raise HTTPException(
+                status_code=400,
+                detail="Set confirm=true to repair missing evidence links.",
+            ) from error
+        raise
 
 
 @app.get(

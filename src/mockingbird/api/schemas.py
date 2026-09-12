@@ -7553,6 +7553,41 @@ class FolderImportResult(BaseModel):
     review_queue_count: int = Field(ge=0)
 
 
+# Manual Import Evidence Integrity v1 (see docs/manual-import-evidence-
+# integrity-v1-contract.md): every manual/folder media import created
+# before that fix set a Visit's `representative_media_path` without ever
+# materializing a VisitEvidenceLink, so `storage_summary()` and the
+# retention evaluator -- both of which derive ownership from
+# VisitEvidenceLink, not `representative_media_path` -- could treat a
+# legitimate, reviewed Visit's own media as orphaned. This is the report/
+# repair pair for that older data: read-only by default, additive-only
+# when applied, and it never guesses across ambiguous candidates (see
+# `outcome` values below) -- it reports those for review instead.
+class VisitEvidenceLinkRepairEntry(BaseModel):
+    visit_id: str
+    event_id: str
+    media_asset_id: str | None = None
+    # "already_linked" | "would_repair" | "repaired" |
+    # "ambiguous_no_asset_match" | "ambiguous_multiple_asset_match" |
+    # "ambiguous_missing_event" | "ambiguous_no_evidence_derivable"
+    outcome: str
+    detail: str
+
+
+class VisitEvidenceLinkRepairReport(BaseModel):
+    applied: bool
+    generated_at: datetime
+    candidate_count: int = Field(ge=0)
+    repaired_count: int = Field(ge=0)
+    already_linked_count: int = Field(ge=0)
+    ambiguous_count: int = Field(ge=0)
+    entries: list[VisitEvidenceLinkRepairEntry]
+
+
+class VisitEvidenceLinkRepairRequest(BaseModel):
+    confirm: bool = False
+
+
 class EventDetail(BaseModel):
     event: Event
     stream: Stream
