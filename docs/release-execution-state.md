@@ -694,10 +694,41 @@ self-authorize a subsequent milestone. **Authorization remains NONE --
 GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED**, returned for the next
 external (ChatGPT) acceptance review and the owner's own release decision.
 
+**2026-09-12 update (Final Candidate Build & Freeze v1 -- ChatGPT accepts
+Manual Import Evidence Integrity v1 as classification A):** builds and
+freezes the final v0.1.0 release candidate from the current accepted
+state; also catches up this file's own stacked log, which had fallen six
+real, already-accepted commits behind `main` since the entry directly
+above. See §3, below, for the complete delta (Final Release Candidate
+Corrections v1, Product Polish & UX Refinement v1/v2, Release Experience
+Rehearsal v1, Reviewed Wildlife Semantic Consistency v1, Manual Import
+Evidence Integrity v1, and this milestone's own final-artifact build/
+verify/smoke record) -- not duplicated here to avoid drift between two
+copies of the same facts. HEAD `ee2af65`, schema `v59` unchanged, version
+`0.1.0` (not `1.0.0` -- see the version-restoration note in §3's own new
+entry). **Authorization remains NONE.**
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
+
+**Staleness correction, 2026-09-12, by Final Candidate Build & Freeze v1:**
+the stacked "Accepted HEAD" log immediately below is dated to the Place
+Story Deep Dives & Representative Evidence v1 checkpoint (`33d9f5f`) and
+was not kept current through the many milestones accepted since -- treat
+it as historical narrative, not current state (the same situation §16,
+below, already names and corrects for an earlier checkpoint). **Current
+facts, verified directly:** Accepted HEAD `ee2af65`
+(`ee2af6512d983693def5633cf7fa0b29ab86453c`); schema `v59` unchanged;
+version `0.1.0`; latest accepted milestone Manual Import Evidence
+Integrity v1; current authorized implementation milestone `NONE`. See
+`## CURRENT PHASE`, above, and §3, below, for the complete current picture
+and the full delta since `33d9f5f`, including this milestone's own final
+release-candidate build/verify/smoke record. This note does not re-derive
+or rewrite the stacked history below, which remains an accurate historical
+record through its own last-updated point.
+
 - **Accepted HEAD:** `33d9f5f` -- the implementation commit for
   Place Story Deep Dives & Representative Evidence v1 (see
   [place-story-deep-dives-representative-evidence-v1-report.md](place-story-deep-dives-representative-evidence-v1-report.md)
@@ -3626,6 +3657,153 @@ exactly as open as stated.
 ## 3. Current authorized milestone
 
 **NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+
+**2026-09-12 update (Final Candidate Build & Freeze v1 -- also catches up
+five prior unreconciled milestones):** this file's own stacked log had
+fallen six real, already-accepted commits behind `main` since the last
+reconciliation (`869cd59`, "Final Release Hardening & Launch Readiness
+v1"); this entry closes that gap in one pass rather than five/six separate
+ones, matching this milestone's own scope (build and freeze the release
+candidate from the current accepted state, not re-audit history). Verified
+starting baseline exactly as expected: HEAD `ee2af65`, schema `v59`
+unchanged, version `0.1.0`, working tree clean except the seven preserved
+untracked detector files, no competing active writer (two same-repo
+interactive peer sessions, `mockingbird-active-34`/`mockingbird-active-8c`,
+checked directly and confirmed idle/clear before any build step), nothing
+pushed (`git log origin/main..HEAD` 401 commits ahead, `HEAD..origin/main`
+empty).
+
+Milestones accepted since `869cd59`, each already real/merged and
+independently corroborated this session (not re-verified from scratch,
+per this milestone's explicit "do not reopen accepted work" scope):
+
+- **Final Release Candidate Corrections v1** (`56449ad`, 2026-09-10):
+  restored the version single-source-of-truth `1.0.0` -> `0.1.0` (the
+  immediately-prior milestone's own bump is confirmed, not re-litigated
+  here, to have been a reversible SemVer-convention choice rather than an
+  accepted-doctrine requirement -- see
+  [[one-release-roadmap-scheduler-reconciliation-v1-2026-08-27]]/
+  [[global-remaining-product-development-release-queue-reconciliation-v1]],
+  neither of which ever required `1.0.0`); fixed Doctor's `Application`
+  check reading a false "did not shut down cleanly" `WARN` for the entire
+  lifetime of every healthy running instance (a stale-read bug, distinct
+  from the already-disclosed concurrent-Doctor limitation, which is
+  unchanged); proven both directions on real Windows hardware (repeated
+  clean launch/relaunch showing Doctor `PASS`, then a genuine hard-kill
+  still correctly producing `WARN`). **This is the correction that makes
+  this file's own "bumped `0.1.0` -> `1.0.0`" line (below, in the Final
+  Release Hardening & Launch Readiness v1 entry) stale prose about what
+  that milestone did at the time -- current version is `0.1.0`, confirmed
+  directly in `pyproject.toml`/`web/package.json` at this reconciliation's
+  own HEAD.**
+- **Product Polish & UX Refinement v1** (`4ec0702`, 2026-09-10):
+  frontend-only navigation consistency/density/copy fixes across ~15 pages
+  (Doctor/health panel wording, Zone Insights, Review Queue, Stream/Visit
+  Detail density, Sign-In copy); no schema/API/product-logic change.
+- **Product Polish & UX Refinement v2** (`88a5eb1`, 2026-09-10): fixed a
+  real 354-vs-177 review-count double-count in `product_repository.py`,
+  added Local Data progressive disclosure, bounded 5 previously-unbounded
+  developer-surface lists (Classifier Manifest, Detection Proposals,
+  Folder Import, Model Adapters, Motion Evidence pages).
+- **Release Experience Rehearsal v1** (`5af366a`/`250dd5c`/`152f150`,
+  2026-09-11): a real, live, first-person rehearsal of the actual
+  release-user path (fresh disposable data directory, real native-Windows/
+  GPU hardware, real Edge browser automation) against a built artifact
+  from `88a5eb1` -- found and fixed 4 real defects live, documented the
+  expected unsigned-artifact SmartScreen warning as an intentional,
+  disclosed fact (no key fabricated), independently re-verified the final
+  fixed artifact. See
+  [release-experience-rehearsal-v1-report.md](release-experience-rehearsal-v1-report.md).
+- **Reviewed Wildlife Semantic Consistency v1** (`a379008`, 2026-09-11):
+  closed the cross-surface disagreement the rehearsal's own Section 3.5
+  found and deliberately left open for a follow-up -- a reviewed-but-
+  species-unresolved wildlife Visit ("confirmed wildlife, species not yet
+  identified") now reads consistently across Today, Bird Log, Local Data,
+  Dashboard, Visit Detail, and Event Detail, never collapsed with genuine
+  no-wildlife-confirmed. See
+  [wildlife-semantic-consistency-v1-contract.md](wildlife-semantic-consistency-v1-contract.md).
+- **Manual Import Evidence Integrity v1** (`ee2af65`, 2026-09-11): fixed a
+  real correctness gap -- `/api/media/import`/`/api/media/folder-import`'s
+  shared helper set a Visit's `representative_media_path` but never
+  created the matching `VisitEvidenceLinkModel`, so legitimate, reviewed
+  imported media could be misreported as orphaned in the Local Data
+  storage summary (retention/deletion itself was already safe -- a
+  presentation/truth-telling defect, not a data-loss one). Fixed at the
+  source (new imports now call the same established evidence-link
+  materializer, `_ensure_visit_evidence_links`, every other Visit-creation
+  path already uses) plus presentation parity for not-yet-repaired
+  existing rows, plus a confirm-gated report/repair pair
+  (`GET`/`POST /api/media/evidence-link-repair*`,
+  `scripts/repair_import_evidence_links.py`) for existing data. See
+  [manual-import-evidence-integrity-v1-contract.md](manual-import-evidence-integrity-v1-contract.md).
+
+**This milestone (Final Candidate Build & Freeze v1):** built the
+definitive release candidate from clean HEAD `ee2af65` (git-archive
+snapshot, `source_clean: true` both artifacts; no source/schema/packaging
+change made -- the build itself exposed no defect).
+
+- **Host artifact:** `MockingBird-windows-x64.zip`, 18,728 files,
+  4,922,872,252 bytes, `zip_sha256`
+  `cba87e455a63a83ef33a44a6c8bff66909aff8723d06464a8dab183082f2f5c6`,
+  `build_id` `4990e15aeb2ba583`, `git_commit`
+  `ee2af6512d983693def5633cf7fa0b29ab86453c`, `app_version` `0.1.0`. Full
+  GPU/CUDA + BioCLIP runtime included (no skip flags), both model bundles
+  hash-verified against the accepted provenance record (MDv5a ONNX
+  `b03ef796...0abbc`/source `.pt` `fe3e90e4...94a5ef`, matching
+  [[accepted-observation-model-provenance]] exactly), every required CUDA/
+  cuDNN DLL (including the historically-fragile `cublasLt64_13.dll`)
+  verified present. SBOM: CycloneDX 1.5, 58 components, generated
+  successfully. Signing: honestly unsigned (no
+  `MOCKINGBIRD_RELEASE_SIGNING_KEY_ID` configured, none fabricated).
+  `scripts/verify_release_artifact.py`: **OK**. Spot-checked the full
+  18,728-entry zip listing directly: zero hits for any of the seven
+  protected untracked detector files, zero real secrets/private keys/local
+  machine paths/test databases (`.pem`/`api_key` hits were both benign
+  third-party package files -- `certifi`'s CA bundle and FastAPI's generic
+  API-key security helper -- not leaked credentials).
+- **Camera Node artifact:** `mockingbird_camera_node-0.1.0-py3-none-any.whl`,
+  `build_id` `5b3c7b44d2039bba18437cb203ae6791`, `git_commit`
+  `ee2af6512d983693def5633cf7fa0b29ab86453c`, `version` `0.1.0`, wheel
+  `sha256` `38dfac47a6ea6b164fe82e94642540d02be213506b7ee7d6e1090afe93f6d904`.
+  `scripts/verify_release_artifact.py` does not apply to this artifact (its
+  own docstring confirms it reads `build_local_product.py`'s Host-bundle
+  manifest shape specifically; the Camera Node artifact's manifest is a
+  deliberately different, slimmer shape from a separate builder,
+  `build_camera_node_artifact.py`) -- no dedicated automated verifier
+  script exists for it. Independently re-derived every fact by hand instead
+  (same method: trust nothing the manifest claims about itself): recomputed
+  SHA-256 of all 4 `SHA256SUMS` entries and all 19 real wheel-internal file
+  contents directly from the zip bytes -- 100% byte-for-byte match, zero
+  discrepancies. Wire protocol unchanged (`node_api_version` `v1`,
+  `transport_protocol_version` `transport/v1`) -- no live reference-Camera-
+  Node preflight repeated, per this milestone's own scope ("no Pi
+  revalidation required unless the Camera Node artifact/build changes
+  beyond normal rebuild metadata" -- confirmed true here).
+
+**Targeted final smoke check** (disposable Windows-side instance, fresh
+`MOCKINGBIRD_HOME`, real native-Windows/GPU hardware, not a repeated
+rehearsal): extracted a fresh copy of the Host artifact and launched it
+against a brand-new, disposable data directory. All five required checks
+passed, with direct evidence, not simulated: (1) the artifact launched and
+reached `ready: true`, schema `59`; (2) `GET /api/product/instance`
+returned `build_id`/`git_commit`/`app_version` byte-identical to the build
+manifest; (3) one manual media import (`POST /api/media/import`) created a
+Visit whose own entry in the new evidence-link-repair report reads
+`already_linked` (not `would_repair`/`ambiguous_*`) -- direct proof this
+milestone's own fix holds in the real shipped artifact, not only in unit
+tests; (4) the Local Data storage summary's `orphaned_managed_media_count`
+stayed at `0` (unchanged) while `total_managed_media_count` correctly rose
+by 1 -- the imported media was never misclassified as orphaned; (5)
+`POST /api/product/shutdown` returned `accepted: true`, the process
+exited `0`, and the runtime marker read `{"state": "clean"}`. Disposable
+instance and the Windows-side extracted copy fully removed afterward,
+zero residue.
+
+**Does not** call the product publicly released, **does not** distribute
+it, **does not** push, **does not** self-authorize a subsequent milestone,
+and **does not** reopen any accepted work. **Remaining concrete release
+blockers: none newly found by this build/verify/smoke pass.**
+**Authorization after this closure remains NONE.**
 
 **2026-09-10 update (Final Release Hardening & Launch Readiness v1):**
 directly authorized final engineering/hardening pass for the one public
