@@ -1057,14 +1057,28 @@ def test_multi_stream_stop_does_not_kill_a_different_streams_authority(
     assert manager.status(STREAM_ID).state == "stopped"
 
 
-def test_candidate_authority_exhausted_flag_is_truthful_and_sticky(
+def test_candidate_authority_exhausted_flag_is_truthful_and_recovers(
     repository: ProductRepository,
 ) -> None:
     """Health/diagnostic truth for budget exhaustion: a session that is
     still genuinely `observing` but has exhausted its own in-session budget
-    must say so plainly, and the fact must stay true for the rest of this
-    session (see "Health/diagnostic truth for budget exhaustion" in
-    docs/candidate-visit-authority-contract.md)."""
+    must say so plainly (see "Health/diagnostic truth for budget
+    exhaustion" in docs/candidate-visit-authority-contract.md).
+
+    24/7 Field Reliability Corrections v1: unlike before, this fact must
+    NOT stay true for the rest of the session once real headroom returns --
+    `product_repository._SESSION_BUDGET_WINDOW` makes the budget itself a
+    rolling window rather than a permanent-for-the-activation-window fact,
+    so a flag that never un-latches would keep telling a user "still
+    exhausted" while new Visits were actively being created again. This
+    test raises the configured limit (rather than advancing real time 24h,
+    which `_run_assembly_tick`'s own `decided_at = datetime.now(UTC)` reads
+    directly and unmockably) to simulate recovered headroom deterministically
+    -- the mechanism under test here is the engine session's own flag
+    -clearing on the next successful creation, not the window's arithmetic
+    itself (that is proven directly, over real elapsed time, by
+    `test_session_budget_recovers_across_the_rolling_window_without_a_restart`
+    in test_candidate_visit_repository.py)."""
 
     repository.set_observation_authority_mode(
         ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW, max_candidates_per_session=1,
@@ -1111,6 +1125,34 @@ def test_candidate_authority_exhausted_flag_is_truthful_and_sticky(
     # alongside them, never by falsely degrading `engine_available`/camera
     # health, which stay reserved for actual camera/engine problems.
     assert snapshot.counts.candidates_created == 1
+
+    # Recovered headroom (in production: the rolling window's oldest
+    # candidate ages out; here: the configured limit is raised, without
+    # `fresh_session=True` -- `activation_boundary_at` is deliberately left
+    # untouched, so this is not a fresh session either way) -- a third,
+    # well-separated encounter must both create successfully AND clear the
+    # sticky flag back to an honest `False`.
+    repository.set_observation_authority_mode(
+        ObservationAuthorityMode.candidate_visit, stream_id=STREAM_ID, now=NOW, max_candidates_per_session=5,
+    )
+    third_updates = list(_tick_track_updates("gen-third", 200_000, 201_000))
+    evidence_third, bytes_third = _tick_evidence("gen-third", "identification", "hash-third")
+    burst_bytes_cache[evidence_third.media_asset_id] = bytes_third
+
+    session._run_assembly_tick(
+        all_track_updates=first_updates + second_updates + third_updates,
+        all_evidence_candidates=[evidence_first, evidence_second, evidence_third],
+        attempted_proposal_ids=attempted_proposal_ids, burst_bytes_cache=burst_bytes_cache, adapter=adapter,
+        finalize=True,
+    )
+    assert session._counts.candidates_created == 2
+    assert session._candidate_authority_exhausted is False
+    assert session._candidate_authority_message is None
+
+    recovered_snapshot = session.snapshot()
+    assert recovered_snapshot.candidate_authority_exhausted is False
+    assert recovered_snapshot.candidate_authority_message is None
+    assert recovered_snapshot.counts.candidates_created == 2
 
 
 class _RecordingAutomaticIdentificationAssist:

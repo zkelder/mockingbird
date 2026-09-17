@@ -249,3 +249,16 @@ none of those needed to change for this fix, and none did.
   work; the running process's own `release_info.json`/`build_info.json`
   remain the reliable source of truth regardless. Out of this contract's
   scope; flagged for a dedicated packaging session.
+- ~~**Nothing resumes a session once this contract's own bounded retry
+  budget is exhausted and the session ends terminally.**~~ **Closed by
+  24/7 Field Reliability Corrections v1**
+  (`camera_node_recovery.py::CameraNodeRecoverySupervisor`, see
+  docs/runtime-map.md). This contract deliberately bounds retries only
+  *while a session still holds camera ownership* (see "Architectural
+  rule," above) and was never meant to retry forever; real field evidence
+  (a multi-day outage the reference Node never recovered from during the
+  run) showed that once this contract's own retry budget correctly gives
+  up, nothing in the product ever called `ObservationEngineSessionManager.
+  start()` again -- an unattended 24/7 deployment cannot rely on a person
+  noticing. The new supervisor is a distinct layer *above* this one,
+  never touching `AnalysisStreamRetryPolicy` itself.

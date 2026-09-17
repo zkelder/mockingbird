@@ -779,7 +779,7 @@ def test_gather_media_integrity_detects_missing_and_truncated_files(tmp_path) ->
                 )
         engine = create_engine(f"sqlite:///{db_path}")
         try:
-            gathered = doctor._gather_media_integrity(engine)
+            gathered = doctor._gather_media_integrity(engine, media_root=media_root)
         finally:
             engine.dispose()
     finally:
@@ -788,6 +788,117 @@ def test_gather_media_integrity_detects_missing_and_truncated_files(tmp_path) ->
     assert gathered["sampled_count"] == 3
     assert gathered["missing_count"] == 1
     assert gathered["size_mismatch_count"] == 1
+
+
+def test_gather_media_integrity_resolves_relative_paths_against_media_root(tmp_path, monkeypatch) -> None:
+    """24/7 Field Reliability Corrections v1: real root cause -- a relative
+    `local_path` (the shape manual/folder import stores, see
+    `ProductRepository._storage_managed_media_path`) must resolve against
+    `DoctorEnvironment.media_root`, never the process's current working
+    directory. Before the fix, `Path(local_path).stat()` on a relative path
+    only ever happened to work when cwd was already the media root --
+    exactly reproduced here by running from an unrelated cwd."""
+
+    from sqlalchemy import create_engine
+
+    from mockingbird.repository.product_repository import ProductRepository
+    from mockingbird.storage.models import MediaAssetModel
+
+    media_root = tmp_path / "media"
+    media_root.mkdir()
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=media_root)
+    try:
+        intact_path = media_root / "intact.jpg"
+        intact_path.write_bytes(b"x" * 20)
+        with repository.session_factory() as session:
+            with session.begin():
+                session.add(
+                    MediaAssetModel(
+                        id="media-asset-relative-intact", source_id=None,
+                        stream_id="stream-does-not-need-to-exist-for-this-check",
+                        filename="intact.jpg", content_type="image/jpeg", media_type="image",
+                        local_path="intact.jpg",  # relative to media_root, not cwd
+                        original_filename="intact.jpg", file_size_bytes=20,
+                        created_at=datetime.now(UTC),
+                    )
+                )
+                session.add(
+                    MediaAssetModel(
+                        id="media-asset-relative-missing", source_id=None,
+                        stream_id="stream-does-not-need-to-exist-for-this-check",
+                        filename="gone.jpg", content_type="image/jpeg", media_type="image",
+                        local_path="gone.jpg",  # relative, genuinely absent from media_root
+                        original_filename="gone.jpg", file_size_bytes=20,
+                        created_at=datetime.now(UTC),
+                    )
+                )
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            # Arbitrary current working directory, unrelated to media_root or
+            # MOCKINGBIRD_HOME -- the exact contract `DoctorEnvironment`
+            # itself documents ("must work from any starting directory").
+            unrelated_cwd = tmp_path / "somewhere-else"
+            unrelated_cwd.mkdir()
+            monkeypatch.chdir(unrelated_cwd)
+            gathered = doctor._gather_media_integrity(engine, media_root=media_root)
+        finally:
+            engine.dispose()
+    finally:
+        repository.close()
+
+    assert gathered["sampled_count"] == 2
+    assert gathered["missing_count"] == 1  # only the genuinely-missing one
+    assert gathered["size_mismatch_count"] == 0
+
+
+def test_gather_media_integrity_same_result_regardless_of_current_working_directory(tmp_path, monkeypatch) -> None:
+    """Running Doctor from an arbitrary working directory must return the
+    identical media-integrity result as running it from `media_root` itself
+    -- the specific regression this milestone's field evidence found (every
+    one of 25 sampled retained media files misreported as incomplete/missing
+    purely because of the process's starting directory)."""
+
+    from sqlalchemy import create_engine
+
+    from mockingbird.repository.product_repository import ProductRepository
+    from mockingbird.storage.models import MediaAssetModel
+
+    media_root = tmp_path / "media"
+    media_root.mkdir()
+    db_path = tmp_path / "mockingbird.sqlite3"
+    repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=media_root)
+    try:
+        (media_root / "relative-intact.jpg").write_bytes(b"x" * 20)
+        with repository.session_factory() as session:
+            with session.begin():
+                session.add(
+                    MediaAssetModel(
+                        id="media-asset-cwd-independence", source_id=None,
+                        stream_id="stream-does-not-need-to-exist-for-this-check",
+                        filename="relative-intact.jpg", content_type="image/jpeg", media_type="image",
+                        local_path="relative-intact.jpg",
+                        original_filename="relative-intact.jpg", file_size_bytes=20,
+                        created_at=datetime.now(UTC),
+                    )
+                )
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            monkeypatch.chdir(media_root)
+            from_media_root = doctor._gather_media_integrity(engine, media_root=media_root)
+
+            elsewhere = tmp_path / "elsewhere"
+            elsewhere.mkdir()
+            monkeypatch.chdir(elsewhere)
+            from_elsewhere = doctor._gather_media_integrity(engine, media_root=media_root)
+        finally:
+            engine.dispose()
+    finally:
+        repository.close()
+
+    assert from_media_root == from_elsewhere == {
+        "sampled_count": 1, "missing_count": 0, "size_mismatch_count": 0,
+    }
 
 
 # --------------------------------------------------------------------------

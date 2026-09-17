@@ -84,6 +84,7 @@ def _evidence(
     engine_media_id: str = "shadow-burst:hash-1",
     *,
     geometry_attribution_json: str | None = None,
+    subject_geometry: tuple[float, float, float, float] = (0.4, 0.4, 0.6, 0.6),
 ) -> CandidateEvidenceItem:
     return CandidateEvidenceItem(
         engine_media_id=engine_media_id,
@@ -93,7 +94,7 @@ def _evidence(
         width=1920,
         height=1080,
         captured_at=NOW,
-        subject_geometry=(0.4, 0.4, 0.6, 0.6),
+        subject_geometry=subject_geometry,
         geometry_attribution_json=geometry_attribution_json,
     )
 
@@ -388,13 +389,17 @@ def test_multi_stream_authority_is_isolated(repository: ProductRepository) -> No
             evidence_items=(_evidence(),),
         )
     )
-    # Stream A is now exhausted (budget=1, already used).
-    exhausted = repository.get_observation_authority_state(stream_id=STREAM_ID)
+    # Stream A is now exhausted (budget=1, already used). `now=NOW` matches
+    # the fixed moment every write above used -- the session budget is a
+    # rolling window (`_SESSION_BUDGET_WINDOW`), so reading against the
+    # real wall clock instead would see this candidate age out of the
+    # window on any day after this fixture's own fixed `NOW`.
+    exhausted = repository.get_observation_authority_state(stream_id=STREAM_ID, now=NOW)
     assert exhausted.candidates_created_in_session == 1
 
     # Stream B has never been touched: still shadow, zero count -- never
     # inheriting Stream A's mode or its already-consumed budget.
-    fresh_other = repository.get_observation_authority_state(stream_id=other_stream_id)
+    fresh_other = repository.get_observation_authority_state(stream_id=other_stream_id, now=NOW)
     assert fresh_other.mode == "shadow"
     assert fresh_other.candidates_created_in_session == 0
 
@@ -437,6 +442,85 @@ def test_legitimate_active_session_exhaustion_still_blocks_safely(repository: Pr
         for index in range(3)
     ]
     assert [outcome.outcome for outcome in outcomes] == ["created", "created", "blocked_session_limit"]
+
+
+def test_session_budget_recovers_across_the_rolling_window_without_a_restart(
+    repository: ProductRepository,
+) -> None:
+    """24/7 Field Reliability Corrections v1: real field evidence -- a
+    production session hit the 50-candidate default after ~7.5 hours, then
+    permanently suppressed every further legitimate Visit as `blocked_
+    session_limit` for the remaining ~34 hours of an otherwise-healthy
+    session, because `candidates_created_in_session` was an unbounded count
+    since `activation_boundary_at` with no reset short of Stop/Start. This
+    proves the fix: continuous legitimate activity that exhausts the budget
+    still recovers on its own, once the trailing `_SESSION_BUDGET_WINDOW`
+    rolls forward -- no Stop/Start, no code change, same activation
+    boundary throughout -- while the guard still bounds a runaway scene
+    (never unlimited creation, even after recovery)."""
+
+    from mockingbird.repository.product_repository import _SESSION_BUDGET_WINDOW
+
+    def _distinct_evidence(index: int) -> tuple:
+        # A distinct subject_geometry per attempt -- genuinely different
+        # encounters, never the exact-repeated-geometry shape `evaluate_
+        # scene_confusor_suspicion` exists to catch (unrelated to this
+        # test's own session-budget focus; reusing one fixed box across
+        # many successful creations in the same Stream/broad_class would
+        # legitimately trip that separate, correct mechanism).
+        offset = index * 0.01
+        return (_evidence(subject_geometry=(0.4 + offset, 0.4, 0.6 + offset, 0.6)),)
+
+    _activate(repository, now=NOW, max_candidates_per_session=2)
+    outcomes = [
+        repository.create_candidate_visit_from_proposal(
+            CreateCandidateVisitRequest(
+                proposal=_facts(proposal_id=f"visit-episode:old-{index}"),
+                observed_at=NOW, evidence_items=_distinct_evidence(index),
+            )
+        )
+        for index in range(2)
+    ]
+    assert [outcome.outcome for outcome in outcomes] == ["created", "created"]
+    still_exhausted = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=_facts(proposal_id="visit-episode:old-2"), observed_at=NOW, evidence_items=_distinct_evidence(2),
+        )
+    )
+    assert still_exhausted.outcome == "blocked_session_limit"
+
+    # Same activation boundary the whole time (no Stop/Start) -- only real
+    # elapsed time, well past the old 50-candidate boundary's own real-world
+    # 7.5-hour exhaustion point, and past the rolling window itself.
+    later = NOW + _SESSION_BUDGET_WINDOW + timedelta(minutes=1)
+    exhausted_status = repository.get_observation_authority_state(stream_id=STREAM_ID, now=later)
+    assert exhausted_status.activation_boundary_at == NOW  # never reset -- this is not a fresh session
+    # The two candidates from `NOW` have aged out of the trailing window --
+    # observable recovery, not a guess (Requirement: "the guard must remain
+    # observable").
+    assert exhausted_status.candidates_created_in_session == 0
+
+    recovered = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=_facts(proposal_id="visit-episode:new-1"), observed_at=later, evidence_items=_distinct_evidence(3),
+        )
+    )
+    assert recovered.outcome == "created"
+
+    # The guard still bounds a runaway scene *after* recovery too -- this
+    # is a rolling budget, never an unlimited one.
+    second_after_recovery = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=_facts(proposal_id="visit-episode:new-2"), observed_at=later, evidence_items=_distinct_evidence(4),
+        )
+    )
+    assert second_after_recovery.outcome == "created"
+    third_after_recovery = repository.create_candidate_visit_from_proposal(
+        CreateCandidateVisitRequest(
+            proposal=_facts(proposal_id="visit-episode:new-3"), observed_at=later, evidence_items=_distinct_evidence(5),
+        )
+    )
+    assert third_after_recovery.outcome == "blocked_session_limit"
 
 
 # --- 1. Default authority is shadow -----------------------------------------

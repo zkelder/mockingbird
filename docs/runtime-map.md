@@ -209,6 +209,18 @@ unchanged. `contracts.py` is the shared, dependency-light type vocabulary
 `VisitProposal`, ...) essentially every module above imports; if you are
 looking for "the schema of an in-flight detection," start there.
 
+**Above** one running session's own lifecycle (24/7 Field Reliability
+Corrections v1): `camera_node_recovery.py::CameraNodeRecoverySupervisor`
+notices a Stream whose session already ended with `stopped_reason==
+"camera_unavailable"` and calls `ObservationEngineSessionManager.start()`
+again once the Node's own health responds -- resuming unattended
+observation without a person clicking Start observing. Distinct from
+`engine_runtime.AnalysisStreamRetryPolicy` (bounds retries *inside* one
+still-active session, while it still holds camera ownership) and from
+`monitoring.durable_supervisor.DurableMonitoringSupervisor` (the identical
+bounded-backoff/reconcile shape, but wired only to the legacy
+`live_monitoring` lane below -- never to this engine).
+
 ## The legacy lanes (`live_monitoring` and `snapshot_monitor`)
 
 Not superseded -- these are the real, current production runtime for every

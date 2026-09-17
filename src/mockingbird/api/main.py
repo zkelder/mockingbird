@@ -518,6 +518,7 @@ from mockingbird.observation.acoustic_ingest import AcousticIngestError, run_aco
 from mockingbird.observation import audio_capture
 from mockingbird.observation.acoustic_runtime import AcousticRuntimeService, MicrophoneSegmentSource
 from mockingbird.species.birdnet_adapter import get_birdnet_status
+from mockingbird.observation.camera_node_recovery import CameraNodeRecoverySupervisor
 from mockingbird.observation.engine_runtime import (
     ObservationEngineSessionManager,
     ObservationEngineSessionStatus,
@@ -608,6 +609,7 @@ async def _app_lifespan(_app: FastAPI):
     global _live_object_detector_manager
     repository = get_repository()
     get_durable_monitoring_supervisor().start()
+    get_camera_node_recovery_supervisor().start()
     if repository.storage_retention_settings().automatic_cleanup_enabled:
         get_local_storage_retention_service().start()
     # Acoustic Runtime & Quality v1: always started, mirroring the durable
@@ -923,6 +925,7 @@ _source_monitor_manager: SnapshotObservationProvider | None = None
 _live_camera_session_manager: live_camera_session.LiveCameraSessionManager | None = None
 _microphone_session_manager: audio_capture.MicrophoneSessionManager | None = None
 _observation_engine_session_manager: ObservationEngineSessionManager | None = None
+_camera_node_recovery_supervisor: CameraNodeRecoverySupervisor | None = None
 _live_preview_lease_manager: live_preview_leases.LivePreviewLeaseManager | None = None
 _durable_monitoring_supervisor: DurableMonitoringSupervisor | None = None
 _local_storage_retention_service: LocalStorageRetentionService | None = None
@@ -1529,7 +1532,7 @@ def _stop_runtime_activity(*, reason: str) -> None:
     global _source_monitor_manager, _live_camera_session_manager, _live_preview_lease_manager
     global _live_object_detector_manager, _tracked_activity_detector_manager
     global _observation_engine_session_manager, _acoustic_runtime_service
-    global _attention_sync_service
+    global _attention_sync_service, _camera_node_recovery_supervisor
     detector_drained = False
 
     def drain_live_detector() -> None:
@@ -1560,6 +1563,16 @@ def _stop_runtime_activity(*, reason: str) -> None:
         # under a media root that was concurrently being replaced.
         _acoustic_runtime_service.shutdown()
         _acoustic_runtime_service = None
+    if _camera_node_recovery_supervisor is not None:
+        # Stopped before `_observation_engine_session_manager.stop_all`
+        # below, for the identical reason the acoustic runtime service's
+        # own shutdown was moved here (see that branch's comment): this
+        # supervisor calls `.start()` back into the session manager, so it
+        # must never keep ticking against a manager (or repository/media
+        # root) that is concurrently being torn down or swapped out from
+        # under it -- for example a local-backup restore.
+        _camera_node_recovery_supervisor.shutdown()
+        _camera_node_recovery_supervisor = None
     if _source_monitor_manager is not None:
         _source_monitor_manager.cancel_all()
         _source_monitor_manager = None
@@ -1824,6 +1837,24 @@ def get_observation_engine_session_manager() -> ObservationEngineSessionManager:
             acceptance_recorder_config_factory=acceptance_recorder_config_from_env,
         )
     return _observation_engine_session_manager
+
+
+def get_camera_node_recovery_supervisor() -> CameraNodeRecoverySupervisor:
+    """24/7 Field Reliability Corrections v1: the app-owned background loop
+    that resumes Camera Node observation automatically once a Stream that
+    stopped with `stopped_reason="camera_unavailable"` becomes reachable
+    again. Mirrors `get_durable_monitoring_supervisor`'s identical
+    lazy-singleton shape; a harmless, cheap no-op loop whenever no Stream
+    currently has an eligible `camera_unavailable` stop (the common case)."""
+
+    global _camera_node_recovery_supervisor
+    if _camera_node_recovery_supervisor is None:
+        _camera_node_recovery_supervisor = CameraNodeRecoverySupervisor(
+            session_manager=get_observation_engine_session_manager(),
+            repository_factory=ProductRepository,
+            camera_node_client=get_camera_node_client(),
+        )
+    return _camera_node_recovery_supervisor
 
 
 def get_tracked_activity_detector_manager() -> TrackedOutdoorActivityDetectorManager:

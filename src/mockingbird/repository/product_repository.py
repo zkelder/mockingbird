@@ -3559,6 +3559,32 @@ _DEFAULT_MAX_CANDIDATES_PER_HOUR = 20
 _DEFAULT_MAX_EVIDENCE_ITEMS_PER_CANDIDATE = 4
 _DEFAULT_MAX_EVIDENCE_BYTES_PER_CANDIDATE = 8_000_000
 
+# 24/7 Field Reliability Corrections v1: `max_candidates_per_session` was
+# originally the controlled trial's own hard bound (`candidate-authority
+# -trial --max-candidates 3`, a real session capped at 600 wall-clock
+# seconds by that same CLI) and was never given its own reset cadence
+# because a "session" was always assumed to be short. Real 24/7 field
+# evidence (a production session left running continuously) hit the
+# 50-candidate default after ~7.5 hours, then permanently suppressed every
+# further legitimate Visit as `blocked_session_limit` for the remaining
+# ~34 hours of an otherwise-healthy session -- `activation_boundary_at`
+# only ever advances on a fresh Start (see "Fresh-session activation"
+# above), which unattended continuous operation may not do for days or
+# weeks. `max_candidates_per_hour` already protects against runaway/noisy
+# -scene *bursts* over a genuine rolling window (`_authority_state`'s own
+# `observed_at - timedelta(hours=1)` query); this applies the identical
+# rolling-window pattern at a longer horizon so the *volume* budget also
+# decays instead of accumulating for the entire lifetime of one activation,
+# while `activation_boundary_at` remains an unconditional floor (a fresh
+# Start can never inherit a stale prior activation's own count -- "no
+# backlog replay into authority" is unaffected). Mirrors the existing
+# hourly window's own convention of a hardcoded lookback duration paired
+# with a configurable count (`max_candidates_per_session` itself is
+# unchanged, still caller-configurable per Stream) rather than adding a new
+# per-Stream configurable duration column for a bound this codebase has
+# never made independently configurable at the hourly grain either.
+_SESSION_BUDGET_WINDOW = timedelta(hours=24)
+
 
 def _reject_camera_node_legacy_monitoring_enable(provider_key: str | None) -> None:
     """Camera Node Streams use the Observation Engine for monitoring; the
@@ -7531,12 +7557,25 @@ class ProductRepository:
     # candidate Visit creation` actually touches the product database.
     # =========================================================================
 
-    def get_observation_authority_state(self, *, stream_id: str) -> ObservationAuthorityStatus:
+    def get_observation_authority_state(
+        self, *, stream_id: str, now: datetime | None = None,
+    ) -> ObservationAuthorityStatus:
         """Side-effect-free status read for one Stream. Never creates the
         settings row -- a Stream that has never touched Stage 7 authority
         reports shadow-mode defaults from nothing on disk, exactly like it
         would after reading them. Independent of every other Stream's own
-        authority state (see the model's own docstring)."""
+        authority state (see the model's own docstring).
+
+        `now` defaults to the real wall clock, matching every production
+        caller (this is a read, never a policy decision, so there was no
+        reason to thread a caller-supplied moment through before 24/7 Field
+        Reliability Corrections v1) -- exposed explicitly, mirroring `set_
+        observation_authority_mode`'s own `now` parameter, only because
+        `candidates_created_in_session` is now a rolling window
+        (`_SESSION_BUDGET_WINDOW`) rather than an unbounded count: a test
+        that writes candidates against a fixed simulated moment must read
+        this status against that same moment, not the real day the test
+        happens to run on, to see a stable result."""
 
         with self.session_factory() as session:
             settings = session.get(ObservationAuthoritySettingsModel, stream_id)
@@ -7576,7 +7615,7 @@ class ProductRepository:
                     scene_confusor_regions_with_reviewed_false_evidence=0,
                     scene_confusor_regions_eligible_from_reviewed_evidence=0,
                 )
-            return self._observation_authority_status(session, settings, now=datetime.now(UTC))
+            return self._observation_authority_status(session, settings, now=now or datetime.now(UTC))
 
     def set_observation_authority_mode(
         self,
@@ -10764,9 +10803,11 @@ class ProductRepository:
         ledger table, scoped to this Stream alone -- never an in-memory-only
         counter a restart could reset, and never another Stream's own
         candidates (see the model's own docstring: a global cross-Stream
-        total was a real, demonstrated defect). "Session" here means "since
-        this Stream's own current activation boundary," matching the
-        contract doc's own definition."""
+        total was a real, demonstrated defect). "Session" here means "within
+        the trailing `_SESSION_BUDGET_WINDOW`, but never before this
+        Stream's own current activation boundary" -- see that constant's own
+        docstring (24/7 Field Reliability Corrections v1) for why this is a
+        rolling window rather than an unbounded count since activation."""
 
         # SQLite's `DateTime(timezone=True)` does not itself preserve
         # tzinfo across a write/read round trip -- normalize every
@@ -10776,10 +10817,11 @@ class ProductRepository:
         activation_boundary_at = normalize_optional_utc(settings.activation_boundary_at)
         session_count = 0
         if settings.mode == ObservationAuthorityMode.candidate_visit.value and activation_boundary_at is not None:
+            session_window_start = max(activation_boundary_at, observed_at - _SESSION_BUDGET_WINDOW)
             session_count = session.scalar(
                 select(func.count(ObservationCandidateVisitModel.proposal_id)).where(
                     ObservationCandidateVisitModel.stream_id == settings.stream_id,
-                    ObservationCandidateVisitModel.created_at >= activation_boundary_at,
+                    ObservationCandidateVisitModel.created_at >= session_window_start,
                 )
             ) or 0
         hourly_count = session.scalar(

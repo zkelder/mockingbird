@@ -835,6 +835,47 @@ Ambiguous-Boundary Recall Closure v1 fix (above) -- it is scoped correctly
 genuinely still-active session that exhausts its own real budget must, and
 does, still block (`blocked_session_limit`) exactly as before.
 
+### Continuous-operation session budget window (24/7 Field Reliability Corrections v1)
+
+Real 24/7 field evidence exposed a defect in what "session" meant for
+`max_candidates_per_session`: `candidates_created_in_session` counted every
+candidate since `activation_boundary_at` with no decay, which is correct
+for a bounded controlled trial (`candidate-authority-trial` itself caps
+real duration at 600 seconds) but wrong for continuous unattended
+production operation, where a single Start may legitimately run for days
+or weeks without ever revisiting `activation_boundary_at` (see
+"Fresh-session activation," above -- only a genuinely new Start moves it).
+A production session hit the 50-candidate default after ~7.5 hours of
+real, healthy operation, then permanently suppressed every further
+legitimate Visit as `blocked_session_limit` for the remaining ~34 hours of
+that same session.
+
+`ProductRepository._authority_state` now bounds the session count to a
+trailing rolling window (`_SESSION_BUDGET_WINDOW`, 24 hours) rather than an
+unbounded count since activation -- the identical rolling-window pattern
+`max_candidates_per_hour` already used at a shorter horizon
+(`created_at >= observed_at - timedelta(hours=1)`), just applied at a
+longer one, so the *volume* budget also decays instead of accumulating for
+the entire lifetime of one activation. `activation_boundary_at` remains an
+unconditional floor on the window's start (`max(activation_boundary_at,
+observed_at - _SESSION_BUDGET_WINDOW)`): a fresh Start can never inherit a
+stale prior activation's own count, and "no backlog replay into authority"
+is completely unaffected. The window length itself is a hardcoded constant,
+not a new per-Stream configurable column -- mirroring how the hourly
+window's own one-hour lookback has never been independently configurable
+either, only its count (`max_candidates_per_session` itself is unchanged,
+still caller-configurable per Stream).
+
+This is still the identical safety bound, never raised or removed:
+`max_candidates_per_hour` continues to bound runaway/noisy-scene *bursts*
+exactly as before, and the rolling session window continues to bound total
+*volume* within any trailing 24-hour period -- a genuinely runaway scene
+still hits `blocked_session_limit` and stays blocked until the window
+rolls forward, precisely the "the guard must remain effective" half of
+this fix. The other half: legitimate, continuous wildlife activity can
+never again be permanently locked out of Visit creation for the remainder
+of a long-running process the way it was before.
+
 ## Diagnostics
 
 `ProductRepository.get_observation_authority_state(stream_id=...)` is a
@@ -848,19 +889,32 @@ session/hourly counts, and bounded lifetime counters
 stage.
 
 ### Health/diagnostic truth for budget exhaustion (Visit Authority Budget +
-### Ambiguous-Boundary Recall Closure v1)
+### Ambiguous-Boundary Recall Closure v1; recovery behavior updated by 24/7
+### Field Reliability Corrections v1)
 
-A legitimately exhausted in-session budget (`blocked_session_limit`, a real,
-non-retryable outcome for the rest of the current activation window -- see
-"Limits," below) must never be silently absorbed into an otherwise-healthy
-status: a Stream can stay genuinely `observing`/`engine_available` while
-unable to create any further Visit, and that fact must be surfaced
-truthfully rather than presented as ordinary full productivity.
-`_EngineSession` tracks `candidate_authority_exhausted: bool` (set the first
-time this running session observes a `blocked_session_limit` outcome; sticky
-for the rest of the session, matching the outcome's own permanent-for-this-
-activation-window semantics -- a fresh Start always begins with it `False`
-again) plus a plain-language `candidate_authority_message`. Both flow through
+A legitimately exhausted in-session budget (`blocked_session_limit`, a real
+outcome for the current moment -- see "Limits," below, and "Continuous
+-operation session budget window" for why this is no longer permanent for
+the rest of the activation window) must never be silently absorbed into an
+otherwise-healthy status: a Stream can stay genuinely
+`observing`/`engine_available` while unable to create any further Visit,
+and that fact must be surfaced truthfully rather than presented as ordinary
+full productivity. `_EngineSession` tracks `candidate_authority_exhausted:
+bool` (set the first time this running session observes a `blocked_
+session_limit` outcome; a fresh Start always begins with it `False`) plus a
+plain-language `candidate_authority_message`.
+
+Once `max_candidates_per_session` became a rolling window rather than an
+unbounded per-activation count, staying sticky for the rest of the session
+would itself become a lie: new Visits can start being created again, on
+their own, once the window rolls forward -- with nothing to ever clear a
+permanently-latched flag, the panel would keep telling a user "still
+exhausted" while evidence of the opposite (freshly created Visits)
+accumulated right alongside it. `_candidate_authority_exhausted` is instead
+cleared back to `False` (and `_candidate_authority_message` to `None`) the
+next time this session actually creates a candidate -- concrete,
+`evaluate_candidate_authority`-verified proof the budget currently has
+headroom, never a guess or a timer of its own. Both flow through
 `ObservationEngineSessionStatus` -> `unified_status.ObservationPanelFacts` ->
 the `ObservationSessionStatusResponse` wire contract unchanged in shape,
 reaching `GET /api/streams/{id}/observation/status` and the Observation

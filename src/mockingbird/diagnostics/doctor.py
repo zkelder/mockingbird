@@ -2219,7 +2219,27 @@ def _interpret_research_export(gathered: dict[str, Any]) -> DoctorCheckResult:
 _MEDIA_INTEGRITY_SAMPLE_SIZE = 25
 
 
-def _gather_media_integrity(engine: Engine) -> dict[str, Any]:
+def _resolve_media_asset_path(local_path: str, *, media_root: Path) -> Path:
+    """24/7 Field Reliability Corrections v1: `MediaAssetModel.local_path` is
+    stored absolute for most write paths (`ProductRepository._copy_media_file`)
+    but relative to the runtime's own media root for others (manual/folder
+    import) -- see `ProductRepository._storage_managed_media_path`, the
+    established resolver for this exact ambiguity elsewhere in the product.
+    A bare `Path(local_path).stat()` silently depended on the *process's
+    current working directory* to resolve the relative case, contradicting
+    `DoctorEnvironment`'s own "must work from any starting directory"
+    contract -- reproduced directly: every sampled relative-path asset read
+    as missing/incomplete when Doctor ran from a directory other than the
+    one relative paths happened to resolve against. This mirrors `_storage_
+    managed_media_path`'s absolute/relative branch without its symlink/
+    containment fencing, which guards a *deletion* decision this read-only
+    stat check has no need for."""
+
+    raw = Path(local_path)
+    return raw if raw.is_absolute() else media_root / raw
+
+
+def _gather_media_integrity(engine: Engine, *, media_root: Path) -> dict[str, Any]:
     with engine.connect() as connection:
         rows = connection.execute(
             select(MediaAssetModel.local_path, MediaAssetModel.file_size_bytes)
@@ -2230,7 +2250,7 @@ def _gather_media_integrity(engine: Engine) -> dict[str, Any]:
     size_mismatch_count = 0
     for local_path, expected_size in rows:
         try:
-            actual_size = Path(local_path).stat().st_size
+            actual_size = _resolve_media_asset_path(local_path, media_root=media_root).stat().st_size
         except OSError:
             missing_count += 1
             continue
@@ -2539,7 +2559,7 @@ def run_doctor(
             _execute_check(
                 code=DoctorCheckCode.MEDIA_INTEGRITY,
                 component="Media integrity",
-                gather=lambda: _gather_media_integrity(engine),
+                gather=lambda: _gather_media_integrity(engine, media_root=environment.media_root),
                 interpret=_interpret_media_integrity,
                 timeout_seconds=timeout_seconds,
             )

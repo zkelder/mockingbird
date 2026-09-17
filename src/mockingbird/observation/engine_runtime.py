@@ -729,12 +729,19 @@ class _EngineSession:
         # truthfully surfaced, not silently absorbed into the generic
         # suppressed-reasons diagnostic alone (see "Health/diagnostic truth
         # for budget exhaustion" in docs/candidate-visit-authority-
-        # contract.md). Sticky for the lifetime of this running session,
-        # matching `blocked_session_limit`'s own permanent-for-this-
-        # activation-window semantics (`candidate_visit_authority.
-        # RETRYABLE_OUTCOMES` excludes it) -- once true, stays true until
-        # this session stops (a fresh Start gets a fresh activation boundary
-        # and therefore a fresh flag).
+        # contract.md). 24/7 Field Reliability Corrections v1: no longer
+        # sticky for the lifetime of the session -- `blocked_session_limit`
+        # itself stopped being a permanent-for-this-activation-window fact
+        # once the repository's own session budget became a rolling window
+        # rather than an unbounded count (see `product_repository.
+        # _SESSION_BUDGET_WINDOW`), so a flag that never un-latches would
+        # keep telling a user "still exhausted" while new Visits were
+        # actively, successfully being created again. Set `True` the first
+        # time this running session observes `blocked_session_limit`;
+        # cleared back to `False` the next time this session actually
+        # creates a candidate (concrete proof the budget currently has
+        # headroom -- see the `outcome.created` branch below). A fresh Start
+        # always begins with it `False` regardless.
         self._candidate_authority_exhausted = False
         self._candidate_authority_message: str | None = None
         self._advanced: dict[str, object] = {}
@@ -2191,6 +2198,19 @@ class _EngineSession:
                 )
                 if outcome.created:
                     self._last_candidate_visit_id = outcome.visit_id
+                    if self._candidate_authority_exhausted:
+                        # 24/7 Field Reliability Corrections v1: a
+                        # successful creation is concrete, immediate proof
+                        # the session budget currently has headroom --
+                        # `evaluate_candidate_authority` only ever returns
+                        # "create" when `candidates_created_in_session <
+                        # limits.max_candidates_per_session` at this exact
+                        # attempt. Clearing here (rather than leaving this
+                        # sticky for the rest of the session) keeps the
+                        # flag truthful once the rolling `_SESSION_BUDGET_
+                        # WINDOW` frees up capacity again on its own.
+                        self._candidate_authority_exhausted = False
+                        self._candidate_authority_message = None
                 elif outcome.outcome in BLOCKED_OUTCOMES or outcome.outcome in REJECTED_OUTCOMES or outcome.outcome in {
                     "blocked_privacy_zone", "blocked_missing_evidence", "blocked_scene_confusor_suspected", "failed",
                 }:
@@ -2199,16 +2219,15 @@ class _EngineSession:
                     # Legitimate, in-session budget exhaustion (see "Health/
                     # diagnostic truth for budget exhaustion" in
                     # docs/candidate-visit-authority-contract.md) -- truthful
-                    # and sticky for the rest of this running session,
-                    # matching `blocked_session_limit`'s own permanent-for-
-                    # this-activation-window semantics. Never raw internal
+                    # for as long as it keeps recurring; never raw internal
                     # counters here (those stay in `advanced`); a plain-
                     # language fact plus the one safe, always-correct action.
                     self._candidate_authority_exhausted = True
                     self._candidate_authority_message = (
-                        "This session has reached its automatic Visit-creation limit for now. "
-                        "Existing Visits are unaffected. Stop and start observation again to "
-                        "resume creating new Visits."
+                        "This session has reached its automatic Visit-creation limit for the "
+                        "recent activity period. Existing Visits are unaffected, and new Visit "
+                        "creation will automatically resume on its own as that period rolls "
+                        "forward -- no restart is needed."
                     )
             # Automatic Species Suggestion v1: a durably-created candidate
             # Visit (evidence already committed by `create_candidate_visit_
