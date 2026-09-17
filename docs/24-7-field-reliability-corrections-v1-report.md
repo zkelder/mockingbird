@@ -351,10 +351,13 @@ identical gathered result both times).
   schema change; the recovery supervisor and Doctor fix touch no
   persisted schema at all).
 - Release version: **0.1.0, unchanged**.
-- HEAD: not yet committed as of this report (see closing note -- commits
-  were not part of this milestone's explicit authorization beyond the
-  work itself; the owner/ChatGPT should confirm before any commit/push,
-  per this milestone's own "do NOT push/publish/distribute").
+- HEAD: **`2468b91`** -- committed by a dedicated closure session,
+  explicitly authorized to commit (distinct from this report's own
+  original authorization, which covered the implementation work only).
+  That session re-verified the diff's scope, schema (v59), version
+  (0.1.0), and that all seven protected untracked detector files were
+  unaffected before committing. Not pushed. See §12 for what changed
+  after this report's original writing.
 
 ## 10. Remaining 24/7 blockers
 
@@ -374,7 +377,7 @@ identical gathered result both times).
   Appendix below, preserved for the next accuracy campaign, not acted on
   here.
 
-## 11. Verdict
+## 11. Verdict (as originally written by the implementation session; superseded -- see §12)
 
 **FURTHER 24/7 CORRECTNESS WORK REQUIRED** -- narrowly, for exactly one
 reason: the Camera Node auto-recovery fix has strong simulation/unit
@@ -388,6 +391,40 @@ this milestone's own instructions call for, before authorizing the next
 simulation/unit coverage sufficient on its own to proceed without that
 proof, that is their call to make, not a self-authorization by this
 session.
+
+## 12. Closure addendum (2026-09-16, dedicated closure session, HEAD `2468b91`)
+
+A separate, explicitly-authorized closure session committed this
+milestone's implementation exactly as this report originally described it
+(no code changes) and, per its own explicit instructions, made one fresh,
+independent, bounded reachability check against the reference Camera Node
+before treating §11's verdict as final -- rather than reusing this report's
+existing finding untested. Result: **still genuinely unreachable**, and by
+a wider margin than the original check -- `ping` (`Destination Host
+Unreachable`), the HTTP health probe (`curl: (7) Couldn't connect to
+server`), and `ssh mockingbird-pi` (`No route to host`) all failed
+identically. This is a second, independent same-day confirmation of a
+real network-level condition external to this repository, not a retry of
+the same stale finding.
+
+No real disconnect/reconnect test (closure step 2, sub-steps A-G) could be
+performed as a result -- there is no reachable Node to interrupt. No code
+was changed as a result, per that session's own explicit instruction: an
+unreachable reference Pi is an evidence-gathering limitation, not a
+reproduced software defect, and does not retroactively call the
+implementation itself into question. Simulation/unit coverage
+(`tests/test_camera_node_recovery.py`, 18 tests, unchanged) remains the
+only evidence for the recovery supervisor's own control-flow correctness;
+real-hardware disconnect/reconnect proof is still owed before the *next*
+72-hour-to-7-day endurance run, not before this closure.
+
+**Final verdict, superseding §11: READY FOR REPEAT ENDURANCE RUN --
+CAMERA RECOVERY HARDWARE PROOF PENDING.** The implementation (all three
+fixes) is accepted; Visit-cap and Doctor are fully real-hardware/real-CLI
+proven; Camera Node auto-resume is accepted at the simulation/test level
+with real-hardware proof of the disconnect/reconnect path still
+outstanding, tracked as a named risk for the next endurance run rather
+than as a blocking defect in this one.
 
 ---
 
