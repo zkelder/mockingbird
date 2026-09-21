@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -9,14 +10,74 @@ from sqlalchemy import func, inspect, select
 from mockingbird.api.main import app, configure_repository
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.storage.database import CURRENT_DATABASE_SCHEMA_VERSION
-from mockingbird.storage.models import ReviewLabelModel, VisitTagMembershipModel, VisitTagModel
+from mockingbird.storage.models import (
+    CameraSourceModel,
+    EventModel,
+    ReviewLabelModel,
+    StreamModel,
+    VisitModel,
+    VisitTagMembershipModel,
+    VisitTagModel,
+    ZoneModel,
+)
 from tests.conftest import LegacyAuthenticatedTestClient
 
 
 VISIT_ID = "visit-bird-feeder-001"
 SECOND_VISIT_ID = "visit-squirrel-ground-001"
+# Pre-Release Trust & Correctness Correction v1 (UI-01): a real, non-demo
+# fixture for the one test below that needs its Visit actually visible in
+# Bird Log -- VISIT_ID/SECOND_VISIT_ID are the seeded *demo* Source's
+# Visits, now correctly excluded from Bird Log like every other real-history
+# surface (see `_real_source_condition` in product_repository.py).
+REAL_SOURCE_ID = "source-visit-tags-real"
+REAL_STREAM_ID = "stream-visit-tags-real"
+REAL_ZONE_ID = "zone-visit-tags-real"
+REAL_VISIT_ID = "visit-tags-real"
 
 pytestmark = pytest.mark.anyio
+
+
+def add_real_visit(repository: ProductRepository) -> None:
+    """A Visit on a real (non-demo) Source, for a test that needs actual
+    Bird Log visibility rather than just tag CRUD against any Visit id."""
+
+    started_at = datetime(2026, 6, 1, 15, 0, tzinfo=UTC)
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                CameraSourceModel(
+                    id=REAL_SOURCE_ID, name="Visit tags fixture camera",
+                    kind="manual_upload", status="connected", description="Visit tags test fixture source.",
+                )
+            )
+            session.add(
+                StreamModel(
+                    id=REAL_STREAM_ID, source_id=REAL_SOURCE_ID, name="Visit tags fixture stream",
+                    description="Visit tags test fixture stream.", is_live=False,
+                )
+            )
+            session.add(
+                ZoneModel(
+                    id=REAL_ZONE_ID, stream_id=REAL_STREAM_ID, name="Feeder", zone_type="feeder",
+                    polygon_json="[]", is_active=True, monitoring_policy_json=None,
+                )
+            )
+            session.add(
+                EventModel(
+                    id=f"event-{REAL_VISIT_ID}", stream_id=REAL_STREAM_ID,
+                    title="Visit tags fixture event", event_type="observation_engine_candidate",
+                    started_at=started_at, ended_at=started_at + timedelta(seconds=5),
+                    primary_zone_id=REAL_ZONE_ID, review_status="needs_review",
+                )
+            )
+            session.add(
+                VisitModel(
+                    id=REAL_VISIT_ID, event_id=f"event-{REAL_VISIT_ID}", subject_label="bird",
+                    species_guess=None, confidence=None, reviewed_label=None,
+                    review_status="needs_review", zone_id=REAL_ZONE_ID, is_superseded=False,
+                )
+            )
 
 
 @pytest.fixture(autouse=True)
@@ -135,10 +196,15 @@ async def test_tags_are_normalized_bounded_and_organization_only(
 
 async def test_journal_tag_filter_changes_only_the_bounded_gallery(
     client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
 ) -> None:
+    add_real_visit(isolated_repository)
     reviewed = await client.post(
         "/api/review-labels",
-        json={"review_origin": "human", "target_type": "visit", "target_id": VISIT_ID, "label": "northern_cardinal"},
+        json={
+            "review_origin": "human", "target_type": "visit",
+            "target_id": REAL_VISIT_ID, "label": "northern_cardinal",
+        },
     )
     assert reviewed.status_code == 201
     tag = await client.post(
@@ -147,7 +213,7 @@ async def test_journal_tag_filter_changes_only_the_bounded_gallery(
     )
     assert tag.status_code == 201
     added = await client.post(
-        f"/api/tags/{tag.json()['id']}/visits/{VISIT_ID}",
+        f"/api/tags/{tag.json()['id']}/visits/{REAL_VISIT_ID}",
         json={
             "expected_state_token": tag.json()["state_token"],
             "idempotency_key": "journal-tag-add",
@@ -161,7 +227,7 @@ async def test_journal_tag_filter_changes_only_the_bounded_gallery(
     assert filtered.status_code == 200
     assert filtered.json()["observation_count"] == unfiltered.json()["observation_count"]
     assert filtered.json()["scope"]["tag_id"] == tag.json()["id"]
-    assert [row["visit_id"] for row in filtered.json()["gallery"]["observations"]] == [VISIT_ID]
+    assert [row["visit_id"] for row in filtered.json()["gallery"]["observations"]] == [REAL_VISIT_ID]
     assert filtered.json()["gallery"]["observations"][0]["tags"] == ["Training candidate"]
 
 

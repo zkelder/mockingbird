@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from mockingbird.api.main import app, configure_repository
-from mockingbird.repository.product_repository import ProductRepository
+from mockingbird.repository.product_repository import ProductRepository, SourceProviderConfigurationModel
 from mockingbird.source_providers import external_url_preview
 from mockingbird.source_providers.external_url_preview import ExternalUrlPreviewFetchResult
 from tests.conftest import LegacyAuthenticatedTestClient
@@ -79,6 +79,22 @@ def isolated_repository(tmp_path: Path) -> ProductRepository:
         db_url=f"sqlite:///{tmp_path / 'mockingbird.sqlite3'}",
         media_root=tmp_path / "media",
     )
+    # Pre-Release Trust & Correctness Correction v1 (UI-01): this file's
+    # fixtures build Visits on the seeded demo Source's own STREAM_ID, which
+    # Dashboard/Bird Log now correctly exclude from real history like every
+    # other surface (see `_real_source_condition` in product_repository.py).
+    # "De-demo" the seeded Source in place -- the same real-product
+    # mechanism (an effective, non-"demo" provider configuration)
+    # `_real_source_condition` already recognizes for a Source repurposed
+    # after creation.
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                SourceProviderConfigurationModel(
+                    source_id=SOURCE_ID, provider_key="manual_upload",
+                    config_json="{}", updated_at=datetime.now(UTC),
+                )
+            )
     configure_repository(repository)
     yield repository
     configure_repository(None)
@@ -336,7 +352,11 @@ async def test_external_url_to_correction_truth_smoke_flow(
     media_response = await client.get(f"/api/media/{saved['media_asset_id']}")
     assert media_response.status_code == 200
     media_asset = media_response.json()
-    saved_path = Path(media_asset["local_path"]).resolve()
+    # SEC-2: GET /api/media/{id} now redacts local_path; real server-side
+    # file placement is verified from the repository directly.
+    real_asset = isolated_repository.get_media_asset(saved["media_asset_id"])
+    assert real_asset is not None
+    saved_path = Path(real_asset.local_path).resolve()
     assert saved_path.is_relative_to(isolated_repository.media_root.resolve())
     assert saved_path.read_bytes() == fetch_stub.content
     assert "Creates no Events, Visits, ReviewLabels, or truth." in media_asset["notes"]
@@ -540,7 +560,9 @@ async def test_external_url_to_correction_truth_smoke_flow(
     assert reviewed_record["source_id"] == SOURCE_ID
     assert reviewed_record["stream_id"] == STREAM_ID
     assert reviewed_record["zone_id"] == FEEDER_ZONE_ID
-    assert reviewed_record["media_path"] == media_asset["local_path"]
+    # SEC-2: media_asset["local_path"] (from the earlier, now-redacted GET)
+    # is always "" -- compare against the real path instead.
+    assert reviewed_record["media_path"] == real_asset.local_path
     assert_count_delta(
         before_configuration,
         await product_counts(client),

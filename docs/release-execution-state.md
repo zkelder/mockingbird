@@ -708,6 +708,21 @@ copies of the same facts. HEAD `ee2af65`, schema `v59` unchanged, version
 `0.1.0` (not `1.0.0` -- see the version-restoration note in §3's own new
 entry). **Authorization remains NONE.**
 
+**2026-09-21 update (Pre-Release Trust & Correctness Correction v1
+authorized):** catches up this file's own stacked log a second time --
+`2468b91`/`0135801` ("24/7 Field Reliability Corrections v1", 2026-09-16)
+were real, accepted, merged commits this file never once mentioned before
+now. A definitive read-only baseline audit the same day found three fresh,
+high-severity, previously-undisclosed defects (fabricated demo history
+shown as real on a fresh install; a broader-than-assumed Doctor media-
+integrity false-positive; the shipped Windows launcher silently dropping
+`--host`/`--allow-network`) plus six smaller confirmed gaps. The external
+(ChatGPT) global release sequencing authorized a bounded defect-correction
+milestone closing all of them -- see §3, below, for the complete delta and
+the milestone's own eventual closure entry once implemented and validated.
+**Authorization: Pre-Release Trust & Correctness Correction v1** (no longer
+`NONE`).
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
@@ -3656,7 +3671,268 @@ exactly as open as stated.
 
 ## 3. Current authorized milestone
 
-**NONE -- GLOBAL PRODUCT-ROADMAP RECONCILIATION REQUIRED.**
+**Pre-Release Trust & Correctness Correction v1** -- directly authorized
+outside this file by the external (ChatGPT) global release sequencing,
+following its review of the 2026-09-21 definitive pre-release baseline
+audit (delivered to the user as `mockingbird-v0.1-baseline-audit.md`, not
+committed to this repository).
+
+**2026-09-21 update (baseline reconciliation, catching up two unreconciled
+accepted commits):** this file's own stacked §3 log had fallen two real,
+already-accepted commits behind `main` since the 2026-09-12 freeze
+(`cbebf39`) -- `2468b91`/`0135801` ("24/7 Field Reliability Corrections
+v1") were merged 2026-09-16 but only ever updated their own standalone
+report (`24-7-field-reliability-corrections-v1-report.md`); this file
+itself has zero mention of that milestone anywhere, confirmed by exhaustive
+grep before writing this entry. Verified starting baseline exactly as
+expected before any edit: branch `main`; HEAD `0135801`; schema `v59`
+unchanged (`CURRENT_DATABASE_SCHEMA_VERSION` in `storage/database.py`);
+working tree clean except the seven preserved untracked detector files
+(§13, below), confirmed present and untouched both at this reconciliation's
+own start and reconfirmed after implementation.
+
+**Accepted delta from 24/7 Field Reliability Corrections v1** (`2468b91`
+implementation, `0135801` closure -- see that milestone's own report for
+the complete record, summarized here only to close this file's own gap):
+bounded reopening of the 2026-09-12 freeze after a real multi-day endurance
+run exposed three concrete operational defects, all fixed -- (1) session
+Visit-cap permanent exhaustion (`max_candidates_per_session` converted from
+an unbounded lifetime count to a trailing rolling 24h window, mirroring the
+existing `max_candidates_per_hour` pattern); (2) Camera Node auto-resume
+(new `CameraNodeRecoverySupervisor`, mirroring the existing durable
+supervisor's reconcile/bounded-backoff/auto-resume shape); (3) a first
+attempt at the Doctor media-integrity cwd bug (later found, in this same
+milestone's own DI-1 fix below, to have only closed the false-positive for
+the manual/folder-import shape, not the far more common observation-
+-engine-created-evidence shape -- see [[doctor-media-integrity-relative-path-regression-2026-09-17]]).
+Closure session performed one fresh, independent reachability check against
+the reference Camera Node (still unreachable at that time); final verdict
+**READY FOR REPEAT ENDURANCE RUN -- CAMERA RECOVERY HARDWARE PROOF
+PENDING**. No schema change. This delta is accepted, real, and merged --
+recorded here only because this file's own bookkeeping had not caught up to
+it, exactly the class of gap this section's own "Update protocol" (§15)
+exists to prevent.
+
+**2026-09-21 definitive pre-release baseline audit** (read-only, 7 parallel
+agents, HEAD `0135801`, schema `v59`, not committed to this repository,
+delivered directly to the user): independently reconfirmed the reconciliation
+gap above, then found three new, high-severity, previously-undisclosed
+defects (a fresh install's Dashboard/Bird Log rendering the seeded demo
+Source's fabricated Visits as real reviewed history; Doctor's media-
+integrity false-positive precisely root-caused, broader than the 24/7 Field
+Reliability fix assumed; the shipped Windows launcher not forwarding
+`--host`/`--allow-network`), plus a Camera Node artifact packaging gap, two
+UX dead ends (no password self-service control despite the Users page
+pointing at one; Dataset Export with no download action), no top-level
+React error boundary, CSV-injection sanitization narrower than this file's
+own historical claims, and one unredacted media endpoint. Recommended (not
+self-authorized) exactly the milestone this entry now authorizes.
+
+**2026-09-21 update (Pre-Release Trust & Correctness Correction v1
+executed):** closes every item the 2026-09-21 baseline audit found, all
+nine, none deferred. Schema unchanged (`v59`); no detector/classifier/
+threshold/tracker/admission/Visit-assembly change; working tree confirmed
+clean except the seven preserved untracked detector files both before and
+after implementation.
+
+- **UI-01 (fabricated demo history):** the seeded demo Source's Visits
+  rendered as real, unlabeled, Reviewed wildlife history on Dashboard
+  "Recent activity" and Bird Log. Root cause: three raw SQL queries in
+  `dashboard_summary` (`recent_rows`, the `needs_rows` fallback,
+  `reviewed_today_rows`) and Bird Log/Wildlife Insights' shared
+  `_wildlife_insight_records` resolver never joined through to
+  `CameraSourceModel` at all, unlike ~8 sibling call sites that already
+  excluded `SourceKind.demo` activity. Fixed by extracting the one existing
+  correct exclusion condition (previously inline only in
+  `dashboard_summary`'s own `real_stream_count` query) into a shared
+  `_real_source_condition()` helper -- deliberately keyed off the Source's
+  *effective* provider configuration, not its static `kind`, matching the
+  existing precedent for a demo Source later repurposed into a real one --
+  and applying it to all four gaps via the identical join shape already
+  used elsewhere. New `tests/test_demo_source_exclusion.py` proves the
+  actual fresh-install scenario directly: a repository seeded only by
+  `seed_if_empty()` (no other test setup) shows zero demo activity on
+  Dashboard/Bird Log, both at the repository-method and HTTP-API level,
+  while a real non-demo Visit still appears normally. This fix's own blast
+  radius reached roughly a dozen existing test files that had been reusing
+  the seeded demo Source/Stream as a convenience fixture for unrelated
+  Dashboard/Bird-Log-adjacent assertions -- each given either a dedicated
+  real (non-demo) Source/Stream/Zone fixture or, where the demo Source is
+  used as pure incidental plumbing by many unrelated tests in one file, a
+  narrowly-scoped "de-demo" of the seeded Source in place (a
+  `SourceProviderConfigurationModel` row with a non-"demo" `provider_key`,
+  the same real-product repurposing mechanism `_real_source_condition`
+  already recognizes) -- confirmed, in every case, not to weaken the two
+  existing tests whose own purpose is proving the exclusion mechanism
+  itself (`test_real_stream_count_excludes_the_lingering_demo_stream` and
+  the durable-`kind` tests in `test_stream_playback_contract.py`).
+- **DI-1 (Doctor media-integrity false-positive):** broader than 24/7 Field
+  Reliability Corrections v1's own Fix 3 assumed -- see
+  [[doctor-media-integrity-relative-path-regression-2026-09-17]]. Real root
+  cause: `ProductRepository.media_root` defaults to the bare relative
+  string `"data/media/imports"`, anchored correctly only by
+  `runtime.run_preflight()`'s process-wide `os.chdir()` before any
+  repository exists; every real write path then stores a `local_path`
+  relative to *runtime_home*, not to `media_root` as the prior fix assumed
+  -- joining it against Doctor's own absolute, home-anchored `media_root`
+  double-nested the path and reported genuinely intact, actively-created
+  evidence as missing. Fixed by resolving relative paths against
+  `DoctorEnvironment.runtime_home` first (itself already computed
+  independent of cwd), falling back to the `media_root`-relative
+  interpretation only as a defensive second candidate for a differently-
+  shaped legacy path -- never reintroducing a `Path.cwd()` dependency. Four
+  tests, including one that reproduces the exact real-world shape
+  (`"data/media/imports/media-candidate-NNN.jpg"`) and would fail under the
+  prior resolver.
+- **PKG-1 (Windows launcher argument forwarding):** `Start MockingBird.vbs`
+  never forwarded its own command-line arguments, so the documented
+  `--host 0.0.0.0 --allow-network` remote-access invocation could not be
+  performed against the shipped artifact. Fixed by forwarding
+  `WScript.Arguments` into the `pythonw.exe -m mockingbird` command line
+  (quoted, with embedded-quote escaping); an ordinary no-argument launch is
+  byte-for-byte unaffected. **Validated for real on native Windows**, not
+  only via the structural content test in
+  `test_local_product_packaging.py`: built a minimal real embeddable-Python
+  runtime plus a real generated `Start MockingBird.vbs`, invoked it exactly
+  as documented, and confirmed via a stub `mockingbird` package's own
+  `sys.argv` that `--host 0.0.0.0 --allow-network` and a value containing
+  spaces both forward correctly. This real test also found a second,
+  genuine defect beyond the confirmed one: bare `.vbs` execution from a
+  Command Prompt does not reliably run the file's own associated handler
+  even with a correct `assoc`/`ftype` registration, so
+  `docs/using-mockingbird.md` now documents the explicit, proven-reliable
+  `wscript "Start MockingBird.vbs" --host 0.0.0.0 --allow-network` form
+  instead.
+- **PKG-2 (Camera Node artifact completeness):** the downloadable Camera
+  Node artifact never included `install_camera_node.py`, which
+  `docs/camera-node-install-guide.md`'s own step 2 always told the user to
+  run against it -- a plain release download could not be installed from
+  itself. Fixed by packaging the installer script alongside the wheel/
+  manifest/checksums, covering it in `SHA256SUMS`, and extending the
+  existing clean-commit source guard (`RELEASE_SOURCE_PATHS`) to cover it
+  as the real build input it now is. `docs/camera-node-installer-design.md`
+  and the install guide's own step 2 command corrected to match. **Real
+  build validated**: a genuine `build_camera_node_artifact.py` invocation
+  produces the installer script inside the artifact directory, every
+  `SHA256SUMS` entry independently verified with `sha256sum -c`, and the
+  installer's own real `--status`/`--preflight` read-only checks run
+  successfully from that exact co-located location.
+- **FLOW-3 (password self-service):** the Users page told administrators to
+  use the account menu to change their own password; no such control
+  existed despite the backend endpoint (`POST /api/auth/change-password`)
+  already working. New `ChangePasswordControl`, mirroring the existing
+  `ResetPasswordControl` disclosure pattern with the current-password proof
+  that endpoint's own contract requires; fixed a latent bug in the pattern
+  being mirrored (closing the disclosure and setting a success message in
+  the same state update collapses the form before the message ever paints
+  a frame) rather than propagating it. Proven end to end on real native
+  Chromium (not only unit-level): a throwaway user's password is changed,
+  the old password is confirmed rejected and the new one confirmed working
+  with a real fresh sign-in, the current session is confirmed to survive
+  (only other sessions are revoked), and an incorrect current password is
+  confirmed rejected with a clear error -- never the shared e2e suite's own
+  admin account, to avoid cross-spec interference.
+- **FLOW-5 (Dataset Export download):** the manifest was shown as inline
+  JSON only, with no save/download action. Added a Blob-based download,
+  mirroring the existing `ClassifierManifestPage` pattern exactly (no
+  backend change -- the manifest was already fully fetched client-side),
+  with a filename derived from the export's own name/date/id. Proven with a
+  real Playwright download event: the file actually saves, the content
+  matches what was already shown inline, and the filename is sensible.
+- **FLOW-10 (top-level React error boundary, release-critical):** no error
+  boundary existed anywhere, so an unexpected render error turned the whole
+  app blank. New class-component `ErrorBoundary` (React has no
+  function-component boundary API) wraps the app root; calm,
+  doctrine-consistent copy; a "Reload MockingBird" recovery action; logs to
+  the browser console only (this product keeps no client-side telemetry).
+  A deliberate, test-only crash hook (`?mockingbird_test_crash=1`, inert
+  otherwise) lets a real e2e spec prove the boundary catches a genuine
+  descendant render failure rather than relying on finding or fabricating
+  a real one -- confirmed on real Chromium, including that no blank page,
+  no raw stack trace, and no implementation detail reaches the DOM.
+- **DI-2 (CSV-injection sanitizer coverage, release-critical):** despite
+  documentation claiming broad coverage, two real CSV writers never called
+  the canonical sanitizer -- `_write_classifier_manifest_csv`
+  (`manifest.csv`) and `mockingbird.ecological.inaturalist_csv.
+  build_inaturalist_csv`, the module's own shipped public builder (its only
+  current production caller happens to re-derive rows through the already-
+  sanitized `_write_csv` path, so this was latent, not yet observed in
+  production, but real for any other caller including the module's own
+  tests). Extracted the sanitizer from its private home inside
+  `product_repository.py` into a new dependency-free `mockingbird.
+  csv_safety` module -- the two files needed it are one module-layering
+  step apart, ruling out reusing the private original without either a
+  layering violation or a second, divergent copy -- and wired both gaps
+  through it. Regression tests reproduce representative dangerous prefixes
+  (`=`, `+`, `@`, a Windows-style DDE/HYPERLINK payload) and confirm a
+  genuine negative-number string still round-trips unmodified.
+- **SEC-2 (media path exposure):** `GET /api/media` and
+  `GET /api/media/{id}` returned the raw absolute server-local filesystem
+  path to any signed-in Viewer, unlike Visit-facing endpoints, which
+  already redact it via the existing `_redact_visit`/`_redact_media_asset`
+  convention. Wired both handlers through that same convention (a new
+  `_redact_media_assets` for the list form). This fix's own blast radius
+  reached roughly a dozen existing tests across six files that asserted on
+  the now-redacted raw path to verify real server-side file placement --
+  each updated to read the real path from the repository directly instead,
+  which the redaction deliberately leaves unaffected.
+- **Item 10 (targeted copy corrections):** the Users page's account-menu
+  instruction needed no wording change (FLOW-3 makes it true rather than
+  requiring correction); `docs/using-mockingbird.md`'s Windows remote-
+  access step and `docs/camera-node-install-guide.md`/`docs/camera-node-
+  installer-design.md`'s artifact file lists and install command corrected
+  to match the real, now-fixed shipped mechanism in each case.
+
+**Validation.** Tier 1 (focused): every fix above has dedicated, passing
+regression tests reproducing its own confirmed defect shape, not merely
+exercising the surrounding code. Tier 2 (affected subsystem): full runs of
+every directly-touched test file, `ruff check` on every changed/new Python
+file confirmed to introduce zero new findings via direct `git stash`
+bisection against the unmodified baseline (the two large shared files,
+`product_repository.py` and `api/main.py`, carry pre-existing findings
+unrelated to this milestone, confirmed identical in count before and
+after), `tsc --noEmit`/`vite build` clean. Tier 3 (full Core, required by
+this milestone's own cross-cutting scope): **6057 passed / 5 failed / 4
+skipped / 35 deselected / 11 xfailed**, 41m56s -- all 5 failures
+independently confirmed pre-existing via `git stash` bisection against the
+unmodified baseline (`test_doctor_camera_node_transport.py`'s own pair,
+`test_environmental_context.py`'s date-sensitive baseline test, and
+`test_place_change_summary_repository.py`'s own long-documented flake all
+reproduced identically on the clean baseline; `test_transport_worker.py`'s
+own retry-timing test passed in isolation both with and without this
+milestone's changes, consistent with the identical load-induced-flake
+class already documented for this file, not reproducible outside a full-
+suite run either way), none in a file this milestone touched. A first Core
+attempt found real regressions this milestone's own UI-01/SEC-2 fixes
+exposed in ~15 existing tests (most reusing the seeded demo Source as an
+incidental fixture, a few asserting the raw path SEC-2 now redacts); every
+one fixed and independently re-confirmed, including a second, proactive
+sweep of `slow`-marked tests Core itself never runs, which found and fixed
+one more (`test_acoustic_ingest_real_model.py`, the real-BirdNET-model
+acceptance test). Full e2e suite (189 tests, including 5 new for FLOW-3/5/
+10): **187 passed / 2 failed**, both independently confirmed pre-existing
+via the identical bisection technique (`reviewed-product-loop.spec.ts`,
+already documented across at least three prior milestones' own acceptance
+records, and `notification-preferences.spec.ts`'s own insight-alert-
+category test, newly bisected this milestone and reproduced identically on
+the clean baseline).
+
+**Self-review.** No accidental truth-state change (every fix is either a
+read-query filter, an API-response redaction, or export-file sanitization
+-- no write path, correction, or Review Decision touched); no destructive
+migration or data behavior (no migration added, schema unchanged at `v59`,
+no delete/overwrite of existing records); no relative-path/cwd regression
+(DI-1 is the one fix that touches path resolution at all, and it removes a
+cwd dependency rather than adding one, proven by a dedicated cwd-
+independence test).
+
+**Does not** change MDv5a/BioCLIP-2/BirdNET production status, promote
+SpeciesNet, perform the Host/Place terminology pass, the accessibility
+pass, the UI visual-polish pass, Gate G, or hardware field acceptance --
+all explicitly out of scope and untouched. **Does not** push. **Does not**
+self-authorize a subsequent milestone. **Authorization remains this
+milestone's own** pending the owner/external (ChatGPT) acceptance review of
+this closure.
 
 **2026-09-12 update (Final Candidate Build & Freeze v1 -- also catches up
 five prior unreconciled milestones):** this file's own stacked log had
@@ -11409,6 +11685,39 @@ rather than cleaned up; re-verify their presence untouched at the start of
 each session that touches this repository.
 
 ## 14. Validation baselines
+
+**Latest accepted Core checkpoint (Pre-Release Trust & Correctness
+Correction v1):** 6057 passed / **5 failed** / 4 skipped / 35 deselected
+(`slow`-marked) / 11 xfailed, 41m56s -- run twice this milestone (a first
+attempt found 19 failures, 15 real regressions this milestone's own UI-01/
+SEC-2 fixes exposed in existing tests plus 4 already-matching this
+checkpoint's own pre-existing set; every real regression fixed and this
+second, accepted attempt run clean of them). All 5 remaining failures
+independently re-confirmed via direct `git stash` bisection against the
+unmodified baseline this same session (not merely cited):
+`test_doctor_camera_node_transport.py`'s own pair and
+`test_environmental_context.py::test_temperature_band_established_once_
+enough_days_are_cached` reproduced the identical failure standalone against
+the stashed baseline; `test_place_change_summary_repository.py::test_api_
+round_trip_exposes_change_detection_fields` is this section's own long-
+documented recurring date-sensitive fixture flake (see below), also
+reproduced standalone; `test_transport_worker.py::test_retryable_failure_
+returns_item_to_failed_retryable_and_eventually_succeeds` passed standalone
+against the stashed baseline and passed again with this milestone's changes
+present, consistent with this same file's own already-documented load-
+induced-timing-flake class (a different specific test in the identical
+file, `test_sticky_diagnostic_set_on_protocol_incompatibility_and_cleared_
+on_next_success`, is the one previously recorded here) rather than
+reproducible in isolation either way. No schema change (`v59`, unchanged).
+Full existing e2e suite (189 tests, 5 new this milestone): 187 passed / 2
+failed, both independently re-confirmed pre-existing via the identical
+bisection technique -- `reviewed-product-loop.spec.ts` (already documented
+below across multiple prior milestones) and `notification-preferences.
+spec.ts::clicking an insight alert opens Place Story already scoped to
+wildlife` (newly bisected this milestone, reproduced identically on the
+unmodified baseline). See
+[pre-release-trust-correctness-correction-v1-report.md](pre-release-trust-correctness-correction-v1-report.md)
+for the complete record.
 
 **External Pre-Release Acceptance -- Private Cohort v1 did not run a full
 Core checkpoint** -- disclosed explicitly here so this is never mistaken

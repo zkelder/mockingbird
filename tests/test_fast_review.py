@@ -9,7 +9,14 @@ from sqlalchemy import func, select
 
 from mockingbird.api.main import app, configure_repository
 from mockingbird.repository.product_repository import ProductRepository
-from mockingbird.storage.models import EventModel, ReviewLabelModel, StreamModel, VisitModel, ZoneModel
+from mockingbird.storage.models import (
+    CameraSourceModel,
+    EventModel,
+    ReviewLabelModel,
+    StreamModel,
+    VisitModel,
+    ZoneModel,
+)
 from tests.conftest import LegacyAuthenticatedTestClient
 
 
@@ -104,6 +111,40 @@ def add_second_stream(repository: ProductRepository) -> str:
                 )
             )
     return stream_id
+
+
+def add_real_stream(repository: ProductRepository) -> tuple[str, str]:
+    """A Stream on a real (non-demo) Source, distinct from `add_second_
+    stream`'s `stream-fast-review-other` (still on the seeded demo Source).
+    Pre-Release Trust & Correctness Correction v1 (UI-01): needed by the one
+    test that checks Dashboard visibility -- the demo Source's activity is
+    now correctly excluded from Dashboard/Bird Log, like every other real-
+    history surface (see `_real_source_condition` in product_repository.py)."""
+
+    source_id = "source-fast-review-real"
+    stream_id = "stream-fast-review-real"
+    zone_id = "zone-fast-review-real"
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                CameraSourceModel(
+                    id=source_id, name="Fast Review real fixture camera",
+                    kind="manual_upload", status="connected", description="Fast Review real-visibility fixture.",
+                )
+            )
+            session.add(
+                StreamModel(
+                    id=stream_id, source_id=source_id, name="Fast Review real fixture stream",
+                    description="Fast Review real-visibility fixture.", is_live=False,
+                )
+            )
+            session.add(
+                ZoneModel(
+                    id=zone_id, stream_id=stream_id, name="Feeder", zone_type="feeder",
+                    polygon_json="[]", is_active=True,
+                )
+            )
+    return stream_id, zone_id
 
 
 async def queue_item(client: httpx.AsyncClient, visit_id: str) -> dict:
@@ -344,20 +385,27 @@ async def test_fast_outcomes_and_navigation_never_accept_suggestions_automatical
     client: httpx.AsyncClient,
     isolated_repository: ProductRepository,
 ) -> None:
+    real_stream_id, real_zone_id = add_real_stream(isolated_repository)
     add_reviewable_visit(
         isolated_repository,
         event_id="event-fast-blank",
         visit_id="visit-fast-blank",
+        stream_id=real_stream_id,
+        zone_id=real_zone_id,
     )
     add_reviewable_visit(
         isolated_repository,
         event_id="event-fast-non-bird",
         visit_id="visit-fast-non-bird",
+        stream_id=real_stream_id,
+        zone_id=real_zone_id,
     )
     add_reviewable_visit(
         isolated_repository,
         event_id="event-fast-ambiguous",
         visit_id="visit-fast-ambiguous",
+        stream_id=real_stream_id,
+        zone_id=real_zone_id,
     )
     before = active_review_label_count(isolated_repository)
     blank = await queue_item(client, "visit-fast-blank")
@@ -366,7 +414,7 @@ async def test_fast_outcomes_and_navigation_never_accept_suggestions_automatical
         json={
             "ordered_targets": [{"target_type": "visit", "target_id": blank["target_id"]}],
             "direction": "next",
-            "stream_id": STREAM_ID,
+            "stream_id": real_stream_id,
         },
     )
     assert navigate.status_code == 200

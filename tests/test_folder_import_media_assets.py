@@ -103,12 +103,6 @@ async def import_folder(client: httpx.AsyncClient, payload: dict | None = None) 
     )
 
 
-async def media_by_id(client: httpx.AsyncClient) -> dict[str, dict]:
-    response = await client.get("/api/media")
-    assert response.status_code == 200
-    return {item["id"]: item for item in response.json()}
-
-
 async def test_unknown_source_folder_import_returns_404(client: httpx.AsyncClient) -> None:
     response = await client.post("/api/sources/source-missing/folder-import", json={})
 
@@ -194,20 +188,22 @@ async def test_folder_import_creates_media_assets_only(
     assert skipped["clip.mp4"] == "extension_not_allowed"
     assert skipped["nested"] == "directory_skipped"
 
-    media = await media_by_id(client)
+    # SEC-2: GET /api/media now redacts local_path, so real server-side file
+    # placement is verified from the repository directly, not the API.
     media_root = isolated_repository.media_root.resolve()
     for item in result["imported"]:
-        asset = media[item["media_asset_id"]]
-        local_path = Path(asset["local_path"])
+        asset = isolated_repository.get_media_asset(item["media_asset_id"])
+        assert asset is not None
+        local_path = Path(asset.local_path)
         assert local_path.is_file()
         assert local_path.resolve().is_relative_to(media_root)
         assert local_path.read_bytes() == source_files[item["relative_source_path"]]
-        assert asset["source_id"] == SOURCE_ID
-        assert asset["stream_id"] == STREAM_ID
-        assert asset["original_filename"] == item["file_name"]
-        assert "provider_key=folder_import_future" in asset["notes"]
-        assert f"relative_source_path={item['relative_source_path']}" in asset["notes"]
-        assert str(folder) not in asset["notes"]
+        assert asset.source_id == SOURCE_ID
+        assert asset.stream_id == STREAM_ID
+        assert asset.original_filename == item["file_name"]
+        assert "provider_key=folder_import_future" in asset.notes
+        assert f"relative_source_path={item['relative_source_path']}" in asset.notes
+        assert str(folder) not in asset.notes
 
     assert all((folder / name).read_bytes() == content for name, content in source_files.items())
     after = await product_counts(client)

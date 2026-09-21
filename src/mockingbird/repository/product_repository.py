@@ -202,6 +202,7 @@ from mockingbird.research.eligibility import (
     RESEARCH_ELIGIBILITY_POLICY_VERSION,
     evaluate_research_export_eligibility,
 )
+from mockingbird.csv_safety import csv_injection_safe_value
 from mockingbird.ecological.adapters import (
     DESTINATION_ADAPTERS,
     DestinationTaxonomyMapping,
@@ -1426,39 +1427,6 @@ DARWIN_CORE_EXPORT_CONTENT_TYPES: dict[str, str] = {
 ECOLOGICAL_SUBMISSIONS_EXPORT_CONTENT_TYPES: dict[str, str] = {
     "inaturalist_import.csv": "text/csv",
 }
-
-#: Leading characters a spreadsheet application (Excel, Google Sheets,
-#: LibreOffice Calc) treats as the start of a formula when a CSV cell is
-#: opened -- the classic "CSV injection" class Phase 39 of the Ecological
-#: Interoperability & Submission Workflows v1 milestone brief calls out by
-#: name. Applies to every CSV this repository writes (`_write_csv`, used by
-#: the generic research export, Camtrap DP, Darwin Core, and the new
-#: ecological-submission exports alike) since a user-supplied free-text
-#: field (a Camtrap DP `site_name`, an ecological-submission `place_name`,
-#: a Darwin Core `locality`) can end up as a cell value verbatim.
-_CSV_FORMULA_TRIGGER_CHARACTERS = ("=", "+", "-", "@", "\t", "\r")
-
-
-def _csv_injection_safe_value(value: Any) -> Any:
-    """Prefix a string cell that would otherwise be interpreted as a
-    formula with a single quote -- the standard, widely-used mitigation
-    (OWASP's own recommended CSV-injection defense). Never touches a
-    non-string value (a number, `None`, a bool) -- there is nothing to
-    sanitize there, and stringifying one would silently change its type in
-    the exported file. A string that starts with `-` or `+` but is itself a
-    plain, valid number (a formatted negative/positive latitude/longitude,
-    for example) is never a formula and must round-trip unchanged -- a
-    real, caught-by-testing bug in an earlier version of this function
-    corrupted every western/southern-hemisphere coordinate this way."""
-
-    if not isinstance(value, str) or not value.startswith(_CSV_FORMULA_TRIGGER_CHARACTERS):
-        return value
-    try:
-        float(value)
-    except ValueError:
-        return f"'{value}"
-    return value
-
 
 RESEARCH_MEDIA_CSV_FIELDNAMES: tuple[str, ...] = (
     "media_id", "observation_id", "evidence_role", "is_crop",
@@ -4011,6 +3979,44 @@ class PlaceWeatherContext(NamedTuple):
     temperature_baseline: condition_bands.TemperatureBaseline
     daily_mean_temperatures_c: dict[date, float]
     daily_total_precipitation_mm: dict[date, float]
+
+
+def _real_source_condition() -> Any:
+    """A SQL condition, for use in a `.where()` alongside a join through
+    `StreamModel`/`CameraSourceModel` (and an `outerjoin` to
+    `SourceProviderConfigurationModel`), excluding the seeded demo Source's
+    activity from real product history.
+
+    Pre-Release Trust & Correctness Correction v1 (UI-01): extracted from
+    `dashboard_summary`'s own `real_stream_count` query -- the one place
+    this exact condition already existed -- after a fresh-install audit
+    found Dashboard "Recent activity" and Bird Log render the demo Source's
+    fabricated Visits as real, unlabeled, Reviewed wildlife history, while
+    roughly eight sibling call sites already excluded it. Deliberately keys
+    off the Source's *effective* provider configuration, not its own
+    `kind`, which records only how a Source was originally created and
+    never updates when its provider configuration is later changed (Guided
+    Camera Editing repurposing the seeded demo Source into a real
+    `camera_node` Source keeps `kind="demo"` forever; filtering on stale
+    `kind` alone would make that genuinely real, actively observing camera
+    disappear from real history). No `SourceProviderConfigurationModel` row
+    is ever eagerly seeded for a fresh demo Source, though --
+    `_default_source_provider_key` resolves its *effective* provider_key
+    ("demo") from `kind` alone in that case -- so this replicates that exact
+    fallback in SQL via the required outer join: a real row's own
+    `provider_key` wins when present, `kind` decides only when no row
+    exists yet."""
+
+    return or_(
+        and_(
+            SourceProviderConfigurationModel.source_id.isnot(None),
+            SourceProviderConfigurationModel.provider_key != "demo",
+        ),
+        and_(
+            SourceProviderConfigurationModel.source_id.is_(None),
+            CameraSourceModel.kind != SourceKind.demo.value,
+        ),
+    )
 
 
 class ProductRepository:
@@ -19049,39 +19055,15 @@ class ProductRepository:
                     # configuration, the same field `engine_active`/
                     # `live_active`/`source_active` already gate on in
                     # `_dashboard_runtime_by_stream` -- not the Source's own
-                    # `kind`, which records only how a Source was originally
-                    # created and never updates when its provider
-                    # configuration is later changed (for example, Guided
-                    # Camera Editing repurposing the seeded demo Source into
-                    # a real `camera_node` Source keeps `kind="demo"`
-                    # forever; filtering on stale `kind` alone would make
-                    # that genuinely real, actively observing camera
-                    # disappear from this denominator while it still counted
-                    # in the numerator -- a nonsensical "observing more
-                    # cameras than exist"). No `SourceProviderConfiguration
-                    # Model` row is ever eagerly seeded for a fresh demo
-                    # Source, though -- `_default_source_provider_key`
-                    # resolves its *effective* provider_key ("demo") from
-                    # `kind` alone in that case -- so this replicates that
-                    # exact fallback in SQL via an outer join: a real row's
-                    # own `provider_key` wins when present, `kind` decides
-                    # only when no row exists yet.
+                    # `kind`; see `_real_source_condition`'s own docstring
+                    # for the full "repurposed demo Source" reasoning.
                     .outerjoin(
                         SourceProviderConfigurationModel,
                         SourceProviderConfigurationModel.source_id == CameraSourceModel.id,
                     )
                     .where(
                         CameraSourceModel.status != SourceStatus.archived.value,
-                        or_(
-                            and_(
-                                SourceProviderConfigurationModel.source_id.isnot(None),
-                                SourceProviderConfigurationModel.provider_key != "demo",
-                            ),
-                            and_(
-                                SourceProviderConfigurationModel.source_id.is_(None),
-                                CameraSourceModel.kind != SourceKind.demo.value,
-                            ),
-                        ),
+                        _real_source_condition(),
                     )
                 )
                 or 0
@@ -19253,7 +19235,15 @@ class ProductRepository:
             recent_rows = session.execute(
                 select(VisitModel, EventModel)
                 .join(EventModel, VisitModel.event_id == EventModel.id)
-                .where(VisitModel.is_superseded.is_(False))
+                # UI-01: exclude the seeded demo Source's fabricated Visits
+                # from real "Recent activity" -- see `_real_source_condition`.
+                .join(StreamModel, EventModel.stream_id == StreamModel.id)
+                .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+                .outerjoin(
+                    SourceProviderConfigurationModel,
+                    SourceProviderConfigurationModel.source_id == CameraSourceModel.id,
+                )
+                .where(VisitModel.is_superseded.is_(False), _real_source_condition())
                 .order_by(
                     EventModel.started_at.desc(),
                     EventModel.id.desc(),
@@ -19287,9 +19277,16 @@ class ProductRepository:
                 needs_rows = session.execute(
                     select(VisitModel, EventModel)
                     .join(EventModel, VisitModel.event_id == EventModel.id)
+                    .join(StreamModel, EventModel.stream_id == StreamModel.id)
+                    .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+                    .outerjoin(
+                        SourceProviderConfigurationModel,
+                        SourceProviderConfigurationModel.source_id == CameraSourceModel.id,
+                    )
                     .where(
                         VisitModel.review_status == ReviewStatus.needs_review.value,
                         VisitModel.is_superseded.is_(False),
+                        _real_source_condition(),
                     )
                     .order_by(
                         EventModel.started_at.desc(),
@@ -19306,11 +19303,18 @@ class ProductRepository:
             reviewed_today_rows = session.execute(
                 select(VisitModel, EventModel)
                 .join(EventModel, VisitModel.event_id == EventModel.id)
+                .join(StreamModel, EventModel.stream_id == StreamModel.id)
+                .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+                .outerjoin(
+                    SourceProviderConfigurationModel,
+                    SourceProviderConfigurationModel.source_id == CameraSourceModel.id,
+                )
                 .where(
                     VisitModel.review_status == ReviewStatus.reviewed.value,
                     VisitModel.is_superseded.is_(False),
                     EventModel.started_at >= day_start,
                     EventModel.started_at < day_end,
+                    _real_source_condition(),
                 )
                 .order_by(
                     EventModel.started_at.desc(),
@@ -32683,8 +32687,18 @@ class ProductRepository:
             .join(EventModel, VisitModel.event_id == EventModel.id)
             .join(StreamModel, EventModel.stream_id == StreamModel.id)
             .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+            # UI-01: exclude the seeded demo Source's fabricated Visits from
+            # real Bird Log/Wildlife Insights history -- unconditional,
+            # independent of `include_archived` (a demo Visit is never real
+            # history regardless of archive state) -- see
+            # `_real_source_condition`.
+            .outerjoin(
+                SourceProviderConfigurationModel,
+                SourceProviderConfigurationModel.source_id == CameraSourceModel.id,
+            )
             .where(
                 VisitModel.is_superseded.is_(False),
+                _real_source_condition(),
                 *(
                     ()
                     if include_archived
@@ -36144,7 +36158,7 @@ class ProductRepository:
             writer.writeheader()
             for row in rows:
                 writer.writerow(
-                    {name: _csv_injection_safe_value(row.get(name)) for name in fieldnames}
+                    {name: csv_injection_safe_value(row.get(name)) for name in fieldnames}
                 )
 
     def research_export_eligibility_preview(
@@ -40364,7 +40378,9 @@ class ProductRepository:
                 row = example.model_dump(mode="json")
                 row["quality_flags"] = json.dumps(row["quality_flags"], sort_keys=True)
                 row["provenance"] = json.dumps(row["provenance"], sort_keys=True)
-                writer.writerow({field: row.get(field) for field in fieldnames})
+                writer.writerow(
+                    {field: csv_injection_safe_value(row.get(field)) for field in fieldnames}
+                )
 
     def _analytics_summary(self, session: Session) -> AnalyticsSummary:
         event_ids_with_any_visits = set(session.scalars(select(VisitModel.event_id)).all())

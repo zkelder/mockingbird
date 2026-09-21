@@ -1,14 +1,25 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import "./styles.css";
 
 const rootElement = document.getElementById("root");
 
+// Test-only hook (FLOW-10 regression coverage): ?mockingbird_test_crash=1
+// deliberately throws during render instead of mounting the real app, so an
+// e2e spec can prove the error boundary recovers from a genuine descendant
+// render failure without needing to find or fabricate one elsewhere in the
+// app. Inert otherwise -- a stray query param that does nothing.
+function TestCrash(): never {
+  throw new Error("Deliberate test render failure (FLOW-10 error boundary regression coverage).");
+}
+
 if (rootElement) {
+  const shouldCrash = new URLSearchParams(window.location.search).has("mockingbird_test_crash");
   createRoot(rootElement).render(
     <StrictMode>
-      <App />
+      <ErrorBoundary>{shouldCrash ? <TestCrash /> : <App />}</ErrorBoundary>
     </StrictMode>,
   );
 }

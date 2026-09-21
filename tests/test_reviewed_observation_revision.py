@@ -9,11 +9,26 @@ from sqlalchemy import select
 
 from mockingbird.api.main import app, configure_repository
 from mockingbird.repository.product_repository import ProductRepository
-from mockingbird.storage.models import EventModel, ReviewLabelModel, VisitModel
+from mockingbird.storage.models import (
+    CameraSourceModel,
+    EventModel,
+    ReviewLabelModel,
+    StreamModel,
+    VisitModel,
+    ZoneModel,
+)
 from tests.conftest import LegacyAuthenticatedTestClient
 
 
-STREAM_ID = "stream-backyard-feeder"
+# Pre-Release Trust & Correctness Correction v1 (UI-01): a dedicated, real
+# (non-demo) Source/Stream/Zone -- this file used to piggyback on the seeded
+# demo Source's "stream-backyard-feeder"/"zone-feeder", which Dashboard/Bird
+# Log now correctly exclude from real history like every other surface (see
+# `_real_source_condition` in product_repository.py), breaking this file's
+# own Dashboard/Bird Log revision-visibility assertions.
+SOURCE_ID = "source-reviewed-revision"
+STREAM_ID = "stream-reviewed-revision"
+ZONE_ID = "zone-reviewed-revision"
 VISIT_ID = "visit-reviewed-revision"
 EVENT_ID = "event-reviewed-revision"
 
@@ -47,6 +62,26 @@ def add_reviewable_visit(repository: ProductRepository) -> None:
     now = datetime.now(UTC)
     with repository.session_factory() as session:
         with session.begin():
+            if session.get(CameraSourceModel, SOURCE_ID) is None:
+                session.add(
+                    CameraSourceModel(
+                        id=SOURCE_ID, name="Reviewed revision fixture camera",
+                        kind="manual_upload", status="connected",
+                        description="Reviewed observation revision test fixture source.",
+                    )
+                )
+                session.add(
+                    StreamModel(
+                        id=STREAM_ID, source_id=SOURCE_ID, name="Reviewed revision fixture stream",
+                        description="Reviewed observation revision test fixture stream.", is_live=False,
+                    )
+                )
+                session.add(
+                    ZoneModel(
+                        id=ZONE_ID, stream_id=STREAM_ID, name="Feeder", zone_type="feeder",
+                        polygon_json="[]", is_active=True, monitoring_policy_json=None,
+                    )
+                )
             session.add(
                 EventModel(
                     id=EVENT_ID,
@@ -55,7 +90,7 @@ def add_reviewable_visit(repository: ProductRepository) -> None:
                     event_type="reviewed_revision_fixture",
                     started_at=now,
                     ended_at=now,
-                    primary_zone_id="zone-feeder",
+                    primary_zone_id=ZONE_ID,
                     review_status="needs_review",
                 )
             )

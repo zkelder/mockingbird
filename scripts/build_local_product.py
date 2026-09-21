@@ -611,6 +611,14 @@ LAUNCHER_VBS = (
     "' window; MockingBird opens your browser automatically once ready. If\r\n"
     "' MockingBird cannot start, it shows its own message explaining why --\r\n"
     "' pythonw.exe has no console/terminal of its own to show one in.\r\n"
+    "' Any arguments given to this script (for example --host 0.0.0.0\r\n"
+    "' --allow-network, see using-mockingbird.md \"Use MockingBird on your\r\n"
+    "' phone\") are forwarded unchanged to MockingBird -- run from a Command\r\n"
+    "' Prompt as: wscript \"Start MockingBird.vbs\" --host 0.0.0.0\r\n"
+    "' --allow-network (a bare filename does not reliably run a .vbs file's\r\n"
+    "' associated handler from Command Prompt; wscript makes it explicit),\r\n"
+    "' or add the arguments to a shortcut's Target. With no arguments,\r\n"
+    "' behavior is unchanged: local-only on 127.0.0.1.\r\n"
     "Set shell = CreateObject(\"WScript.Shell\")\r\n"
     "Set fso = CreateObject(\"Scripting.FileSystemObject\")\r\n"
     "scriptDirectory = fso.GetParentFolderName(WScript.ScriptFullName)\r\n"
@@ -620,7 +628,12 @@ LAUNCHER_VBS = (
     "    MsgBox \"MockingBird cannot start: \" & pythonwPath & \" is missing.\" & Chr(13) & \"Try re-extracting the MockingBird folder from its zip file.\", vbCritical, \"MockingBird\"\r\n"
     "    WScript.Quit 1\r\n"
     "End If\r\n"
-    "shell.Run \"\"\"\" & pythonwPath & \"\"\" -m mockingbird\", 0, False\r\n"
+    "forwardedArgs = \"\"\r\n"
+    "For i = 0 To WScript.Arguments.Count - 1\r\n"
+    "    quotedArg = Chr(34) & Replace(WScript.Arguments(i), Chr(34), Chr(34) & Chr(34)) & Chr(34)\r\n"
+    "    forwardedArgs = forwardedArgs & \" \" & quotedArg\r\n"
+    "Next\r\n"
+    "shell.Run \"\"\"\" & pythonwPath & \"\"\" -m mockingbird\" & forwardedArgs, 0, False\r\n"
 )
 
 README_FIRST = (

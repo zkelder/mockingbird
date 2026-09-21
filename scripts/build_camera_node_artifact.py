@@ -19,6 +19,14 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE_PACKAGE = ROOT / "src" / "mockingbird_node"
+#: Pre-Release Trust & Correctness Correction v1 (PKG-2): `docs/camera-node-
+#: install-guide.md`'s own step 2 tells the user to run this script against
+#: the artifact directory, but it was never actually packaged into that
+#: directory -- a real downloaded/rebuilt artifact could not be installed
+#: from itself, only from a full repository checkout. Shipped alongside the
+#: wheel/manifest/checksums below, not inside the wheel (the installer runs
+#: *before* any Python environment exists to `pip install` into).
+INSTALLER_SCRIPT = ROOT / "scripts" / "install_camera_node.py"
 #: The complete transitive import closure of `app.py`/`__main__.py`, verified
 #: by `test_node_files_cover_the_real_internal_import_closure` (a fast,
 #: static AST check -- no venv/pip needed) rather than trusted by hand a
@@ -68,7 +76,10 @@ RUNTIME_REQUIREMENTS = (
 #: export to close that class of leak). Only the narrower "uncommitted edit
 #: to an already-tracked file" ambiguity needs a reproducibility guard here.
 #: See "Reproducibility hardening" in docs/camera-node-installer-design.md.
-RELEASE_SOURCE_PATHS: tuple[str, ...] = ("src/mockingbird_node",)
+#: Includes `scripts/install_camera_node.py` (PKG-2): it now ships alongside
+#: the wheel (see `INSTALLER_SCRIPT`), so it is as much a build input as
+#: `src/mockingbird_node` and deserves the identical clean-commit guarantee.
+RELEASE_SOURCE_PATHS: tuple[str, ...] = ("src/mockingbird_node", "scripts/install_camera_node.py")
 
 
 class CameraNodeArtifactError(RuntimeError):
@@ -80,6 +91,7 @@ class CameraNodeArtifact:
     wheel: Path
     requirements: Path
     configuration_example: Path
+    installer: Path
     manifest: Path
     checksums: Path
 
@@ -280,6 +292,8 @@ def build_camera_node_artifact(
     requirements.write_text("\n".join(RUNTIME_REQUIREMENTS) + "\n", encoding="utf-8")
     configuration_example = output_dir / "camera-node.env.example"
     configuration_example.write_bytes(_configuration_example())
+    installer = output_dir / INSTALLER_SCRIPT.name
+    installer.write_bytes(INSTALLER_SCRIPT.read_bytes())
     manifest = output_dir / "manifest.json"
     manifest.write_text(
         json.dumps(
@@ -327,12 +341,12 @@ def build_camera_node_artifact(
         encoding="utf-8",
     )
     checksums = output_dir / "SHA256SUMS"
-    checksum_files = (wheel, requirements, configuration_example, manifest)
+    checksum_files = (wheel, requirements, configuration_example, installer, manifest)
     checksums.write_text(
         "".join(f"{_sha256(path.read_bytes())}  {path.name}\n" for path in checksum_files),
         encoding="utf-8",
     )
-    return CameraNodeArtifact(wheel, requirements, configuration_example, manifest, checksums)
+    return CameraNodeArtifact(wheel, requirements, configuration_example, installer, manifest, checksums)
 
 
 def main() -> None:

@@ -254,13 +254,21 @@ async def assert_folder_status_is_honest(client: httpx.AsyncClient, folder: Path
 
 async def assert_media_under_root(
     client: httpx.AsyncClient,
+    repository: ProductRepository,
     media_asset_id: str,
     media_root: Path,
 ) -> Path:
+    # SEC-2: GET /api/media/{id} now redacts local_path before it crosses the
+    # API boundary (matching Visit-facing endpoints). This helper verifies
+    # real server-side file placement, which the redaction deliberately does
+    # not change, so it reads the path from the repository directly rather
+    # than the (now-redacted) API response -- confirming the endpoint itself
+    # still resolves and returns 200 is enough to prove access still works.
     response = await client.get(f"/api/media/{media_asset_id}")
     assert response.status_code == 200
-    media_asset = response.json()
-    local_path = Path(media_asset["local_path"]).resolve()
+    media_asset = repository.get_media_asset(media_asset_id)
+    assert media_asset is not None
+    local_path = Path(media_asset.local_path).resolve()
     assert local_path.is_file()
     assert local_path.is_relative_to(media_root.resolve())
     return local_path
@@ -446,6 +454,7 @@ async def test_external_url_provider_smoke_flow_preserves_truth_boundaries(
 
     saved_path = await assert_media_under_root(
         client,
+        isolated_repository,
         saved["media_asset_id"],
         isolated_repository.media_root,
     )
@@ -573,6 +582,7 @@ async def test_folder_import_provider_smoke_flow_preserves_truth_boundaries(
     copied_paths = {
         media_asset_id: await assert_media_under_root(
             client,
+            isolated_repository,
             media_asset_id,
             isolated_repository.media_root,
         )

@@ -32,6 +32,12 @@ function mediaReferenceName(mediaPath: string): string {
   return pathParts[pathParts.length - 1] ?? mediaPath;
 }
 
+function manifestDownloadFilename(manifest: DatasetExportManifest): string {
+  const slug = manifest.export.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+  const day = manifest.export.created_at.slice(0, 10);
+  return `${slug || "dataset-export"}-${day}-${manifest.export.id}.json`;
+}
+
 export function ExportsPage({
   exports,
   datasetCoverage,
@@ -131,6 +137,21 @@ export function ExportsPage({
     } finally {
       setIsCreating(false);
     }
+  }
+
+  function downloadManifest() {
+    if (!manifest) {
+      return;
+    }
+    setError(null);
+    const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" });
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = manifestDownloadFilename(manifest);
+    link.click();
+    URL.revokeObjectURL(objectUrl);
+    setMessage("Manifest download started.");
   }
 
   return (
@@ -267,12 +288,17 @@ export function ExportsPage({
         <div className="section-heading">
           <h2>Manifest preview</h2>
           {manifest ? (
-            <StatusPill
-              label={`${manifest.records.length} ready record${
-                manifest.records.length === 1 ? "" : "s"
-              }`}
-              tone={manifest.records.length > 0 ? "good" : "quiet"}
-            />
+            <>
+              <StatusPill
+                label={`${manifest.records.length} ready record${
+                  manifest.records.length === 1 ? "" : "s"
+                }`}
+                tone={manifest.records.length > 0 ? "good" : "quiet"}
+              />
+              <button className="secondary-action" onClick={downloadManifest} type="button">
+                Download manifest JSON
+              </button>
+            </>
           ) : null}
         </div>
 

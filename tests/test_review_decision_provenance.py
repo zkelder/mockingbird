@@ -15,6 +15,7 @@ without touching unrelated review truth.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -227,10 +228,56 @@ def test_bird_log_journal_excludes_agent_diagnostic_assessment(tmp_path: Path) -
 
 
 def test_bird_log_journal_includes_human_review(tmp_path: Path) -> None:
+    """Pre-Release Trust & Correctness Correction v1 (UI-01): uses a
+    dedicated, real (non-demo) Visit -- BIRD_VISIT_ID is the seeded demo
+    Source's own Visit, now correctly excluded from Bird Log like every
+    other real-history surface (see `_real_source_condition` in
+    product_repository.py). Every other test in this file uses
+    BIRD_VISIT_ID for review-label mechanics unrelated to Bird Log
+    visibility and is unaffected."""
+
+    from mockingbird.storage.models import CameraSourceModel, EventModel, StreamModel, VisitModel, ZoneModel
+
     repository = repository_for(tmp_path / "db.sqlite3")
+    real_visit_id = "visit-real-non-demo"
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                CameraSourceModel(
+                    id="source-real-non-demo", name="Real fixture camera",
+                    kind="manual_upload", status="connected", description="Real, non-demo fixture source.",
+                )
+            )
+            session.add(
+                StreamModel(
+                    id="stream-real-non-demo", source_id="source-real-non-demo", name="Real fixture stream",
+                    description="Real, non-demo fixture stream.", is_live=False,
+                )
+            )
+            session.add(
+                ZoneModel(
+                    id="zone-real-non-demo", stream_id="stream-real-non-demo", name="Feeder", zone_type="feeder",
+                    polygon_json="[]", is_active=True, monitoring_policy_json=None,
+                )
+            )
+            session.add(
+                EventModel(
+                    id="event-real-non-demo", stream_id="stream-real-non-demo", title="Real fixture event",
+                    event_type="observation_engine_candidate", started_at=datetime.now(UTC),
+                    ended_at=datetime.now(UTC), primary_zone_id="zone-real-non-demo",
+                    review_status="needs_review",
+                )
+            )
+            session.add(
+                VisitModel(
+                    id=real_visit_id, event_id="event-real-non-demo", subject_label="bird",
+                    species_guess=None, confidence=None, reviewed_label=None,
+                    review_status="needs_review", zone_id="zone-real-non-demo", is_superseded=False,
+                )
+            )
     repository.create_review_label(
         ReviewCorrectionCreate(
-            target_type="visit", target_id=BIRD_VISIT_ID, label="northern_cardinal", review_origin="human"
+            target_type="visit", target_id=real_visit_id, label="northern_cardinal", review_origin="human"
         )
     )
 

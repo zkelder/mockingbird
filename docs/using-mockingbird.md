@@ -235,10 +235,11 @@ WiFi), MockingBird needs to be told to answer the network, not just this
 one computer -- off by default, so nothing changes unless you ask for it:
 
 1. Close MockingBird if it's running.
-2. Start it with two extra words: on Windows, open Command Prompt in
-   MockingBird's folder and run `"Start MockingBird.cmd" --host 0.0.0.0
-   --allow-network` (a shortcut can be edited to add these to its Target);
-   on Linux/macOS, `./start-mockingbird.sh --host 0.0.0.0 --allow-network`.
+2. Start it with a few extra words: on Windows, open Command Prompt in
+   MockingBird's folder and run `wscript "Start MockingBird.vbs" --host
+   0.0.0.0 --allow-network` (a shortcut can be edited to add
+   `--host 0.0.0.0 --allow-network` to its Target instead); on Linux/macOS,
+   `./start-mockingbird.sh --host 0.0.0.0 --allow-network`.
 3. Open **Settings**, then **Connection & Remote Access**, for the exact
    address to open on your phone (also copyable from there).
 

@@ -24,6 +24,7 @@ import { ActivityLibraryPage, activityLibraryPath } from "./pages/ActivityLibrar
 import { BirdLogPage } from "./pages/BirdLogPage";
 import { CameraSetupPage } from "./pages/CameraSetupPage";
 import { CameraConfigurationPage } from "./pages/CameraConfigurationPage";
+import { ChangePasswordControl } from "./components/ChangePasswordControl";
 import { OnboardingWizard } from "./components/OnboardingWizard";
 import { ClassifierManifestPage } from "./pages/ClassifierManifestPage";
 import { EcologicalDestinationsPage } from "./pages/EcologicalDestinationsPage";
@@ -1312,6 +1313,7 @@ export default function App() {
             <strong>{currentUser.display_name}</strong>
             <span>{currentUser.role}</span>
           </div>
+          <ChangePasswordControl />
           <button className="text-action" onClick={handleSignOut} type="button">
             Sign out
           </button>

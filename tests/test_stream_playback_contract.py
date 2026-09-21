@@ -50,7 +50,7 @@ from mockingbird.playback.live_camera_session import (
     _LiveActivitySession,
 )
 from mockingbird.playback.live_preview_leases import LivePreviewLeaseManager
-from mockingbird.repository.product_repository import ProductRepository
+from mockingbird.repository.product_repository import ProductRepository, SourceProviderConfigurationModel
 from mockingbird.sampler.saved_media_frames import (
     SavedMediaFrame,
     SavedMediaFrameDecodeError,
@@ -425,6 +425,21 @@ def add_dashboard_today_visits(repository: ProductRepository, tmp_path: Path) ->
     its own correct local-day-to-UTC-range conversion from it."""
 
     local_now = datetime.now().astimezone().replace(microsecond=0)
+    # Pre-Release Trust & Correctness Correction v1 (UI-01): this helper's
+    # Visits sit on the seeded demo Source's own STREAM_ID, now correctly
+    # excluded from Dashboard real-history sections like every other
+    # surface (see `_real_source_condition` in product_repository.py).
+    # Scoped to this one helper (its only caller) -- never the shared
+    # `isolated_repository` fixture -- so it cannot affect this file's own
+    # dedicated tests of the exclusion mechanism itself.
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                SourceProviderConfigurationModel(
+                    source_id=SOURCE_ID, provider_key="manual_upload",
+                    config_json="{}", updated_at=datetime.now(UTC),
+                )
+            )
     records = [
         ("needs", "needs_review", None, True, 45),
         ("bird", "reviewed", "northern_mockingbird", True, 40),
@@ -533,6 +548,23 @@ async def test_dashboard_midnight_boundary_uses_local_day_not_utc_digits(
 
     fixed_local_tz = timezone(timedelta(hours=-4))
     local_now = datetime(2026, 3, 15, 0, 30, 0, tzinfo=fixed_local_tz)
+
+    # Pre-Release Trust & Correctness Correction v1 (UI-01): this test's
+    # Visits sit on the seeded demo Source's own STREAM_ID, now correctly
+    # excluded from today_observations like every other real-history
+    # surface (see `_real_source_condition` in product_repository.py).
+    # Scoped to this one test only -- never the shared `isolated_repository`
+    # fixture -- so it cannot affect this file's own dedicated tests of the
+    # exclusion mechanism itself (`test_real_stream_count_excludes_the_
+    # lingering_demo_stream` and similar).
+    with isolated_repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                SourceProviderConfigurationModel(
+                    source_id=SOURCE_ID, provider_key="manual_upload",
+                    config_json="{}", updated_at=datetime.now(UTC),
+                )
+            )
 
     with isolated_repository.session_factory() as session:
         with session.begin():
@@ -1700,7 +1732,9 @@ async def test_live_motion_evaluation_uses_cached_frames_and_saves_best_frame_on
     assert media_asset["content_type"] == "image/jpeg"
     assert "Saved best live motion frame from active stream." in media_asset["notes"]
     assert "Creates no Events, Visits, ReviewLabels, exports, or truth." in media_asset["notes"]
-    saved_path = Path(media_asset["local_path"]).resolve()
+    # SEC-2: GET /api/media/{id} now redacts local_path; real server-side
+    # file placement is verified from the repository directly.
+    saved_path = Path(isolated_repository.get_media_asset(media_asset["id"]).local_path).resolve()
     assert saved_path.is_relative_to(isolated_repository.media_root.resolve())
     assert saved_path.read_bytes() == frame_1
 
@@ -6393,7 +6427,7 @@ async def test_windows_dshow_capture_without_session_ignores_fresh_cache_and_use
     assert media_response.status_code == 200
     media_asset = media_response.json()
     assert "playback_type=windows_dshow" in media_asset["notes"]
-    saved_path = Path(media_asset["local_path"]).resolve()
+    saved_path = Path(isolated_repository.get_media_asset(media_asset["id"]).local_path).resolve()
     assert saved_path.is_relative_to(isolated_repository.media_root.resolve())
     assert saved_path.read_bytes() == fallback_frame
 
@@ -6442,7 +6476,7 @@ async def test_windows_dshow_capture_frame_ignores_stale_live_cache_and_falls_ba
     assert captured_args == ["EMEET SmartCam S600"]
     media_response = await client.get(f"/api/media/{body['media_asset_id']}")
     assert media_response.status_code == 200
-    saved_path = Path(media_response.json()["local_path"]).resolve()
+    saved_path = Path(isolated_repository.get_media_asset(body["media_asset_id"]).local_path).resolve()
     assert saved_path.is_relative_to(isolated_repository.media_root.resolve())
     assert saved_path.read_bytes() == fallback_frame
 
@@ -6523,7 +6557,7 @@ async def test_windows_dshow_capture_frame_creates_one_media_asset_only(
     assert "Saved explicit local camera frame capture." in media_asset["notes"]
     assert "playback_type=windows_dshow" in media_asset["notes"]
     assert "Creates no Events, Visits, ReviewLabels, exports, or truth." in media_asset["notes"]
-    saved_path = Path(media_asset["local_path"]).resolve()
+    saved_path = Path(isolated_repository.get_media_asset(media_asset["id"]).local_path).resolve()
     assert saved_path.is_relative_to(isolated_repository.media_root.resolve())
     assert saved_path.read_bytes() == jpeg_frame
 
@@ -6596,7 +6630,7 @@ async def test_local_usb_capture_without_session_ignores_fresh_cache_and_uses_on
     assert media_response.status_code == 200
     media_asset = media_response.json()
     assert "playback_type=local_usb" in media_asset["notes"]
-    saved_path = Path(media_asset["local_path"]).resolve()
+    saved_path = Path(isolated_repository.get_media_asset(media_asset["id"]).local_path).resolve()
     assert saved_path.is_relative_to(isolated_repository.media_root.resolve())
     assert saved_path.read_bytes() == fallback_frame
 
@@ -6680,7 +6714,7 @@ async def test_local_usb_capture_frame_uses_running_session_frame_without_one_sh
 
     media_response = await client.get(f"/api/media/{body['media_asset_id']}")
     assert media_response.status_code == 200
-    saved_path = Path(media_response.json()["local_path"]).resolve()
+    saved_path = Path(isolated_repository.get_media_asset(body["media_asset_id"]).local_path).resolve()
     assert saved_path.is_relative_to(isolated_repository.media_root.resolve())
     assert saved_path.read_bytes() == session_frame
 

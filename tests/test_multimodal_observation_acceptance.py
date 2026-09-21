@@ -60,6 +60,26 @@ REAL_OVERLAPPING_FIXTURE = (
 @pytest.fixture
 def repository(tmp_path: Path) -> ProductRepository:
     repo = ProductRepository(db_url=f"sqlite:///{tmp_path / 'mockingbird.sqlite3'}", media_root=tmp_path / "media")
+    # Pre-Release Trust & Correctness Correction v1 (UI-01): this whole
+    # file's shared helpers build every Visit on the seeded demo Source's
+    # own "stream-backyard-feeder"/"zone-feeder" (never their own real
+    # Source/Stream), which Dashboard/Bird Log now correctly exclude from
+    # real history like every other surface (see `_real_source_condition`
+    # in product_repository.py). Rather than rename every constant and
+    # helper in this file, "de-demo" the seeded Source in place -- the same
+    # real-product mechanism (an effective, non-"demo" provider
+    # configuration) `_real_source_condition` already recognizes for a
+    # Source repurposed after creation (see its own docstring).
+    from mockingbird.repository.product_repository import SourceProviderConfigurationModel
+
+    with repo.session_factory() as session:
+        with session.begin():
+            session.add(
+                SourceProviderConfigurationModel(
+                    source_id="source-backyard-demo", provider_key="manual_upload",
+                    config_json="{}", updated_at=datetime.now(UTC),
+                )
+            )
     yield repo
     repo.close()
 

@@ -497,6 +497,55 @@ async def test_visit_detail_redacts_sibling_and_resulting_visit_media_paths(
     assert payload["sibling_visits"][0]["representative_media_path"] is None
 
 
+async def test_list_media_assets_redacts_local_path(
+    client: httpx.AsyncClient, isolated_repository: ProductRepository
+) -> None:
+    """Pre-Release Trust & Correctness Correction v1 (SEC-2): GET /api/media
+    exposed the raw absolute server-local filesystem path to any signed-in
+    Viewer -- unlike Visit-facing endpoints, which already redact it (see the
+    two tests above). Legitimate access (status 200, the asset otherwise
+    resolvable) must be unaffected."""
+
+    add_graph(isolated_repository)
+    add_visit_with_media(
+        isolated_repository,
+        visit_id="media-list-leak",
+        started_at=datetime(2026, 8, 1, 17, 0, tzinfo=UTC),
+        species_guess=None,
+        set_representative_media_path=False,
+    )
+
+    listing = await client.get("/api/media")
+    assert listing.status_code == 200
+    assets = listing.json()
+    assert any(asset["id"] == "media-media-list-leak" for asset in assets)
+    assert all(asset["local_path"] == "" for asset in assets)
+
+
+async def test_get_media_asset_redacts_local_path(
+    client: httpx.AsyncClient, isolated_repository: ProductRepository
+) -> None:
+    add_graph(isolated_repository)
+    add_visit_with_media(
+        isolated_repository,
+        visit_id="media-detail-leak",
+        started_at=datetime(2026, 8, 1, 17, 0, tzinfo=UTC),
+        species_guess=None,
+        set_representative_media_path=False,
+    )
+
+    detail = await client.get("/api/media/media-media-detail-leak")
+    assert detail.status_code == 200
+    asset = detail.json()
+    assert asset["id"] == "media-media-detail-leak"
+    assert asset["local_path"] == ""
+    # The real file still exists server-side -- redaction is API-surface
+    # only, never a change to how media is actually stored or served.
+    real_asset = isolated_repository.get_media_asset("media-media-detail-leak")
+    assert real_asset is not None
+    assert Path(real_asset.local_path).is_file()
+
+
 # ---------------------------------------------------------------------------
 # Event Detail evidence images for the dominant (no representative_media_path)
 # Visit-creation architecture (D5/D12)

@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -5,7 +6,7 @@ import pytest
 
 from mockingbird.api.main import app, configure_repository
 from mockingbird.api.schemas import SourceKind, SourceStatus
-from mockingbird.repository.product_repository import ProductRepository
+from mockingbird.repository.product_repository import ProductRepository, SourceProviderConfigurationModel
 from mockingbird.storage.models import CameraSourceModel, StreamModel, ZoneModel
 from tests.conftest import LegacyAuthenticatedTestClient
 
@@ -30,6 +31,22 @@ def isolated_repository(tmp_path: Path) -> ProductRepository:
         db_url=f"sqlite:///{tmp_path / 'mockingbird.sqlite3'}",
         media_root=tmp_path / "media",
     )
+    # Pre-Release Trust & Correctness Correction v1 (UI-01): this file's
+    # fixtures build Visits on the seeded demo Source's own STREAM_ID, which
+    # Dashboard/Bird Log now correctly exclude from real history like every
+    # other surface (see `_real_source_condition` in product_repository.py).
+    # "De-demo" the seeded Source in place -- the same real-product
+    # mechanism (an effective, non-"demo" provider configuration)
+    # `_real_source_condition` already recognizes for a Source repurposed
+    # after creation.
+    with repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                SourceProviderConfigurationModel(
+                    source_id=SOURCE_ID, provider_key="manual_upload",
+                    config_json="{}", updated_at=datetime.now(UTC),
+                )
+            )
     configure_repository(repository)
     yield repository
     configure_repository(None)
@@ -369,12 +386,17 @@ async def test_folder_import_motion_evidence_rejects_privacy_and_ignore_zones(
 
 async def test_folder_import_motion_evidence_rejects_missing_local_media_file(
     client: httpx.AsyncClient,
+    isolated_repository: ProductRepository,
     tmp_path: Path,
 ) -> None:
     media_asset_id = await import_folder_media_asset(client, tmp_path)
     media_response = await client.get(f"/api/media/{media_asset_id}")
     assert media_response.status_code == 200
-    Path(media_response.json()["local_path"]).unlink()
+    # SEC-2: GET /api/media/{id} now redacts local_path; the real path to
+    # delete (simulating a missing file) is read from the repository.
+    real_asset = isolated_repository.get_media_asset(media_asset_id)
+    assert real_asset is not None
+    Path(real_asset.local_path).unlink()
     before = await product_counts(client)
 
     response = await client.post(

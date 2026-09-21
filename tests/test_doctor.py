@@ -779,7 +779,7 @@ def test_gather_media_integrity_detects_missing_and_truncated_files(tmp_path) ->
                 )
         engine = create_engine(f"sqlite:///{db_path}")
         try:
-            gathered = doctor._gather_media_integrity(engine, media_root=media_root)
+            gathered = doctor._gather_media_integrity(engine, runtime_home=tmp_path, media_root=media_root)
         finally:
             engine.dispose()
     finally:
@@ -790,14 +790,18 @@ def test_gather_media_integrity_detects_missing_and_truncated_files(tmp_path) ->
     assert gathered["size_mismatch_count"] == 1
 
 
-def test_gather_media_integrity_resolves_relative_paths_against_media_root(tmp_path, monkeypatch) -> None:
-    """24/7 Field Reliability Corrections v1: real root cause -- a relative
-    `local_path` (the shape manual/folder import stores, see
-    `ProductRepository._storage_managed_media_path`) must resolve against
-    `DoctorEnvironment.media_root`, never the process's current working
-    directory. Before the fix, `Path(local_path).stat()` on a relative path
-    only ever happened to work when cwd was already the media root --
-    exactly reproduced here by running from an unrelated cwd."""
+def test_gather_media_integrity_resolves_relative_paths_against_media_root_as_fallback(tmp_path, monkeypatch) -> None:
+    """Pre-Release Trust & Correctness Correction v1: `media_root`-relative
+    resolution (the shape `ProductRepository._storage_managed_media_path`
+    also tries as its own second candidate) is kept as a defensive fallback
+    for a differently-shaped legacy `local_path`, even though it is no
+    longer the primary interpretation -- see
+    `test_gather_media_integrity_resolves_relative_paths_against_runtime_home_first`,
+    below, for the real production shape this milestone fixes. Before either
+    fix, `Path(local_path).stat()` on a relative path only ever happened to
+    work when cwd was already the media root -- exactly reproduced here by
+    running from an unrelated cwd, proving this fallback candidate is itself
+    cwd-independent."""
 
     from sqlalchemy import create_engine
 
@@ -841,7 +845,12 @@ def test_gather_media_integrity_resolves_relative_paths_against_media_root(tmp_p
             unrelated_cwd = tmp_path / "somewhere-else"
             unrelated_cwd.mkdir()
             monkeypatch.chdir(unrelated_cwd)
-            gathered = doctor._gather_media_integrity(engine, media_root=media_root)
+            # runtime_home is deliberately also `unrelated_cwd`, so the
+            # primary (runtime_home-relative) candidate misses and
+            # resolution must fall through to the media_root-relative one.
+            gathered = doctor._gather_media_integrity(
+                engine, runtime_home=unrelated_cwd, media_root=media_root
+            )
         finally:
             engine.dispose()
     finally:
@@ -850,6 +859,60 @@ def test_gather_media_integrity_resolves_relative_paths_against_media_root(tmp_p
     assert gathered["sampled_count"] == 2
     assert gathered["missing_count"] == 1  # only the genuinely-missing one
     assert gathered["size_mismatch_count"] == 0
+
+
+def test_gather_media_integrity_resolves_relative_paths_against_runtime_home_first(tmp_path) -> None:
+    """Pre-Release Trust & Correctness Correction v1: the real, confirmed
+    production shape. `ProductRepository._write_media_file`/`_copy_media_file`
+    store `local_path` as `self.media_root / filename`; when `media_root` is
+    the default *relative* `"data/media/imports"` (unconfigured
+    `MOCKINGBIRD_MEDIA_ROOT`, the common case), the stored value already
+    carries that full prefix and is relative to `runtime_home`, not to
+    `DoctorEnvironment.media_root` (which is independently computed as the
+    *absolute* `runtime_home / "data" / "media" / "imports"`, mirroring
+    `resolve_doctor_environment`). Joining a value like
+    `"data/media/imports/media-candidate-001.jpg"` against that absolute
+    `media_root` double-nests the prefix and never resolves -- exactly the
+    24/7 Field Reliability Corrections v1 regression this milestone fixes.
+    This test reproduces that precise shape and would fail under the prior
+    (`media_root`-only) resolver."""
+
+    from sqlalchemy import create_engine
+
+    from mockingbird.storage.models import MediaAssetModel
+
+    runtime_home = tmp_path / "home"
+    media_dir = runtime_home / "data" / "media" / "imports"
+    media_dir.mkdir(parents=True)
+    (media_dir / "media-candidate-001.jpg").write_bytes(b"x" * 20)
+    media_root = runtime_home / "data" / "media" / "imports"  # DoctorEnvironment's own computation
+
+    db_path = tmp_path / "mockingbird.sqlite3"
+    from mockingbird.repository.product_repository import ProductRepository
+
+    repository = ProductRepository(db_url=f"sqlite:///{db_path}", media_root=media_root)
+    try:
+        with repository.session_factory() as session:
+            with session.begin():
+                session.add(
+                    MediaAssetModel(
+                        id="media-asset-home-relative", source_id=None,
+                        stream_id="stream-does-not-need-to-exist-for-this-check",
+                        filename="media-candidate-001.jpg", content_type="image/jpeg", media_type="image",
+                        local_path="data/media/imports/media-candidate-001.jpg",
+                        original_filename="media-candidate-001.jpg", file_size_bytes=20,
+                        created_at=datetime.now(UTC),
+                    )
+                )
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            gathered = doctor._gather_media_integrity(engine, runtime_home=runtime_home, media_root=media_root)
+        finally:
+            engine.dispose()
+    finally:
+        repository.close()
+
+    assert gathered == {"sampled_count": 1, "missing_count": 0, "size_mismatch_count": 0}
 
 
 def test_gather_media_integrity_same_result_regardless_of_current_working_directory(tmp_path, monkeypatch) -> None:
@@ -884,13 +947,16 @@ def test_gather_media_integrity_same_result_regardless_of_current_working_direct
                 )
         engine = create_engine(f"sqlite:///{db_path}")
         try:
+            # runtime_home is fixed and deliberately unrelated to either cwd,
+            # so it never resolves; both calls must fall through to the same
+            # media_root-relative candidate regardless of actual cwd.
             monkeypatch.chdir(media_root)
-            from_media_root = doctor._gather_media_integrity(engine, media_root=media_root)
+            from_media_root = doctor._gather_media_integrity(engine, runtime_home=tmp_path, media_root=media_root)
 
             elsewhere = tmp_path / "elsewhere"
             elsewhere.mkdir()
             monkeypatch.chdir(elsewhere)
-            from_elsewhere = doctor._gather_media_integrity(engine, media_root=media_root)
+            from_elsewhere = doctor._gather_media_integrity(engine, runtime_home=tmp_path, media_root=media_root)
         finally:
             engine.dispose()
     finally:

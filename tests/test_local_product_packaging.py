@@ -486,6 +486,18 @@ def test_assemble_windows_bundle_produces_a_python_and_pip_free_user_experience(
     assert "pythonw.exe" in launcher
     assert "-m mockingbird" in launcher
     assert ", 0, False" in launcher
+    # Pre-Release Trust & Correctness Correction v1 (PKG-1): the launcher
+    # forwards its own command-line arguments (for example --host 0.0.0.0
+    # --allow-network, see docs/using-mockingbird.md "Use MockingBird on
+    # your phone") to MockingBird -- confirmed for real, end to end, on
+    # native Windows against this exact generated file (real packaged
+    # Python runtime, real WScript.Arguments), not only by this structural
+    # check. `forwardedArgs` starting empty (no trailing space glued onto
+    # "-m mockingbird" when no arguments are given) keeps an ordinary,
+    # no-argument double-click launch byte-identical to before this fix.
+    assert "WScript.Arguments" in launcher
+    assert 'forwardedArgs = ""' in launcher
+    assert 'mockingbird" & forwardedArgs' in launcher
     readme_text = (bundle_dir / "README-FIRST.txt").read_text(encoding="utf-8")
     # External Acceptance Entry Readiness & Uninstall Closure v1: the
     # in-box README is the *only* uninstall documentation an unpacked

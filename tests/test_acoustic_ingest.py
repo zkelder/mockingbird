@@ -16,7 +16,11 @@ import pytest
 
 from mockingbird.api.schemas import ReviewCorrectionCreate
 from mockingbird.observation import acoustic_ingest
-from mockingbird.repository.product_repository import MediaAssetModel, ProductRepository
+from mockingbird.repository.product_repository import (
+    MediaAssetModel,
+    ProductRepository,
+    SourceProviderConfigurationModel,
+)
 STREAM_ID = "stream-backyard-feeder"
 
 
@@ -40,6 +44,22 @@ class FakeRecording:
 @pytest.fixture
 def repository(tmp_path: Path) -> ProductRepository:
     repo = ProductRepository(db_url=f"sqlite:///{tmp_path / 'mockingbird.sqlite3'}", media_root=tmp_path / "media")
+    # Pre-Release Trust & Correctness Correction v1 (UI-01): this file's
+    # fixtures build every Visit on the seeded demo Source's own STREAM_ID,
+    # which Dashboard/Bird Log now correctly exclude from real history like
+    # every other surface (see `_real_source_condition` in
+    # product_repository.py). "De-demo" the seeded Source in place -- the
+    # same real-product mechanism (an effective, non-"demo" provider
+    # configuration) `_real_source_condition` already recognizes for a
+    # Source repurposed after creation.
+    with repo.session_factory() as session:
+        with session.begin():
+            session.add(
+                SourceProviderConfigurationModel(
+                    source_id="source-backyard-demo", provider_key="manual_upload",
+                    config_json="{}", updated_at=datetime.now(UTC),
+                )
+            )
     yield repo
     repo.close()
 

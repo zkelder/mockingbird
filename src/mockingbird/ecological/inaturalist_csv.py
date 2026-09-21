@@ -19,6 +19,7 @@ import io
 from collections.abc import Iterable
 from datetime import datetime
 
+from mockingbird.csv_safety import csv_injection_safe_value
 from mockingbird.ecological.adapters import EcologicalSubmissionCandidate
 from mockingbird.time_utils import resolve_host_local_timezone
 
@@ -117,7 +118,8 @@ def build_inaturalist_csv(candidates: Iterable[EcologicalSubmissionCandidate]) -
     writer = csv.DictWriter(buffer, fieldnames=list(INATURALIST_CSV_COLUMNS))
     writer.writeheader()
     for candidate in candidates:
-        writer.writerow(submission_candidate_to_inaturalist_row(candidate))
+        row = submission_candidate_to_inaturalist_row(candidate)
+        writer.writerow({name: csv_injection_safe_value(value) for name, value in row.items()})
     return buffer.getvalue()
 
 

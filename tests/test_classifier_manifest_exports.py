@@ -291,6 +291,50 @@ async def test_classifier_manifest_export_csv_option_and_summary_omission(
     assert any(row["label"] == "blue_jay" for row in rows)
 
 
+def test_write_classifier_manifest_csv_neutralizes_formula_leading_cell_values(tmp_path: Path) -> None:
+    """Pre-Release Trust & Correctness Correction v1 (DI-2): `manifest.csv`
+    never called the shared CSV-injection sanitizer `_write_csv` uses --
+    every field, including `label`, is free text at the schema level
+    (`ClassifierManifestExample.label: str`, no controlled-vocabulary
+    constraint), even though the accepted review-label taxonomy normally
+    keeps real corrections to a closed set. Calls the writer directly with a
+    hand-built manifest so this proves the writer's own sanitization,
+    independent of whatever the real HTTP review-label path happens to
+    normalize upstream."""
+
+    from mockingbird.api.schemas import (
+        ClassifierManifestExample,
+        ClassifierManifestSummary,
+        ClassifierTrainingManifestResponse,
+    )
+
+    repository = ProductRepository(db_url=f"sqlite:///{tmp_path / 'mockingbird.sqlite3'}", media_root=tmp_path / "media")
+    try:
+        example = ClassifierManifestExample(
+            example_id="example-1", visit_id="visit-1", media_asset_id="media-1",
+            label="=cmd|' /C calc'!A1", common_name="+HYPERLINK(\"http://evil.example\")",
+            scientific_name="-2+3", split="train",
+        )
+        manifest = ClassifierTrainingManifestResponse(
+            manifest_version="1", generated_at="2026-09-21T00:00:00Z", examples=[example],
+            skipped_records=[], taxonomy=[],
+            summary=ClassifierManifestSummary(examples=1, skipped=0, labels={}, splits={}),
+        )
+        output_path = tmp_path / "manifest.csv"
+        repository._write_classifier_manifest_csv(output_path, manifest)
+        rows = list(csv.DictReader(output_path.open(encoding="utf-8")))
+    finally:
+        repository.close()
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["label"] == "'=cmd|' /C calc'!A1"
+    assert row["common_name"] == "'+HYPERLINK(\"http://evil.example\")"
+    # "-2+3" starts with a trigger character (`-`) but, unlike a real
+    # negative coordinate, is not itself a valid float -- must be sanitized.
+    assert row["scientific_name"] == "'-2+3"
+
+
 async def test_classifier_manifest_export_rejects_non_dry_run_media_copy_and_unsafe_input(
     client: httpx.AsyncClient,
     isolated_repository: Path,

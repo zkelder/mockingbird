@@ -2016,6 +2016,13 @@ def _redact_media_asset(media_asset: MediaAsset | None) -> MediaAsset | None:
     return media_asset.model_copy(update={"local_path": ""})
 
 
+def _redact_media_assets(media_assets: list[MediaAsset]) -> list[MediaAsset]:
+    return [
+        media_asset if not media_asset.local_path else media_asset.model_copy(update={"local_path": ""})
+        for media_asset in media_assets
+    ]
+
+
 def _unsupported_target(target_type: str) -> HTTPException:
     return HTTPException(
         status_code=400,
@@ -14262,7 +14269,7 @@ async def remove_yard_map_zone_placement(
 
 @app.get("/api/media", response_model=list[MediaAsset])
 async def list_media_assets() -> list[MediaAsset]:
-    return get_repository().list_media_assets()
+    return _redact_media_assets(get_repository().list_media_assets())
 
 
 @app.post("/api/media/import", response_model=MediaImportResult, status_code=201)
@@ -14431,7 +14438,9 @@ async def get_media_asset(media_id: str) -> MediaAsset:
     asset = get_repository().get_media_asset(media_id)
     if asset is None:
         raise _not_found("Media asset", media_id)
-    return asset
+    redacted = _redact_media_asset(asset)
+    assert redacted is not None  # asset is non-None; _redact_media_asset only nulls out local_path
+    return redacted
 
 
 @app.post(

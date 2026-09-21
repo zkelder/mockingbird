@@ -143,3 +143,26 @@ def test_build_inaturalist_csv_never_includes_a_photo_column():
     csv_text = build_inaturalist_csv([_candidate()])
     header = csv_text.splitlines()[0]
     assert "photo" not in header.lower()
+
+
+def test_build_inaturalist_csv_neutralizes_a_formula_leading_place_name():
+    """Pre-Release Trust & Correctness Correction v1 (DI-2): this builder is
+    the module's own shipped, public CSV writer, distinct from the sanitized
+    `_write_csv` path `ProductRepository.export_ecological_batch` happens to
+    use for a real export -- any other caller of this function (including
+    this test, before the fix) got an unsanitized cell. A user-supplied
+    `place_name` starting with a spreadsheet-formula trigger character must
+    never reach the CSV unescaped -- see
+    `test_a_user_supplied_place_name_starting_with_a_formula_character_is_neutralized_in_the_csv`
+    in tests/test_ecological_interoperability_repository.py for the sibling
+    proof on the other (already-safe) production path."""
+
+    location = LocationSelection(choice="coarse", latitude=40.0, longitude=-75.0, place_name="=cmd|' /C calc'!A1")
+    csv_text = build_inaturalist_csv([_candidate(location=location)])
+    reader = csv.DictReader(io.StringIO(csv_text))
+    row = next(reader)
+    assert row["place_guess"] == "'=cmd|' /C calc'!A1"
+    assert not row["place_guess"].startswith("=")
+    # A genuine negative/positive numeric value must still round-trip unchanged.
+    assert row["latitude"] == "40.000000"
+    assert row["longitude"] == "-75.000000"

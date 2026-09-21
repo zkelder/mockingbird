@@ -104,6 +104,76 @@ def test_manifest_records_the_candidate_wire_protocol_versions(tmp_path) -> None
     assert manifest["protocol"] == {"node_api_version": "v1", "transport_protocol_version": "transport/v1"}
 
 
+# Pre-Release Trust & Correctness Correction v1 (PKG-2): docs/camera-node-
+# install-guide.md's own step 2 always told the user to run
+# `install_camera_node.py` against the artifact directory, but the builder
+# never actually packaged that script into it -- a plain release download
+# (no repository checkout) could not be installed from itself. These are the
+# "package-integrity coverage" the milestone's own PKG-2 acceptance calls
+# for -- fast, no venv/pip/subprocess needed.
+def test_installer_script_is_packaged_alongside_the_wheel(tmp_path) -> None:
+    artifact = BUILD_ARTIFACT(tmp_path / "artifact", allow_dirty_source=True)
+
+    assert artifact.installer.name == "install_camera_node.py"
+    assert artifact.installer.parent == artifact.wheel.parent
+    real_installer = ROOT / "scripts" / "install_camera_node.py"
+    assert artifact.installer.read_bytes() == real_installer.read_bytes()
+
+
+def test_installer_script_is_covered_by_sha256sums(tmp_path) -> None:
+    artifact = BUILD_ARTIFACT(tmp_path / "artifact", allow_dirty_source=True)
+
+    checksums = artifact.checksums.read_text(encoding="utf-8")
+    assert "install_camera_node.py" in checksums
+    import hashlib
+
+    expected = hashlib.sha256(artifact.installer.read_bytes()).hexdigest()
+    assert f"{expected}  install_camera_node.py" in checksums
+
+
+def test_installer_script_appears_exactly_once_in_the_artifact_directory(tmp_path) -> None:
+    """Every file the install guide's own step 1 documents -- wheel,
+    requirements.txt, camera-node.env.example, manifest.json, SHA256SUMS,
+    and now install_camera_node.py -- exists, and nothing unexpected does."""
+
+    output_dir = tmp_path / "artifact"
+    artifact = BUILD_ARTIFACT(output_dir, allow_dirty_source=True)
+
+    assert {path.name for path in output_dir.iterdir()} == {
+        artifact.wheel.name,
+        "requirements.txt",
+        "camera-node.env.example",
+        "install_camera_node.py",
+        "manifest.json",
+        "SHA256SUMS",
+    }
+
+
+def test_release_source_paths_cover_the_installer_script_for_the_clean_source_guard() -> None:
+    """The clean-commit guard (`verify_clean_camera_node_source`) must refuse
+    a build with an uncommitted edit to the installer script exactly like it
+    already refuses one to `src/mockingbird_node` -- it is now an equally
+    real packaged build input (see `INSTALLER_SCRIPT`)."""
+
+    release_source_paths = _MODULE["RELEASE_SOURCE_PATHS"]
+    assert "scripts/install_camera_node.py" in release_source_paths
+
+
+def test_default_build_refuses_a_dirty_installer_script(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _commit_fixture_node_package(repo)
+    (repo / "scripts").mkdir()
+    installer = repo / "scripts" / "install_camera_node.py"
+    installer.write_text("# v1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "--quiet", "-m", "add installer"], cwd=repo, check=True, capture_output=True)
+
+    installer.write_text("# v1, edited but not committed\n", encoding="utf-8")
+
+    with pytest.raises(CameraNodeArtifactError, match="uncommitted changes"):
+        VERIFY_CLEAN_SOURCE(cwd=repo)
+
+
 # Test Suite Runtime & Baseline Reliability v1: a real venv + real `pip
 # install` of the built wheel, plus real subprocess launches of the
 # installed launcher -- Tier C (slow software integration), excluded from

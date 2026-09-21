@@ -136,11 +136,15 @@ milestone -- see "Reproducibility hardening," below) produces:
   the `sd_notify` Unix-datagram-socket protocol directly, both standard
   library only.
 - `camera-node.env.example` -- a starting configuration.
+- `install_camera_node.py` -- a copy of the installer script itself (Pre-
+  Release Trust & Correctness Correction v1, PKG-2: the artifact directory
+  is now self-contained -- step 2 of the install guide no longer depends on
+  a separate repository checkout for it).
 - `manifest.json` -- artifact identity, now including verifiable source
   provenance (see below).
 - `SHA256SUMS` -- checksums of all of the above.
 
-This seven/eight-file directory *is* "a versioned Camera Node artifact" in the
+This six-file directory *is* "a versioned Camera Node artifact" in the
 target install flow ("obtain artifact -> install dependencies -> configure
 -> install/enable service"). It is produced on a developer/CI machine (this
 build needs nothing beyond Python's standard library) and copied onto the

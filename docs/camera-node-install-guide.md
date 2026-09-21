@@ -24,9 +24,12 @@ architectural requirement.
 
 If you downloaded MockingBird as a release, the Camera Node artifact
 (`camera-node-artifact/`, containing the wheel, `requirements.txt`,
-`camera-node.env.example`, `manifest.json`, and `SHA256SUMS`) is provided
-as its own labeled download alongside the main `MockingBird-windows-x64.zip`
--- unpack it and skip to copying it to the Node device, below.
+`camera-node.env.example`, `install_camera_node.py`, `manifest.json`, and
+`SHA256SUMS`) is provided as its own labeled download alongside the main
+`MockingBird-windows-x64.zip` -- unpack it and skip to copying it to the
+Node device, below. It is self-contained: everything step 2 needs, including
+the installer script itself, is already inside this directory, so a plain
+release download never needs a separate repository checkout.
 `manifest.json`'s `provenance.git_commit` records exactly which commit
 produced it, matching the main download's own build.
 
@@ -49,15 +52,13 @@ scp -r camera-node-artifact/ your-node-device:/home/you/camera-node-artifact
 
 ## 2. Install
 
-On the Node device itself, as root:
+On the Node device itself, as root -- `install_camera_node.py` is already
+inside the artifact directory you just copied over, so this needs nothing
+else from a repository checkout:
 
 ```sh
-sudo python3 scripts/install_camera_node.py /home/you/camera-node-artifact
+sudo python3 /home/you/camera-node-artifact/install_camera_node.py /home/you/camera-node-artifact
 ```
-
-(If you copied only the artifact directory, not the whole repository, copy
-`scripts/install_camera_node.py` alongside it too -- it needs nothing else
-from the repository at install time.)
 
 This installs missing system prerequisites, creates a dedicated
 `mockingbird-node` service account, builds a virtual environment, installs
