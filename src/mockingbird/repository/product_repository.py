@@ -42985,9 +42985,23 @@ def _review_queue_product_context(
         else None
     )
     provider_key = provider.provider_key.lower() if provider is not None else ""
+    # A real row's own `provider_key` wins when present; `kind` (which never
+    # updates once a Source is created) decides only when no row exists yet
+    # -- the identical effective-provider precedent `_real_source_condition`/
+    # `_default_source_provider_key` already establish elsewhere in this
+    # module. The previous `kind == demo OR provider_key == demo` check here
+    # meant a demo Source repurposed into a real one (exactly the scenario
+    # `_real_source_condition`'s own docstring names: "Guided Camera Editing
+    # repurposing the seeded demo Source into a real camera_node Source
+    # keeps kind='demo' forever") could never actually stop being treated as
+    # demo for Review Queue purposes -- found via this milestone's own
+    # native-Windows test-suite validation, once `is_demo_source` became a
+    # real filtering signal (see `GET /api/review-queue`/`dashboard_summary`)
+    # rather than informational-only.
     is_demo_source = bool(
-        (source is not None and source.kind == SourceKind.demo.value)
-        or provider_key == "demo"
+        provider_key == "demo"
+        if provider is not None
+        else (source is not None and source.kind == SourceKind.demo.value)
     )
 
     scoring_config: dict[str, Any] = {}

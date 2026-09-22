@@ -8,7 +8,7 @@ import pytest
 from mockingbird.api.main import app, configure_repository
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.storage.models import EventModel
-from tests.conftest import LegacyAuthenticatedSyncTestClient
+from tests.conftest import LegacyAuthenticatedSyncTestClient, de_demo_seeded_source
 
 client = LegacyAuthenticatedSyncTestClient(app)
 
@@ -24,6 +24,7 @@ SEED_EXPORT_ID = "dataset-export-reviewed-yard-001"
 @pytest.fixture(autouse=True)
 def isolated_repository(tmp_path: Path) -> ProductRepository:
     repository = ProductRepository(db_url=f"sqlite:///{tmp_path / 'mockingbird.sqlite3'}")
+    de_demo_seeded_source(repository)
     configure_repository(repository)
     yield repository
     configure_repository(None)

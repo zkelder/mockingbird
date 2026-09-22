@@ -41,7 +41,7 @@ from mockingbird.species.bioclip_adapter import (
     BioClipRankedSuggestion,
     BioClipTimeoutError,
 )
-from tests.conftest import LegacyAuthenticatedTestClient
+from tests.conftest import LegacyAuthenticatedTestClient, de_demo_seeded_source
 
 pytestmark = pytest.mark.anyio
 
@@ -64,6 +64,7 @@ def isolated_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         db_url=f"sqlite:///{tmp_path / 'mockingbird.sqlite3'}",
         media_root=tmp_path / "media",
     )
+    de_demo_seeded_source(repository)
     configure_repository(repository)
     yield repository
     configure_repository(None)

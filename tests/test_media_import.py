@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pytest
-from tests.conftest import LegacyAuthenticatedSyncTestClient
+from tests.conftest import LegacyAuthenticatedSyncTestClient, de_demo_seeded_source
 
 from mockingbird.api.main import app, configure_repository
 from mockingbird.repository.product_repository import ProductRepository
@@ -18,6 +18,7 @@ def isolated_repository(tmp_path: Path) -> None:
         db_url=f"sqlite:///{tmp_path / 'mockingbird.sqlite3'}",
         media_root=tmp_path / "media",
     )
+    de_demo_seeded_source(repository)
     configure_repository(repository)
     yield
     configure_repository(None)

@@ -8,7 +8,7 @@ from mockingbird.api.main import app, configure_repository
 from mockingbird.api.schemas import MotionEvidenceCreateRequest
 from mockingbird.repository.product_repository import ProductRepository
 from mockingbird.storage.models import MediaAssetModel
-from tests.conftest import LegacyAuthenticatedTestClient
+from tests.conftest import LegacyAuthenticatedTestClient, de_demo_seeded_source
 
 pytestmark = pytest.mark.anyio
 
@@ -22,6 +22,7 @@ IGNORE_ZONE_ID = "zone-ignore-driveway-edge"
 @pytest.fixture(autouse=True)
 def isolated_repository(tmp_path: Path) -> ProductRepository:
     repository = ProductRepository(db_url=f"sqlite:///{tmp_path / 'mockingbird.sqlite3'}")
+    de_demo_seeded_source(repository)
     configure_repository(repository)
     yield repository
     configure_repository(None)

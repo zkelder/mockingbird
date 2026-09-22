@@ -17,12 +17,26 @@ Dashboard headline field derived from it or from a sibling raw count
 query (`needs_review_visit_count`, the per-stream `needs_review_counts`,
 `actionable_animal_visit_count`, `legacy_activity_count`) -- still showed
 the seeded demo Visit as a genuine item needing review on a brand-new
-install. Fixed with the identical established pattern: a new
-`_source_is_effectively_demo` (the `_real_source_condition` SQL condition,
-reusable where a call site already resolves one row at a time in Python)
-plus the same join+`_real_source_condition()` shape the already-fixed
-`needs_rows` sibling query used, applied to the two raw COUNT queries that
-did not have it.
+install. Fixed at `GET /api/review-queue` and in `dashboard_summary`'s own
+`product_review_items` derivation by filtering on `_review_queue_product_
+context`'s already-computed `is_demo_source`; the two raw COUNT queries
+(`needs_review_visit_count`, per-stream `needs_review_counts`) got the
+same join+`_real_source_condition()` shape their sibling `needs_rows`
+query already used.
+
+That first pass left `_review_queue_product_context` computing
+`is_demo_source` from `source.kind == demo OR provider_key == "demo"` --
+an OR that, unlike `_real_source_condition()`'s own precedent, could never
+stop being true once `kind == "demo"`, no matter what real provider a
+Source later gained. `_real_source_condition`'s own docstring names exactly
+this scenario (Guided Camera Editing repurposing the seeded demo Source
+into a real `camera_node` Source, `kind` staying `"demo"` forever) as the
+reason `kind` must never be the deciding signal once a real provider row
+exists. Corrected to mirror `_real_source_condition()` exactly: a real
+provider row's own `provider_key` wins when present, `kind` decides only
+as the fallback for a Source with no provider row yet -- see
+`test_a_repurposed_demo_source_no_longer_counts_as_demo`, below, for the
+dedicated regression test.
 
 These tests deliberately construct a `ProductRepository` against a brand
 new, empty SQLite database and change nothing else -- `seed_if_empty()`
@@ -41,7 +55,7 @@ import pytest
 from mockingbird.api import demo_data
 from mockingbird.api.main import app, configure_repository
 from mockingbird.repository.product_repository import ProductRepository
-from tests.conftest import LegacyAuthenticatedTestClient
+from tests.conftest import LegacyAuthenticatedTestClient, de_demo_seeded_source
 
 pytestmark = pytest.mark.anyio
 
@@ -291,6 +305,35 @@ async def test_a_real_visit_on_a_non_demo_source_still_appears_in_review_queue(
     assert response.status_code == 200
     item_ids = [item["id"] for item in response.json()]
     assert item_ids == ["review-queue-visit-real-002"]
+
+    dashboard_response = await client.get("/api/dashboard/summary")
+    assert dashboard_response.status_code == 200
+    assert dashboard_response.json()["headline"]["needs_review_visit_count"] == 1
+
+
+async def test_a_repurposed_demo_source_no_longer_counts_as_demo(
+    client: httpx.AsyncClient, fresh_repository: ProductRepository,
+) -> None:
+    """`_real_source_condition`'s own docstring names this exact scenario:
+    Guided Camera Editing repurposing the seeded demo Source into a real
+    `camera_node` Source keeps `kind="demo"` forever, so only the Source's
+    *effective* provider (a real `SourceProviderConfigurationModel` row)
+    may decide "is this demo" -- `kind` is the fallback for a Source with
+    no such row, never the deciding signal once one exists. An earlier
+    version of `_review_queue_product_context` still checked `kind` even
+    when a real provider row existed, so a repurposed demo Source's own
+    pre-existing seeded Visit could never stop reading as demo/
+    `legacy_activity`. `de_demo_seeded_source` performs the identical
+    real-product repurposing this test proves: inserting a real,
+    non-"demo" `SourceProviderConfigurationModel` row for the seeded
+    demo Source, changing nothing else."""
+
+    de_demo_seeded_source(fresh_repository)
+
+    response = await client.get("/api/review-queue")
+    assert response.status_code == 200
+    item_ids = {item["id"] for item in response.json()}
+    assert "review-queue-visit-bird-feeder-001" in item_ids
 
     dashboard_response = await client.get("/api/dashboard/summary")
     assert dashboard_response.status_code == 200

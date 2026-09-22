@@ -58,6 +58,58 @@ from mockingbird.repository.product_repository import ProductRepository
 _BACKUP_ROOT_ENV_VAR = "MOCKINGBIRD_BACKUP_ROOT"
 
 
+def de_demo_seeded_source(repository: ProductRepository, *, source_id: str = "source-backyard-demo") -> None:
+    """Give the seeded demo Source a real, non-demo effective provider.
+
+    Native-Windows & Packaging Acceptance v1: real fresh-install testing
+    found the seeded demo Source's own activity leaking into the real
+    Review Queue/Dashboard counts (the same defect family Pre-Release
+    Trust & Correctness Correction v1's UI-01 fix already closed for
+    Dashboard "Recent activity"/Bird Log). The fix -- excluding
+    `is_demo_source` activity at the Review Queue API boundary and in
+    `dashboard_summary`'s own derivation -- has a real blast radius: many
+    existing test files across this suite use the seeded demo Source/
+    Stream purely as convenience plumbing (a Visit needs *some* Source),
+    not as something under test, and now see it excluded too. This is
+    UI-01's own already-established fix for exactly this situation ("a
+    narrowly-scoped 'de-demo' of the seeded Source in place" -- see
+    `mockingbird.repository.product_repository._real_source_condition`'s
+    docstring): insert a real `SourceProviderConfigurationModel` row with
+    a non-"demo" `provider_key` -- `"camera_node"`, the exact repurposing
+    example that docstring itself names ("Guided Camera Editing
+    repurposing the seeded demo Source into a real `camera_node` Source"),
+    not a fabricated provider key, so any test that happens to also touch
+    provider-definition/playback-status resolution for this Source sees a
+    real, recognized value (a Source's own `kind` staying `"demo"` forever
+    is expected and unrelated -- only the *effective* provider decides
+    this). Call once, right after seeding,
+    from a file's own repository-isolation fixture; every test in that
+    file then sees the seeded Visits as real history again, exactly as
+    every test in every affected file already assumed before this
+    milestone's own fix existed.
+    """
+
+    from datetime import UTC, datetime
+
+    from mockingbird.repository.product_repository import SourceProviderConfigurationModel
+
+    with repository.session_factory() as session:
+        with session.begin():
+            existing = session.get(SourceProviderConfigurationModel, source_id)
+            if existing is not None:
+                existing.provider_key = "camera_node"
+                existing.updated_at = datetime.now(UTC)
+            else:
+                session.add(
+                    SourceProviderConfigurationModel(
+                        source_id=source_id,
+                        provider_key="camera_node",
+                        config_json="{}",
+                        updated_at=datetime.now(UTC),
+                    )
+                )
+
+
 @pytest.fixture(autouse=True)
 def _default_isolated_repository(tmp_path_factory: pytest.TempPathFactory):
     """Configure a throwaway, isolated repository before every test runs.

@@ -17,7 +17,7 @@ from mockingbird.storage.models import (
     VisitModel,
     ZoneModel,
 )
-from tests.conftest import LegacyAuthenticatedTestClient
+from tests.conftest import LegacyAuthenticatedTestClient, de_demo_seeded_source
 
 
 STREAM_ID = "stream-backyard-feeder"
@@ -34,6 +34,7 @@ def isolated_repository(tmp_path: Path) -> ProductRepository:
         db_url=f"sqlite:///{tmp_path / 'mockingbird.sqlite3'}",
         media_root=tmp_path / "media",
     )
+    de_demo_seeded_source(repository)
     configure_repository(repository)
     yield repository
     configure_repository(None)
