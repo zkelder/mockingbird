@@ -4109,8 +4109,8 @@ export function StreamDetailPage({
           <strong>Source</strong> {sourceDisplay}
         </span>
         <span>
-          <strong>Zones</strong>{" "}
-          {detail.playback.supports_zone_editing ? "Available nearby" : "Unavailable"}
+          <strong>Areas</strong>{" "}
+          {detail.playback.supports_zone_editing ? "Can be drawn for this camera" : "Not supported by this camera"}
         </span>
         {detail.playback.live_stream_url_display ? (
           <span>

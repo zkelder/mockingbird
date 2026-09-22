@@ -93,9 +93,9 @@ test("a real correction moves Analytics and Local Data's real counts, never the 
   // strict-mode violation).
   await expect(page.getByRole("heading", { name: "Insights", exact: true })).toBeVisible();
 
-  await expect(metricValue(page, "Events")).toHaveText(String(beforeSummary.event_count + 1));
+  await expect(metricValue(page, "Activity sessions")).toHaveText(String(beforeSummary.event_count + 1));
   await expect(metricValue(page, "Visits")).toHaveText(String(beforeSummary.visit_count + 1));
-  await expect(metricValue(page, "Needs review")).toHaveText(String(beforeSummary.needs_review_count));
+  await expect(metricValue(page, "Waiting for you")).toHaveText(String(beforeSummary.needs_review_count));
   // "Blue Jay" alone is another Playwright strict-mode violation here -- it
   // legitimately appears in several unrelated places at once (a "New
   // labels" comparison note, review-history cards, a filter dropdown
@@ -107,7 +107,7 @@ test("a real correction moves Analytics and Local Data's real counts, never the 
 
   await page.goto("/local-data");
   await expect(page.getByRole("heading", { name: "Local Data" })).toBeVisible();
-  await expect(metricValue(page, "Events")).toHaveText(String(beforeSummary.event_count + 1));
+  await expect(metricValue(page, "Activity sessions")).toHaveText(String(beforeSummary.event_count + 1));
   await expect(metricValue(page, "Visits")).toHaveText(String(beforeSummary.visit_count + 1));
-  await expect(metricValue(page, "Needs review")).toHaveText(String(beforeSummary.needs_review_count));
+  await expect(metricValue(page, "Waiting for you")).toHaveText(String(beforeSummary.needs_review_count));
 });

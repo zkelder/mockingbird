@@ -90,7 +90,7 @@ test("a brand-new Place shows an honest empty state, not a bare zero", async ({ 
   const card = page.locator(".biodiversity-summary-card");
   await expect(card).toBeVisible();
   await expect(card.getByText("Nothing recorded yet.")).toBeVisible();
-  await expect(card.getByText("No monitoring history recorded yet", { exact: false })).toBeVisible();
+  await expect(card.getByText("No camera has spent time observing yet", { exact: false })).toBeVisible();
 });
 
 test("Dashboard shows New here, Regular visitors, and Recently observed from the same summary", async ({

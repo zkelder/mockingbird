@@ -127,7 +127,7 @@ async function seedConfirmedBirdVisit(
   await form
     .locator("textarea")
     .fill("e2e: seeded by mobile-viewport-audit.spec.ts for a phone-width layout screenshot.");
-  await form.getByRole("button", { name: /Save correction|Resolve species/ }).click();
+  await form.getByRole("button", { name: /Save correction|Confirm species|Resolve species/ }).click();
 
   // Poll the real record rather than the rendered heading text -- avoids
   // coupling this seeding helper to displayTaxonomyLabel()'s exact
@@ -279,7 +279,7 @@ test("Review Queue stays free of horizontal overflow at phone width", async ({ p
   const confirmButton = page
     .locator("article.queue-card")
     .first()
-    .getByRole("button", { name: /Save correction|Resolve species/ });
+    .getByRole("button", { name: /Save correction|Confirm species|Resolve species/ });
   if (await confirmButton.count()) {
     await assertMeetsTapTargetMinimum(confirmButton, "Review Queue: confirm/save-correction button");
   }

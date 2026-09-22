@@ -80,22 +80,28 @@ test("a fresh install creates the first administrator, shows guided setup, persi
   expect(storageBodyText.toLowerCase()).not.toContain("sqlite3");
   await page.getByRole("button", { name: "Continue" }).click();
 
-  // Camera: the existing, unmodified guided Add Camera flow is embedded
-  // directly -- proving composition, not a second implementation of it.
-  await expect(page.getByRole("heading", { name: "Add Camera" })).toBeVisible();
+  // Camera: the existing guided Add Camera flow is embedded directly --
+  // proving composition, not a second implementation of it. UI/UX &
+  // First-Run Adoption v1: embedded, it no longer renders its own
+  // "Guided setup / Add Camera" page header under the wizard's own one
+  // (three stacked headings for one step), so the step is identified by
+  // its first section heading instead.
+  await expect(page.getByRole("heading", { name: "1. Add your camera" })).toBeVisible();
 
   // A reload mid-wizard must resume at the saved step, not restart --
   // "close/reopen without losing configuration." Also proves the signed-in
   // session itself survives a reload (a cookie, not in-memory-only state).
   await page.reload();
-  await expect(page.getByRole("heading", { name: "Add Camera" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "1. Add your camera" })).toBeVisible();
 
   // Finishing without a camera is an explicit, honest escape hatch (the
   // milestone does not require every step during first run); the app then
-  // shows the normal product shell instead of the wizard. Labeled "Do this
-  // later" (not "Discard") because nothing is actually discarded -- see
-  // "Pairing recovery UX" in docs/camera-node-pairing-persistence-design.md.
-  await page.getByRole("button", { name: "Do this later" }).click();
+  // shows the normal product shell instead of the wizard. Nothing is
+  // actually discarded -- see "Pairing recovery UX" in
+  // docs/camera-node-pairing-persistence-design.md. UI/UX & First-Run
+  // Adoption v1 renamed it inside the wizard, where "Do this later" gave no
+  // hint that importing photos is a supported alternative to a camera.
+  await page.getByRole("button", { name: /^Skip/ }).click();
   await expect(page.getByRole("heading", { name: "Today in Your Yard" })).toBeVisible();
 
   // Onboarding must never reappear after completion, including on reload,

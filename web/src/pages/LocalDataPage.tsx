@@ -1028,17 +1028,17 @@ export function LocalDataPage({
             </section>
 
             <section className="metric-grid">
-              <MetricCard label="Events" value={status.event_count} detail="outdoor activity" />
-              <MetricCard label="Visits" value={status.visit_count} detail="reviewable observations" />
+              <MetricCard label="Activity sessions" value={status.event_count} detail="times something was active" />
+              <MetricCard label="Visits" value={status.visit_count} detail="individual animal visits" />
               <MetricCard
-                label="Needs review"
+                label="Waiting for you"
                 value={status.needs_review_count}
-                detail="local correction work"
+                detail="visits to confirm"
               />
               <MetricCard
-                label="Corrections"
+                label="Confirmations"
                 value={status.review_label_count}
-                detail="dataset-grade labels"
+                detail="times you confirmed or corrected"
               />
               <MetricCard
                 label="Proposals"

@@ -406,5 +406,5 @@ test("Bird Log shows each label's own representative image, omits the thumbnail 
   await expect(finchImage).toBeVisible();
   await expect(finchImage).toHaveAttribute("src", new RegExp("media-finch-journal"));
   await expect(finchImage).not.toHaveAttribute("src", new RegExp("media-cardinal-journal"));
-  await expect(finchCard).toContainText("0 Zones");
+  await expect(finchCard).toContainText("0 areas");
 });

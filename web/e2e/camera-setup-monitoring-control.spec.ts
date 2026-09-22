@@ -37,7 +37,7 @@ test("camera setup hides the legacy Start watching checkbox for a Camera Node ca
   await expect(page.getByLabel("Start watching once setup finishes")).toHaveCount(0);
   await expect(page.locator('input[type="checkbox"]')).toHaveCount(0);
   await expect(
-    page.getByText("MockingBird Camera Node monitoring starts from this camera", { exact: false }),
+    page.getByText("Finishing setup never starts watching by itself", { exact: false }),
   ).toBeVisible();
   await expect(page.getByText("Start observing", { exact: false })).toBeVisible();
 

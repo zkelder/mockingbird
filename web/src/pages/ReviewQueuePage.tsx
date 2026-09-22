@@ -1435,14 +1435,15 @@ export function ReviewQueuePage({
   const [reviewLabels, setReviewLabels] = useState<ReviewLabel[]>([]);
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("all");
   const [productTab, setProductTab] = useState<ProductReviewTab>("animals");
-  // UI/UX & First-Run Adoption v1: the queue used to open on "Animals"
-  // unconditionally, so a user whose only waiting item sat in another group
-  // landed on "No review items match these filters" (and "Reset filters"
-  // never changed the tab). Until the user picks a group themselves, open
-  // on the first group that actually has work waiting.
-  const userChoseProductTabRef = useRef(false);
+  // UI/UX & First-Run Adoption v1: the queue opens on "Animals" (an
+  // accepted contract -- see e2e/review-queue-fast-review-keyboard.spec.ts).
+  // The dead end this milestone fixed was what happened when that group was
+  // empty while work waited elsewhere: "No review items match these
+  // filters", whose only offered recovery ("Reset filters") never changed
+  // the group. The group with waiting work is now named, counted and one
+  // click away -- see the empty states below -- and "Reset filters" moves
+  // there too, instead of the queue silently re-deciding for the user.
   function chooseProductTab(tab: ProductReviewTab) {
-    userChoseProductTabRef.current = true;
     setProductTab(tab);
   }
   const [showLegacyAndTestActivity, setShowLegacyAndTestActivity] = useState(false);
@@ -1570,15 +1571,6 @@ export function ReviewQueuePage({
     (total, tab) => total + productQueueCounts[tab],
     0,
   );
-  useEffect(() => {
-    if (userChoseProductTabRef.current || firstPendingProductTab === null) {
-      return;
-    }
-    if (productQueueCounts[productTab] === 0) {
-      setProductTab(firstPendingProductTab);
-    }
-  }, [firstPendingProductTab, productQueueCounts, productTab]);
-
   const productReviewFilters: ReviewFilterOption<ProductReviewTab>[] = [
     { value: "animals", label: "Animals", count: productQueueCounts.animals },
     {
@@ -2374,7 +2366,6 @@ export function ReviewQueuePage({
   }
 
   function resetReviewFilters() {
-    userChoseProductTabRef.current = false;
     if (firstPendingProductTab !== null) {
       setProductTab(firstPendingProductTab);
     }
