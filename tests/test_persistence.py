@@ -28,6 +28,7 @@ from mockingbird.storage.models import (
     StreamModel,
     ZoneModel,
 )
+from tests.conftest import de_demo_seeded_source
 
 STREAM_ID = "stream-backyard-feeder"
 FEEDER_ZONE_ID = "zone-feeder"
@@ -156,6 +157,13 @@ def test_dataset_export_persists_after_repository_reload(tmp_path: Path) -> None
 def test_analytics_summary_reflects_persisted_correction_state(tmp_path: Path) -> None:
     db_path = tmp_path / "mockingbird.sqlite3"
     repository = repository_for(db_path)
+    # Analytics & Local Data Truth Consistency v1: `_analytics_summary` now
+    # excludes the seeded demo Source's own activity -- this test is about
+    # correction state surviving a reload, not about demo status, so give
+    # the seeded Visit under test a real effective provider first (the
+    # established repurposing mechanism), exactly as a user genuinely
+    # replacing the seeded camera would.
+    de_demo_seeded_source(repository)
 
     repository.create_review_label(
         ReviewCorrectionCreate(
@@ -182,9 +190,18 @@ def test_analytics_needs_review_count_matches_review_queue_on_seed_data(
     Visit's (see `_recompute_visit_review_truth`), not a second
     independently reviewable task. Before the fix, `analytics_summary()`
     double-counted this one real reviewable task as 2; the curated Review
-    Queue always correctly showed 1."""
+    Queue always correctly showed 1.
+
+    Analytics & Local Data Truth Consistency v1: this cross-surface
+    invariant is about the rollup-mirror double-counting question, not
+    about demo status -- `_analytics_summary` now excludes the seeded demo
+    Source's own activity entirely, so give the seeded Visit under test a
+    real effective provider first (the established repurposing mechanism)
+    so it legitimately counts on both surfaces, exactly as before this
+    milestone for a real, non-demo Stream."""
     db_path = tmp_path / "mockingbird.sqlite3"
     repository = repository_for(db_path)
+    de_demo_seeded_source(repository)
 
     analytics = repository.analytics_summary()
     queue = repository.review_queue_items()

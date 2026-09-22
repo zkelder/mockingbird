@@ -24,7 +24,7 @@ from mockingbird.storage.models import (
     YardMapZonePlacementModel,
     ZoneModel,
 )
-from tests.conftest import LegacyAuthenticatedTestClient
+from tests.conftest import LegacyAuthenticatedTestClient, de_demo_seeded_source
 
 
 PNG_64 = (
@@ -245,6 +245,17 @@ async def test_yard_map_activity_is_stream_scoped_and_uses_reviewed_truth_only(
     client: httpx.AsyncClient,
     isolated_repository: ProductRepository,
 ) -> None:
+    # Analytics & Local Data Truth Consistency v1: `_yard_map_activity_
+    # summary` now shows "no activity yet" for a demo-sourced Stream. This
+    # test's own actual subject is stream-scoping and reviewed-truth-only
+    # display, exercised against the seeded `stream-backyard-feeder`'s two
+    # Visits purely as convenient plumbing -- not demo-exclusion itself
+    # (`tests/test_demo_source_exclusion.py`'s own dedicated Yard Map
+    # tests already cover that) -- so repurpose it first, the same
+    # established mechanism Review Queue Count Truth Consistency v1 used
+    # for the identical situation.
+    de_demo_seeded_source(isolated_repository)
+
     suggestion = await client.post("/api/species-suggestions/mock", json={"visit_id": "visit-bird-feeder-001"})
     assert suggestion.status_code == 201
 

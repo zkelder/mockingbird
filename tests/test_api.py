@@ -1010,7 +1010,13 @@ def test_reset_demo_data_restores_seed_state_after_mutations() -> None:
     assert status["zone_count"] == 3
     assert status["review_label_count"] == 1
     assert status["dataset_export_count"] == 2
-    assert status["needs_review_count"] >= 1
+    # Analytics & Local Data Truth Consistency v1: `needs_review_count` is
+    # reused from `_analytics_summary`, which excludes the seeded demo
+    # Source's own activity -- the reseeded demo bird Visit's raw
+    # `review_status` genuinely is restored to `needs_review` (proven
+    # directly below), but it must not surface as real outstanding work on
+    # a reset-to-demo-only install with zero real cameras.
+    assert status["needs_review_count"] == 0
 
     zones = client.get(f"/api/streams/{STREAM_ID}/zones").json()
     assert all(zone["id"] != created_zone["id"] for zone in zones)
@@ -1031,8 +1037,14 @@ def test_reset_demo_data_does_not_duplicate_seed_rows() -> None:
     assert status["source_count"] == 1
     assert status["stream_count"] == 1
     assert status["zone_count"] == 3
-    assert status["event_count"] == 2
-    assert status["visit_count"] == 2
+    # Analytics & Local Data Truth Consistency v1: `event_count`/
+    # `visit_count` are reused from `_analytics_summary`, which excludes
+    # the seeded demo Source's own activity -- always 0 on a demo-only
+    # install regardless of how many times it is reseeded. Non-duplication
+    # itself is still fully proven by `zone_count`/`review_label_count`
+    # above/below, neither of which is demo-filtered.
+    assert status["event_count"] == 0
+    assert status["visit_count"] == 0
     assert status["media_asset_count"] == 0
     assert status["review_label_count"] == 1
     assert status["dataset_export_count"] == 1

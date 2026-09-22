@@ -400,10 +400,22 @@ async def test_external_url_provider_smoke_flow_preserves_truth_boundaries(
     tmp_path: Path,
 ) -> None:
     before = await product_counts(client)
-    before_truth = await dataset_truth_counts(client)
 
     await configure_external_url(client)
     assert await product_counts(client) == before
+    # Analytics & Local Data Truth Consistency v1: `dataset_truth_counts`
+    # reads `/api/dataset-coverage/summary`, which now excludes the seeded
+    # demo Source's own activity -- `configure_external_url` just gave this
+    # exact Source (`SOURCE_ID = "source-backyard-demo"`) a real, non-demo
+    # effective provider (`_real_source_condition`'s own established
+    # repurposing precedent), so its pre-existing reviewed squirrel Visit
+    # now legitimately counts as real dataset truth. This test's own
+    # subject is whether the *external-URL preview/save/evidence* actions
+    # below it preserve truth boundaries, not whether repurposing a Source
+    # changes what already-existing Visits count as -- so the baseline is
+    # captured after repurposing, matching every truth-boundary assertion
+    # below it exactly as before.
+    before_truth = await dataset_truth_counts(client)
 
     monkeypatch.setattr(
         external_url_preview,
@@ -522,10 +534,18 @@ async def test_folder_import_provider_smoke_flow_preserves_truth_boundaries(
     write_file(folder / "clip.mp4", b"not imported")
 
     before = await product_counts(client)
-    before_truth = await dataset_truth_counts(client)
 
     await configure_folder_source(client, folder)
     assert await product_counts(client) == before
+    # Analytics & Local Data Truth Consistency v1: same reasoning as
+    # `test_external_url_provider_smoke_flow_preserves_truth_boundaries`,
+    # above -- `configure_folder_source` just gave the seeded demo Source a
+    # real, non-demo effective provider, so its pre-existing reviewed
+    # squirrel Visit now legitimately counts toward `dataset_truth_counts`
+    # (`/api/dataset-coverage/summary`). Captured after repurposing so this
+    # test keeps proving what it always proved: the *folder-import
+    # preview/scan* actions below preserve truth boundaries.
+    before_truth = await dataset_truth_counts(client)
 
     monkeypatch.setattr(
         "mockingbird.repository.product_repository.folder_import_preview.preview_folder_import",

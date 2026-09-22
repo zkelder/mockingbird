@@ -4019,6 +4019,35 @@ def _real_source_condition() -> Any:
     )
 
 
+def _real_stream_ids(session: Session) -> set[str]:
+    """Every Stream id whose effective Source is not the seeded demo Source,
+    per `_real_source_condition()`.
+
+    Analytics & Local Data Truth Consistency v1: `_analytics_summary`,
+    `_dataset_coverage_summary`, `_dataset_quality_summary`, and
+    `_yard_map_activity_summary` each aggregate Events/Visits in Python
+    rather than filtering them in SQL directly, so none of them could reuse
+    `_real_source_condition()` inline the way the Review Queue/Dashboard
+    fixes already do. One bulk id-set query, computed once per summary and
+    checked in Python (`event.stream_id in real_stream_ids`), is the same
+    seam for these Python-side aggregations that `_visible_review_queue_
+    items`/`_visible_review_queue_count` already are for the Review Queue
+    family -- reusing the established condition rather than re-deriving
+    ad hoc `provider_key != "demo"` checks at each call site."""
+
+    return set(
+        session.scalars(
+            select(StreamModel.id)
+            .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+            .outerjoin(
+                SourceProviderConfigurationModel,
+                SourceProviderConfigurationModel.source_id == CameraSourceModel.id,
+            )
+            .where(_real_source_condition())
+        )
+    )
+
+
 class ProductRepository:
     """Persist product-level stream, zone, event, review, and export state.
 
@@ -17825,6 +17854,7 @@ class ProductRepository:
         stream: StreamModel,
         *,
         start_at: datetime,
+        is_real_source: bool,
         engine_terminally_unavailable: bool = False,
         engine_unavailable_message: str | None = None,
     ) -> YardMapActivitySummary:
@@ -17838,58 +17868,73 @@ class ProductRepository:
             actual_state = StreamRuntimeState(checkpoint.actual_state) if checkpoint else StreamRuntimeState.stopped
         except ValueError:
             actual_state = StreamRuntimeState.stopped
-        visit_rows = session.execute(
-            select(VisitModel, EventModel)
-            .join(EventModel, VisitModel.event_id == EventModel.id)
-            .where(
-                EventModel.stream_id == stream.id,
-                EventModel.started_at >= start_at,
-                VisitModel.is_superseded.is_(False),
+        # Analytics & Local Data Truth Consistency v1: a demo/sample Source's
+        # Stream must show "no activity yet," not fabricated visits, on the
+        # Yard Map -- the same per-Stream tile a real camera's activity
+        # renders on (needs-review button, "Latest"/"Confirmed" labels,
+        # preview photo). `is_real_source` mirrors `_real_source_condition()`
+        # (via `yard_map`'s own bulk `_real_stream_ids` lookup); skip the
+        # Visit-derived queries entirely for a demo-sourced Stream rather
+        # than querying fabricated Visits and discarding the result.
+        if is_real_source:
+            visit_rows = session.execute(
+                select(VisitModel, EventModel)
+                .join(EventModel, VisitModel.event_id == EventModel.id)
+                .where(
+                    EventModel.stream_id == stream.id,
+                    EventModel.started_at >= start_at,
+                    VisitModel.is_superseded.is_(False),
+                )
+                .order_by(EventModel.started_at.desc(), EventModel.id.desc(), VisitModel.id.desc())
+                .limit(50)
+            ).all()
+            summaries = [
+                self._stream_visit_summary_from_models(session, visit, event)
+                for visit, event in visit_rows
+            ]
+            latest = summaries[0] if summaries else None
+            confirmed = next(
+                (
+                    summary.reviewed_label
+                    for summary in summaries
+                    if summary.review_outcome == VisitReviewOutcome.confirmed_bird
+                    and summary.reviewed_label
+                ),
+                None,
             )
-            .order_by(EventModel.started_at.desc(), EventModel.id.desc(), VisitModel.id.desc())
-            .limit(50)
-        ).all()
-        summaries = [
-            self._stream_visit_summary_from_models(session, visit, event)
-            for visit, event in visit_rows
-        ]
-        latest = summaries[0] if summaries else None
-        confirmed = next(
-            (
-                summary.reviewed_label
-                for summary in summaries
-                if summary.review_outcome == VisitReviewOutcome.confirmed_bird
-                and summary.reviewed_label
-            ),
-            None,
-        )
-        needs_review_count = session.scalar(
-            select(func.count(VisitModel.id))
-            .join(EventModel, VisitModel.event_id == EventModel.id)
-            .where(
-                EventModel.stream_id == stream.id,
-                EventModel.started_at >= start_at,
-                VisitModel.is_superseded.is_(False),
-                VisitModel.review_status == ReviewStatus.needs_review.value,
-            )
-        ) or 0
-        needs_review_visit_ids = session.scalars(
-            select(VisitModel.id)
-            .join(EventModel, VisitModel.event_id == EventModel.id)
-            .where(
-                EventModel.stream_id == stream.id,
-                EventModel.started_at >= start_at,
-                VisitModel.is_superseded.is_(False),
-                VisitModel.review_status == ReviewStatus.needs_review.value,
-            )
-            .order_by(EventModel.started_at.desc(), EventModel.id.desc(), VisitModel.id.desc())
-            .limit(50)
-        ).all()
-        open_activity = session.scalar(
-            select(EventModel.id)
-            .where(EventModel.stream_id == stream.id, EventModel.ended_at.is_(None))
-            .limit(1)
-        ) is not None
+            needs_review_count = session.scalar(
+                select(func.count(VisitModel.id))
+                .join(EventModel, VisitModel.event_id == EventModel.id)
+                .where(
+                    EventModel.stream_id == stream.id,
+                    EventModel.started_at >= start_at,
+                    VisitModel.is_superseded.is_(False),
+                    VisitModel.review_status == ReviewStatus.needs_review.value,
+                )
+            ) or 0
+            needs_review_visit_ids = session.scalars(
+                select(VisitModel.id)
+                .join(EventModel, VisitModel.event_id == EventModel.id)
+                .where(
+                    EventModel.stream_id == stream.id,
+                    EventModel.started_at >= start_at,
+                    VisitModel.is_superseded.is_(False),
+                    VisitModel.review_status == ReviewStatus.needs_review.value,
+                )
+                .order_by(EventModel.started_at.desc(), EventModel.id.desc(), VisitModel.id.desc())
+                .limit(50)
+            ).all()
+            open_activity = session.scalar(
+                select(EventModel.id)
+                .where(EventModel.stream_id == stream.id, EventModel.ended_at.is_(None))
+                .limit(1)
+            ) is not None
+        else:
+            latest = None
+            confirmed = None
+            needs_review_count = 0
+            needs_review_visit_ids = []
+            open_activity = False
         try:
             playback = self.get_stream_playback_status(stream.id)
         except Exception:
@@ -17942,6 +17987,7 @@ class ProductRepository:
         current_time = _as_utc(now or datetime.now(UTC))
         start_at = self._yard_map_range_start(activity_range, current_time)
         with self.session_factory() as session:
+            real_stream_ids = _real_stream_ids(session)
             map_model = session.get(YardMapModel, YARD_MAP_ID)
             stream_placements = {
                 item.stream_id: item
@@ -17986,6 +18032,7 @@ class ProductRepository:
                             session,
                             stream,
                             start_at=start_at,
+                            is_real_source=stream.id in real_stream_ids,
                             engine_terminally_unavailable=engine_terminally_unavailable,
                             engine_unavailable_message=engine_unavailable_message,
                         ),
@@ -39194,12 +39241,34 @@ class ProductRepository:
                     suggested_action="Review correction history and keep the intended final label.",
                 )
 
+        # Analytics & Local Data Truth Consistency v1: Dataset QA is framed
+        # to the user as their own reviewed-dataset cleanup/export readiness
+        # (`DatasetQualityPanel.tsx`: "Records needing cleanup before
+        # export", "Export-ready records") -- demo/sample Visits and Events
+        # must not contribute issues or counts, per the same
+        # `_real_source_condition()` contract `_real_stream_ids` centralizes.
+        real_stream_ids = _real_stream_ids(session)
         visits = self._visits_for_eventless_query(session)
         event_ids_with_visits = {visit.event_id for visit in visits}
+        # `event_ids_with_any_visits` (ALL-time, including superseded visits
+        # -- distinct from `event_ids_with_visits` above, which is current/
+        # non-superseded only) was referenced below but never defined in
+        # this function, unlike its sibling `_dataset_coverage_summary`/
+        # `_analytics_summary`, which both define it identically before this
+        # exact same loop shape. Latent pre-existing bug, found while adding
+        # this milestone's own demo-filtering to this function: any
+        # genuinely eventless real Event (no Visit ever, e.g. "Motion
+        # ignored in privacy zone" -- product-doctrine.md's own Activity
+        # Session example) hits the `or event_model.id in event_ids_with_
+        # any_visits` branch below and raises `NameError`, crashing `GET
+        # /api/dataset-quality/summary`. Fixed here, matching the sibling
+        # functions' own established definition exactly; see
+        # `test_dataset_quality_summary_does_not_crash_on_an_eventless_real_event`.
+        event_ids_with_any_visits = set(session.scalars(select(VisitModel.event_id)).all())
 
         for visit in visits:
             event_model = session.get(EventModel, visit.event_id)
-            if event_model is None or session.get(StreamModel, event_model.stream_id) is None:
+            if event_model is None or event_model.stream_id not in real_stream_ids:
                 continue
 
             event = self._event_from_model(session, event_model)
@@ -39242,7 +39311,7 @@ class ProductRepository:
         for event_model in event_models:
             if event_model.id in event_ids_with_visits or event_model.id in event_ids_with_any_visits:
                 continue
-            if session.get(StreamModel, event_model.stream_id) is None:
+            if event_model.stream_id not in real_stream_ids:
                 continue
 
             event = self._event_from_model(session, event_model)
@@ -39395,13 +39464,20 @@ class ProductRepository:
                 else item.last_seen_at
             )
 
+        # Analytics & Local Data Truth Consistency v1: Dataset Coverage is
+        # framed to the user as their own reviewed-dataset export readiness
+        # (`DatasetCoveragePanel.tsx`: "Reviewed species coverage",
+        # "Export-ready reviewed records") -- demo/sample Visits and Events
+        # must not inflate it, per the same `_real_source_condition()`
+        # contract `_real_stream_ids` already centralizes.
+        real_stream_ids = _real_stream_ids(session)
         visits = self._visits_for_eventless_query(session)
         event_ids_with_visits = {visit.event_id for visit in visits}
         event_ids_with_any_visits = set(session.scalars(select(VisitModel.event_id)).all())
 
         for visit in visits:
             event_model = session.get(EventModel, visit.event_id)
-            if event_model is None or session.get(StreamModel, event_model.stream_id) is None:
+            if event_model is None or event_model.stream_id not in real_stream_ids:
                 continue
 
             event = self._event_from_model(session, event_model)
@@ -39423,7 +39499,7 @@ class ProductRepository:
         for event_model in event_models:
             if event_model.id in event_ids_with_visits or event_model.id in event_ids_with_any_visits:
                 continue
-            if session.get(StreamModel, event_model.stream_id) is None:
+            if event_model.stream_id not in real_stream_ids:
                 continue
 
             event = self._event_from_model(session, event_model)
@@ -40426,6 +40502,17 @@ class ProductRepository:
                 )
 
     def _analytics_summary(self, session: Session) -> AnalyticsSummary:
+        # Analytics & Local Data Truth Consistency v1: demo/sample Sources
+        # must not silently contribute to analytics presented as the user's
+        # real observed ecosystem/history (product-doctrine.md, "Measured,
+        # Inferred, and Reviewed"). `real_stream_ids`/`stream_id_by_event_id`
+        # filter every count and breakdown below by the same canonical
+        # `_real_source_condition()` contract the Review Queue/Dashboard
+        # already use -- not a second, ad hoc demo check.
+        real_stream_ids = _real_stream_ids(session)
+        stream_id_by_event_id = dict(
+            session.execute(select(EventModel.id, EventModel.stream_id)).all()
+        )
         event_ids_with_any_visits = set(session.scalars(select(VisitModel.event_id)).all())
         active_event_ids = {
             visit.event_id for visit in self._visits_for_eventless_query(session)
@@ -40433,9 +40520,14 @@ class ProductRepository:
         events = [
             self._event_from_model(session, event)
             for event in session.scalars(select(EventModel).order_by(EventModel.started_at)).all()
-            if event.id not in event_ids_with_any_visits or event.id in active_event_ids
+            if (event.id not in event_ids_with_any_visits or event.id in active_event_ids)
+            and event.stream_id in real_stream_ids
         ]
-        visits = self._visits_for_eventless_query(session)
+        visits = [
+            visit
+            for visit in self._visits_for_eventless_query(session)
+            if stream_id_by_event_id.get(visit.event_id) in real_stream_ids
+        ]
         review_labels = self.list_review_labels_from_session(session)
 
         # An Event's own `review_status` becomes a rollup mirror of its
@@ -40475,6 +40567,7 @@ class ProductRepository:
             if label.target_type == "event" and (
                 label.target_id in visit_event_ids
                 or label.target_id in event_ids_with_any_visits
+                or stream_id_by_event_id.get(label.target_id) not in real_stream_ids
             ):
                 continue
             species_counts[self._normalize_label_from_session(session, label.label)] += 1

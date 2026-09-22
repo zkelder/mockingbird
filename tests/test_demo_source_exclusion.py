@@ -55,6 +55,33 @@ review" pills/toasts. `ProductRepository._visible_review_queue_items`/
 `_review_queue_items` itself) is the one shared seam introduced to close
 all of them at once instead of reproducing the filter ad hoc; the tests
 below prove it directly and at each distinct response shape it now backs.
+
+Analytics & Local Data Truth Consistency v1 extends this file again. Review
+Queue Count Truth Consistency v1's own report disclosed a larger, separate
+family it deliberately left unfixed: `AnalyticsSummary.needs_review_count`
+(and its siblings `event_count`/`visit_count`/`species_counts`/
+`zone_activity_counts`, all computed together in `_analytics_summary`) and
+`YardMapActivitySummary.needs_review_count` (a different computation
+entirely, in `_yard_map_activity_summary`) were both still demo-inclusive,
+feeding `AnalyticsPage.tsx`, `LocalDataPage.tsx`, `DatasetCoveragePanel.tsx`
+(via `_dataset_coverage_summary`), `DatasetQualityPanel.tsx` (via
+`_dataset_quality_summary`), and `YardMapPage.tsx` -- every one framed to
+the user as their own real reviewed/observed wildlife history, never as
+demo/sample content. The new module-level `_real_stream_ids(session)`
+helper (product_repository.py, immediately after `_real_source_condition`
+itself) is the one shared seam these four Python-side aggregations now
+filter through -- the same canonical `_real_source_condition()` contract
+`_visible_review_queue_count` already established for the Review Queue
+family, reused rather than re-derived. `LocalDataStatus`'s own raw
+`_count(session, Model)` storage-inventory fields (`source_count`/
+`stream_count`/`zone_count`/`review_label_count`/`dataset_export_count`/
+etc.) are deliberately left demo-inclusive: `LocalDataPage.tsx` frames
+them as "local source records"/"local import references" -- local-storage
+diagnostics, not ecosystem history -- already honestly disclosed via
+`seed_data_present`, exactly matching this repository's own established
+`AdapterEvaluationSummary.unreviewed_count` precedent for a legitimate
+non-"needs review" metric. See this milestone's own closure report for
+the complete field-by-field contract.
 """
 
 from __future__ import annotations
@@ -671,3 +698,354 @@ async def test_model_adapter_family_response_counts_exclude_demo_activity(
     )
     assert decision_response.status_code == 200
     assert decision_response.json()["review_queue_count"] == 1
+
+
+# --- Analytics & Local Data Truth Consistency v1 ----------------------------
+
+
+def test_demo_only_install_reports_no_genuine_analytics_activity(
+    fresh_repository: ProductRepository,
+) -> None:
+    """`AnalyticsSummary` is `AnalyticsPage.tsx`'s own "Events"/"Visits"/
+    "Needs review"/"Reviewed species" headline -- a demo-only install (zero
+    real cameras) must report zero genuine activity, not the seeded demo
+    Source's own two fabricated Events/Visits (one needs-review bird guess,
+    one already-reviewed squirrel)."""
+
+    with fresh_repository.session_factory() as session:
+        summary = fresh_repository._analytics_summary(session)
+
+    assert summary.event_count == 0
+    assert summary.visit_count == 0
+    assert summary.needs_review_count == 0
+    assert summary.species_counts == {}
+    assert summary.species_label_ids == []
+    assert summary.zone_activity_counts == {}
+
+
+def test_demo_only_install_local_data_status_excludes_activity_but_keeps_storage_inventory(
+    fresh_repository: ProductRepository,
+) -> None:
+    """`LocalDataStatus` mixes two field families on one page
+    (`LocalDataPage.tsx`): a genuine-activity family reused directly from
+    `_analytics_summary` (`event_count`/`visit_count`/`needs_review_count`
+    -- "outdoor activity"/"reviewable observations"/"local correction
+    work"), and a raw local-storage-inventory family (`source_count`/
+    `stream_count`/`zone_count`/`review_label_count`/`dataset_export_count`
+    -- "local source records"/"local import references", the same
+    "Local-first storage" framing as the page's own header). Only the first
+    family is genuine ecosystem/history truth; the second legitimately
+    describes what a first-run walkthrough deliberately seeds into local
+    storage -- already honestly disclosed via `seed_data_present`, exactly
+    like `AdapterEvaluationSummary.unreviewed_count` was already judged a
+    legitimate non-"needs review" metric. See this milestone's own closure
+    report for the complete contract."""
+
+    with fresh_repository.session_factory() as session:
+        status = fresh_repository._local_data_status(session)
+
+    assert status.event_count == 0
+    assert status.visit_count == 0
+    assert status.needs_review_count == 0
+
+    assert status.seed_data_present is True
+    assert status.source_count == 1
+    assert status.stream_count == 1
+    assert status.zone_count == 3
+    assert status.review_label_count == 1
+    assert status.dataset_export_count == 1
+
+
+def test_demo_only_install_reports_no_genuine_dataset_coverage(
+    fresh_repository: ProductRepository,
+) -> None:
+    """`DatasetCoveragePanel.tsx` frames every field here as the user's own
+    reviewed-dataset export readiness ("Export-ready reviewed records",
+    "Reviewed species coverage") -- the seeded demo Source's already-
+    reviewed squirrel Visit must not count as if the user had reviewed
+    anything, and no species entry may show nonzero coverage from it."""
+
+    with fresh_repository.session_factory() as session:
+        coverage = fresh_repository._dataset_coverage_summary(session)
+
+    assert coverage.reviewed_record_count == 0
+    assert coverage.export_ready_count == 0
+    assert coverage.needs_review_count == 0
+    assert coverage.unknown_bird_count == 0
+    assert coverage.unknown_animal_count == 0
+    assert coverage.false_positive_count == 0
+    assert coverage.reviewed_species_count == 0
+    assert coverage.covered_target_species_count == 0
+    assert all(item.reviewed_record_count == 0 for item in coverage.species)
+
+
+def test_demo_only_install_reports_no_genuine_dataset_quality_issues(
+    fresh_repository: ProductRepository,
+) -> None:
+    """`DatasetQualityPanel.tsx` frames every field here as the user's own
+    export-cleanup signal ("Records needing cleanup before export") -- the
+    seeded demo Source's own needs-review bird guess must not appear as a
+    genuine QA issue."""
+
+    with fresh_repository.session_factory() as session:
+        quality = fresh_repository._dataset_quality_summary(session)
+
+    assert quality.issue_count == 0
+    assert quality.export_ready_count == 0
+    assert quality.needs_review_count == 0
+    assert quality.issues == []
+
+
+def test_demo_only_install_yard_map_shows_no_genuine_activity_on_the_demo_stream_tile(
+    fresh_repository: ProductRepository,
+) -> None:
+    """`YardMapPage.tsx` renders every Stream's tile identically, seeded or
+    real -- there is no demo filter at the frontend at all
+    (`YardMapActivitySummary` carries no `is_demo` field). The seeded demo
+    Stream's own fabricated needs-review bird Visit must not appear as a
+    clickable "N needs review" button, a fake "Latest"/"Confirmed" label,
+    or a fabricated preview photo. The seeded demo Events are fixed at
+    2026-01-15; pinning `now` just after that date proves the exclusion
+    itself, independent of today's real wall-clock date already aging that
+    fixed data out of "last_7_days" incidentally."""
+
+    from datetime import UTC, datetime
+
+    yard_map = fresh_repository.yard_map(
+        activity_range="last_7_days",
+        now=datetime(2026, 1, 15, 16, 0, tzinfo=UTC),
+    )
+    demo_stream = next(s for s in yard_map.streams if s.id == demo_data.STREAM_ID)
+
+    assert demo_stream.activity.needs_review_count == 0
+    assert demo_stream.activity.needs_review_visit_ids == []
+    assert demo_stream.activity.latest_visit_id is None
+    assert demo_stream.activity.latest_visit_at is None
+    assert demo_stream.activity.latest_confirmed_label is None
+    assert demo_stream.activity.latest_preview_url is None
+    assert demo_stream.activity.open_activity_session is False
+
+
+def test_analytics_and_dataset_summaries_count_only_real_activity_alongside_demo(
+    fresh_repository: ProductRepository,
+) -> None:
+    """`AnalyticsSummary`, `DatasetCoverageSummary`, and `LocalDataStatus`'s
+    reused fields must count exactly the real activity present, growing as
+    it grows, never inflated or masked by the seeded demo Source's own
+    fabricated Events/Visits alongside it. Uses a *reviewed* target-species
+    Visit (unlike `_add_real_needs_review_visit`) so the derived
+    `reviewed_species_count`/`covered_target_species_count` numerators are
+    exercised too, not just the headline counts."""
+
+    from datetime import UTC, datetime, timedelta
+
+    from mockingbird.storage.models import EventModel, VisitModel
+
+    stream_id, zone_id = _add_real_stream_and_zone(fresh_repository, suffix="analytics-1")
+    started_at = datetime.now(UTC) - timedelta(minutes=10)
+    with fresh_repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                EventModel(
+                    id="event-truth-consistency-reviewed-1", stream_id=stream_id,
+                    title="Real activity", event_type="observation_engine_candidate",
+                    started_at=started_at, ended_at=started_at + timedelta(seconds=5),
+                    primary_zone_id=zone_id, review_status="reviewed",
+                )
+            )
+            session.add(
+                VisitModel(
+                    id="visit-truth-consistency-reviewed-1", event_id="event-truth-consistency-reviewed-1",
+                    subject_label="bird", species_guess="northern_cardinal", confidence=0.9,
+                    reviewed_label="northern_cardinal", review_status="reviewed",
+                    zone_id=zone_id, is_superseded=False,
+                )
+            )
+
+    with fresh_repository.session_factory() as session:
+        analytics = fresh_repository._analytics_summary(session)
+        coverage = fresh_repository._dataset_coverage_summary(session)
+        local_data = fresh_repository._local_data_status(session)
+
+    assert analytics.event_count == 1
+    assert analytics.visit_count == 1
+    assert analytics.needs_review_count == 0
+    assert analytics.species_counts == {"northern_cardinal": 1}
+    assert analytics.species_label_ids == ["northern_cardinal"]
+
+    assert coverage.reviewed_record_count == 1
+    assert coverage.export_ready_count == 1
+    assert coverage.reviewed_species_count == 1
+    assert coverage.covered_target_species_count == 1
+
+    assert local_data.event_count == 1
+    assert local_data.visit_count == 1
+    assert local_data.needs_review_count == 0
+
+    # Grows correctly as more real activity is added -- never hardcoded.
+    _add_real_needs_review_visit(
+        fresh_repository, stream_id=stream_id, zone_id=zone_id,
+        event_id="event-truth-consistency-reviewed-2", visit_id="visit-truth-consistency-reviewed-2",
+        species_guess="blue_jay",
+    )
+    with fresh_repository.session_factory() as session:
+        analytics = fresh_repository._analytics_summary(session)
+    assert analytics.event_count == 2
+    assert analytics.visit_count == 2
+    assert analytics.needs_review_count == 1
+
+
+def test_dataset_coverage_excludes_a_reviewed_target_species_added_under_the_demo_stream(
+    fresh_repository: ProductRepository,
+) -> None:
+    """Proves the *derived* `covered_target_species_count`/`reviewed_
+    species_count` numerators exclude demo-sourced activity, not only the
+    headline counts (product-doctrine.md's own "0 real observations
+    alongside 3 species observed" contradiction) -- inserting a Visit
+    reviewed as a real target bird species directly under the seeded demo
+    Stream must not mark `northern_cardinal` as covered."""
+
+    from datetime import UTC, datetime, timedelta
+
+    from mockingbird.storage.models import EventModel, VisitModel
+
+    started_at = datetime.now(UTC) - timedelta(minutes=10)
+    with fresh_repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                EventModel(
+                    id="event-demo-extra-cardinal", stream_id=demo_data.STREAM_ID,
+                    title="Extra demo activity", event_type="bird_feeder_visit",
+                    started_at=started_at, ended_at=started_at + timedelta(seconds=5),
+                    primary_zone_id=demo_data.FEEDER_ZONE_ID, review_status="reviewed",
+                )
+            )
+            session.add(
+                VisitModel(
+                    id="visit-demo-extra-cardinal", event_id="event-demo-extra-cardinal",
+                    subject_label="bird", species_guess="northern_cardinal", confidence=0.9,
+                    reviewed_label="northern_cardinal", review_status="reviewed",
+                    zone_id=demo_data.FEEDER_ZONE_ID, is_superseded=False,
+                )
+            )
+
+    with fresh_repository.session_factory() as session:
+        coverage = fresh_repository._dataset_coverage_summary(session)
+
+    assert coverage.covered_target_species_count == 0
+    assert coverage.reviewed_species_count == 0
+    cardinal = next(item for item in coverage.species if item.label == "northern_cardinal")
+    assert cardinal.reviewed_record_count == 0
+
+
+def test_yard_map_counts_real_stream_activity_normally_alongside_an_untouched_demo_tile(
+    fresh_repository: ProductRepository,
+) -> None:
+    """A real Stream's own tile must show its genuine needs-review activity
+    exactly as before, unaffected by the seeded demo Stream sitting
+    alongside it on the same map."""
+
+    stream_id, zone_id = _add_real_stream_and_zone(fresh_repository, suffix="yard-map-1")
+    _add_real_needs_review_visit(
+        fresh_repository, stream_id=stream_id, zone_id=zone_id,
+        event_id="event-yard-map-real-1", visit_id="visit-yard-map-real-1",
+    )
+
+    yard_map = fresh_repository.yard_map(activity_range="last_7_days")
+    real_stream = next(s for s in yard_map.streams if s.id == stream_id)
+    demo_stream = next(s for s in yard_map.streams if s.id == demo_data.STREAM_ID)
+
+    assert real_stream.activity.needs_review_count == 1
+    assert real_stream.activity.needs_review_visit_ids == ["visit-yard-map-real-1"]
+    assert demo_stream.activity.needs_review_count == 0
+
+
+def test_repurposed_demo_source_counts_toward_analytics_and_dataset_summaries(
+    fresh_repository: ProductRepository,
+) -> None:
+    """`de_demo_seeded_source` performs the real product repurposing
+    mechanism (a real `SourceProviderConfigurationModel` row) -- once
+    applied, the seeded demo Source's own two pre-existing Visits must
+    count as genuine activity everywhere, exactly like `GET /api/review-
+    queue` and `_visible_review_queue_count` already established."""
+
+    de_demo_seeded_source(fresh_repository)
+
+    with fresh_repository.session_factory() as session:
+        analytics = fresh_repository._analytics_summary(session)
+        coverage = fresh_repository._dataset_coverage_summary(session)
+        local_data = fresh_repository._local_data_status(session)
+
+    assert analytics.event_count == 2
+    assert analytics.visit_count == 2
+    assert analytics.needs_review_count == 1
+    assert analytics.species_counts == {"squirrel": 1}
+
+    assert coverage.reviewed_record_count == 1
+    assert coverage.export_ready_count == 1
+
+    assert local_data.event_count == 2
+    assert local_data.visit_count == 2
+    assert local_data.needs_review_count == 1
+
+
+def test_repurposed_demo_source_counts_toward_yard_map_activity(
+    fresh_repository: ProductRepository,
+) -> None:
+    """The same repurposing contract, proven for the Yard Map's own,
+    differently-computed per-Stream `needs_review_count`."""
+
+    from datetime import UTC, datetime
+
+    de_demo_seeded_source(fresh_repository)
+
+    yard_map = fresh_repository.yard_map(
+        activity_range="last_7_days",
+        now=datetime(2026, 1, 15, 16, 0, tzinfo=UTC),
+    )
+    demo_stream = next(s for s in yard_map.streams if s.id == demo_data.STREAM_ID)
+
+    assert demo_stream.activity.needs_review_count == 1
+    assert demo_stream.activity.needs_review_visit_ids == ["visit-bird-feeder-001"]
+
+
+def test_dataset_quality_summary_does_not_crash_on_a_genuinely_eventless_real_event(
+    fresh_repository: ProductRepository,
+) -> None:
+    """Latent pre-existing bug, found while adding this milestone's own
+    demo-filtering to `_dataset_quality_summary`: unlike its siblings
+    `_analytics_summary`/`_dataset_coverage_summary`, it never defined
+    `event_ids_with_any_visits` (the ALL-time, including-superseded
+    complement to `event_ids_with_visits`), so any genuinely eventless
+    Event -- one that never had a Visit at all, e.g. "Motion ignored in
+    privacy zone" (product-doctrine.md's own Activity Session example) --
+    raised `NameError`, crashing `GET /api/dataset-quality/summary`. Not a
+    demo-truth defect (it would crash identically for real data), but
+    found directly inside, and fixed alongside, code this milestone was
+    already required to touch; disclosed in the closure report rather than
+    silently folded in."""
+
+    from datetime import UTC, datetime, timedelta
+
+    from mockingbird.storage.models import EventModel
+
+    stream_id, zone_id = _add_real_stream_and_zone(fresh_repository, suffix="eventless-1")
+    started_at = datetime.now(UTC) - timedelta(minutes=10)
+    with fresh_repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                EventModel(
+                    id="event-genuinely-eventless-1", stream_id=stream_id,
+                    title="Motion ignored", event_type="ignored_motion",
+                    started_at=started_at, ended_at=started_at + timedelta(seconds=2),
+                    primary_zone_id=zone_id, review_status="reviewed",
+                )
+            )
+
+    with fresh_repository.session_factory() as session:
+        quality = fresh_repository._dataset_quality_summary(session)
+
+    assert quality.issue_count == 1
+    assert quality.needs_review_count == 1
+    assert quality.issues[0].target_type == "event"
+    assert quality.issues[0].target_id == "event-genuinely-eventless-1"

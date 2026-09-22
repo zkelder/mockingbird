@@ -5,7 +5,7 @@ import pytest
 
 from mockingbird.api.main import app, configure_repository
 from mockingbird.repository.product_repository import ProductRepository
-from tests.conftest import LegacyAuthenticatedTestClient
+from tests.conftest import LegacyAuthenticatedTestClient, de_demo_seeded_source
 
 pytestmark = pytest.mark.anyio
 
@@ -20,6 +20,16 @@ def isolated_repository(tmp_path: Path) -> None:
         db_url=f"sqlite:///{tmp_path / 'mockingbird.sqlite3'}",
         media_root=tmp_path / "media",
     )
+    # Analytics & Local Data Truth Consistency v1: `_analytics_summary`
+    # (embedded in the review-label correction response as `analytics`)
+    # now excludes the seeded demo Source's own activity. Every test in
+    # this file that corrects `VISIT_ID` uses it purely as convenient
+    # plumbing to prove taxonomy normalization/freeform-label behavior via
+    # `species_counts` -- never demo-exclusion itself -- so repurpose it
+    # once, for the whole file, the same established mechanism Review
+    # Queue Count Truth Consistency v1 already used for the identical
+    # situation.
+    de_demo_seeded_source(repository)
     configure_repository(repository)
     yield
     configure_repository(None)

@@ -5,7 +5,7 @@ import pytest
 
 from mockingbird.api.main import app, configure_repository
 from mockingbird.repository.product_repository import ProductRepository
-from tests.conftest import LegacyAuthenticatedTestClient
+from tests.conftest import LegacyAuthenticatedTestClient, de_demo_seeded_source
 
 pytestmark = pytest.mark.anyio
 
@@ -20,6 +20,17 @@ def isolated_repository(tmp_path: Path) -> None:
         db_url=f"sqlite:///{tmp_path / 'mockingbird.sqlite3'}",
         media_root=tmp_path / "media",
     )
+    # Analytics & Local Data Truth Consistency v1: `_dataset_quality_
+    # summary` now excludes the seeded demo Source's own activity. Every
+    # test in this file builds its scenario on top of the seeded
+    # `visit-bird-feeder-001`/`stream-backyard-feeder` fixture data purely
+    # as convenient plumbing (dataset QA's own issue-detection behavior is
+    # what is actually under test here, never demo-exclusion itself --
+    # that is `tests/test_demo_source_exclusion.py`'s job) -- repurpose it
+    # once, for the whole file, the same established mechanism Review
+    # Queue Count Truth Consistency v1 already used for the identical
+    # situation.
+    de_demo_seeded_source(repository)
     configure_repository(repository)
     yield
     configure_repository(None)

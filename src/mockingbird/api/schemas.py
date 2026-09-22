@@ -4464,6 +4464,16 @@ class DatasetCoverageGap(BaseModel):
 
 
 class DatasetCoverageSummary(BaseModel):
+    # `DatasetCoveragePanel.tsx` frames every field here as the user's own
+    # reviewed-dataset export readiness ("Export-ready reviewed records",
+    # "Reviewed species coverage") -- `_dataset_coverage_summary` excludes
+    # the seeded demo Source's own activity throughout, including the
+    # derived `covered_target_species_count`/`reviewed_species_count`
+    # numerators and each `species` entry's own counts, not only the
+    # headline totals (Analytics & Local Data Truth Consistency v1).
+    # `target_species_count` is the one exception: it is the taxonomy's own
+    # target-species list size, not activity-derived, so it is unaffected
+    # by demo status either way.
     reviewed_record_count: int = Field(ge=0)
     export_ready_count: int = Field(ge=0)
     needs_review_count: int = Field(ge=0)
@@ -4497,6 +4507,11 @@ class DatasetQualityIssue(BaseModel):
 
 
 class DatasetQualitySummary(BaseModel):
+    # `DatasetQualityPanel.tsx` frames every field here as the user's own
+    # export-cleanup signal ("Records needing cleanup before export") --
+    # `_dataset_quality_summary` excludes the seeded demo Source's own
+    # activity from every count and from `issues` itself (Analytics &
+    # Local Data Truth Consistency v1).
     issue_count: int = Field(ge=0)
     high_count: int = Field(ge=0)
     medium_count: int = Field(ge=0)
@@ -4691,6 +4706,12 @@ class ClassifierManifestFileExportResponse(BaseModel):
 
 
 class AnalyticsSummary(BaseModel):
+    # Every count/breakdown below is genuine user-facing ecosystem/history
+    # truth (`AnalyticsPage.tsx`'s own "outdoor activity"/"animal visits"/
+    # "corrected bird truth" framing) -- `_analytics_summary` excludes the
+    # seeded demo Source's own activity from all of them (Analytics & Local
+    # Data Truth Consistency v1). A new field here inherits that contract;
+    # it must not silently reintroduce demo-inclusive product truth.
     event_count: int = Field(ge=0)
     visit_count: int = Field(ge=0)
     needs_review_count: int = Field(ge=0)
@@ -6606,6 +6627,18 @@ class ModelAdapterRunResult(BaseModel):
 
 
 class LocalDataStatus(BaseModel):
+    # Analytics & Local Data Truth Consistency v1's own contract: this page
+    # (`LocalDataPage.tsx`, "Local-first storage") mixes two field families.
+    # `event_count`/`visit_count`/`needs_review_count` are reused directly
+    # from `_analytics_summary` -- genuine ecosystem/history truth, demo
+    # -excluded there. Every other count below is a raw local-storage
+    # inventory total (`self._count(session, Model)`, unfiltered by design)
+    # -- "local source records"/"local import references" framing, not an
+    # ecosystem-history claim, and already honestly disclosed via
+    # `seed_data_present`. Keep new fields in the family their own framing
+    # actually belongs to; do not assume every field here must be demo
+    # -filtered, and do not silently make an inventory total look like an
+    # activity claim.
     database_url: str
     database_path: str | None = None
     using_default_database: bool
@@ -8028,6 +8061,14 @@ class YardMapZonePlacement(BaseModel):
 
 
 class YardMapActivitySummary(BaseModel):
+    # `YardMapPage.tsx` renders every Stream's tile identically, seeded or
+    # real, with no demo indicator of its own -- every field below that
+    # depends on Visit/Event activity (everything except the monitoring/
+    # health state, which honestly has no real camera to report on for a
+    # demo-sourced Stream either way) reads as "no activity yet" for a
+    # demo-sourced Stream rather than its fabricated content
+    # (`_yard_map_activity_summary`'s own `is_real_source` gate; Analytics
+    # & Local Data Truth Consistency v1).
     monitoring_desired_state: StreamMonitoringMode
     monitoring_actual_state: StreamRuntimeState
     camera_health_state: CameraHealthState = CameraHealthState.stopped
