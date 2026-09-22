@@ -748,6 +748,24 @@ longer Pre-Release Trust & Correctness Correction v1).
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
 
+**Staleness correction, 2026-09-22, by Review Queue Count Truth
+Consistency v1:** the 2026-09-21 note immediately below, and the stacked
+"Accepted HEAD" log beneath it, are both further superseded -- accepted
+HEAD has moved once since (`3feab6c` "Reconcile release-execution-
+state.md and publish the Native-Windows & Packaging Acceptance v1
+report"; see `## CURRENT PHASE`, above, and §3, below, for the complete
+delta). **Current facts, verified directly:** Accepted HEAD
+`3feab6c3e5bacf6ee45fb7f8067c5049d2813565`; schema `v59` unchanged;
+version `0.1.0`; latest accepted milestone Native-Windows & Packaging
+Acceptance v1 (two real native-Windows/GPU defects found and fixed --
+see §3); current authorized implementation milestone **Review Queue
+Count Truth Consistency v1**. Working tree confirmed clean except the
+seven preserved untracked detector files (§13, below), present and
+untouched; no active writer session found sharing this working tree
+(verified directly via this session's own peer-session inventory). This
+note does not re-derive or rewrite the note/history below, which remains
+an accurate historical record through its own last-updated point.
+
 **Staleness correction, 2026-09-21, by Native-Windows & Packaging
 Acceptance v1:** the 2026-09-12 note immediately below, and the stacked
 "Accepted HEAD" log beneath it, are both further superseded -- accepted
@@ -3709,6 +3727,197 @@ boundary to an actual product user (`docs/using-mockingbird.md`'s new
 exactly as open as stated.
 
 ## 3. Current authorized milestone
+
+**Accepted, 2026-09-22, by Review Queue Count Truth Consistency v1's own
+baseline reconciliation.** Native-Windows & Packaging Acceptance v1 (the
+entry immediately below) is now accepted: accepted HEAD
+`3feab6c3e5bacf6ee45fb7f8067c5049d2813565` ("Reconcile release-execution-
+state.md and publish the Native-Windows & Packaging Acceptance v1
+report"), the documentation-reconciliation commit immediately following
+that milestone's own `9f98955` fix commit -- no code changed between
+them. Validation state carried forward unchanged from that milestone's
+own record, below: two real defects found and fixed on real native-
+Windows/GPU hardware (a backup restore-plan file-lock bug; a demo-Source
+Review Queue/Dashboard leak), Tier 3 second run 6061 passed / 7 failed
+(all 7 independently re-confirmed pre-existing/environmental via `git
+stash` bisection, zero attributable to that milestone), schema unchanged
+(`v59`). **Not falsely closed:** that milestone's own one incomplete
+real-hardware proof -- a live, fresh Camera Node pairing proof against
+the shared reference Pi, blocked by that session's own auto-mode
+guardrail against remote writes to shared infrastructure, not a product
+defect -- remains genuinely open and is carried forward here as a
+still-open field-validation item, not marked done. It belongs with Lane
+G/Lane R's own existing Camera Node hardware-validation record (§6.G,
+§6.R) for whichever future session next has authorization to perform a
+live pairing-reset against that shared device; this reconciliation does
+not attempt it and does not reopen either lane's own `CLOSED` status on
+this basis, since both lanes' own closures were already earned on
+different, already-proven grounds (Lane G: Authenticated Camera Node
+Golden-Path Capture & Preview Acceptance v1's own fresh pairing proof;
+Lane R: the accepted true-latency budget). Verified starting baseline for
+this reconciliation exactly as expected: branch `main`; HEAD
+`3feab6c3e5bacf6ee45fb7f8067c5049d2813565`; schema `v59`; working tree
+clean except the seven preserved untracked detector files, confirmed
+present and untouched; of 199 peer sessions, every MockingBird-named
+session idle or offline, the sole "busy" peer session belonging to an
+unrelated project.
+
+**Review Queue Count Truth Consistency v1** -- directly authorized
+outside this file by the external (ChatGPT) global release sequencing,
+following acceptance of Native-Windows & Packaging Acceptance v1, above.
+A narrow release-correctness milestone, not a UI redesign: that
+milestone's own N.2 fix excluded the seeded demo Source's activity from
+`GET /api/review-queue`/`dashboard_summary`, but disclosed roughly a
+dozen sibling `review_queue_count` response fields (Manual Import,
+Folder Import, Model Adapters, Detection Proposals, and the core
+review/correction flow itself) still computing an unfiltered
+`len(_review_queue_items(...))`, surfaced to users as "N needs review"
+pills/toasts. Starting baseline verified exactly as expected before any
+edit: branch `main`; HEAD `3feab6c3e5bacf6ee45fb7f8067c5049d2813565`;
+schema `v59` unchanged; working tree clean except the seven preserved
+untracked detector files (§13, below), confirmed present and untouched;
+no active writer session found sharing this working tree (this session's
+own peer-session inventory, identical finding to the acceptance note
+above). This entry is updated in place once this milestone is
+implemented and validated, matching this file's own established
+convention.
+
+**2026-09-22 update (Review Queue Count Truth Consistency v1 executed):**
+a bounded repository search for every `review_queue_count` producer
+(`grep` across `src/`, cross-checked against every call site of
+`self._review_queue_items(session)`) found exactly eleven --
+`run_model_adapter`, `_run_local_image_detector_adapter`,
+`_run_megadetector_adapter`, `create_demo_detection_run`,
+`decide_detection_proposal`, `create_media_import`,
+`import_folder_media`, `_create_review_label_result_in_session`,
+`_review_correction_result_for_model`, `_visit_review_reopen_response`,
+`_fast_review_undo_response` -- confirming, not merely assuming, the
+prior milestone's own "roughly a dozen" estimate. **Canonical fix:** two
+new `ProductRepository` methods immediately after `_review_queue_items`
+itself -- `_visible_review_queue_items` (filters `is_demo_source`) and
+`_visible_review_queue_count` (its length) -- reused at all eleven sites
+and at `dashboard_summary`'s own pre-existing inline filter (removing
+that duplicate), while `_review_queue_items`/`review_queue_items()`
+itself is untouched, preserving the internal unfiltered contract
+`test_review_queue_product_mode.py` depends on. `GET /api/review-queue`'s
+own existing one-line filter in `api/main.py` was deliberately left as
+is (a different architectural layer, already correct, already tested;
+consolidating it was considered and declined to keep this milestone's
+blast radius bounded).
+
+Two closely-related but larger families were found during this search
+and deliberately **not** fixed, disclosed here rather than silently
+left: `YardMapActivitySummary.needs_review_count`
+(`YardMapPage.tsx`'s own per-camera "N needs review" button) is a raw
+per-stream SQL count with no `is_demo_source` awareness at all; and
+`AnalyticsSummary.needs_review_count` (`_analytics_summary`, embedded
+--but, checked directly, never actually read by the frontend-- in four
+of the eleven fixed response objects, and separately live via `GET
+/api/analytics/summary` feeding `AnalyticsPage.tsx`,
+`SpeciesCoverageCard.tsx`, and transitively `LocalDataStatus`/
+`DatasetCoverageSummary`/`DatasetQualitySummary` on `LocalDataPage.tsx`
+and their panels) is demo-inclusive throughout, alongside its own
+sibling `event_count`/`visit_count`/`species_counts` fields that would
+need the identical treatment to stay internally consistent if
+`needs_review_count` alone were changed. Both are real, user-visible
+instances of the same defect family, but neither is "immediately
+related" to `review_queue_count` in the bounded sense this milestone's
+own governing brief scoped (different computation, different response
+shapes, a materially larger blast radius across Analytics/Local
+Data/Dataset Coverage/Dataset Quality this milestone's own brief did not
+authorize) -- see this milestone's own report for the complete record
+and why a dedicated follow-up, not an opportunistic extension here, is
+the correct next step. `AdapterEvaluationSummary.unreviewed_count`
+(`ModelAdaptersPage.tsx`'s adapter-evaluation stats grid) was also
+found and is correctly left alone: a QA/evaluation metric about
+adapter-proposal outcome history, not a "go review this" call to
+action.
+
+Schema unchanged (`v59`); no detector/classifier/threshold/tracker/
+admission/Visit-assembly/truth-mutation change anywhere in this
+milestone -- confirmed both by design (the fix only ever changes which
+already-computed items are counted) and by full Tier 3 evidence, below.
+Working tree confirmed clean except the seven preserved untracked
+detector files, byte-identical (re-hashed) at this milestone's own start
+and close.
+
+**Validation.** Tier 1: 8 new focused tests added to the existing
+`tests/test_demo_source_exclusion.py` (18 total in that file, all
+passing), covering a demo-only queue (count 0), real activity alongside
+demo (count 1, then 2), a repurposed seeded demo Source (counts once
+repurposed, mirroring the already-established `_real_source_condition`
+contract), the core `POST /api/review-labels` correction response, Fast
+Review's undo response, Manual Import, Folder Import, and one combined
+test exercising Model Adapters/the Manual-Import-adjacent "demo
+proposal" action/Detection Proposals together against one shared real
+Visit (table-driven rather than three near-duplicate fixtures). The
+core-correction-flow test was independently proven RED against the
+unmodified `3feab6c` baseline (`assert 1 == 0`, the seeded demo Visit
+counted as outstanding real work) and GREEN after the fix, via `git
+stash` bisection. Tier 2: 275 passed / 0 failed across 20
+directly-adjacent files (review queue, dashboard demo exclusion, fast
+review, media/folder import, model adapter, detection interface,
+review identification, visit curation, and the broad `test_api.py`),
+explicitly including the demo-source contract tests from the prior two
+milestones. `ruff check` on both changed source files: `product_
+repository.py`'s own established 56-finding baseline confirmed
+byte-identical before/after via `git stash` bisection;
+`test_demo_source_exclusion.py`: 0 findings.
+
+**Tier 3 (full Core), run once against the fix: 6069 passed, 7 failed,
+4 skipped, 35 deselected, 11 xfailed (43m35s).** Six failures are
+byte-identical to the already-established pre-existing set (`test_
+doctor_camera_node_transport.py` x2, `test_environmental_context.py`,
+both `test_place_biodiversity_summary_repository.py` cases, `test_
+place_change_summary_repository.py`) recorded across multiple prior
+milestones. The seventh, `test_everyday_discovery_ux_closure.py::test_
+today_dashboard_shows_only_corrected_truth`, was not previously on
+record -- rather than assume flakiness, this milestone ran full Tier 3 a
+**second time**, from a `git stash`-isolated unmodified `3feab6c`
+baseline: **6062 passed, 6 failed, 4 skipped, 35 deselected, 11 xfailed
+(41m9s)** -- the identical six pre-existing failures, and the seventh
+test did not fail on this run either. This test's own file was last
+touched two commits before this milestone's own starting baseline,
+untouched by this milestone; it passed cleanly both in isolation (1/1)
+and at its own file's level (19/19) on the fixed tree. **Zero Core
+failures attributable to this milestone** -- the seventh is a genuine,
+newly-observed, full-suite-only intermittent flake in an unrelated
+subsystem (consistent with this repository's own already-documented
+class of load/timing-sensitive full-suite flakiness), not a regression,
+proven by a full second baseline run rather than asserted.
+
+**Targeted e2e.** One new spec, `review-queue-count-demo-exclusion.
+spec.ts`: a dedicated real (non-demo) Source/Stream via `POST
+/api/sources` (the seeded demo Stream is always `legacy_activity` by
+design and would never exercise this fix, per `review-queue-fast-
+review-keyboard.spec.ts`'s own established reasoning), one real import,
+one real "False positive" correction through the actual rendered UI,
+asserting the real toast text reads "0 items still need review." --
+independently proven RED (announced "1", the seeded demo Visit's own
+count) against the unmodified baseline and GREEN after the fix, both at
+the real-browser level, via the identical `git stash` bisection
+discipline used for Tier 1. `review-queue-fast-review-keyboard.spec.ts`
+re-run standalone: passed, no regression. Two other existing specs
+(`reviewed-product-loop.spec.ts`, `review-queue-bulk-correct-stale-
+write.spec.ts`) were found already failing when run standalone against
+this exact starting baseline -- independently confirmed via the same
+bisection to fail byte-identically with or without this milestone's own
+fix (a stale UI-element expectation in each, unrelated to
+`review_queue_count`), disclosed here as pre-existing e2e drift this
+milestone did not cause and does not fix. `tsc --noEmit` on the web
+project: clean.
+
+Second commit pending, code+tests only (matching this file's own
+established convention of keeping the doc-reconciliation commit
+separate). Not pushed.
+
+**Does not** redesign the Review Queue, Dashboard, or imports; change
+any model/detector/threshold; implement pagination/performance work;
+alter Local Only/Host-Place terminology; or begin the next global phase
+(UI/UX & First-Run Adoption v1) -- all explicitly out of scope and
+untouched. **Does not** push. **Does not** self-authorize a subsequent
+milestone. **Authorization remains this milestone's own** pending the
+owner/external (ChatGPT) acceptance review of this closure.
 
 **Native-Windows & Packaging Acceptance v1** -- directly authorized outside
 this file by the external (ChatGPT) global release sequencing, following
