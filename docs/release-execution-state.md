@@ -748,6 +748,37 @@ longer Pre-Release Trust & Correctness Correction v1).
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
 
+**Staleness correction, 2026-09-22, by Analytics & Local Data Truth
+Consistency v1:** the note immediately below, and the stacked "Accepted
+HEAD" log beneath it, are both further superseded -- accepted HEAD has
+moved once since (`6740f71` "Analytics & Local Data Truth Consistency v1:
+exclude demo-source activity from Analytics, Local Data, Dataset
+Coverage/Quality, and Yard Map"; see `## CURRENT PHASE`, above, and §3,
+below, for the complete delta -- this reconciliation's own commit, which
+records and publishes this milestone's closure, follows immediately
+after). **Current facts, verified directly:** Accepted HEAD
+`993d3ef094a5f9f0d7ba2941b25476f1172b9c8b` (unchanged from the note
+below -- the acceptance-of-the-immediately-prior-milestone step this
+reconciliation itself performs, per §3, has not yet been confirmed by any
+*later* milestone, matching this file's own established convention);
+schema `v59` unchanged; version `0.1.0`; implementation commit `6740f71`
+executes and fully validates **Analytics & Local Data Truth Consistency
+v1** (excludes the seeded demo Source's own activity from `Analytics
+Summary`/`LocalDataStatus`/`DatasetCoverageSummary`/`DatasetQualitySummary`/
+`YardMapActivitySummary` -- see §3); current authorized implementation
+milestone `NONE`, pending external (ChatGPT) acceptance of this closure.
+Working tree confirmed clean except the seven preserved untracked
+detector files (§13, below) and `uv.lock` (pre-existing untracked, not
+one of the seven, not touched), present and untouched. **Not a clean
+single-writer session throughout -- disclosed here rather than only in
+the milestone's own report:** a second Claude session sharing this exact
+milestone and working tree was active for part of this reconciliation's
+own Tier 3 window; see the closure report's own §R for the complete,
+unredacted account. No commit, push, or destructive operation occurred
+from either session before this reconciliation's own commits. This note
+does not re-derive or rewrite the note/history below, which remains an
+accurate historical record through its own last-updated point.
+
 **Staleness correction, 2026-09-22, by Review Queue Count Truth
 Consistency v1:** the 2026-09-21 note immediately below, and the stacked
 "Accepted HEAD" log beneath it, are both further superseded -- accepted
@@ -3728,9 +3759,162 @@ exactly as open as stated.
 
 ## 3. Current authorized milestone
 
-**Accepted, 2026-09-22, by Review Queue Count Truth Consistency v1's own
-baseline reconciliation.** Native-Windows & Packaging Acceptance v1 (the
-entry immediately below) is now accepted: accepted HEAD
+**Accepted, 2026-09-22, by Analytics & Local Data Truth Consistency v1's
+own baseline reconciliation.** Review Queue Count Truth Consistency v1
+(the entry immediately below) is now accepted: accepted HEAD
+`993d3ef094a5f9f0d7ba2941b25476f1172b9c8b` ("Add Review Queue Count Truth
+Consistency v1 closure report, link from release-execution-state.md").
+Validation state carried forward unchanged from that milestone's own
+record, below: the canonical `_visible_review_queue_items`/`_visible_
+review_queue_count` fix, reused at all eleven `review_queue_count` call
+sites; Tier 3 (full Core), run once against the fix: 6069 passed, 7
+failed (6 pre-existing, 1 newly-observed full-suite-only intermittent
+flake, reconfirmed clean via a second full run); schema unchanged (`v59`).
+That milestone's own two disclosed-but-deliberately-out-of-scope sibling
+count families -- `AnalyticsSummary.needs_review_count` and `YardMap
+ActivitySummary.needs_review_count`, both demo-inclusive throughout, along
+with every field family sharing their own producer functions -- are
+exactly what this reconciliation's own milestone, below, closes; not
+carried forward as still-open. **Not falsely closed:** Native-Windows &
+Packaging Acceptance v1's own one incomplete real-hardware proof -- a
+live, fresh Camera Node pairing proof against the shared reference Pi,
+blocked by that session's own auto-mode guardrail against remote writes
+to shared infrastructure, not a product defect -- remains genuinely open
+and is carried forward here unchanged, once again, as a still-open
+field-validation item; it belongs with Lane G/Lane R's own existing
+Camera Node hardware-validation record (§6.G, §6.R) for whichever future
+session next has authorization to perform a live pairing-reset against
+that shared device. Verified starting baseline for this reconciliation
+exactly as expected: branch `main`; HEAD `993d3ef`; schema `v59`; working
+tree clean except the seven preserved untracked detector files, confirmed
+present and untouched, plus `uv.lock` (pre-existing untracked, not one of
+the seven, not touched). **Disclosed departure from this file's own §13
+"never allow multiple Claude writer sessions in the same working tree"
+rule:** a second Claude Desktop session (`Analytics & Local Data Truth
+Consistency`, no "v1") sharing this exact milestone and working tree was
+found active partway through this reconciliation's own Tier 3 work, after
+an initial peer-session check had found every session idle. Not
+prevented, only detected after the fact and then handled: both sessions'
+edits were independently verified (not merely accepted) before being
+relied on, and both sessions coordinated live via cross-session messaging
+for the remainder of the work, including one near-collision (both
+independently started a full Core run within the same minute; caught
+within about a minute via direct process inspection and resolved by
+stopping this session's own redundant run). HEAD never moved during any
+of this; no commit, push, or destructive operation occurred from either
+session before this reconciliation's own commits. Full account in the
+closure report's own §R.
+
+**Analytics & Local Data Truth Consistency v1** -- directly authorized
+outside this file by the external (ChatGPT) global release sequencing,
+following acceptance of Review Queue Count Truth Consistency v1, above.
+A narrow release-correctness milestone, not a UI redesign: excludes the
+seeded demo Source's own activity from `AnalyticsSummary`, `LocalData
+Status` (via its existing reuse of `AnalyticsSummary`), `DatasetCoverage
+Summary`, `DatasetQualitySummary`, and `YardMapActivitySummary` --
+exactly the field families Review Queue Count Truth Consistency v1's own
+report disclosed and deliberately left out of its own bounded scope.
+Starting baseline verified exactly as expected before any edit: branch
+`main`; HEAD `993d3ef`; schema `v59` unchanged; working tree clean except
+the seven preserved untracked detector files (§13, below) and `uv.lock`,
+confirmed present and untouched.
+
+**2026-09-22 update (Analytics & Local Data Truth Consistency v1
+executed):** see
+[analytics-local-data-truth-consistency-v1-report.md](analytics-local-data-truth-consistency-v1-report.md)
+for the complete record, summarized here. One shared seam,
+`_real_stream_ids(session)`, reuses the canonical `_real_source_
+condition()` the Review Queue family already established; `_analytics_
+summary`, `_dataset_coverage_summary`, `_dataset_quality_summary`, and
+`_yard_map_activity_summary`/`yard_map` (new `is_real_source` parameter)
+all now filter through it -- one seam for every Python-side aggregation
+this defect family touches, not ad hoc `provider_key != "demo"` checks
+per call site. `LocalDataStatus`'s own raw storage-inventory fields
+(`source_count`, `stream_count`, `zone_count`, `media_asset_count`,
+`detection_run_count`, `detection_proposal_count`, `motion_evidence_
+count`, `review_label_count`, `dataset_export_count`) are deliberately
+left demo-inclusive -- local-storage diagnostics ("local source records"/
+"local import references"), not ecosystem-history truth, already honestly
+disclosed via `seed_data_present`, matching the same Category-C
+determination this file's own history already applied to `AdapterEvaluation
+Summary.unreviewed_count`. `target_species_count` (taxonomy list size, not
+activity-derived) and Yard Map's own monitoring/health fields are
+likewise unaffected either way, correctly. Incidental fix, disclosed
+rather than folded in silently: `_dataset_quality_summary` referenced
+`event_ids_with_any_visits` without ever defining it (unlike its two
+siblings), crashing `GET /api/dataset-quality/summary` on any genuinely
+eventless real Event -- fixed to match the sibling functions' own
+established shape.
+
+**Validation.** Tier 1: 11 new tests in `tests/test_demo_source_
+exclusion.py` (29 total, all passing) -- RED against the unmodified
+baseline (8 of 11 failed) and GREEN after the fix, via `git stash`
+bisection. Tier 2: 30 directly-adjacent test files, 419 passed twice;
+9 files needed fixture-level corrections where they used the seeded demo
+Source as convenient plumbing rather than testing demo-exclusion itself
+(`test_api.py`, `test_persistence.py`, `test_dataset_coverage.py`,
+`test_dataset_quality.py`, `test_model_readiness.py`, `test_yard_map.py`
+in the original sweep; `test_taxonomy.py`/`test_source_provider_smoke_
+flows.py` found only by Tier 3, below) -- each reviewed individually, no
+assertion weakened, only repurposed via the established `de_demo_seeded_
+source` mechanism or corrected to the newly-correct expected value.
+`ruff check`: `product_repository.py`'s established 56-finding baseline
+is now 55 (the incidental `F821` fix); every other changed file clean or
+byte-identical to its own pre-existing baseline.
+
+**Tier 3 (full Core).** First run: 6079 passed, 8 failed -- 4 matched the
+established pre-existing set (`test_doctor_camera_node_transport.py` x2,
+`test_environmental_context.py`, `test_place_change_summary_repository.py`;
+`test_place_biodiversity_summary_repository.py`'s own pair did not
+reproduce, consistent with its long-documented flakiness), 4 were new
+(`test_source_provider_smoke_flows.py`/`test_taxonomy.py`, two files never
+reached by Tier 2's own sweep -- exactly the case Tier 3 exists for),
+root-caused and fixed as fixture-level corrections identical in kind to
+the nine above, independently re-verified (including a direct full-
+traceback reproduction proving the one `KeyError` is a test assertion
+artifact, not a server-side defect) rather than accepted on report alone.
+Second, confirming run from the fully-fixed tree: **4 failed, 6083
+passed, 4 skipped, 35 deselected, 11 xfailed (42m38s)** -- the identical
+established pre-existing set, independently re-confirmed via `git stash`
+bisection against unmodified HEAD. **Zero Core failures attributable to
+this milestone.**
+
+**Targeted e2e.** `web/e2e/analytics-local-data-truth-consistency.spec.ts`
+proves a real correction moves `/analytics` and `/local-data`'s real,
+rendered counts by exactly the genuine amount and surfaces the corrected
+species, both pages, through the real UI -- deliberately delta-based
+rather than a hard "reads zero" (this suite's own shared-instance
+constraint, disclosed in the spec's own header). The demo-only-install
+"reads exactly zero" contract itself is Tier 1's own claim, proven there
+with true fixture isolation. Found and fixed three pre-existing
+Playwright strict-mode violations in the untracked spec file itself (not
+application code) before it would pass at all -- full account, including
+why the fixed spec legitimately passes both before and after this
+milestone's own backend fix (proof of its own real, but narrower, scope;
+not a failed RED proof), in the closure report's own §O. `tsc --noEmit`:
+clean.
+
+No schema change (`v59`, unchanged); no detector/classifier/threshold/
+tracker/admission/Visit-assembly/truth-mutation change anywhere in this
+milestone. Working tree confirmed clean except the seven preserved
+untracked detector files and `uv.lock`, byte-identical (re-hashed) at this
+session's own start and close. Implementation commit `6740f71`; this
+reconciliation's own commit follows. Not pushed.
+
+**Does not** redesign Analytics, Local Data, Dataset Coverage/Quality, or
+Yard Map; change any model/detector/threshold; touch Place Biodiversity/
+Change/Habitat summaries (bounded scope, per the governing brief -- an
+analogous gap there is genuinely unknown, not assumed clean); or begin
+the next global phase (UI/UX & First-Run Adoption v1) -- all explicitly
+out of scope and untouched. **Does not** push. **Does not** self-authorize
+a subsequent milestone. **Authorization remains this milestone's own**
+pending the owner/external (ChatGPT) acceptance review of this closure.
+
+**Native-Windows & Packaging Acceptance v1 [reference retained below for
+its own still-open Camera Node pairing item, accepted above]** -- directly
+authorized outside this file by the external (ChatGPT) global release
+sequencing, following acceptance of Pre-Release Trust & Correctness
+Correction v1 (HEAD
 `3feab6c3e5bacf6ee45fb7f8067c5049d2813565` ("Reconcile release-execution-
 state.md and publish the Native-Windows & Packaging Acceptance v1
 report"), the documentation-reconciliation commit immediately following
