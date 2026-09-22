@@ -743,10 +743,40 @@ See §3, below, for this milestone's own record once implemented and
 validated. **Authorization: Native-Windows & Packaging Acceptance v1** (no
 longer Pre-Release Trust & Correctness Correction v1).
 
+**2026-09-22 update (Analytics & Local Data Truth Consistency v1
+accepted; UI/UX & First-Run Adoption v1 authorized):** the external
+(ChatGPT) global release sequencing accepted Analytics & Local Data Truth
+Consistency v1's own closure entry (§3, below). Accepted HEAD
+`456277f633df0a1e51821bd00ad8260c42c40244` ("Reconcile release-execution-
+state.md and publish the Analytics & Local Data Truth Consistency v1
+report"). Directly authorizes the next milestone: **UI/UX & First-Run
+Adoption v1** -- the comprehensive pre-release product-experience
+milestone (Stage A: a finite, evidence-backed UI/UX defect inventory from
+the running product; Stage B: fix every P0/P1 and bounded P2 item it
+finds). See §3, below, for this milestone's own record once implemented
+and validated. **Authorization: UI/UX & First-Run Adoption v1** (no longer
+NONE).
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
+
+**Staleness correction, 2026-09-22, by UI/UX & First-Run Adoption v1:**
+the note immediately below is further superseded. **Current facts,
+verified directly:** Accepted HEAD
+`456277f633df0a1e51821bd00ad8260c42c40244`; schema `v59` unchanged;
+version `0.1.0`; latest accepted milestone **Analytics & Local Data Truth
+Consistency v1**; current authorized implementation milestone **UI/UX &
+First-Run Adoption v1**. Working tree confirmed clean except the seven
+preserved untracked detector files (§13, below) and `uv.lock`, present and
+untouched (re-hashed at session start). Writer safety: every peer
+MockingBird session found idle/offline and every recent working-tree
+mtime predates the accepted HEAD commit; this session recorded its own
+single-writer claim in an untracked `.git/MOCKINGBIRD_ACTIVE_WRITER`
+marker (inside `.git/`, so never part of the working tree) and re-checks
+peers before each commit boundary. This note does not re-derive or
+rewrite the note/history below.
 
 **Staleness correction, 2026-09-22, by Analytics & Local Data Truth
 Consistency v1:** the note immediately below, and the stacked "Accepted
@@ -3758,6 +3788,40 @@ boundary to an actual product user (`docs/using-mockingbird.md`'s new
 exactly as open as stated.
 
 ## 3. Current authorized milestone
+
+**Accepted, 2026-09-22, by UI/UX & First-Run Adoption v1's own
+baseline reconciliation.** Analytics & Local Data Truth Consistency v1
+(the entry immediately below) is now accepted: accepted HEAD
+`456277f633df0a1e51821bd00ad8260c42c40244`. Validation state carried
+forward unchanged from that milestone's own record, below: Tier 1 11 new
+tests (`tests/test_demo_source_exclusion.py`, 29 total) RED-then-GREEN;
+Tier 2 419 passed twice; Tier 3 (full Core) confirming run 4 failed /
+6083 passed / 4 skipped / 35 deselected / 11 xfailed, all 4 the
+established pre-existing set; targeted e2e and `tsc --noEmit` clean;
+schema unchanged (`v59`). **Carried forward, not falsely closed:** (a)
+Native-Windows & Packaging Acceptance v1's live fresh Camera Node pairing
+proof against the shared reference Pi (Lane G/Lane R field-validation
+item, unchanged); (b) that milestone's own explicitly-disclosed
+out-of-scope gap -- Place Biodiversity/Change/Habitat summaries were
+never checked for the same demo-source leak -- which this milestone's own
+Stage A audit, below, reproduces directly on a fresh install and records
+in its own entry. Verified starting baseline exactly as expected: branch
+`main`; HEAD `456277f`; schema `v59`; working tree clean except the seven
+preserved untracked detector files and `uv.lock`.
+
+**UI/UX & First-Run Adoption v1** -- directly authorized outside this
+file by the external (ChatGPT) global release sequencing, following
+acceptance of Analytics & Local Data Truth Consistency v1, above. The
+comprehensive pre-release product-experience milestone: Stage A, a
+finite, evidence-backed UI/UX defect inventory built from the running
+product (fresh and populated instances, desktop and narrow widths), not
+source review alone; Stage B, fix every P0/P1 item and bounded, low-risk
+P2 items. Explicitly out of scope: detector/model selection, MDv5a
+threshold, BioCLIP, SpeciesNet, BirdNET redesign, new wildlife
+capability, native mobile, multi-site, LTE/solar, custom hardware,
+storage/database architecture, broad performance work, Gate G, push. See
+[ui-ux-first-run-adoption-v1-report.md](ui-ux-first-run-adoption-v1-report.md)
+for the complete record once implemented and validated.
 
 **Accepted, 2026-09-22, by Analytics & Local Data Truth Consistency v1's
 own baseline reconciliation.** Review Queue Count Truth Consistency v1
