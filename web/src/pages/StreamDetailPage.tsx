@@ -2499,7 +2499,7 @@ export function StreamDetailPage({
           {/* Camera / Source Experience & First-Hour Setup Closure v1: this
               was previously only reachable when the camera already needed
               attention (see ObservationControlPanel's own conditional link
-              below) -- a healthy camera's own detail page had no visible way
+              below) — a healthy camera's own detail page had no visible way
               back to rename/reconfigure/credential-update at all; the user
               had to return to Cameras/Dashboard first. */}
           <button className="secondary-action" onClick={onOpenCameraSetup}>
@@ -4500,7 +4500,7 @@ export function StreamDetailPage({
                   </div>
                 ) : null}
                 {/* Whole-Product Polish v1: this compact preview widget (see
-                    "queue-mini" -- distinct from the full Review Queue page
+                    "queue-mini" — distinct from the full Review Queue page
                     the button below opens) used to render every matching
                     item with no cap; a Stream with a large backlog (171 in
                     hands-on testing) made this one small side panel taller

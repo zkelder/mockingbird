@@ -778,7 +778,7 @@ function RealModelSmokeCheck({
 
       <div className="detail-actions">
         <button className="secondary-action" onClick={onOpenStreams} type="button">
-          Cameras / Streams
+          Cameras
         </button>
         <button className="secondary-action" onClick={onOpenImport} type="button">
           Import image

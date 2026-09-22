@@ -83,7 +83,7 @@ async function mockBiodiversitySummary(page: Page, overrides: Record<string, unk
 test("a brand-new Place shows an honest empty state, not a bare zero", async ({ page }) => {
   await completeSetup(page);
   await mockBiodiversitySummary(page, {
-    warnings: ["No monitoring history recorded yet -- biodiversity facts here will fill in once a Stream has been observing."],
+    warnings: ["No camera has spent time observing yet — what lives here fills in once one has been watching for a while."],
   });
 
   await page.goto("/");

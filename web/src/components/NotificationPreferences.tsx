@@ -147,7 +147,7 @@ export function NotificationPreferences() {
               <br />
               <span className="meta-text">
                 Pause a live browser interruption during these hours, in your own device's local time. Everything
-                still appears in the Attention Center and any digest -- quiet hours affect delivery only.
+                still appears in the Attention Center and any digest — quiet hours affect delivery only.
               </span>
             </span>
             <input
@@ -184,7 +184,7 @@ export function NotificationPreferences() {
               <strong>Browser notifications</strong>
               <br />
               <span className="meta-text">
-                A live interruption on this device while MockingBird's tab is open (or backgrounded, not closed) --
+                A live interruption on this device while MockingBird's tab is open (or backgrounded, not closed) —
                 only for a sustained camera/storage problem, never for ordinary wildlife activity. This never leaves
                 your device: no cloud or push service is involved.
               </span>
@@ -192,7 +192,7 @@ export function NotificationPreferences() {
             {permission === "unsupported" ? (
               <StatusPill label="Not supported in this browser" tone="quiet" />
             ) : permission === "denied" ? (
-              <StatusPill label="Blocked -- change this in your browser's site settings" tone="review" />
+              <StatusPill label="Blocked — change this in your browser's site settings" tone="review" />
             ) : permission === "granted" ? (
               <label className="data-row">
                 <span>Enabled</span>

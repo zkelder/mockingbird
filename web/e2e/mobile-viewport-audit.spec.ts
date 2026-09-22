@@ -220,9 +220,9 @@ test("Place Story stays free of horizontal overflow at phone width", async ({ pa
   await page.screenshot({ path: screenshotPath("place-story"), fullPage: true });
 });
 
-test("Cameras / Streams list stays free of horizontal overflow at phone width", async ({ page }) => {
+test("Cameras list stays free of horizontal overflow at phone width", async ({ page }) => {
   await page.goto("/cameras");
-  await expect(page.getByRole("heading", { name: "Cameras / Streams" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Cameras", exact: true })).toBeVisible();
   // The pre-existing demo Stream's own card heading is real but sits
   // inside a collapsed-by-default disclosure on this page (confirmed via
   // Playwright's own "hidden" accessibility-tree report, not a timing
@@ -231,7 +231,7 @@ test("Cameras / Streams list stays free of horizontal overflow at phone width", 
   // audit's. The page heading above plus the overflow/screenshot below
   // are this test's actual point.
 
-  await assertNoHorizontalOverflow(page, "Cameras / Streams list (/cameras)");
+  await assertNoHorizontalOverflow(page, "Cameras list (/cameras)");
   await page.screenshot({ path: screenshotPath("cameras"), fullPage: true });
 });
 

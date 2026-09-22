@@ -796,7 +796,7 @@ export function VisitDetailPage({
     <div className="page-stack">
       <div className="stream-detail-heading">
         <div>
-          <span className="page-eyebrow">Visit case file</span>
+          <span className="page-eyebrow">One visit</span>
           <StatusPill
             label={formatLabel(detail.visit.review_status)}
             tone={detail.visit.review_status === "needs_review" ? "review" : "good"}
@@ -831,7 +831,7 @@ export function VisitDetailPage({
         subject-visit-assembly-review-v1.md): a reviewer usually lands on a
         Visit directly (Review Queue, Bird Log), not via its Event, so this
         is the one place that needs to surface "this Visit is one of
-        several subjects from the same encounter" -- empty, and therefore
+        several subjects from the same encounter" — empty, and therefore
         invisible, for the ordinary single-subject case. Each sibling
         remains its own independently reviewable Visit; this banner is
         navigation/context only, never a shared correction surface.
@@ -866,9 +866,9 @@ export function VisitDetailPage({
         Multimodal Observation & Soundscape v1 (see docs/multimodal-
         observation-soundscape-v1-contract.md): a durable, additive link to
         an opposite-modality Visit the association engine judged temporally
-        related -- empty, and therefore invisible, for the ordinary single-
+        related — empty, and therefore invisible, for the ordinary single-
         modality case. Plain wording only ("Also heard/seen nearby",
-        "Evidence agrees/differs") -- never "BioCLIP"/"BirdNET"/raw scores.
+        "Evidence agrees/differs") — never "BioCLIP"/"BirdNET"/raw scores.
         Each associated Visit remains its own independently reviewable
         Visit; this panel is navigation/context only, never a shared
         correction surface, matching the sibling-Visits panel above exactly.
@@ -910,7 +910,7 @@ export function VisitDetailPage({
                 <p>
                   {association.tier === "associated"
                     ? "Likely the same encounter."
-                    : "Possibly related -- not confirmed as the same encounter."}
+                    : "Possibly related — not confirmed as the same encounter."}
                 </p>
                 {multimodalSentence ? <p>{multimodalSentence}</p> : null}
                 <div className="detail-actions">
@@ -930,7 +930,7 @@ export function VisitDetailPage({
       {/*
         Camera / Source + Multi-Camera Maturity v1, Phase I: a durable,
         additive link to a same-encounter (or possibly-same-encounter) Visit
-        on a *different* camera -- empty, and therefore invisible, for the
+        on a *different* camera — empty, and therefore invisible, for the
         ordinary single-camera case. Mirrors the multimodal panel above
         exactly (plain wording, navigation/context only, never a shared
         correction surface) with one addition: which other camera/Area, since
@@ -959,7 +959,7 @@ export function VisitDetailPage({
                 <p>
                   {association.tier === "associated"
                     ? "Likely the same encounter, also captured on another camera."
-                    : "Possibly related to activity on another camera -- not confirmed as the same encounter."}
+                    : "Possibly related to activity on another camera — not confirmed as the same encounter."}
                 </p>
                 <div className="detail-actions">
                   <button
@@ -982,14 +982,14 @@ export function VisitDetailPage({
         Primary evidence hero: the one place on this page that always shows
         the actual saved image, for every Visit provenance. The panels below
         (high-resolution crop, promoted evidence context, attached media)
-        each only render for one specific creation path -- legacy manual-crop
+        each only render for one specific creation path — legacy manual-crop
         Visits, motion_evidence promotion, or a resolvable representative_
-        media_path -- and a Stage 7 Observation Engine candidate Visit
+        media_path — and a Stage 7 Observation Engine candidate Visit
         (event_type "observation_engine_candidate", evidence carried only
         through visit_evidence_links/evidence_frames) matches none of them.
         Before this section existed, opening one of those Visits rendered no
         image anywhere on the page even though real evidence bytes were
-        already saved and already served correctly by the backend -- the
+        already saved and already served correctly by the backend — the
         real defect this section fixes. `evidence_frames` (falling back to
         `media_asset` for older single-frame Visits) is the one source that
         is populated for every provenance; an explicit "Evidence unavailable"
@@ -1013,15 +1013,30 @@ export function VisitDetailPage({
           <span>
             {detail.stream.name}
             {detail.primary_zone
-              ? ` · ${detail.primary_zone.name} (${formatLabel(detail.primary_zone.zone_type)})`
+              ? ` · ${detail.primary_zone.name}${
+                  formatLabel(detail.primary_zone.zone_type).toLowerCase() ===
+                  detail.primary_zone.name.toLowerCase()
+                    ? ""
+                    : ` (${formatLabel(detail.primary_zone.zone_type)})`
+                }`
               : ""}
           </span>
+          {/* UI/UX & First-Run Adoption v1: this line showed a reviewed label
+              and a model guess identically, with no way to tell them apart. */}
           <span>
-            {detail.visit.reviewed_label
-              ? displayTaxonomyLabel(detail.visit.reviewed_label, taxonomyLabels)
-              : detail.visit.species_guess
-                ? displayTaxonomyLabel(detail.visit.species_guess, taxonomyLabels)
-                : "Unknown"}
+            {detail.visit.reviewed_label ? (
+              <>
+                <strong>{displayTaxonomyLabel(detail.visit.reviewed_label, taxonomyLabels)}</strong>
+                <EvidenceBadge label="You confirmed this" tone="truth" />
+              </>
+            ) : detail.visit.species_guess ? (
+              <>
+                <span>Likely {displayTaxonomyLabel(detail.visit.species_guess, taxonomyLabels)}</span>
+                <EvidenceBadge label="MockingBird's guess" tone="evidence" />
+              </>
+            ) : (
+              "Not identified yet"
+            )}
           </span>
         </div>
         {detail.evidence_frames.length > 0 ? (
@@ -1052,7 +1067,7 @@ export function VisitDetailPage({
           {/* Everyday Product / Discovery UX Closure v1: this used to render a
               second, independent VisitEvidenceSequence over the identical
               evidence_frames the "Visit evidence" section above already
-              shows -- two separate zoom/pan/selected-frame states for the
+              shows — two separate zoom/pan/selected-frame states for the
               same photo could visibly diverge as a reviewer interacted with
               one and not the other. The crop editor below is self-contained
               (its own image + drag handles), so the duplicate viewer added
@@ -1237,8 +1252,13 @@ export function VisitDetailPage({
           <span className="meta-text">Subject</span>
           <strong>{displayTaxonomyLabel(detail.visit.subject_label, taxonomyLabels)}</strong>
           <TaxonomyBadge label={subjectTaxonomy} value={detail.visit.subject_label} />
+          {/* UI/UX & First-Run Adoption v1: this bare percentage sat beside
+              a second, different percentage (detector evidence) with neither
+              saying what it measured. */}
           {detail.visit.confidence ? (
-            <span className="meta-text">{Math.round(detail.visit.confidence * 100)}% confidence</span>
+            <span className="meta-text">
+              How sure the detector was it saw an animal: {Math.round(detail.visit.confidence * 100)}%
+            </span>
           ) : null}
         </div>
         <div className="panel case-summary-card">
@@ -1265,7 +1285,12 @@ export function VisitDetailPage({
           </button>
           <span className="meta-text">
             {detail.primary_zone
-              ? `${detail.primary_zone.name} (${formatLabel(detail.primary_zone.zone_type)})`
+              ? `${detail.primary_zone.name}${
+                  formatLabel(detail.primary_zone.zone_type).toLowerCase() ===
+                  detail.primary_zone.name.toLowerCase()
+                    ? ""
+                    : ` (${formatLabel(detail.primary_zone.zone_type)})`
+                }`
               : "Unzoned"}
           </span>
         </div>
@@ -1283,7 +1308,7 @@ export function VisitDetailPage({
           </div>
         ) : null}
         {/* Environmental Context Foundation v1 / v2: omitted entirely (not
-            a loading/error state) when nothing is available -- see
+            a loading/error state) when nothing is available — see
             docs/environmental-context-foundation-v1-contract.md "Frontend
             surface". Context only, never a claim about why the Visit
             happened. Weather is resolved independently of solar (see
@@ -1513,35 +1538,12 @@ export function VisitDetailPage({
         </div>
       </section>
 
-      <section className="panel observation-notes">
-        <div className="section-heading"><div><h2>Observation notes</h2><span className="meta-text">Private local context. Notes never change the reviewed label.</span></div><StatusPill label={detail.visit.review_status === "reviewed" ? "Reviewed" : "Needs review"} tone={detail.visit.review_status === "reviewed" ? "good" : "review"} /></div>
-        {organization ? <>
-          <button className="secondary-action" disabled={isSavingOrganization} onClick={() => void saveOrganization({ is_favorite: !organization.is_favorite })} type="button">{organization.is_favorite ? "Remove favorite" : "Favorite this Visit"}</button>
-          <label>Note <textarea maxLength={4000} value={organization.note} onChange={(event) => setOrganization({ ...organization, note: event.target.value })} /></label>
-          <span className="field-helper">{organization.note.length}/4000 characters</span>
-          <button className="primary-action" disabled={isSavingOrganization} onClick={() => void saveOrganization({ note: organization.note })} type="button">{isSavingOrganization ? "Saving..." : "Save note"}</button>
-          {organization.updated_at ? <span className="meta-text">Updated {formatDateTime(organization.updated_at)}</span> : null}
-        </> : <span className="meta-text">Loading observation notes...</span>}
-        {organizationMessage ? <span className="meta-text">{organizationMessage}</span> : null}
-      </section>
-
-      <section className="panel">
-        <div className="section-heading"><div><h2>Collections</h2><span className="meta-text">Private local galleries. Membership does not duplicate media or change review truth.</span></div><button className="text-action" onClick={onOpenCollections} type="button">Manage Collections</button></div>
-        {visitCollections.length > 0 ? <div className="label-helper-chips">{visitCollections.map((collection) => <span key={collection.id}><StatusPill label={collection.name} tone="quiet" /><button className="text-action" onClick={() => void removeFromCollection(collection)} type="button" aria-label={`Remove this Visit from ${collection.name}`}>Remove</button></span>)}</div> : <span className="meta-text">This Visit is not in a Collection yet.</span>}
-        <label>Add to Collection <select value={selectedCollectionId} onChange={(event) => setSelectedCollectionId(event.target.value)}><option value="">Choose a Collection</option>{collections.filter((collection) => !visitCollections.some((current) => current.id === collection.id)).map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select></label>
-        <button className="secondary-action" disabled={!selectedCollectionId} onClick={() => { const collection = collections.find((item) => item.id === selectedCollectionId); if (collection) void addToCollection(collection); }} type="button">Add Visit</button>
-        <label>Create and add to new Collection <input maxLength={80} value={newCollectionName} onChange={(event) => setNewCollectionName(event.target.value)} /></label><span className="field-helper">{newCollectionName.length}/80 characters</span><button className="secondary-action" onClick={() => void createAndAddCollection()} type="button">Create and add</button>
-        {collectionMessage ? <span className="meta-text">{collectionMessage}</span> : null}
-      </section>
-
-      <section className="panel">
-        <div className="section-heading"><div><h2>Tags</h2><span className="meta-text">Private organization only. Tags never change the reviewed label.</span></div></div>
-        {visitTags.length ? <div className="label-helper-chips">{visitTags.map((tag) => <span key={tag.id}><button className="text-action" onClick={() => onOpenActivityLibrary({ tag_id: tag.id })} type="button">{tag.name}</button><button className="text-action" onClick={() => void removeTag(tag)} aria-label={`Remove ${tag.name}`} type="button">Remove</button></span>)}</div> : <span className="meta-text">No tags on this Visit.</span>}
-        <label>Add existing tag <select value={selectedTagId} onChange={(event) => setSelectedTagId(event.target.value)}><option value="">Choose tag</option>{tags.filter((tag) => !visitTags.some((current) => current.id === tag.id)).map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}</select></label><button className="secondary-action" disabled={!selectedTagId} onClick={() => { const tag = tags.find((item) => item.id === selectedTagId); if (tag) void addTag(tag); }} type="button">Add tag</button>
-        <label>Create and add tag <input maxLength={50} value={newTagName} onChange={(event) => setNewTagName(event.target.value)} /></label><span className="field-helper">{newTagName.length}/50 characters</span><button className="secondary-action" onClick={() => void createAndAddTag()} type="button">Create and add</button>
-        {tagMessage ? <span className="meta-text">{tagMessage}</span> : null}
-      </section>
-
+      {/* UI/UX & First-Run Adoption v1: the correction form (the one
+          action this page exists for) used to sit below notes,
+          collections, tags and the identification assistant -- about
+          1900px down on desktop and far further on a phone. Evidence,
+          then optional assist, then confirm; private organization
+          (notes/collections/tags) follows. */}
       <section className="panel">
         <IdentificationAssistant
           assistant={identificationAssistant}
@@ -1564,14 +1566,15 @@ export function VisitDetailPage({
           </div>
           <p className="evidence-panel-copy">
             {isSpeciesVisit
-              ? "Use reviewed species, Unknown bird, or False positive. This value becomes dataset truth for analytics and exports."
-              : "Use the reviewed label that should become dataset truth for analytics and exports."}
+              ? "Confirm the species, or choose Unknown if the evidence isn't clear enough — an honest “unknown” is more useful than a guess. What you save becomes your record in Bird Log, Insights, and exports."
+              : "Save the label that describes what this really was. What you save becomes your record in Bird Log, Insights, and exports."}
           </p>
           <div className="correction-truth-note">
-            <strong>Correction form is the truth action</strong>
+            <strong>Your answer is the one that counts</strong>
             <span>
-              Suggestions can prefill the label only. You can edit the label and notes before
-              saving; dataset/export truth changes only after this correction is submitted.
+              {label && !detail.visit.reviewed_label && label === detail.visit.species_guess
+                ? "The box below is prefilled with MockingBird's own guess — change it if it is wrong, or clear it and choose Unknown. Nothing is recorded until you save."
+                : "Change the label or notes however you like. Nothing is recorded until you save, and a later model run can suggest a different answer but can never overwrite yours."}
             </span>
           </div>
           <section className="species-suggestion-review-context">
@@ -1634,8 +1637,8 @@ export function VisitDetailPage({
                     <h4>Species suggestion evidence</h4>
                     <span className="meta-text">
                       {classifierSupportingEvidenceSuggestion
-                        ? `MockingBird's suggestion of ${displayTaxonomyLabel(classifierSupportingEvidenceSuggestion.suggested_label, taxonomyLabels)} was based on this frame -- not the Visit evidence image above.`
-                        : "MockingBird's species suggestion was based on this frame -- not the Visit evidence image above."}
+                        ? `MockingBird's suggestion of ${displayTaxonomyLabel(classifierSupportingEvidenceSuggestion.suggested_label, taxonomyLabels)} was based on this frame — not the Visit evidence image above.`
+                        : "MockingBird's species suggestion was based on this frame — not the Visit evidence image above."}
                     </span>
                   </div>
                   <EvidenceBadge
@@ -1751,14 +1754,14 @@ export function VisitDetailPage({
               />
             </label>
             <button className="primary-action" disabled={isSaving} type="submit">
-              {isSaving ? "Saving..." : isSpeciesVisit ? "Resolve species" : "Save correction"}
+              {isSaving ? "Saving…" : isSpeciesVisit ? "Confirm species" : "Save correction"}
             </button>
           </form>
-          <button className="secondary-action" onClick={onOpenExports}>
-            Open Dataset Exports
+          <button className="text-action" onClick={onOpenExports} type="button">
+            Exports
           </button>
-          {detail.detection_proposals.length > 0 ? (
-            <button className="secondary-action" onClick={onOpenDetectionProposals}>
+          {isDeveloperMode && detail.detection_proposals.length > 0 ? (
+            <button className="text-action" onClick={onOpenDetectionProposals} type="button">
               Detection Proposals
             </button>
           ) : null}
@@ -1881,6 +1884,37 @@ export function VisitDetailPage({
           ) : null}
         </section>
       )}
+
+      <section className="panel observation-notes">
+        <div className="section-heading"><div><h2>Observation notes</h2><span className="meta-text">Private local context. Notes never change the reviewed label.</span></div><StatusPill label={detail.visit.review_status === "reviewed" ? "Reviewed" : "Needs review"} tone={detail.visit.review_status === "reviewed" ? "good" : "review"} /></div>
+        {organization ? <>
+          <button className="secondary-action" disabled={isSavingOrganization} onClick={() => void saveOrganization({ is_favorite: !organization.is_favorite })} type="button">{organization.is_favorite ? "Remove favorite" : "Favorite this Visit"}</button>
+          <label>Note <textarea maxLength={4000} value={organization.note} onChange={(event) => setOrganization({ ...organization, note: event.target.value })} /></label>
+          <span className="field-helper">{organization.note.length}/4000 characters</span>
+          <button className="primary-action" disabled={isSavingOrganization} onClick={() => void saveOrganization({ note: organization.note })} type="button">{isSavingOrganization ? "Saving..." : "Save note"}</button>
+          {organization.updated_at ? <span className="meta-text">Updated {formatDateTime(organization.updated_at)}</span> : null}
+        </> : <span className="meta-text">Loading observation notes...</span>}
+        {organizationMessage ? <span className="meta-text">{organizationMessage}</span> : null}
+      </section>
+
+      <section className="panel">
+        <div className="section-heading"><div><h2>Collections</h2><span className="meta-text">Private local galleries. Membership does not duplicate media or change review truth.</span></div><button className="text-action" onClick={onOpenCollections} type="button">Manage Collections</button></div>
+        {visitCollections.length > 0 ? <div className="label-helper-chips">{visitCollections.map((collection) => <span key={collection.id}><StatusPill label={collection.name} tone="quiet" /><button className="text-action" onClick={() => void removeFromCollection(collection)} type="button" aria-label={`Remove this Visit from ${collection.name}`}>Remove</button></span>)}</div> : <span className="meta-text">This Visit is not in a Collection yet.</span>}
+        <label>Add to Collection <select value={selectedCollectionId} onChange={(event) => setSelectedCollectionId(event.target.value)}><option value="">Choose a Collection</option>{collections.filter((collection) => !visitCollections.some((current) => current.id === collection.id)).map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select></label>
+        <button className="secondary-action" disabled={!selectedCollectionId} onClick={() => { const collection = collections.find((item) => item.id === selectedCollectionId); if (collection) void addToCollection(collection); }} type="button">Add Visit</button>
+        <label>Create and add to new Collection <input maxLength={80} value={newCollectionName} onChange={(event) => setNewCollectionName(event.target.value)} /></label><span className="field-helper">{newCollectionName.length}/80 characters</span><button className="secondary-action" onClick={() => void createAndAddCollection()} type="button">Create and add</button>
+        {collectionMessage ? <span className="meta-text">{collectionMessage}</span> : null}
+      </section>
+
+      <section className="panel">
+        <div className="section-heading"><div><h2>Tags</h2><span className="meta-text">Private organization only. Tags never change the reviewed label.</span></div></div>
+        {visitTags.length ? <div className="label-helper-chips">{visitTags.map((tag) => <span key={tag.id}><button className="text-action" onClick={() => onOpenActivityLibrary({ tag_id: tag.id })} type="button">{tag.name}</button><button className="text-action" onClick={() => void removeTag(tag)} aria-label={`Remove ${tag.name}`} type="button">Remove</button></span>)}</div> : <span className="meta-text">No tags on this Visit.</span>}
+        <label>Add existing tag <select value={selectedTagId} onChange={(event) => setSelectedTagId(event.target.value)}><option value="">Choose tag</option>{tags.filter((tag) => !visitTags.some((current) => current.id === tag.id)).map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}</select></label><button className="secondary-action" disabled={!selectedTagId} onClick={() => { const tag = tags.find((item) => item.id === selectedTagId); if (tag) void addTag(tag); }} type="button">Add tag</button>
+        <label>Create and add tag <input maxLength={50} value={newTagName} onChange={(event) => setNewTagName(event.target.value)} /></label><span className="field-helper">{newTagName.length}/50 characters</span><button className="secondary-action" onClick={() => void createAndAddTag()} type="button">Create and add</button>
+        {tagMessage ? <span className="meta-text">{tagMessage}</span> : null}
+      </section>
+
+
     </div>
   );
 }

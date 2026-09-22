@@ -320,7 +320,7 @@ export function HabitatPhenologyCard({
       <fieldset className="habitat-phenology-fields">
         <legend>Habitat details</legend>
         <p className="meta-text">
-          Durable details about this Place -- setting, plants, and features. Nothing recorded here
+          Durable details about this Place — setting, plants, and features. Nothing recorded here
           affects wildlife identification or history.
         </p>
         {hasHabitatFacts ? (
@@ -414,7 +414,7 @@ export function HabitatPhenologyCard({
         <legend>Season / phenology</legend>
         <p className="meta-text">
           Dated observations, like flowering, fruiting, or feeder availability. A note from the
-          past stays historical -- it will not be shown as happening now.
+          past stays historical — it will not be shown as happening now.
         </p>
         {phenologyEntries.length > 0 ? (
           <ul className="habitat-phenology-list">

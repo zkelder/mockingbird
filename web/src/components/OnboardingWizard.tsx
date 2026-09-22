@@ -408,7 +408,7 @@ function ObserveStep({ streamId, onFinish }: { streamId: string; onFinish: () =>
             This camera type doesn&rsquo;t watch for activity on its own here, so there is no
             Start observing step for it. If this is a recorded/imported Source, use{" "}
             <strong>Import Media</strong> (in the main menu) whenever you&rsquo;re ready to add
-            video or image files -- MockingBird analyzes them the same way a live camera&rsquo;s
+            video or image files — MockingBird analyzes them the same way a live camera&rsquo;s
             activity is analyzed. Sightings will show up in Today and Bird Log; open Review Queue
             any time you want to work through suggestions in one place. Nothing here is
             permanent, and you can add or adjust Sources any time from Cameras.
@@ -422,7 +422,7 @@ function ObserveStep({ streamId, onFinish }: { streamId: string; onFinish: () =>
               stop observing any time from Cameras.
             </p>
             {/* UI/UX & First-Run Adoption v1: first-run testing found no
-                statement of what to expect after starting -- users had no way
+                statement of what to expect after starting — users had no way
                 to tell "working, nothing has visited yet" from "broken". */}
             <p className="meta-text">
               What to expect: MockingBird watches quietly and only saves something when there is

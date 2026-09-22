@@ -313,7 +313,7 @@ test("an insufficiently-monitored change reads as an honest restrained state, no
   await page.goto("/place-report");
   await page.getByRole("button", { name: "See activity insight" }).click();
   await expect(
-    page.getByText("Too soon to tell -- not enough time has passed since this change yet."),
+    page.getByText("Too soon to tell — not enough time has passed since this change yet."),
   ).toBeVisible();
 });
 
@@ -349,7 +349,7 @@ test("Manage features shows an honest 'no camera linked' state for a Place-wide 
 
   await page.goto("/");
   await page.getByRole("button", { name: "Manage features" }).click();
-  await expect(page.locator(".place-features-card").getByText("No camera linked -- Place knowledge only.")).toBeVisible();
+  await expect(page.locator(".place-features-card").getByText("No camera linked — Place knowledge only.")).toBeVisible();
 });
 
 test("+ Add another view reveals an accessible camera/Zone picker", async ({ page }) => {

@@ -361,6 +361,23 @@ export function onSessionExpired(listener: () => void): () => void {
   return () => sessionExpiredListeners.delete(listener);
 }
 
+// UI/UX & First-Run Adoption v1: a failed connection reached the user as
+// the browser's raw "Failed to fetch". MockingBird runs locally, so this
+// nearly always means the app itself stopped.
+async function friendlyFetch(input: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new ApiError(
+        "Couldn't reach MockingBird. Check that it is still running on this computer, then try again.",
+        0,
+      );
+    }
+    throw error;
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const isFormData = init?.body instanceof FormData;
   const headers = new Headers(init?.headers);
@@ -368,7 +385,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers.set("Content-Type", "application/json");
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await friendlyFetch(`${API_BASE_URL}${path}`, {
     // Local Identity, Multi-User & Organization Access v1: `fetch`'s own
     // default is already "same-origin" (every request here is same-origin
     // in both dev, via Vite's proxy, and the packaged app, which serves
@@ -388,8 +405,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     let detail = response.statusText;
     let structuredError: StructuredError | undefined;
     try {
-      const body = (await response.json()) as { detail?: string; error?: unknown };
-      detail = body.detail ?? detail;
+      const body = (await response.json()) as { detail?: unknown; error?: unknown };
+      // UI/UX & First-Run Adoption v1: FastAPI validation errors return
+      // `detail` as an array of objects, which previously reached the user
+      // as the literal string "[object Object]".
+      if (typeof body.detail === "string") {
+        detail = body.detail;
+      } else if (Array.isArray(body.detail)) {
+        const messages = body.detail
+          .map((item) => (typeof item === "string" ? item : (item as { msg?: string })?.msg))
+          .filter((message): message is string => Boolean(message));
+        if (messages.length > 0) {
+          detail = messages.join(" ");
+        }
+      }
       structuredError = parseStructuredError(body.error);
     } catch {
       detail = response.statusText;
@@ -405,7 +434,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 async function requestImage(path: string, payload: unknown): Promise<Blob> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await friendlyFetch(`${API_BASE_URL}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),

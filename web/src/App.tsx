@@ -707,16 +707,27 @@ export default function App() {
     }
 
     if (isLoading && page !== "dashboard") {
-      return <div className="panel">Loading MockingBird...</div>;
+      return (
+        <div className="panel" role="status">
+          Loading MockingBird&hellip;
+        </div>
+      );
     }
 
     if (error && page !== "dashboard") {
       return (
         <div className="error-panel">
-          <strong>Could not reach the MockingBird API.</strong>
-          <span>{error}</span>
-          <span>API base: {apiClient.baseUrl}</span>
-          <button className="secondary-action" onClick={() => void loadAppData()}>
+          {/* UI/UX & First-Run Adoption v1: this said "could not reach the
+              MockingBird API" and printed an empty "API base:" line when
+              MockingBird is served from its own origin. */}
+          <strong>MockingBird couldn&rsquo;t load this page.</strong>
+          <span>
+            Check that MockingBird is still running on this computer, then try again. If it keeps
+            happening, open Doctor for a full check.
+          </span>
+          <span className="meta-text">{error}</span>
+          {apiClient.baseUrl ? <span className="meta-text">Address: {apiClient.baseUrl}</span> : null}
+          <button className="secondary-action" onClick={() => void loadAppData()} type="button">
             Retry
           </button>
         </div>
@@ -1311,7 +1322,7 @@ export default function App() {
             </details>
           ) : null}
           {/* UI/UX & First-Run Adoption v1: "Recently opened" only lists
-              what the user actually opened -- previously a "Stream Detail"
+              what the user actually opened — previously a "Stream Detail"
               entry appeared on a fresh install (falling back to the first
               Stream, usually the demo one) before any camera was opened. */}
           {openedStream || selectedEventId || selectedVisitId ? (

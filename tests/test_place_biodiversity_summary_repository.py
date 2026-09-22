@@ -224,7 +224,7 @@ def test_brand_new_place_has_no_taxa_and_an_honest_warning(repository: ProductRe
     assert summary.historical_baseline.maturity == "insufficient"
     assert summary.historical_baseline.total_monitored_seconds is None
     assert len(summary.warnings) == 1
-    assert "No monitoring history recorded yet" in summary.warnings[0]
+    assert "No camera has spent time observing yet" in summary.warnings[0]
 
 
 def test_sparse_monitoring_gets_the_softer_insufficient_warning(repository: ProductRepository) -> None:

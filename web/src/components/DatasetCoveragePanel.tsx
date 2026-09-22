@@ -78,7 +78,7 @@ export function DatasetCoveragePanel({
         </div>
         {/* Broader Wildlife Maturity v1: the panel already received this
             field and already distinguishes the two reasons in its gap list
-            (gapReasonLabel above) -- it just never surfaced this sibling
+            (gapReasonLabel above) — it just never surfaced this sibling
             metric, unlike AnalyticsPage's matching "Unknown animals" card.
             See docs/broader-wildlife-maturity-v1-contract.md. */}
         <div>

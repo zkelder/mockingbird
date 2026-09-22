@@ -2469,7 +2469,7 @@ export function ReviewQueuePage({
           (result.failed_count > 0
             ? ` ${result.failed_count} item${
                 result.failed_count === 1 ? "" : "s"
-              } could not be saved -- see the bulk correction result below.`
+              } could not be saved — see the bulk correction result below.`
             : ""),
       );
     } catch (caught) {
@@ -2928,7 +2928,7 @@ export function ReviewQueuePage({
                 <span>
                   {bulkResult.failed_count} item{bulkResult.failed_count === 1 ? "" : "s"} changed
                   since this page last loaded {bulkResult.failed_count === 1 ? "it" : "them"} and{" "}
-                  {bulkResult.failed_count === 1 ? "was" : "were"} not saved -- refresh and review{" "}
+                  {bulkResult.failed_count === 1 ? "was" : "were"} not saved — refresh and review{" "}
                   {bulkResult.failed_count === 1 ? "it" : "them"} again below.
                 </span>
               ) : null}

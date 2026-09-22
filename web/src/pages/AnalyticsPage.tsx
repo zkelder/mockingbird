@@ -26,7 +26,9 @@ interface AnalyticsPageProps {
   onOpenReview: () => void;
   onOpenEvent: (eventId: string) => void;
   onOpenVisit: (visitId: string) => void;
-  onOpenDetectionProposals: () => void;
+  // Retained for the App-level call site; Detection Proposals is a
+  // developer surface and no longer linked from this page's header.
+  onOpenDetectionProposals?: () => void;
   onOpenStream?: (streamId?: string) => void;
   onOpenActivityLibrary: (filters: ActivityLibraryFilters) => void;
   onOpenBirdLog: () => void;
@@ -42,7 +44,6 @@ export function AnalyticsPage({
   onOpenReview,
   onOpenEvent,
   onOpenVisit,
-  onOpenDetectionProposals,
   onOpenStream,
   onOpenActivityLibrary,
   onOpenBirdLog,
@@ -69,9 +70,9 @@ export function AnalyticsPage({
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow="Local summaries"
+        eyebrow="Patterns at this place"
         title="Insights"
-        description="Summaries come from reviewable outdoor activity and corrected labels."
+        description="What has visited, how often, and where \u2014 counted from activity recorded here and from what you have confirmed."
         actions={
           <>
             {analytics.needs_review_count > 0 ? (
@@ -79,11 +80,8 @@ export function AnalyticsPage({
                 Review needed items
               </button>
             ) : null}
-            <button className="secondary-action" onClick={onOpenExports}>
-              Open Dataset Exports
-            </button>
-            <button className="secondary-action" onClick={onOpenDetectionProposals}>
-              Advanced Detection Proposals
+            <button className="text-action" onClick={onOpenExports} type="button">
+              Exports
             </button>
           </>
         }
@@ -101,13 +99,22 @@ export function AnalyticsPage({
         streams={streams}
         onOpenActivityLibrary={onOpenActivityLibrary}
       />
+      {/* UI/UX & First-Run Adoption v1: these totals are all-time, while the
+          panels above are range-scoped — the page read as if it contradicted
+          itself ("No activity in this range" above "Visits 2"). */}
+      <div className="section-heading analytics-alltime-heading">
+        <div>
+          <h2>All time at this place</h2>
+          <span className="meta-text">Every recorded visit, not just the range above</span>
+        </div>
+      </div>
       <section className="metric-grid">
-        <MetricCard label="Events" value={analytics.event_count} detail="outdoor activity" />
-        <MetricCard label="Visits" value={analytics.visit_count} detail="animal visits" />
+        <MetricCard label="Activity sessions" value={analytics.event_count} detail="times something was active" />
+        <MetricCard label="Visits" value={analytics.visit_count} detail="individual animal visits" />
         <MetricCard
-          label="Needs review"
+          label="Waiting for you"
           value={analytics.needs_review_count}
-          detail="correction work"
+          detail="visits to confirm"
         />
         <MetricCard
           label="Active zones"
@@ -117,30 +124,38 @@ export function AnalyticsPage({
       </section>
       <section className="metric-grid">
         <MetricCard
-          label="Reviewed species"
+          label="Species you confirmed"
           value={reviewedSpeciesTotal}
-          detail="corrected bird truth"
+          detail="distinct confirmed species"
         />
-        <MetricCard label="Unknown birds" value={unknownBirdCount} detail="needs species resolution" />
-        <MetricCard label="Unknown animals" value={unknownAnimalCount} detail="needs label review" />
-        <MetricCard label="False positives" value={falsePositiveCount} detail="reviewed out" />
+        <MetricCard label="Birds, species unknown" value={unknownBirdCount} detail="confirmed as a bird" />
+        <MetricCard label="Wildlife, kind unknown" value={unknownAnimalCount} detail="confirmed as wildlife" />
+        <MetricCard label="Not wildlife" value={falsePositiveCount} detail="ruled out by you" />
       </section>
       <section className="notice-panel">
-        <strong>Corrections drive analytics</strong>
-        <span>Raw evidence appears here only after review and correction.</span>
+        <strong>What you confirm shapes these numbers</strong>
+        <span>Species counts come from visits you have confirmed or corrected, never from a model's guess alone.</span>
       </section>
-      <DatasetCoveragePanel
-        coverage={datasetCoverage}
-        onOpenExports={onOpenExports}
-        onOpenReview={onOpenReview}
-      />
-      <DatasetQualityPanel
-        quality={datasetQuality}
-        onOpenEvent={onOpenEvent}
-        onOpenExports={onOpenExports}
-        onOpenReview={onOpenReview}
-        onOpenVisit={onOpenVisit}
-      />
+      {/* UI/UX & First-Run Adoption v1: dataset/model-readiness material is
+          real and useful, but it is export preparation, not nature insight --
+          collapsed so Insights reads as a place page by default. */}
+      <details className="panel analytics-dataset-readiness">
+        <summary>Dataset readiness (for exports and model work)</summary>
+        <div className="page-stack">
+          <DatasetCoveragePanel
+            coverage={datasetCoverage}
+            onOpenExports={onOpenExports}
+            onOpenReview={onOpenReview}
+          />
+          <DatasetQualityPanel
+            quality={datasetQuality}
+            onOpenEvent={onOpenEvent}
+            onOpenExports={onOpenExports}
+            onOpenVisit={onOpenVisit}
+            onOpenReview={onOpenReview}
+          />
+        </div>
+      </details>
       <section className="panel">
         <div className="section-heading">
           <h2>Label categories</h2>

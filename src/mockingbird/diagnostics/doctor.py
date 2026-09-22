@@ -285,6 +285,14 @@ class DoctorEnvironment(BaseModel):
     transport_root: Path
 
 
+def _plural(count: int, noun: str) -> str:
+    """"1 camera"/"2 cameras" -- Doctor summaries are shown verbatim to users,
+    and previously read "1 configured Stream(s)" (UI/UX & First-Run Adoption
+    v1)."""
+
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
 def resolve_doctor_environment(*, runtime_home: Path | None = None) -> DoctorEnvironment:
     import os
 
@@ -1259,7 +1267,10 @@ def _interpret_camera_node(gathered: dict[str, Any], *, now: datetime) -> Doctor
             code=DoctorCheckCode.CAMERA_NODE,
             component="Camera Node",
             status=DoctorStatus.WARN,
-            summary=f"{attention_count} of {gathered.get('stream_count', 0)} configured Stream(s) need attention.",
+            summary=(
+                f"{attention_count} of {_plural(int(gathered.get('stream_count', 0)), 'set-up camera')} "
+                "need attention."
+            ),
             detail="A Stream's last-known runtime state is blocked or interrupted.",
             recoverability=DoctorRecoverability.DEGRADED,
             user_action="Open the affected Stream's camera health details, check its network/cable connection, or restart its Camera Node.",
@@ -1403,7 +1414,7 @@ def _interpret_camera_node(gathered: dict[str, Any], *, now: datetime) -> Doctor
         code=DoctorCheckCode.CAMERA_NODE,
         component="Camera Node",
         status=DoctorStatus.PASS,
-        summary=f"{gathered.get('stream_count', 0)} configured Stream(s); no attention needed.",
+        summary=f"{_plural(int(gathered.get('stream_count', 0)), 'set-up camera')}; no attention needed.",
         detail=f"{gathered.get('currently_monitored_count', 0)} currently being monitored.",
         diagnostic_context=context,
     )
@@ -2189,7 +2200,7 @@ def _interpret_research_export(gathered: dict[str, Any]) -> DoctorCheckResult:
             code=DoctorCheckCode.RESEARCH_EXPORT,
             component="Research / export",
             status=DoctorStatus.WARN,
-            summary=f"{failed_count} of the last {sampled_count} export(s) failed.",
+            summary=f"{failed_count} of the last {_plural(sampled_count, 'export')} failed.",
             detail="Reviewed history and Bird Log are unaffected; this only concerns dataset export runs.",
             recoverability=DoctorRecoverability.DEGRADED,
             user_action="Check available storage on the export folder's drive, then try the export again.",
@@ -2199,7 +2210,7 @@ def _interpret_research_export(gathered: dict[str, Any]) -> DoctorCheckResult:
         code=DoctorCheckCode.RESEARCH_EXPORT,
         component="Research / export",
         status=DoctorStatus.PASS,
-        summary=f"The last {sampled_count} export(s) completed without error.",
+        summary=f"The last {_plural(sampled_count, 'export')} completed without error.",
         diagnostic_context=context,
     )
 

@@ -103,7 +103,7 @@ export function DoctorPage({ onNavigate }: DoctorPageProps) {
         </div>
         <p>{overallSummary(report.overall_status)}</p>
         <span className="meta-text">
-          Checked {formatDateTime(report.generated_at)} ({report.duration_ms.toFixed(0)}ms) -- MockingBird{" "}
+          Checked {formatDateTime(report.generated_at)} ({report.duration_ms.toFixed(0)}ms) — MockingBird{" "}
           {report.app_version}
         </span>
       </section>
@@ -127,7 +127,11 @@ function overallTone(status: DoctorOverallStatus): "good" | "review" | "alert" {
 
 function overallSummary(status: DoctorOverallStatus): string {
   return {
-    HEALTHY: "Everything MockingBird needs to observe wildlife is working.",
+    // UI/UX & First-Run Adoption v1: a fresh install passes every check
+    // while nothing is set up at all (no detector, no backup, no media), so
+    // the old wording ("everything ... is working") overclaimed. Each check
+    // below already says honestly when it has nothing to check yet.
+    HEALTHY: "Nothing is wrong. Every check below either passed or has nothing to check yet.",
     DEGRADED: "MockingBird is working, but at least one check below could use attention.",
     UNHEALTHY: "MockingBird cannot reliably observe wildlife until at least one check below is fixed.",
   }[status];
@@ -142,7 +146,7 @@ function checkTone(status: DoctorStatus): "good" | "review" | "alert" | "quiet" 
 }
 
 function checkLabel(status: DoctorStatus): string {
-  return { PASS: "Pass", WARN: "Needs attention", FAIL: "Not working", SKIPPED: "Unavailable" }[status];
+  return { PASS: "OK", WARN: "Needs attention", FAIL: "Not working", SKIPPED: "Not checked" }[status];
 }
 
 // Which existing, already-safe settings surface a non-passing check's own

@@ -67,7 +67,7 @@ export function LocalDataPage({
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Structured error surfacing (P0): populated only when a caught ApiError
-  // carries one (today, only a database-write failure does) -- see
+  // carries one (today, only a database-write failure does) — see
   // `applyError`. Reset alongside `error` everywhere so a later, unrelated
   // failure can never show a stale "Advanced details" block.
   const [errorDetail, setErrorDetail] = useState<StructuredError | undefined>(undefined);
@@ -157,7 +157,7 @@ export function LocalDataPage({
     void loadStatus();
     void loadBackups();
     void loadStorage();
-    // Secondary/informational card -- a failed load leaves it simply
+    // Secondary/informational card — a failed load leaves it simply
     // unrendered rather than raising the same page-wide error banner a
     // failed backup/storage load would (see EmptyState fallback below).
     apiClient
@@ -171,7 +171,7 @@ export function LocalDataPage({
       await navigator.clipboard.writeText(url);
       setConnectionCopyFeedback("Copied.");
     } catch {
-      setConnectionCopyFeedback("Could not copy automatically -- select and copy the address above.");
+      setConnectionCopyFeedback("Could not copy automatically — select and copy the address above.");
     }
     window.setTimeout(() => setConnectionCopyFeedback(null), 4000);
   }
@@ -395,7 +395,7 @@ export function LocalDataPage({
   }
 
   // Release Reliability & First-Run Recovery v1: the real, in-app graceful
-  // stop -- closing this browser tab never reaches the backend process at
+  // stop — closing this browser tab never reaches the backend process at
   // all, and ending python.exe/pythonw.exe in Task Manager is an external
   // OS-level termination no Python-level shutdown hook can reliably
   // intercept, so either one honestly (but, for a perfectly normal stop,
@@ -420,7 +420,7 @@ export function LocalDataPage({
       }
     } catch {
       // A closed connection is the *expected* success signal here (the
-      // process just stopped serving), not a failure to report -- never
+      // process just stopped serving), not a failure to report — never
       // alarm the user over the very thing they just asked to happen.
       setIsConfirmingShutdown(false);
       setShutdownMessage("MockingBird is shutting down. It's safe to close this tab now.");
@@ -550,7 +550,7 @@ export function LocalDataPage({
                 <strong>{status.dataset_export_count}</strong>
               </div>
               <p>{status.local_first_note}</p>
-              <p>Imported media files stay in the configured local media root and are not analyzed or transcoded.</p>
+              <p className="meta-text">Imported photos and video stay in this folder on this device.</p>
             </div>
 
             <div className="panel local-data-card">
@@ -592,7 +592,7 @@ export function LocalDataPage({
               </div>
               <div className="data-row">
                 <span>At home, on this device</span>
-                <strong>Always available -- open MockingBird's usual address in this browser.</strong>
+                <strong>Always available — open MockingBird's usual address in this browser.</strong>
               </div>
               {connectionInfo.local_network_url ? (
                 <div className="data-row">
@@ -613,20 +613,31 @@ export function LocalDataPage({
                   <span>At home, from your phone (same WiFi)</span>
                   <strong>
                     {connectionInfo.is_loopback_only
-                      ? "Not enabled -- MockingBird only answers on this device right now."
+                      ? "Not enabled \u2014 MockingBird only answers on this device right now."
                       : "Enabled, but this device's local network address could not be detected automatically."}
                   </strong>
                 </div>
               )}
+              {connectionInfo.is_loopback_only ? (
+                // UI/UX & First-Run Adoption v1: this said "Not enabled" and
+                // stopped there, with no way to act on it.
+                <p className="meta-text">
+                  To reach MockingBird from another device on your WiFi, close it and start it again
+                  with network access turned on: on Windows, run{" "}
+                  <code>wscript "Start MockingBird.vbs" --host 0.0.0.0 --allow-network</code>; on
+                  Linux or macOS, <code>./start-mockingbird.sh --host 0.0.0.0 --allow-network</code>.
+                  This address then appears here. Signing in is still required.
+                </p>
+              ) : null}
               {connectionCopyFeedback ? <p role="status">{connectionCopyFeedback}</p> : null}
               <p>
-                Signing in is always required, on any device -- enabling network access never weakens that. This
+                Signing in is always required, on any device — enabling network access never weakens that. This
                 device serves plain HTTP unless you add a reverse proxy for TLS, so only allow network access on a
                 WiFi you trust.
               </p>
               <p>
                 Away from home, the supported path is a private network between your phone and this device (for
-                example Tailscale) -- MockingBird does not require, and does not provide, a cloud relay. Publicly
+                example Tailscale) — MockingBird does not require, and does not provide, a cloud relay. Publicly
                 forwarding this device's port on your router is not supported.
               </p>
             </section>
@@ -689,7 +700,7 @@ export function LocalDataPage({
                 </div>
                 <div className="data-row">
                   <span>Storage writable</span>
-                  <strong>{storageSummary.is_writable ? "Yes" : "No -- check folder permissions"}</strong>
+                  <strong>{storageSummary.is_writable ? "Yes" : "No — check folder permissions"}</strong>
                 </div>
                 <div className="data-row">
                   <span>Protected review context</span>
@@ -992,7 +1003,7 @@ export function LocalDataPage({
             {backups.length > 0 ? (
               <details className="advanced-details" open={backups.length <= 3}>
                 <summary>
-                  {backups.length} local backup{backups.length === 1 ? "" : "s"} -- verify, download, or
+                  {backups.length} local backup{backups.length === 1 ? "" : "s"} — verify, download, or
                   restore
                 </summary>
                 <div className="backup-list">
@@ -1053,7 +1064,7 @@ export function LocalDataPage({
                         <span>
                           Current local data and managed media will be replaced. Active camera work
                           will stop, and a verified safety backup will be created first. Any camera
-                          that was continuously monitoring will be paused after restore -- resume it
+                          that was continuously monitoring will be paused after restore — resume it
                           from Stream Detail when you're ready.
                         </span>
                       </div>
@@ -1153,7 +1164,7 @@ export function LocalDataPage({
             </div>
             <p>
               Stops MockingBird cleanly. Your local data is never affected. Closing this browser
-              tab does not stop MockingBird -- use this instead of ending the process in Task
+              tab does not stop MockingBird — use this instead of ending the process in Task
               Manager, so the next launch does not need to recover from an unexpected stop.
             </p>
             {shutdownMessage ? (

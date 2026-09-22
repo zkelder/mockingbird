@@ -109,6 +109,7 @@ export function AlertsControl({
   onAction: (action: ProductAlertAction) => void;
 }) {
   const [isOpen, setIsOpen] = useState(false);
+  const controlRef = useRef<HTMLDivElement | null>(null);
   const [alerts, setAlerts] = useState<ProductAlert[]>([]);
   const [unread, setUnread] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -153,8 +154,33 @@ export function AlertsControl({
     const timer = window.setInterval(() => void refresh(), 60_000);
     return () => window.clearInterval(timer);
   }, [refresh]);
+  // UI/UX & First-Run Adoption v1: this popover could only be closed by
+  // clicking its own button again -- no Escape, no outside click.
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+        controlRef.current?.querySelector<HTMLButtonElement>(".alerts-button")?.focus();
+      }
+    }
+    function handlePointerDown(event: MouseEvent) {
+      if (controlRef.current && !controlRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("mousedown", handlePointerDown);
+    };
+  }, [isOpen]);
+
   return (
-    <div className="alerts-control">
+    <div className="alerts-control" ref={controlRef}>
       <button aria-expanded={isOpen} className="alerts-button" onClick={() => setIsOpen((value) => !value)} type="button">
         Alerts{unread ? <span className="alerts-badge">{unread > 99 ? "99+" : unread}</span> : null}
       </button>
@@ -162,7 +188,7 @@ export function AlertsControl({
         <section className="alerts-drawer" aria-label="Recent alerts">
           <div className="section-heading"><div><h2>Alerts</h2><span className="meta-text">Local attention items only.</span></div><button className="text-action" onClick={onOpenInbox} type="button">Open inbox</button></div>
           {error ? <div className="error-panel">{error}</div> : null}
-          {!alerts.length ? <EmptyState title="Nothing worth noticing right now" description="A new species, a meaningful change, review work, or a real observatory issue will appear here -- MockingBird stays quiet otherwise." /> : alerts.slice(0, 5).map((alert) => <AlertRow alert={alert} key={alert.id} onAction={onAction} onChanged={refresh} />)}
+          {!alerts.length ? <EmptyState title="Nothing worth noticing right now" description="A new species, a meaningful change, review work, or a real observatory issue will appear here — MockingBird stays quiet otherwise." /> : alerts.slice(0, 5).map((alert) => <AlertRow alert={alert} key={alert.id} onAction={onAction} onChanged={refresh} />)}
         </section>
       ) : null}
     </div>

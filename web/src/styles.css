@@ -10392,3 +10392,32 @@ a.secondary-action {
 .source-setup-form > label + label {
   margin-top: 4px;
 }
+
+/* UI/UX & First-Run Adoption v1: this line had no rule at all, so date,
+   camera, zone and identification ran together as one string. */
+.visit-evidence-context-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  color: #3f5347;
+}
+
+.visit-evidence-context-line > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.analytics-alltime-heading {
+  margin-top: 4px;
+}
+
+.analytics-dataset-readiness > summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.analytics-dataset-readiness[open] > summary {
+  margin-bottom: 12px;
+}

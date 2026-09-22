@@ -45,7 +45,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       <div className="error-panel app-error-boundary" role="alert">
         <strong>MockingBird ran into a problem and couldn't continue.</strong>
         <span>
-          Your reviewed history and evidence are safe -- this is a display problem, not data loss.
+          Your reviewed history and evidence are safe — this is a display problem, not data loss.
         </span>
         <span>
           Reloading usually fixes it. If it keeps happening, check{" "}

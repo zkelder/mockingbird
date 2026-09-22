@@ -450,7 +450,7 @@ export function FolderImportPage({
           </div>
           {importedRows.length > 6 ? (
             <span className="meta-text">
-              +{importedRows.length - 6} more imported -- open Review Queue or Dataset Exports above to
+              +{importedRows.length - 6} more imported — open Review Queue or Dataset Exports above to
               see all {importedRows.length}.
             </span>
           ) : null}

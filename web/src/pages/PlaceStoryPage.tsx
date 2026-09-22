@@ -163,7 +163,7 @@ export function PlaceStoryPage({
       <PageHeader
         eyebrow="Remember"
         title="Place Story"
-        description="A living history of this Place -- firsts, meaningful changes, and noteworthy moments, gathered from your reviewed wildlife history and recorded Place changes."
+        description="A living history of this Place — firsts, meaningful changes, and noteworthy moments, gathered from your reviewed wildlife history and recorded Place changes."
       />
 
       <section className="panel journal-filter-panel" aria-label="Filter the Place Story">
@@ -196,7 +196,7 @@ export function PlaceStoryPage({
       ) : entries.length === 0 && isEarlyExperience ? (
         <EmptyState
           title="Your Place Story is just beginning"
-          description="As MockingBird observes more wildlife and you record changes around the yard -- a new feeder, a planting, a phenology note -- this timeline will grow."
+          description="As MockingBird observes more wildlife and you record changes around the yard — a new feeder, a planting, a phenology note — this timeline will grow."
           action={
             <button className="secondary-action" onClick={onOpenPlaceActivityReport} type="button">
               See the full Place Report

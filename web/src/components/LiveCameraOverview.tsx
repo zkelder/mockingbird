@@ -611,7 +611,7 @@ export function LiveCameraOverview({
                     this legacy toggle here would durably start an
                     ungated zone-motion session against the same camera --
                     including auto-created Visits with none of that gate's
-                    quality checks -- and keep silently resuming it every
+                    quality checks — and keep silently resuming it every
                     time Observation later stops
                     (LiveCameraSessionManager.resume_after_observation).
                     Hidden here for camera_node, exactly like "Show/Stop live

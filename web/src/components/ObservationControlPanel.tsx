@@ -267,7 +267,7 @@ export function ObservationControlPanel({
                     <strong>Camera</strong> {status.camera_connected ? "Healthy" : "Needs attention"}
                   </span>
                 ) : null}
-                {/* Camera and Observation are reported separately -- a
+                {/* Camera and Observation are reported separately — a
                     successfully paired, reachable camera must never read
                     "Needs attention" merely because the *Observation*
                     runtime (model bundle, GPU/CUDA) is what actually failed
@@ -321,7 +321,7 @@ export function ObservationControlPanel({
                     {status.candidate_authority_message ??
                       "This session has reached its automatic Visit-creation limit for the recent " +
                         "activity period. New Visit creation will automatically resume on its own " +
-                        "as that period rolls forward -- no restart is needed."}
+                        "as that period rolls forward — no restart is needed."}
                   </span>
                 </div>
               ) : null}

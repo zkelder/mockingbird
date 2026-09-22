@@ -252,7 +252,7 @@ export function WildlifeInsightsPanel({
             <EmptyState
               title="No active cameras to summarize"
               description="Add or restore a camera, then review captured activity to build local wildlife insights."
-              action={<button className="secondary-action" onClick={onOpenStreams} type="button">Open Cameras / Streams</button>}
+              action={<button className="secondary-action" onClick={onOpenStreams} type="button">Go to Cameras</button>}
             />
           ) : summary.headline.active_visit_count === 0 ? (
             <EmptyState
@@ -334,7 +334,7 @@ export function WildlifeInsightsPanel({
                 <div><strong>Unresolved activity</strong><button className="text-action" onClick={() => onOpenActivityLibrary(filtersForDrilldown(summary.unresolved_activity_drilldown))} type="button">{summary.headline.unresolved_visit_count} needs-review Visits</button></div>
                 {/* Manual Import Evidence Integrity v1 / Wildlife Semantic Consistency v1: this count is
                     entirely confirmed_unidentified_wildlife (reviewed, wildlife presence confirmed, species
-                    honestly unresolved) -- see docs/wildlife-semantic-consistency-v1-contract.md's own
+                    honestly unresolved) — see docs/wildlife-semantic-consistency-v1-contract.md's own
                     disclosed-not-fixed note. "ambiguous/unknown" read like genuine uncertainty about a
                     Visit that was in fact reviewed and confirmed; word it the way every other fixed surface
                     already does instead. No change to what is counted, only how it reads. */}

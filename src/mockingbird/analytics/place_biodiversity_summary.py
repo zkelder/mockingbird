@@ -84,8 +84,8 @@ def _warnings_for_baseline(historical_baseline: HistoricalPlaceBaseline) -> tupl
 
     if historical_baseline.total_monitored_seconds is None:
         return (
-            "No monitoring history recorded yet -- biodiversity facts here "
-            "will fill in once a Stream has been observing.",
+            "No camera has spent time observing yet \u2014 what lives here "
+            "fills in once one has been watching for a while.",
         )
     if historical_baseline.maturity == "insufficient":
         return (

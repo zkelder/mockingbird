@@ -641,7 +641,7 @@ export function BirdLogPage({
           Wildlife Semantic Consistency v1 (see docs/wildlife-semantic-
           consistency-v1-contract.md): a reviewed "unknown_bird"/"unknown_
           animal"/"ambiguous" Visit is real, human-confirmed wildlife
-          presence with species honestly unresolved -- never fabricated
+          presence with species honestly unresolved — never fabricated
           into a `labels` entry (there is no named taxon), but must not be
           silently invisible either. Shown as its own honestly-labeled
           panel, distinct from the per-species grid below, so a Bird Log
@@ -902,7 +902,7 @@ export function BirdLogPage({
                   <span>
                     {activeHistory.baseline_maturity === "established"
                       ? "This is a local MockingBird record milestone, not an ecological claim."
-                      : "MockingBird hasn't accumulated enough monitored history yet to call this ecologically new -- just the first time it's been confirmed here."}
+                      : "MockingBird hasn't accumulated enough monitored history yet to call this ecologically new — just the first time it's been confirmed here."}
                   </span>
                 </div>
               ) : null}
@@ -938,7 +938,7 @@ export function BirdLogPage({
                       </ul>
                     ) : null}
                     {/* Place / Yard Intelligence v2, Phase 11: distinct from
-                        the single-most-recent-sighting snapshot above -- a
+                        the single-most-recent-sighting snapshot above — a
                         pattern across this taxon's whole reviewed history.
                         Association language only, never a cause. */}
                     {(activeHistory.habitat_associations ?? [])
@@ -952,7 +952,7 @@ export function BirdLogPage({
                       ))}
                     {/* Environmental Context v2: identical association-
                         language-only, all-matches-listed convention as
-                        habitat_associations above -- see docs/
+                        habitat_associations above — see docs/
                         environmental-context-v2-contract.md "Phase 6/16". */}
                     {(activeHistory.weather_associations ?? [])
                       .filter((association) => association.status !== "no_clear_association")

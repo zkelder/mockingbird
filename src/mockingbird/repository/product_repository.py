@@ -11292,10 +11292,15 @@ class ProductRepository:
             database_integrity_check=self.schema_status.integrity_check,
             seed_data_present=session.get(CameraSourceModel, demo_data.SOURCE_ID) is not None,
             local_first_note=(
-                "MockingBird stores local product metadata, zones, corrections, "
-                "review state, imported media references, analytics inputs, and "
-                "dataset export manifests here. Imported media stays local and is "
-                "not analyzed or transcoded in this phase."
+                # UI/UX & First-Run Adoption v1: the old wording ("not
+                # analyzed or transcoded in this phase") is both developer
+                # language and no longer true -- imported media is analyzed
+                # like any other activity.
+                "Everything MockingBird knows about this place -- your cameras, "
+                "areas, sightings, confirmations, review history, and export "
+                "manifests -- is stored here on this device. Imported photos and "
+                "video stay on this device too; MockingBird reads them to look "
+                "for wildlife and never uploads them."
             ),
         )
 

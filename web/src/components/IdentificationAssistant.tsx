@@ -42,7 +42,7 @@ export function IdentificationAssistant({
         </div>
         {/*
           The specific analyzer name (e.g. a model/architecture identifier)
-          is deliberately not shown here -- see suggestionExplanation.ts's
+          is deliberately not shown here — see suggestionExplanation.ts's
           file header. "Availability" below already reports plain-language
           readiness status.
         */}

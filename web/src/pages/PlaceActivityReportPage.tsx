@@ -523,7 +523,7 @@ export function featureAssociationSentence(association: {
   window_days?: number | null;
 }): string {
   if (association.maturity === "too_soon") {
-    return "Too soon to tell -- not enough time has passed since this change yet.";
+    return "Too soon to tell — not enough time has passed since this change yet.";
   }
   if (association.maturity === "insufficient_coverage") {
     return "Not enough comparable monitoring yet to evaluate this change.";
@@ -739,7 +739,7 @@ export function PlaceActivityReportPage({
       <PageHeader
         eyebrow="Explore the full picture"
         title="Place Report"
-        description="The same wildlife report Today uses, over a period you choose -- when it's most active, which areas see the most activity, what's been seen where, and whether there's enough monitoring to trust the pattern."
+        description="The same wildlife report Today uses, over a period you choose — when it's most active, which areas see the most activity, what's been seen where, and whether there's enough monitoring to trust the pattern."
         actions={
           <button className="secondary-action" onClick={() => onOpenBirdLog()} type="button">
             Open Bird Log
@@ -818,7 +818,7 @@ export function PlaceActivityReportPage({
             </div>
             <span className="meta-text">
               {selectedSourceIds.length === 0
-                ? "No cameras selected -- every camera is included."
+                ? "No cameras selected — every camera is included."
                 : `Limited to ${selectedSourceIds.length} of ${sources.length} camera${sources.length === 1 ? "" : "s"}.`}
             </span>
           </fieldset>
@@ -956,7 +956,7 @@ export function PlaceActivityReportPage({
 
               {/* Place / Yard Intelligence v2, Phase 7: which camera currently
                   sees the most wildlife activity, normalized for how long each
-                  one was actually monitored -- never a raw side-by-side count. */}
+                  one was actually monitored — never a raw side-by-side count. */}
               {(report.activity_by_source ?? []).length > 1 ? (
                 <section className="panel" aria-label="Wildlife activity by camera">
                   <div className="section-heading">
@@ -1006,13 +1006,13 @@ export function PlaceActivityReportPage({
       ) : null}
 
       {/* Biodiversity & Place Intelligence v1: deliberately outside the
-          `report` conditional above -- an all-time Place roster, not
+          `report` conditional above — an all-time Place roster, not
           scoped to the period picker. Same component the Dashboard's own
           sibling card uses, so the two can never disagree. */}
       <BiodiversitySummaryCard onOpenBirdLog={onOpenBirdLog} summary={biodiversitySummary} />
 
       {/* Year-over-Year Seasonality & Long-Term Place Memory v1:
-          deliberately outside the `report` conditional above -- always the
+          deliberately outside the `report` conditional above — always the
           current Place-local month, not scoped to the period picker (a
           different question from "activity in the period I chose above").
           Same component the Dashboard's own sibling card uses, so the two
@@ -1020,7 +1020,7 @@ export function PlaceActivityReportPage({
       <YearOverYearCard comparison={yearOverYear} onOpenBirdLog={onOpenBirdLog} onOpenTaxonStory={onOpenTaxonStory} />
 
       {/* Habitat & Phenology Foundation v1: deliberately outside the `report`
-          conditional above -- a genuinely independent, period-agnostic
+          conditional above — a genuinely independent, period-agnostic
           fetch that must keep working (or stay quietly absent) regardless
           of whether the wildlife report loaded. Read-only: editing lives on
           the Dashboard (Today) card. */}
@@ -1031,7 +1031,7 @@ export function PlaceActivityReportPage({
               <h2>Habitat &amp; season</h2>
               <span className="meta-text">
                 Durable details about this Place, and the full history of recorded season/phenology
-                notes -- not limited to the period above.
+                notes — not limited to the period above.
               </span>
             </div>
           </div>
@@ -1063,7 +1063,7 @@ export function PlaceActivityReportPage({
 
       {/* Place Features & Habitat Change v2: deliberately outside the
           `report` conditional above, same reasoning as Habitat & Season
-          just above -- a genuinely independent, period-agnostic fetch.
+          just above — a genuinely independent, period-agnostic fetch.
           Read-only: editing lives on the Dashboard (Today) card. Each
           Feature's own before/after insight is lazily loaded only when
           expanded, never computed for every Feature up front. */}
@@ -1074,7 +1074,7 @@ export function PlaceActivityReportPage({
               <h2>Features &amp; changes</h2>
               <span className="meta-text">
                 Feeders, water features, and other things around this Place, and the full history of
-                recorded changes -- not limited to the period above.
+                recorded changes — not limited to the period above.
               </span>
             </div>
             {placeFeatures.length > 0 ? (

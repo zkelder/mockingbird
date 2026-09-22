@@ -169,7 +169,7 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
       });
       const readyCount = records.filter((record) => record.status === "prepared").length;
       setPrepareMessage(
-        `Prepared ${records.length} record(s) for ${activeDestination.display_name} -- `
+        `Prepared ${records.length} record(s) for ${activeDestination.display_name} — `
           + `${readyCount} ready, ${records.length - readyCount} need attention.`,
       );
       await loadSubmissions();
@@ -201,7 +201,7 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
       `Prepare a file for ${activeDestination?.display_name ?? destination} with `
         + `${selectedSubmissionIds.size} record(s)?\n\n`
         + `Location: ${locationSummary}\nMedia: ${mediaPolicy === "none" ? "None" : "Reference only, no photo bytes"}\n\n`
-        + "This writes a local file only -- MockingBird never submits it anywhere on its own. "
+        + "This writes a local file only — MockingBird never submits it anywhere on its own. "
         + "You still upload it yourself.",
     );
     if (!confirmed) {
@@ -372,7 +372,7 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
               <div>
                 <h2>2. Location and media</h2>
                 <span className="meta-text">
-                  Explicit every time -- never reused from your weather/environment coordinate.
+                  Explicit every time — never reused from your weather/environment coordinate.
                 </span>
               </div>
             </div>
@@ -425,7 +425,7 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
               <div className="notice-panel">
                 <strong>"Obscured" is a display setting on the destination, not a transmission setting</strong>
                 <span>
-                  iNaturalist still receives and stores the exact coordinate you enter here -- "obscured" only
+                  iNaturalist still receives and stores the exact coordinate you enter here — "obscured" only
                   hides it from other users. Enter an already-rounded location yourself if you want the
                   destination's own servers to never see your precise coordinate.
                 </span>
@@ -504,7 +504,7 @@ export function EcologicalDestinationsPage({ onOpenVisit }: EcologicalDestinatio
                     {record.is_stale ? (
                       <>
                         <br />
-                        <small>MockingBird has been corrected since this was prepared -- re-prepare it.</small>
+                        <small>MockingBird has been corrected since this was prepared — re-prepare it.</small>
                       </>
                     ) : null}
                   </span>

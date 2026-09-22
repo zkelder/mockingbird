@@ -206,7 +206,7 @@ export function TaxonStoryPage({
 
       {!hasAnyHistory ? (
         <EmptyState
-          description={`MockingBird has not yet confirmed ${displayName} at this Place -- once a sighting is reviewed, its story will start here.`}
+          description={`MockingBird has not yet confirmed ${displayName} at this Place — once a sighting is reviewed, its story will start here.`}
           title="No confirmed observations yet"
         />
       ) : (

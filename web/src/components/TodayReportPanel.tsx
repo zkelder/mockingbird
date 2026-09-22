@@ -327,7 +327,7 @@ export function TodayReportPanel({
                           <span>{highlight.display_name}</span>
                           <span className="today-report-species-meta">{speciesTimeRange(highlight)}</span>
                           {/* Multi-Camera Place Experience v2: which camera
-                              produced this highlight's evidence -- only
+                              produced this highlight's evidence — only
                               worth naming once there is more than one
                               camera to distinguish (see "Do not turn Today
                               into a camera-monitoring dashboard"). */}
@@ -346,7 +346,7 @@ export function TodayReportPanel({
                             <StatusPill label={highlight.change_note} tone="quiet" />
                           ) : null}
                           {/* Place / Yard Intelligence v2: same "only when earned" discipline
-                              as the two pills above -- most highlights show neither. */}
+                              as the two pills above — most highlights show neither. */}
                           {highlight.regularity_note ? (
                             <StatusPill label={highlight.regularity_note} tone="quiet" />
                           ) : null}
@@ -410,7 +410,7 @@ export function TodayReportPanel({
           ) : null}
 
           {/* Multi-Camera Place Experience v2: a compact, coverage-normalized
-              per-camera comparison -- reuses the exact same SourceActivityList
+              per-camera comparison — reuses the exact same SourceActivityList
               presentation as the full Place Activity Report page, never a
               second bar-list. Only worth showing once there is more than one
               camera to compare (matching that page's own gating); Today stays
@@ -446,7 +446,7 @@ export function TodayReportPanel({
               onClick={configuredStreamCount > 0 ? onOpenStreams : onAddCamera}
               type="button"
             >
-              {configuredStreamCount > 0 ? "Open Cameras / Streams" : "Add Camera"}
+              {configuredStreamCount > 0 ? "Go to Cameras" : "Add Camera"}
             </button>
           }
           description={
@@ -465,7 +465,7 @@ export function TodayReportPanel({
             activity stays a quiet affordance" test encodes a deliberate
             existing decision to keep this link calm and jargon-free (it
             explicitly asserts no "AI suggestion" wording ever appears here)
-            -- review prominence already reads as adequate per this
+            — review prominence already reads as adequate per this
             milestone's own archaeology; left unchanged rather than
             reopening an already-settled call. */}
         {reviewCount > 0 ? (

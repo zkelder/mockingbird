@@ -13,7 +13,7 @@ const ROLE_OPTIONS: UserRole[] = ["viewer", "reviewer", "administrator"];
 function describeAuditAction(action: string): string {
   // A handful of the most common actions get a calmer label; anything else
   // (there are ~20 distinct action strings across review/camera/storage/
-  // backup/user mutations -- see docs/local-identity-multi-user-contract.md
+  // backup/user mutations — see docs/local-identity-multi-user-contract.md
   // "Audit") falls back to its own raw dotted name, which is still legible.
   const labels: Record<string, string> = {
     "user.bootstrap_administrator": "First-run administrator created",
@@ -240,10 +240,25 @@ export function UsersPage({ currentUser }: UsersPageProps) {
   }
 
   if (isLoading) {
-    return <div className="panel">Loading…</div>;
+    return (
+      <div className="panel" role="status">
+        Loading accounts&hellip;
+      </div>
+    );
   }
   if (error) {
-    return <div className="error-panel">{error}</div>;
+    // UI/UX & First-Run Adoption v1: a failed load rendered the bare server
+    // message ("Internal Server Error") with no heading and no way back.
+    return (
+      <div className="error-panel">
+        <strong>Couldn&rsquo;t load accounts.</strong>
+        <span>Check that MockingBird is still running, then try again.</span>
+        <span className="meta-text">{error}</span>
+        <button className="secondary-action" onClick={() => void load()} type="button">
+          Retry
+        </button>
+      </div>
+    );
   }
 
   return (
@@ -251,12 +266,12 @@ export function UsersPage({ currentUser }: UsersPageProps) {
       <PageHeader
         eyebrow="Administration"
         title="Users"
-        description="Local accounts for this Host. Roles are Viewer, Reviewer, and Administrator -- see the account menu to change your own password."
+        description="Accounts that can sign in to MockingBird on this computer. Viewers can look, Reviewers can also confirm and correct sightings, and Administrators can change cameras and settings."
       />
       {rowError ? <div className="error-panel">{rowError}</div> : null}
       <section className="panel page-stack">
         {/* Mobile & Remote Experience v1 (Phase 10): the only raw <table> in
-            the frontend -- an admin-only, low-row-count surface where
+            the frontend — an admin-only, low-row-count surface where
             horizontal scroll is a genuinely appropriate, well-understood
             pattern rather than justifying a one-off stacked-card rebuild or
             a new generic responsive-table framework. Every column stays
@@ -283,6 +298,7 @@ export function UsersPage({ currentUser }: UsersPageProps) {
                 <td>{user.login_identity}</td>
                 <td>
                   <select
+                    aria-label={`Role for ${user.display_name}`}
                     disabled={user.id === currentUser.id}
                     onChange={(event) => void handleRoleChange(user, event.target.value as UserRole)}
                     value={user.role}

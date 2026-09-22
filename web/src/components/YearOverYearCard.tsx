@@ -104,7 +104,7 @@ function placeSummary(
     case "partial_period":
       return (
         <p className="meta-text">
-          {currentLabel} is still in progress -- check back once it's complete for a full comparison with{" "}
+          {currentLabel} is still in progress — check back once it's complete for a full comparison with{" "}
           {priorLabel}.
         </p>
       );

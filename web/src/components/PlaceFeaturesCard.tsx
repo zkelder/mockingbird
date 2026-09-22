@@ -351,7 +351,7 @@ export function PlaceFeaturesCard({
                       ))}
                     </div>
                   ) : (
-                    <span className="meta-text">No camera linked -- Place knowledge only.</span>
+                    <span className="meta-text">No camera linked — Place knowledge only.</span>
                   )}
                   {addingViewForFeatureId === feature.id ? (
                     <div className="detail-actions">

@@ -4285,9 +4285,16 @@ export function StreamsPage({
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow="Outdoor camera workspace"
-        title="Cameras / Streams"
-        description="Add a camera, connect it, open the live Stream, and draw the Zones that matter."
+        eyebrow="What MockingBird is watching"
+        title="Cameras"
+        description="Add a camera, check its picture, and choose the areas worth watching. Nothing is watched until you start observing."
+        actions={
+          /* UI/UX & First-Run Adoption v1: Add Camera previously existed only
+             inside a collapsed panel further down the page. */
+          <button className="primary-action" onClick={onAddCamera} type="button">
+            Add Camera
+          </button>
+        }
       />
       {connectionError ? <div className="error-panel">{connectionError}</div> : null}
       {liveOverviewError ? <div className="error-panel">{liveOverviewError}</div> : null}

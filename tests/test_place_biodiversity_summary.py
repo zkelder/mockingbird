@@ -204,7 +204,7 @@ class TestWarnings:
             generated_at=GENERATED_AT,
         )
         assert len(summary.warnings) == 1
-        assert "No monitoring history recorded yet" in summary.warnings[0]
+        assert "No camera has spent time observing yet" in summary.warnings[0]
 
     def test_insufficient_but_some_monitoring_gets_a_different_warning(self) -> None:
         summary = compute_place_biodiversity_summary(

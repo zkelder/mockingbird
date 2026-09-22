@@ -72,7 +72,7 @@ function maturityInfo(
         label: "Early signal, longer window",
         tone: "review",
         detail:
-          "Only a longer, less-fresh comparison window had enough monitored history yet -- treat this as provisional.",
+          "Only a longer, less-fresh comparison window had enough monitored history yet — treat this as provisional.",
       };
     case "insufficient_coverage":
       return {
@@ -180,7 +180,7 @@ export function FeatureComparisonPage({
         if (dateB == null) return -1;
         return dateB.localeCompare(dateA) || a.feature.name.localeCompare(b.feature.name);
       }
-      return 0; // "automatic" -- preserve the backend's own newest-created-first order.
+      return 0; // "automatic" — preserve the backend's own newest-created-first order.
     });
     return sorted;
   }, [overview, typeFilter, onlySufficientData, featureSort]);
@@ -227,7 +227,7 @@ export function FeatureComparisonPage({
   return (
     <div className="page feature-comparison-page">
       <PageHeader
-        description="A fair, honest look at your recorded Features and habitat changes -- not a leaderboard."
+        description="A fair, honest look at your recorded Features and habitat changes — not a leaderboard."
         eyebrow="Compare"
         headingRef={headingRef}
         title="Compare Features"
@@ -367,7 +367,7 @@ export function FeatureComparisonPage({
         <h2>Habitat Change Outcomes</h2>
         <p className="meta-text">
           Reviewed changes with an attempted before/after comparison. An association describes what was observed
-          during the same period -- never a cause.
+          during the same period — never a cause.
         </p>
         {outcomeRows.length > 0 ? (
           <div className="zone-insights-sort">

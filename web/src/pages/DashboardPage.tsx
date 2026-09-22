@@ -680,16 +680,16 @@ export function DashboardPage({
           see docs/biodiversity-place-intelligence-v1-contract.md. */}
       <BiodiversitySummaryCard onOpenBirdLog={onOpenBirdLog} summary={biodiversitySummary} />
       {/* Year-over-Year Seasonality & Long-Term Place Memory v1: a fifth
-          sibling card, same reasoning as the others above -- see
+          sibling card, same reasoning as the others above — see
           docs/year-over-year-seasonality-long-term-place-memory-v1-report.md. */}
       <YearOverYearCard comparison={yearOverYear} onOpenBirdLog={onOpenBirdLog} onOpenTaxonStory={onOpenTaxonStory} />
       {/* Everyday Discovery / Product Experience v2 (Phase G): Today's own
           report above only ever shows one busiest_zone winner and a single
-          change sentence -- this links to the fuller exploration surface
+          change sentence — this links to the fuller exploration surface
           over the same underlying Place Activity Report, for a period the
           reviewer chooses. Deliberately not the "Zone & Feeder Insights"
           button above (a separate, bird-only, differently-computed BI
-          surface) -- the two are never the same link. */}
+          surface) — the two are never the same link. */}
       <div className="place-report-entry-link">
         <button className="text-action" onClick={onOpenPlaceActivityReport} type="button">
           See the full place report
@@ -790,7 +790,7 @@ export function DashboardPage({
       </section>
 
       {/* UI/UX & First-Run Adoption v1: moved up from the bottom of the
-          page -- real wildlife visits are the point of Today, and used to sit
+          page — real wildlife visits are the point of Today, and used to sit
           beneath every setup prompt and the status panel. */}
       <section className="panel dashboard-recent-activity">
         <div className="section-heading">
@@ -840,7 +840,7 @@ export function DashboardPage({
               <span className="meta-text">
                 {/* Multi-Camera Place Experience v2: every currently-armed
                     camera being unhealthy at once is materially different
-                    from one of several -- Phase 21 ("if all active cameras
+                    from one of several — Phase 21 ("if all active cameras
                     stop... Product should clearly communicate"). Computed
                     from two already-returned facts (the unhealthy list vs.
                     `headline.monitored_stream_count`, the same "currently
@@ -915,7 +915,7 @@ export function DashboardPage({
           </div>
         </div>
         {/* Environmental Context Foundation v1: a sibling of the report panel
-            above, not nested inside it -- see docs/environmental-context-
+            above, not nested inside it — see docs/environmental-context-
             foundation-v1-contract.md "Frontend surface" and this component's
             own docstring for why. */}
         <EnvironmentalContextCard
@@ -923,7 +923,7 @@ export function DashboardPage({
           onSaveLocation={saveEnvironmentalContextLocation}
         />
         {/* Habitat & Phenology Foundation v1: a third sibling card, same
-            reasoning as EnvironmentalContextCard above -- see
+            reasoning as EnvironmentalContextCard above — see
             docs/habitat-phenology-foundation-v1-contract.md "Frontend
             surface". */}
         <HabitatPhenologyCard
@@ -972,7 +972,7 @@ export function DashboardPage({
 
       {/* Everyday Discovery / Product Experience v2 (Phase C): app/storage/
           backup health is real, useful information, but it is not "what
-          happened here today" -- moved below the wildlife-discovery content
+          happened here today" — moved below the wildlife-discovery content
           instead of leading the page, matching the milestone's priority
           order (product-doctrine.md: this is a nature observatory, not an
           operations dashboard). */}
