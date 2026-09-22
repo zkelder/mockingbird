@@ -44,7 +44,7 @@ interface LastImportContext {
 }
 
 export function ManualImportPage({
-  streams,
+  streams: allStreams,
   sources,
   onOpenEvent,
   onOpenVisit,
@@ -56,7 +56,7 @@ export function ManualImportPage({
   onImportComplete,
   isDeveloperMode = false,
 }: ManualImportPageProps) {
-  const [selectedStreamId, setSelectedStreamId] = useState(streams[0]?.id ?? "");
+  const [selectedStreamId, setSelectedStreamId] = useState("");
   const [zones, setZones] = useState<Zone[]>([]);
   const [selectedZoneId, setSelectedZoneId] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -69,6 +69,25 @@ export function ManualImportPage({
   const [notes, setNotes] = useState("");
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
   const [setupReviews, setSetupReviews] = useState<Record<string, SourceSetupReviewResponse>>({});
+  const [isCreatingImportSource, setIsCreatingImportSource] = useState(false);
+  // UI/UX & First-Run Adoption v1: on a fresh install the only Stream is the
+  // seeded demo one, so this page used to default to it -- and media
+  // imported there was filed under the demo Source, which every review and
+  // history surface (correctly) hides. Never offer a demo Source as an
+  // import target. Mirrors the backend's effective-provider rule
+  // (`_real_source_condition`): a Source's configured provider decides, its
+  // original `kind` only until that is known.
+  const streams = useMemo(() => {
+    const demoSourceIds = new Set(
+      sources
+        .filter((source) => {
+          const review = setupReviews[source.id];
+          return review ? review.provider_key === "demo" : source.kind === "demo";
+        })
+        .map((source) => source.id),
+    );
+    return allStreams.filter((stream) => !demoSourceIds.has(stream.source_id));
+  }, [allStreams, setupReviews, sources]);
   const [result, setResult] = useState<MediaImportResult | null>(null);
   const [lastImportContext, setLastImportContext] = useState<LastImportContext | null>(null);
   const [demoResult, setDemoResult] = useState<DemoDetectionRunResult | null>(null);
@@ -260,7 +279,7 @@ export function ManualImportPage({
       setLastImportContext(nextImportContext);
       setDemoResult(null);
       setDemoDecisionResult(null);
-      setMessage("Imported media created a reviewable event and visit.");
+      setMessage("Imported. A new visit is waiting for you to confirm what it shows.");
       setFile(null);
       setFileInputKey((current) => current + 1);
       setSpeciesGuess("");
@@ -362,23 +381,39 @@ export function ManualImportPage({
     setIsConvertingDemoProposal(false);
   }
 
+  async function createImportSource() {
+    setIsCreatingImportSource(true);
+    setError(null);
+    try {
+      const created = await apiClient.createCameraSource({ name: "Imported photos" });
+      await apiClient.updateSourceProviderConfiguration(created.source.id, {
+        provider_key: "manual_media",
+        config: {},
+      });
+      await onImportComplete();
+      setSelectedStreamId(created.stream.id);
+      setMessage("Ready. Choose a photo or video below to add it.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not set up importing. Please try again.");
+    } finally {
+      setIsCreatingImportSource(false);
+    }
+  }
+
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow="Local-first media input"
+        eyebrow="No camera needed"
         title="Import Media"
-        description="Create a reviewable outdoor event from local media. Media stays local; review and correct imported observations before export."
+        description="Add wildlife photos or video from this computer — for example from a trail camera or phone. Files stay on this device. MockingBird turns each one into a visit you can confirm or correct."
         actions={
           <>
             <button className="secondary-action" onClick={onOpenFolderImport}>
-              Import Folder
+              Import a folder
             </button>
-            <button className="secondary-action" onClick={onOpenDetectionProposals}>
-              Detection Proposals
-            </button>
-            {selectedStream ? (
-              <button className="secondary-action" onClick={() => onOpenStream(selectedStream.id)}>
-                Open stream context
+            {isDeveloperMode ? (
+              <button className="secondary-action" onClick={onOpenDetectionProposals}>
+                Detection Proposals
               </button>
             ) : null}
           </>
@@ -387,18 +422,30 @@ export function ManualImportPage({
 
       {message ? <div className="notice-panel">{message}</div> : null}
       {error ? <div className="error-panel">{error}</div> : null}
-      <section className="notice-panel onboarding-provider-note">
-        <strong>Explicit local ingest</strong>
-        <span>Import creates review work. Corrections create truth.</span>
-      </section>
+      {streams.length === 0 ? (
+        <EmptyState
+          title="First, choose where imported media goes"
+          description="MockingBird keeps imported photos and video together under their own source, separate from any live camera. This takes one click and can be renamed later."
+          action={
+            <button
+              className="primary-action"
+              disabled={isCreatingImportSource}
+              onClick={() => void createImportSource()}
+              type="button"
+            >
+              {isCreatingImportSource ? "Setting up…" : "Set up importing"}
+            </button>
+          }
+        />
+      ) : null}
 
       {selectedStream && selectedSource ? (
         <section className="panel import-context-panel">
           <div className="section-heading">
             <div>
-              <h2>Import context</h2>
+              <h2>Where this media goes</h2>
               <span className="meta-text">
-                Source and Stream context for reviewable Events/Visits
+                Imported visits are filed under this source and camera view
               </span>
             </div>
             {selectedSetupReview ? (
@@ -434,18 +481,15 @@ export function ManualImportPage({
               <p>{selectedSetupReview.next_step}</p>
             ) : (
               <p>
-                Manual import can still be used as an explicit local ingest path for the selected
-                Stream. Live playback is not implied.
+                Media imported here is filed under this camera. It won't start live viewing or
+                monitoring.
               </p>
             )}
-            <p>Imported media stays local and needs review.</p>
+            <p>Imported media stays on this device and waits for you to confirm what it shows.</p>
           </div>
           <div className="detail-actions">
-            <button className="secondary-action" onClick={onOpenStreams} type="button">
-              Source setup
-            </button>
-            <button className="secondary-action" onClick={() => onOpenStream(selectedStream.id)}>
-              Open stream context
+            <button className="text-action" onClick={() => onOpenStream(selectedStream.id)} type="button">
+              Open this camera
             </button>
           </div>
         </section>
@@ -606,14 +650,14 @@ export function ManualImportPage({
       <section className="manual-import-layout">
         <form className="panel manual-import-form" onSubmit={submitImport}>
           <div className="section-heading">
-            <h2>Create review event</h2>
+            <h2>Add a photo or video</h2>
             <StatusPill label="Media stays local" tone="quiet" />
           </div>
           <div className="import-flow-strip">
-            <span>Local media</span>
-            <span>Stream context</span>
-            <span>Needs review</span>
-            <span>Export-ready after correction</span>
+            <span>Choose a file</span>
+            <span>MockingBird creates a visit</span>
+            <span>You confirm or correct it</span>
+            <span>It joins your Bird Log</span>
           </div>
           <label>
             Image or video file
@@ -631,7 +675,7 @@ export function ManualImportPage({
             </div>
           ) : null}
           <label>
-            Stream
+            Save under
             <select
               disabled={streams.length === 0}
               value={selectedStreamId}
@@ -684,10 +728,10 @@ export function ManualImportPage({
             />
           </label>
           <button className="primary-action" disabled={isSubmitting || !file || !selectedStreamId} type="submit">
-            {isSubmitting ? "Importing..." : "Create reviewable event"}
+            {isSubmitting ? "Importing…" : "Import"}
           </button>
           {streams.length === 0 ? (
-            <span className="meta-text">A stream is required before local media can enter review.</span>
+            <span className="meta-text">Set up importing above first.</span>
           ) : null}
         </form>
 

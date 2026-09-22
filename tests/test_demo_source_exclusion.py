@@ -1049,3 +1049,85 @@ def test_dataset_quality_summary_does_not_crash_on_a_genuinely_eventless_real_ev
     assert quality.needs_review_count == 1
     assert quality.issues[0].target_type == "event"
     assert quality.issues[0].target_id == "event-genuinely-eventless-1"
+
+
+# ---------------------------------------------------------------------------
+# UI/UX & First-Run Adoption v1: Place-history, discovery, and export
+# surfaces. That milestone's own fresh-install walkthrough found Today and
+# Place Report rendering "Kinds of wildlife known here: 1" (the seeded demo
+# squirrel) and Place Story naming it the Place's first recorded species,
+# with the demo Visit also flowing into Activity Library, reviewed dataset
+# exports, and research-safe (Darwin Core/Camtrap DP/iNaturalist) scope.
+# Analytics & Local Data Truth Consistency v1 had explicitly left the Place
+# Biodiversity family out of its own bounded scope. Fixed once at
+# `_historical_place_baseline_and_species_statuses` (all six Place-history
+# callers) plus each surface's own Stream scope, all via the same
+# `_real_stream_ids`/`_real_source_condition()` seam.
+# ---------------------------------------------------------------------------
+
+
+async def test_fresh_install_biodiversity_summary_knows_no_wildlife(client) -> None:
+    response = await client.get("/api/place/biodiversity-summary")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["historical_baseline"]["distinct_taxa_count"] == 0
+    assert body["historical_baseline"]["earliest_authoritative_record_at"] is None
+    assert body["taxa"] == []
+
+
+async def test_fresh_install_place_story_has_no_demo_wildlife_history(client) -> None:
+    response = await client.get("/api/place/story")
+    assert response.status_code == 200
+    text = response.text.lower()
+    assert "squirrel" not in text
+
+
+async def test_fresh_install_place_activity_report_has_no_demo_wildlife(client) -> None:
+    response = await client.post(
+        "/api/analytics/place-activity-report",
+        json={"start_at": "2026-01-01T00:00:00Z", "end_at": "2026-02-01T00:00:00Z"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert "squirrel" not in response.text.lower()
+    assert body["historical_baseline"]["distinct_taxa_count"] == 0
+
+
+async def test_fresh_install_activity_library_has_no_demo_visits(client) -> None:
+    response = await client.post("/api/activity-library/search", json={})
+    assert response.status_code == 200, response.text
+    assert "visit-squirrel-ground-001" not in response.text
+    assert "visit-bird-feeder-001" not in response.text
+
+
+async def test_fresh_install_reviewed_dataset_export_has_no_demo_records(client) -> None:
+    response = await client.post("/api/dataset-exports", json={"name": "First export"})
+    assert response.status_code == 201, response.text
+    assert response.json()["export"]["record_count"] == 0
+
+
+async def test_fresh_install_research_scope_never_includes_demo_visits(client) -> None:
+    research = await client.post("/api/research/export", json={"dry_run": True})
+    assert research.status_code == 201, research.text
+    assert research.json()["observation_count"] == 0
+    assert research.json()["excluded_count"] == 0
+
+    preview = await client.post(
+        "/api/ecological/eligibility-preview", json={"destination": "inaturalist"}
+    )
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["items"] == []
+
+
+async def test_repurposed_demo_source_counts_toward_place_biodiversity(
+    client, fresh_repository: ProductRepository
+) -> None:
+    """Positive control: exclusion follows the *effective* provider, so the
+    same seeded history reappears once the Source is genuinely real."""
+
+    de_demo_seeded_source(fresh_repository)
+    response = await client.get("/api/place/biodiversity-summary")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["historical_baseline"]["distinct_taxa_count"] == 1
+    assert [taxon["label"] for taxon in body["taxa"]] == ["squirrel"]

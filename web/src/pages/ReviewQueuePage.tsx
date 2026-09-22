@@ -1398,6 +1398,7 @@ interface ReviewQueuePageProps {
   onOpenAnalytics: () => void;
   onOpenClassifierReadiness: () => void;
   onOpenExports: () => void;
+  onOpenToday?: () => void;
   onOpenVisit: (visitId: string) => void;
 }
 
@@ -1411,6 +1412,7 @@ export function ReviewQueuePage({
   onOpenAnalytics,
   onOpenClassifierReadiness,
   onOpenExports,
+  onOpenToday,
   onOpenVisit,
 }: ReviewQueuePageProps) {
   const [queueItems, setQueueItems] = useState<ReviewQueueItem[]>(items);
@@ -1433,6 +1435,16 @@ export function ReviewQueuePage({
   const [reviewLabels, setReviewLabels] = useState<ReviewLabel[]>([]);
   const [reviewFilter, setReviewFilter] = useState<ReviewFilter>("all");
   const [productTab, setProductTab] = useState<ProductReviewTab>("animals");
+  // UI/UX & First-Run Adoption v1: the queue used to open on "Animals"
+  // unconditionally, so a user whose only waiting item sat in another group
+  // landed on "No review items match these filters" (and "Reset filters"
+  // never changed the tab). Until the user picks a group themselves, open
+  // on the first group that actually has work waiting.
+  const userChoseProductTabRef = useRef(false);
+  function chooseProductTab(tab: ProductReviewTab) {
+    userChoseProductTabRef.current = true;
+    setProductTab(tab);
+  }
   const [showLegacyAndTestActivity, setShowLegacyAndTestActivity] = useState(false);
   const [skippedTargetIds, setSkippedTargetIds] = useState<Set<string>>(() => new Set());
   const [reviewPage, setReviewPage] = useState(0);
@@ -1546,6 +1558,27 @@ export function ReviewQueuePage({
     [queueItems],
   );
 
+  const pendingProductTabs: ProductReviewTab[] = [
+    "animals",
+    "other_activity",
+    "unchecked",
+    ...(showLegacyAndTestActivity ? (["legacy_activity"] as ProductReviewTab[]) : []),
+  ];
+  const firstPendingProductTab =
+    pendingProductTabs.find((tab) => productQueueCounts[tab] > 0) ?? null;
+  const pendingReviewCount = pendingProductTabs.reduce(
+    (total, tab) => total + productQueueCounts[tab],
+    0,
+  );
+  useEffect(() => {
+    if (userChoseProductTabRef.current || firstPendingProductTab === null) {
+      return;
+    }
+    if (productQueueCounts[productTab] === 0) {
+      setProductTab(firstPendingProductTab);
+    }
+  }, [firstPendingProductTab, productQueueCounts, productTab]);
+
   const productReviewFilters: ReviewFilterOption<ProductReviewTab>[] = [
     { value: "animals", label: "Animals", count: productQueueCounts.animals },
     {
@@ -1554,11 +1587,17 @@ export function ReviewQueuePage({
       count: productQueueCounts.other_activity,
     },
     { value: "unchecked", label: "Unchecked", count: productQueueCounts.unchecked },
-    {
-      value: "legacy_activity",
-      label: "Legacy activity",
-      count: productQueueCounts.legacy_activity,
-    },
+    // "Legacy activity" (sample/test and older evidence-only items) is only
+    // offered once the user has asked to see it.
+    ...(showLegacyAndTestActivity
+      ? [
+          {
+            value: "legacy_activity" as ProductReviewTab,
+            label: "Legacy activity",
+            count: productQueueCounts.legacy_activity,
+          },
+        ]
+      : []),
     { value: "reviewed", label: "Reviewed", count: productQueueCounts.reviewed },
   ];
 
@@ -2335,6 +2374,10 @@ export function ReviewQueuePage({
   }
 
   function resetReviewFilters() {
+    userChoseProductTabRef.current = false;
+    if (firstPendingProductTab !== null) {
+      setProductTab(firstPendingProductTab);
+    }
     setReviewFilter("all");
     setReviewSort("newest");
     setTextSearch("");
@@ -2598,12 +2641,12 @@ export function ReviewQueuePage({
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow="Dataset-grade truth"
+        eyebrow="Confirm what visited"
         title="Review Queue"
-        description="Confirm or correct outdoor activity before it becomes analytics and local export data."
+        description="Check MockingBird's suggestions and confirm or correct them. What you confirm becomes your trusted record in Bird Log, Insights, and exports — later model runs can suggest, but never overwrite it."
         actions={
-          <button className="secondary-action" onClick={onOpenExports}>
-            Open Dataset Exports
+          <button className="text-action" onClick={onOpenExports} type="button">
+            Exports
           </button>
         }
       />
@@ -2634,29 +2677,34 @@ export function ReviewQueuePage({
       ) : null}
       {queueItems.length === 0 ? (
         <EmptyState
-          title="No wildlife moments ready for review"
-          description="MockingBird only surfaces a candidate here once it has a clear enough moment to actually review. If observation is running but nothing appears, MockingBird saw activity but couldn't capture a clear enough moment yet -- that's expected, not an error."
+          title="Nothing to review yet"
+          description="When a camera is observing, visits MockingBird is unsure about appear here for you to confirm or correct. If observation is running but nothing appears yet, MockingBird hasn't captured a clear enough moment — that's expected, not an error."
           action={
-            <button className="primary-action" onClick={onOpenExports}>
-              Open Dataset Exports
-            </button>
+            onOpenToday ? (
+              <button className="secondary-action" onClick={onOpenToday} type="button">
+                Back to Today
+              </button>
+            ) : undefined
           }
         />
       ) : null}
       {queueItems.length > 0 ? (
-        <section className="review-triage-bar" aria-label="Product Mode review queue">
+        <section className="review-triage-bar" aria-label="Review groups">
           <div className="review-triage-copy">
-            <strong>Product Mode</strong>
+            <strong>What needs a look</strong>
             <span>
-              Current detector-qualified animal Visits are shown first. Detector evidence
-              is not a species result; a correction is still the only truth action.
+              {pendingReviewCount > 0
+                ? `${pendingReviewCount} ${pendingReviewCount === 1 ? "visit is" : "visits are"} waiting for you. `
+                : "Nothing is waiting for you right now. "}
+              A detection only means something was there; your confirmation is what makes a
+              sighting part of your records.
             </span>
           </div>
           <ReviewFilterTabs
             activeFilter={productTab}
             filters={productReviewFilters}
             label="Product review groups"
-            onChange={setProductTab}
+            onChange={chooseProductTab}
           />
           <label className="review-triage-order">
             <input
@@ -3706,7 +3754,39 @@ export function ReviewQueuePage({
             </button>
           </div>
         ) : null}
-        {queueItems.length > 0 && filteredItems.length === 0 ? (
+        {queueItems.length > 0 &&
+        filteredItems.length === 0 &&
+        !readinessHandoffLabel &&
+        productQueueCounts[productTab] === 0 &&
+        productTab !== "reviewed" ? (
+          firstPendingProductTab !== null ? (
+            <EmptyState
+              title="Nothing waiting in this group"
+              description={`${pendingReviewCount} ${pendingReviewCount === 1 ? "visit is" : "visits are"} waiting in ${
+                productReviewFilters.find((filter) => filter.value === firstPendingProductTab)?.label ?? "another group"
+              }.`}
+              action={
+                <button
+                  className="secondary-action"
+                  onClick={() => chooseProductTab(firstPendingProductTab)}
+                  type="button"
+                >
+                  Show {productReviewFilters.find((filter) => filter.value === firstPendingProductTab)?.label ?? "waiting visits"}
+                </button>
+              }
+            />
+          ) : (
+            <EmptyState
+              title="All caught up"
+              description="Nothing is waiting for review. New visits appear here when MockingBird is unsure, and everything you have confirmed stays in the Reviewed group and your Bird Log."
+              action={
+                <button className="secondary-action" onClick={() => chooseProductTab("reviewed")} type="button">
+                  Show reviewed
+                </button>
+              }
+            />
+          )
+        ) : queueItems.length > 0 && filteredItems.length === 0 ? (
           <EmptyState
             title={
               readinessHandoffLabel ? "No matching review items found" : "No review items match these filters"
@@ -5067,7 +5147,7 @@ function CorrectionAuditPanel({
       <summary>
         <span>Reviewed history</span>
         <strong>
-          {groups.length} reviewed target{groups.length === 1 ? "" : "s"}
+          {groups.length} reviewed
         </strong>
       </summary>
       <span className="meta-text">

@@ -18,9 +18,10 @@ export function ReviewFilterTabs<TValue extends string>({
   onChange,
 }: ReviewFilterTabsProps<TValue>) {
   return (
-    <div className="review-filter-tabs" aria-label={label}>
+    <div className="review-filter-tabs" aria-label={label} role="group">
       {filters.map((filter) => (
         <button
+          aria-pressed={activeFilter === filter.value}
           className={activeFilter === filter.value ? "selected" : ""}
           key={filter.value}
           onClick={() => onChange(filter.value)}

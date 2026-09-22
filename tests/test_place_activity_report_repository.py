@@ -652,7 +652,7 @@ def test_coverage_fully_withheld_only_when_no_in_scope_stream_has_any_history(
     assert report.coverage.history_available_from is None
     assert report.maturity == "no_data"
     assert any(
-        "No durable monitoring exposure has been recorded for any Stream yet"
+        "No camera has spent time observing yet"
         in warning
         for warning in report.warnings
     )

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { apiClient, onSessionExpired } from "./api/client";
 import type {
   ActivityLibraryFilters,
@@ -104,24 +104,36 @@ const initialData: AppData = {
 // server-side regardless of what this list shows (see mockingbird.api.auth
 // ROUTE_POLICY); this is UX calm, not the authorization boundary itself.
 // Omitted `minRole` means every signed-in role (Viewer floor) sees it.
-const productNavItems: Array<{ page: Page; label: string; minRole?: UserRole }> = [
-  { page: "dashboard", label: "Today" },
-  { page: "streams", label: "Cameras" },
-  { page: "import", label: "Import Media" },
-  { page: "review", label: "Review Queue", minRole: "reviewer" },
-  { page: "bird-log", label: "Bird Log" },
-  { page: "place-activity-report", label: "Place Report" },
-  { page: "place-story", label: "Place Story" },
-  { page: "activity-library", label: "Activity Library" },
-  { page: "analytics", label: "Insights" },
-  { page: "ecological-destinations", label: "Ecological Destinations" },
-  { page: "settings", label: "Local Data" },
-  { page: "users", label: "Users", minRole: "administrator" },
+// UI/UX & First-Run Adoption v1: grouped under plain headings that follow
+// the product loop (observe -> discover/confirm/remember -> understand ->
+// manage) instead of one flat, 13-item "Product loop" list. Labels and
+// routes are unchanged; only order and grouping moved.
+type NavGroup = "home" | "observe" | "wildlife" | "place" | "manage";
+const navGroupLabels: Record<NavGroup, string | null> = {
+  home: null,
+  observe: "Observe",
+  wildlife: "Wildlife",
+  place: "Your place",
+  manage: "Settings & help",
+};
+const productNavItems: Array<{ page: Page; label: string; group: NavGroup; minRole?: UserRole }> = [
+  { page: "dashboard", label: "Today", group: "home" },
+  { page: "streams", label: "Cameras", group: "observe" },
+  { page: "import", label: "Import Media", group: "observe" },
+  { page: "review", label: "Review Queue", group: "wildlife", minRole: "reviewer" },
+  { page: "bird-log", label: "Bird Log", group: "wildlife" },
+  { page: "activity-library", label: "Activity Library", group: "wildlife" },
+  { page: "place-story", label: "Place Story", group: "place" },
+  { page: "place-activity-report", label: "Place Report", group: "place" },
+  { page: "analytics", label: "Insights", group: "place" },
+  { page: "ecological-destinations", label: "Ecological Destinations", group: "place" },
+  { page: "settings", label: "Local Data", group: "manage" },
+  { page: "users", label: "Users", group: "manage", minRole: "administrator" },
   // Product Operations & First-Observation Completion v1: Doctor's own
   // report includes local filesystem paths and Camera Node structural
   // facts -- Administrator-gated server-side (see api/auth.py), mirrored
   // here so the nav never shows an entry a Viewer/Reviewer cannot open.
-  { page: "doctor", label: "Doctor", minRole: "administrator" },
+  { page: "doctor", label: "Doctor", group: "manage", minRole: "administrator" },
 ];
 
 const ROLE_RANK: Record<UserRole, number> = { viewer: 0, reviewer: 1, administrator: 2 };
@@ -193,6 +205,10 @@ export default function App() {
   const [selectedStreamId, setSelectedStreamId] = useState<string | null>(
     initialRoute.streamId ?? null,
   );
+  // UI/UX & First-Run Adoption v1: `selectedStreamId` also defaults to the
+  // first Stream on data load (other pages rely on that), so it cannot say
+  // whether the user actually opened a camera; this can.
+  const [openedStreamId, setOpenedStreamId] = useState<string | null>(initialRoute.streamId ?? null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(
     initialRoute.eventId ?? null,
   );
@@ -255,6 +271,7 @@ export default function App() {
     setPageState(route.page);
     if (route.streamId !== undefined) {
       setSelectedStreamId(route.streamId);
+      setOpenedStreamId(route.streamId);
     }
     if (route.eventId !== undefined) {
       setSelectedEventId(route.eventId);
@@ -492,6 +509,8 @@ export default function App() {
     () => data.streams.find((stream) => stream.id === selectedStreamId) ?? data.streams[0],
     [data.streams, selectedStreamId],
   );
+
+  const openedStream = openedStreamId ? data.streams.find((stream) => stream.id === openedStreamId) ?? null : null;
 
   function openStream(streamId: string) {
     navigate({ page: "stream-detail", streamId });
@@ -1003,6 +1022,7 @@ export default function App() {
           onOpenAnalytics={() => setPage("analytics")}
           onOpenClassifierReadiness={() => setPage("classifier-readiness")}
           onOpenExports={() => setPage("exports")}
+          onOpenToday={() => setPage("dashboard")}
           onOpenVisit={openVisit}
         />
       );
@@ -1206,6 +1226,9 @@ export default function App() {
 
   return (
     <>
+      <a className="skip-link" href="#main-content">
+        Skip to main content
+      </a>
       <header className="mobile-topbar">
         <button
           aria-controls="primary-navigation"
@@ -1242,16 +1265,23 @@ export default function App() {
         </div>
         <AlertsControl onAction={openAlertAction} onOpenInbox={() => setPage("alerts-inbox")} />
         <nav className="nav-list" aria-label="Product navigation">
-          <span className="nav-section-label">Product loop</span>
-          {visibleProductNavItems.map((item) => (
-            <button
-              className={page === item.page ? "nav-item active" : "nav-item"}
-              key={item.page}
-              onClick={() => setPage(item.page)}
-            >
-              {item.label}
-            </button>
-          ))}
+          {visibleProductNavItems.map((item, index) => {
+            const groupLabel = navGroupLabels[item.group];
+            const startsGroup = index === 0 || visibleProductNavItems[index - 1].group !== item.group;
+            return (
+              <Fragment key={item.page}>
+                {startsGroup && groupLabel ? <span className="nav-section-label">{groupLabel}</span> : null}
+                <button
+                  aria-current={page === item.page ? "page" : undefined}
+                  className={page === item.page ? "nav-item active" : "nav-item"}
+                  onClick={() => setPage(item.page)}
+                  type="button"
+                >
+                  {item.label}
+                </button>
+              </Fragment>
+            );
+          })}
           <button
             aria-pressed={isDeveloperMode}
             className={`nav-item developer-mode-toggle${isDeveloperMode ? " active" : ""}`}
@@ -1280,38 +1310,48 @@ export default function App() {
               </div>
             </details>
           ) : null}
-          {selectedStream || selectedEventId || selectedVisitId ? (
-            <span className="nav-section-label">Current context</span>
+          {/* UI/UX & First-Run Adoption v1: "Recently opened" only lists
+              what the user actually opened -- previously a "Stream Detail"
+              entry appeared on a fresh install (falling back to the first
+              Stream, usually the demo one) before any camera was opened. */}
+          {openedStream || selectedEventId || selectedVisitId ? (
+            <span className="nav-section-label">Recently opened</span>
           ) : null}
-          {selectedStream ? (
+          {openedStream ? (
             <button
+              aria-current={page === "stream-detail" ? "page" : undefined}
               className={page === "stream-detail" ? "nav-item active" : "nav-item"}
-              onClick={() => openStream(selectedStream.id)}
+              onClick={() => openStream(openedStream.id)}
+              type="button"
             >
-              Stream Detail
+              Camera: {openedStream.name}
             </button>
           ) : null}
           {selectedEventId ? (
             <button
+              aria-current={page === "event-detail" ? "page" : undefined}
               className={page === "event-detail" ? "nav-item active" : "nav-item"}
               onClick={() => openEvent(selectedEventId)}
+              type="button"
             >
-              Event Detail
+              Activity details
             </button>
           ) : null}
           {selectedVisitId ? (
             <button
+              aria-current={page === "visit-detail" ? "page" : undefined}
               className={page === "visit-detail" ? "nav-item active" : "nav-item"}
               onClick={() => openVisit(selectedVisitId)}
+              type="button"
             >
-              Visit Detail
+              Visit details
             </button>
           ) : null}
         </nav>
         <div className="account-menu">
           <div className="account-menu-identity">
             <strong>{currentUser.display_name}</strong>
-            <span>{currentUser.role}</span>
+            <span>{currentUser.role.charAt(0).toUpperCase() + currentUser.role.slice(1)}</span>
           </div>
           <ChangePasswordControl />
           <button className="text-action" onClick={handleSignOut} type="button">
@@ -1319,11 +1359,11 @@ export default function App() {
           </button>
         </div>
         <div className="sidebar-footer">
-          <span>Local app</span>
+          <span>Running on</span>
           <strong>{apiClient.baseUrl || "This device"}</strong>
         </div>
       </aside>
-      <main className="main-content">
+      <main className="main-content" id="main-content" tabIndex={-1}>
         {loadWarnings.length > 0 ? (
           <div className="notice-panel app-load-warning" role="status">
             <strong>Some supporting information could not refresh.</strong>
@@ -1339,6 +1379,7 @@ export default function App() {
       <nav aria-label="Primary" className="mobile-bottom-nav">
         {mobileNavItems.map((item) => (
           <button
+            aria-current={page === item.page ? "page" : undefined}
             className={page === item.page ? "mobile-bottom-nav-item active" : "mobile-bottom-nav-item"}
             key={item.page}
             onClick={() => setPage(item.page)}

@@ -18383,6 +18383,10 @@ class ProductRepository:
                 .join(EventModel, VisitModel.event_id == EventModel.id)
                 .join(StreamModel, EventModel.stream_id == StreamModel.id)
                 .outerjoin(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+                .outerjoin(
+                    SourceProviderConfigurationModel,
+                    SourceProviderConfigurationModel.source_id == CameraSourceModel.id,
+                )
                 .outerjoin(ZoneModel, ZoneModel.id == effective_zone_id)
                 .outerjoin(VisitOrganizationModel, VisitOrganizationModel.visit_id == VisitModel.id)
                 .outerjoin(
@@ -18391,6 +18395,9 @@ class ProductRepository:
                 )
             )
 
+            # UI/UX & First-Run Adoption v1: the seeded demo Source's
+            # fabricated Visits are not captured activity.
+            query = query.where(_real_source_condition())
             # Provenance is opt-in: active Visits are the current product truth by default.
             if not payload.include_superseded:
                 query = query.where(VisitModel.is_superseded.is_(False))
@@ -32928,6 +32935,13 @@ class ProductRepository:
             stream_id_query = (
                 select(StreamModel.id, CameraSourceModel.id, CameraSourceModel.name)
                 .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+                # UI/UX & First-Run Adoption v1: the seeded demo Source is
+                # never part of a real Place report, in either branch below.
+                .outerjoin(
+                    SourceProviderConfigurationModel,
+                    SourceProviderConfigurationModel.source_id == CameraSourceModel.id,
+                )
+                .where(_real_source_condition())
             )
             if payload.source_ids:
                 # Camera / Source + Multi-Camera Maturity v1, Phase N: an
@@ -33293,11 +33307,14 @@ class ProductRepository:
             "The same animal may create more than one Visit if it leaves and returns.",
         ]
         if not stream_ids:
-            warnings.append("No Streams are configured yet.")
+            warnings.append("No cameras are set up yet.")
         elif coverage.history_available_from is None:
+            # UI/UX & First-Run Adoption v1: shown verbatim on Today and
+            # Place Report -- plain language instead of "durable monitoring
+            # exposure ... coverage is withheld".
             warnings.append(
-                "No durable monitoring exposure has been recorded for any Stream yet, "
-                "so coverage is withheld."
+                "No camera has spent time observing yet, so there is no "
+                "observing time to compare visits against."
             )
         else:
             if coverage.history_is_partial:
@@ -33739,7 +33756,20 @@ class ProductRepository:
         bounded Visit query shape) for distinct-usable-day/regularity
         accounting. Both reuse the caller's already-preloaded `taxonomy_
         index` -- no second per-row taxonomy lookup.
+
+        UI/UX & First-Run Adoption v1: every caller's `stream_ids` is
+        narrowed here to real (non-demo) Streams via `_real_stream_ids`, the
+        same seam Analytics & Local Data Truth Consistency v1 established --
+        once, for all six callers (Today, Place Activity Report, Bird Log
+        overview/history, Place Biodiversity, Place Story), rather than per
+        call site. A fresh install otherwise showed the seeded demo Visit as
+        "Kinds of wildlife known here: 1" and Place Story's "1st species
+        recorded", and its first-confirmed date would suppress a user's own
+        first real sighting of that taxon from ever reading as new.
         """
+
+        real_stream_ids = _real_stream_ids(session)
+        stream_ids = [stream_id for stream_id in stream_ids if stream_id in real_stream_ids]
 
         usable_dates, has_any_monitoring_history, total_monitored_seconds = (
             self._historical_usable_dates(
@@ -35224,9 +35254,15 @@ class ProductRepository:
             # that period's own real history.
             stream_ids = list(
                 session.scalars(
-                    select(StreamModel.id).join(
-                        CameraSourceModel, StreamModel.source_id == CameraSourceModel.id
+                    select(StreamModel.id)
+                    .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+                    # UI/UX & First-Run Adoption v1: archived-inclusive, but
+                    # never the seeded demo Source's fabricated history.
+                    .outerjoin(
+                        SourceProviderConfigurationModel,
+                        SourceProviderConfigurationModel.source_id == CameraSourceModel.id,
                     )
+                    .where(_real_source_condition())
                 ).all()
             )
             taxonomy_index = self._taxonomy_label_index(session)
@@ -35316,9 +35352,15 @@ class ProductRepository:
             # remains a real part of this Place's history.
             stream_ids = list(
                 session.scalars(
-                    select(StreamModel.id).join(
-                        CameraSourceModel, StreamModel.source_id == CameraSourceModel.id
+                    select(StreamModel.id)
+                    .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+                    # UI/UX & First-Run Adoption v1: archived-inclusive, but
+                    # never the seeded demo Source's fabricated history.
+                    .outerjoin(
+                        SourceProviderConfigurationModel,
+                        SourceProviderConfigurationModel.source_id == CameraSourceModel.id,
                     )
+                    .where(_real_source_condition())
                 ).all()
             )
             taxonomy_index = self._taxonomy_label_index(session)
@@ -36040,18 +36082,27 @@ class ProductRepository:
     def _research_scope_stream_ids(
         self, session: Session, filters: ResearchExportFilters,
     ) -> list[str] | None:
-        """`None` means "every configured Stream" -- an explicit, distinct
-        state from an empty list (which would mean "no Stream at all")."""
+        """The Streams a research/ecological export may draw from.
 
+        UI/UX & First-Run Adoption v1: always an explicit list of real
+        (non-demo) Streams -- previously `None` meant "every configured
+        Stream", which let the seeded demo Source's fabricated reviewed
+        Visit export as an eligible Darwin Core/Camtrap DP/iNaturalist
+        record on a fresh install. An empty list correctly means "nothing
+        in scope"."""
+
+        real_stream_ids = _real_stream_ids(session)
         if filters.stream_ids is not None:
-            return list(filters.stream_ids)
+            return [stream_id for stream_id in filters.stream_ids if stream_id in real_stream_ids]
         if filters.source_ids is not None:
-            return list(
-                session.scalars(
+            return [
+                stream_id
+                for stream_id in session.scalars(
                     select(StreamModel.id).where(StreamModel.source_id.in_(filters.source_ids))
                 ).all()
-            )
-        return None
+                if stream_id in real_stream_ids
+            ]
+        return sorted(real_stream_ids)
 
     def _research_collection_visit_ids(self, session: Session, collection_id: str) -> list[str]:
         collection = session.get(ResearchCollectionModel, collection_id)
@@ -38653,6 +38704,9 @@ class ProductRepository:
         )
         event_ids_with_visits = {visit.event_id for visit in visits}
         event_ids_with_any_visits = set(session.scalars(select(VisitModel.event_id)).all())
+        # UI/UX & First-Run Adoption v1: the seeded demo Source's fabricated
+        # activity is never real dataset material.
+        real_stream_ids = _real_stream_ids(session)
 
         for visit in visits:
             if selected_visit_ids is not None and visit.id not in selected_visit_ids:
@@ -38660,6 +38714,8 @@ class ProductRepository:
             event_model = session.get(EventModel, visit.event_id)
             if event_model is None:
                 skipped_reasons["missing_event"] += 1
+                continue
+            if event_model.stream_id not in real_stream_ids:
                 continue
 
             event = self._event_from_model(session, event_model)
@@ -38682,6 +38738,8 @@ class ProductRepository:
             if selected_visit_ids is not None:
                 continue
             if event_model.id in event_ids_with_visits or event_model.id in event_ids_with_any_visits:
+                continue
+            if event_model.stream_id not in real_stream_ids:
                 continue
 
             stream_model = session.get(StreamModel, event_model.stream_id)

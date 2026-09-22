@@ -88,7 +88,7 @@ function CreateUserForm({ onCreated }: { onCreated: (user: UserSummary) => void 
         />
       </label>
       <label>
-        Login identity
+        Username
         <input
           autoComplete="off"
           onChange={(event) => setLoginIdentity(event.target.value)}
@@ -267,7 +267,7 @@ export function UsersPage({ currentUser }: UsersPageProps) {
           <thead>
             <tr>
               <th>Name</th>
-              <th>Login identity</th>
+              <th>Username</th>
               <th>Role</th>
               <th>Status</th>
               <th>Actions</th>

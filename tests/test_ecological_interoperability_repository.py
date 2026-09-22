@@ -42,6 +42,7 @@ from mockingbird.repository.product_repository import (
     CreateCandidateVisitRequest,
     ProductRepository,
 )
+from tests.conftest import de_demo_seeded_source
 
 STREAM_ID = "stream-backyard-feeder"
 FEEDER_ZONE_ID = "zone-feeder"
@@ -87,6 +88,7 @@ def repository(tmp_path: Path) -> ProductRepository:
             }
         ),
     )
+    de_demo_seeded_source(repo)
     yield repo
     repo.close()
 
@@ -307,6 +309,7 @@ def test_a_lookup_failure_degrades_honestly_and_never_poisons_the_cache(tmp_path
         research_export_root=tmp_path / "research_exports", ecological_export_root=tmp_path / "ecological_exports",
         inaturalist_taxonomy_requester=_FakeTaxonomyRequester(raises=True),
     )
+    de_demo_seeded_source(repo)
     try:
         _activate(repo)
         visit_id = _create_visit(repo)

@@ -46,6 +46,11 @@ interface TodayReportPanelProps {
   onOpenStreams: () => void;
   onOpenReview: () => void;
   onOpenBirdLog: () => void;
+  // UI/UX & First-Run Adoption v1: the all-time waiting count (Dashboard
+  // headline `needs_review_visit_count`, demo-excluded) -- `reviewCount`
+  // below is today-only, so on its own it said "All caught up" while older
+  // visits were still waiting in the Review Queue.
+  waitingReviewCount?: number;
 }
 
 function plural(count: number, word: string): string {
@@ -157,6 +162,7 @@ export function TodayReportPanel({
   onOpenStreams,
   onOpenReview,
   onOpenBirdLog,
+  waitingReviewCount = 0,
 }: TodayReportPanelProps) {
   if (!report && isLoading) {
     return (
@@ -465,6 +471,10 @@ export function TodayReportPanel({
         {reviewCount > 0 ? (
           <button className="text-action" onClick={onOpenReview} type="button">
             {plural(reviewCount, "item")} worth reviewing
+          </button>
+        ) : waitingReviewCount > 0 ? (
+          <button className="text-action" onClick={onOpenReview} type="button">
+            Nothing new today · {plural(waitingReviewCount, "earlier visit")} still worth reviewing
           </button>
         ) : (
           <span className="meta-text">All caught up — nothing waiting on you</span>

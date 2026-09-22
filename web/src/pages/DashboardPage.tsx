@@ -598,7 +598,7 @@ export function DashboardPage({
       <section className="dashboard-hero dashboard-operations-hero">
         <div>
           <StatusPill
-            label={health?.status === "ok" ? "Local app connected" : "Local status unavailable"}
+            label={health?.status === "ok" ? "Running on this device" : "Can't reach MockingBird"}
             tone={health?.status === "ok" ? "good" : "review"}
           />
           <h1>Today in Your Yard</h1>
@@ -607,16 +607,24 @@ export function DashboardPage({
           </p>
         </div>
         <div className="hero-actions">
-          <button className="primary-action" onClick={onAddCamera} type="button">
-            Add Camera
-          </button>
-          <button className="primary-action" onClick={onOpenStreams} type="button">
-            Open Cameras / Streams
-          </button>
+          {summary.headline.real_stream_count > 0 ? (
+            <>
+              <button className="primary-action" onClick={onOpenStreams} type="button">
+                Cameras
+              </button>
+              <button className="secondary-action" onClick={onAddCamera} type="button">
+                Add Camera
+              </button>
+            </>
+          ) : (
+            <button className="primary-action" onClick={onAddCamera} type="button">
+              Add Camera
+            </button>
+          )}
           <button className="secondary-action" onClick={onOpenInsights} type="button">
-            Zone & Feeder Insights
+            Insights
           </button>
-          <button className="secondary-action" onClick={() => void refreshDashboard()} type="button">
+          <button className="text-action" onClick={() => void refreshDashboard()} type="button">
             {isRefreshing ? "Refreshing…" : "Refresh"}
           </button>
         </div>
@@ -653,7 +661,7 @@ export function DashboardPage({
 
       <TodayAttentionSummary onOpenAlertsInbox={onOpenAlertsInbox} />
       <TodayReportPanel
-        configuredStreamCount={summary.headline.configured_stream_count}
+        configuredStreamCount={summary.headline.real_stream_count}
         isLoading={isLoading}
         monitoredStreamCount={summary.headline.monitored_stream_count}
         onAddCamera={onAddCamera}
@@ -661,50 +669,12 @@ export function DashboardPage({
         onOpenReview={() => onOpenReview()}
         onOpenStreams={onOpenStreams}
         report={report}
+        waitingReviewCount={summary.headline.needs_review_visit_count}
       />
       {/* Place / Yard Intelligence v2, Phase 13: a sibling of the report
           panel above, same reasoning as the other sibling cards below --
           see docs/place-yard-intelligence-v2-contract.md section 3.7. */}
       <WeeklySummaryCard weeklyDigest={report?.weekly_digest} />
-      {/* Environmental Context Foundation v1: a sibling of the report panel
-          above, not nested inside it -- see docs/environmental-context-
-          foundation-v1-contract.md "Frontend surface" and this component's
-          own docstring for why. */}
-      <EnvironmentalContextCard
-        context={environmentalContext}
-        onSaveLocation={saveEnvironmentalContextLocation}
-      />
-      {/* Habitat & Phenology Foundation v1: a third sibling card, same
-          reasoning as EnvironmentalContextCard above -- see
-          docs/habitat-phenology-foundation-v1-contract.md "Frontend
-          surface". */}
-      <HabitatPhenologyCard
-        context={habitatContext}
-        onAddHabitatFact={addHabitatFact}
-        onAddPhenologyObservation={addPhenologyObservation}
-        onRemoveHabitatFact={removeHabitatFact}
-        onRemovePhenologyObservation={removePhenologyObservation}
-        onUpdateHabitatFact={updateHabitatFact}
-        onUpdatePhenologyObservation={updatePhenologyObservation}
-      />
-      {/* Place Features & Habitat Change v2: a fifth sibling card, same
-          reasoning as EnvironmentalContextCard/HabitatPhenologyCard above --
-          see docs/place-features-habitat-change-v2-contract.md "Product
-          surfaces". */}
-      <PlaceFeaturesCard
-        features={placeFeatures}
-        onAddChangeEvent={addPlaceFeatureChangeEvent}
-        onAddFeature={addPlaceFeature}
-        onAddObservationLink={addPlaceFeatureObservationLink}
-        onOpenFeatureStory={onOpenFeatureStory}
-        onRemoveFeature={removePlaceFeature}
-        onRemoveObservationLink={removePlaceFeatureObservationLink}
-        onUpdateFeature={updatePlaceFeature}
-        sources={placeFeatureSources}
-        streams={placeFeatureStreams}
-        summary={placeFeaturesSummary}
-        zones={zones}
-      />
       {/* Biodiversity & Place Intelligence v1: a fourth sibling card, same
           reasoning as EnvironmentalContextCard/HabitatPhenologyCard above --
           see docs/biodiversity-place-intelligence-v1-contract.md. */}
@@ -819,6 +789,48 @@ export function DashboardPage({
         )}
       </section>
 
+      {/* UI/UX & First-Run Adoption v1: moved up from the bottom of the
+          page -- real wildlife visits are the point of Today, and used to sit
+          beneath every setup prompt and the status panel. */}
+      <section className="panel dashboard-recent-activity">
+        <div className="section-heading">
+          <div>
+            <h2>Recent activity</h2>
+            <span className="meta-text">The latest visits from all your cameras and imports</span>
+          </div>
+          <span className="meta-text">Updated {formatDateTime(summary.generated_at)}</span>
+        </div>
+        {summary.recent_activity.length > 0 ? (
+          <div className="dashboard-visit-list">
+            {summary.recent_activity.map((visit) => (
+              <article className="dashboard-visit-row dashboard-activity-row" key={visit.id}>
+                <VisitPreview visit={visit} />
+                <div>
+                  <strong>{outcomeLabel(visit)}</strong>
+                  <span>{formatDateTime(visit.captured_at)}</span>
+                  <VisitContext visit={visit} />
+                  <ModalityNote visit={visit} />
+                </div>
+                <div className="detail-actions">
+                  {visit.review_status === "needs_review" ? (
+                    <button className="secondary-action" onClick={() => openVisitReview(visit)} type="button">Review</button>
+                  ) : (
+                    <button className="secondary-action" onClick={() => onOpenVisit(visit.id)} type="button">Visit detail</button>
+                  )}
+                  <button className="text-action" onClick={() => onOpenStream(visit.stream_id)} type="button">Camera</button>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <EmptyState
+            title="No visits yet"
+            description="Visits appear here once a camera is observing or you import photos or video. Nothing needs to be running for past visits to stay available."
+            action={<button className="secondary-action" onClick={onOpenStreams} type="button">Go to Cameras</button>}
+          />
+        )}
+      </section>
+
       {monitorActionError ? <div className="dashboard-action-error" role="alert">{monitorActionError}</div> : null}
       {today.observation_health.length > 0 ? (
         <section className="panel dashboard-camera-attention" aria-label="Cameras needing attention">
@@ -888,6 +900,60 @@ export function DashboardPage({
           </div>
         </section>
       ) : null}
+      {/* UI/UX & First-Run Adoption v1: the three optional Place-detail
+          prompts used to sit directly under today's report, above any
+          wildlife, each as its own unexplained card. Grouped here, after the
+          wildlife content, and labelled as optional. */}
+      <section aria-labelledby="dashboard-place-details-heading" className="page-stack dashboard-place-details">
+        <div className="section-heading">
+          <div>
+            <h2 id="dashboard-place-details-heading">About your place</h2>
+            <span className="meta-text">
+              Optional. A rough location, habitat notes, and features like feeders or water give your sightings
+              more context.
+            </span>
+          </div>
+        </div>
+        {/* Environmental Context Foundation v1: a sibling of the report panel
+            above, not nested inside it -- see docs/environmental-context-
+            foundation-v1-contract.md "Frontend surface" and this component's
+            own docstring for why. */}
+        <EnvironmentalContextCard
+          context={environmentalContext}
+          onSaveLocation={saveEnvironmentalContextLocation}
+        />
+        {/* Habitat & Phenology Foundation v1: a third sibling card, same
+            reasoning as EnvironmentalContextCard above -- see
+            docs/habitat-phenology-foundation-v1-contract.md "Frontend
+            surface". */}
+        <HabitatPhenologyCard
+          context={habitatContext}
+          onAddHabitatFact={addHabitatFact}
+          onAddPhenologyObservation={addPhenologyObservation}
+          onRemoveHabitatFact={removeHabitatFact}
+          onRemovePhenologyObservation={removePhenologyObservation}
+          onUpdateHabitatFact={updateHabitatFact}
+          onUpdatePhenologyObservation={updatePhenologyObservation}
+        />
+        {/* Place Features & Habitat Change v2: a fifth sibling card, same
+            reasoning as EnvironmentalContextCard/HabitatPhenologyCard above --
+            see docs/place-features-habitat-change-v2-contract.md "Product
+            surfaces". */}
+        <PlaceFeaturesCard
+          features={placeFeatures}
+          onAddChangeEvent={addPlaceFeatureChangeEvent}
+          onAddFeature={addPlaceFeature}
+          onAddObservationLink={addPlaceFeatureObservationLink}
+          onOpenFeatureStory={onOpenFeatureStory}
+          onRemoveFeature={removePlaceFeature}
+          onRemoveObservationLink={removePlaceFeatureObservationLink}
+          onUpdateFeature={updatePlaceFeature}
+          sources={placeFeatureSources}
+          streams={placeFeatureStreams}
+          summary={placeFeaturesSummary}
+          zones={zones}
+        />
+      </section>
       <LiveCameraOverview
         onOpenReview={(streamId) =>
           onOpenReview({ source: "live-motion", search: streamId, status: "unreviewed" })
@@ -912,44 +978,6 @@ export function DashboardPage({
           operations dashboard). */}
       <ProductHealthPanel onOpenLocalData={onOpenLocalData} storageSummary={storageSummary} />
 
-      <section className="panel dashboard-recent-activity">
-        <div className="section-heading">
-          <div>
-            <h2>Recent activity</h2>
-            <span className="meta-text">Newest Visits across Streams</span>
-          </div>
-          <span className="meta-text">Updated {formatDateTime(summary.generated_at)}</span>
-        </div>
-        {summary.recent_activity.length > 0 ? (
-          <div className="dashboard-visit-list">
-            {summary.recent_activity.map((visit) => (
-              <article className="dashboard-visit-row dashboard-activity-row" key={visit.id}>
-                <VisitPreview visit={visit} />
-                <div>
-                  <strong>{outcomeLabel(visit)}</strong>
-                  <span>{formatDateTime(visit.captured_at)}</span>
-                  <VisitContext visit={visit} />
-                  <ModalityNote visit={visit} />
-                </div>
-                <div className="detail-actions">
-                  {visit.review_status === "needs_review" ? (
-                    <button className="secondary-action" onClick={() => openVisitReview(visit)} type="button">Review</button>
-                  ) : (
-                    <button className="secondary-action" onClick={() => onOpenVisit(visit.id)} type="button">Visit detail</button>
-                  )}
-                  <button className="text-action" onClick={() => onOpenStream(visit.stream_id)} type="button">Stream</button>
-                </div>
-              </article>
-            ))}
-          </div>
-        ) : (
-          <EmptyState
-            title="No recent activity"
-            description="Captured Visits will appear here after activity becomes reviewable."
-            action={<button className="secondary-action" onClick={onOpenStreams} type="button">Open Cameras / Streams</button>}
-          />
-        )}
-      </section>
     </div>
   );
 }

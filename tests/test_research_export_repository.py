@@ -37,6 +37,7 @@ from mockingbird.repository.product_repository import (
     StreamModel,
     VisitModel,
 )
+from tests.conftest import de_demo_seeded_source
 
 STREAM_ID = "stream-backyard-feeder"
 FEEDER_ZONE_ID = "zone-feeder"
@@ -51,6 +52,7 @@ def repository(tmp_path: Path) -> ProductRepository:
         media_root=tmp_path / "media",
         research_export_root=tmp_path / "research_exports",
     )
+    de_demo_seeded_source(repo)
     yield repo
     repo.close()
 

@@ -69,7 +69,7 @@ export function SignInPage({ onSignedIn }: SignInPageProps) {
           </div>
         ) : null}
         <label>
-          Login identity
+          Username
           <input
             autoComplete="username"
             autoFocus

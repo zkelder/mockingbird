@@ -16,7 +16,7 @@ const ADMIN_PASSWORD = "correct horse battery staple";
 
 async function signIn(page: Page, loginIdentity = ADMIN_LOGIN_IDENTITY, password = ADMIN_PASSWORD) {
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
-  await page.getByLabel("Login identity").fill(loginIdentity);
+  await page.getByLabel("Username").fill(loginIdentity);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
 }
@@ -65,7 +65,7 @@ test("a fresh install creates the first administrator, shows guided setup, persi
   const createAccountButton = page.getByRole("button", { name: "Create account" });
   await expect(createAccountButton).toBeDisabled();
   await page.getByLabel("Your name").fill("Ada Admin");
-  await page.getByLabel("Login identity").fill(ADMIN_LOGIN_IDENTITY);
+  await page.getByLabel("Username").fill(ADMIN_LOGIN_IDENTITY);
   await page.getByLabel("Password").fill(ADMIN_PASSWORD);
   await createAccountButton.click();
 

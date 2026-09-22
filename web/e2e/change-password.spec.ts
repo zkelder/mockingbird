@@ -20,7 +20,7 @@ const ADMIN_PASSWORD = "e2e-shared-suite-admin-password-1";
 
 async function signIn(page: import("@playwright/test").Page, loginIdentity: string, password: string) {
   await page.goto("/");
-  await page.getByLabel("Login identity").fill(loginIdentity);
+  await page.getByLabel("Username").fill(loginIdentity);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("heading", { name: "MockingBird status" })).toBeVisible();
@@ -36,7 +36,7 @@ test("a signed-in user can change their own password from the account menu", asy
   // Create a throwaway user as the admin, then hand off entirely to it.
   await page.goto("/users");
   await page.getByLabel("Display name").fill("E2E Password Change");
-  await page.getByLabel("Login identity").fill(loginIdentity);
+  await page.getByLabel("Username").fill(loginIdentity);
   await page.getByLabel("Temporary password").fill(originalPassword);
   await page.getByRole("button", { name: "Add user" }).click();
   await expect(page.getByText(loginIdentity)).toBeVisible();
@@ -66,7 +66,7 @@ test("a signed-in user can change their own password from the account menu", asy
   await accountMenu.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
 
-  await page.getByLabel("Login identity").fill(loginIdentity);
+  await page.getByLabel("Username").fill(loginIdentity);
   await page.getByLabel("Password").fill(originalPassword);
   await page.getByRole("button", { name: "Sign in" }).click();
   // The old password is genuinely rejected -- proves the change took effect
@@ -85,7 +85,7 @@ test("an incorrect current password is rejected with a clear error, never silent
   await signIn(page, ADMIN_LOGIN_IDENTITY, ADMIN_PASSWORD);
   await page.goto("/users");
   await page.getByLabel("Display name").fill("E2E Wrong Current Password");
-  await page.getByLabel("Login identity").fill(loginIdentity);
+  await page.getByLabel("Username").fill(loginIdentity);
   await page.getByLabel("Temporary password").fill(originalPassword);
   await page.getByRole("button", { name: "Add user" }).click();
   await expect(page.getByText(loginIdentity)).toBeVisible();

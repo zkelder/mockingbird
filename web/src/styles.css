@@ -10208,3 +10208,187 @@ a.secondary-action {
   padding: 0 12px;
   font-size: 0.85rem;
 }
+
+/* ---------------------------------------------------------------------
+   UI/UX & First-Run Adoption v1 -- shared, cross-page fixes kept in one
+   block rather than scattered per page.
+   --------------------------------------------------------------------- */
+
+/* The "MB" mark rendered at 1.31:1 contrast: `.brand-block span` (sidebar
+   secondary text colour) out-ranked `.brand-mark` because the mark is a
+   <span>. */
+.brand-block .brand-mark {
+  color: #1f3329;
+  font-size: 0.95rem;
+}
+
+.skip-link {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 100;
+  padding: 10px 16px;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #1f3329;
+  font-weight: 700;
+  transform: translateY(-200%);
+}
+
+.skip-link:focus {
+  transform: none;
+}
+
+.main-content:focus {
+  outline: none;
+}
+
+/* Disabled means "blocked", not "busy". */
+.primary-action:disabled,
+.secondary-action:disabled {
+  cursor: not-allowed;
+}
+
+/* A real third tier of button hierarchy: `.text-action` previously had the
+   same border, white fill, and height as `.secondary-action`. */
+.text-action {
+  border-color: transparent;
+  background: transparent;
+  text-decoration: underline;
+  text-decoration-color: rgb(46 111 94 / 0.35);
+  text-underline-offset: 3px;
+}
+
+.text-action:hover {
+  border-color: transparent;
+  background: #eef7ee;
+  text-decoration-color: currentColor;
+}
+
+.text-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.sidebar .text-action {
+  color: #dbe8c5;
+}
+
+.sidebar .text-action:hover {
+  background: #2a4536;
+}
+
+.nav-section-label + .nav-item {
+  margin-top: -2px;
+}
+
+.nav-list > .nav-section-label:not(:first-child) {
+  margin-top: 8px;
+}
+
+.dashboard-place-details > .section-heading {
+  padding: 0 4px;
+}
+
+@media (max-width: 760px) {
+  /* The closed drawer was only translated off-screen, so keyboard users
+     tabbed through ~15 invisible nav buttons. */
+  .sidebar:not(.sidebar-open) {
+    visibility: hidden;
+    box-shadow: none;
+    transition: transform 0.2s ease, visibility 0s linear 0.2s;
+  }
+
+  .sidebar.sidebar-open {
+    visibility: visible;
+    transition: transform 0.2s ease;
+  }
+
+  .review-filter-tabs button {
+    min-height: 44px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* UI/UX & First-Run Adoption v1: Add Camera, inside and outside the wizard. */
+.camera-setup-embedded-actions {
+  justify-content: flex-end;
+}
+
+.camera-setup-requirements ul {
+  margin: 6px 0 0;
+  padding-left: 20px;
+}
+
+.onboarding-explainer-grid {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.onboarding-explainer-grid h3 {
+  margin: 0 0 6px;
+  font-size: 1rem;
+}
+
+.onboarding-explainer-grid ul {
+  margin: 4px 0 8px;
+  padding-left: 20px;
+}
+
+.onboarding-glossary {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+}
+
+.onboarding-glossary dt {
+  font-weight: 700;
+}
+
+.onboarding-glossary dd {
+  margin: 0 0 8px;
+  color: #3f5347;
+}
+
+/* Stacked, styled label+control pairs on the setup steps, which otherwise
+   rendered as raw inline "Camera type[select]" pairs. */
+.source-setup-form label {
+  display: grid;
+  gap: 6px;
+  font-weight: 700;
+}
+
+.source-setup-form label input[type="text"],
+.source-setup-form label input:not([type]),
+.source-setup-form label input[type="password"],
+.source-setup-form label input[type="number"],
+.source-setup-form label select {
+  min-height: 40px;
+  max-width: 100%;
+  padding: 0 10px;
+  border: 1px solid #b8c7b3;
+  border-radius: 8px;
+  background: #ffffff;
+  font: inherit;
+  font-weight: 400;
+}
+
+.source-setup-form label input[type="checkbox"] {
+  width: auto;
+  min-height: 0;
+}
+
+.source-setup-form > label + label {
+  margin-top: 4px;
+}

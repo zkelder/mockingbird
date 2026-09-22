@@ -151,8 +151,10 @@ export function OnboardingWizard({
       {step === "storage" ? <StorageStep onContinue={() => void advance("camera")} /> : null}
       {step === "camera" ? (
         <CameraSetupPage
+          embedded
           onCancel={() => void finish()}
           onComplete={(streamId) => void handleCameraComplete(streamId)}
+          onImportInstead={() => void finish()}
           onSourcesChanged={() => {}}
         />
       ) : null}
@@ -181,20 +183,54 @@ export function OnboardingWizard({
 }
 
 function WelcomeStep({ onContinue }: { onContinue: () => void }) {
+  // UI/UX & First-Run Adoption v1: the welcome step now answers the
+  // questions a first-time user actually has (what the words mean, what
+  // hardware is needed, what leaves the network, what is optional) instead
+  // of leaving Host/Camera Node/Place undefined until later screens.
   return (
     <section className="panel page-stack">
       <h2>What MockingBird does</h2>
       <p>
         MockingBird watches outdoor cameras you choose and quietly notices meaningful visits from
         birds and other wildlife. Sightings show up right away in Today and Bird Log, often with a
-        likely species guess -- MockingBird never claims an identification as certain until you
-        confirm or correct it, whenever you'd like.
+        likely species guess — MockingBird never claims an identification as certain until you
+        confirm or correct it, whenever you&rsquo;d like.
       </p>
       <ul className="onboarding-promise-list">
         <li>Your video and data stay on this device.</li>
         <li>Nothing is uploaded or shared automatically.</li>
         <li>You choose when observing starts and stops.</li>
       </ul>
+      <div className="onboarding-explainer-grid">
+        <div>
+          <h3>A few words you&rsquo;ll see</h3>
+          <dl className="onboarding-glossary">
+            <dt>Host</dt>
+            <dd>This computer. It runs MockingBird and keeps all of your data.</dd>
+            <dt>Camera Node</dt>
+            <dd>
+              A small networked camera device you set up outdoors (a Raspberry Pi with a camera is
+              the reference design). It sends what it sees to this computer.
+            </dd>
+            <dt>Place</dt>
+            <dd>The yard, garden, or site you are observing.</dd>
+          </dl>
+        </div>
+        <div>
+          <h3>What you&rsquo;ll need</h3>
+          <p>This computer, plus one way to see wildlife:</p>
+          <ul>
+            <li>a Camera Node,</li>
+            <li>a network (IP) camera or a USB webcam, or</li>
+            <li>no camera at all — you can import photos or video from a trail camera or phone.</li>
+          </ul>
+          <p className="meta-text">
+            Optional extras — sound identification, weather, and access from your phone — stay off
+            until you turn them on. If you skip adding a camera, nothing is watched and you can add
+            one any time from Cameras.
+          </p>
+        </div>
+      </div>
       <div className="panel-actions">
         <button className="primary-action" onClick={onContinue} type="button">
           Get started
@@ -235,8 +271,9 @@ function AccountStep({ onCreated }: { onCreated: (user: CurrentUser) => void }) 
     <form className="panel page-stack auth-form" onSubmit={(event) => void handleSubmit(event)}>
       <h2>Create your administrator account</h2>
       <p>
-        This is the first account on this Host, with full access to cameras, users, and system
-        settings. You can add Viewer and Reviewer accounts for others later from Users.
+        This is the first account on this computer, with full access to cameras, users, and
+        settings. You can add accounts for family or collaborators later from Users. Everyone,
+        including you, signs in to use MockingBird.
       </p>
       {error ? <div className="error-panel">{error}</div> : null}
       <label>
@@ -249,7 +286,7 @@ function AccountStep({ onCreated }: { onCreated: (user: CurrentUser) => void }) 
         />
       </label>
       <label>
-        Login identity
+        Username
         <input
           autoComplete="username"
           onChange={(event) => setLoginIdentity(event.target.value)}
@@ -303,8 +340,9 @@ function StorageStep({ onContinue }: { onContinue: () => void }) {
     <section className="panel page-stack">
       <h2>Where MockingBird keeps your data</h2>
       <p>
-        Cameras, Zones, reviewed visits, exports, and backups all stay in one local folder on this
-        device. MockingBird created it automatically; there is nothing to set up.
+        Your cameras, sightings, confirmations, exports, and backups all stay in one folder on this
+        computer. MockingBird created it automatically; there is nothing to set up. You can make a
+        backup any time from Local Data.
       </p>
       {status?.database_path ? (
         <code className="onboarding-storage-path">{parentDirectory(status.database_path)}</code>
@@ -376,12 +414,22 @@ function ObserveStep({ streamId, onFinish }: { streamId: string; onFinish: () =>
             permanent, and you can add or adjust Sources any time from Cameras.
           </p>
         ) : (
-          <p>
-            Start observing when you would like MockingBird to watch this camera. Sightings will
-            show up in Today and Bird Log as they happen; open Review Queue any time you want to
-            work through suggestions in one place. Nothing here is permanent, and you can start or
-            stop observing any time from Cameras.
-          </p>
+          <>
+            <p>
+              Start observing when you would like MockingBird to watch this camera. Sightings will
+              show up in Today and Bird Log as they happen; open Review Queue any time you want to
+              work through suggestions in one place. Nothing here is permanent, and you can start or
+              stop observing any time from Cameras.
+            </p>
+            {/* UI/UX & First-Run Adoption v1: first-run testing found no
+                statement of what to expect after starting -- users had no way
+                to tell "working, nothing has visited yet" from "broken". */}
+            <p className="meta-text">
+              What to expect: MockingBird watches quietly and only saves something when there is
+              real activity. A visit usually appears in Today within a few minutes of an animal
+              arriving and leaving. A quiet hour with nothing saved is normal, not a failure.
+            </p>
+          </>
         )}
       </section>
       <ObservationControlPanel streamId={streamId} onStatus={handleStatus} />

@@ -18,6 +18,12 @@ interface CameraSetupPageProps {
   onComplete: (streamId: string) => void;
   onCancel: () => void;
   onSourcesChanged: () => void;
+  // UI/UX & First-Run Adoption v1: inside the first-run wizard this page
+  // rendered its own "Guided setup / Add Camera" page header directly under
+  // the wizard's own "Welcome to MockingBird" one -- three stacked headings
+  // for one step. The wizard passes `embedded` so only its own header shows.
+  embedded?: boolean;
+  onImportInstead?: () => void;
 }
 
 const defaultPolygon: Point[] = [
@@ -102,7 +108,7 @@ function onvifDeviceSummary(discovery: OnvifDiscoverProfilesResponse | null): st
   return [discovery.device_manufacturer, discovery.device_model].filter(Boolean).join(" ");
 }
 
-export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: CameraSetupPageProps) {
+export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged, embedded = false, onImportInstead }: CameraSetupPageProps) {
   const [initialDraft] = useState(readDraft);
   const [options, setOptions] = useState<CameraSetupOption[]>([]);
   const [providerKey, setProviderKey] = useState(initialDraft.providerKey ?? "");
@@ -606,20 +612,50 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
     );
   }
 
+  const skipButton = (
+    <button className="secondary-action" onClick={() => { window.sessionStorage.removeItem(DRAFT_KEY); onCancel(); }} type="button">
+      {embedded ? "Skip — I'll add a camera later" : "Do this later"}
+    </button>
+  );
+
   return (
     <div className="page-stack">
-      <section className="page-header">
-        <div>
-          <span className="eyebrow">Guided setup</span>
-          <h1>Add Camera</h1>
-          <p>Add your camera, check the picture, then choose the area to watch.</p>
-        </div>
-        <button className="secondary-action" onClick={() => { window.sessionStorage.removeItem(DRAFT_KEY); onCancel(); }} type="button">Do this later</button>
+      {embedded ? (
+        <div className="panel-actions camera-setup-embedded-actions">{skipButton}</div>
+      ) : (
+        <section className="page-header">
+          <div>
+            <span className="eyebrow">Guided setup</span>
+            <h1>Add Camera</h1>
+            <p>Add your camera, check the picture, then choose the area to watch.</p>
+          </div>
+          {skipButton}
+        </section>
+      )}
+      <section className="notice-panel camera-setup-requirements">
+        <strong>What you&rsquo;ll need</strong>
+        <span>
+          One of: a MockingBird Camera Node (a small networked camera device — a Raspberry Pi with
+          a camera is the reference design), a network (IP/ONVIF/RTSP) camera, or a USB webcam
+          attached to this computer. Have its address and sign-in details handy.
+        </span>
+        <span className="meta-text">
+          No camera yet? You can skip this and import photos or video from a trail camera or phone
+          instead — MockingBird looks at imported media the same way.
+        </span>
+        {onImportInstead ? (
+          <button className="text-action" onClick={onImportInstead} type="button">
+            Import photos instead
+          </button>
+        ) : null}
       </section>
-      <section className="panel page-stack">
+      <section className="panel page-stack source-setup-form">
         <h2>1. Add your camera</h2>
         <label>Camera type<select value={providerKey} onChange={(event) => { setProviderKey(event.target.value); setConfig({}); setValidation(null); setSelectedNodeCameraId(""); setOnvifDiscovery(null); setOnvifSelectedProfileToken(""); if (nodePreviewUrl) URL.revokeObjectURL(nodePreviewUrl); setNodePreviewUrl(null); if (setupPreviewUrl) URL.revokeObjectURL(setupPreviewUrl); setSetupPreviewUrl(null); }}>
-          {options.map((option) => <option key={option.provider_key} disabled={option.availability !== "available_now"} value={option.provider_key}>{option.display_name}{option.availability === "available_now" ? ` — ${option.compatibility_label}` : " — unavailable"}</option>)}
+          {/* UI/UX & First-Run Adoption v1: not-yet-available providers were
+              listed as disabled "— unavailable" entries, which read like
+              MockingBird was broken rather than like a roadmap. */}
+          {options.filter((option) => option.availability === "available_now").map((option) => <option key={option.provider_key} value={option.provider_key}>{option.display_name} — {option.compatibility_label}</option>)}
         </select></label>
         {selected ? <><p className="meta-text">{selected.message}</p>
           <div className="source-connection-meta">
@@ -651,7 +687,7 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
                   <span>MockingBird can no longer use its saved pairing for this Camera Node. Start the Node again for a new one-time code, then pair again below — your camera name, view name, and area to watch are still saved.</span>
                 </div>
               ) : (
-                <span>Enter the Node’s local address and the one-time pairing code shown on the Node’s own console. MockingBird never scans your network for it.</span>
+                <span>Enter the Camera Node’s address on your network and its one-time pairing code. Both are printed in the Camera Node’s own setup output — see the Camera Node install guide if you haven’t set one up yet. MockingBird never scans your network for it.</span>
               )}
               <label>Node address<input autoCapitalize="off" autoCorrect="off" inputMode="url" onChange={(event) => setNodeAddress(event.target.value)} placeholder="http://192.168.1.50:8787" value={nodeAddress} /></label>
               <label>One-time pairing code<input autoComplete="one-time-code" onChange={(event) => setPairingCode(event.target.value)} type="password" value={pairingCode} /></label>
@@ -691,17 +727,17 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
           {setupPreviewUrl ? <img alt="Camera picture" className="camera-node-preview" src={setupPreviewUrl} /> : null}
         </> : null}
       </section>
-      <section className="panel page-stack">
+      <section className="panel page-stack source-setup-form">
         <h2>2. Choose the area to watch</h2><p>Draw the part of this camera’s view that matters. Privacy and Ignore areas won’t trigger monitoring on their own, but can still appear in a photo saved because of activity elsewhere in view.</p>
         <div className="zone-drawing-canvas" onPointerDown={(event) => { drawStart.current = pointAt(event); event.currentTarget.setPointerCapture(event.pointerId); }} onPointerUp={finishDraw} role="img" aria-label="Draw the area to watch">
           <div className="zone-drawing-rectangle" style={{ left: `${polygon[0].x * 100}%`, top: `${polygon[0].y * 100}%`, width: `${(polygon[1].x - polygon[0].x) * 100}%`, height: `${(polygon[2].y - polygon[1].y) * 100}%` }} />
           <span>Drag to draw the area to watch</span>
         </div>
         <label>Area name<input onChange={(event) => setZoneName(event.target.value)} onBlur={() => saveNodeDraft({ zone_name: zoneName })} value={zoneName} /></label>
-        <label>Area type<select value={zoneType} onChange={(event) => { const value = event.target.value as ZoneType; setZoneType(value); saveNodeDraft({ zone_type: value }); }}>{["feeder", "birdbath", "ground", "perch", "yard", "driveway", "privacy", "ignore"].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+        <label>Area type<select value={zoneType} onChange={(event) => { const value = event.target.value as ZoneType; setZoneType(value); saveNodeDraft({ zone_type: value }); }}>{["feeder", "birdbath", "ground", "perch", "yard", "driveway", "privacy", "ignore"].map((value) => <option key={value} value={value}>{formatLabel(value)}</option>)}</select></label>
         {zoneType !== "privacy" && zoneType !== "ignore" ? <label>Sensitivity<select value={sensitivity} onChange={(event) => { const value = event.target.value as ZoneActivitySensitivity; setSensitivity(value); saveNodeDraft({ sensitivity: value }); }}><option value="low">Low</option><option value="normal">Normal</option><option value="high">High</option></select></label> : <p className="meta-text">Activity in this area won’t start or trigger monitoring by itself. If activity elsewhere starts monitoring, a saved photo can still show this area.</p>}
       </section>
-      <section className="panel page-stack">
+      <section className="panel page-stack source-setup-form">
         <h2>3. Start watching</h2>
         {selected?.provider_key === "camera_node" ? (
           // Camera Node monitoring is exclusively the accepted Observation
@@ -711,9 +747,15 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
           // checkbox is offered here, so there is nothing this page could
           // submit that the backend would reject.
           <>
-            <p>MockingBird Camera Node monitoring starts from this camera’s own Observation panel, not from this checklist.</p>
+            <p>
+              {embedded
+                ? "Finishing setup never starts watching by itself — you'll choose when to start on the next step."
+                : "Finishing setup never starts watching by itself."}
+            </p>
             <span className="meta-text">
-              After you finish, open this camera’s Stream page and use <strong>Start observing</strong> whenever you’re ready. Finishing setup never turns monitoring on by itself.
+              {embedded
+                ? "Nothing is saved until you start observing, and you can stop any time."
+                : "When you're ready, open this camera from Cameras and choose Start observing. You can stop any time."}
             </span>
           </>
         ) : (
@@ -727,12 +769,12 @@ export function CameraSetupPage({ onCancel, onComplete, onSourcesChanged }: Came
           {isCompleting
             ? "Finishing…"
             : selected?.provider_key === "camera_node"
-              ? "Finish setup"
+              ? (embedded ? "Continue" : "Finish setup")
               : monitoringEnabled
                 ? "Finish and start watching"
                 : "Finish without watching yet"}
         </button>
-        {finishBlockers.length > 0 ? <ul className="meta-text finish-blockers">{finishBlockers.map((reason) => <li key={reason}>{reason}</li>)}</ul> : null}
+        {finishBlockers.length > 0 ? <div className="meta-text"><span>Before you can continue:</span><ul className="finish-blockers">{finishBlockers.map((reason) => <li key={reason}>{reason}</li>)}</ul></div> : null}
         {error ? <div className="error-panel">{error}</div> : null}
       </section>
     </div>

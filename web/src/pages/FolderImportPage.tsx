@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { apiClient } from "../api/client";
+import { useRealStreams } from "../components/useRealStreams";
 import type {
   CameraSource,
   FolderImportPreview,
@@ -39,7 +40,7 @@ function formatBytes(bytes: number): string {
 }
 
 export function FolderImportPage({
-  streams,
+  streams: allStreams,
   sources,
   onOpenEvent,
   onOpenVisit,
@@ -50,7 +51,8 @@ export function FolderImportPage({
   onImportComplete,
 }: FolderImportPageProps) {
   const [folderPath, setFolderPath] = useState("");
-  const [selectedStreamId, setSelectedStreamId] = useState(streams[0]?.id ?? "");
+  const streams = useRealStreams(allStreams, sources);
+  const [selectedStreamId, setSelectedStreamId] = useState("");
   const [zones, setZones] = useState<Zone[]>([]);
   const [selectedZoneId, setSelectedZoneId] = useState("");
   // Broader Wildlife Maturity v1: honest default for arbitrary imported
@@ -264,7 +266,7 @@ export function FolderImportPage({
             <StatusPill label="Media stays local" tone="quiet" />
           </div>
           <label>
-            Stream
+            Save under
             <select
               disabled={streams.length === 0}
               value={selectedStreamId}
@@ -276,6 +278,11 @@ export function FolderImportPage({
                 </option>
               ))}
             </select>
+            {streams.length === 0 ? (
+              <span className="meta-text">
+                Nothing to save under yet — use “Set up importing” on Import Media first, or add a camera.
+              </span>
+            ) : null}
           </label>
           <label>
             Zone
