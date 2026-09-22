@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 import zipfile
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -784,3 +786,55 @@ def test_restore_hold_does_not_affect_a_stream_that_was_never_armed() -> None:
             transaction.commit()
         finally:
             restored_repository.close()
+
+
+def test_create_restore_plan_closes_its_sqlite_connection(tmp_path: Path) -> None:
+    """Native-Windows & Packaging Acceptance v1: real native-Windows testing
+    reproduced `create_restore_plan` failing every time with a genuine
+    `PermissionError: [WinError 32] The process cannot access the file
+    because it is being used by another process` -- its own `finally` block
+    tries to `unlink()` a temporary `.sqlite3` file while a `with
+    sqlite3.connect(...) as connection:` block above it (a well-known
+    sqlite3-module gotcha: `with` only commits/rolls back, it never closes)
+    was still genuinely holding it open. Invisible on POSIX, where unlinking
+    an open file is always allowed -- this is a portable regression test for
+    the actual fix (an explicit `connection.close()`), not an OS-specific
+    repro, since Linux CI can never reproduce the Windows failure directly."""
+
+    repository = _repository(tmp_path)
+    manager = _manager(repository, tmp_path)
+    backup = manager.create_backup()
+
+    # `sqlite3.Connection` is an immutable C-extension type -- neither an
+    # instance's nor the type's own `close` attribute can be monkeypatched
+    # directly. Wrap the real connection instead, delegating every attribute
+    # except `close` (which this test needs to observe) to it.
+    class _CloseSpy:
+        def __init__(self, real: sqlite3.Connection) -> None:
+            self._real = real
+            self.close_called = False
+
+        def close(self) -> None:
+            self.close_called = True
+            self._real.close()
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._real, name)
+
+    spies: list[_CloseSpy] = []
+    real_connect = sqlite3.connect
+
+    def spy_connect(*args: object, **kwargs: object) -> _CloseSpy:
+        wrapper = _CloseSpy(real_connect(*args, **kwargs))
+        spies.append(wrapper)
+        return wrapper  # type: ignore[return-value]
+
+    with patch("mockingbird.storage.backup.sqlite3.connect", side_effect=spy_connect):
+        manager.create_restore_plan(manager.verify_backup(backup.backup.id))
+
+    assert len(spies) >= 1
+    assert all(spy.close_called for spy in spies)
+    # The real regression: this must be possible immediately afterward, with
+    # no other reference to the temporary database file's connection alive.
+    leftover = list(manager.backup_root.glob(".restore-plan-*.sqlite3"))
+    assert leftover == []

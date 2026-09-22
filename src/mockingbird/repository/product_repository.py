@@ -19107,9 +19107,16 @@ class ProductRepository:
                 session.scalar(
                     select(func.count(VisitModel.id))
                     .join(EventModel, VisitModel.event_id == EventModel.id)
+                    .join(StreamModel, EventModel.stream_id == StreamModel.id)
+                    .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+                    .outerjoin(
+                        SourceProviderConfigurationModel,
+                        SourceProviderConfigurationModel.source_id == CameraSourceModel.id,
+                    )
                     .where(
                         VisitModel.review_status == ReviewStatus.needs_review.value,
                         VisitModel.is_superseded.is_(False),
+                        _real_source_condition(),
                     )
                 )
                 or 0
@@ -19118,9 +19125,16 @@ class ProductRepository:
                 session.execute(
                     select(EventModel.stream_id, func.count(VisitModel.id))
                     .join(VisitModel, VisitModel.event_id == EventModel.id)
+                    .join(StreamModel, EventModel.stream_id == StreamModel.id)
+                    .join(CameraSourceModel, StreamModel.source_id == CameraSourceModel.id)
+                    .outerjoin(
+                        SourceProviderConfigurationModel,
+                        SourceProviderConfigurationModel.source_id == CameraSourceModel.id,
+                    )
                     .where(
                         VisitModel.review_status == ReviewStatus.needs_review.value,
                         VisitModel.is_superseded.is_(False),
+                        _real_source_condition(),
                     )
                     .group_by(EventModel.stream_id)
                 ).all()
@@ -19326,7 +19340,15 @@ class ProductRepository:
                 session,
                 reviewed_today_rows,
             )
-            product_review_items = self._review_queue_items(session)
+            # Excludes the seeded demo Source's own items via `is_demo_source`
+            # -- `_review_queue_items` itself deliberately still returns them,
+            # flagged (see `GET /api/review-queue`'s own identical exclusion
+            # and its docstring); found live on a real native-Windows fresh
+            # install (Native-Windows & Packaging Acceptance v1), the same
+            # gap class UI-01 fixed elsewhere in this function.
+            product_review_items = [
+                item for item in self._review_queue_items(session) if not item.is_demo_source
+            ]
             actionable_animal_visits: list[DashboardVisitSummary] = []
             for item in product_review_items:
                 if item.product_category != "animal" or item.visit_id is None:
@@ -38682,6 +38704,10 @@ class ProductRepository:
                 continue
 
             event = self._event_from_model(session, event_model)
+            stream_name, source_id, source_name = self._review_queue_stream_context(
+                session,
+                event.stream_id,
+            )
             zone_id, zone_name, zone_type = self._zone_context(
                 session,
                 visit.zone_id or event.primary_zone_id,
@@ -38702,10 +38728,6 @@ class ProductRepository:
                 _species_suggestion_from_model(suggestion_model)
                 if suggestion_model is not None
                 else None
-            )
-            stream_name, source_id, source_name = self._review_queue_stream_context(
-                session,
-                event.stream_id,
             )
             visit_model = session.get(VisitModel, visit.id)
             if visit_model is None:
@@ -38839,11 +38861,11 @@ class ProductRepository:
                 or event.id in event_ids_with_historical_visits
             ):
                 continue
-            zone_id, zone_name, zone_type = self._zone_context(session, event.primary_zone_id)
             stream_name, source_id, source_name = self._review_queue_stream_context(
                 session,
                 event.stream_id,
             )
+            zone_id, zone_name, zone_type = self._zone_context(session, event.primary_zone_id)
             evidence = self._motion_evidence_for_review_queue_item(
                 session,
                 event_id=event.id,

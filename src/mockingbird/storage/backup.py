@@ -1131,7 +1131,21 @@ class LocalBackupManager:
                 raise LocalBackupValidationError("backup_database_hash_mismatch")
             _validate_database_file(temporary_database)
 
-            with sqlite3.connect(temporary_database) as connection:
+            # `with sqlite3.connect(...)` only commits/rolls back the current
+            # transaction on exit -- it deliberately never closes the
+            # connection (a well-known sqlite3 module gotcha), unlike
+            # `_validate_database_file`'s own correct `try/finally:
+            # connection.close()` two functions above. On POSIX, unlinking a
+            # still-open file below is harmless (deferred deletion), so this
+            # was invisible there; real native-Windows acceptance testing
+            # reproduced it directly: `temporary_database.unlink()` in this
+            # function's own `finally` block below raised a real `WinError
+            # 32` ("The process cannot access the file because it is being
+            # used by another process") every time, since the connection
+            # opened here was genuinely still holding the file. Explicit
+            # `connection.close()` closes it before that unlink ever runs.
+            connection = sqlite3.connect(temporary_database)
+            try:
                 entity_counts = _database_entity_counts(connection)
                 external_paths, unknown_external_paths = _database_external_path_fields(
                     connection
@@ -1147,6 +1161,8 @@ class LocalBackupManager:
                         ),
                     )
                 )
+            finally:
+                connection.close()
 
             warnings: list[str] = []
             if rebind_managed_storage and not summary.restore_compatible:
@@ -1311,7 +1327,16 @@ class LocalBackupManager:
         if not plan.restore_allowed:
             raise LocalBackupValidationError("restore_managed_storage_rebind_rejected")
 
-        with sqlite3.connect(staged_database) as connection:
+        # Explicit `connection.close()` in `finally`, not bare `with
+        # sqlite3.connect(...)` -- see `create_restore_plan`'s identical,
+        # real native-Windows-reproduced fix/comment above for why: `with`
+        # alone never closes a sqlite3 connection, only commits/rolls back.
+        # `staged_database` is later renamed into place or deleted by the
+        # caller (`_extract_staged_restore`/`replace_live_files`); closing
+        # explicitly here removes any dependence on GC timing to release the
+        # Windows file handle first.
+        connection = sqlite3.connect(staged_database)
+        try:
             before_counts = _database_entity_counts(connection)
             before_external = connection.execute(
                 "SELECT source_id, provider_key, config_json "
@@ -1367,6 +1392,8 @@ class LocalBackupManager:
                     raise LocalBackupValidationError(
                         "restore_managed_path_rebind_incomplete"
                     )
+        finally:
+            connection.close()
 
         entries_by_relative = {
             PurePosixPath(str(entry["path"])).relative_to("media").as_posix(): entry

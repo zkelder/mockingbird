@@ -14954,9 +14954,19 @@ async def decide_detection_proposal(
 async def list_review_queue(
     include_reviewed: bool = Query(default=False),
 ) -> list[ReviewQueueItem]:
-    """Read compact review work; reviewed history is opt-in for Product Mode."""
+    """Read compact review work; reviewed history is opt-in for Product Mode.
 
-    return get_repository().review_queue_items(include_reviewed=include_reviewed)
+    Excludes the seeded demo Source's own activity -- found live on a real
+    native-Windows fresh install (Native-Windows & Packaging Acceptance
+    v1): the repository's own `review_queue_items` deliberately still
+    returns every item, `is_demo_source`-flagged (other internal
+    consumers, and `ReviewQueueItem.is_demo_source` itself, depend on that
+    -- see `tests/test_review_queue_product_mode.py`), so this product-
+    facing HTTP boundary is where the exclusion belongs, mirroring
+    `_dashboard_today_summary`'s own established `is_demo_source` check."""
+
+    items = get_repository().review_queue_items(include_reviewed=include_reviewed)
+    return [item for item in items if not item.is_demo_source]
 
 
 @app.post(

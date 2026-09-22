@@ -1,4 +1,5 @@
-"""Pre-Release Trust & Correctness Correction v1 (UI-01).
+"""Pre-Release Trust & Correctness Correction v1 (UI-01), extended by
+Native-Windows & Packaging Acceptance v1.
 
 A fresh installation seeds a demo Source (`SourceKind.demo`,
 `source-backyard-demo`) with two fabricated example Visits so the product
@@ -8,6 +9,20 @@ is not empty before a user adds a real camera (see
 unlabeled, Reviewed wildlife history -- confirmed live with screenshots.
 Roughly eight sibling call sites already excluded `SourceKind.demo`
 activity from real product history; these two were the exception.
+
+A real native-Windows acceptance run of the packaged artifact (Native-
+Windows & Packaging Acceptance v1) found the identical gap one layer
+over: the Review Queue itself (`GET /api/review-queue`) -- and every
+Dashboard headline field derived from it or from a sibling raw count
+query (`needs_review_visit_count`, the per-stream `needs_review_counts`,
+`actionable_animal_visit_count`, `legacy_activity_count`) -- still showed
+the seeded demo Visit as a genuine item needing review on a brand-new
+install. Fixed with the identical established pattern: a new
+`_source_is_effectively_demo` (the `_real_source_condition` SQL condition,
+reusable where a call site already resolves one row at a time in Python)
+plus the same join+`_real_source_condition()` shape the already-fixed
+`needs_rows` sibling query used, applied to the two raw COUNT queries that
+did not have it.
 
 These tests deliberately construct a `ProductRepository` against a brand
 new, empty SQLite database and change nothing else -- `seed_if_empty()`
@@ -174,3 +189,109 @@ async def test_a_real_visit_on_a_non_demo_source_still_appears(
     assert response.status_code == 200
     recent_ids = [visit["id"] for visit in response.json()["recent_activity"]]
     assert recent_ids == ["visit-real-001"]
+
+
+def test_fresh_install_review_queue_is_honestly_empty(
+    fresh_repository: ProductRepository,
+) -> None:
+    """Found live on a real native-Windows install: the seeded demo
+    Source's own `visit-bird-feeder-001` (needs_review, a fabricated
+    `northern_cardinal` suggestion) appeared as a genuine Review Queue
+    item on a brand-new install with zero real cameras configured.
+
+    The repository method itself deliberately still returns the item,
+    correctly `is_demo_source`-flagged -- `test_review_queue_product_mode.py`
+    already depends on that contract for internal callers. The exclusion
+    that actually matters to a user belongs at the product-facing HTTP
+    boundary (see `test_review_queue_api_excludes_demo_visits`, below)."""
+
+    items = fresh_repository.review_queue_items()
+    assert [item.is_demo_source for item in items] == [True]
+
+
+async def test_review_queue_api_excludes_demo_visits(client: httpx.AsyncClient) -> None:
+    response = await client.get("/api/review-queue")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+async def test_dashboard_needs_review_counts_exclude_demo_visits(
+    client: httpx.AsyncClient,
+) -> None:
+    """The raw `needs_review_visit_count`/per-stream `needs_review_counts`
+    COUNT queries are siblings of the already-demo-excluding `needs_rows`
+    query in the same function -- this proves they now match it."""
+
+    response = await client.get("/api/dashboard/summary")
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["headline"]["needs_review_visit_count"] == 0
+    assert payload["headline"]["actionable_animal_visit_count"] == 0
+    assert payload["headline"]["legacy_activity_count"] == 0
+    for stream in payload["streams"]:
+        assert stream["needs_review_visit_count"] == 0
+
+
+async def test_a_real_visit_on_a_non_demo_source_still_appears_in_review_queue(
+    client: httpx.AsyncClient, fresh_repository: ProductRepository,
+) -> None:
+    """The fix must exclude only the demo Source's own activity -- a real,
+    non-demo, needs-review Visit must still reach the Review Queue and the
+    Dashboard's derived counts exactly as before."""
+
+    from datetime import UTC, datetime, timedelta
+
+    from mockingbird.storage.models import (
+        CameraSourceModel,
+        EventModel,
+        StreamModel,
+        VisitModel,
+        ZoneModel,
+    )
+
+    started_at = datetime.now(UTC) - timedelta(minutes=5)
+    with fresh_repository.session_factory() as session:
+        with session.begin():
+            session.add(
+                CameraSourceModel(
+                    id="source-real-camera-2", name="Real backyard camera 2",
+                    kind="manual_upload", status="connected", description="A genuine, non-demo source.",
+                )
+            )
+            session.add(
+                StreamModel(
+                    id="stream-real-camera-2", source_id="source-real-camera-2",
+                    name="Real backyard stream 2", description="A genuine, non-demo stream.", is_live=False,
+                )
+            )
+            session.add(
+                ZoneModel(
+                    id="zone-real-camera-2", stream_id="stream-real-camera-2", name="Feeder", zone_type="feeder",
+                    polygon_json="[]", is_active=True, monitoring_policy_json=None,
+                )
+            )
+            session.add(
+                EventModel(
+                    id="event-real-visit-2", stream_id="stream-real-camera-2", title="Real activity",
+                    event_type="observation_engine_candidate", started_at=started_at,
+                    ended_at=started_at + timedelta(seconds=5), primary_zone_id="zone-real-camera-2",
+                    review_status="needs_review",
+                )
+            )
+            session.add(
+                VisitModel(
+                    id="visit-real-002", event_id="event-real-visit-2", subject_label="bird",
+                    species_guess="northern_cardinal", confidence=None, reviewed_label=None,
+                    review_status="needs_review", zone_id="zone-real-camera-2", is_superseded=False,
+                )
+            )
+
+    response = await client.get("/api/review-queue")
+    assert response.status_code == 200
+    item_ids = [item["id"] for item in response.json()]
+    assert item_ids == ["review-queue-visit-real-002"]
+
+    dashboard_response = await client.get("/api/dashboard/summary")
+    assert dashboard_response.status_code == 200
+    assert dashboard_response.json()["headline"]["needs_review_visit_count"] == 1
