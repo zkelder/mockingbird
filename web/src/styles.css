@@ -10421,3 +10421,51 @@ a.secondary-action {
 .analytics-dataset-readiness[open] > summary {
   margin-bottom: 12px;
 }
+
+/* UI/UX & First-Run Adoption v1: grid/flex items default to `min-width:
+   auto`, so one wide control (a long <select> option, an address field)
+   stretched an entire page past a phone viewport -- Add Camera rendered
+   401px wide at 390px and clipped its own right edge. */
+.page-stack,
+.panel,
+.page-header,
+.section-heading {
+  min-width: 0;
+}
+
+.source-setup-form label select,
+.source-setup-form label input {
+  width: 100%;
+}
+
+@media (max-width: 760px) {
+  .page-stack > *,
+  .panel > * {
+    min-width: 0;
+  }
+}
+
+/* UI/UX & First-Run Adoption v1: import form controls kept their intrinsic
+   width (a long "camera - source" option ran past a phone viewport). */
+.manual-import-form label,
+.manual-import-form > label {
+  display: grid;
+  gap: 6px;
+}
+
+.manual-import-form label input:not([type="checkbox"]),
+.manual-import-form label select,
+.manual-import-form label textarea {
+  width: 100%;
+  max-width: 100%;
+}
+
+.table-scroll-hint {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .table-scroll-hint {
+    display: block;
+  }
+}

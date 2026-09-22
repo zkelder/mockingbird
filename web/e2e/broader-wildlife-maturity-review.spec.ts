@@ -37,8 +37,8 @@ async function importUnreviewedAnimalVisit(page: import("@playwright/test").Page
  * detail this spec needs to navigate past to reach the review form at
  * all. */
 async function openLegacyActivityTab(page: import("@playwright/test").Page) {
-  await page.getByLabel("Show legacy and test activity").check();
-  await page.getByRole("button", { name: "Legacy activity" }).click();
+  await page.getByLabel("Show sample and older activity").check();
+  await page.getByRole("button", { name: "Sample and older activity" }).click();
 }
 
 test("Fast Review's one-click Unknown animal action saves real reviewed truth", async ({ page }) => {

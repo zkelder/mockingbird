@@ -1593,7 +1593,7 @@ export function ReviewQueuePage({
       ? [
           {
             value: "legacy_activity" as ProductReviewTab,
-            label: "Legacy activity",
+            label: "Sample and older activity",
             count: productQueueCounts.legacy_activity,
           },
         ]
@@ -2712,7 +2712,7 @@ export function ReviewQueuePage({
               onChange={(event) => setShowLegacyAndTestActivity(event.target.checked)}
               type="checkbox"
             />
-            Show legacy and test activity
+            Show sample and older activity
           </label>
           <details className="review-diagnostic-details">
             <summary>Advanced evidence filters</summary>
@@ -3836,10 +3836,10 @@ function ProductReviewCard({
   const capturedAt = item.captured_at ?? item.activity_started_at ?? null;
   const location = [item.stream_name ?? item.stream_id, item.zone_name ?? "No Zone"].join(" · ");
   const evidenceClass = item.detector_class
-    ? `${formatLabel(item.detector_class)} detector evidence`
+    ? `MockingBird saw: ${formatLabel(item.detector_class).toLowerCase()}`
     : item.product_category === "unchecked"
-      ? "No detector qualification recorded"
-      : "Legacy activity evidence";
+      ? "Not checked by the detector"
+      : "Sample or older activity";
 
   return (
     <article className="queue-card review-product-card">

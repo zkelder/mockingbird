@@ -52,8 +52,14 @@ export function TaxonomyLabelInput({
       <div className="taxonomy-quick-picks">
         {quickLabels.map((taxonomyLabel) => (
           <button
+            aria-pressed={matchedLabel?.id === taxonomyLabel.id}
+            className={matchedLabel?.id === taxonomyLabel.id ? "selected" : ""}
             key={taxonomyLabel.id}
-            onClick={() => onChange(taxonomyLabel.label)}
+            /* UI/UX & First-Run Adoption v1: a quick pick used to write the
+               internal id ("northern_cardinal") into the field while the
+               dropdown wrote the display name; `findTaxonomyLabel` resolves
+               either, so both now show the readable name. */
+            onClick={() => onChange(taxonomyLabel.display_name)}
             type="button"
           >
             {taxonomyLabel.display_name}

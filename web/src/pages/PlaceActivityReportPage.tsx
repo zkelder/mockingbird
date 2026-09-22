@@ -788,7 +788,11 @@ export function PlaceActivityReportPage({
         ) : null}
         {report ? (
           <span className="meta-text">
-            {new Date(report.period_start_at).toLocaleDateString()} – {new Date(report.period_end_at).toLocaleDateString()}
+            {/* UI/UX & First-Run Adoption v1: `period_end_at` is exclusive,
+                so printing it directly showed a range one day into the
+                future ("8/24 - 9/23" for "last 30 days" on 9/22). */}
+            {new Date(report.period_start_at).toLocaleDateString()} –{" "}
+            {new Date(new Date(report.period_end_at).getTime() - 1).toLocaleDateString()}
             {" · "}Updated {formatDateTime(report.generated_at)}
           </span>
         ) : null}

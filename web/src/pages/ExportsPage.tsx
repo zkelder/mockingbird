@@ -395,9 +395,7 @@ export function ExportsPage({
                 <article className="record-card" key={record.record_id}>
                   <div className="item-title-row">
                     <div>
-                      <span className="meta-text">
-                        Export record {record.record_id}
-                      </span>
+                      <span className="meta-text">Record</span>
                       <h3>{record.label_display_name ?? formatLabel(record.label)}</h3>
                       <p>
                         Correction truth exports as <strong>{record.label}</strong>; subject context is{" "}
@@ -468,11 +466,11 @@ export function ExportsPage({
                     </div>
                     <div>
                       <span>Reviewed</span>
-                      <strong>{record.reviewed ? "true" : "false"}</strong>
+                      <strong>{record.reviewed ? "Yes" : "No"}</strong>
                     </div>
                     <div>
-                      <span>Dataset ready</span>
-                      <strong>{record.dataset_ready ? "true" : "false"}</strong>
+                      <span>Ready to export</span>
+                      <strong>{record.dataset_ready ? "Yes" : "No"}</strong>
                     </div>
                     <div>
                       <span>Started</span>

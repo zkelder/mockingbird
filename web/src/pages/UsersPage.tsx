@@ -270,6 +270,7 @@ export function UsersPage({ currentUser }: UsersPageProps) {
       />
       {rowError ? <div className="error-panel">{rowError}</div> : null}
       <section className="panel page-stack">
+        <p className="meta-text table-scroll-hint">Scroll sideways in the table to see roles and actions.</p>
         {/* Mobile & Remote Experience v1 (Phase 10): the only raw <table> in
             the frontend — an admin-only, low-row-count surface where
             horizontal scroll is a genuinely appropriate, well-understood

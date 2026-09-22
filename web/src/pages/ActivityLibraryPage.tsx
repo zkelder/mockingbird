@@ -25,12 +25,12 @@ const defaultFilters: ActivityLibraryFilters = {
 const reviewFilterOptions: Array<{ value: ActivityLibraryReviewFilter; label: string }> = [
   { value: "all", label: "All activity" },
   { value: "needs_review", label: "Needs review" },
-  { value: "reviewed_observation", label: "Reviewed observations" },
+  { value: "reviewed_observation", label: "Confirmed by you" },
   { value: "confirmed_wildlife", label: "Confirmed wildlife" },
-  { value: "non_bird", label: "Non-bird activity" },
-  { value: "blank_false", label: "Blank / false activity" },
+  { value: "non_bird", label: "Other wildlife" },
+  { value: "blank_false", label: "Nothing there" },
   { value: "blank", label: "Blank activity" },
-  { value: "ambiguous_unknown", label: "Ambiguous / unknown" },
+  { value: "ambiguous_unknown", label: "Unclear" },
 ];
 
 interface ActivityLibraryPageProps {
@@ -508,7 +508,7 @@ export function ActivityLibraryPage({
       <PageHeader
         eyebrow="Activity Library"
         title="Find captured activity"
-        description="Search active Visits across Streams, then inspect evidence, review unresolved activity, or export only existing reviewed truth."
+        description="Every visit MockingBird has captured, from every camera. Search it, look at the evidence, confirm what is still waiting, or pick visits to export."
         actions={<button className="secondary-action" onClick={onOpenCollections} type="button">Collections</button>}
       />
 
@@ -526,12 +526,12 @@ export function ActivityLibraryPage({
             </select>
           </label>
           <label>
-            Stream
+            Camera
             <select
               value={filters.stream_id ?? ""}
               onChange={(event) => commitFilters({ ...filters, stream_id: event.target.value || null })}
             >
-              <option value="">All Streams</option>
+              <option value="">All cameras</option>
               {selectedStreamMissing ? <option value={filters.stream_id ?? ""}>Unavailable Stream</option> : null}
               {streams.map((stream) => <option key={stream.id} value={stream.id}>{stream.name}</option>)}
             </select>

@@ -57,8 +57,8 @@ test("a bulk correction submitted with a stale review_state_token is rejected, n
   // group (confirmed by direct execution, not assumed) -- both the
   // group's own tab and its "show legacy and test activity" gate must be
   // active for the seeded item to appear at all, independent of search.
-  await page.getByRole("checkbox", { name: "Show legacy and test activity" }).check();
-  await page.getByRole("button", { name: /^Legacy activity/ }).click();
+  await page.getByRole("checkbox", { name: "Show sample and older activity" }).check();
+  await page.getByRole("button", { name: /^Sample and older activity/ }).click();
   await page.getByText("Filter review items", { exact: true }).click();
   await page.getByPlaceholder("label, stream, source, zone, suggestion").fill(visit.id);
 

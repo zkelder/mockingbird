@@ -72,7 +72,7 @@ export function AnalyticsPage({
       <PageHeader
         eyebrow="Patterns at this place"
         title="Insights"
-        description="What has visited, how often, and where \u2014 counted from activity recorded here and from what you have confirmed."
+        description="What has visited, how often, and where — counted from activity recorded here and from what you have confirmed."
         actions={
           <>
             {analytics.needs_review_count > 0 ? (

@@ -179,6 +179,10 @@ const advancedNavItems: Array<{ page: Page; label: string }> = [
 const advancedPages = new Set<Page>([
   ...advancedNavItems.map((item) => item.page),
   "motion-evidence-detail",
+  // UI/UX & First-Run Adoption v1: Automation Status is a developer surface
+  // (future placeholders, raw scheduler ids) that was reachable by URL
+  // without Developer Mode and listed nowhere.
+  "worker-status",
 ]);
 
 // Calm Attention & Notifications v1: maps a Place Story `PlaceStoryEventKind`

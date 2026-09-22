@@ -432,9 +432,9 @@ export function LocalDataPage({
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow="Local-first storage"
+        eyebrow="Your data, on your computer"
         title="Local Data"
-        description="MockingBird keeps product metadata, imported media references, drawn zones, review corrections, analytics inputs, and dataset export manifests locally."
+        description="Where MockingBird keeps what it knows about this place, who can reach it, how much space it uses, and how to back it up or restore it."
         actions={
           <>
             <button className="secondary-action" onClick={onOpenDashboard}>
@@ -475,112 +475,6 @@ export function LocalDataPage({
 
       {!isLoading && status ? (
         <>
-          <section className="metric-grid">
-            <MetricCard label="Sources" value={status.source_count} detail="local source records" />
-            <MetricCard label="Streams" value={status.stream_count} detail="video-centered views" />
-            <MetricCard label="Zones" value={status.zone_count} detail="user-authored context" />
-            <MetricCard
-              label="Media"
-              value={status.media_asset_count}
-              detail="local import references"
-            />
-          </section>
-
-          <section className="metric-grid">
-            <MetricCard label="Events" value={status.event_count} detail="outdoor activity" />
-            <MetricCard label="Visits" value={status.visit_count} detail="reviewable observations" />
-            <MetricCard
-              label="Needs review"
-              value={status.needs_review_count}
-              detail="local correction work"
-            />
-            <MetricCard
-              label="Corrections"
-              value={status.review_label_count}
-              detail="dataset-grade labels"
-            />
-            <MetricCard
-              label="Proposals"
-              value={status.detection_proposal_count}
-              detail={`${status.detection_run_count} detection runs`}
-            />
-            <MetricCard
-              label="Exports"
-              value={status.dataset_export_count}
-              detail="local dataset manifests"
-            />
-          </section>
-
-          <section className="split-grid">
-            <div className="panel local-data-card">
-              <div className="section-heading">
-                <h2>Database</h2>
-                <StatusPill
-                  label={status.database_ready ? "Ready" : "Unavailable"}
-                  tone={status.database_ready ? "good" : "review"}
-                />
-              </div>
-              <div className="data-row">
-                <span>Storage</span>
-                <strong>Local SQLite database</strong>
-              </div>
-              <div className="data-row">
-                <span>Configuration</span>
-                <strong>{status.using_default_database ? "Default local database" : "Environment override"}</strong>
-              </div>
-              <div className="data-row">
-                <span>Data format</span>
-                <strong>
-                  Version {status.database_schema_version} of{" "}
-                  {status.database_schema_current_version}
-                </strong>
-              </div>
-              <div className="data-row">
-                <span>Integrity check</span>
-                <strong>
-                  {status.database_integrity_check === "ok" ? "Passed" : "Not required"}
-                </strong>
-              </div>
-              <div className="data-row">
-                <span>Seed data</span>
-                <strong>{status.seed_data_present ? "Present" : "Missing"}</strong>
-              </div>
-              <div className="data-row">
-                <span>Dataset exports</span>
-                <strong>{status.dataset_export_count}</strong>
-              </div>
-              <p>{status.local_first_note}</p>
-              <p className="meta-text">Imported photos and video stay in this folder on this device.</p>
-            </div>
-
-            <div className="panel local-data-card">
-              <div className="section-heading">
-                <h2>Product Loop</h2>
-              </div>
-              <p>
-                These records support the stream-first loop from outdoor streams to zones, events,
-                visits, review corrections, analytics, and local dataset exports.
-              </p>
-              <div className="local-data-actions">
-                <button className="secondary-action" onClick={onOpenImport}>
-                  Import Media
-                </button>
-                <button className="secondary-action" onClick={onOpenStreams}>
-                  Streams
-                </button>
-                <button className="secondary-action" onClick={onOpenReview}>
-                  Review Queue
-                </button>
-                <button className="secondary-action" onClick={onOpenDetectionProposals}>
-                  Detection Proposals
-                </button>
-                <button className="secondary-action" onClick={onOpenExports}>
-                  Dataset Exports
-                </button>
-              </div>
-            </div>
-          </section>
-
           {connectionInfo ? (
             <section className="panel local-data-card">
               <div className="section-heading">
@@ -613,7 +507,7 @@ export function LocalDataPage({
                   <span>At home, from your phone (same WiFi)</span>
                   <strong>
                     {connectionInfo.is_loopback_only
-                      ? "Not enabled \u2014 MockingBird only answers on this device right now."
+                      ? "Not enabled — MockingBird only answers on this device right now."
                       : "Enabled, but this device's local network address could not be detected automatically."}
                   </strong>
                 </div>
@@ -1111,6 +1005,120 @@ export function LocalDataPage({
               </details>
             ) : null}
           </section>
+
+          {/* UI/UX & First-Run Adoption v1: this page opened with eleven
+              raw count cards and the database panel -- database telemetry
+              before anything about ownership, privacy, or backups. The same
+              facts are kept, one collapse down and after them. */}
+          <details className="panel local-data-card local-data-technical">
+            <summary>What&rsquo;s stored here, in detail</summary>
+            <p className="meta-text">
+              Exact record counts and database facts for this installation. Counts include the
+              built-in sample camera if it is still present.
+            </p>
+            <section className="metric-grid">
+              <MetricCard label="Sources" value={status.source_count} detail="local source records" />
+              <MetricCard label="Streams" value={status.stream_count} detail="video-centered views" />
+              <MetricCard label="Zones" value={status.zone_count} detail="user-authored context" />
+              <MetricCard
+                label="Media"
+                value={status.media_asset_count}
+                detail="local import references"
+              />
+            </section>
+
+            <section className="metric-grid">
+              <MetricCard label="Events" value={status.event_count} detail="outdoor activity" />
+              <MetricCard label="Visits" value={status.visit_count} detail="reviewable observations" />
+              <MetricCard
+                label="Needs review"
+                value={status.needs_review_count}
+                detail="local correction work"
+              />
+              <MetricCard
+                label="Corrections"
+                value={status.review_label_count}
+                detail="dataset-grade labels"
+              />
+              <MetricCard
+                label="Proposals"
+                value={status.detection_proposal_count}
+                detail={`${status.detection_run_count} detection runs`}
+              />
+              <MetricCard
+                label="Exports"
+                value={status.dataset_export_count}
+                detail="local dataset manifests"
+              />
+            </section>
+
+            <section className="split-grid">
+              <div className="panel local-data-card">
+                <div className="section-heading">
+                  <h2>Database</h2>
+                  <StatusPill
+                    label={status.database_ready ? "Ready" : "Unavailable"}
+                    tone={status.database_ready ? "good" : "review"}
+                  />
+                </div>
+                <div className="data-row">
+                  <span>Storage</span>
+                  <strong>Local SQLite database</strong>
+                </div>
+                <div className="data-row">
+                  <span>Configuration</span>
+                  <strong>{status.using_default_database ? "Default local database" : "Environment override"}</strong>
+                </div>
+                <div className="data-row">
+                  <span>Data format</span>
+                  <strong>
+                    Version {status.database_schema_version} of{" "}
+                    {status.database_schema_current_version}
+                  </strong>
+                </div>
+                <div className="data-row">
+                  <span>Integrity check</span>
+                  <strong>
+                    {status.database_integrity_check === "ok" ? "Passed" : "Not required"}
+                  </strong>
+                </div>
+                <div className="data-row">
+                  <span>Seed data</span>
+                  <strong>{status.seed_data_present ? "Present" : "Missing"}</strong>
+                </div>
+                <div className="data-row">
+                  <span>Dataset exports</span>
+                  <strong>{status.dataset_export_count}</strong>
+                </div>
+                <p>{status.local_first_note}</p>
+                <p className="meta-text">Imported photos and video stay in this folder on this device.</p>
+              </div>
+
+              <div className="panel local-data-card">
+                <div className="section-heading">
+                  <h2>Where these records come from</h2>
+                </div>
+                <p>
+                  Everything counted here is created by ordinary use: adding cameras, importing
+                  media, confirming what visited, and exporting.
+                </p>
+                <div className="local-data-actions">
+                  <button className="secondary-action" onClick={onOpenImport}>
+                    Import Media
+                  </button>
+                  <button className="secondary-action" onClick={onOpenStreams}>
+                    Cameras
+                  </button>
+                  <button className="secondary-action" onClick={onOpenReview}>
+                    Review Queue
+                  </button>
+                  <button className="secondary-action" onClick={onOpenExports}>
+                    Exports
+                  </button>
+                </div>
+              </div>
+            </section>
+          </details>
 
           <section className="panel local-data-card">
             <div className="section-heading">

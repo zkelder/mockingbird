@@ -589,9 +589,9 @@ export function SavedMediaRetentionPage() {
           <label>
             Mode
             <select onChange={(event) => setMode(event.target.value)} value={mode}>
-              <option value="delete_file_only">delete_file_only</option>
-              <option value="delete_media_asset">delete_media_asset</option>
-              <option value="archive">archive</option>
+              <option value="delete_file_only">Remove the file, keep the record</option>
+              <option value="delete_media_asset">Remove the file and its record</option>
+              <option value="archive">Move to the archive folder</option>
             </select>
           </label>
         </div>
@@ -711,7 +711,7 @@ export function SavedMediaRetentionPage() {
       <section className="panel retention-item-list-panel">
         <div className="section-heading">
           <div>
-            <h2>Saved preview MediaAssets</h2>
+            <h2>Saved preview images</h2>
             <span className="meta-text">
               File names, safe provenance, linkage counts, and risk level only.
             </span>
@@ -770,7 +770,7 @@ export function SavedMediaRetentionPage() {
         ) : (
           <EmptyState
             title="No saved preview media"
-            description="Saved external_url previews appear here after explicit save."
+            description="Previews you have explicitly saved from a camera appear here."
           />
         )}
       </section>

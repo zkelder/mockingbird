@@ -594,9 +594,9 @@ export function BirdLogPage({
     return (
       <div className="page-stack">
         <PageHeader
-          eyebrow="Reviewed wildlife history"
+          eyebrow="What you have confirmed"
           title="Bird Log"
-          description="Confirmed wildlife from current reviewed corrections. Suggestions and unresolved activity stay in review context."
+          description="Birds and other wildlife you have confirmed at this place. Visits MockingBird is still unsure about wait in the Review Queue until you decide."
           actions={
             <>
               <button className="secondary-action" onClick={() => navigatePath("/analytics")} type="button">Insights</button>
@@ -608,7 +608,7 @@ export function BirdLogPage({
         />
         <section className="panel journal-controls">
           <label>
-            Order labels by
+            Sort by
             <select
               onChange={(event) => commitLocation({ ...location, order: event.target.value as WildlifeJournalOrder })}
               value={location.order}
@@ -710,7 +710,7 @@ export function BirdLogPage({
                   <div className="journal-label-facts">
                     <span>First: <strong>{formatDateTime(item.first_observed_at)}</strong></span>
                     <span>Latest: <strong>{formatDateTime(item.latest_observed_at)}</strong></span>
-                    <span>{item.stream_count} Stream{item.stream_count === 1 ? "" : "s"} · {item.zone_count} Zone{item.zone_count === 1 ? "" : "s"}</span>
+                    <span>Seen on {item.stream_count} camera{item.stream_count === 1 ? "" : "s"} · {item.zone_count} area{item.zone_count === 1 ? "" : "s"}</span>
                   </div>
                   <button className="secondary-action" onClick={() => navigateJournalLabel(item.label)} type="button">Open history</button>
                 </div>

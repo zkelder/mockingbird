@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiClient, ApiError } from "../api/client";
 
 /**
@@ -12,14 +12,25 @@ import { apiClient, ApiError } from "../api/client";
  */
 export function ChangePasswordControl() {
   const [isOpen, setIsOpen] = useState(false);
+  // UI/UX & First-Run Adoption v1: opening this form left focus on <body>
+  // and Escape did nothing.
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const firstFieldRef = useRef<HTMLInputElement | null>(null);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (isOpen && !message) {
+      firstFieldRef.current?.focus();
+    }
+  }, [isOpen, message]);
+
   function close() {
     setIsOpen(false);
+    window.setTimeout(() => triggerRef.current?.focus(), 0);
     setCurrentPassword("");
     setNewPassword("");
     setError(null);
@@ -28,10 +39,17 @@ export function ChangePasswordControl() {
 
   if (!isOpen) {
     return (
-      <button className="text-action" onClick={() => setIsOpen(true)} type="button">
+      <button className="text-action" onClick={() => setIsOpen(true)} ref={triggerRef} type="button">
         Change password
       </button>
     );
+  }
+
+  function handleFormKeyDown(event: React.KeyboardEvent) {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      close();
+    }
   }
 
   async function handleChange() {
@@ -65,13 +83,14 @@ export function ChangePasswordControl() {
   }
 
   return (
-    <div className="account-menu-password-form auth-form inline-reset-password">
+    <div className="account-menu-password-form auth-form inline-reset-password" onKeyDown={handleFormKeyDown}>
       {error ? <div className="error-panel">{error}</div> : null}
       <label>
         Current password
         <input
           autoComplete="current-password"
           onChange={(event) => setCurrentPassword(event.target.value)}
+          ref={firstFieldRef}
           type="password"
           value={currentPassword}
         />
