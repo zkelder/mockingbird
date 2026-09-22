@@ -3974,6 +3974,93 @@ out of scope and untouched. **Does not** push. **Does not** self-authorize
 a subsequent milestone. **Authorization remains this milestone's own**
 pending the owner/external (ChatGPT) acceptance review of this closure.
 
+**2026-09-22 update (UI/UX & First-Run Adoption v1 executed):** see
+[ui-ux-first-run-adoption-v1-report.md](ui-ux-first-run-adoption-v1-report.md)
+for the complete record, summarized here. Stage A audited all 28
+user-reachable routes plus the five-step first-run wizard against two
+real running instances (a genuinely fresh install and a populated one) at
+1366/820/390px, with console/HTTP error capture, per-element overflow
+measurement and structural accessibility facts -- not source review
+alone. It produced a finite inventory of 4 P0, 16 P1, ~16 P2 and a
+recorded P3 set. Stage B fixed every P0 and P1 and the bounded P2 items.
+
+**P0-1 is a truth defect this file's own prior milestone explicitly left
+unexamined** (Analytics & Local Data Truth Consistency v1 disclosed that
+Place Biodiversity/Change/Habitat were out of its bounded scope): on a
+fresh install the seeded demo Visit was presented as this Place's real
+history ("Kinds of wildlife known here: 1" on Today and Place Report,
+Place Story's "1st species recorded"), listed in Activity Library, and --
+most seriously -- exported as an *eligible research record* by Darwin
+Core, Camtrap DP, iNaturalist eligibility and reviewed dataset exports
+(`_research_scope_stream_ids` returned `None`, meaning "every Stream").
+Closed at one shared seam,
+`_historical_place_baseline_and_species_statuses` (all six Place-history
+callers), plus each sibling scope, reusing the established
+`_real_stream_ids`/`_real_source_condition()` contract rather than ad hoc
+per-call-site checks. The other three P0s were first-run dead ends:
+Import Media defaulting to the demo Stream (media filed there is hidden
+by every review/history surface), the Review Queue offering only a
+non-working recovery when its default group was empty while work waited
+elsewhere, and an Add Camera step that assumed Camera Node hardware and
+repository knowledge.
+
+**Validation.** Tier 1: 7 new tests in `tests/test_demo_source_
+exclusion.py` (36 total), RED-then-GREEN via `git stash` bisection (6 of
+7 failed against the unmodified baseline), including a positive control
+proving a repurposed real Source still counts. Tier 2: 51 backend test
+files; one sweep found 33 failures in 5 files, every one a fixture using
+the seeded demo Source as convenient plumbing, corrected via the
+established `de_demo_seeded_source` mechanism with no assertion weakened
+(then 55/55). `tsc --noEmit` clean; `ruff` unchanged at its established
+55-finding baseline for `product_repository.py`.
+
+**Tier 3 (full Core).** First run 12 failed / 6117 passed
+(45m15s): 4 the established pre-existing set, 8 genuine fallout in files
+Tier 2 never reached -- all eight using the seeded demo Source/Visit as
+plumbing for Activity Library search, dataset export or research scope,
+each corrected via the same `de_demo_seeded_source` mechanism. Second,
+confirming run: **5 failed / 6124 passed / 4 skipped / 11 xfailed
+(42m29s)** -- the identical 4 pre-existing failures plus one
+timing-sensitive Camera Node transport acceptance test that passes
+standalone in this tree and in a baseline clone, and failed only because
+browser suites were running concurrently against this machine. Zero Core
+failures attributable to this milestone's product changes.
+
+**e2e.** Onboarding suite 6/6. Shared suite: 181 passed / 10 failed,
+classified rigorously rather than assumed -- the accepted baseline
+(`456277f`) was cloned, built and run through the identical suite and
+fails **9** of the same specs (order/accumulation artifacts against the
+suite's one shared instance). The single difference was one spec pinning
+a metric label this milestone renamed; label made consistent across
+Insights and Local Data, spec updated, now passing. Net attributable e2e
+regressions: zero. Scripted keyboard checks (skip link, focus order,
+Escape/focus return on the Alerts popover and Change password, review
+tabs) all pass; every audited route measures zero horizontally
+overflowing elements at 390px and 820px.
+
+No schema change (`v59`). No detector/classifier/threshold/tracker/
+admission/Visit-assembly change. No accepted truth contract changed --
+the demo-exclusion work extends the existing contract to the surfaces it
+had not yet reached.
+
+**Disclosed process defect, not repaired:** this milestone's first
+implementation commit used `git add -A src tests` and thereby staged
+three of the seven preserved untracked detector files
+(`small_bird_benchmark.py`, `wildlife.py.orig`,
+`test_small_bird_benchmark.py`). Their content was never modified
+(SHA-256 verified at session start and after every commit, byte
+identical) and nothing was pushed, but they are tracked in local history
+from `3f6a49c` onward. Both repairs -- `git rm --cached`, or rewriting
+the unpushed range -- are destructive git operations this session was
+refused permission to perform, so the repair is left to the owner. See
+§Z-1 of the closure report.
+
+**Does not** push, change any model/detector/threshold, redesign
+Analytics/Local Data/Yard Map truth, build mobile/multi-site, perform
+broad performance work, execute Gate G, or self-authorize a successor.
+**Authorization remains this milestone's own** pending the owner/external
+(ChatGPT) acceptance review of this closure.
+
 **Native-Windows & Packaging Acceptance v1 [reference retained below for
 its own still-open Camera Node pairing item, accepted above]** -- directly
 authorized outside this file by the external (ChatGPT) global release
