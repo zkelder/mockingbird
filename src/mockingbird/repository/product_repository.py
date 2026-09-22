@@ -11296,9 +11296,9 @@ class ProductRepository:
                 # analyzed or transcoded in this phase") is both developer
                 # language and no longer true -- imported media is analyzed
                 # like any other activity.
-                "Everything MockingBird knows about this place -- your cameras, "
+                "Everything MockingBird knows about this place \u2014 your cameras, "
                 "areas, sightings, confirmations, review history, and export "
-                "manifests -- is stored here on this device. Imported photos and "
+                "manifests \u2014 is stored here on this device. Imported photos and "
                 "video stay on this device too; MockingBird reads them to look "
                 "for wildlife and never uploads them."
             ),

@@ -966,7 +966,7 @@ def test_local_data_status_reports_persisted_product_counts() -> None:
     assert status["review_label_count"] == 1
     assert status["dataset_export_count"] == 1
     assert status["needs_review_count"] >= 1
-    assert "local product metadata" in status["local_first_note"]
+    assert "stored here on this device" in status["local_first_note"]
 
 
 def test_reset_demo_data_restores_seed_state_after_mutations() -> None:

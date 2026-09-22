@@ -7,7 +7,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pytest
-from tests.conftest import LegacyAuthenticatedSyncTestClient
+from tests.conftest import de_demo_seeded_source, LegacyAuthenticatedSyncTestClient
 
 from mockingbird.api.main import app, configure_repository
 from mockingbird.api.schemas import (
@@ -39,6 +39,7 @@ def evidence_repository(tmp_path: Path) -> ProductRepository:
         db_url=f"sqlite:///{tmp_path / 'mockingbird.sqlite3'}",
         media_root=tmp_path / "media",
     )
+    de_demo_seeded_source(repository)
     configure_repository(repository)
     yield repository
     configure_repository(None)

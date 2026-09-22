@@ -7,7 +7,7 @@ import pytest
 
 from mockingbird.api.main import app, configure_repository
 from mockingbird.repository.product_repository import ProductRepository
-from tests.conftest import LegacyAuthenticatedTestClient
+from tests.conftest import de_demo_seeded_source, LegacyAuthenticatedTestClient
 
 
 VISIT_ID = "visit-bird-feeder-001"
@@ -21,6 +21,7 @@ def isolated_repository(tmp_path: Path) -> ProductRepository:
         db_url=f"sqlite:///{tmp_path / 'mockingbird.sqlite3'}",
         media_root=tmp_path / "media",
     )
+    de_demo_seeded_source(repository)
     configure_repository(repository)
     yield repository
     configure_repository(None)

@@ -35,6 +35,7 @@ from mockingbird.repository.product_repository import (
 )
 from mockingbird.review_provenance import ReviewProvenanceError, discloses_non_human_review
 from mockingbird.storage.database import CURRENT_DATABASE_SCHEMA_VERSION, create_database_engine
+from tests.conftest import de_demo_seeded_source
 
 STREAM_ID = "stream-backyard-feeder"
 BIRD_VISIT_ID = "visit-bird-feeder-001"
@@ -42,7 +43,12 @@ AGENT_IDENTITY = "claude-agent-visual-inspection-2026-08-10"
 
 
 def repository_for(path: Path) -> ProductRepository:
-    return ProductRepository(db_url=f"sqlite:///{path}")
+    repository = ProductRepository(db_url=f"sqlite:///{path}")
+    # UI/UX & First-Run Adoption v1: this file uses the seeded demo Visit as
+    # plumbing; demo activity is now excluded from dataset/research export
+    # scope. See tests/conftest.py::de_demo_seeded_source.
+    de_demo_seeded_source(repository)
+    return repository
 
 
 # --- 1/2/3/4: origin -> authority eligibility at creation time -------------
