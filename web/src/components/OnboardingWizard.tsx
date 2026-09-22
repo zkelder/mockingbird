@@ -38,7 +38,7 @@ export function OnboardingWizard({
   onFinished,
 }: {
   onAccountCreated: (user: CurrentUser) => void;
-  onFinished: () => void;
+  onFinished: (destination?: "dashboard" | "import") => void;
 }) {
   const [step, setStep] = useState<WizardStep>("welcome");
   const [createdStreamId, setCreatedStreamId] = useState<string | null>(null);
@@ -95,7 +95,7 @@ export function OnboardingWizard({
     }
   }
 
-  async function finish() {
+  async function finish(destination: "dashboard" | "import" = "dashboard") {
     setError(null);
     try {
       await apiClient.updateSetupState({
@@ -103,7 +103,7 @@ export function OnboardingWizard({
         completed: true,
         last_created_stream_id: createdStreamId ?? undefined,
       });
-      onFinished();
+      onFinished(destination);
     } catch {
       setError("Could not finish setup. Try again in a moment.");
     }
@@ -154,7 +154,7 @@ export function OnboardingWizard({
           embedded
           onCancel={() => void finish()}
           onComplete={(streamId) => void handleCameraComplete(streamId)}
-          onImportInstead={() => void finish()}
+          onImportInstead={() => void finish("import")}
           onSourcesChanged={() => {}}
         />
       ) : null}

@@ -458,9 +458,14 @@ export default function App() {
     });
   }
 
-  function handleOnboardingFinished() {
+  function handleOnboardingFinished(destination: Page = "dashboard") {
     setSetupState((current) => (current ? { ...current, completed: true } : current));
     void loadAppData({ showLoading: false });
+    // UI/UX & First-Run Adoption v1: finishing setup by choosing "Import
+    // photos instead" must actually land on Import Media, not Today.
+    if (destination !== "dashboard") {
+      setPage(destination);
+    }
   }
 
   useEffect(() => {
