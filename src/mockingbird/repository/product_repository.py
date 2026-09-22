@@ -19340,15 +19340,12 @@ class ProductRepository:
                 session,
                 reviewed_today_rows,
             )
-            # Excludes the seeded demo Source's own items via `is_demo_source`
-            # -- `_review_queue_items` itself deliberately still returns them,
-            # flagged (see `GET /api/review-queue`'s own identical exclusion
-            # and its docstring); found live on a real native-Windows fresh
-            # install (Native-Windows & Packaging Acceptance v1), the same
-            # gap class UI-01 fixed elsewhere in this function.
-            product_review_items = [
-                item for item in self._review_queue_items(session) if not item.is_demo_source
-            ]
+            # Excludes the seeded demo Source's own items -- see
+            # `_visible_review_queue_items`'s own docstring. Found live on a
+            # real native-Windows fresh install (Native-Windows & Packaging
+            # Acceptance v1), the same gap class UI-01 fixed elsewhere in
+            # this function.
+            product_review_items = self._visible_review_queue_items(session)
             actionable_animal_visits: list[DashboardVisitSummary] = []
             for item in product_review_items:
                 if item.product_category != "animal" or item.visit_id is None:
@@ -26993,7 +26990,7 @@ class ProductRepository:
                         _detection_proposal_from_model(proposal)
                         for proposal in proposal_models
                     ],
-                    review_queue_count=len(self._review_queue_items(session)),
+                    review_queue_count=self._visible_review_queue_count(session),
                     local_first_note=(
                         "Model adapters create proposal evidence, not review truth. "
                         "Users must convert, review, and correct proposals before exports, "
@@ -27116,7 +27113,7 @@ class ProductRepository:
                         _detection_proposal_from_model(proposal)
                         for proposal in proposal_models
                     ],
-                    review_queue_count=len(self._review_queue_items(session)),
+                    review_queue_count=self._visible_review_queue_count(session),
                     local_first_note=(
                         "Local image detector outputs are proposal evidence only. "
                         "Convert, review, and correct proposals before exports, coverage, "
@@ -27260,7 +27257,7 @@ class ProductRepository:
                         _detection_proposal_from_model(proposal)
                         for proposal in proposal_models
                     ],
-                    review_queue_count=len(self._review_queue_items(session)),
+                    review_queue_count=self._visible_review_queue_count(session),
                     local_first_note=(
                         "MegaDetector-family outputs are animal/person/vehicle proposal "
                         "evidence only. Convert, review, and correct proposals before "
@@ -27375,7 +27372,7 @@ class ProductRepository:
                 return DemoDetectionRunResult(
                     detection_run=_detection_run_from_model(run_model),
                     proposals=[_detection_proposal_from_model(proposal_model)],
-                    review_queue_count=len(self._review_queue_items(session)),
+                    review_queue_count=self._visible_review_queue_count(session),
                 )
 
     def list_detection_proposals(self) -> list[DetectionProposal]:
@@ -27529,7 +27526,7 @@ class ProductRepository:
                     proposal=_detection_proposal_from_model(proposal_model),
                     event=event,
                     visit=visit,
-                    review_queue_count=len(self._review_queue_items(session)),
+                    review_queue_count=self._visible_review_queue_count(session),
                     analytics=self._analytics_summary(session),
                 )
 
@@ -27578,7 +27575,7 @@ class ProductRepository:
                     event=event,
                     visit=visit,
                     stream=_stream_from_model(stream_model),
-                    review_queue_count=len(self._review_queue_items(session)),
+                    review_queue_count=self._visible_review_queue_count(session),
                 )
 
     def preview_folder_import(self, folder_path: str) -> FolderImportPreview:
@@ -27653,7 +27650,7 @@ class ProductRepository:
                     events=events,
                     visits=visits,
                     skipped_files=skipped_files,
-                    review_queue_count=len(self._review_queue_items(session)),
+                    review_queue_count=self._visible_review_queue_count(session),
                 )
 
     def list_review_labels(self) -> list[ReviewLabel]:
@@ -28108,7 +28105,7 @@ class ProductRepository:
             review_label=review_label,
             visit=visit,
             event=event,
-            review_queue_count=len(self._review_queue_items(session)),
+            review_queue_count=self._visible_review_queue_count(session),
             analytics=self._analytics_summary(session),
         )
 
@@ -38083,7 +38080,7 @@ class ProductRepository:
             review_label=_review_label_from_model(label_model),
             visit=visit,
             event=event,
-            review_queue_count=len(self._review_queue_items(session)),
+            review_queue_count=self._visible_review_queue_count(session),
             analytics=self._analytics_summary(session),
         )
 
@@ -38103,7 +38100,7 @@ class ProductRepository:
         return VisitReviewReopenResponse(
             visit=_visit_from_model(visit),
             event=self._event_from_model(session, event),
-            review_queue_count=len(self._review_queue_items(session)),
+            review_queue_count=self._visible_review_queue_count(session),
             analytics=self._analytics_summary(session),
             review_state_token=self._review_state_token(session, "visit", visit.id),
             idempotent=idempotent,
@@ -38121,7 +38118,7 @@ class ProductRepository:
             reversal_review_label_id=reversal.id,
             target_type=ReviewQueueBulkCorrectionTargetType(reversal.target_type),
             target_id=reversal.target_id,
-            review_queue_count=len(self._review_queue_items(session)),
+            review_queue_count=self._visible_review_queue_count(session),
             analytics=self._analytics_summary(session),
             idempotent=idempotent,
             message="The Fast Review correction was reversed and the prior review state restored.",
@@ -38955,6 +38952,30 @@ class ProductRepository:
             key=lambda item: (recency_by_item_id.get(item.id, 0.0), item.id),
             reverse=True,
         )
+
+    def _visible_review_queue_items(self, session: Session) -> list[ReviewQueueItem]:
+        """The canonical user-visible review queue: excludes demo activity.
+
+        `_review_queue_items` deliberately still returns every item,
+        `is_demo_source`-flagged, for internal callers that need the
+        complete picture (see its own docstring and
+        `test_review_queue_product_mode.py`). Review Queue Count Truth
+        Consistency v1: Native-Windows & Packaging Acceptance v1 fixed this
+        exact exclusion at `GET /api/review-queue` and `dashboard_summary`,
+        but found roughly a dozen sibling `review_queue_count` response
+        fields (Manual Import, Folder Import, Model Adapters, Detection
+        Proposals, and the core review/correction flow itself) still
+        computing an unfiltered `len(_review_queue_items(...))`. Every
+        surface presented to a user as "needs review"/"review queue
+        count"/equivalent product language must go through this one seam
+        instead of reproducing `if not item.is_demo_source` ad hoc."""
+
+        return [item for item in self._review_queue_items(session) if not item.is_demo_source]
+
+    def _visible_review_queue_count(self, session: Session) -> int:
+        """The one number a user should ever see as "N need review"."""
+
+        return len(self._visible_review_queue_items(session))
 
     def _dataset_quality_summary(self, session: Session) -> DatasetQualitySummary:
         issues: list[DatasetQualityIssue] = []
