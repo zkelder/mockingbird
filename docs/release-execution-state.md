@@ -757,10 +757,57 @@ finds). See §3, below, for this milestone's own record once implemented
 and validated. **Authorization: UI/UX & First-Run Adoption v1** (no longer
 NONE).
 
+**2026-09-22 update (UI/UX & First-Run Adoption v1 accepted; Performance /
+Scale / Stability Closure v1 authorized):** the external (ChatGPT) global
+release sequencing accepted UI/UX & First-Run Adoption v1's own closure
+entry (§3, below) -- 4 P0 and 16 P1 product-experience defects closed,
+Core run twice with zero failures attributable to the milestone's own
+changes, and its disclosed protected-file incident non-destructively
+remediated (`2549b32`, contents unchanged, no commit rewritten). Accepted
+HEAD `3133c64b6a9c49273f5cc57a807240630cab5b7a` ("docs: record the
+protected-file remediation in the UI/UX v1 closure report"). Directly
+authorizes the next milestone: **Performance / Scale / Stability Closure
+v1** -- establishing that v0.1 stays responsive, bounded and recoverable
+under realistic first-release workloads (Stage A: credible v0.1 load
+profiles plus measured startup, UI/API responsiveness, the flagged
+unbounded `GET /api/visits` surface, memory, CPU/GPU, storage growth,
+database scale, queue/backpressure, long-run stability, restart/recovery,
+optional BirdNET, and native Windows -- producing an evidence-backed
+P0/P1/P2/P3 inventory; Stage B: fix every P0/P1 and bounded P2). Release
+fitness, not maximum scale: no storage-architecture redesign, no
+distributed/cloud infrastructure, no model re-selection, no frontend
+rewrite, no Gate G, no push. See §3, below, for this milestone's own
+record once implemented and validated. **Authorization: Performance /
+Scale / Stability Closure v1** (no longer UI/UX & First-Run Adoption v1).
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
+
+**Staleness correction, 2026-09-22, by Performance / Scale / Stability
+Closure v1:** the note immediately below is superseded. **Current facts,
+verified directly this session:** Accepted HEAD
+`3133c64b6a9c49273f5cc57a807240630cab5b7a` ("docs: record the
+protected-file remediation in the UI/UX v1 closure report"); schema `v59`
+unchanged (`CURRENT_DATABASE_SCHEMA_VERSION = 59` in
+`src/mockingbird/storage/database.py`, read directly); version `0.1.0`;
+latest accepted milestone **UI/UX & First-Run Adoption v1**; current
+authorized implementation milestone **Performance / Scale / Stability
+Closure v1**. Working tree confirmed clean except the seven preserved
+untracked detector files (§13, below) and `uv.lock`, all eight present,
+untracked and SHA-256-hashed at session start for re-verification at every
+commit boundary. **The UI/UX & First-Run Adoption v1 protected-file
+incident (three of the seven briefly tracked from `3f6a49c`) is
+remediated** -- commit `2549b32` restored all seven to untracked state
+index-only, contents never altered, and `3133c64` recorded the remedy in
+that milestone's own closure report; §13's rule stands unchanged and
+un-weakened. Writer safety: peer-session and working-tree-mtime checks
+performed at session start, and this session recorded its own
+single-writer claim in an untracked `.git/MOCKINGBIRD_ACTIVE_WRITER`
+marker (inside `.git/`, so never part of the working tree), re-checked
+before each commit boundary. This note does not re-derive or rewrite the
+notes/history below.
 
 **Staleness correction, 2026-09-22, by UI/UX & First-Run Adoption v1:**
 the note immediately below is further superseded. **Current facts,
@@ -3788,6 +3835,66 @@ boundary to an actual product user (`docs/using-mockingbird.md`'s new
 exactly as open as stated.
 
 ## 3. Current authorized milestone
+
+**Accepted, 2026-09-22, by Performance / Scale / Stability Closure v1's
+own baseline reconciliation.** UI/UX & First-Run Adoption v1 (the entry
+below) is now accepted: accepted HEAD
+`3133c64b6a9c49273f5cc57a807240630cab5b7a`. Validation state carried
+forward unchanged from that milestone's own record, below and in
+[ui-ux-first-run-adoption-v1-report.md](ui-ux-first-run-adoption-v1-report.md):
+Tier 1 `tests/test_demo_source_exclusion.py` 7 new tests (36 total),
+6 of 7 proven RED against the unmodified baseline; Tier 2 51 backend test
+files, 33 fixture failures in 5 files all corrected with the established
+`de_demo_seeded_source` mechanism (no assertion weakened), then 55/55;
+Tier 3 (full Core) run twice -- first run 12 failed / 6117 passed, eight
+of them genuine demo-exclusion fallout in files Tier 2 never reached, all
+corrected; second, confirming run **5 failed / 6124 passed / 4 skipped /
+11 xfailed (42m29s)**, four the established pre-existing set
+(`test_doctor_camera_node_transport.py`'s own pair,
+`test_environmental_context.py::test_temperature_band_established_once_
+enough_days_are_cached`,
+`test_place_change_summary_repository.py::test_api_round_trip_exposes_
+change_detection_fields`) and the fifth
+(`test_camera_node_transport_acceptance.py::test_scenario_1_ordinary_
+disconnect_reconnect`) a concurrency-scheduling artifact of running
+browser suites against this machine at the same time as Core, passing
+standalone in both the working tree and a baseline clone. Schema
+unchanged (`v59`). **The protected-file incident that milestone disclosed
+in its own §Z-1 is remediated, not merely recorded:** commit `2549b32`
+restored all seven preserved files to untracked state index-only, with
+every file's contents byte-identical throughout and no milestone commit
+rewritten; `3133c64` published that remedy in the closure report. §13's
+"never edited, deleted, renamed, staged, incorporated, or cleaned up"
+rule is unchanged and un-weakened by the incident. **Carried forward, not
+falsely closed:** (a) Native-Windows & Packaging Acceptance v1's live
+fresh Camera Node pairing proof against the shared reference Pi (Lane G /
+Lane R field-validation item, unchanged, now carried across three
+consecutive milestones); (b) the Doctor media-integrity relative-path
+behaviour recorded in earlier audit notes, outside that milestone's scope
+and outside this one's. Verified starting baseline exactly as expected:
+branch `main`; HEAD `3133c64`; schema `v59`; working tree clean except the
+seven preserved untracked detector files and `uv.lock`.
+
+**Performance / Scale / Stability Closure v1** -- directly authorized
+outside this file by the external (ChatGPT) global release sequencing,
+following acceptance of UI/UX & First-Run Adoption v1, above. Establishes
+that MockingBird v0.1 remains responsive, bounded and recoverable under
+realistic first-release workloads -- release fitness, not theoretical
+maximum scale. Stage A: define a finite set of credible v0.1 load profiles
+(fresh install, established home install, busy period, large early-adopter
+library) and measure startup, UI/API responsiveness, the specifically
+flagged unbounded `GET /api/visits` surface, memory, CPU/GPU, disk/media/
+database growth, database/query scale, queue/backpressure behaviour,
+long-run stability, restart/recovery under load, optional-BirdNET impact,
+and native-Windows-specific behaviour -- producing an evidence-backed
+P0/P1/P2/P3 inventory. Stage B: fix every P0 and P1, and bounded P2 items
+only where clearly worthwhile. Explicitly out of scope: storage-
+architecture redesign, distributed/cloud/multi-site infrastructure,
+detector/model selection, thresholds, a new task-queue platform absent a
+demonstrated blocker, frontend rewrite, reopening the accepted UI/UX
+milestone, Gate G, push. See
+[performance-scale-stability-closure-v1-report.md](performance-scale-stability-closure-v1-report.md)
+for the complete record once implemented and validated.
 
 **Accepted, 2026-09-22, by UI/UX & First-Run Adoption v1's own
 baseline reconciliation.** Analytics & Local Data Truth Consistency v1
