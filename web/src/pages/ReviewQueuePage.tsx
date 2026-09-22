@@ -2835,6 +2835,43 @@ export function ReviewQueuePage({
           </div>
         </details>
       ) : null}
+      {/* UI/UX & First-Run Adoption v1: shown with the queue itself, not
+          below the bulk/batch/history panels -- this is the recovery for
+          landing on a group with no waiting work. */}
+      {queueItems.length > 0 &&
+      filteredItems.length === 0 &&
+      !readinessHandoffLabel &&
+      productQueueCounts[productTab] === 0 &&
+      productTab !== "reviewed" ? (
+        firstPendingProductTab !== null ? (
+            <EmptyState
+              title="Nothing waiting in this group"
+              description={`${pendingReviewCount} ${pendingReviewCount === 1 ? "visit is" : "visits are"} waiting in ${
+                productReviewFilters.find((filter) => filter.value === firstPendingProductTab)?.label ?? "another group"
+              }.`}
+              action={
+                <button
+                  className="secondary-action"
+                  onClick={() => chooseProductTab(firstPendingProductTab)}
+                  type="button"
+                >
+                  Show {productReviewFilters.find((filter) => filter.value === firstPendingProductTab)?.label ?? "waiting visits"}
+                </button>
+              }
+            />
+          ) : (
+            <EmptyState
+              title="All caught up"
+              description="Nothing is waiting for review. New visits appear here when MockingBird is unsure, and everything you have confirmed stays in the Reviewed group and your Bird Log."
+              action={
+                <button className="secondary-action" onClick={() => chooseProductTab("reviewed")} type="button">
+                  Show reviewed
+                </button>
+              }
+            />
+          )
+      ) : null}
+
       {queueItems.length > 0 ? (
         <details className="panel review-bulk-panel review-secondary-details">
           <summary>
@@ -3745,39 +3782,14 @@ export function ReviewQueuePage({
             </button>
           </div>
         ) : null}
+        {/* The group-level recovery above already covers "this group has no
+            waiting work"; this one is for filters/search inside a group that
+            does. */}
         {queueItems.length > 0 &&
         filteredItems.length === 0 &&
-        !readinessHandoffLabel &&
-        productQueueCounts[productTab] === 0 &&
-        productTab !== "reviewed" ? (
-          firstPendingProductTab !== null ? (
-            <EmptyState
-              title="Nothing waiting in this group"
-              description={`${pendingReviewCount} ${pendingReviewCount === 1 ? "visit is" : "visits are"} waiting in ${
-                productReviewFilters.find((filter) => filter.value === firstPendingProductTab)?.label ?? "another group"
-              }.`}
-              action={
-                <button
-                  className="secondary-action"
-                  onClick={() => chooseProductTab(firstPendingProductTab)}
-                  type="button"
-                >
-                  Show {productReviewFilters.find((filter) => filter.value === firstPendingProductTab)?.label ?? "waiting visits"}
-                </button>
-              }
-            />
-          ) : (
-            <EmptyState
-              title="All caught up"
-              description="Nothing is waiting for review. New visits appear here when MockingBird is unsure, and everything you have confirmed stays in the Reviewed group and your Bird Log."
-              action={
-                <button className="secondary-action" onClick={() => chooseProductTab("reviewed")} type="button">
-                  Show reviewed
-                </button>
-              }
-            />
-          )
-        ) : queueItems.length > 0 && filteredItems.length === 0 ? (
+        (Boolean(readinessHandoffLabel) ||
+          productTab === "reviewed" ||
+          productQueueCounts[productTab] > 0) ? (
           <EmptyState
             title={
               readinessHandoffLabel ? "No matching review items found" : "No review items match these filters"
