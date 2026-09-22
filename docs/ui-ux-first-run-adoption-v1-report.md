@@ -453,19 +453,43 @@ after every commit and matches byte for byte (independent copies were
 also taken and compared). The other four preserved files were never
 staged. Nothing was pushed.
 
-**Why it is not repaired here.** Both available remedies -- rewriting the
-unpushed local history to exclude those paths, and `git rm --cached` to
-return them to untracked state with identical content on disk -- are
-classified as destructive git operations and were refused by this
-session's environment. Repairing this therefore needs an explicit
-decision by the owner rather than a silent workaround. Until then the
-three files are *tracked* in local history from `3f6a49c` onward, with
-unchanged content.
+**Why it was not repaired at milestone close.** Both available remedies
+-- rewriting the unpushed local history to exclude those paths, and
+`git rm --cached` to return them to untracked state with identical
+content on disk -- are classified as destructive git operations and were
+refused by this session's environment. Repairing this therefore needed an
+explicit decision by the owner rather than a silent workaround. The three
+files remained *tracked* in local history from `3f6a49c` onward, with
+unchanged content, until the correction below.
 
-**Recommended repair** (owner's choice, nothing pushed):
-`git rm --cached` those three paths and commit, which restores them to
-untracked immediately; or, for a clean history, rewrite `f050c88..HEAD`
-excluding those paths.
+**Remediation (2026-09-22), commit `2549b32`.** The owner authorised the
+non-destructive option. `git rm --cached` was run for exactly those three
+paths and committed as a dedicated repository-hygiene correction on top
+of `2cde683`:
+
+`chore: restore protected detector files to untracked state`
+
+- **Index-only.** The commit contains nothing but the removal of those
+  three paths from tracking: 3 files changed, 1752 deletions, zero
+  additions, zero modifications, change type `D` only.
+- **Contents untouched.** The working-tree copies were retained. Each was
+  confirmed byte-identical to the blob it was untracked from
+  (`git hash-object` == `git rev-parse HEAD:<path>`), and the SHA-256 of
+  all seven preserved files matches the values recorded before the
+  correction.
+- **Invariant restored.** All seven preserved detector files are untracked
+  again, as §13 of [release-execution-state.md](release-execution-state.md)
+  requires. Tracked-file count went 1047 -> 1044; the delta is exactly
+  those three paths and nothing else.
+- **History preserved.** No history was rewritten; the nine milestone
+  commits `f050c88`, `3f6a49c`, `f2a8f83`, `d145a20`, `fc0ff49`,
+  `7048ede`, `2c26d66`, `05146c7`, `2cde683` keep their original hashes
+  and were not amended or rebased. Schema remains `v59`; `uv.lock` remains
+  untracked and unrelated.
+- **No revalidation required.** The executable source state on disk is
+  unchanged, so no Core/e2e rerun was needed for this index-only
+  correction.
+- **Push status:** still **not pushed.**
 
 **Process lesson, recorded so it does not recur:** in this repository
 `git add -A <dir>` is unsafe -- the preserved files live inside `src/`
@@ -484,11 +508,11 @@ their own lanes, unchanged by this work:
 2. The **Doctor media-integrity relative-path** behaviour recorded in
    earlier audit notes, outside this milestone's scope.
 
-Plus this milestone's own disclosed process defect (§Z-1): three
-preserved untracked detector files are tracked in local history from
-`3f6a49c`, content unchanged, awaiting the owner's decision on the
-repair, because both repairs are destructive git operations this session
-was not permitted to perform.
+This milestone's own disclosed process defect (§Z-1) -- three preserved
+untracked detector files tracked in local history from `3f6a49c`, content
+unchanged -- is **closed**: the owner authorised the non-destructive
+remedy and commit `2549b32` restored all seven files to untracked state
+without altering any file's contents or rewriting any milestone commit.
 
 P3 items recorded in §E are deliberately deferred, not blockers.
 
@@ -543,10 +567,11 @@ concurrently" guidance, not a product regression.
   `2c26d66`, `05146c7`, after the baseline reconciliation `f050c88`).
 - **Schema:** `v59`, unchanged. **Version:** `0.1.0`, unchanged.
 - **Working tree:** clean apart from the preserved untracked files and
-  `uv.lock`; all eight protected files byte-identical to their
-  session-start SHA-256, re-verified at close -- but see §Z-1: three of
-  them are tracked in local history and await the owner's repair
-  decision.
+  `uv.lock`; all seven protected files byte-identical to their
+  session-start SHA-256, re-verified at close. Three of them were
+  accidentally tracked during this milestone and were restored to their
+  required untracked state by the follow-up correction `2549b32`, with
+  contents unchanged -- see §Z-1.
 - **Push status:** **not pushed.**
 - **Out of scope and untouched:** detector/model selection, MDv5a
   threshold, BioCLIP, SpeciesNet, BirdNET decisions, new wildlife
