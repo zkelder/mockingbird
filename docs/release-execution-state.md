@@ -3783,7 +3783,10 @@ implemented and validated, matching this file's own established
 convention.
 
 **2026-09-22 update (Review Queue Count Truth Consistency v1 executed):**
-a bounded repository search for every `review_queue_count` producer
+see
+[review-queue-count-truth-consistency-v1-report.md](review-queue-count-truth-consistency-v1-report.md)
+for the complete record, summarized here. A bounded repository search
+for every `review_queue_count` producer
 (`grep` across `src/`, cross-checked against every call site of
 `self._review_queue_items(session)`) found exactly eleven --
 `run_model_adapter`, `_run_local_image_detector_adapter`,
