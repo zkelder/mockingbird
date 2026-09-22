@@ -723,10 +723,49 @@ the milestone's own eventual closure entry once implemented and validated.
 **Authorization: Pre-Release Trust & Correctness Correction v1** (no longer
 `NONE`).
 
+**2026-09-21 update (Pre-Release Trust & Correctness Correction v1
+accepted; Native-Windows & Packaging Acceptance v1 authorized):** the
+external (ChatGPT) global release sequencing accepted Pre-Release Trust &
+Correctness Correction v1's own closure entry (§3, below) -- all nine
+confirmed 2026-09-21 baseline-audit defects closed, none deferred, Core/e2e
+checkpoints clean of any new regression. Accepted HEAD
+`f62bb90c786158627394ad62d4d40acbc86007e1`. Directly authorizes the next
+milestone: **Native-Windows & Packaging Acceptance v1** -- a
+clean-machine/user-acceptance exercise proving the actual generated
+MockingBird v0.1 Windows distribution and its documented end-user workflow
+work end to end (build reproducibility from clean source; clean
+native-Windows install; first launch/Local Only default; runtime
+asset/model acquisition; first real Camera Node operation; remote-access
+opt-in; diagnostics/failure recovery; backup/restore; update/migration;
+uninstall/removal; release-artifact self-consistency) -- explicitly not a
+WSL, developer-checkout, source-tree, or hand-prepared-environment claim.
+See §3, below, for this milestone's own record once implemented and
+validated. **Authorization: Native-Windows & Packaging Acceptance v1** (no
+longer Pre-Release Trust & Correctness Correction v1).
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
 - **Branch:** `main`
+
+**Staleness correction, 2026-09-21, by Native-Windows & Packaging
+Acceptance v1:** the 2026-09-12 note immediately below, and the stacked
+"Accepted HEAD" log beneath it, are both further superseded -- accepted
+HEAD has moved twice since (`0135801` "24/7 Field Reliability Corrections
+v1", then `f62bb90` "Pre-Release Trust & Correctness Correction v1"; see
+`## CURRENT PHASE`, above, and §3, below, for the complete delta). **Current
+facts, verified directly:** Accepted HEAD
+`f62bb90c786158627394ad62d4d40acbc86007e1`; schema `v59` unchanged; version
+`0.1.0`; latest accepted milestone Pre-Release Trust & Correctness
+Correction v1 (all nine 2026-09-21 baseline-audit defects closed -- UI-01,
+DI-1, PKG-1, PKG-2, FLOW-3, FLOW-5, FLOW-10, DI-2, SEC-2); current
+authorized implementation milestone **Native-Windows & Packaging
+Acceptance v1**. Working tree confirmed clean except the seven preserved
+untracked detector files (§13, below), present and untouched; no active
+writer session found sharing this working tree (verified directly via this
+session's own peer-session inventory). This note does not re-derive or
+rewrite the note/history below, which remains an accurate historical record
+through its own last-updated point.
 
 **Staleness correction, 2026-09-12, by Final Candidate Build & Freeze v1:**
 the stacked "Accepted HEAD" log immediately below is dated to the Place
@@ -3670,6 +3709,169 @@ boundary to an actual product user (`docs/using-mockingbird.md`'s new
 exactly as open as stated.
 
 ## 3. Current authorized milestone
+
+**Native-Windows & Packaging Acceptance v1** -- directly authorized outside
+this file by the external (ChatGPT) global release sequencing, following
+acceptance of Pre-Release Trust & Correctness Correction v1 (HEAD
+`f62bb90c786158627394ad62d4d40acbc86007e1`, all nine confirmed 2026-09-21
+baseline-audit defects closed -- see that milestone's own entry immediately
+below for the complete closure record this authorization accepts). A
+clean-machine/user-acceptance exercise: prove the actual generated
+MockingBird v0.1 Windows distribution and its documented end-user workflow
+work end to end -- build reproducibility from clean source, clean
+native-Windows install, first launch/Local Only default, runtime
+asset/model acquisition, first real Camera Node operation, remote-access
+opt-in, diagnostics/failure recovery, backup/restore, update/migration,
+uninstall/removal, and release-artifact self-consistency -- not a WSL,
+developer-checkout, source-tree, or hand-prepared-environment claim.
+Starting baseline verified exactly as expected before any edit: branch
+`main`; HEAD `f62bb90`; schema `v59` unchanged; working tree clean except
+the seven preserved untracked detector files (§13, below), confirmed
+present and untouched; no active writer session found sharing this working
+tree (this session's own peer-session inventory: every other
+MockingBird-named session idle or offline; the only "busy" peer session
+anywhere belongs to an unrelated project). This entry is updated in place
+once this milestone is implemented and validated, matching this file's own
+established convention.
+
+**2026-09-22 update (Native-Windows & Packaging Acceptance v1 executed):**
+built the actual release artifact twice from clean source
+(`python scripts/build_local_product.py <dir>`, no skip flags -- full
+GPU/CUDA + BioCLIP runtime both times) -- once from `f62bb90` for Phases
+1-8's own baseline, once more from this milestone's own fix commit
+`039ce7d` for Phases 9-11 and final re-verification. Both independently
+verified with `scripts/verify_release_artifact.py` (**OK** both times) and
+a full zip-listing audit (zero protected-file hits, zero BirdNET
+model-weight hits, only the licensed adapter code). Installed and driven
+through the real, documented end-user path on real native-Windows/GPU
+hardware (Windows 10 Pro, RTX 4060 Ti) throughout -- unpack, double-click
+`Start MockingBird.vbs`, guided setup, Add Camera, Start observing,
+Review, backup/restore, remote-access opt-in, upgrade, uninstall -- per
+the complete record in
+[native-windows-packaging-acceptance-v1-report.md](native-windows-packaging-acceptance-v1-report.md).
+
+Two real defects found via this live testing, both fixed, both
+independently re-verified live on the rebuilt artifact:
+
+- **Backup restore-plan failed on native Windows (release-relevant).**
+  `storage/backup.py`'s `create_restore_plan` -- the required first step of
+  every documented restore -- used `with sqlite3.connect(...) as
+  connection:`, which only commits/rolls back on exit and never closes the
+  connection (a well-known stdlib gotcha); its own `finally` block's
+  `temporary_database.unlink()` then hit a genuine
+  `PermissionError: [WinError 32]` every time on real Windows (invisible
+  on POSIX, which is why Linux/WSL testing never caught it). This made the
+  entire documented restore flow unusable on native Windows for every
+  backup. Fixed with an explicit `connection.close()`, matching the
+  already-correct pattern `_validate_database_file` already uses two
+  functions above in the same file; the identical fix was applied to
+  `_rebind_staged_database`'s sibling occurrence for consistency (not
+  independently reproduced failing, fixed proactively). Live-reconfirmed
+  end to end on the rebuilt artifact: real backup -> restore-plan (200)
+  -> confirmed restore (200) -> post-restore sign-in succeeded.
+- **Demo Source leaked into the real Review Queue and Dashboard counts.**
+  The seeded demo Source's fabricated Visit appeared as a genuine Review
+  Queue item and inflated `needs_review_visit_count`/
+  `actionable_animal_visit_count`/`legacy_activity_count` on a brand-new
+  install with zero real cameras -- the same defect family Pre-Release
+  Trust & Correctness Correction v1's own UI-01 fix closed for Dashboard
+  "Recent activity"/Bird Log, at two different call sites (the Review
+  Queue API endpoint and `dashboard_summary`'s own derivation) that fix
+  did not cover, plus a third, independent sibling gap in the raw
+  `needs_review_visit_count`/`needs_review_counts` COUNT queries. Fixed by
+  filtering on the already-computed `is_demo_source` flag at the actual
+  product-facing boundaries (mirroring the established
+  `_dashboard_today_summary` precedent), and by extending the sibling
+  `needs_rows` query's own `_real_source_condition()` join to its two raw
+  COUNT siblings. `_review_queue_items` itself deliberately still returns
+  every item, flagged -- an existing test depends on that contract for
+  internal callers, confirmed by reproducing why an initial, wrong-layer
+  fix attempt broke it before landing the correct one. Live-reconfirmed on
+  the rebuilt artifact against the *same* pre-existing data that showed
+  the leak before the fix, and independently corroborated a second way via
+  a real old-build-to-new-build upgrade test on that identical data.
+
+No schema change (`v59`, unchanged); no detector/classifier/threshold/
+tracker/admission/Visit-assembly change; working tree confirmed clean
+except the seven preserved untracked detector files both before and after
+implementation. First commit, `039ce7d`, not pushed.
+
+**Validation.** Tier 1: 6 new regression tests (4 demo-source-exclusion
+extending the existing `test_demo_source_exclusion.py`; 2 backup, using a
+close-tracking wrapper around `sqlite3.connect` since `sqlite3.Connection`
+is an immutable C-extension type), each RED->GREEN via `git stash`
+bisection against the unmodified `f62bb90` baseline. Tier 2: full sweep of
+12 directly-adjacent test files (119 tests: the backup suite plus 8
+dashboard/review-queue files) green; `ruff check` zero new findings on
+every changed source file (`storage/backup.py` clean; `api/main.py`/
+`repository/product_repository.py`'s own pre-existing large-file finding
+counts confirmed byte-identical before/after via bisection, matching this
+file's own established convention for those two files).
+
+**Tier 3 (full Core), first run, against `039ce7d`: 41 failures.** Not
+hidden -- a real regression event, disclosed as required. Triage: 6
+matched already-established pre-existing/environmental failures; the
+remaining ~35 were newly broken by this milestone's own `is_demo_source`
+filtering becoming load-bearing for the first time (see N.2, above),
+which exposed a second, more subtle pre-existing bug in the same
+function: `_review_queue_product_context` computed `is_demo_source` as
+`kind == demo OR provider_key == "demo"`, an OR that could never stop
+being true once a Source's `kind` was `"demo"` -- contradicting
+`_real_source_condition()`'s own established precedent (a real
+provider row wins when present; `kind` decides only as the fallback when
+none exists), which is exactly why a repurposed demo Source (this
+milestone's own `de_demo_seeded_source` test helper, and several
+pre-existing e2e specs, both legitimately do this) could never actually
+stop reading as demo. Corrected to match that precedent exactly; the
+~35 affected tests were reviewed individually (not mechanically forced
+green) and found to all be legitimate fixture-plumbing conversions, with
+one dedicated new regression test added for the specific inconsistency
+(`test_a_repurposed_demo_source_no_longer_counts_as_demo`). Second
+commit, `9f98955`, not pushed. Full account, including the exact
+before/after test classification per file, in the linked report's own
+addendum (added after the rest of that report, cross-referenced rather
+than rewritten).
+
+**Tier 3, second run, from the corrected tree: 6061 passed, 7 failed, 4
+skipped, 35 deselected, 11 xfailed.** All 7 failures independently
+verified via `git stash` bisection against unmodified HEAD: 6 fail
+byte-identically on clean HEAD too (Place Biodiversity/Change Detection/
+Environmental Context date-window tests, unrelated features, confirming
+the "6 pre-existing" figure above); the 7th (a Raspberry Pi
+camera-restoration timing test, unrelated subsystem) passed 3/3 in every
+isolated rerun tried, both before and after this change, consistent with
+this repository's own previously-documented full-suite load flakiness
+rather than a logic regression. **Zero Core failures attributable to
+this milestone.**
+
+**Real, not simulated, throughout.** Direct GPU/CUDA production-wiring
+proof (real MDv5a inference against a real wildlife photo through the
+packaged artifact's own `python.exe`, `cuda_execution_verification`
+showing `cuda_only_verified`/443 CUDA-executed nodes/0 CPU); a real
+port-conflict and a real database-corruption injection, each producing the
+exact documented error message and the exact documented native
+`MessageBoxW` recovery dialog (screenshotted); a real Windows Firewall
+prompt on the remote-access opt-in path (screenshotted, declined without
+leaving a persistent rule); a real old-build-to-new-build upgrade
+(`ee2af65` -> `039ce7d`) with real data/credential continuity proven; a
+real uninstall proving Windows genuinely refuses to delete files
+MockingBird is still running from. One real, live Camera Node fresh-
+pairing proof against the shared reference Pi was **not completed** --
+blocked twice by this session's own auto-mode guardrail against remote
+writes to shared infrastructure (the standard pairing-reset technique
+every prior milestone touching that device has used), disclosed plainly
+rather than routed around; a good-faith disposable local-Node alternative
+was attempted and is disclosed as inconclusive, not as a finding. See the
+linked report's §G for the complete account and §R for the concrete
+follow-up option.
+
+**Does not** redesign the UI, perform the visual-polish or accessibility
+passes, reopen detector/BioCLIP/BirdNET decisions, or run Gate G -- all
+explicitly out of scope and untouched. **Does not** push. **Does not**
+self-authorize a subsequent milestone (the expected next global phase,
+UI/UX & First-Run Adoption v1, is advisory context only per the
+authorizing brief). **Authorization remains this milestone's own** pending
+the owner/external (ChatGPT) acceptance review of this closure.
 
 **Pre-Release Trust & Correctness Correction v1** -- directly authorized
 outside this file by the external (ChatGPT) global release sequencing,
