@@ -56,16 +56,26 @@ function sessionCookieFrom(response: Response): { value: string; maxAgeSeconds: 
   return { value, maxAgeSeconds: maxAgeMatch ? Number(maxAgeMatch[1]) : 60 * 60 * 24 * 30 };
 }
 
-export default async function globalSetup(): Promise<void> {
+export default async function globalSetup(config?: {
+  projects?: Array<{ use?: { baseURL?: string } }>;
+}): Promise<void> {
   const configuredRuntimeRoot = process.env.MOCKINGBIRD_E2E_RUNTIME_ROOT?.trim();
   if (!configuredRuntimeRoot) {
     // Mirrors playwright.config.ts's own guard -- this file is only ever
-    // invoked through that config, which already enforces this.
+    // invoked through a config, which already enforces this.
     throw new Error("MOCKINGBIRD_E2E_RUNTIME_ROOT must be set before global setup runs.");
   }
   const runtimeRoot = resolve(configuredRuntimeRoot);
-  const port = Number(process.env.MOCKINGBIRD_E2E_PORT ?? "8174");
-  const baseURL = `http://127.0.0.1:${port}`;
+  // Review Queue Scale Closure v1: take the instance to bootstrap from the
+  // *invoking config's* own `baseURL` when Playwright supplies it, rather
+  // than from this file's own copy of the shared suite's default port. A
+  // second config now reuses this setup on its own port
+  // (playwright.review-queue.config.ts), and a hard-coded port here would
+  // have quietly bootstrapped the wrong instance. The env/default fallback
+  // is unchanged for any caller that does not pass a config.
+  const configuredBaseURL = config?.projects?.[0]?.use?.baseURL?.trim();
+  const baseURL =
+    configuredBaseURL || `http://127.0.0.1:${Number(process.env.MOCKINGBIRD_E2E_PORT ?? "8174")}`;
 
   await waitForServer(baseURL);
 

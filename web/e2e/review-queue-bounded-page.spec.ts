@@ -13,11 +13,17 @@ import { expect, test } from "@playwright/test";
 // "no full-history payload is fetched" is a statement about requests, not
 // about rendering.
 //
-// Every expectation is stated against the server's own answer for the same
-// view rather than against a fixture count, for two reasons: this suite
-// shares one database across specs, so no spec may assume a pristine queue;
-// and "the rendered page agrees with server truth" is the stronger claim
-// anyway.
+// Expectations are stated against the server's own answer for the same view
+// rather than against hard-coded counts: "the rendered page agrees with
+// server truth" is exactly the claim that matters here, and it stays true
+// however the fixture is sized.
+//
+// This spec runs against its own isolated instance
+// (playwright.review-queue.config.ts, `npm run test:e2e:review-queue`), on
+// the same principle as onboarding.spec.ts: its whole subject is a backlog
+// *larger than one page*, and several specs in the shared suite legitimately
+// assert on a near-empty queue. A spec that builds a backlog cannot share a
+// database with specs that observe an empty one.
 
 const PAGE_SIZE = 25;
 const IMPORTED_VISITS = 32;
@@ -74,10 +80,10 @@ async function importVisits(
   count: number,
 ): Promise<{ visitIds: string[]; streamId: string }> {
   // A dedicated, real (non-demo) Source/Stream -- `POST /api/sources`
-  // mirrors the plain "Add Camera" flow, matching real users, not this
-  // suite's shared demo fixture Stream (`kind == "demo"`), whose activity is
-  // demo-excluded from the visible queue by design and would never exercise
-  // what is under test here. Same reasoning as
+  // mirrors the plain "Add Camera" flow, matching real users, not the
+  // seeded demo Stream (`kind == "demo"`), whose activity is demo-excluded
+  // from the visible queue by design and would never exercise what is under
+  // test here. Same reasoning as
   // `review-queue-fast-review-keyboard.spec.ts` and
   // `review-queue-count-demo-exclusion.spec.ts`.
   const created = await page.request.post("/api/sources", {
@@ -141,10 +147,12 @@ test("the Review Queue renders one bounded page whose counts still describe the 
   expect(requests.filter((entry) => entry.bounded).length).toBeGreaterThan(0);
 
   // The window really is bounded: fewer items than match, and fewer bytes
-  // than the unbounded shape of the same queue. (How payload scales with
-  // *history* is asserted structurally in `tests/test_review_queue_page_
-  // scale.py`, where the library size can be controlled; this suite shares
-  // one database across specs.)
+  // than the unbounded shape of the same queue. This fixture is deliberately
+  // only just larger than one page, so the *ratio* here is small by
+  // construction -- how payload scales as history grows is asserted
+  // structurally in `tests/test_review_queue_page_scale.py`, where the
+  // library size can be controlled precisely (10x the history must not move
+  // the response by more than 64 bytes).
   expect(truth.items.length).toBeLessThan(truth.matching_items);
   const unbounded = await page.request.get("/api/review-queue?include_reviewed=true");
   expect(unbounded.ok()).toBeTruthy();

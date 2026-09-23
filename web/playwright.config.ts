@@ -46,7 +46,12 @@ export default defineConfig({
   // files, which is directly incompatible with onboarding.spec.ts's own
   // "genuinely fresh, no administrator yet" premise -- exclude it here
   // rather than have the two configs silently fight over one file.
-  testIgnore: ["**/onboarding.spec.ts"],
+  // review-queue-bounded-page.spec.ts is excluded for the same reason, from
+  // the other direction: it deliberately builds a review backlog larger than
+  // one page, and several specs here assert on a near-empty queue. It runs
+  // against its own instance via playwright.review-queue.config.ts. Review
+  // Queue Scale Closure v1.
+  testIgnore: ["**/onboarding.spec.ts", "**/review-queue-bounded-page.spec.ts"],
   fullyParallel: false,
   workers: 1,
   retries: 0,
