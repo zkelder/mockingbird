@@ -7,6 +7,7 @@ from mockingbird.diagnostics.error_taxonomy import resolve_error
 from mockingbird.diagnostics.structured_log import log_error_event, log_event
 
 from collections import Counter
+import contextlib
 import csv
 import dataclasses
 from dataclasses import asdict, dataclass
@@ -11488,16 +11489,17 @@ class ProductRepository:
         session: Session,
         stream_id: str,
     ) -> tuple[SpeciesCandidatePackModel, str | None, str | None]:
-        selection = session.get(StreamSpeciesCandidatePackSelectionModel, stream_id)
+        selection = _cached_get(session, StreamSpeciesCandidatePackSelectionModel, stream_id)
         selected_pack_id = selection.candidate_pack_id if selection is not None else None
         selected = (
-            session.get(SpeciesCandidatePackModel, selected_pack_id)
+            _cached_get(session, SpeciesCandidatePackModel, selected_pack_id)
             if selected_pack_id is not None
             else None
         )
         if selected is not None and selected.status == SpeciesCandidatePackStatus.active.value:
             return selected, None, selected_pack_id
-        builtin = session.get(
+        builtin = _cached_get(
+            session,
             SpeciesCandidatePackModel,
             BUILTIN_SPECIES_CANDIDATE_PACK_ID,
         )
@@ -19404,7 +19406,14 @@ class ProductRepository:
             # real native-Windows fresh install (Native-Windows & Packaging
             # Acceptance v1), the same gap class UI-01 fixed elsewhere in
             # this function.
-            product_review_items = self._visible_review_queue_items(session)
+            # Reads only `product_category`/`visit_id` from these items (the
+            # twelve previews below are rebuilt from models), so this asks
+            # for the classification, not a hydrated review card per queued
+            # item -- see `_review_queue_items`'s own `include_detail`
+            # docstring for the measured reason.
+            product_review_items = self._visible_review_queue_items(
+                session, include_detail=False
+            )
             actionable_animal_visits: list[DashboardVisitSummary] = []
             for item in product_review_items:
                 if item.product_category != "animal" or item.visit_id is None:
@@ -24278,7 +24287,7 @@ class ProductRepository:
         items: list[EvidenceCandidate] = []
         persisted: str | None = None
         for link in links:
-            asset = session.get(MediaAssetModel, link.media_asset_id)
+            asset = _cached_get(session, MediaAssetModel, link.media_asset_id)
             if asset is None:
                 continue
             if link.is_primary:
@@ -24487,7 +24496,13 @@ class ProductRepository:
         session: Session,
         visit_id: str,
     ) -> list[VisitEvidenceLinkModel]:
-        return list(
+        # Three separate places in one review-queue item's build ask for the
+        # same Visit's links. Serve all three from one query while a
+        # read-only build cache is active (see `_review_queue_read_cache`).
+        cache = session.info.get(_READ_CACHE_SESSION_KEY)
+        if cache is not None and visit_id in cache["evidence_links"]:
+            return cache["evidence_links"][visit_id]
+        links = list(
             session.scalars(
                 select(VisitEvidenceLinkModel)
                 .where(VisitEvidenceLinkModel.visit_id == visit_id)
@@ -24499,6 +24514,9 @@ class ProductRepository:
                 )
             ).all()
         )
+        if cache is not None:
+            cache["evidence_links"][visit_id] = links
+        return links
 
     def _visit_evidence_frames_from_links(
         self,
@@ -24552,7 +24570,7 @@ class ProductRepository:
         for link in links[:MAX_LIVE_VISIT_EVIDENCE_FRAMES]:
             if link.media_asset_id in seen_media_ids:
                 continue
-            asset = session.get(MediaAssetModel, link.media_asset_id)
+            asset = _cached_get(session, MediaAssetModel, link.media_asset_id)
             # Evidence ownership stays Stream-scoped even when a historic link
             # is malformed. Curation must never reveal media from another Stream.
             if asset is None or asset.stream_id != event.stream_id:
@@ -31708,10 +31726,10 @@ class ProductRepository:
         session: Session,
         stream_id: str,
     ) -> tuple[str | None, str | None, str | None]:
-        stream_model = session.get(StreamModel, stream_id)
+        stream_model = _cached_get(session, StreamModel, stream_id)
         if stream_model is None:
             return None, None, None
-        source_model = session.get(CameraSourceModel, stream_model.source_id)
+        source_model = _cached_get(session, CameraSourceModel, stream_model.source_id)
         return (
             stream_model.name,
             stream_model.source_id,
@@ -38453,6 +38471,36 @@ class ProductRepository:
             detections=[_detection_from_model(detection) for detection in detections],
         )
 
+    @staticmethod
+    def _event_without_detections(event: EventModel) -> Event:
+        """`_event_from_model` minus its per-Event `DetectionModel` query.
+
+        Performance / Scale / Stability Closure v1. The review-queue build's
+        Visit loop reads only an Event's scalar fields (`id`, `stream_id`,
+        `event_type`, `started_at`, `primary_zone_id`, `title`) -- verified
+        across that whole loop -- yet paid for one `SELECT` over that
+        Event's detections per queued item. The visit-less Event loop, which
+        *does* read `detections` (for its own `suggested_label`), keeps
+        using `_event_from_model`.
+
+        `detections=[]` here means "not loaded for this caller," never "this
+        Event has no detections": nothing this projection is handed to can
+        observe the difference, and it is deliberately private to the queue
+        build rather than a general-purpose `Event` constructor.
+        """
+
+        return Event(
+            id=event.id,
+            stream_id=event.stream_id,
+            title=event.title,
+            event_type=event.event_type,
+            started_at=_as_utc(event.started_at),
+            ended_at=_as_utc(event.ended_at) if event.ended_at else None,
+            primary_zone_id=event.primary_zone_id,
+            review_status=ReviewStatus(event.review_status),
+            detections=[],
+        )
+
     def _has_authoritative_review_label(self, labels: list[ReviewLabelModel]) -> bool:
         return any(review_provenance.is_authority_eligible(label.review_origin) for label in labels)
 
@@ -38604,7 +38652,7 @@ class ProductRepository:
         if zone_id is None:
             return None, None, None
 
-        zone = session.get(ZoneModel, zone_id)
+        zone = _cached_get(session, ZoneModel, zone_id)
         if zone is None:
             return zone_id, None, None
 
@@ -38784,10 +38832,160 @@ class ProductRepository:
         session: Session,
         *,
         include_reviewed: bool = False,
+        include_detail: bool = True,
+    ) -> list[ReviewQueueItem]:
+        """Build the review queue.
+
+        `include_detail=False` builds the same queue -- same members, same
+        order, same classification -- without the per-item work that only a
+        *displayed* review card needs: the identification-assistant summary,
+        the effective-primary preview, the focus-crop context, the review
+        state token and the stale-suggestion check. Callers that only count
+        the queue, or read an item's `product_category`, pay for none of it.
+
+        Measured at an ordinary established-install size (2,813 Visits, a
+        1,094-item backlog): the identification summary alone was 46% of
+        `GET /api/review-queue`'s response bytes and four SQL statements per
+        item -- and `dashboard_summary` was paying for all of it on every
+        landing-page load, to populate `actionable_animal_visits`,
+        `actionable_animal_visit_count` and `legacy_activity_count`, none of
+        which any screen renders (verified across the whole `web/src` tree).
+
+        Nothing here changes which items are in the queue, their order, or
+        how any of them is classified; the skipped fields keep their schema
+        defaults. Every `include_detail=False` caller is internal and reads
+        only `product_category`, `visit_id`, `is_demo_source` or `len()` --
+        `GET /api/review-queue` itself always asks for full detail.
+        """
+
+        with _review_queue_read_cache(session) as cache:
+            self._preload_review_queue_rows(
+                session, cache, include_reviewed=include_reviewed
+            )
+            return self._review_queue_items_uncached(
+                session,
+                include_reviewed=include_reviewed,
+                include_detail=include_detail,
+            )
+
+    def _preload_review_queue_rows(
+        self,
+        session: Session,
+        cache: dict[str, dict],
+        *,
+        include_reviewed: bool,
+    ) -> None:
+        """Fetch the queue's per-Visit rows in bulk instead of item by item.
+
+        Performance / Scale / Stability Closure v1. Every item in the build
+        needs its own Visit, its Event, its evidence links and each link's
+        media asset. Read one row at a time that is four round trips per
+        item -- at a 1,094-item backlog, ~6,500 statements before the build
+        has done anything interesting. These four `IN (...)` queries fetch
+        exactly the same rows, and `_cached_get`/`_visit_evidence_link_
+        models` then serve every later lookup from them.
+
+        Purely a prefetch: it changes nothing about which rows the build
+        reads or what it decides, and a Visit whose row is missing from a
+        preload map is simply fetched individually as before (the maps are
+        filled, never consulted for "does this exist"). Safe to skip
+        entirely -- the build is correct without it.
+        """
+
+        visit_ids = list(
+            session.scalars(
+                select(VisitModel.id).where(
+                    VisitModel.is_superseded.is_(False),
+                    VisitModel.review_status.in_(_review_queue_statuses(include_reviewed)),
+                )
+            ).all()
+        )
+        if not visit_ids:
+            return
+
+        rows = cache["rows"]
+        link_map: dict[str, list[VisitEvidenceLinkModel]] = {
+            visit_id: [] for visit_id in visit_ids
+        }
+        media_ids: set[str] = set()
+        event_ids: set[str] = set()
+
+        for chunk in _id_chunks(visit_ids):
+            for visit_model in session.scalars(
+                select(VisitModel).where(VisitModel.id.in_(chunk))
+            ).all():
+                rows[(VisitModel, visit_model.id)] = visit_model
+                event_ids.add(visit_model.event_id)
+            for link in session.scalars(
+                select(VisitEvidenceLinkModel)
+                .where(VisitEvidenceLinkModel.visit_id.in_(chunk))
+                .order_by(
+                    VisitEvidenceLinkModel.captured_at,
+                    VisitEvidenceLinkModel.frame_sequence,
+                    VisitEvidenceLinkModel.sort_order,
+                    VisitEvidenceLinkModel.id,
+                )
+            ).all():
+                link_map[link.visit_id].append(link)
+                media_ids.add(link.media_asset_id)
+
+        for chunk in _id_chunks(sorted(event_ids)):
+            for event_model in session.scalars(
+                select(EventModel).where(EventModel.id.in_(chunk))
+            ).all():
+                rows[(EventModel, event_model.id)] = event_model
+
+        for chunk in _id_chunks(sorted(media_ids)):
+            for asset in session.scalars(
+                select(MediaAssetModel).where(MediaAssetModel.id.in_(chunk))
+            ).all():
+                rows[(MediaAssetModel, asset.id)] = asset
+
+        cache["evidence_links"].update(link_map)
+
+    def _review_queue_items_uncached(
+        self,
+        session: Session,
+        *,
+        include_reviewed: bool = False,
+        include_detail: bool = True,
     ) -> list[ReviewQueueItem]:
         queue: list[ReviewQueueItem] = []
         recency_by_item_id: dict[str, float] = {}
-        visits = self._visits_for_eventless_query(session)
+        # Performance / Scale / Stability Closure v1: ask the database for
+        # the review backlog, not for the whole library.
+        #
+        # This used to call `_visits_for_eventless_query`, materialising
+        # *every* non-superseded Visit, and then `continue`d past the ones
+        # whose `review_status` does not belong in the queue -- in Python,
+        # one row at a time. Everything below this loop (evidence frames,
+        # media, zone, suggestion, identification, state token) is a
+        # per-item cascade of further queries, so the cost of building the
+        # queue grew with a Place's total accumulated history rather than
+        # with the work actually waiting to be reviewed. Measured directly
+        # at an ordinary established-install size (2,813 Visits, a 90-day
+        # two-camera library): `GET /api/review-queue` took ~17s and issued
+        # ~39,000 SQL statements, and because `dashboard_summary` and all
+        # eleven `review_queue_count` response fields build this same queue
+        # (see `_visible_review_queue_items`), the landing page and every
+        # saved correction paid the same price.
+        #
+        # `_review_queue_visit_statuses` below is exactly the predicate the
+        # old Python `continue` applied -- pushed into SQL, with
+        # `is_superseded`/ordering preserved from `_visits_for_eventless_
+        # query` so the queue's contents and order are unchanged.
+        allowed_statuses = _review_queue_statuses(include_reviewed)
+        visits = [
+            _visit_from_model(model)
+            for model in session.scalars(
+                select(VisitModel)
+                .where(
+                    VisitModel.is_superseded.is_(False),
+                    VisitModel.review_status.in_(allowed_statuses),
+                )
+                .order_by(VisitModel.id)
+            ).all()
+        ]
 
         # One coherent model-adapter/BioCLIP status snapshot for this whole
         # queue build, not one fresh (expensive local filesystem/model-
@@ -38801,16 +38999,11 @@ class ProductRepository:
         adapter_status = _ReviewAdapterStatusContext.resolve()
 
         for visit in visits:
-            if visit.review_status != ReviewStatus.needs_review and not (
-                include_reviewed and visit.review_status == ReviewStatus.reviewed
-            ):
-                continue
-
-            event_model = session.get(EventModel, visit.event_id)
+            event_model = _cached_get(session, EventModel, visit.event_id)
             if event_model is None:
                 continue
 
-            event = self._event_from_model(session, event_model)
+            event = self._event_without_detections(event_model)
             stream_name, source_id, source_name = self._review_queue_stream_context(
                 session,
                 event.stream_id,
@@ -38836,7 +39029,7 @@ class ProductRepository:
                 if suggestion_model is not None
                 else None
             )
-            visit_model = session.get(VisitModel, visit.id)
+            visit_model = _cached_get(session, VisitModel, visit.id)
             if visit_model is None:
                 continue
             evidence_frames = self._visit_evidence_frames_from_visit(
@@ -38868,7 +39061,7 @@ class ProductRepository:
                     (frame for frame in evidence_frames if frame.is_primary),
                     evidence_frames[0],
                 )
-                primary_model = session.get(MediaAssetModel, primary_frame.media_asset_id)
+                primary_model = _cached_get(session, MediaAssetModel, primary_frame.media_asset_id)
                 media_asset = (
                     _media_asset_from_model(primary_model) if primary_model is not None else None
                 )
@@ -38880,11 +39073,15 @@ class ProductRepository:
                 if evidence is not None
                 else None
             )
-            focus_crop_context = self._review_focus_crop_context(
-                session,
-                zone_id=zone_id,
-                media_asset_id=best_media_asset_id,
-                evidence=evidence,
+            focus_crop_context = (
+                self._review_focus_crop_context(
+                    session,
+                    zone_id=zone_id,
+                    media_asset_id=best_media_asset_id,
+                    evidence=evidence,
+                )
+                if include_detail
+                else _empty_review_focus_crop_context([])
             )
             queue_item = ReviewQueueItem(
                 id=f"review-queue-{visit.id}",
@@ -38920,15 +39117,27 @@ class ProductRepository:
                 **_review_focus_crop_fields(focus_crop_context),
                 media_asset=media_asset,
                 evidence_frames=evidence_frames,
-                effective_primary=self._effective_primary_preview_from_visit(session, visit_model),
-                stale_species_suggestions=self._visit_has_stale_species_suggestions(
-                    session,
-                    visit_id=visit.id,
-                    effective_media_asset_id=best_media_asset_id,
+                effective_primary=(
+                    self._effective_primary_preview_from_visit(session, visit_model)
+                    if include_detail
+                    else None
+                ),
+                stale_species_suggestions=(
+                    self._visit_has_stale_species_suggestions(
+                        session,
+                        visit_id=visit.id,
+                        effective_media_asset_id=best_media_asset_id,
+                    )
+                    if include_detail
+                    else False
                 ),
                 review_status=visit.review_status,
                 reviewed_label=visit.reviewed_label,
-                review_state_token=self._review_state_token(session, "visit", visit.id),
+                review_state_token=(
+                    self._review_state_token(session, "visit", visit.id)
+                    if include_detail
+                    else ""
+                ),
                 reason="Confirm or correct the suggested species label.",
                 **_review_queue_product_context(
                     session=session,
@@ -38942,11 +39151,12 @@ class ProductRepository:
                     subject_label=visit.subject_label,
                 ),
             )
-            queue_item.identification = self._review_identification_summary_for_item(
-                session,
-                queue_item,
-                adapter_status=adapter_status,
-            )
+            if include_detail:
+                queue_item.identification = self._review_identification_summary_for_item(
+                    session,
+                    queue_item,
+                    adapter_status=adapter_status,
+                )
             queue.append(queue_item)
             recency_by_item_id[queue_item.id] = _review_queue_timestamp(event.started_at)
 
@@ -38954,20 +39164,24 @@ class ProductRepository:
         event_ids_with_historical_visits = set(
             session.scalars(select(VisitModel.event_id)).all()
         )
-        event_models = session.scalars(select(EventModel).order_by(EventModel.started_at)).all()
+        # Same fix as the Visit loop above, for the visit-less Event source:
+        # the review-status predicate is the database's job. It matters more
+        # here than it looks, because `_event_from_model` below is itself a
+        # per-Event query -- the old code ran it for every Event in the
+        # library before deciding the Event did not belong in the queue at
+        # all. Ordering (`started_at`) is preserved exactly.
+        event_models = session.scalars(
+            select(EventModel)
+            .where(EventModel.review_status.in_(_review_queue_statuses(include_reviewed)))
+            .order_by(EventModel.started_at)
+        ).all()
         for event_model in event_models:
-            event = self._event_from_model(session, event_model)
             if (
-                (
-                    event.review_status != ReviewStatus.needs_review
-                    and not (
-                        include_reviewed and event.review_status == ReviewStatus.reviewed
-                    )
-                )
-                or event.id in visit_event_ids
-                or event.id in event_ids_with_historical_visits
+                event_model.id in visit_event_ids
+                or event_model.id in event_ids_with_historical_visits
             ):
                 continue
+            event = self._event_from_model(session, event_model)
             stream_name, source_id, source_name = self._review_queue_stream_context(
                 session,
                 event.stream_id,
@@ -38980,7 +39194,7 @@ class ProductRepository:
                 media_asset_id=None,
             )
             media_asset_model = (
-                session.get(MediaAssetModel, evidence.snapshot_media_asset_id)
+                _cached_get(session, MediaAssetModel, evidence.snapshot_media_asset_id)
                 if evidence is not None and evidence.snapshot_media_asset_id is not None
                 else None
             )
@@ -38993,11 +39207,15 @@ class ProductRepository:
                 if evidence is not None
                 else None
             )
-            focus_crop_context = self._review_focus_crop_context(
-                session,
-                zone_id=zone_id,
-                media_asset_id=best_media_asset_id,
-                evidence=evidence,
+            focus_crop_context = (
+                self._review_focus_crop_context(
+                    session,
+                    zone_id=zone_id,
+                    media_asset_id=best_media_asset_id,
+                    evidence=evidence,
+                )
+                if include_detail
+                else _empty_review_focus_crop_context([])
             )
             event_effective_label = (
                 self._current_effective_review_label_model_for_event(session, event.id)
@@ -39033,7 +39251,11 @@ class ProductRepository:
                 media_asset=media_asset,
                 review_status=event.review_status,
                 reviewed_label=event_reviewed_label,
-                review_state_token=self._review_state_token(session, "event", event.id),
+                review_state_token=(
+                    self._review_state_token(session, "event", event.id)
+                    if include_detail
+                    else ""
+                ),
                 reason="Review detected outdoor activity and correct the event meaning.",
                 **_review_queue_product_context(
                     session=session,
@@ -39046,11 +39268,12 @@ class ProductRepository:
                     event_type=event.event_type,
                 ),
             )
-            queue_item.identification = self._review_identification_summary_for_item(
-                session,
-                queue_item,
-                adapter_status=adapter_status,
-            )
+            if include_detail:
+                queue_item.identification = self._review_identification_summary_for_item(
+                    session,
+                    queue_item,
+                    adapter_status=adapter_status,
+                )
             queue.append(queue_item)
             recency_by_item_id[queue_item.id] = _review_queue_timestamp(event.started_at)
 
@@ -39063,7 +39286,12 @@ class ProductRepository:
             reverse=True,
         )
 
-    def _visible_review_queue_items(self, session: Session) -> list[ReviewQueueItem]:
+    def _visible_review_queue_items(
+        self,
+        session: Session,
+        *,
+        include_detail: bool = True,
+    ) -> list[ReviewQueueItem]:
         """The canonical user-visible review queue: excludes demo activity.
 
         `_review_queue_items` deliberately still returns every item,
@@ -39080,12 +39308,21 @@ class ProductRepository:
         count"/equivalent product language must go through this one seam
         instead of reproducing `if not item.is_demo_source` ad hoc."""
 
-        return [item for item in self._review_queue_items(session) if not item.is_demo_source]
+        return [
+            item
+            for item in self._review_queue_items(session, include_detail=include_detail)
+            if not item.is_demo_source
+        ]
 
     def _visible_review_queue_count(self, session: Session) -> int:
         """The one number a user should ever see as "N need review"."""
 
-        return len(self._visible_review_queue_items(session))
+        # A count reads no per-item detail, so it does not pay for any --
+        # see `_review_queue_items`'s own `include_detail` docstring. This
+        # runs on every saved correction (eleven `review_queue_count`
+        # response fields share this seam), which is exactly why it must
+        # not hydrate a review card per queued item to produce one integer.
+        return len(self._visible_review_queue_items(session, include_detail=False))
 
     def _dataset_quality_summary(self, session: Session) -> DatasetQualitySummary:
         issues: list[DatasetQualityIssue] = []
@@ -40702,6 +40939,91 @@ class ProductRepository:
             if session.get(model, candidate) is None:
                 return candidate
             candidate_number += 1
+
+
+# SQLite's default `SQLITE_MAX_VARIABLE_NUMBER` is 999 on older builds.
+# Chunk every `IN (...)` preload well inside that so a large backlog can
+# never turn a prefetch into a hard error.
+_PRELOAD_CHUNK_SIZE = 500
+
+
+def _id_chunks(values: Sequence[str]) -> Iterable[Sequence[str]]:
+    for start in range(0, len(values), _PRELOAD_CHUNK_SIZE):
+        yield values[start : start + _PRELOAD_CHUNK_SIZE]
+
+
+_READ_CACHE_SESSION_KEY = "mockingbird_review_queue_read_cache"
+
+
+@contextlib.contextmanager
+def _review_queue_read_cache(session: Session):
+    """Memoise this session's repeated reads for one read-only queue build.
+
+    Performance / Scale / Stability Closure v1. Building one
+    `ReviewQueueItem` re-reads a small number of rows that every other item
+    in the same build also needs -- its Stream, that Stream's Source and
+    provider configuration, its Zone, the effective species candidate pack,
+    and each evidence link's own media asset. Measured directly at an
+    ordinary established-install size (2,813 Visits / a 1,094-item
+    backlog): `GET /api/review-queue` issued ~36,000 SQL statements, of
+    which roughly a third were repeat reads of the same **two** Streams,
+    two Sources and nine Zones, once per item.
+
+    `Session.get()` does not spare those round trips here -- confirmed
+    directly against this project's own SQLAlchemy 2.0.54 and against a
+    minimal standalone repro: fifty `session.get()` calls for one
+    already-loaded primary key emit fifty `SELECT`s. So the memo has to be
+    explicit.
+
+    Scope is deliberately one queue build, not the session: everything
+    between `__enter__` and `__exit__` here is read-only, so a cached row
+    cannot go stale inside that window, and no other code path is affected
+    because `_cached_get`/`_cached_evidence_links` fall straight through to
+    the database whenever this context is not active. Nested builds share
+    the outermost cache and never clear it early.
+    """
+
+    existing = session.info.get(_READ_CACHE_SESSION_KEY)
+    if existing is not None:
+        yield existing
+        return
+    cache: dict[str, dict] = {"rows": {}, "evidence_links": {}}
+    session.info[_READ_CACHE_SESSION_KEY] = cache
+    try:
+        yield cache
+    finally:
+        session.info.pop(_READ_CACHE_SESSION_KEY, None)
+
+
+def _cached_get(session: Session, model: type, primary_key: Any):
+    """`session.get`, memoised when a read-only build cache is active."""
+
+    cache = session.info.get(_READ_CACHE_SESSION_KEY)
+    if cache is None or primary_key is None:
+        return session.get(model, primary_key)
+    key = (model, primary_key)
+    rows = cache["rows"]
+    if key not in rows:
+        rows[key] = session.get(model, primary_key)
+    return rows[key]
+
+
+def _review_queue_statuses(include_reviewed: bool) -> tuple[str, ...]:
+    """The review statuses that belong in the review queue.
+
+    Performance / Scale / Stability Closure v1. This is a direct, literal
+    translation of the Python predicate `_review_queue_items` used to apply
+    per row -- "keep it if it needs review, or if it is reviewed and the
+    caller asked for reviewed history too" -- so it can be pushed into SQL
+    and the queue build can stop materialising a Place's entire accumulated
+    history on every Dashboard load, Review Queue open and saved
+    correction. One function, used by both the Visit and the visit-less
+    Event loop, so the two can never drift apart.
+    """
+
+    if include_reviewed:
+        return (ReviewStatus.needs_review.value, ReviewStatus.reviewed.value)
+    return (ReviewStatus.needs_review.value,)
 
 
 def _source_provider_definition(provider_key: str) -> SourceProviderDefinition | None:
@@ -43154,10 +43476,10 @@ def _review_queue_product_context(
 ) -> dict[str, Any]:
     """Classify durable review provenance without turning evidence into truth."""
 
-    stream = session.get(StreamModel, stream_id)
-    source = session.get(CameraSourceModel, stream.source_id) if stream else None
+    stream = _cached_get(session, StreamModel, stream_id)
+    source = _cached_get(session, CameraSourceModel, stream.source_id) if stream else None
     provider = (
-        session.get(SourceProviderConfigurationModel, source.id)
+        _cached_get(session, SourceProviderConfigurationModel, source.id)
         if source is not None
         else None
     )
