@@ -255,7 +255,16 @@ from mockingbird.api.schemas import (
     ReviewIdentificationResponse,
     ReviewQueueBulkCorrectionRequest,
     ReviewQueueBulkCorrectionResponse,
+    ReviewQueueEvidenceFilter,
     ReviewQueueItem,
+    ReviewQueuePage,
+    ReviewQueuePageRequest,
+    ReviewQueueProductTab,
+    ReviewQueueSort,
+    ReviewQueueStatusFilter,
+    ReviewQueueSummary,
+    ReviewQueueTargetFilter,
+    ReviewQueueTriageFilter,
     ReviewQueueSpeciesSuggestionBatchPrepareRequest,
     ReviewQueueSpeciesSuggestionBatchPrepareResponse,
     SceneConfusorLearningEnabledUpdate,
@@ -14996,6 +15005,74 @@ async def list_review_queue(
 
     items = get_repository().review_queue_items(include_reviewed=include_reviewed)
     return [item for item in items if not item.is_demo_source]
+
+
+@app.get("/api/review-queue/page", response_model=ReviewQueuePage)
+async def read_review_queue_page(
+    tab: ReviewQueueProductTab = Query(default=ReviewQueueProductTab.animals),
+    show_legacy_and_test_activity: bool = Query(default=False),
+    status: ReviewQueueStatusFilter = Query(default=ReviewQueueStatusFilter.unreviewed),
+    triage: ReviewQueueTriageFilter = Query(default=ReviewQueueTriageFilter.all),
+    evidence: ReviewQueueEvidenceFilter = Query(default=ReviewQueueEvidenceFilter.all),
+    target: ReviewQueueTargetFilter = Query(default=ReviewQueueTargetFilter.all),
+    source_stream: str = Query(default="all", max_length=320),
+    search: str = Query(default="", max_length=512),
+    sort: ReviewQueueSort = Query(default=ReviewQueueSort.newest),
+    page: int = Query(default=0, ge=0),
+    page_size: int = Query(default=25, ge=1, le=100),
+    stream_id: str | None = Query(default=None, max_length=256),
+    scoped_target_ids: list[str] | None = Query(default=None),
+    skipped_target_ids: list[str] | None = Query(default=None),
+    include_eligible_target_ids: bool = Query(default=False),
+) -> ReviewQueuePage:
+    """One bounded page of the Review Queue, with whole-queue counts.
+
+    Review Queue Scale Closure v1. This is the product-facing Review Queue
+    read: `items` is bounded by `page_size`, while every count in the
+    response is computed over the *whole* visible queue at the server, so
+    the accepted page can keep presenting totals as totals. Demo-source
+    activity is excluded exactly as `GET /api/review-queue` above excludes
+    it (see that endpoint's docstring for why the exclusion lives at the
+    HTTP boundary).
+
+    `GET /api/review-queue` itself is unchanged and still returns the whole
+    queue. It is no longer read by any product surface; it stays as the
+    stable list-everything API shape that external/offline callers and this
+    repository's own contract tests use, and `test_review_queue_scale.py`
+    asserts that the *page* never grows with total history.
+    """
+
+    return get_repository().review_queue_page(
+        ReviewQueuePageRequest(
+            tab=tab,
+            show_legacy_and_test_activity=show_legacy_and_test_activity,
+            status=status,
+            triage=triage,
+            evidence=evidence,
+            target=target,
+            source_stream=source_stream,
+            search=search,
+            sort=sort,
+            page=page,
+            page_size=page_size,
+            stream_id=stream_id,
+            scoped_target_ids=scoped_target_ids,
+            skipped_target_ids=skipped_target_ids,
+            include_eligible_target_ids=include_eligible_target_ids,
+        )
+    )
+
+
+@app.get("/api/review-queue/summary", response_model=ReviewQueueSummary)
+async def read_review_queue_summary() -> ReviewQueueSummary:
+    """Review counts only, with no review cards.
+
+    Review Queue Scale Closure v1. The app shell needs per-Stream "N needs
+    review" counts on every page load; it used to obtain them by
+    downloading the entire review queue.
+    """
+
+    return get_repository().review_queue_summary()
 
 
 @app.post(

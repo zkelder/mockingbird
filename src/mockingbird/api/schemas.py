@@ -4136,6 +4136,176 @@ class ReviewQueueItem(BaseModel):
     is_legacy_activity: bool = False
 
 
+class ReviewQueueProductTab(str, Enum):
+    """The Review Queue page's accepted product tabs, plus "no tab scoping".
+
+    Review Queue Scale Closure v1. `animals`/`other_activity`/`unchecked`/
+    `legacy_activity`/`reviewed` are exactly the tabs
+    `ReviewQueuePage.tsx` already offered; `all` has no tab counterpart and
+    exists for the callers that want the queue without a tab (the Streams
+    surfaces' per-Stream review counts).
+    """
+
+    all = "all"
+    animals = "animals"
+    other_activity = "other_activity"
+    unchecked = "unchecked"
+    legacy_activity = "legacy_activity"
+    reviewed = "reviewed"
+
+
+class ReviewQueueTriageFilter(str, Enum):
+    """The Review Queue's existing triage filter (`ReviewFilter` in the page)."""
+
+    all = "all"
+    animal_evidence = "animal_evidence"
+    vehicle_person_evidence = "vehicle_person_evidence"
+    no_clear_proposal = "no_clear_proposal"
+    not_analyzed = "not_analyzed"
+    false_positives = "false_positives"
+
+
+class ReviewQueueEvidenceFilter(str, Enum):
+    all = "all"
+    has_media = "has_media"
+    has_detection_proposal = "has_detection_proposal"
+    has_motion_evidence = "has_motion_evidence"
+    no_proposal_evidence = "no_proposal_evidence"
+
+
+class ReviewQueueTargetFilter(str, Enum):
+    all = "all"
+    visit = "visit"
+    event = "event"
+
+
+class ReviewQueueStatusFilter(str, Enum):
+    unreviewed = "unreviewed"
+    reviewed = "reviewed"
+    all = "all"
+
+
+class ReviewQueueSort(str, Enum):
+    newest = "newest"
+    triage = "triage"
+
+
+class ReviewQueueTabCounts(BaseModel):
+    """Per-tab totals over the whole visible queue, not over one page."""
+
+    animals: int = Field(ge=0)
+    other_activity: int = Field(ge=0)
+    unchecked: int = Field(ge=0)
+    legacy_activity: int = Field(ge=0)
+    reviewed: int = Field(ge=0)
+
+
+class ReviewQueueTriageCounts(BaseModel):
+    """Per-triage-category totals over the whole visible queue."""
+
+    all: int = Field(ge=0)
+    animal_evidence: int = Field(ge=0)
+    vehicle_person_evidence: int = Field(ge=0)
+    no_clear_proposal: int = Field(ge=0)
+    not_analyzed: int = Field(ge=0)
+    false_positives: int = Field(ge=0)
+
+
+class ReviewQueueSourceStreamOption(BaseModel):
+    value: str
+    label: str
+    count: int = Field(ge=0)
+
+
+class ReviewQueuePageRequest(BaseModel):
+    """The active Review Queue view, as the server needs it to answer.
+
+    Review Queue Scale Closure v1. Every field here corresponds one-to-one
+    to a control the accepted Review Queue page already had; nothing new is
+    filterable. Defaults match the page's own initial state (Animals tab,
+    unreviewed, no triage/evidence/source filters, newest first).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    tab: ReviewQueueProductTab = ReviewQueueProductTab.animals
+    show_legacy_and_test_activity: bool = False
+    status: ReviewQueueStatusFilter = ReviewQueueStatusFilter.unreviewed
+    triage: ReviewQueueTriageFilter = ReviewQueueTriageFilter.all
+    evidence: ReviewQueueEvidenceFilter = ReviewQueueEvidenceFilter.all
+    target: ReviewQueueTargetFilter = ReviewQueueTargetFilter.all
+    source_stream: str = Field(default="all", max_length=320)
+    search: str = Field(default="", max_length=512)
+    sort: ReviewQueueSort = ReviewQueueSort.newest
+    page: int = Field(default=0, ge=0)
+    page_size: int = Field(default=25, ge=1, le=100)
+    # The Streams surfaces' own scoping: one Stream's review work.
+    stream_id: str | None = Field(default=None, max_length=256)
+    # Hand-offs from other screens ("review these Visits") and the page's
+    # own in-session "skip" set, both of which the page applied client-side.
+    scoped_target_ids: list[str] | None = Field(default=None, max_length=500)
+    skipped_target_ids: list[str] | None = Field(default=None, max_length=500)
+    include_eligible_target_ids: bool = False
+
+
+class ReviewQueuePage(BaseModel):
+    """One bounded page of the Review Queue, plus whole-queue summary truth.
+
+    Review Queue Scale Closure v1. `items` is bounded by `page_size`;
+    every count here is computed over the whole visible queue at the
+    server, so the accepted UI can keep presenting totals as totals while
+    only ever holding one page of review cards.
+
+    This endpoint reads; it creates no review truth and no export.
+    """
+
+    items: list[ReviewQueueItem] = Field(default_factory=list)
+    page: int = Field(ge=0)
+    page_size: int = Field(ge=1)
+    page_count: int = Field(ge=1)
+    # `total_items`: every visible queue member (the page's old
+    # `queueItems.length`). `matching_items`: those passing the active tab
+    # and filters (its old `filteredItems.length`).
+    total_items: int = Field(ge=0)
+    matching_items: int = Field(ge=0)
+    eligible_matching_items: int = Field(ge=0)
+    species_suggestion_matching_items: int = Field(ge=0)
+    pending_review_count: int = Field(ge=0)
+    tab_counts: ReviewQueueTabCounts
+    triage_counts: ReviewQueueTriageCounts
+    source_stream_options: list[ReviewQueueSourceStreamOption] = Field(
+        default_factory=list
+    )
+    matching_suggested_labels: list[str] = Field(default_factory=list)
+    eligible_suggested_labels: list[str] = Field(default_factory=list)
+    # Only populated when the caller explicitly asks, which the page does
+    # on one user action ("Select visible eligible"). Identifiers only --
+    # never hydrated items -- so the ordinary bounded load stays bounded.
+    eligible_target_ids: list[str] | None = None
+    # A bounded ordered snapshot for Fast Review navigation, in exactly the
+    # active queue order, matching `FastReviewQueueNavigationRequest`'s own
+    # 200-target ceiling.
+    fast_review_targets: list[FastReviewQueueTarget] = Field(default_factory=list)
+    fast_review_stream_id: str | None = None
+    creates_truth: bool = False
+    creates_export: bool = False
+
+
+class ReviewQueueSummary(BaseModel):
+    """Whole-queue review counts with no items at all.
+
+    Review Queue Scale Closure v1. The app shell used to load the entire
+    review queue on every page load purely to derive per-Stream "N needs
+    review" counts. This is that answer, as integers.
+    """
+
+    total_items: int = Field(ge=0)
+    pending_review_count: int = Field(ge=0)
+    tab_counts: ReviewQueueTabCounts
+    needs_review_by_stream: dict[str, int] = Field(default_factory=dict)
+    creates_truth: bool = False
+
+
 class ReviewLabel(BaseModel):
     # Review labels are dataset-grade truth candidates that can override
     # detections -- but see `is_authoritative` below: only some origins are

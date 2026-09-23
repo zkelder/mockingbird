@@ -35,6 +35,18 @@ from sqlalchemy import Engine, and_, delete, func, or_, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
+from mockingbird.repository.review_queue_filters import (
+    ReviewQueueFilterIndex,
+    is_bulk_correction_eligible,
+    matches_product_tab,
+    matches_status_filter,
+    matches_target_filter,
+    product_tab_counts,
+    review_queue_target_id,
+    review_queue_target_type,
+    taxonomy_key,
+    unique_label_values,
+)
 from mockingbird.security.login_rate_limiter import LoginRateLimiter
 from mockingbird.security.passwords import (
     WeakPasswordError,
@@ -697,6 +709,15 @@ from mockingbird.api.schemas import (
     StorageSummary,
     StreamVisitSummary,
     TaxonomyLabel,
+    FastReviewQueueTarget,
+    ReviewQueuePage,
+    ReviewQueuePageRequest,
+    ReviewQueueProductTab,
+    ReviewQueueSort,
+    ReviewQueueSourceStreamOption,
+    ReviewQueueSummary,
+    ReviewQueueTabCounts,
+    ReviewQueueTriageCounts,
     Visit,
     VisitCurationHistoryEntry,
     VisitCurationSequencePreview,
@@ -28610,6 +28631,252 @@ class ProductRepository:
         with self.session_factory() as session:
             return self._review_queue_items(session, include_reviewed=include_reviewed)
 
+    def review_queue_page(self, request: ReviewQueuePageRequest) -> ReviewQueuePage:
+        """One bounded page of the Review Queue, with whole-queue counts.
+
+        Review Queue Scale Closure v1 -- the closure of Performance / Scale
+        / Stability Closure v1's last open P0.
+
+        Two passes over one session, and only the first touches every
+        member:
+
+        1. a *classification* build (`include_detail=False`, so no
+           identification summary, no effective-primary preview, no focus-
+           crop resolution, no review-state token) plus one
+           `ReviewQueueFilterIndex`. That is what makes server-side tabs,
+           filters, ordering and counts possible without hydrating review
+           cards, and after `_preload_review_queue_item_context` it is a
+           fixed handful of statements rather than three per member.
+        2. an `only_targets` build for the at-most-`page_size` members this
+           page actually returns, which is the identical per-item code path
+           a full-detail build runs -- the same one every saved correction
+           already goes through via `_review_queue_item_by_target`.
+
+        The filter chain, its order, the sort, the tab definitions and every
+        count are ports of `ReviewQueuePage.tsx`'s own client-side logic;
+        see `review_queue_filters` for the function-by-function mapping.
+        Demo-source activity is excluded here exactly as the product-facing
+        `GET /api/review-queue` boundary and `_visible_review_queue_items`
+        already exclude it.
+        """
+
+        with self.session_factory() as session:
+            scope = self._review_queue_scope(
+                session,
+                build_search_text=bool(request.search.strip()),
+            )
+            index = scope.index
+            visible = scope.items
+
+            matching = [
+                item
+                for item in visible
+                if self._review_queue_item_matches(item, request, index)
+            ]
+            if request.sort is ReviewQueueSort.triage:
+                # `[...matchingItems].sort(...)` in the page: a stable sort
+                # over the queue's own newest-first order, so equal triage
+                # rank and confidence stay newest-first.
+                matching = sorted(matching, key=index.triage_sort_key)
+
+            eligible = [item for item in matching if is_bulk_correction_eligible(item)]
+            suggestion_eligible = [
+                item
+                for item in matching
+                if index.is_species_suggestion_batch_eligible(item)
+            ]
+
+            page_size = request.page_size
+            page_count = max(1, math.ceil(len(matching) / page_size))
+            page = min(request.page, page_count - 1)
+            window = matching[page * page_size : (page + 1) * page_size]
+
+            hydrated = self._review_queue_hydrated_window(session, window)
+
+            fast_review_window = [
+                item
+                for item in matching
+                if item.target_type == "visit"
+                and item.review_status is ReviewStatus.needs_review
+            ][:_FAST_REVIEW_TARGET_LIMIT]
+            fast_review_stream_ids = {item.stream_id for item in fast_review_window}
+
+            return ReviewQueuePage(
+                items=hydrated,
+                page=page,
+                page_size=page_size,
+                page_count=page_count,
+                total_items=len(visible),
+                matching_items=len(matching),
+                eligible_matching_items=len(eligible),
+                species_suggestion_matching_items=len(suggestion_eligible),
+                pending_review_count=_review_queue_pending_count(
+                    scope.tab_counts, request.show_legacy_and_test_activity
+                ),
+                tab_counts=ReviewQueueTabCounts(**scope.tab_counts),
+                triage_counts=ReviewQueueTriageCounts(**scope.triage_counts),
+                source_stream_options=scope.source_stream_options,
+                matching_suggested_labels=_review_queue_label_values(matching, index),
+                eligible_suggested_labels=_review_queue_label_values(eligible, index),
+                eligible_target_ids=(
+                    [review_queue_target_id(item) for item in eligible]
+                    if request.include_eligible_target_ids
+                    else None
+                ),
+                fast_review_targets=[
+                    FastReviewQueueTarget(
+                        target_type=ReviewQueueBulkCorrectionTargetType.visit,
+                        target_id=review_queue_target_id(item),
+                    )
+                    for item in fast_review_window
+                ],
+                fast_review_stream_id=(
+                    next(iter(fast_review_stream_ids))
+                    if len(fast_review_stream_ids) == 1
+                    else None
+                ),
+            )
+
+    def review_queue_summary(self) -> ReviewQueueSummary:
+        """Review counts only -- no review cards, no page.
+
+        Review Queue Scale Closure v1. The app shell loaded the entire
+        review queue on every page load to derive per-Stream "N needs
+        review" counts for the Streams surfaces. This answers that question
+        with integers instead.
+        """
+
+        with self.session_factory() as session:
+            # Deliberately *not* `_review_queue_scope`: counts need nothing
+            # from the detection-proposal / detection-run / MotionEvidence /
+            # taxonomy filter index, and the app shell asks for this on
+            # every page load.
+            visible = self._review_queue_visible_classification(session)
+            tab_counts = product_tab_counts(visible)
+            needs_review_by_stream: dict[str, int] = {}
+            for item in visible:
+                if item.review_status is not ReviewStatus.needs_review:
+                    continue
+                needs_review_by_stream[item.stream_id] = (
+                    needs_review_by_stream.get(item.stream_id, 0) + 1
+                )
+            return ReviewQueueSummary(
+                total_items=len(visible),
+                pending_review_count=_review_queue_pending_count(
+                    tab_counts, show_legacy_and_test_activity=False
+                ),
+                tab_counts=ReviewQueueTabCounts(**tab_counts),
+                needs_review_by_stream=needs_review_by_stream,
+            )
+
+    def _review_queue_visible_classification(
+        self,
+        session: Session,
+    ) -> list[ReviewQueueItem]:
+        """Every user-visible queue member, classified but not hydrated.
+
+        Same members, order and classification as a full build -- see
+        `_review_queue_items`' `include_detail` docstring -- and the same
+        demo-source exclusion `_visible_review_queue_items` applies.
+        """
+
+        items = self._review_queue_items(
+            session,
+            include_reviewed=True,
+            include_detail=False,
+        )
+        return [item for item in items if not item.is_demo_source]
+
+    def _review_queue_scope(
+        self,
+        session: Session,
+        *,
+        build_search_text: bool = False,
+    ) -> _ReviewQueueScope:
+        """The whole visible queue, classified but not hydrated, plus its counts."""
+
+        visible = self._review_queue_visible_classification(session)
+        index = ReviewQueueFilterIndex(
+            visible,
+            proposals=self.list_detection_proposals(),
+            detection_runs=self.list_detection_runs(),
+            motion_evidence=self.list_motion_evidence(),
+            taxonomy_labels=self.list_taxonomy_labels(),
+            build_search_text=build_search_text,
+        )
+        return _ReviewQueueScope(
+            items=visible,
+            index=index,
+            tab_counts=product_tab_counts(visible),
+            triage_counts=index.triage_counts(visible),
+            source_stream_options=index.source_stream_options(visible),
+        )
+
+    def _review_queue_item_matches(
+        self,
+        item: ReviewQueueItem,
+        request: ReviewQueuePageRequest,
+        index: ReviewQueueFilterIndex,
+    ) -> bool:
+        """`filteredItems`' predicate chain, in the page's own order."""
+
+        target_id = review_queue_target_id(item)
+        if request.skipped_target_ids and target_id in request.skipped_target_ids:
+            return False
+        if not matches_product_tab(
+            item, request.tab, request.show_legacy_and_test_activity
+        ):
+            return False
+        if request.scoped_target_ids is not None and target_id not in (
+            request.scoped_target_ids
+        ):
+            return False
+        if request.stream_id is not None and item.stream_id != request.stream_id:
+            return False
+        if not index.matches_triage_filter(item, request.triage):
+            return False
+        if not matches_target_filter(item, request.target):
+            return False
+        # Everyday Product / Discovery UX Closure v1 kept the Reviewed tab
+        # exempt from the separate Status control, whose "unreviewed"
+        # default would otherwise AND into an unsatisfiable condition.
+        if request.tab is not ReviewQueueProductTab.reviewed and not (
+            matches_status_filter(item, request.status)
+        ):
+            return False
+        if not index.matches_evidence_filter(item, request.evidence):
+            return False
+        if not index.matches_source_stream_filter(item, request.source_stream):
+            return False
+        if not index.matches_search(item, request.search.strip().lower()):
+            return False
+        return True
+
+    def _review_queue_hydrated_window(
+        self,
+        session: Session,
+        window: list[ReviewQueueItem],
+    ) -> list[ReviewQueueItem]:
+        """Full review cards for one page, in that page's order."""
+
+        if not window:
+            return []
+        targets = {
+            (review_queue_target_type(item), review_queue_target_id(item))
+            for item in window
+        }
+        built = self._review_queue_items(
+            session,
+            include_reviewed=True,
+            only_targets=targets,
+        )
+        by_id = {item.id: item for item in built}
+        # A member can only disappear here if it stopped qualifying between
+        # the two passes in the same read-only request, which cannot happen;
+        # fall back to the classification-only item rather than dropping a
+        # row from the page if it ever did.
+        return [by_id.get(item.id, item) for item in window]
+
     def get_visit_identification_assistant(
         self,
         visit_id: str,
@@ -32021,7 +32288,7 @@ class ProductRepository:
             return _empty_review_focus_crop_context(["focus_crop_best_frame_unavailable"])
 
         context_zone_id = zone_id or (evidence.zone_id if evidence is not None else None)
-        zone_model = session.get(ZoneModel, context_zone_id) if context_zone_id else None
+        zone_model = _cached_get(session, ZoneModel, context_zone_id) if context_zone_id else None
         if zone_model is not None and zone_model.zone_type in {
             ZoneType.privacy.value,
             ZoneType.ignore.value,
@@ -38930,6 +39197,25 @@ class ProductRepository:
         if zone is None:
             return zone_id, None, None
 
+        # Review Queue Scale Closure v1: three strings, memoised for the
+        # duration of one read-only build. A Place has a handful of Zones
+        # and every queued item resolves one of them, so building a full
+        # `Zone` schema (with its polygon, schedule and suppression fields)
+        # per item was pure waste -- measured at 14% of the whole
+        # classification pass at Profile B. Identical values; only the
+        # number of times they are constructed changes.
+        cache = session.info.get(_READ_CACHE_SESSION_KEY)
+        if cache is not None:
+            memo = cache.setdefault("zone_context", {})
+            if zone_id not in memo:
+                zone_schema = _zone_from_model(zone)
+                memo[zone_id] = (
+                    zone_schema.id,
+                    zone_schema.name,
+                    zone_schema.zone_type,
+                )
+            return memo[zone_id]
+
         zone_schema = _zone_from_model(zone)
         return zone_schema.id, zone_schema.name, zone_schema.zone_type
 
@@ -39108,6 +39394,8 @@ class ProductRepository:
         include_reviewed: bool = False,
         include_detail: bool = True,
         only_target: tuple[str, str] | None = None,
+        only_targets: set[tuple[str, str]] | None = None,
+        detail_targets: set[tuple[str, str]] | None = None,
     ) -> list[ReviewQueueItem]:
         """Build the review queue.
 
@@ -39116,6 +39404,9 @@ class ProductRepository:
         the queue -- see `_review_queue_item_by_target`, which every saved
         correction goes through. The item it produces is constructed by the
         exact same code as the same item inside a full build.
+        `only_targets` is the same narrowing for a *set* of targets, which
+        is how the bounded Review Queue page hydrates exactly the members
+        it is about to return (Review Queue Scale Closure v1).
 
         `include_detail=False` builds the same queue -- same members, same
         order, same classification -- without the per-item work that only a
@@ -39135,19 +39426,31 @@ class ProductRepository:
         Nothing here changes which items are in the queue, their order, or
         how any of them is classified; the skipped fields keep their schema
         defaults. Every `include_detail=False` caller is internal and reads
-        only `product_category`, `visit_id`, `is_demo_source` or `len()` --
-        `GET /api/review-queue` itself always asks for full detail.
+        only `product_category`, `visit_id`, `is_demo_source` or `len()`.
+
+        `detail_targets` narrows `include_detail` to a *set* of
+        `(target_type, target_id)` pairs. That is what makes the bounded
+        Review Queue page possible in one pass: server-side tabs, filters
+        and counts need every member classified, but only the members that
+        will actually be rendered as review cards need the expensive
+        per-card hydration. Membership, order and classification are
+        identical to an `include_detail=False` build; the listed targets
+        simply additionally carry the fields a displayed card needs. Review
+        Queue Scale Closure v1.
         """
 
+        if only_target is not None:
+            only_targets = {only_target}
         with _read_only_build_cache(session) as cache:
             self._preload_review_queue_rows(
-                session, cache, include_reviewed=include_reviewed, only_target=only_target
+                session, cache, include_reviewed=include_reviewed, only_targets=only_targets
             )
             return self._review_queue_items_uncached(
                 session,
                 include_reviewed=include_reviewed,
                 include_detail=include_detail,
-                only_target=only_target,
+                only_targets=only_targets,
+                detail_targets=detail_targets,
             )
 
     def _preload_review_queue_rows(
@@ -39156,7 +39459,7 @@ class ProductRepository:
         cache: dict[str, Any],
         *,
         include_reviewed: bool,
-        only_target: tuple[str, str] | None = None,
+        only_targets: set[tuple[str, str]] | None = None,
     ) -> None:
         """Fetch the queue's per-Visit rows in bulk instead of item by item.
 
@@ -39179,11 +39482,15 @@ class ProductRepository:
             VisitModel.is_superseded.is_(False),
             VisitModel.review_status.in_(_review_queue_statuses(include_reviewed)),
         )
-        if only_target is not None:
-            target_type, target_id = only_target
-            if target_type != "visit":
+        if only_targets is not None:
+            wanted_visit_ids = sorted(
+                target_id
+                for target_type, target_id in only_targets
+                if target_type == "visit"
+            )
+            if not wanted_visit_ids:
                 return
-            preload_query = preload_query.where(VisitModel.id == target_id)
+            preload_query = preload_query.where(VisitModel.id.in_(wanted_visit_ids))
         visit_ids = list(session.scalars(preload_query).all())
         if not visit_ids:
             return
@@ -39331,7 +39638,8 @@ class ProductRepository:
         *,
         include_reviewed: bool = False,
         include_detail: bool = True,
-        only_target: tuple[str, str] | None = None,
+        only_targets: set[tuple[str, str]] | None = None,
+        detail_targets: set[tuple[str, str]] | None = None,
     ) -> list[ReviewQueueItem]:
         queue: list[ReviewQueueItem] = []
         recency_by_item_id: dict[str, float] = {}
@@ -39362,9 +39670,15 @@ class ProductRepository:
             VisitModel.is_superseded.is_(False),
             VisitModel.review_status.in_(allowed_statuses),
         )
-        if only_target is not None:
+        if only_targets is not None:
             visit_query = visit_query.where(
-                VisitModel.id == (only_target[1] if only_target[0] == "visit" else None)
+                VisitModel.id.in_(
+                    sorted(
+                        target_id
+                        for target_type, target_id in only_targets
+                        if target_type == "visit"
+                    )
+                )
             )
         visits = [
             _visit_from_model(model)
@@ -39421,6 +39735,9 @@ class ProductRepository:
             visit_model = _cached_get(session, VisitModel, visit.id)
             if visit_model is None:
                 continue
+            item_detail = include_detail and (
+                detail_targets is None or ("visit", visit.id) in detail_targets
+            )
             evidence_frames = self._visit_evidence_frames_from_visit(
                 session,
                 visit_model,
@@ -39469,7 +39786,7 @@ class ProductRepository:
                     media_asset_id=best_media_asset_id,
                     evidence=evidence,
                 )
-                if include_detail
+                if item_detail
                 else _empty_review_focus_crop_context([])
             )
             queue_item = ReviewQueueItem(
@@ -39508,7 +39825,7 @@ class ProductRepository:
                 evidence_frames=evidence_frames,
                 effective_primary=(
                     self._effective_primary_preview_from_visit(session, visit_model)
-                    if include_detail
+                    if item_detail
                     else None
                 ),
                 stale_species_suggestions=(
@@ -39517,14 +39834,14 @@ class ProductRepository:
                         visit_id=visit.id,
                         effective_media_asset_id=best_media_asset_id,
                     )
-                    if include_detail
+                    if item_detail
                     else False
                 ),
                 review_status=visit.review_status,
                 reviewed_label=visit.reviewed_label,
                 review_state_token=(
                     self._review_state_token(session, "visit", visit.id)
-                    if include_detail
+                    if item_detail
                     else ""
                 ),
                 reason="Confirm or correct the suggested species label.",
@@ -39540,7 +39857,7 @@ class ProductRepository:
                     subject_label=visit.subject_label,
                 ),
             )
-            if include_detail:
+            if item_detail:
                 queue_item.identification = self._review_identification_summary_for_item(
                     session,
                     queue_item,
@@ -39562,9 +39879,15 @@ class ProductRepository:
         event_query = select(EventModel).where(
             EventModel.review_status.in_(_review_queue_statuses(include_reviewed))
         )
-        if only_target is not None:
+        if only_targets is not None:
             event_query = event_query.where(
-                EventModel.id == (only_target[1] if only_target[0] == "event" else None)
+                EventModel.id.in_(
+                    sorted(
+                        target_id
+                        for target_type, target_id in only_targets
+                        if target_type == "event"
+                    )
+                )
             )
         event_models = session.scalars(event_query.order_by(EventModel.started_at)).all()
         for event_model in event_models:
@@ -39574,6 +39897,9 @@ class ProductRepository:
             ):
                 continue
             event = self._event_from_model(session, event_model)
+            item_detail = include_detail and (
+                detail_targets is None or ("event", event_model.id) in detail_targets
+            )
             stream_name, source_id, source_name = self._review_queue_stream_context(
                 session,
                 event.stream_id,
@@ -39606,7 +39932,7 @@ class ProductRepository:
                     media_asset_id=best_media_asset_id,
                     evidence=evidence,
                 )
-                if include_detail
+                if item_detail
                 else _empty_review_focus_crop_context([])
             )
             event_effective_label = (
@@ -39645,7 +39971,7 @@ class ProductRepository:
                 reviewed_label=event_reviewed_label,
                 review_state_token=(
                     self._review_state_token(session, "event", event.id)
-                    if include_detail
+                    if item_detail
                     else ""
                 ),
                 reason="Review detected outdoor activity and correct the event meaning.",
@@ -39660,7 +39986,7 @@ class ProductRepository:
                     event_type=event.event_type,
                 ),
             )
-            if include_detail:
+            if item_detail:
                 queue_item.identification = self._review_identification_summary_for_item(
                     session,
                     queue_item,
@@ -41414,6 +41740,64 @@ def _cached_get(session: Session, model: type, primary_key: Any):
     if key not in rows:
         rows[key] = session.get(model, primary_key)
     return rows[key]
+
+
+_FAST_REVIEW_TARGET_LIMIT = 200
+"""`FastReviewQueueNavigationRequest.ordered_targets`' own ceiling."""
+
+
+@dataclass
+class _ReviewQueueScope:
+    """The whole visible review queue, classified once per request.
+
+    Review Queue Scale Closure v1. Shared by `review_queue_page` and
+    `review_queue_summary` so a tab count can never mean one thing on the
+    Review Queue and another on the Streams surfaces.
+    """
+
+    items: list[ReviewQueueItem]
+    index: ReviewQueueFilterIndex
+    tab_counts: dict[str, int]
+    triage_counts: dict[str, int]
+    source_stream_options: list[ReviewQueueSourceStreamOption]
+
+
+def _review_queue_pending_count(
+    tab_counts: dict[str, int],
+    show_legacy_and_test_activity: bool,
+) -> int:
+    """`pendingReviewCount` in the page: the sum of the *pending* tabs.
+
+    "Sample and older activity" is only offered once the user has asked to
+    see it, and is only counted when it is offered -- exactly as
+    `pendingProductTabs` does.
+    """
+
+    total = (
+        tab_counts["animals"] + tab_counts["other_activity"] + tab_counts["unchecked"]
+    )
+    if show_legacy_and_test_activity:
+        total += tab_counts["legacy_activity"]
+    return total
+
+
+def _review_queue_label_values(
+    items: list[ReviewQueueItem],
+    index: ReviewQueueFilterIndex,
+) -> list[str]:
+    """`visibleSuggestedLabelValues`/`bulkSuggestedLabelValues`, bounded.
+
+    The page feeds these into `labelHelperGroups`, which takes at most the
+    first three distinct values, so a bounded prefix is all the accepted UI
+    can ever display. Capped well above that so the chips are identical.
+    """
+
+    return unique_label_values([item.suggested_label for item in items])[
+        :_REVIEW_QUEUE_LABEL_VALUE_LIMIT
+    ]
+
+
+_REVIEW_QUEUE_LABEL_VALUE_LIMIT = 24
 
 
 _PRELOAD_MISS = object()
@@ -45668,11 +46052,15 @@ def _detector_bbox_to_json(bbox) -> str | None:
 
 
 def _taxonomy_key(value: str) -> str:
-    normalized = value.strip().lower().replace("-", "_")
-    normalized = re.sub(r"\s+", "_", normalized)
-    normalized = re.sub(r"[^a-z0-9_]+", "", normalized)
-    normalized = re.sub(r"_+", "_", normalized)
-    return normalized.strip("_")
+    """Delegates to `review_queue_filters.taxonomy_key`.
+
+    Review Queue Scale Closure v1 needed this same normalization in the
+    server-side Review Queue filter port. One implementation, so a label
+    can never normalize one way for review truth and another way for a
+    filter or a count.
+    """
+
+    return taxonomy_key(value)
 
 
 def _freeform_label(value: str) -> str:
