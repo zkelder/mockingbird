@@ -238,7 +238,7 @@ def test_current_schema_creates_only_empty_tag_records(tmp_path: Path) -> None:
         media_root=tmp_path / "media",
     )
     de_demo_seeded_source(repository)
-    assert CURRENT_DATABASE_SCHEMA_VERSION == 59
+    assert CURRENT_DATABASE_SCHEMA_VERSION == 60
     table_names = set(inspect(repository.engine).get_table_names())
     assert {"visit_tags", "visit_tag_memberships"}.issubset(table_names)
     with repository.session_factory() as session:

@@ -27,7 +27,32 @@ BACKUP_ROOT_ENV_VAR = "MOCKINGBIRD_BACKUP_ROOT"
 BACKUP_EXTENSION = ".mbbackup"
 MANIFEST_MEMBER = "manifest.json"
 DATABASE_MEMBER = "database.sqlite3"
-MAX_MANIFEST_BYTES = 1_048_576
+# Performance / Scale / Stability Closure v1. This cap is a real and
+# necessary guard -- `_read_manifest` reads the member into memory before
+# parsing it, and a backup archive is not necessarily one MockingBird
+# wrote -- but 1 MiB was set without reference to how large a *legitimate*
+# manifest gets, and a manifest is inherently O(retained media files): one
+# `{"path", "size_bytes", "sha256"}` entry each, ~154 bytes once
+# `json.dumps(..., indent=2)` has formatted it.
+#
+# Measured directly: that made every backup fail at roughly 6,800 media
+# files. At this product's own measured rate (four evidence frames per
+# Visit, ~30 Visits/day for an established feeder) an ordinary owner
+# crosses that in about two months -- and `create_backup` verifies the
+# archive it has just written, so the failure is not "an old backup cannot
+# be read" but "no backup can be made at all." Worse, the pre-migration
+# safety backup is a hard gate on migrating, so the same install could no
+# longer be upgraded either: reproduced end to end against a 2,813-Visit /
+# 11,244-media-asset library, where opening the database at a newer schema
+# raised `backup_manifest_invalid` and refused to migrate.
+#
+# 64 MiB keeps the guard bounded (a hostile archive still cannot make this
+# read unbounded memory) while covering ~435,000 media files -- roughly ten
+# years of continuous use at the rate above, and far beyond anything v0.1
+# targets. See tests/test_backup_manifest_scale.py, which pins both the
+# real round trip at a large media count and the guard still rejecting an
+# oversized manifest.
+MAX_MANIFEST_BYTES = 64 * 1024 * 1024
 COPY_CHUNK_BYTES = 1024 * 1024
 
 # Appliance / Storage / Privacy / Recovery v1: every temporary-name prefix

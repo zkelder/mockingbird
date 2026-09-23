@@ -2416,6 +2416,16 @@ class CameraNodeBootObservationOutcome:
 
 class MotionEvidenceModel(Base):
     __tablename__ = "motion_evidence"
+    # Performance / Scale / Stability Closure v1 (schema 60). Measured at an
+    # ordinary established-install size (2,813 Visits / 11,244 media assets):
+    # this table carried no secondary index at all, so every lookup by this
+    # foreign key was a full table scan. See
+    # docs/performance-scale-stability-closure-v1-report.md for the measured
+    # before/after and the query plan each index was chosen against.
+    __table_args__ = (
+        Index("ix_motion_evidence_visit", "promoted_visit_id"),
+        Index("ix_motion_evidence_event", "promoted_event_id"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     source_id: Mapped[str | None] = mapped_column(ForeignKey("camera_sources.id"), nullable=True)
@@ -2474,6 +2484,14 @@ class SpeciesSuggestionModel(Base):
             unique=True,
             sqlite_where=text("window_start_ms IS NOT NULL"),
         ),
+        # Performance / Scale / Stability Closure v1 (schema 60): every
+        # per-Visit suggestion lookup (the review-queue build's pending
+        # suggestion, the stale-suggestion check, the identification
+        # summary) was a full table scan -- 2,464 rows at an ordinary
+        # established-install size, read once per queued item. Composite so
+        # the same index serves both `visit_id`-only and
+        # `visit_id`+`status` lookups; confirmed against real query plans.
+        Index("ix_species_suggestions_visit_status", "visit_id", "status"),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)

@@ -43,7 +43,7 @@ DEFAULT_DB_URL = "sqlite:///data/mockingbird.sqlite3"
 DB_URL_ENV_VAR = "MOCKINGBIRD_DB_URL"
 DEFAULT_MEDIA_ROOT = "data/media/imports"
 MEDIA_ROOT_ENV_VAR = "MOCKINGBIRD_MEDIA_ROOT"
-CURRENT_DATABASE_SCHEMA_VERSION = 59
+CURRENT_DATABASE_SCHEMA_VERSION = 60
 
 _SCHEMA_METADATA = MetaData()
 _SCHEMA_VERSION_TABLE = Table(
@@ -1683,6 +1683,80 @@ def _migrate_to_place_feature_observation_links(connection: Connection) -> None:
         )
 
 
+# Performance / Scale / Stability Closure v1 (schema 60). Every index below
+# was chosen from a real, measured query plan at an ordinary
+# established-install workload, not from intuition -- see
+# docs/performance-scale-stability-closure-v1-report.md for the plan and the
+# before/after each one was justified by.
+_OBSERVATION_HISTORY_INDEXES: tuple[tuple[str, str], ...] = (
+    # `review_labels` had no secondary index, and the Activity Library's own
+    # main query runs two correlated scalar subqueries against it per Visit
+    # row -- 2,813 Visits x 1,719 labels, all full scans. That single
+    # statement was 835ms of a 850ms request.
+    ("ix_review_labels_target", "review_labels (target_type, target_id)"),
+    # Every "the Visits of this Event" lookup, on every review and history
+    # surface.
+    ("ix_visits_event", "visits (event_id)"),
+    # The review-queue/backlog query itself.
+    ("ix_visits_review_status", "visits (review_status, is_superseded)"),
+    # Stream event history and the Camera/Stream detail timeline.
+    ("ix_events_stream_started", "events (stream_id, started_at)"),
+    # The review queue's visit-less Event source.
+    ("ix_events_review_status", "events (review_status)"),
+    # One scan per Event when projecting Events with their detections.
+    ("ix_detections_event", "detections (event_id)"),
+    # Composite: serves both `visit_id`-only and `visit_id` + `status`
+    # suggestion lookups, confirmed against real plans.
+    ("ix_species_suggestions_visit_status", "species_suggestions (visit_id, status)"),
+    # `_motion_evidence_for_review_queue_item` filters on either column; the
+    # pair lets SQLite use a multi-index OR rather than a scan.
+    ("ix_motion_evidence_visit", "motion_evidence (promoted_visit_id)"),
+    ("ix_motion_evidence_event", "motion_evidence (promoted_event_id)"),
+    # `_media_asset_for_path_from_session` resolves a Visit's representative
+    # image by path, once per queued item.
+    ("ix_media_assets_local_path", "media_assets (local_path)"),
+    ("ix_media_assets_stream", "media_assets (stream_id)"),
+    ("ix_detection_proposals_run", "detection_proposals (run_id)"),
+    ("ix_detection_proposals_visit", "detection_proposals (visit_id)"),
+    ("ix_detection_runs_media", "detection_runs (media_asset_id)"),
+)
+
+
+def _migrate_to_observation_history_indexes(connection: Connection) -> None:
+    """Performance / Scale / Stability Closure v1: index the observation
+    history's own foreign keys.
+
+    Before this migration MockingBird's core observation tables -- `visits`,
+    `events`, `detections`, `media_assets`, `review_labels`,
+    `species_suggestions`, `motion_evidence`, `detection_runs`,
+    `detection_proposals` -- carried no secondary index at all, only
+    SQLite's own implicit primary-key indexes. Every lookup by a foreign key
+    was therefore a full table scan, which is invisible on a fresh install
+    and quadratic on a real one: measured at an ordinary established-install
+    size (2,813 Visits, 11,244 media assets, 90 days, two cameras), adding
+    exactly these indexes took `GET /api/dataset-quality/summary` from
+    14.6s to 6.2s, `GET /api/review-queue` from 9.6s to 6.4s, and
+    `GET /api/dashboard/summary` from 4.9s to 3.0s, with no other change.
+
+    Purely additive and reversible in effect: an index changes no row, no
+    column and no value, only the plan SQLite chooses. Creating all
+    fourteen on that same 2,813-Visit database took 0.28s and grew it by
+    12% (11.36 MB -> 12.73 MB) -- a real, disclosed storage cost, paid once,
+    in exchange for the numbers above.
+
+    `IF NOT EXISTS` matters here: a database created fresh at schema 60
+    already has every one of these from `Base.metadata.create_all`, and a
+    re-run of this migration must be a no-op rather than an error.
+    """
+
+    if connection.dialect.name != "sqlite":
+        raise DatabaseSchemaCompatibilityError(
+            "Observation-history index migration requires local SQLite storage."
+        )
+    for name, definition in _OBSERVATION_HISTORY_INDEXES:
+        connection.exec_driver_sql(f"CREATE INDEX IF NOT EXISTS {name} ON {definition}")
+
+
 _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     2: _migrate_to_stream_monitoring_contract,
     3: _migrate_to_zone_optional_motion_evidence,
@@ -1742,6 +1816,7 @@ _SCHEMA_MIGRATIONS: dict[int, SchemaMigration] = {
     57: _migrate_to_ecological_interoperability,
     58: _migrate_to_field_acceptance_authentication,
     59: _migrate_to_place_feature_observation_links,
+    60: _migrate_to_observation_history_indexes,
 }
 
 

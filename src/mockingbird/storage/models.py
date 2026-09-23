@@ -372,6 +372,16 @@ class ZoneModel(Base):
 
 class EventModel(Base):
     __tablename__ = "events"
+    # Performance / Scale / Stability Closure v1 (schema 60). Measured at an
+    # ordinary established-install size (2,813 Visits / 11,244 media assets):
+    # this table carried no secondary index at all, so every lookup by this
+    # foreign key was a full table scan. See
+    # docs/performance-scale-stability-closure-v1-report.md for the measured
+    # before/after and the query plan each index was chosen against.
+    __table_args__ = (
+        Index("ix_events_stream_started", "stream_id", "started_at"),
+        Index("ix_events_review_status", "review_status"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     stream_id: Mapped[str] = mapped_column(ForeignKey("streams.id"), nullable=False)
@@ -391,6 +401,13 @@ class EventModel(Base):
 
 class DetectionModel(Base):
     __tablename__ = "detections"
+    # Performance / Scale / Stability Closure v1 (schema 60). Measured at an
+    # ordinary established-install size (2,813 Visits / 11,244 media assets):
+    # this table carried no secondary index at all, so every lookup by this
+    # foreign key was a full table scan. See
+    # docs/performance-scale-stability-closure-v1-report.md for the measured
+    # before/after and the query plan each index was chosen against.
+    __table_args__ = (Index("ix_detections_event", "event_id"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     event_id: Mapped[str] = mapped_column(ForeignKey("events.id"), nullable=False)
@@ -402,6 +419,16 @@ class DetectionModel(Base):
 
 class VisitModel(Base):
     __tablename__ = "visits"
+    # Performance / Scale / Stability Closure v1 (schema 60). Measured at an
+    # ordinary established-install size (2,813 Visits / 11,244 media assets):
+    # this table carried no secondary index at all, so every lookup by this
+    # foreign key was a full table scan. See
+    # docs/performance-scale-stability-closure-v1-report.md for the measured
+    # before/after and the query plan each index was chosen against.
+    __table_args__ = (
+        Index("ix_visits_event", "event_id"),
+        Index("ix_visits_review_status", "review_status", "is_superseded"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     event_id: Mapped[str] = mapped_column(ForeignKey("events.id"), nullable=False)
@@ -611,6 +638,16 @@ class VisitCurationHistoryModel(Base):
 
 class MediaAssetModel(Base):
     __tablename__ = "media_assets"
+    # Performance / Scale / Stability Closure v1 (schema 60). Measured at an
+    # ordinary established-install size (2,813 Visits / 11,244 media assets):
+    # this table carried no secondary index at all, so every lookup by this
+    # foreign key was a full table scan. See
+    # docs/performance-scale-stability-closure-v1-report.md for the measured
+    # before/after and the query plan each index was chosen against.
+    __table_args__ = (
+        Index("ix_media_assets_local_path", "local_path"),
+        Index("ix_media_assets_stream", "stream_id"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     source_id: Mapped[str | None] = mapped_column(
@@ -866,6 +903,13 @@ class UserNotificationPreferenceModel(Base):
 
 class DetectionRunModel(Base):
     __tablename__ = "detection_runs"
+    # Performance / Scale / Stability Closure v1 (schema 60). Measured at an
+    # ordinary established-install size (2,813 Visits / 11,244 media assets):
+    # this table carried no secondary index at all, so every lookup by this
+    # foreign key was a full table scan. See
+    # docs/performance-scale-stability-closure-v1-report.md for the measured
+    # before/after and the query plan each index was chosen against.
+    __table_args__ = (Index("ix_detection_runs_media", "media_asset_id"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     media_asset_id: Mapped[str] = mapped_column(
@@ -884,6 +928,16 @@ class DetectionRunModel(Base):
 
 class DetectionProposalModel(Base):
     __tablename__ = "detection_proposals"
+    # Performance / Scale / Stability Closure v1 (schema 60). Measured at an
+    # ordinary established-install size (2,813 Visits / 11,244 media assets):
+    # this table carried no secondary index at all, so every lookup by this
+    # foreign key was a full table scan. See
+    # docs/performance-scale-stability-closure-v1-report.md for the measured
+    # before/after and the query plan each index was chosen against.
+    __table_args__ = (
+        Index("ix_detection_proposals_run", "run_id"),
+        Index("ix_detection_proposals_visit", "visit_id"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     run_id: Mapped[str] = mapped_column(ForeignKey("detection_runs.id"), nullable=False)
@@ -1164,6 +1218,13 @@ class TaxonomyLabelModel(Base):
 
 class ReviewLabelModel(Base):
     __tablename__ = "review_labels"
+    # Performance / Scale / Stability Closure v1 (schema 60). Measured at an
+    # ordinary established-install size (2,813 Visits / 11,244 media assets):
+    # this table carried no secondary index at all, so every lookup by this
+    # foreign key was a full table scan. See
+    # docs/performance-scale-stability-closure-v1-report.md for the measured
+    # before/after and the query plan each index was chosen against.
+    __table_args__ = (Index("ix_review_labels_target", "target_type", "target_id"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     target_type: Mapped[str] = mapped_column(String, nullable=False)
