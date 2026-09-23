@@ -249,18 +249,25 @@ class _Server:
         return env
 
     def start(self, *, timeout_seconds: float = 180.0) -> None:
-        command = [
-            sys.executable,
-            "-m",
-            "uvicorn",
-            "mockingbird.api.main:app",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(self.port),
-            "--log-level",
-            "warning",
-        ]
+        # Launch through a tiny generated bootstrap rather than
+        # `python -m uvicorn` with `PYTHONPATH` set. MockingBird's own
+        # packaged Windows runtime is an embeddable CPython, which ignores
+        # `PYTHONPATH` entirely -- without this the child silently imported
+        # the *packaged* `mockingbird` from its own `site-packages` instead
+        # of the tree under measurement, and failed on a schema mismatch.
+        # Prepending the path inside the child is unambiguous on every
+        # platform.
+        bootstrap = self.root / "_serve.py"
+        bootstrap.write_text(
+            "import sys\n"
+            f"sys.path.insert(0, {str(_ROOT / 'src')!r})\n"
+            "import uvicorn\n"
+            "uvicorn.run("
+            "'mockingbird.api.main:app', "
+            f"host='127.0.0.1', port={self.port}, log_level='warning')\n",
+            encoding="utf-8",
+        )
+        command = [sys.executable, str(bootstrap)]
         self.launched_at = time.perf_counter()
         _LIVE_SERVERS.append(self)
         log = open(self.log_path, "ab")

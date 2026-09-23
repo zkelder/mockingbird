@@ -283,8 +283,14 @@ def build_workload(
     write_media_files: bool = True,
     now: datetime | None = None,
     progress: bool = False,
+    id_prefix: str = "perf",
 ) -> SeedResult:
-    """Populate `repository` with `profile`'s worth of realistic history."""
+    """Populate `repository` with `profile`'s worth of realistic history.
+
+    `id_prefix` keeps successive calls against the same repository from
+    colliding, so a soak can append fresh activity to a library it has
+    already seeded instead of trying to recreate the same Source.
+    """
 
     import time as _time
 
@@ -316,8 +322,16 @@ def build_workload(
             stream_ids: list[str] = []
             zones_by_stream: dict[str, list[str]] = {}
             for stream_index in range(profile.streams):
-                source_id = f"perf-source-{stream_index}"
-                stream_id = f"perf-stream-{stream_index}"
+                source_id = f"{id_prefix}-source-{stream_index}"
+                stream_id = f"{id_prefix}-stream-{stream_index}"
+                if session.get(CameraSourceModel, source_id) is not None:
+                    # Appending to a library this prefix already seeded.
+                    stream_ids.append(stream_id)
+                    zones_by_stream[stream_id] = [
+                        f"{id_prefix}-zone-{stream_index}-{zone_index}"
+                        for zone_index in range(len(_ZONE_NAMES))
+                    ]
+                    continue
                 session.add(
                     CameraSourceModel(
                         id=source_id,
@@ -351,7 +365,7 @@ def build_workload(
                 stream_ids.append(stream_id)
                 zone_ids: list[str] = []
                 for zone_index, (zone_name, zone_type) in enumerate(_ZONE_NAMES):
-                    zone_id = f"perf-zone-{stream_index}-{zone_index}"
+                    zone_id = f"{id_prefix}-zone-{stream_index}-{zone_index}"
                     session.add(
                         ZoneModel(
                             id=zone_id,
@@ -400,8 +414,8 @@ def build_workload(
                 subject = _weighted_species(rng) if is_bird else rng.choice(_OTHER_SUBJECTS)
                 reviewed = rng.random() < profile.reviewed_fraction
 
-                event_id = f"perf-event-{counts['events']}"
-                visit_id = f"perf-visit-{counts['visits']}"
+                event_id = f"{id_prefix}-event-{counts['events']}"
+                visit_id = f"{id_prefix}-visit-{counts['visits']}"
                 counts["events"] += 1
                 counts["visits"] += 1
 
@@ -419,7 +433,7 @@ def build_workload(
                 )
                 session.add(
                     DetectionModel(
-                        id=f"perf-detection-{counts['detections']}",
+                        id=f"{id_prefix}-detection-{counts['detections']}",
                         event_id=event_id,
                         label="animal",
                         confidence=round(rng.uniform(0.35, 0.98), 3),
@@ -432,9 +446,9 @@ def build_workload(
                 confidence = round(rng.uniform(0.28, 0.96), 3)
                 asset_ids: list[str] = []
                 for frame_index in range(profile.evidence_per_visit):
-                    asset_id = f"perf-media-{counts['media']}"
+                    asset_id = f"{id_prefix}-media-{counts['media']}"
                     counts["media"] += 1
-                    relative = f"perf/{asset_id}.jpg"
+                    relative = f"{id_prefix}/{asset_id}.jpg"
                     if write_media_files:
                         target = media_root / relative
                         target.parent.mkdir(parents=True, exist_ok=True)
@@ -444,7 +458,7 @@ def build_workload(
                     session.add(
                         MediaAssetModel(
                             id=asset_id,
-                            source_id=stream_id.replace("stream", "source"),
+                            source_id=stream_id.replace("-stream-", "-source-"),
                             stream_id=stream_id,
                             filename=f"{asset_id}.jpg",
                             content_type="image/jpeg",
@@ -472,7 +486,7 @@ def build_workload(
                 for sort_order, asset_id in enumerate(asset_ids):
                     session.add(
                         VisitEvidenceLinkModel(
-                            id=f"perf-link-{counts['links']}",
+                            id=f"{id_prefix}-link-{counts['links']}",
                             visit_id=visit_id,
                             media_asset_id=asset_id,
                             captured_at=started_at + timedelta(seconds=sort_order * 2),
@@ -496,7 +510,7 @@ def build_workload(
                         confidence=confidence if is_bird else None,
                         reviewed_label=subject if reviewed else None,
                         review_status="reviewed" if reviewed else "needs_review",
-                        representative_media_path=f"perf/{asset_ids[0]}.jpg",
+                        representative_media_path=f"{id_prefix}/{asset_ids[0]}.jpg",
                         zone_id=zone_id,
                         is_superseded=False,
                     )
@@ -505,7 +519,7 @@ def build_workload(
                 if is_bird:
                     session.add(
                         SpeciesSuggestionModel(
-                            id=f"perf-suggestion-{counts['suggestions']}",
+                            id=f"{id_prefix}-suggestion-{counts['suggestions']}",
                             stream_id=stream_id,
                             event_id=event_id,
                             visit_id=visit_id,
@@ -532,7 +546,7 @@ def build_workload(
 
                 # One DetectionRun per detected frame, matching the real
                 # per-media-asset shape of `DetectionRunModel`.
-                run_id = f"perf-run-{counts['visits']}"
+                run_id = f"{id_prefix}-run-{counts['visits']}"
                 session.add(
                     DetectionRunModel(
                         id=run_id,
@@ -546,7 +560,7 @@ def build_workload(
                 )
                 session.add(
                     DetectionProposalModel(
-                        id=f"perf-proposal-{counts['detections']}",
+                        id=f"{id_prefix}-proposal-{counts['detections']}",
                         run_id=run_id,
                         media_asset_id=asset_ids[0],
                         stream_id=stream_id,
@@ -569,7 +583,7 @@ def build_workload(
                 if reviewed:
                     session.add(
                         ReviewLabelModel(
-                            id=f"perf-label-{counts['labels']}",
+                            id=f"{id_prefix}-label-{counts['labels']}",
                             target_type="visit",
                             target_id=visit_id,
                             label=subject,
@@ -633,6 +647,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=20260922)
     parser.add_argument("--no-media-files", action="store_true")
     parser.add_argument("--json", type=Path, default=None)
+    parser.add_argument("--id-prefix", default="perf")
     args = parser.parse_args(argv)
 
     profile = PROFILES[args.profile]
@@ -648,6 +663,7 @@ def main(argv: list[str] | None = None) -> int:
             seed=args.seed,
             write_media_files=not args.no_media_files,
             progress=True,
+            id_prefix=args.id_prefix,
         )
     finally:
         repository.close()

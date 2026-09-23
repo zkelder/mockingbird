@@ -38117,11 +38117,48 @@ class ProductRepository:
     def _visits_for_event(self, session: Session, event_id: str) -> list[Visit]:
         return [_visit_from_model(visit) for visit in self._visit_models_for_event(session, event_id)]
 
+    def _review_labels_by_target(
+        self,
+        session: Session,
+    ) -> dict[tuple[str, str], list[ReviewLabelModel]] | None:
+        """Every review label, grouped by target, for one read-only build.
+
+        Performance / Scale / Stability Closure v1. The Bird Log journal and
+        the dataset coverage/quality reports walk a Place's whole history and
+        ask "what was reviewed here?" once per Visit *and* once per Event --
+        two queries each, 5,622 statements for a 2,813-Visit library. The
+        table itself is small (1,719 rows there), so inside a read-only
+        build one ordered read and a group-by answers all of them.
+
+        Returns `None` when no build cache is active, which is every
+        truth-writing path: those keep the per-target query below, unchanged.
+        """
+
+        cache = session.info.get(_READ_CACHE_SESSION_KEY)
+        if cache is None:
+            return None
+        grouped = cache.get("review_labels_by_target")
+        if grouped is None:
+            grouped = {}
+            for label in session.scalars(
+                select(ReviewLabelModel).order_by(
+                    ReviewLabelModel.created_at, ReviewLabelModel.id
+                )
+            ).all():
+                grouped.setdefault((label.target_type, label.target_id), []).append(label)
+            cache["review_labels_by_target"] = grouped
+        return grouped
+
     def _review_label_models_for_event(
         self,
         session: Session,
         event_id: str,
     ) -> list[ReviewLabelModel]:
+        grouped = self._review_labels_by_target(session)
+        if grouped is not None:
+            return self._effective_review_label_models(
+                list(grouped.get(("event", event_id), ()))
+            )
         labels = list(
             session.scalars(
                 select(ReviewLabelModel)
@@ -38139,6 +38176,11 @@ class ProductRepository:
         session: Session,
         visit_id: str,
     ) -> list[ReviewLabelModel]:
+        grouped = self._review_labels_by_target(session)
+        if grouped is not None:
+            return self._effective_review_label_models(
+                list(grouped.get(("visit", visit_id), ()))
+            )
         labels = list(
             session.scalars(
                 select(ReviewLabelModel)
@@ -38159,6 +38201,11 @@ class ProductRepository:
         limit: int = 50,
     ) -> list[ReviewLabelModel]:
         bounded_limit = max(1, min(limit, 50))
+        grouped = self._review_labels_by_target(session)
+        if grouped is not None:
+            # Same rows, same newest-first order, same bound -- served from
+            # the one grouped read this build already performed.
+            return list(reversed(grouped.get(("visit", visit_id), ())))[:bounded_limit]
         return list(
             session.scalars(
                 select(ReviewLabelModel)
@@ -41158,7 +41205,14 @@ def _read_only_build_cache(session: Session):
     if existing is not None:
         yield existing
         return
-    cache: dict[str, Any] = {"rows": {}, "evidence_links": {}, "taxonomy": None}
+    cache: dict[str, Any] = {
+        "rows": {},
+        "evidence_links": {},
+        "taxonomy": None,
+        # Filled lazily by `_review_labels_by_target`; absent until a
+        # builder actually asks for a review label.
+        "review_labels_by_target": None,
+    }
     session.info[_READ_CACHE_SESSION_KEY] = cache
     try:
         yield cache
