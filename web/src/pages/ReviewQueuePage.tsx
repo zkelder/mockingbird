@@ -1714,6 +1714,30 @@ export function ReviewQueuePage({
     setShouldOpenFocusedFastReview(false);
   }, [pagedItems, shouldOpenFocusedFastReview]);
 
+  // Changing a tab or filter returns to page 1, exactly as before. This is a
+  // render-phase adjustment rather than an effect on purpose: with an
+  // effect, a filter changed while on page 3 would fetch page 3 of the new
+  // result set and only then fetch page 1 -- two bounded requests where one
+  // will do, in a milestone whose whole subject is not asking for work
+  // nobody needs.
+  const reviewFilterSignature = [
+    productTab,
+    String(showLegacyAndTestActivity),
+    reviewFilter,
+    reviewStatusFilter,
+    evidenceFilter,
+    sourceStreamFilter,
+    targetTypeFilter,
+    textSearch.trim(),
+  ].join("\u0000");
+  const previousFilterSignature = useRef(reviewFilterSignature);
+  if (previousFilterSignature.current !== reviewFilterSignature) {
+    previousFilterSignature.current = reviewFilterSignature;
+    if (reviewPage !== 0) {
+      setReviewPage(0);
+    }
+  }
+
   // Review Queue Scale Closure v1: the one place the queue is read. Every
   // control that used to re-filter a downloaded queue is a dependency here
   // instead, so changing a tab, a filter or a page is one bounded request.
@@ -1733,7 +1757,10 @@ export function ReviewQueuePage({
       page: reviewPage,
       pageSize: PRODUCT_REVIEW_PAGE_SIZE,
       scopedTargetIds: scopedVisitIds ? [...scopedVisitIds] : null,
-      skippedTargetIds: [...skippedTargetIds],
+      // The in-session skip set is a handful of items in practice; the cap
+      // matches the server's own `max_length` so a pathological session
+      // cannot turn this into an over-long URL or a validation error.
+      skippedTargetIds: [...skippedTargetIds].slice(0, 200),
     }),
     [
       evidenceFilter,
@@ -1754,11 +1781,22 @@ export function ReviewQueuePage({
   const queuePageQueryRef = useRef(queuePageQuery);
   queuePageQueryRef.current = queuePageQuery;
 
+  // A queue request is a real round trip at a real backlog, so two can be in
+  // flight at once (change a filter while a post-correction refresh is
+  // running). Only the newest one may write state, or a slow earlier
+  // response would quietly reinstate the previous view.
+  const queueRequestSequence = useRef(0);
+
   const loadQueuePage = useCallback(
     async (query: ReviewQueuePageQuery): Promise<ReviewQueuePageResponse | null> => {
+      queueRequestSequence.current += 1;
+      const sequence = queueRequestSequence.current;
       setIsLoadingQueuePage(true);
       try {
         const nextPage = await apiClient.getReviewQueuePage(query);
+        if (sequence !== queueRequestSequence.current) {
+          return nextPage;
+        }
         setQueuePage(nextPage);
         setQueuePageError(null);
         // The server clamps a page request past the end of the result set;
@@ -1768,12 +1806,16 @@ export function ReviewQueuePage({
         }
         return nextPage;
       } catch (caught) {
-        setQueuePageError(
-          caught instanceof Error ? caught.message : "Review work could not be loaded.",
-        );
+        if (sequence === queueRequestSequence.current) {
+          setQueuePageError(
+            caught instanceof Error ? caught.message : "Review work could not be loaded.",
+          );
+        }
         return null;
       } finally {
-        setIsLoadingQueuePage(false);
+        if (sequence === queueRequestSequence.current) {
+          setIsLoadingQueuePage(false);
+        }
       }
     },
     [],
@@ -1790,18 +1832,6 @@ export function ReviewQueuePage({
     [loadQueuePage],
   );
 
-  useEffect(() => {
-    setReviewPage(0);
-  }, [
-    evidenceFilter,
-    productTab,
-    reviewFilter,
-    reviewStatusFilter,
-    showLegacyAndTestActivity,
-    sourceStreamFilter,
-    targetTypeFilter,
-    textSearch,
-  ]);
 
   useEffect(() => {
     setSelectedTargetIds([]);
@@ -2358,6 +2388,18 @@ export function ReviewQueuePage({
         }
       }
       await refreshReviewLabels();
+      // Review Queue Scale Closure v1: this is the primary single-item
+      // correction path -- every card's Confirm / Correct / False positive.
+      // It never refreshed the queue itself: before this milestone it relied
+      // on `onCreateCorrection` reloading the app shell's own unbounded
+      // review-queue download, which changed this page's `items` prop, which
+      // tripped an effect that re-downloaded the whole queue again. With the
+      // shell no longer carrying the queue, the refresh has to be explicit
+      // -- and is now one bounded page instead of two full downloads. Found
+      // by `web/e2e/review-queue-bounded-page.spec.ts`, which asserted the
+      // rendered tab count after a correction; a passing unit test would not
+      // have caught it.
+      await refreshQueuePage();
       setLastCorrectionSummary({
         label: result.review_label.label,
         mode: "single",
@@ -2961,7 +3003,10 @@ export function ReviewQueuePage({
         onOpenVisit={onOpenVisit}
         taxonomyLabels={taxonomyLabels}
       />
-      <div className="queue-list">
+      {/* Review Queue Scale Closure v1: paging is now a real request, so the
+          list can briefly still show the previous page. Say so, rather than
+          presenting stale cards as settled. No visual change. */}
+      <div aria-busy={isLoadingQueuePage} className="queue-list">
         {pagedItems.map((item) => {
           if (productMode) {
             return (
@@ -3096,7 +3141,11 @@ export function ReviewQueuePage({
             );
           });
           return (
-            <article className="queue-card" key={item.id}>
+            <article
+              className="queue-card"
+              data-target-id={reviewQueueTargetId(item)}
+              key={item.id}
+            >
               <div className="item-title-row">
                 <div>
                   <span className="meta-text">{formatLabel(item.item_type)}</span>
@@ -3712,7 +3761,12 @@ function ProductReviewCard({
       : "Sample or older activity";
 
   return (
-    <article className="queue-card review-product-card">
+    // `data-target-id` is a test hook only -- Review Queue Scale Closure v1
+    // needed browser-level proof that two bounded pages carry disjoint work.
+    <article
+      className="queue-card review-product-card"
+      data-target-id={reviewQueueTargetId(item)}
+    >
       {item.media_asset ? (
         <MediaAssetPreview asset={item.media_asset} compact />
       ) : (

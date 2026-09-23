@@ -89,7 +89,40 @@ def core_operations() -> list[Operation]:
         Operation("health", "Product health", "GET", "/api/product/health"),
         Operation("streams", "Camera / Stream status", "GET", "/api/streams"),
         Operation("sources", "Sources list", "GET", "/api/sources"),
-        Operation("review_queue", "Review Queue", "GET", "/api/review-queue"),
+        Operation("review_queue", "Review Queue (unbounded API)", "GET", "/api/review-queue"),
+        # Review Queue Scale Closure v1: what the Review Queue page and the
+        # app shell actually request now. The unbounded shape above stays
+        # measured so the two can be compared directly.
+        Operation(
+            "review_queue_page",
+            "Review Queue (page mount)",
+            "GET",
+            "/api/review-queue/page?tab=animals&status=unreviewed&page_size=25",
+        ),
+        Operation(
+            "review_queue_page_next",
+            "Review Queue (next page)",
+            "GET",
+            "/api/review-queue/page?tab=animals&status=unreviewed&page_size=25&page=1",
+        ),
+        Operation(
+            "review_queue_reviewed",
+            "Review Queue (Reviewed tab)",
+            "GET",
+            "/api/review-queue/page?tab=reviewed&page_size=25",
+        ),
+        Operation(
+            "review_queue_summary",
+            "Review Queue counts (app shell)",
+            "GET",
+            "/api/review-queue/summary",
+        ),
+        Operation(
+            "review_queue_reviewed_history",
+            "Review Queue (unbounded, with history)",
+            "GET",
+            "/api/review-queue?include_reviewed=true",
+        ),
         Operation("bird_log", "Bird Log (journal)", "GET", "/api/bird-log/journal"),
         Operation("bird_log_likely", "Bird Log (likely species)", "GET", "/api/bird-log/likely"),
         Operation("analytics", "Analytics", "GET", "/api/analytics/summary"),
