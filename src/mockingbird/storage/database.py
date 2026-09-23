@@ -1753,7 +1753,26 @@ def _migrate_to_observation_history_indexes(connection: Connection) -> None:
         raise DatabaseSchemaCompatibilityError(
             "Observation-history index migration requires local SQLite storage."
         )
+    # Migrations run *before* `Base.metadata.create_all` (see
+    # `initialize_database`), so a database being brought forward from a
+    # much older schema can legitimately reach this point without every
+    # table existing yet -- found by `test_camera_health.py`'s own v20/v21
+    # fixtures and `test_repository_isolation.py`, which start from
+    # deliberately partial historical shapes. Skipping an absent table
+    # loses nothing: `create_all`, moments later, creates that table
+    # together with the same indexes, which are declared on the models
+    # themselves. What must never happen is this migration failing and
+    # blocking the upgrade over an index.
+    existing_tables = {
+        row[0]
+        for row in connection.exec_driver_sql(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        )
+    }
     for name, definition in _OBSERVATION_HISTORY_INDEXES:
+        table = definition.split("(", 1)[0].strip()
+        if table not in existing_tables:
+            continue
         connection.exec_driver_sql(f"CREATE INDEX IF NOT EXISTS {name} ON {definition}")
 
 
