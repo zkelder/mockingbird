@@ -10960,7 +10960,12 @@ class ProductRepository:
             pass
 
     def local_data_status(self) -> LocalDataStatus:
-        with self.session_factory() as session:
+        # Performance / Scale / Stability Closure v1: one read-only build,
+        # so the repeated whole-table taxonomy scans and per-row re-reads it
+        # performs are served once -- see `_read_only_build_cache`. Purely a
+        # memo: this builder writes nothing, so a cached row cannot go
+        # stale inside it, and every value it produces is unchanged.
+        with self.session_factory() as session, _read_only_build_cache(session):
             return self._local_data_status(session)
 
     def get_setup_state(self) -> SetupState:
@@ -17141,10 +17146,57 @@ class ProductRepository:
                 session.flush()
                 return deleted_zone, self._zones_for_stream(session, stream_id)
 
-    def list_events(self) -> list[Event]:
+    def list_events(self, *, limit: int | None = None, offset: int = 0) -> list[Event]:
+        """Read Events oldest-first, optionally one bounded window at a time.
+
+        Performance / Scale / Stability Closure v1: this used to read every
+        Event in the library and then issue one further `SELECT` per Event
+        for its detections. At an ordinary established-install size (2,813
+        Events) that was 2,820 statements and a 1.2 MB response for a route
+        with no product consumer. Detections are now fetched for the
+        returned window in one chunked query; `limit`/`offset` let a caller
+        page rather than ask for a whole library at once.
+        """
+
         with self.session_factory() as session:
-            events = session.scalars(select(EventModel).order_by(EventModel.started_at)).all()
-            return [self._event_from_model(session, event) for event in events]
+            query = select(EventModel).order_by(EventModel.started_at, EventModel.id)
+            if offset:
+                query = query.offset(offset)
+            if limit is not None:
+                query = query.limit(limit)
+            events = session.scalars(query).all()
+            return self._events_from_models(session, events)
+
+    def _events_from_models(self, session: Session, events: Sequence[EventModel]) -> list[Event]:
+        """Project many Events, reading their detections in bulk."""
+
+        detections_by_event: dict[str, list[DetectionModel]] = {
+            event.id: [] for event in events
+        }
+        for chunk in _id_chunks([event.id for event in events]):
+            for detection in session.scalars(
+                select(DetectionModel)
+                .where(DetectionModel.event_id.in_(chunk))
+                .order_by(DetectionModel.id)
+            ).all():
+                detections_by_event[detection.event_id].append(detection)
+        return [
+            Event(
+                id=event.id,
+                stream_id=event.stream_id,
+                title=event.title,
+                event_type=event.event_type,
+                started_at=_as_utc(event.started_at),
+                ended_at=_as_utc(event.ended_at) if event.ended_at else None,
+                primary_zone_id=event.primary_zone_id,
+                review_status=ReviewStatus(event.review_status),
+                detections=[
+                    _detection_from_model(detection)
+                    for detection in detections_by_event[event.id]
+                ],
+            )
+            for event in events
+        ]
 
     def get_event(self, event_id: str) -> Event | None:
         with self.session_factory() as session:
@@ -17173,14 +17225,30 @@ class ProductRepository:
             ).all()
             return [self._event_from_model(session, event) for event in events]
 
-    def list_visits(self) -> list[Visit]:
+    def list_visits(self, *, limit: int | None = None, offset: int = 0) -> list[Visit]:
+        """Read active Visits by id, optionally one bounded window at a time.
+
+        Performance / Scale / Stability Closure v1: the pre-release audit
+        flagged `GET /api/visits` as returning the whole Visit table. It
+        does, and at an ordinary established-install size (2,813 Visits)
+        that is a 754 KB response; a large early-adopter library would make
+        it several megabytes. No part of the shipped frontend calls it
+        (verified across `web/src`), so the bounded default now applied at
+        the route is a safety limit rather than a behaviour change --
+        `limit`/`offset` let any caller page through the whole table.
+        """
+
         with self.session_factory() as session:
-            visits = session.scalars(
+            query = (
                 select(VisitModel)
                 .where(VisitModel.is_superseded.is_(False))
                 .order_by(VisitModel.id)
-            ).all()
-            return [_visit_from_model(visit) for visit in visits]
+            )
+            if offset:
+                query = query.offset(offset)
+            if limit is not None:
+                query = query.limit(limit)
+            return [_visit_from_model(visit) for visit in session.scalars(query).all()]
 
     def get_visit(self, visit_id: str) -> Visit | None:
         with self.session_factory() as session:
@@ -19099,7 +19167,12 @@ class ProductRepository:
         day_start = _as_utc(local_day_start)
         day_end = _as_utc(next_local_day_start)
 
-        with self.session_factory() as session:
+        # Performance / Scale / Stability Closure v1: the landing page is
+        # entirely read-only, so one build cache covers its "today" section
+        # and its review-queue classification together -- see
+        # `_read_only_build_cache`. Values are unchanged; only the number of
+        # repeated reads is.
+        with self.session_factory() as session, _read_only_build_cache(session):
             configured_stream_count = (
                 session.scalar(
                     select(func.count(StreamModel.id))
@@ -24498,7 +24571,7 @@ class ProductRepository:
     ) -> list[VisitEvidenceLinkModel]:
         # Three separate places in one review-queue item's build ask for the
         # same Visit's links. Serve all three from one query while a
-        # read-only build cache is active (see `_review_queue_read_cache`).
+        # read-only build cache is active (see `_read_only_build_cache`).
         cache = session.info.get(_READ_CACHE_SESSION_KEY)
         if cache is not None and visit_id in cache["evidence_links"]:
             return cache["evidence_links"][visit_id]
@@ -27735,14 +27808,30 @@ class ProductRepository:
             labels = session.scalars(
                 select(ReviewLabelModel).order_by(ReviewLabelModel.created_at, ReviewLabelModel.id)
             ).all()
+            effective = self._effective_review_label_models(labels)
+            # Performance / Scale / Stability Closure v1: resolve "is this
+            # label's Visit still active?" for every label in one chunked
+            # query instead of one `session.get` per label -- 1,720
+            # statements for 1,719 labels at an established-install size.
+            # Same exclusion, same rows: a label whose Visit is missing or
+            # superseded is dropped exactly as before.
+            visit_ids = sorted(
+                {label.target_id for label in effective if label.target_type == "visit"}
+            )
+            active_visit_ids: set[str] = set()
+            for chunk in _id_chunks(visit_ids):
+                active_visit_ids.update(
+                    session.scalars(
+                        select(VisitModel.id).where(
+                            VisitModel.id.in_(chunk),
+                            VisitModel.is_superseded.is_(False),
+                        )
+                    ).all()
+                )
             return [
                 _review_label_from_model(label)
-                for label in self._effective_review_label_models(labels)
-                if label.target_type != "visit"
-                or (
-                    (visit := session.get(VisitModel, label.target_id)) is not None
-                    and not visit.is_superseded
-                )
+                for label in effective
+                if label.target_type != "visit" or label.target_id in active_visit_ids
             ]
 
     def review_labels_for_event(self, event_id: str) -> list[ReviewLabel]:
@@ -31174,10 +31263,16 @@ class ProductRepository:
         target_type: str,
         target_id: str,
     ) -> ReviewQueueItem | None:
+        # Performance / Scale / Stability Closure v1: ask for the one item,
+        # not for the queue. This runs on every saved correction, and at an
+        # established-install size building the whole queue here cost
+        # seconds per correction to find a single row.
         return next(
             (
                 item
-                for item in self._review_queue_items(session)
+                for item in self._review_queue_items(
+                    session, only_target=(target_type, target_id)
+                )
                 if item.target_type == target_type and item.target_id == target_id
             ),
             None,
@@ -31974,7 +32069,12 @@ class ProductRepository:
             )
 
     def analytics_summary(self) -> AnalyticsSummary:
-        with self.session_factory() as session:
+        # Performance / Scale / Stability Closure v1: one read-only build,
+        # so the repeated whole-table taxonomy scans and per-row re-reads it
+        # performs are served once -- see `_read_only_build_cache`. Purely a
+        # memo: this builder writes nothing, so a cached row cannot go
+        # stale inside it, and every value it produces is unchanged.
+        with self.session_factory() as session, _read_only_build_cache(session):
             return self._analytics_summary(session)
 
     def build_analytics_summary(self) -> AnalyticsSummary:
@@ -34188,7 +34288,11 @@ class ProductRepository:
         recent_end = local_now.date()
         recent_start = recent_end - timedelta(days=13)
 
-        with self.session_factory() as session:
+        # Performance / Scale / Stability Closure v1: read-only build --
+        # this overview re-scanned `taxonomy_labels` thousands of times per
+        # request at an established-install size. See
+        # `_read_only_build_cache`.
+        with self.session_factory() as session, _read_only_build_cache(session):
             # Historical Baseline Maturity + New/Regular Species v1 (see
             # docs/historical-baseline-maturity-contract.md): Place-wide
             # usable-day facts, anchored to "now" (unlike `place_activity_
@@ -35887,15 +35991,30 @@ class ProductRepository:
         )
 
     def dataset_coverage_summary(self) -> DatasetCoverageSummary:
-        with self.session_factory() as session:
+        # Performance / Scale / Stability Closure v1: one read-only build,
+        # so the repeated whole-table taxonomy scans and per-row re-reads it
+        # performs are served once -- see `_read_only_build_cache`. Purely a
+        # memo: this builder writes nothing, so a cached row cannot go
+        # stale inside it, and every value it produces is unchanged.
+        with self.session_factory() as session, _read_only_build_cache(session):
             return self._dataset_coverage_summary(session)
 
     def dataset_quality_summary(self) -> DatasetQualitySummary:
-        with self.session_factory() as session:
+        # Performance / Scale / Stability Closure v1: one read-only build,
+        # so the repeated whole-table taxonomy scans and per-row re-reads it
+        # performs are served once -- see `_read_only_build_cache`. Purely a
+        # memo: this builder writes nothing, so a cached row cannot go
+        # stale inside it, and every value it produces is unchanged.
+        with self.session_factory() as session, _read_only_build_cache(session):
             return self._dataset_quality_summary(session)
 
     def classifier_readiness_report(self) -> ClassifierReadinessReport:
-        with self.session_factory() as session:
+        # Performance / Scale / Stability Closure v1: one read-only build,
+        # so the repeated whole-table taxonomy scans and per-row re-reads it
+        # performs are served once -- see `_read_only_build_cache`. Purely a
+        # memo: this builder writes nothing, so a cached row cannot go
+        # stale inside it, and every value it produces is unchanged.
+        with self.session_factory() as session, _read_only_build_cache(session):
             return self._classifier_readiness_report(session)
 
     def build_classifier_training_manifest(self) -> ClassifierTrainingManifestResponse:
@@ -37550,6 +37669,24 @@ class ProductRepository:
         if taxonomy_index is not None:
             return taxonomy_index.get(lookup_key)
 
+        # Performance / Scale / Stability Closure v1: inside a read-only
+        # build (see `_read_only_build_cache`), reuse one index of this
+        # table instead of re-scanning it per label. `_taxonomy_label_index`
+        # is this module's own already-accepted batched form of the very
+        # scan below -- same `_taxonomy_key` normalisation, same candidate
+        # fields, same id-ordered tie-break -- so the answer is identical;
+        # only the number of queries changes. Measured at an established-
+        # install size (2,813 Visits): 7,340 full scans of `taxonomy_labels`
+        # in one `GET /api/dataset-quality/summary`, 5,233 in one Bird Log
+        # journal. Every truth-writing caller runs outside any such build
+        # and still takes the unmodified per-call path below, which is why
+        # this stays keyed on the build cache rather than on the session.
+        cache = session.info.get(_READ_CACHE_SESSION_KEY)
+        if cache is not None:
+            if cache["taxonomy"] is None:
+                cache["taxonomy"] = self._taxonomy_label_index(session)
+            return cache["taxonomy"].get(lookup_key)
+
         labels = session.scalars(select(TaxonomyLabelModel).order_by(TaxonomyLabelModel.id)).all()
         for label in labels:
             taxonomy_label = _taxonomy_label_from_model(label)
@@ -38833,8 +38970,15 @@ class ProductRepository:
         *,
         include_reviewed: bool = False,
         include_detail: bool = True,
+        only_target: tuple[str, str] | None = None,
     ) -> list[ReviewQueueItem]:
         """Build the review queue.
+
+        `only_target` narrows the build to one `(target_type, target_id)`
+        at the database, for callers that want a single item rather than
+        the queue -- see `_review_queue_item_by_target`, which every saved
+        correction goes through. The item it produces is constructed by the
+        exact same code as the same item inside a full build.
 
         `include_detail=False` builds the same queue -- same members, same
         order, same classification -- without the per-item work that only a
@@ -38858,22 +39002,24 @@ class ProductRepository:
         `GET /api/review-queue` itself always asks for full detail.
         """
 
-        with _review_queue_read_cache(session) as cache:
+        with _read_only_build_cache(session) as cache:
             self._preload_review_queue_rows(
-                session, cache, include_reviewed=include_reviewed
+                session, cache, include_reviewed=include_reviewed, only_target=only_target
             )
             return self._review_queue_items_uncached(
                 session,
                 include_reviewed=include_reviewed,
                 include_detail=include_detail,
+                only_target=only_target,
             )
 
     def _preload_review_queue_rows(
         self,
         session: Session,
-        cache: dict[str, dict],
+        cache: dict[str, Any],
         *,
         include_reviewed: bool,
+        only_target: tuple[str, str] | None = None,
     ) -> None:
         """Fetch the queue's per-Visit rows in bulk instead of item by item.
 
@@ -38892,14 +39038,16 @@ class ProductRepository:
         entirely -- the build is correct without it.
         """
 
-        visit_ids = list(
-            session.scalars(
-                select(VisitModel.id).where(
-                    VisitModel.is_superseded.is_(False),
-                    VisitModel.review_status.in_(_review_queue_statuses(include_reviewed)),
-                )
-            ).all()
+        preload_query = select(VisitModel.id).where(
+            VisitModel.is_superseded.is_(False),
+            VisitModel.review_status.in_(_review_queue_statuses(include_reviewed)),
         )
+        if only_target is not None:
+            target_type, target_id = only_target
+            if target_type != "visit":
+                return
+            preload_query = preload_query.where(VisitModel.id == target_id)
+        visit_ids = list(session.scalars(preload_query).all())
         if not visit_ids:
             return
 
@@ -38949,6 +39097,7 @@ class ProductRepository:
         *,
         include_reviewed: bool = False,
         include_detail: bool = True,
+        only_target: tuple[str, str] | None = None,
     ) -> list[ReviewQueueItem]:
         queue: list[ReviewQueueItem] = []
         recency_by_item_id: dict[str, float] = {}
@@ -38975,16 +39124,17 @@ class ProductRepository:
         # `is_superseded`/ordering preserved from `_visits_for_eventless_
         # query` so the queue's contents and order are unchanged.
         allowed_statuses = _review_queue_statuses(include_reviewed)
+        visit_query = select(VisitModel).where(
+            VisitModel.is_superseded.is_(False),
+            VisitModel.review_status.in_(allowed_statuses),
+        )
+        if only_target is not None:
+            visit_query = visit_query.where(
+                VisitModel.id == (only_target[1] if only_target[0] == "visit" else None)
+            )
         visits = [
             _visit_from_model(model)
-            for model in session.scalars(
-                select(VisitModel)
-                .where(
-                    VisitModel.is_superseded.is_(False),
-                    VisitModel.review_status.in_(allowed_statuses),
-                )
-                .order_by(VisitModel.id)
-            ).all()
+            for model in session.scalars(visit_query.order_by(VisitModel.id)).all()
         ]
 
         # One coherent model-adapter/BioCLIP status snapshot for this whole
@@ -39170,11 +39320,14 @@ class ProductRepository:
         # per-Event query -- the old code ran it for every Event in the
         # library before deciding the Event did not belong in the queue at
         # all. Ordering (`started_at`) is preserved exactly.
-        event_models = session.scalars(
-            select(EventModel)
-            .where(EventModel.review_status.in_(_review_queue_statuses(include_reviewed)))
-            .order_by(EventModel.started_at)
-        ).all()
+        event_query = select(EventModel).where(
+            EventModel.review_status.in_(_review_queue_statuses(include_reviewed))
+        )
+        if only_target is not None:
+            event_query = event_query.where(
+                EventModel.id == (only_target[1] if only_target[0] == "event" else None)
+            )
+        event_models = session.scalars(event_query.order_by(EventModel.started_at)).all()
         for event_model in event_models:
             if (
                 event_model.id in visit_event_ids
@@ -40952,12 +41105,12 @@ def _id_chunks(values: Sequence[str]) -> Iterable[Sequence[str]]:
         yield values[start : start + _PRELOAD_CHUNK_SIZE]
 
 
-_READ_CACHE_SESSION_KEY = "mockingbird_review_queue_read_cache"
+_READ_CACHE_SESSION_KEY = "mockingbird_read_only_build_cache"
 
 
 @contextlib.contextmanager
-def _review_queue_read_cache(session: Session):
-    """Memoise this session's repeated reads for one read-only queue build.
+def _read_only_build_cache(session: Session):
+    """Memoise this session's repeated reads for one read-only build.
 
     Performance / Scale / Stability Closure v1. Building one
     `ReviewQueueItem` re-reads a small number of rows that every other item
@@ -40987,7 +41140,7 @@ def _review_queue_read_cache(session: Session):
     if existing is not None:
         yield existing
         return
-    cache: dict[str, dict] = {"rows": {}, "evidence_links": {}}
+    cache: dict[str, Any] = {"rows": {}, "evidence_links": {}, "taxonomy": None}
     session.info[_READ_CACHE_SESSION_KEY] = cache
     try:
         yield cache

@@ -414,3 +414,72 @@ def test_review_queue_is_unchanged_for_a_mixed_library(tmp_path) -> None:
         assert len(queue) == 7
     finally:
         repository.close()
+
+
+def test_single_item_lookup_does_not_build_the_whole_queue(tmp_path) -> None:
+    """Every saved correction resolves one item; it must cost like one."""
+
+    small = ProductRepository(db_url=f"sqlite:///{tmp_path / 'one-small.sqlite3'}")
+    large = ProductRepository(db_url=f"sqlite:///{tmp_path / 'one-large.sqlite3'}")
+    try:
+        _build_library(small, reviewed_visits=5, needs_review_visits=20)
+        _build_library(large, reviewed_visits=5, needs_review_visits=200)
+
+        def _lookup(repository: ProductRepository, visit_id: str):
+            with repository.session_factory() as session:
+                return repository._review_queue_item_by_target(session, "visit", visit_id)
+
+        small_statements, small_item = _count_statements(
+            small, lambda: _lookup(small, "visit-0005")
+        )
+        large_statements, large_item = _count_statements(
+            large, lambda: _lookup(large, "visit-0005")
+        )
+
+        assert small_item is not None and large_item is not None
+        assert small_item.target_id == large_item.target_id == "visit-0005"
+        # A 10x larger backlog must not make resolving one item cost 10x.
+        assert large_statements <= small_statements + 10, (
+            f"single-item lookup scaled with backlog size: "
+            f"{small_statements} statements at a 20-item backlog, "
+            f"{large_statements} at 200"
+        )
+    finally:
+        small.close()
+        large.close()
+
+
+def test_single_item_lookup_matches_the_same_item_in_a_full_build(tmp_path) -> None:
+    """The narrowed build must produce a byte-identical item."""
+
+    repository = ProductRepository(db_url=f"sqlite:///{tmp_path / 'one-equal.sqlite3'}")
+    try:
+        _build_library(repository, reviewed_visits=4, needs_review_visits=6, eventless_needs_review=2)
+        with repository.session_factory() as session:
+            full = {
+                (item.target_type, item.target_id): item
+                for item in repository._review_queue_items(session)
+            }
+            for (target_type, target_id), expected in full.items():
+                narrowed = repository._review_queue_item_by_target(
+                    session, target_type, target_id
+                )
+                assert narrowed is not None, f"{target_type}:{target_id} went missing"
+                assert narrowed.model_dump(mode="json") == expected.model_dump(mode="json")
+    finally:
+        repository.close()
+
+
+def test_single_item_lookup_returns_none_for_a_reviewed_or_absent_target(tmp_path) -> None:
+    """Narrowing must not start returning items the full build excludes."""
+
+    repository = ProductRepository(db_url=f"sqlite:///{tmp_path / 'one-none.sqlite3'}")
+    try:
+        _build_library(repository, reviewed_visits=3, needs_review_visits=3)
+        with repository.session_factory() as session:
+            # `visit-0000` is reviewed, so it is not in the default queue.
+            assert repository._review_queue_item_by_target(session, "visit", "visit-0000") is None
+            assert repository._review_queue_item_by_target(session, "visit", "nope") is None
+            assert repository._review_queue_item_by_target(session, "event", "nope") is None
+    finally:
+        repository.close()

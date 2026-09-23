@@ -709,6 +709,20 @@ app = FastAPI(
     lifespan=_app_lifespan,
 )
 
+
+# Performance / Scale / Stability Closure v1. The pre-release baseline
+# audit flagged `GET /api/visits` as returning the entire Visit table with
+# no limit; measured at an ordinary established-install size (2,813
+# Visits) it returns 754 KB, and a large early-adopter library would make
+# it several megabytes in one response. Nothing in the shipped frontend
+# calls it -- verified across the whole `web/src` tree -- so this bounded
+# default is a safety limit on a diagnostic/integration route, not a
+# change to any product behaviour. A caller that genuinely wants the whole
+# table pages through it with `offset`; the order (`Visit.id`) is stable,
+# so paging is well defined.
+_DEFAULT_LIST_PAGE_SIZE = 500
+_MAX_LIST_PAGE_SIZE = 2000
+
 # Local Vite dev origins let the stream-first frontend use the API. An
 # explicit, bounded allowlist -- never a wildcard -- because `allow_
 # credentials=True` is set: `allow_origins=["*"]` combined with credentials
@@ -13342,8 +13356,18 @@ async def delete_zone(zone_id: str, request: Request) -> ZoneMutationResult:
 
 
 @app.get("/api/events", response_model=list[Event])
-async def list_events() -> list[Event]:
-    return get_repository().list_events()
+async def list_events(
+    limit: int = Query(default=_DEFAULT_LIST_PAGE_SIZE, ge=1, le=_MAX_LIST_PAGE_SIZE),
+    offset: int = Query(default=0, ge=0),
+) -> list[Event]:
+    """Read Events, oldest first, one bounded page at a time.
+
+    Bounded for the same reason as `GET /api/visits` above, and with the
+    same evidence: no shipped frontend caller, 1.2 MB and 2,820 SQL
+    statements at an established-install size before this milestone.
+    """
+
+    return get_repository().list_events(limit=limit, offset=offset)
 
 
 @app.get("/api/events/{event_id}", response_model=Event)
@@ -13424,8 +13448,13 @@ async def list_event_visits(event_id: str) -> list[Visit]:
 
 
 @app.get("/api/visits", response_model=list[Visit])
-async def list_visits() -> list[Visit]:
-    return _redact_visits(get_repository().list_visits())
+async def list_visits(
+    limit: int = Query(default=_DEFAULT_LIST_PAGE_SIZE, ge=1, le=_MAX_LIST_PAGE_SIZE),
+    offset: int = Query(default=0, ge=0),
+) -> list[Visit]:
+    """Read active Visits, oldest id first, one bounded page at a time."""
+
+    return _redact_visits(get_repository().list_visits(limit=limit, offset=offset))
 
 
 @app.post("/api/activity-library/search", response_model=ActivityLibrarySearchResponse)
