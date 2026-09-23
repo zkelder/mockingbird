@@ -3875,6 +3875,94 @@ and outside this one's. Verified starting baseline exactly as expected:
 branch `main`; HEAD `3133c64`; schema `v59`; working tree clean except the
 seven preserved untracked detector files and `uv.lock`.
 
+**Performance / Scale / Stability Closure v1 -- IMPLEMENTED, pending
+external acceptance.** See
+[performance-scale-stability-closure-v1-report.md](performance-scale-stability-closure-v1-report.md)
+for the complete record. **Schema `v59` -> `v60`** (fourteen additive
+indexes; no table, column or value changed; a fresh install and an
+upgraded install converge on an identical index set, asserted as a test;
+the real 2,813-Visit database migrated in 2.8s including its
+pre-migration safety backup). Stage A measured four credible v0.1
+workloads (69 / 2,813 / 3,322-with-burst / 11,206 Visits, each sized from
+this repository's own accepted field evidence) on two real environments
+(Linux/WSL and **native Windows**, using a real packaged MockingBird
+Windows runtime against native NTFS storage).
+
+**The three findings that mattered:**
+
+1. **Backups -- and therefore upgrades -- failed after about two months
+   of ordinary use.** A backup manifest carries one ~154-byte entry per
+   media file and `MAX_MANIFEST_BYTES` was 1 MiB, so it was exceeded at
+   roughly 6,800 files. `create_backup` verifies the archive it has just
+   written, so this was not "an old backup cannot be read" -- *no backup
+   could be made at all* -- and because the pre-migration safety backup
+   is a hard gate on migrating, the same install could no longer be
+   upgraded. Reproduced end to end. Pre-existing and independent of
+   everything else here; the schema bump is simply how it surfaced.
+2. **The core observation tables had no secondary index at all**, so
+   every foreign-key lookup was a full table scan. Fourteen indexes
+   added, each chosen from a real query plan and each pinned by a test
+   asserting SQLite picks it.
+3. **The landing page and review loop degraded with total accumulated
+   history rather than with work outstanding.** Fixed by pushing the
+   review-status predicate into SQL, a read-only build cache, bulk
+   preloads, and letting the Dashboard and the eleven `review_queue_count`
+   fields ask for classification without per-item review-card hydration.
+
+Measured at the established-install workload, before -> after:
+`GET /api/dashboard/summary` 18.02s -> 2.29s (38,796 -> 5,189 SQL
+statements); `GET /api/review-queue` 17.15s -> 5.07s (38,970 -> 11,027);
+Activity Library 7.09s -> 173ms; `GET /api/events` 2.79s -> 19ms (2,820
+-> 3 statements). Also: `GET /api/visits` -- the endpoint the pre-release
+audit specifically flagged -- confirmed unbounded, confirmed to have **no
+frontend consumer**, and bounded with `limit`/`offset`.
+
+Measured non-findings, each with evidence rather than assumption: **no
+per-request memory leak** (4,427 identical requests against a fixed
+library moved RSS 5.6 MB/hour; flat file descriptors and threads);
+**queues are genuinely bounded** (4 ingest frames, 100 acoustic segments
+per Stream, 500 global, all shedding oldest-first to a diagnosable
+state); **restart is safe** (three restarts under load, two of them
+`SIGKILL`, zero duplicated or orphaned observations, zero stranded queue
+work); **logs are hard-capped** at 20 MB; **optional BirdNET's disabled
+path is lightweight** (0.48ms, no heavy import).
+
+**One P0 is reduced but explicitly NOT closed, and this file records it
+as open:** `GET /api/review-queue` remains unbounded. At Profile C -- an
+ordinary three-month library with one burst week and an owner behind on
+review -- it returns 14.9 MB in 74.4s; at Profile D, 36.1 MB in 95.8s;
+and `ReviewQueuePage` requests it with `include_reviewed=true` on mount
+and after every saved correction. Closing it needs server-side pagination
+**plus** server-computed per-tab and per-filter counts **plus** a matching
+change to that page, which computes all of them client-side over the full
+list -- a coordinated frontend change that materially alters the
+just-accepted UI/UX & First-Run Adoption v1 milestone's most complex page.
+That is the owner's call to authorize, not this milestone's to take
+against an explicit "do not rewrite the frontend / do not reopen the
+accepted UI/UX milestone" instruction. The same reasoning applies to
+`GET /api/media` (11.9 MB at Profile B, six page consumers) and the three
+detection/suggestion list endpoints. **This is the natural next
+milestone's subject, and saying so here is advisory only.**
+
+Tier 1: 30 new tests across four files
+(`test_review_queue_scale.py`, `test_bounded_list_endpoints.py`,
+`test_observation_history_indexes.py`, `test_backup_manifest_scale.py`),
+with RED-against-baseline proof wherever the change permitted it. Tier 2:
+145 + 126 + 34 passed across review-queue, dashboard, identification,
+review-provenance, persistence/migration, backup/restore/upgrade,
+dataset, journal and export subsystems. Tier 3 (full Core) run twice: the
+first run (11 failed / 6,111 passed) found **a real defect this milestone
+had introduced** -- migration 60 aborted an upgrade from an old schema
+because migrations run before `create_all` and a table did not exist yet
+-- fixed in `700de44`; the second, confirming run was **6 failed / 6,116
+passed / 4 skipped / 35 deselected / 11 xfailed (43m07s)**, all six the
+established pre-existing set. **Zero Core failures attributable to this
+milestone's changes.** `ruff` byte-identical to baseline on every changed
+product file. Working tree clean apart from the seven preserved untracked
+detector files (verified untracked and byte-identical at every commit
+boundary; explicit staging paths throughout) and `uv.lock`. **Not
+pushed.**
+
 **Performance / Scale / Stability Closure v1** -- directly authorized
 outside this file by the external (ChatGPT) global release sequencing,
 following acceptance of UI/UX & First-Run Adoption v1, above. Establishes
