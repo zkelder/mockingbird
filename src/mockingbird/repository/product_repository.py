@@ -31857,6 +31857,15 @@ class ProductRepository:
         visit_id: str | None,
         media_asset_id: str | None,
     ) -> MotionEvidenceModel | None:
+        preloaded = self._preloaded_motion_evidence_for_review_queue_item(
+            session,
+            event_id=event_id,
+            visit_id=visit_id,
+            media_asset_id=media_asset_id,
+        )
+        if preloaded is not _PRELOAD_MISS:
+            return preloaded
+
         target_filters = []
         if visit_id:
             target_filters.append(MotionEvidenceModel.promoted_visit_id == visit_id)
@@ -31878,6 +31887,61 @@ class ProductRepository:
             .where(*filters)
             .order_by(MotionEvidenceModel.created_at.desc(), MotionEvidenceModel.id.desc())
         ).first()
+
+    def _preloaded_motion_evidence_for_review_queue_item(
+        self,
+        session: Session,
+        *,
+        event_id: str | None,
+        visit_id: str | None,
+        media_asset_id: str | None,
+    ) -> MotionEvidenceModel | None | object:
+        """Answer from the queue build's bulk MotionEvidence preload, or miss.
+
+        Review Queue Scale Closure v1. Returns `_PRELOAD_MISS` -- never
+        `None`, which is a real answer here -- whenever this lookup is not
+        one the preload can serve, so the caller falls through to its own
+        query unchanged. The preload is keyed by promoted Visit and
+        promoted Event, so a lookup with no Visit/Event target at all
+        (`filters = [media_filter]` in the caller) is deliberately a miss.
+
+        The filtering below is the same predicate the query applies:
+        newest-first by `(created_at, id)`, restricted to the requested
+        media asset when one was given, over the union of rows promoted to
+        this Visit or this Event.
+        """
+
+        cache = session.info.get(_READ_CACHE_SESSION_KEY)
+        if cache is None:
+            return _PRELOAD_MISS
+        by_target = cache.get("review_queue_motion_evidence")
+        if by_target is None:
+            return _PRELOAD_MISS
+        if not visit_id and not event_id:
+            return _PRELOAD_MISS
+
+        candidates: list[MotionEvidenceModel] = []
+        seen: set[str] = set()
+        for key in (
+            ("visit", visit_id) if visit_id else None,
+            ("event", event_id) if event_id else None,
+        ):
+            if key is None:
+                continue
+            for model in by_target.get(key, ()):
+                if model.id in seen:
+                    continue
+                seen.add(model.id)
+                candidates.append(model)
+        if media_asset_id:
+            candidates = [
+                model
+                for model in candidates
+                if model.snapshot_media_asset_id == media_asset_id
+            ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda model: (model.created_at, model.id))
 
     def _review_queue_activity_context(
         self,
@@ -38091,6 +38155,14 @@ class ProductRepository:
         if media_path is None:
             return None
 
+        # Review Queue Scale Closure v1: served from the queue build's bulk
+        # path preload when one is active, and from this same query
+        # otherwise -- see `_preload_review_queue_item_context`.
+        cache = session.info.get(_READ_CACHE_SESSION_KEY)
+        by_path = cache.get("media_asset_by_local_path") if cache is not None else None
+        if by_path is not None and media_path in by_path:
+            return _media_asset_from_model(by_path[media_path])
+
         asset = session.scalar(
             select(MediaAssetModel).where(MediaAssetModel.local_path == media_path)
         )
@@ -39156,6 +39228,103 @@ class ProductRepository:
 
         cache["evidence_links"].update(link_map)
 
+        self._preload_review_queue_item_context(
+            session,
+            cache,
+            visit_ids=visit_ids,
+            event_ids=sorted(event_ids),
+        )
+
+    def _preload_review_queue_item_context(
+        self,
+        session: Session,
+        cache: dict[str, Any],
+        *,
+        visit_ids: Sequence[str],
+        event_ids: Sequence[str],
+    ) -> None:
+        """Fetch the queue build's last three per-item reads in bulk.
+
+        Review Queue Scale Closure v1. After Performance / Scale /
+        Stability Closure v1's own prefetch, a detail-free queue build at
+        Profile B (2,813 members) still issued 8,505 statements -- almost
+        exactly three per member, and they were always the same three:
+
+        1. the item's newest *pending* `SpeciesSuggestionModel`;
+        2. its `MotionEvidenceModel`, via `_motion_evidence_for_review_
+           queue_item`;
+        3. the `MediaAssetModel` behind `Visit.representative_media_path`.
+
+        Everything else the detail-free build reads (Stream, Source,
+        provider configuration, Zone) is a handful of rows shared by every
+        item, already served from `_cached_get`'s memo after the first
+        read. That made the *classification* pass -- which is what
+        server-side tabs, counts and filters need -- cost O(backlog)
+        round trips, so bounding the response alone would not have bounded
+        the request.
+
+        This is purely a prefetch, exactly like `_preload_review_queue_
+        rows`: the three consumers each fall back to their own original
+        query whenever their map is absent or does not contain the key,
+        the maps are filled and never consulted for existence, and nothing
+        here decides what is in the queue or how it is classified.
+        """
+
+        pending_status = SpeciesSuggestionStatus.pending.value
+        suggestions: dict[str, SpeciesSuggestionModel] = {}
+        for chunk in _id_chunks(list(visit_ids)):
+            for model in session.scalars(
+                select(SpeciesSuggestionModel).where(
+                    SpeciesSuggestionModel.visit_id.in_(chunk),
+                    SpeciesSuggestionModel.status == pending_status,
+                )
+            ).all():
+                current = suggestions.get(model.visit_id)
+                if current is None or _pending_suggestion_outranks(model, current):
+                    suggestions[model.visit_id] = model
+        cache["review_queue_pending_suggestion"] = suggestions
+
+        evidence_by_target: dict[tuple[str, str], list[MotionEvidenceModel]] = {}
+
+        def _record(key: tuple[str, str], model: MotionEvidenceModel) -> None:
+            evidence_by_target.setdefault(key, []).append(model)
+
+        for chunk in _id_chunks(list(visit_ids)):
+            for model in session.scalars(
+                select(MotionEvidenceModel).where(
+                    MotionEvidenceModel.promoted_visit_id.in_(chunk)
+                )
+            ).all():
+                _record(("visit", model.promoted_visit_id or ""), model)
+        for chunk in _id_chunks(list(event_ids)):
+            for model in session.scalars(
+                select(MotionEvidenceModel).where(
+                    MotionEvidenceModel.promoted_event_id.in_(chunk)
+                )
+            ).all():
+                _record(("event", model.promoted_event_id or ""), model)
+        for models in evidence_by_target.values():
+            models.sort(key=lambda model: (model.created_at, model.id), reverse=True)
+        cache["review_queue_motion_evidence"] = evidence_by_target
+
+        paths: list[str] = []
+        seen_paths: set[str] = set()
+        for visit_id in visit_ids:
+            visit_model = cache["rows"].get((VisitModel, visit_id))
+            path = getattr(visit_model, "representative_media_path", None)
+            if path and path not in seen_paths:
+                seen_paths.add(path)
+                paths.append(path)
+        by_path: dict[str, MediaAssetModel] = {}
+        for chunk in _id_chunks(paths):
+            for asset in session.scalars(
+                select(MediaAssetModel)
+                .where(MediaAssetModel.local_path.in_(chunk))
+                .order_by(MediaAssetModel.id)
+            ).all():
+                by_path.setdefault(asset.local_path, asset)
+        cache["media_asset_by_local_path"] = by_path
+
     def _review_queue_items_uncached(
         self,
         session: Session,
@@ -39227,18 +39396,23 @@ class ProductRepository:
                 session,
                 visit.zone_id or event.primary_zone_id,
             )
-            suggestion_model = session.scalars(
-                select(SpeciesSuggestionModel)
-                .where(
-                    SpeciesSuggestionModel.visit_id == visit.id,
-                    SpeciesSuggestionModel.status == SpeciesSuggestionStatus.pending.value,
-                )
-                .order_by(
-                    SpeciesSuggestionModel.created_at.desc(),
-                    SpeciesSuggestionModel.rank,
-                    SpeciesSuggestionModel.id.desc(),
-                )
-            ).first()
+            pending_suggestions = _cached_review_queue_pending_suggestions(session)
+            if pending_suggestions is not None:
+                suggestion_model = pending_suggestions.get(visit.id)
+            else:
+                suggestion_model = session.scalars(
+                    select(SpeciesSuggestionModel)
+                    .where(
+                        SpeciesSuggestionModel.visit_id == visit.id,
+                        SpeciesSuggestionModel.status
+                        == SpeciesSuggestionStatus.pending.value,
+                    )
+                    .order_by(
+                        SpeciesSuggestionModel.created_at.desc(),
+                        SpeciesSuggestionModel.rank,
+                        SpeciesSuggestionModel.id.desc(),
+                    )
+                ).first()
             suggestion = (
                 _species_suggestion_from_model(suggestion_model)
                 if suggestion_model is not None
@@ -41212,6 +41386,15 @@ def _read_only_build_cache(session: Session):
         # Filled lazily by `_review_labels_by_target`; absent until a
         # builder actually asks for a review label.
         "review_labels_by_target": None,
+        # Review Queue Scale Closure v1 bulk prefetches, filled by
+        # `_preload_review_queue_rows` and consulted by the three helpers
+        # that were the queue build's remaining per-item round trips. Each
+        # stays `None` until that preload runs, and every consumer falls
+        # straight through to its own query while it is `None`, so no other
+        # caller's behaviour depends on them.
+        "review_queue_pending_suggestion": None,
+        "review_queue_motion_evidence": None,
+        "media_asset_by_local_path": None,
     }
     session.info[_READ_CACHE_SESSION_KEY] = cache
     try:
@@ -41231,6 +41414,39 @@ def _cached_get(session: Session, model: type, primary_key: Any):
     if key not in rows:
         rows[key] = session.get(model, primary_key)
     return rows[key]
+
+
+_PRELOAD_MISS = object()
+"""Distinguishes "the preload cannot answer this" from a real `None` answer."""
+
+
+def _cached_review_queue_pending_suggestions(
+    session: Session,
+) -> dict[str, SpeciesSuggestionModel] | None:
+    cache = session.info.get(_READ_CACHE_SESSION_KEY)
+    if cache is None:
+        return None
+    return cache.get("review_queue_pending_suggestion")
+
+
+def _pending_suggestion_outranks(
+    candidate: SpeciesSuggestionModel,
+    current: SpeciesSuggestionModel,
+) -> bool:
+    """`ORDER BY created_at DESC, rank ASC, id DESC` as a Python comparison.
+
+    Review Queue Scale Closure v1. `_preload_review_queue_item_context`
+    fetches every queued Visit's pending suggestions in one statement and
+    has to pick the same row the per-Visit query's `.first()` picked, so
+    this is a literal transcription of that query's `ORDER BY` -- kept as
+    one named function precisely so the two cannot drift.
+    """
+
+    if candidate.created_at != current.created_at:
+        return candidate.created_at > current.created_at
+    if candidate.rank != current.rank:
+        return candidate.rank < current.rank
+    return candidate.id > current.id
 
 
 def _review_queue_statuses(include_reviewed: bool) -> tuple[str, ...]:
