@@ -58,7 +58,10 @@ import { formatDateTime, formatLabel } from "../utils";
 interface StreamsPageProps {
   streams: Stream[];
   sources: CameraSource[];
-  reviewQueue: ReviewQueueItem[];
+  // Review Queue Scale Closure v1: per-Stream "N needs review", computed
+  // over the whole review queue by the server instead of derived here from a
+  // full download of it (`GET /api/review-queue/summary`).
+  needsReviewByStream: Record<string, number>;
   datasetExports: DatasetExport[];
   onOpenImport: () => void;
   onOpenStream: (streamId: string) => void;
@@ -1668,7 +1671,7 @@ function localDetectorReadinessCopy(adapter: ModelAdapter | null): string {
 export function StreamsPage({
   streams,
   sources,
-  reviewQueue,
+  needsReviewByStream,
   datasetExports,
   onOpenImport,
   onOpenStream,
@@ -6105,9 +6108,7 @@ export function StreamsPage({
                         : null;
                   const canStartMonitoring =
                     !isMonitorLoading && !isMonitoring && !monitorStartBlockReason;
-                  const streamReviewQueueCount = reviewQueue.filter(
-                    (item) => item.stream_id === stream.id && item.review_status === "needs_review",
-                  ).length;
+                  const streamReviewQueueCount = needsReviewByStream[stream.id] ?? 0;
                   const fieldTestReadiness = buildFieldTestReadiness({
                     isExternalUrlProvider,
                     sourceConfigured:

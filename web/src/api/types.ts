@@ -3326,6 +3326,97 @@ export interface ReviewQueueItem {
   is_legacy_activity: boolean;
 }
 
+// Review Queue Scale Closure v1. `GET /api/review-queue/page` is the
+// product-facing Review Queue read: `items` is bounded by `page_size`,
+// while every count below is computed over the *whole* visible queue at
+// the server, so the page can keep presenting totals as totals while
+// holding one page of review cards. `GET /api/review-queue` still exists
+// and still returns everything; no screen reads it any more.
+export type ReviewQueueProductTabValue =
+  | "all"
+  | "animals"
+  | "other_activity"
+  | "unchecked"
+  | "legacy_activity"
+  | "reviewed";
+
+export interface ReviewQueueTabCounts {
+  animals: number;
+  other_activity: number;
+  unchecked: number;
+  legacy_activity: number;
+  reviewed: number;
+}
+
+export interface ReviewQueueTriageCounts {
+  all: number;
+  animal_evidence: number;
+  vehicle_person_evidence: number;
+  no_clear_proposal: number;
+  not_analyzed: number;
+  false_positives: number;
+}
+
+export interface ReviewQueueSourceStreamOption {
+  value: string;
+  label: string;
+  count: number;
+}
+
+export interface ReviewQueuePage {
+  items: ReviewQueueItem[];
+  page: number;
+  page_size: number;
+  page_count: number;
+  // `total_items` is every visible queue member; `matching_items` is those
+  // passing the active tab and filters.
+  total_items: number;
+  matching_items: number;
+  eligible_matching_items: number;
+  species_suggestion_matching_items: number;
+  // Every visible member still awaiting review, regardless of tab or filter.
+  needs_review_items: number;
+  pending_review_count: number;
+  tab_counts: ReviewQueueTabCounts;
+  triage_counts: ReviewQueueTriageCounts;
+  source_stream_options: ReviewQueueSourceStreamOption[];
+  matching_suggested_labels: string[];
+  eligible_suggested_labels: string[];
+  // Only present when explicitly requested, which happens on one user
+  // action ("Select visible eligible") rather than on every load.
+  eligible_target_ids?: string[] | null;
+  fast_review_targets: FastReviewQueueTarget[];
+  fast_review_stream_id?: string | null;
+  creates_truth: boolean;
+  creates_export: boolean;
+}
+
+export interface ReviewQueueSummary {
+  total_items: number;
+  pending_review_count: number;
+  tab_counts: ReviewQueueTabCounts;
+  needs_review_by_stream: Record<string, number>;
+  creates_truth: boolean;
+}
+
+export interface ReviewQueuePageQuery {
+  tab?: ReviewQueueProductTabValue;
+  showLegacyAndTestActivity?: boolean;
+  status?: "unreviewed" | "reviewed" | "all";
+  triage?: string;
+  evidence?: string;
+  target?: "all" | "visit" | "event";
+  sourceStream?: string;
+  search?: string;
+  sort?: "newest" | "triage";
+  page?: number;
+  pageSize?: number;
+  streamId?: string | null;
+  scopedTargetIds?: string[] | null;
+  skippedTargetIds?: string[] | null;
+  includeEligibleTargetIds?: boolean;
+}
+
 // Review Decision Provenance / Truth Boundary v1 (see
 // docs/review-decision-provenance-contract.md). `undefined`/omitted never
 // means "human" -- see `apiClient`'s review-correction functions, which are

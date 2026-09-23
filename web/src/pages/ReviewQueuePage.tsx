@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { apiClient } from "../api/client";
 import type {
   BoundingBox,
@@ -10,7 +10,11 @@ import type {
   ReviewLabel,
   ReviewQueueBulkCorrectionResponse,
   ReviewQueueBulkCorrectionTargetType,
+  FastReviewQueueTarget,
   ReviewQueueItem,
+  // Aliased: `ReviewQueuePage` is also this module's exported component.
+  ReviewQueuePage as ReviewQueuePageResponse,
+  ReviewQueuePageQuery,
   ReviewQueueSpeciesSuggestionBatchPrepareResponse,
   SpeciesCandidatePackSummary,
   TaxonomyLabel,
@@ -66,28 +70,14 @@ type ProductReviewTab =
 
 const PRODUCT_REVIEW_PAGE_SIZE = 25;
 
-function matchesProductReviewTab(
-  item: ReviewQueueItem,
-  tab: ProductReviewTab,
-  showLegacyAndTestActivity: boolean,
-): boolean {
-  if (tab === "reviewed") {
-    return item.product_category === "reviewed";
-  }
-  if (tab === "legacy_activity") {
-    return showLegacyAndTestActivity && item.product_category === "legacy_activity";
-  }
-  if (item.review_status !== "needs_review") {
-    return false;
-  }
-  if (tab === "animals") {
-    return item.target_type === "visit" && item.product_category === "animal";
-  }
-  if (tab === "other_activity") {
-    return item.product_category === "other_activity";
-  }
-  return item.product_category === "unchecked";
-}
+// Review Queue Scale Closure v1 removed the client-side copies of the queue's
+// tab predicate, status/target/evidence/source-stream predicates, triage sort
+// rank and source/stream facet builder from here. They now live in
+// `mockingbird/repository/review_queue_filters.py`, which is where they have
+// to be for a bounded page's counts and filters to describe the whole queue --
+// and keeping a second copy here is exactly how the two would drift. Each
+// Python function names the TypeScript original it was ported from.
+
 
 function productReviewTitle(item: ReviewQueueItem, taxonomyLabels: TaxonomyLabel[]): string {
   if (item.product_category === "animal") {
@@ -703,19 +693,7 @@ function isBulkCorrectionEligible(item: ReviewQueueItem): boolean {
   return item.review_status === "needs_review";
 }
 
-function matchesTargetFilter(item: ReviewQueueItem, targetFilter: ReviewTargetFilter): boolean {
-  return targetFilter === "all" || reviewQueueTargetType(item) === targetFilter;
-}
 
-function matchesStatusFilter(item: ReviewQueueItem, statusFilter: ReviewStatusFilter): boolean {
-  if (statusFilter === "all") {
-    return true;
-  }
-  if (statusFilter === "reviewed") {
-    return item.review_status === "reviewed";
-  }
-  return item.review_status === "needs_review";
-}
 
 function reviewQueueSearchText(item: ReviewQueueItem, taxonomyLabels: TaxonomyLabel[]): string {
   const suggestedLabel = item.suggested_label ?? "";
@@ -1175,86 +1153,8 @@ function reviewItemFilterMetadata(
   };
 }
 
-function matchesEvidenceFilter(
-  metadata: ReviewItemFilterMetadata,
-  evidenceFilter: ReviewEvidenceFilter,
-): boolean {
-  if (evidenceFilter === "has_media") {
-    return metadata.hasMedia;
-  }
-  if (evidenceFilter === "has_detection_proposal") {
-    return metadata.hasDetectionProposal;
-  }
-  if (evidenceFilter === "has_motion_evidence") {
-    return metadata.hasMotionEvidence;
-  }
-  if (evidenceFilter === "no_proposal_evidence") {
-    return !metadata.hasDetectionProposal;
-  }
-  return true;
-}
 
-function matchesSourceStreamFilter(
-  metadata: ReviewItemFilterMetadata,
-  sourceStreamFilter: string,
-): boolean {
-  if (sourceStreamFilter === "all") {
-    return true;
-  }
-  if (sourceStreamFilter.startsWith("stream:")) {
-    return metadata.streamId === sourceStreamFilter.slice("stream:".length);
-  }
-  if (sourceStreamFilter.startsWith("source:")) {
-    return metadata.sourceId === sourceStreamFilter.slice("source:".length);
-  }
-  return true;
-}
 
-function sourceStreamFilterOptions(
-  metadataById: Map<string, ReviewItemFilterMetadata>,
-): SourceStreamFilterOption[] {
-  const streamCounts = new Map<string, { count: number; label: string }>();
-  const sourceCounts = new Map<string, { count: number; label: string }>();
-
-  for (const metadata of metadataById.values()) {
-    if (metadata.streamId) {
-      const existing = streamCounts.get(metadata.streamId);
-      streamCounts.set(metadata.streamId, {
-        count: (existing?.count ?? 0) + 1,
-        label: metadata.streamName ?? existing?.label ?? metadata.streamId,
-      });
-    }
-    if (metadata.sourceId) {
-      const existing = sourceCounts.get(metadata.sourceId);
-      sourceCounts.set(metadata.sourceId, {
-        count: (existing?.count ?? 0) + 1,
-        label: metadata.sourceName ?? existing?.label ?? metadata.sourceId,
-      });
-    }
-  }
-
-  return [
-    {
-      count: metadataById.size,
-      label: "All streams/sources",
-      value: "all",
-    },
-    ...[...streamCounts.entries()]
-      .sort(([first], [second]) => first.localeCompare(second))
-      .map(([streamId, { count, label }]) => ({
-        count,
-        label: `Stream ${label}`,
-        value: `stream:${streamId}`,
-      })),
-    ...[...sourceCounts.entries()]
-      .sort(([first], [second]) => first.localeCompare(second))
-      .map(([sourceId, { count, label }]) => ({
-        count,
-        label: `Source ${label}`,
-        value: `source:${sourceId}`,
-      })),
-  ];
-}
 
 function reviewEvidenceFilterLabel(evidenceFilter: ReviewEvidenceFilter): string {
   const labels: Record<ReviewEvidenceFilter, string> = {
@@ -1322,16 +1222,6 @@ function reviewTriageDescription(
   return "Optional identification is not currently available; review the saved frame manually.";
 }
 
-function reviewTriageSortRank(category: ReviewTriageCategory): number {
-  const ranks: Record<ReviewTriageCategory, number> = {
-    animal_evidence: 0,
-    not_analyzed: 1,
-    no_clear_proposal: 2,
-    vehicle_person_evidence: 3,
-    false_positives: 4,
-  };
-  return ranks[category];
-}
 
 function sourceStreamFilterLabel(
   sourceStreamFilter: string,
@@ -1385,7 +1275,6 @@ function correctionHistoryGroups(reviewLabels: ReviewLabel[]): CorrectionHistory
 }
 
 interface ReviewQueuePageProps {
-  items: ReviewQueueItem[];
   initialContext?: ReviewQueueInitialContext | null;
   onCreateCorrection: (
     item: ReviewQueueItem,
@@ -1403,7 +1292,6 @@ interface ReviewQueuePageProps {
 }
 
 export function ReviewQueuePage({
-  items,
   initialContext,
   onCreateCorrection,
   onFastReviewChanged,
@@ -1415,13 +1303,25 @@ export function ReviewQueuePage({
   onOpenToday,
   onOpenVisit,
 }: ReviewQueuePageProps) {
-  const [queueItems, setQueueItems] = useState<ReviewQueueItem[]>(items);
+  // Review Queue Scale Closure v1. This page used to hold the *entire*
+  // review queue, reviewed history included, and derive every tab count,
+  // filter count and disclosure from it -- 2,813 items / 20.4 MB / 39.7 s at
+  // an ordinary established-install size, on mount and after every saved
+  // correction. It now holds one bounded page plus the server's own
+  // whole-queue counts, which is what keeps those numbers honest while the
+  // payload stays a function of page size.
+  const [queuePage, setQueuePage] = useState<ReviewQueuePageResponse | null>(null);
+  const [isLoadingQueuePage, setIsLoadingQueuePage] = useState(true);
+  const [queuePageError, setQueuePageError] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, { label: string; notes: string }>>({});
   const [bulkDraft, setBulkDraft] = useState({ label: "", notes: "" });
   const [bulkResult, setBulkResult] = useState<ReviewQueueBulkCorrectionResponse | null>(null);
   const [lastCorrectionSummary, setLastCorrectionSummary] =
     useState<LastCorrectionSummary | null>(null);
   const [selectedTargetIds, setSelectedTargetIds] = useState<string[]>([]);
+  const [selectedBulkTargetType, setSelectedBulkTargetType] = useState<
+    "visit" | "event" | null
+  >(null);
   const [selectedSpeciesSuggestionVisitIds, setSelectedSpeciesSuggestionVisitIds] =
     useState<string[]>([]);
   const [speciesSuggestionBatch, setSpeciesSuggestionBatch] =
@@ -1471,10 +1371,16 @@ export function ReviewQueuePage({
     [detectionRuns],
   );
 
+  const pagedItems = queuePage?.items ?? [];
+
+  // Only the cards actually on screen need per-item render metadata now.
+  // The *counts* this map used to feed (`queueCounts`, the source/stream
+  // facet) are computed over the whole visible queue by the server -- see
+  // `review_queue_filters` for the function-by-function port.
   const filterMetadataByItemId = useMemo(
     () =>
       new Map(
-        queueItems.map((item) => [
+        pagedItems.map((item) => [
           item.id,
           reviewItemFilterMetadata(
             item,
@@ -1491,33 +1397,19 @@ export function ReviewQueuePage({
       detectionRuns,
       detectionRunsById,
       motionEvidence,
-      queueItems,
+      pagedItems,
       taxonomyLabels,
     ],
   );
 
-  const queueCounts = useMemo(
-    () =>
-      queueItems.reduce<Record<ReviewFilter, number>>(
-        (counts, item) => {
-          counts.all += 1;
-          const category = filterMetadataByItemId.get(item.id)?.triage.category;
-          if (category) {
-            counts[category] += 1;
-          }
-          return counts;
-        },
-        {
-          all: 0,
-          animal_evidence: 0,
-          vehicle_person_evidence: 0,
-          no_clear_proposal: 0,
-          not_analyzed: 0,
-          false_positives: 0,
-        },
-      ),
-    [filterMetadataByItemId, queueItems],
-  );
+  const queueCounts: Record<ReviewFilter, number> = queuePage?.triage_counts ?? {
+    all: 0,
+    animal_evidence: 0,
+    vehicle_person_evidence: 0,
+    no_clear_proposal: 0,
+    not_analyzed: 0,
+    false_positives: 0,
+  };
 
   const reviewFilters: ReviewFilterOption<ReviewFilter>[] = [
     { value: "all", label: "All", count: queueCounts.all },
@@ -1531,33 +1423,14 @@ export function ReviewQueuePage({
     { value: "not_analyzed", label: "Not checked", count: queueCounts.not_analyzed },
     { value: "false_positives", label: "False positives", count: queueCounts.false_positives },
   ];
-  const productQueueCounts = useMemo(
-    () =>
-      queueItems.reduce<Record<ProductReviewTab, number>>(
-        (counts, item) => {
-          if (item.target_type === "visit" && item.product_category === "animal") {
-            counts.animals += 1;
-          } else if (item.product_category === "other_activity") {
-            counts.other_activity += 1;
-          } else if (item.product_category === "unchecked") {
-            counts.unchecked += 1;
-          } else if (item.product_category === "legacy_activity") {
-            counts.legacy_activity += 1;
-          } else {
-            counts.reviewed += 1;
-          }
-          return counts;
-        },
-        {
-          animals: 0,
-          other_activity: 0,
-          unchecked: 0,
-          legacy_activity: 0,
-          reviewed: 0,
-        },
-      ),
-    [queueItems],
-  );
+  const productQueueCounts: Record<ProductReviewTab, number> =
+    queuePage?.tab_counts ?? {
+      animals: 0,
+      other_activity: 0,
+      unchecked: 0,
+      legacy_activity: 0,
+      reviewed: 0,
+    };
 
   const pendingProductTabs: ProductReviewTab[] = [
     "animals",
@@ -1567,10 +1440,7 @@ export function ReviewQueuePage({
   ];
   const firstPendingProductTab =
     pendingProductTabs.find((tab) => productQueueCounts[tab] > 0) ?? null;
-  const pendingReviewCount = pendingProductTabs.reduce(
-    (total, tab) => total + productQueueCounts[tab],
-    0,
-  );
+  const pendingReviewCount = queuePage?.pending_review_count ?? 0;
   const productReviewFilters: ReviewFilterOption<ProductReviewTab>[] = [
     { value: "animals", label: "Animals", count: productQueueCounts.animals },
     {
@@ -1593,149 +1463,61 @@ export function ReviewQueuePage({
     { value: "reviewed", label: "Reviewed", count: productQueueCounts.reviewed },
   ];
 
-  const sourceStreamOptions = useMemo(
-    () => sourceStreamFilterOptions(filterMetadataByItemId),
-    [filterMetadataByItemId],
-  );
+  const sourceStreamOptions: SourceStreamFilterOption[] =
+    queuePage?.source_stream_options ?? [];
 
-  const filteredItems = useMemo(
-    () => {
-      const normalizedSearch = textSearch.trim().toLowerCase();
-
-      const matchingItems = queueItems.filter((item) => {
-        if (skippedTargetIds.has(reviewQueueTargetId(item))) {
-          return false;
-        }
-        if (!matchesProductReviewTab(item, productTab, showLegacyAndTestActivity)) {
-          return false;
-        }
-        if (scopedVisitIds && !scopedVisitIds.has(reviewQueueTargetId(item))) {
-          return false;
-        }
-        const metadata = filterMetadataByItemId.get(item.id);
-        if (!metadata) {
-          return false;
-        }
-        if (reviewFilter !== "all" && metadata.triage.category !== reviewFilter) {
-          return false;
-        }
-
-        if (!matchesTargetFilter(item, targetTypeFilter)) {
-          return false;
-        }
-        // Everyday Product / Discovery UX Closure v1: the "Reviewed" tab's
-        // own definition (product_category === "reviewed") already fully
-        // determines review status -- every matching item's review_status
-        // is always "reviewed". The separate Status filter below defaults
-        // to "unreviewed" (a sensible default for the other tabs), so
-        // applying it here too silently ANDed an unsatisfiable condition:
-        // opening the Reviewed tab always showed an empty "No review items
-        // match these filters" with no indication why, since the
-        // conflicting Status control lives in a collapsed panel.
-        if (productTab !== "reviewed" && !matchesStatusFilter(item, reviewStatusFilter)) {
-          return false;
-        }
-        if (!matchesEvidenceFilter(metadata, evidenceFilter)) {
-          return false;
-        }
-        if (!matchesSourceStreamFilter(metadata, sourceStreamFilter)) {
-          return false;
-        }
-        if (
-          normalizedSearch &&
-          !metadata.searchText.includes(normalizedSearch)
-        ) {
-          return false;
-        }
-
-        return true;
-      });
-      if (reviewSort === "newest") {
-        return matchingItems;
-      }
-      return [...matchingItems].sort((first, second) => {
-        const firstTriage = filterMetadataByItemId.get(first.id)?.triage;
-        const secondTriage = filterMetadataByItemId.get(second.id)?.triage;
-        if (!firstTriage || !secondTriage) {
-          return 0;
-        }
-        const rankDelta =
-          reviewTriageSortRank(firstTriage.category) -
-          reviewTriageSortRank(secondTriage.category);
-        if (rankDelta !== 0) {
-          return rankDelta;
-        }
-        return (secondTriage.confidence ?? 0) - (firstTriage.confidence ?? 0);
-      });
-    },
-    [
-      evidenceFilter,
-      filterMetadataByItemId,
-      queueItems,
-      productTab,
-      showLegacyAndTestActivity,
-      skippedTargetIds,
-      reviewFilter,
-      reviewSort,
-      reviewStatusFilter,
-      scopedVisitIds,
-      sourceStreamFilter,
-      targetTypeFilter,
-      textSearch,
-    ],
-  );
-  const reviewPageCount = Math.max(
-    1,
-    Math.ceil(filteredItems.length / PRODUCT_REVIEW_PAGE_SIZE),
-  );
-  const pagedItems = useMemo(
-    () =>
-      filteredItems.slice(
-        reviewPage * PRODUCT_REVIEW_PAGE_SIZE,
-        (reviewPage + 1) * PRODUCT_REVIEW_PAGE_SIZE,
-      ),
-    [filteredItems, reviewPage],
-  );
+  // Review Queue Scale Closure v1: this predicate chain, its order, the
+  // triage sort and the page window all moved to the server so the queue
+  // stops being downloaded to be filtered -- `ProductRepository.
+  // _review_queue_item_matches` and `review_queue_filters` are literal ports
+  // of what used to be here. `matchingItemCount` is the old
+  // `filteredItems.length`; `queueItemCount` the old `queueItems.length`.
+  const matchingItemCount = queuePage?.matching_items ?? 0;
+  const queueItemCount = queuePage?.total_items ?? 0;
+  const reviewPageCount = queuePage?.page_count ?? 1;
+  const eligibleMatchingCount = queuePage?.eligible_matching_items ?? 0;
+  const speciesSuggestionMatchingCount =
+    queuePage?.species_suggestion_matching_items ?? 0;
 
   const selectedItems = useMemo(
     () =>
-      queueItems.filter((item) => selectedTargetIds.includes(reviewQueueTargetId(item))),
-    [queueItems, selectedTargetIds],
+      pagedItems.filter((item) => selectedTargetIds.includes(reviewQueueTargetId(item))),
+    [pagedItems, selectedTargetIds],
   );
 
-  const selectedEligibleItems = useMemo(
-    () => selectedItems.filter(isBulkCorrectionEligible),
-    [selectedItems],
-  );
-
+  // Every id in `selectedTargetIds` was put there from an eligible item --
+  // either a page checkbox (`canSelectForBulk`) or the server's own
+  // `eligible_target_ids` -- and the selection is cleared whenever the tab
+  // or any filter changes, so eligibility is a property of how the
+  // selection is built rather than something to re-derive from a window.
+  // `selectedBulkTargetType` records which kind was selected, because a
+  // "select all eligible" selection can reach past the current page.
   const hasEligibleBulkSelection =
-    selectedTargetIds.length > 0 && selectedEligibleItems.length === selectedTargetIds.length;
+    selectedTargetIds.length > 0 && selectedBulkTargetType !== null;
 
-  const selectedTargetType = selectedItems[0]
-    ? reviewQueueTargetType(selectedItems[0])
-    : null;
+  const selectedTargetType =
+    selectedBulkTargetType ??
+    (selectedItems[0] ? reviewQueueTargetType(selectedItems[0]) : null);
 
   const visibleEligibleItems = useMemo(
-    () => filteredItems.filter(isBulkCorrectionEligible),
-    [filteredItems],
+    () => pagedItems.filter(isBulkCorrectionEligible),
+    [pagedItems],
   );
-
-
 
   const visibleSpeciesSuggestionItems = useMemo(
     () =>
-      filteredItems.filter((item) => isSpeciesSuggestionBatchEligible(item, taxonomyLabels)),
-    [filteredItems, taxonomyLabels],
+      pagedItems.filter((item) => isSpeciesSuggestionBatchEligible(item, taxonomyLabels)),
+    [pagedItems, taxonomyLabels],
   );
 
   const selectedSpeciesSuggestionItems = useMemo(
     () =>
-      filteredItems.filter(
+      pagedItems.filter(
         (item) =>
           isSpeciesSuggestionBatchEligible(item, taxonomyLabels) &&
           selectedSpeciesSuggestionVisitIds.includes(reviewQueueTargetId(item)),
       ),
-    [filteredItems, selectedSpeciesSuggestionVisitIds, taxonomyLabels],
+    [pagedItems, selectedSpeciesSuggestionVisitIds, taxonomyLabels],
   );
 
   const isSpeciesSuggestionBatchRunning = speciesSuggestionBatch?.phase === "running";
@@ -1821,24 +1603,29 @@ export function ReviewQueuePage({
     [taxonomyLabels],
   );
 
+  // These feed label-helper chips, which show at most three distinct values.
+  // The distinct suggested labels across the *whole* matching/eligible set
+  // now come from the server (bounded, see `_review_queue_label_values`), so
+  // the chips are the same ones a full download produced; the identification
+  // labels are still taken from the hydrated cards on this page.
   const visibleSuggestedLabelValues = useMemo(
     () =>
       uniqueLabelValues([
-        ...filteredItems.map((item) => item.suggested_label),
-        ...reviewIdentificationLabelValues(filteredItems),
+        ...(queuePage?.matching_suggested_labels ?? []),
+        ...reviewIdentificationLabelValues(pagedItems),
       ]),
-    [filteredItems],
+    [pagedItems, queuePage],
   );
 
   const bulkSuggestedLabelValues = useMemo(
     () =>
       uniqueLabelValues([
         ...selectedItems.map((item) => item.suggested_label),
-        ...visibleEligibleItems.map((item) => item.suggested_label),
+        ...(queuePage?.eligible_suggested_labels ?? []),
         ...reviewIdentificationLabelValues(selectedItems),
         ...reviewIdentificationLabelValues(visibleEligibleItems),
       ]),
-    [selectedItems, visibleEligibleItems],
+    [queuePage, selectedItems, visibleEligibleItems],
   );
 
   const bulkLabelHelperGroups = useMemo(
@@ -1918,31 +1705,90 @@ export function ReviewQueuePage({
     if (!shouldOpenFocusedFastReview) {
       return;
     }
-    const firstUnresolved = filteredItems.find(
+    const firstUnresolved = pagedItems.find(
       (item) => item.target_type === "visit" && item.review_status === "needs_review",
     );
     if (firstUnresolved) {
       setFastReviewRequest(firstUnresolved);
     }
     setShouldOpenFocusedFastReview(false);
-  }, [filteredItems, shouldOpenFocusedFastReview]);
+  }, [pagedItems, shouldOpenFocusedFastReview]);
+
+  // Review Queue Scale Closure v1: the one place the queue is read. Every
+  // control that used to re-filter a downloaded queue is a dependency here
+  // instead, so changing a tab, a filter or a page is one bounded request.
+  const queuePageQuery = useMemo<ReviewQueuePageQuery>(
+    () => ({
+      tab: productTab,
+      showLegacyAndTestActivity,
+      status: reviewStatusFilter,
+      triage: reviewFilter,
+      evidence: evidenceFilter,
+      target: targetTypeFilter,
+      sourceStream: sourceStreamFilter,
+      search: textSearch.trim(),
+      // The page's own control is labelled "Animals first"; the server calls
+      // that ordering `triage`, which is exactly what it always was.
+      sort: reviewSort === "animals_first" ? "triage" : "newest",
+      page: reviewPage,
+      pageSize: PRODUCT_REVIEW_PAGE_SIZE,
+      scopedTargetIds: scopedVisitIds ? [...scopedVisitIds] : null,
+      skippedTargetIds: [...skippedTargetIds],
+    }),
+    [
+      evidenceFilter,
+      productTab,
+      reviewFilter,
+      reviewPage,
+      reviewSort,
+      reviewStatusFilter,
+      scopedVisitIds,
+      showLegacyAndTestActivity,
+      skippedTargetIds,
+      sourceStreamFilter,
+      targetTypeFilter,
+      textSearch,
+    ],
+  );
+
+  const queuePageQueryRef = useRef(queuePageQuery);
+  queuePageQueryRef.current = queuePageQuery;
+
+  const loadQueuePage = useCallback(
+    async (query: ReviewQueuePageQuery): Promise<ReviewQueuePageResponse | null> => {
+      setIsLoadingQueuePage(true);
+      try {
+        const nextPage = await apiClient.getReviewQueuePage(query);
+        setQueuePage(nextPage);
+        setQueuePageError(null);
+        // The server clamps a page request past the end of the result set;
+        // follow it so the control and the content cannot disagree.
+        if (nextPage.page !== (query.page ?? 0)) {
+          setReviewPage(nextPage.page);
+        }
+        return nextPage;
+      } catch (caught) {
+        setQueuePageError(
+          caught instanceof Error ? caught.message : "Review work could not be loaded.",
+        );
+        return null;
+      } finally {
+        setIsLoadingQueuePage(false);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
-    let isMounted = true;
-    void apiClient
-      .getReviewQueue({ includeReviewed: true })
-      .then((nextItems) => {
-        if (isMounted) {
-          setQueueItems(nextItems);
-        }
-      })
-      .catch(() => {
-        // Keep the initial unresolved snapshot if reviewed-history loading is unavailable.
-      });
-    return () => {
-      isMounted = false;
-    };
-  }, [items]);
+    void loadQueuePage(queuePageQuery);
+  }, [loadQueuePage, queuePageQuery]);
+
+  // One bounded refetch of exactly the current view, for every saved
+  // mutation. Nothing here reloads history.
+  const refreshQueuePage = useCallback(
+    () => loadQueuePage(queuePageQueryRef.current),
+    [loadQueuePage],
+  );
 
   useEffect(() => {
     setReviewPage(0);
@@ -1959,6 +1805,7 @@ export function ReviewQueuePage({
 
   useEffect(() => {
     setSelectedTargetIds([]);
+    setSelectedBulkTargetType(null);
     setSelectedSpeciesSuggestionVisitIds([]);
     setBulkResult(null);
     if (!isSpeciesSuggestionBatchRunning) {
@@ -1967,6 +1814,7 @@ export function ReviewQueuePage({
   }, [
     evidenceFilter,
     isSpeciesSuggestionBatchRunning,
+    productTab,
     reviewFilter,
     reviewStatusFilter,
     sourceStreamFilter,
@@ -1975,26 +1823,13 @@ export function ReviewQueuePage({
   ]);
 
   useEffect(() => {
-    if (!sourceStreamOptions.some((option) => option.value === sourceStreamFilter)) {
+    if (
+      sourceStreamOptions.length > 0 &&
+      !sourceStreamOptions.some((option) => option.value === sourceStreamFilter)
+    ) {
       setSourceStreamFilter("all");
     }
   }, [sourceStreamFilter, sourceStreamOptions]);
-
-  useEffect(() => {
-    const availableTargetIds = new Set(
-      queueItems.filter(isBulkCorrectionEligible).map(reviewQueueTargetId),
-    );
-    setSelectedTargetIds((current) =>
-      current.filter((targetId) => availableTargetIds.has(targetId)),
-    );
-  }, [queueItems]);
-
-  useEffect(() => {
-    const visibleEligibleTargetIds = new Set(visibleEligibleItems.map(reviewQueueTargetId));
-    setSelectedTargetIds((current) =>
-      current.filter((targetId) => visibleEligibleTargetIds.has(targetId)),
-    );
-  }, [visibleEligibleItems]);
 
 
 
@@ -2125,11 +1960,23 @@ export function ReviewQueuePage({
       if (selected) {
         return current.includes(targetId) ? current : [...current, targetId];
       }
-      return current.filter((selectedTargetId) => selectedTargetId !== targetId);
+      const next = current.filter((selectedTargetId) => selectedTargetId !== targetId);
+      if (next.length === 0) {
+        setSelectedBulkTargetType(null);
+      }
+      return next;
     });
+    if (selected) {
+      setSelectedBulkTargetType(reviewQueueTargetType(item));
+    }
   }
 
-  function selectVisibleBulkItems() {
+  // Review Queue Scale Closure v1: "eligible" still means every eligible item
+  // in the *whole* filtered result set, exactly as before -- the count beside
+  // this button is the server's own `eligible_matching_items`. Only the
+  // identifiers are fetched, and only on this one click, so the ordinary
+  // bounded page load stays bounded.
+  async function selectVisibleBulkItems() {
     const targetType =
       selectedTargetType ??
       (targetTypeFilter === "event" || targetTypeFilter === "visit"
@@ -2140,15 +1987,26 @@ export function ReviewQueuePage({
     if (!targetType) {
       return;
     }
-    setSelectedTargetIds(
-      visibleEligibleItems
-        .filter((item) => reviewQueueTargetType(item) === targetType)
-        .map(reviewQueueTargetId),
-    );
+    try {
+      const withIds = await apiClient.getReviewQueuePage({
+        ...queuePageQueryRef.current,
+        target: targetType,
+        includeEligibleTargetIds: true,
+      });
+      setSelectedTargetIds(withIds.eligible_target_ids ?? []);
+      setSelectedBulkTargetType(targetType);
+    } catch (caught) {
+      setMessage(
+        caught instanceof Error
+          ? caught.message
+          : "The eligible review items could not be selected.",
+      );
+    }
   }
 
   function clearBulkSelection() {
     setSelectedTargetIds([]);
+    setSelectedBulkTargetType(null);
     setBulkResult(null);
   }
 
@@ -2341,7 +2199,7 @@ export function ReviewQueuePage({
         : current,
     );
     try {
-      setQueueItems(await apiClient.getReviewQueue({ includeReviewed: true }));
+      await refreshQueuePage();
     } catch {
       // Completed evidence stays durable; a manual refresh can restore this view.
     }
@@ -2430,10 +2288,10 @@ export function ReviewQueuePage({
         notes: bulkDraft.notes.trim() || undefined,
         expected_state_tokens: expectedStateTokens,
       });
-      const refreshedQueue = await apiClient.getReviewQueue({ includeReviewed: true });
-      setQueueItems(refreshedQueue);
+      const refreshedQueue = await refreshQueuePage();
       if (result.succeeded_count > 0) {
         setSelectedTargetIds([]);
+        setSelectedBulkTargetType(null);
         setLastCorrectionSummary({
           correctedTargetIds: result.results
             .filter((item) => item.status === "succeeded")
@@ -2445,7 +2303,7 @@ export function ReviewQueuePage({
           reviewLabelIds: result.results
             .map((item) => item.created_review_label_id)
             .filter((id): id is string => Boolean(id)),
-          remaining: refreshedQueue.filter(isBulkCorrectionEligible).length,
+          remaining: refreshedQueue?.needs_review_items ?? 0,
           skippedCount: result.skipped_count,
           succeededCount: result.succeeded_count,
           targetType: selectedTargetType,
@@ -2568,8 +2426,7 @@ export function ReviewQueuePage({
                 media_asset_id: mediaAssetId ?? undefined,
               })
             ).identification.message;
-      const refreshedQueue = await apiClient.getReviewQueue({ includeReviewed: true });
-      setQueueItems(refreshedQueue);
+      await refreshQueuePage();
       await refreshDetectionEvidence();
       setMessage(message);
     } catch (caught) {
@@ -2593,8 +2450,7 @@ export function ReviewQueuePage({
     setMessage(null);
     try {
       await apiClient.updateSpeciesSuggestionStatus(suggestionId, "rejected");
-      const refreshedQueue = await apiClient.getReviewQueue({ includeReviewed: true });
-      setQueueItems(refreshedQueue);
+      await refreshQueuePage();
       setMessage("Suggestion rejected as evidence. No review truth was created.");
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : "Suggestion could not be rejected.");
@@ -2618,8 +2474,7 @@ export function ReviewQueuePage({
         decision: "reject",
         notes: "Rejected from Review Queue identification assist.",
       });
-      const refreshedQueue = await apiClient.getReviewQueue({ includeReviewed: true });
-      setQueueItems(refreshedQueue);
+      await refreshQueuePage();
       await refreshDetectionEvidence();
       setMessage("Suggestion evidence rejected. No review truth was created.");
     } catch (caught) {
@@ -2642,6 +2497,13 @@ export function ReviewQueuePage({
         }
       />
       {message ? <div className="notice-panel">{message}</div> : null}
+      {queuePageError ? <div className="error-panel">{queuePageError}</div> : null}
+      {/* Review Queue Scale Closure v1: the queue is fetched one bounded page
+          at a time, so a tab, filter or page change is a real request. Say so
+          on the first load, when there is nothing else on screen yet. */}
+      {isLoadingQueuePage && queuePage === null ? (
+        <div className="notice-panel">Loading review work…</div>
+      ) : null}
       {lastCorrectionSummary ? (
         <CorrectionSuccessPanel
           onContinueReview={() => setLastCorrectionSummary(null)}
@@ -2666,7 +2528,7 @@ export function ReviewQueuePage({
           </button>
         </section>
       ) : null}
-      {queueItems.length === 0 ? (
+      {queueItemCount === 0 && !isLoadingQueuePage ? (
         <EmptyState
           title="Nothing to review yet"
           description="When a camera is observing, visits MockingBird is unsure about appear here for you to confirm or correct. If observation is running but nothing appears yet, MockingBird hasn't captured a clear enough moment — that's expected, not an error."
@@ -2679,7 +2541,7 @@ export function ReviewQueuePage({
           }
         />
       ) : null}
-      {queueItems.length > 0 ? (
+      {queueItemCount > 0 ? (
         <section className="review-triage-bar" aria-label="Review groups">
           <div className="review-triage-copy">
             <strong>What needs a look</strong>
@@ -2726,7 +2588,7 @@ export function ReviewQueuePage({
           </details>
         </section>
       ) : null}
-      {queueItems.length > 0 ? (
+      {queueItemCount > 0 ? (
         <details
           className="panel species-review-panel review-secondary-details"
           open={Boolean(readinessHandoffLabel)}
@@ -2734,7 +2596,7 @@ export function ReviewQueuePage({
           <summary>
             <span>Filter review items</span>
             <strong>
-              {filteredItems.length} showing / {queueItems.length} total
+              {matchingItemCount} showing / {queueItemCount} total
             </strong>
           </summary>
           <span className="meta-text">
@@ -2812,9 +2674,9 @@ export function ReviewQueuePage({
           </div>
           <div className="review-filter-summary">
             <strong>
-              Showing {filteredItems.length} of {queueItems.length} review items
+              Showing {matchingItemCount} of {queueItemCount} review items
             </strong>
-            <span>{visibleEligibleItems.length} visible eligible</span>
+            <span>{eligibleMatchingCount} eligible</span>
             <span>{selectedTargetIds.length} selected</span>
           </div>
           <div className="review-active-filter-row">
@@ -2838,8 +2700,8 @@ export function ReviewQueuePage({
       {/* UI/UX & First-Run Adoption v1: shown with the queue itself, not
           below the bulk/batch/history panels -- this is the recovery for
           landing on a group with no waiting work. */}
-      {queueItems.length > 0 &&
-      filteredItems.length === 0 &&
+      {queueItemCount > 0 &&
+      matchingItemCount === 0 &&
       !readinessHandoffLabel &&
       productQueueCounts[productTab] === 0 &&
       productTab !== "reviewed" ? (
@@ -2872,12 +2734,12 @@ export function ReviewQueuePage({
           )
       ) : null}
 
-      {queueItems.length > 0 ? (
+      {queueItemCount > 0 ? (
         <details className="panel review-bulk-panel review-secondary-details">
           <summary>
             <span>Bulk correction</span>
             <strong>
-              {selectedTargetIds.length} selected / {visibleEligibleItems.length} eligible
+              {selectedTargetIds.length} selected / {eligibleMatchingCount} eligible
             </strong>
           </summary>
           <span className="meta-text">
@@ -2914,8 +2776,8 @@ export function ReviewQueuePage({
             <div className="review-bulk-actions">
               <button
                 className="secondary-action"
-                disabled={visibleEligibleItems.length === 0 || isBulkSaving}
-                onClick={selectVisibleBulkItems}
+                disabled={eligibleMatchingCount === 0 || isBulkSaving}
+                onClick={() => void selectVisibleBulkItems()}
                 type="button"
               >
                 Select visible eligible
@@ -2977,7 +2839,7 @@ export function ReviewQueuePage({
         </details>
       ) : null}
 
-      {queueItems.length > 0 ? (
+      {queueItemCount > 0 ? (
         <details
           className="panel review-bulk-panel review-secondary-details"
           open={isSpeciesSuggestionBatchRunning}
@@ -2985,7 +2847,7 @@ export function ReviewQueuePage({
           <summary>
             <span>Batch species suggestions</span>
             <strong>
-              {selectedSpeciesSuggestionVisitIds.length} selected / {visibleSpeciesSuggestionItems.length} visible unresolved Visits
+              {selectedSpeciesSuggestionVisitIds.length} selected / {speciesSuggestionMatchingCount} unresolved Visits
             </strong>
           </summary>
           <span className="meta-text">
@@ -3035,7 +2897,7 @@ export function ReviewQueuePage({
               </button>
             ) : null}
           </div>
-          {visibleSpeciesSuggestionItems.length > MAX_SPECIES_SUGGESTION_BATCH_VISITS ? (
+          {speciesSuggestionMatchingCount > MAX_SPECIES_SUGGESTION_BATCH_VISITS ? (
             <span className="field-helper">
               Select visible chooses the first {MAX_SPECIES_SUGGESTION_BATCH_VISITS} Visits in this filtered order.
             </span>
@@ -3077,13 +2939,18 @@ export function ReviewQueuePage({
       ) : null}
 
       <FastReviewPanel
-        items={filteredItems.filter(
-          (item) => item.target_type === "visit" && item.review_status === "needs_review",
-        )}
+        // Review Queue Scale Closure v1: Fast Review only ever needed an
+        // *ordered target list* plus the one card it is showing -- the
+        // navigation endpoint already returns the next card itself. The
+        // server supplies that list for the active queue view, bounded at
+        // the same 200 targets this panel already capped itself to.
+        targets={queuePage?.fast_review_targets ?? []}
+        scopedStreamId={queuePage?.fast_review_stream_id ?? null}
+        pageItems={pagedItems}
         recentLabelValues={recentLabelValues}
         taxonomyLabelValues={taxonomyLabelValues}
         taxonomyLabels={taxonomyLabels}
-        onQueueItemsChange={setQueueItems}
+        onQueueChanged={refreshQueuePage}
         onReviewChanged={onFastReviewChanged}
         requestedItem={fastReviewRequest}
         onRequestedItemConsumed={() => setFastReviewRequest(null)}
@@ -3757,10 +3624,10 @@ export function ReviewQueuePage({
             </article>
           );
         })}
-        {filteredItems.length > PRODUCT_REVIEW_PAGE_SIZE ? (
+        {matchingItemCount > PRODUCT_REVIEW_PAGE_SIZE ? (
           <div className="detail-actions review-page-controls">
             <span className="meta-text">
-              Page {reviewPage + 1} of {reviewPageCount} · {filteredItems.length} matching Visits
+              Page {reviewPage + 1} of {reviewPageCount} · {matchingItemCount} matching Visits
             </span>
             <button
               className="secondary-action"
@@ -3785,8 +3652,8 @@ export function ReviewQueuePage({
         {/* The group-level recovery above already covers "this group has no
             waiting work"; this one is for filters/search inside a group that
             does. */}
-        {queueItems.length > 0 &&
-        filteredItems.length === 0 &&
+        {queueItemCount > 0 &&
+        matchingItemCount === 0 &&
         (Boolean(readinessHandoffLabel) ||
           productTab === "reviewed" ||
           productQueueCounts[productTab] > 0) ? (
@@ -3982,20 +3849,30 @@ function fastReviewDuration(item: ReviewQueueItem): string {
 }
 
 function FastReviewPanel({
-  items,
+  targets,
+  scopedStreamId,
+  pageItems,
   recentLabelValues,
   taxonomyLabelValues,
   taxonomyLabels,
-  onQueueItemsChange,
+  onQueueChanged,
   onReviewChanged,
   requestedItem,
   onRequestedItemConsumed,
 }: {
-  items: ReviewQueueItem[];
+  // Review Queue Scale Closure v1: the bounded ordered target list for the
+  // active queue view (server-supplied, same 200-target ceiling this panel
+  // already applied itself), the Stream it is scoped to when it is scoped to
+  // one, and the review cards currently on the Review Queue page -- which is
+  // where a session starts from. Every card after the first comes from
+  // `navigateFastReviewQueue`, which returns it.
+  targets: FastReviewQueueTarget[];
+  scopedStreamId: string | null;
+  pageItems: ReviewQueueItem[];
   recentLabelValues: string[];
   taxonomyLabelValues: string[];
   taxonomyLabels: TaxonomyLabel[];
-  onQueueItemsChange: (items: ReviewQueueItem[]) => void;
+  onQueueChanged: () => Promise<unknown>;
   onReviewChanged: () => Promise<void>;
   requestedItem: ReviewQueueItem | null;
   onRequestedItemConsumed: () => void;
@@ -4006,6 +3883,7 @@ function FastReviewPanel({
   const [draftNotes, setDraftNotes] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [isNavigating, setIsNavigating] = useState(false);
+  const [isStartingSession, setIsStartingSession] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [processedCount, setProcessedCount] = useState(0);
   const [undoState, setUndoState] = useState<FastReviewUndoState | null>(null);
@@ -4051,19 +3929,11 @@ function FastReviewPanel({
 
   // Navigation accepts a bounded snapshot rather than the full queue. Its order is
   // exactly the active Review Queue order, so filters and Stream scoping are retained.
-  const boundedItems = useMemo(() => items.slice(0, 200), [items]);
-  const orderedTargets = useMemo(
-    () =>
-      boundedItems.map((item) => ({
-        target_type: "visit" as const,
-        target_id: reviewQueueTargetId(item),
-      })),
-    [boundedItems],
+  const orderedTargets = targets;
+  const targetIds = useMemo(
+    () => new Set(targets.map((target) => target.target_id)),
+    [targets],
   );
-  const scopedStreamId = useMemo(() => {
-    const streamIds = new Set(boundedItems.map((item) => item.stream_id));
-    return streamIds.size === 1 ? boundedItems[0]?.stream_id ?? null : null;
-  }, [boundedItems]);
   const suggestedLabels = useMemo(
     () =>
       uniqueLabelValues(
@@ -4096,16 +3966,70 @@ function FastReviewPanel({
     if (!activeItem) {
       return;
     }
-    const refreshed = items.find(
-      (item) => reviewQueueTargetId(item) === reviewQueueTargetId(activeItem),
+    const activeTargetId = reviewQueueTargetId(activeItem);
+    // A card that is still in the active queue view but has been re-fetched
+    // on this page picks up the fresh copy; one that has left the view
+    // closes the session exactly as before. `targets` is the authority for
+    // "is this still in the queue I am reviewing", because a session walks
+    // past the page the user started from.
+    const refreshedOnPage = pageItems.find(
+      (item) => reviewQueueTargetId(item) === activeTargetId,
     );
-    if (refreshed) {
-      setActiveItem(refreshed);
-    } else if (isOpen && !isSaving && !isNavigating) {
+    if (refreshedOnPage) {
+      setActiveItem(refreshedOnPage);
+      return;
+    }
+    if (targetIds.has(activeTargetId)) {
+      return;
+    }
+    if (isOpen && !isSaving && !isNavigating) {
       setActiveItem(null);
       setMessage("Filters changed. Reopen Fast Review to continue within the new queue.");
     }
-  }, [activeItem, isNavigating, isOpen, isSaving, items]);
+  }, [activeItem, isNavigating, isOpen, isSaving, pageItems, targetIds]);
+
+  // Review Queue Scale Closure v1: starting a session resolves the first
+  // target's card through the same navigation endpoint every later card
+  // comes from, instead of reading it out of a downloaded queue. The Review
+  // Queue page's own first page usually already holds it, so that copy is
+  // preferred and no request is needed at all in the common case.
+  async function startSession() {
+    const first = orderedTargets[0];
+    if (!first || isStartingSession) {
+      return;
+    }
+    const alreadyLoaded = pageItems.find(
+      (item) => reviewQueueTargetId(item) === first.target_id,
+    );
+    if (alreadyLoaded) {
+      selectItem(alreadyLoaded);
+      return;
+    }
+    setIsStartingSession(true);
+    try {
+      const response = await apiClient.navigateFastReviewQueue({
+        ordered_targets: orderedTargets,
+        current_target: null,
+        direction: "next",
+        stream_id: scopedStreamId,
+      });
+      if (response.item) {
+        selectItem(response.item);
+      } else {
+        setIsOpen(true);
+        setActiveItem(null);
+        setMessage(response.message);
+      }
+    } catch (caught) {
+      setIsOpen(true);
+      setActiveItem(null);
+      setMessage(
+        caught instanceof Error ? caught.message : "Fast Review could not be started.",
+      );
+    } finally {
+      setIsStartingSession(false);
+    }
+  }
 
   function selectItem(item: ReviewQueueItem) {
     setActiveItem(item);
@@ -4120,18 +4044,17 @@ function FastReviewPanel({
     if (!requestedItem) {
       return;
     }
-    const matchingItem = items.find((item) => item.id === requestedItem.id);
-    if (matchingItem) {
-      selectItem(matchingItem);
-    }
+    // The request already carries the fully hydrated card the user clicked.
+    selectItem(requestedItem);
     onRequestedItemConsumed();
-  }, [items, onRequestedItemConsumed, requestedItem]);
+  }, [onRequestedItemConsumed, requestedItem]);
 
-  async function refreshProductState(): Promise<ReviewQueueItem[]> {
-    const refreshed = await apiClient.getReviewQueue({ includeReviewed: true });
-    onQueueItemsChange(refreshed);
+  async function refreshProductState(): Promise<void> {
+    // One bounded refetch of the Review Queue's current page and counts --
+    // never the whole history, which is what this used to do after every
+    // single Fast Review correction.
+    await onQueueChanged();
     await onReviewChanged();
-    return refreshed;
   }
 
   async function navigate(direction: "next" | "previous", current = activeItem) {
@@ -4230,10 +4153,20 @@ function FastReviewPanel({
         idempotency_key: createFastReviewKey("fast-review-undo"),
         expected_state_token: undoState.stateToken,
       });
-      const refreshed = await refreshProductState();
-      const restored = refreshed.find(
-        (item) => item.target_type === "visit" && reviewQueueTargetId(item) === undoState.targetId,
-      );
+      await refreshProductState();
+      // Re-resolve exactly the restored Visit through the same navigation
+      // endpoint the rest of this panel uses: asked for one target with no
+      // current position, it returns that target's own card if it is
+      // unresolved, which is precisely what an undo restores it to.
+      const restored = await apiClient
+        .navigateFastReviewQueue({
+          ordered_targets: [{ target_type: "visit", target_id: undoState.targetId }],
+          current_target: null,
+          direction: "next",
+          stream_id: null,
+        })
+        .then((response) => response.item)
+        .catch(() => null);
       if (restored) {
         setActiveItem(restored);
         setDraftLabel("");
@@ -4335,11 +4268,21 @@ function FastReviewPanel({
       );
       setIdentificationAssistant(result);
       setMessage(result.message);
-      const refreshed = await apiClient.getReviewQueue({ includeReviewed: true });
-      onQueueItemsChange(refreshed);
-      const refreshedActive = refreshed.find(
-        (item) => reviewQueueTargetId(item) === reviewQueueTargetId(activeItem),
-      );
+      // Bounded refetch of the Review Queue's current page and counts, then
+      // re-resolve just this Visit's own card through the navigation
+      // endpoint (see `undoLastCorrection` for the same pattern).
+      await onQueueChanged();
+      const refreshedActive = await apiClient
+        .navigateFastReviewQueue({
+          ordered_targets: [
+            { target_type: "visit", target_id: reviewQueueTargetId(activeItem) },
+          ],
+          current_target: null,
+          direction: "next",
+          stream_id: null,
+        })
+        .then((response) => response.item)
+        .catch(() => null);
       if (refreshedActive) {
         setActiveItem(refreshedActive);
       }
@@ -4443,7 +4386,7 @@ function FastReviewPanel({
   // the last visible item previously made Fast Review disappear with no
   // acknowledgment at all, stranding focus on `document.body` a second way
   // (see `completeHeadingRef`, above) instead of confirming the save.
-  if (items.length === 0 && !isOpen) {
+  if (targets.length === 0 && !isOpen) {
     return null;
   }
 
@@ -4457,12 +4400,17 @@ function FastReviewPanel({
             Review one unresolved Visit at a time with evidence, explicit correction actions,
             and save-and-next. The current queue filters stay in effect.
           </p>
-          {items.length > 200 ? (
+          {targets.length >= 200 ? (
             <span className="meta-text">Fast Review uses the first 200 matching Visits at a time.</span>
           ) : null}
         </div>
-        <button className="primary-action" onClick={() => selectItem(boundedItems[0])} type="button">
-          Start Fast Review ({Math.min(items.length, 200)})
+        <button
+          className="primary-action"
+          disabled={isStartingSession || targets.length === 0}
+          onClick={() => void startSession()}
+          type="button"
+        >
+          Start Fast Review ({targets.length})
         </button>
       </section>
     );
@@ -4490,8 +4438,8 @@ function FastReviewPanel({
           <span className="eyebrow">Fast Review</span>
           <h2 ref={activeItemHeadingRef} tabIndex={-1}>{activeItem.title}</h2>
           <p>
-            {processedCount} reviewed this session · {Math.min(boundedItems.length, 200)} matching
-            unresolved Visit{boundedItems.length === 1 ? "" : "s"}
+            {processedCount} reviewed this session · {targets.length} matching
+            unresolved Visit{targets.length === 1 ? "" : "s"}
           </p>
         </div>
         <div className="detail-actions">
@@ -4556,7 +4504,12 @@ function FastReviewPanel({
         </div>
         <div className="data-row">
           <span>Queue progress</span>
-          <strong>{boundedItems.findIndex((item) => item.id === activeItem.id) + 1} / {boundedItems.length}</strong>
+          <strong>
+            {orderedTargets.findIndex(
+              (target) => target.target_id === reviewQueueTargetId(activeItem),
+            ) + 1}{" "}
+            / {orderedTargets.length}
+          </strong>
           <small>Current active filters only</small>
         </div>
       </div>

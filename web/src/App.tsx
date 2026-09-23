@@ -13,6 +13,7 @@ import type {
   ProductAlertAction,
   ReviewCorrectionResult,
   ReviewQueueItem,
+  ReviewQueueSummary,
   SetupState,
   SpeciesSuggestion,
   Stream,
@@ -70,7 +71,12 @@ interface AppData {
   health: HealthStatus | null;
   sources: CameraSource[];
   streams: Stream[];
-  reviewQueue: ReviewQueueItem[];
+  // Review Queue Scale Closure v1: the app shell used to load the *entire*
+  // review queue here on every page load -- 1,094 items / 7.9 MB / 5.07 s at
+  // an ordinary established-install size -- only to derive per-Stream "N
+  // needs review" counts for the Streams surfaces. Those counts are now
+  // integers the server computes over the whole queue.
+  reviewQueueSummary: ReviewQueueSummary | null;
   exports: DatasetExport[];
   analytics: AnalyticsSummary | null;
   datasetCoverage: DatasetCoverageSummary | null;
@@ -90,7 +96,7 @@ const initialData: AppData = {
   health: null,
   sources: [],
   streams: [],
-  reviewQueue: [],
+  reviewQueueSummary: null,
   exports: [],
   analytics: null,
   datasetCoverage: null,
@@ -318,7 +324,7 @@ export default function App() {
         healthResult,
         sourcesResult,
         streamsResult,
-        reviewQueueResult,
+        reviewQueueSummaryResult,
         exportsResult,
         analyticsResult,
         datasetCoverageResult,
@@ -328,7 +334,7 @@ export default function App() {
         apiClient.getHealth(),
         apiClient.getSources(),
         apiClient.getStreams(),
-        apiClient.getReviewQueue(),
+        apiClient.getReviewQueueSummary(),
         apiClient.getDatasetExports(),
         apiClient.getAnalyticsSummary(),
         apiClient.getDatasetCoverageSummary(),
@@ -352,7 +358,7 @@ export default function App() {
       }
 
       const optionalResults: Array<[string, PromiseSettledResult<unknown>]> = [
-        ["Review activity", reviewQueueResult],
+        ["Review activity", reviewQueueSummaryResult],
         ["Exports", exportsResult],
         ["Analytics", analyticsResult],
         ["Dataset coverage", datasetCoverageResult],
@@ -369,10 +375,10 @@ export default function App() {
         health: healthResult.value,
         sources: sourcesResult.value,
         streams: streamsResult.value,
-        reviewQueue:
-          reviewQueueResult.status === "fulfilled"
-            ? reviewQueueResult.value
-            : data.reviewQueue,
+        reviewQueueSummary:
+          reviewQueueSummaryResult.status === "fulfilled"
+            ? reviewQueueSummaryResult.value
+            : data.reviewQueueSummary,
         exports: exportsResult.status === "fulfilled" ? exportsResult.value : data.exports,
         analytics:
           analyticsResult.status === "fulfilled" ? analyticsResult.value : data.analytics,
@@ -770,7 +776,7 @@ export default function App() {
         <StreamsPage
           streams={data.streams}
           sources={data.sources}
-          reviewQueue={data.reviewQueue}
+          needsReviewByStream={data.reviewQueueSummary?.needs_review_by_stream ?? {}}
           datasetExports={data.exports}
           onOpenImport={() => setPage("import")}
           onOpenStream={openStream}
@@ -968,7 +974,7 @@ export default function App() {
       return (
         <StreamDetailPage
           streamId={selectedStream.id}
-          reviewQueue={data.reviewQueue}
+          needsReviewByStream={data.reviewQueueSummary?.needs_review_by_stream ?? {}}
           onOpenEvent={openEvent}
           onOpenVisit={openVisit}
           onOpenActivity={() => setPage("activity-library")}
@@ -1033,7 +1039,6 @@ export default function App() {
     if (page === "review") {
       return (
         <ReviewQueuePage
-          items={data.reviewQueue}
           initialContext={reviewQueueInitialContext}
           onCreateCorrection={createCorrection}
           onFastReviewChanged={() => loadAppData({ showLoading: false })}

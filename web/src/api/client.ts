@@ -199,6 +199,9 @@ import type {
   ReviewQueueBulkCorrectionRequest,
   ReviewQueueBulkCorrectionResponse,
   ReviewQueueItem,
+  ReviewQueuePage,
+  ReviewQueuePageQuery,
+  ReviewQueueSummary,
   ReviewQueueSpeciesSuggestionBatchPrepareRequest,
   ReviewQueueSpeciesSuggestionBatchPrepareResponse,
   AcousticAnalysisRun,
@@ -1324,6 +1327,46 @@ export const apiClient = {
     request<ReviewQueueItem[]>(
       `/api/review-queue${options.includeReviewed ? "?include_reviewed=true" : ""}`,
     ),
+  // Review Queue Scale Closure v1: the product-facing Review Queue read.
+  // Bounded by `pageSize`; the counts it returns describe the whole visible
+  // queue, so nothing on the page has to download the queue to be accurate.
+  getReviewQueuePage: (query: ReviewQueuePageQuery = {}) => {
+    const params = new URLSearchParams();
+    const set = (key: string, value: string | number | boolean | undefined) => {
+      if (value !== undefined) {
+        params.set(key, String(value));
+      }
+    };
+    set("tab", query.tab);
+    set("show_legacy_and_test_activity", query.showLegacyAndTestActivity);
+    set("status", query.status);
+    set("triage", query.triage);
+    set("evidence", query.evidence);
+    set("target", query.target);
+    set("source_stream", query.sourceStream);
+    set("search", query.search);
+    set("sort", query.sort);
+    set("page", query.page);
+    set("page_size", query.pageSize);
+    if (query.streamId) {
+      params.set("stream_id", query.streamId);
+    }
+    for (const targetId of query.scopedTargetIds ?? []) {
+      params.append("scoped_target_ids", targetId);
+    }
+    for (const targetId of query.skippedTargetIds ?? []) {
+      params.append("skipped_target_ids", targetId);
+    }
+    if (query.includeEligibleTargetIds) {
+      params.set("include_eligible_target_ids", "true");
+    }
+    const suffix = params.toString();
+    return request<ReviewQueuePage>(
+      `/api/review-queue/page${suffix ? `?${suffix}` : ""}`,
+    );
+  },
+  getReviewQueueSummary: () =>
+    request<ReviewQueueSummary>("/api/review-queue/summary"),
   getReviewLabels: () => request<ReviewLabel[]>("/api/review-labels"),
   searchActivityLibrary: (payload: ActivityLibrarySearchRequest) =>
     request<ActivityLibrarySearchResponse>("/api/activity-library/search", {

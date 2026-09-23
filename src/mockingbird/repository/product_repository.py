@@ -28710,6 +28710,9 @@ class ProductRepository:
                 matching_items=len(matching),
                 eligible_matching_items=len(eligible),
                 species_suggestion_matching_items=len(suggestion_eligible),
+                needs_review_items=sum(
+                    1 for item in visible if is_bulk_correction_eligible(item)
+                ),
                 pending_review_count=_review_queue_pending_count(
                     scope.tab_counts, request.show_legacy_and_test_activity
                 ),
@@ -29509,9 +29512,15 @@ class ProductRepository:
         """
 
         with self.session_factory() as session:
+            # Review Queue Scale Closure v1: membership and Stream identity
+            # are all this navigation decision reads from the queue, and it
+            # runs after every Fast Review correction. Classify the backlog
+            # (cheap) and hydrate only the one Visit actually returned,
+            # instead of building a full review card for every unresolved
+            # item to answer "which one is next".
             current_queue = {
                 (item.target_type, item.target_id): item
-                for item in self._review_queue_items(session)
+                for item in self._review_queue_items(session, include_detail=False)
             }
             ordered_keys: list[tuple[str, str]] = []
             seen_keys: set[tuple[str, str]] = set()
@@ -29558,8 +29567,11 @@ class ProductRepository:
                     message=message,
                 )
 
+            hydrated = self._review_queue_hydrated_window(
+                session, [current_queue[next_key]]
+            )
             return FastReviewQueueNavigationResponse(
-                item=current_queue[next_key],
+                item=hydrated[0],
                 position=unresolved_keys.index(next_key) + 1,
                 unresolved_count=len(unresolved_keys),
                 message="Next unresolved Visit selected from the current filtered queue.",

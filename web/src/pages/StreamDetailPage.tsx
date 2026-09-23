@@ -47,7 +47,11 @@ const STREAM_REVIEW_PREVIEW_COUNT = 5;
 
 interface StreamDetailPageProps {
   streamId: string;
-  reviewQueue: ReviewQueueItem[];
+  // Review Queue Scale Closure v1: per-Stream "N needs review" from
+  // `GET /api/review-queue/summary`, computed over the whole queue by the
+  // server. The short preview list below comes from its own bounded,
+  // Stream-scoped page request rather than from a full queue download.
+  needsReviewByStream: Record<string, number>;
   onOpenEvent: (eventId: string) => void;
   onOpenVisit: (visitId: string) => void;
   onOpenActivity: () => void;
@@ -607,7 +611,7 @@ function rectanglePolygon(start: Point, end: Point): Point[] {
 
 export function StreamDetailPage({
   streamId,
-  reviewQueue,
+  needsReviewByStream,
   onOpenEvent,
   onOpenVisit,
   onOpenActivity,
@@ -620,6 +624,11 @@ export function StreamDetailPage({
   onReviewActivityCreated,
 }: StreamDetailPageProps) {
   const [detail, setDetail] = useState<StreamDetailState | null>(null);
+  // Review Queue Scale Closure v1: a bounded, Stream-scoped page just for
+  // this side panel's short preview -- `STREAM_REVIEW_PREVIEW_COUNT` cards,
+  // never the whole queue. The "+N more waiting" number beside it comes from
+  // the server's own whole-queue per-Stream count.
+  const [streamReviewPreview, setStreamReviewPreview] = useState<ReviewQueueItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   // Whole-Product Polish v1: "Stream events" below used to render every
@@ -1028,6 +1037,17 @@ export function StreamDetailPage({
           apiClient.listSpeciesCandidatePacks(false),
           apiClient.getStreamSpeciesCandidatePackSelection(streamId),
         ]);
+        // Review Queue Scale Closure v1: bounded and Stream-scoped, for the
+        // short "needs review" preview panel only.
+        const reviewPreview = await apiClient
+          .getReviewQueuePage({
+            tab: "all",
+            status: "unreviewed",
+            streamId,
+            pageSize: STREAM_REVIEW_PREVIEW_COUNT,
+          })
+          .then((page) => page.items)
+          .catch(() => [] as ReviewQueueItem[]);
         const visitPairs = await Promise.all(
           events.map(async (event) => [event.id, await apiClient.getEventVisits(event.id)] as const),
         );
@@ -1041,6 +1061,7 @@ export function StreamDetailPage({
             visitsByEvent: Object.fromEntries(visitPairs),
             recentVisits,
           });
+          setStreamReviewPreview(reviewPreview);
           setSourceProviderConfig(providerConfiguration);
           setCameraTuningDraft(cameraTuningDraftFromConfig(providerConfiguration));
           setCandidatePacks(nextCandidatePacks);
@@ -2062,7 +2083,7 @@ export function StreamDetailPage({
     return <div className="error-panel">{error ?? "Stream detail is unavailable."}</div>;
   }
 
-  const streamReviewItems = reviewQueue.filter((item) => item.stream_id === detail.stream.id);
+  const streamReviewItems = streamReviewPreview;
   const isManualMediaStream =
     detail.setupReview?.provider_key === "manual_media" &&
     detail.setupReview.readiness_level === "metadata_ready";
@@ -2187,7 +2208,11 @@ export function StreamDetailPage({
   const hasLocalLiveReviewQueueItem = Boolean(
     liveReviewQueueItemId && !streamReviewItems.some((item) => item.id === liveReviewQueueItemId),
   );
-  const streamReviewCount = streamReviewItems.length + (hasLocalLiveReviewQueueItem ? 1 : 0);
+  // The count is the server's own whole-queue number for this Stream; only
+  // the preview list below is bounded. A live candidate created moments ago
+  // in this session is newest-first, so it is inside the preview window.
+  const streamReviewTotal = needsReviewByStream[detail.stream.id] ?? 0;
+  const streamReviewCount = streamReviewTotal + (hasLocalLiveReviewQueueItem ? 1 : 0);
   const canCreateLiveReviewActivity = Boolean(
     liveMotionResult?.activity_detected &&
       liveMotionResult.review_activity_available &&
@@ -4514,9 +4539,9 @@ export function StreamDetailPage({
                     <span>{item.reason}</span>
                   </div>
                 ))}
-                {streamReviewItems.length > STREAM_REVIEW_PREVIEW_COUNT ? (
+                {streamReviewTotal > STREAM_REVIEW_PREVIEW_COUNT ? (
                   <span className="meta-text">
-                    +{streamReviewItems.length - STREAM_REVIEW_PREVIEW_COUNT} more waiting
+                    +{streamReviewTotal - STREAM_REVIEW_PREVIEW_COUNT} more waiting
                   </span>
                 ) : null}
                 <button className="secondary-action" onClick={() => onOpenReview()}>

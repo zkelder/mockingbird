@@ -4270,6 +4270,10 @@ class ReviewQueuePage(BaseModel):
     matching_items: int = Field(ge=0)
     eligible_matching_items: int = Field(ge=0)
     species_suggestion_matching_items: int = Field(ge=0)
+    # Every visible member still awaiting review, regardless of tab or
+    # filter -- the "N still need review" the bulk-correction summary
+    # reports after a save.
+    needs_review_items: int = Field(ge=0)
     pending_review_count: int = Field(ge=0)
     tab_counts: ReviewQueueTabCounts
     triage_counts: ReviewQueueTriageCounts
