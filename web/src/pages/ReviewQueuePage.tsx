@@ -902,6 +902,14 @@ function reviewTargetKey(targetType: string, targetId: string): string {
   return `${targetType}:${targetId}`;
 }
 
+/**
+ * Remaining Performance P1 Closure v1 (P1-8): the cap on detection evidence
+ * read for one page of review work. A page holds at most 100 items and a
+ * queue item rarely has more than a handful of proposals, so this is a
+ * safety bound, not the working size.
+ */
+const DETECTION_EVIDENCE_WINDOW = 500;
+
 function proposalRelationForReviewItem(
   item: ReviewQueueItem,
   proposal: DetectionProposal,
@@ -1904,19 +1912,76 @@ export function ReviewQueuePage({
     };
   }, []);
 
+  // Remaining Performance P1 Closure v1 (P1-8): detection evidence is read
+  // for the *page* of review work on screen, not for the whole history.
+  //
+  // Review Queue Scale Closure v1 already reduced this page to one bounded
+  // page of items, and `filterMetadataByItemId` below is built over
+  // `pagedItems` alone -- but the proposals and runs feeding it were still
+  // fetched whole (2,811 rows each, 1.94 MB combined, at the accepted
+  // Profile B workload) and filtered in the browser. The scope below is
+  // exactly the relation the browser was computing: a proposal belongs to a
+  // queue item by Visit, by Event, or by MediaAsset.
+  const pagedScopeKey = pagedItems
+    .map((item) =>
+      [
+        item.visit_id ?? "",
+        item.event_id ?? "",
+        item.best_media_asset_id ?? "",
+        item.media_asset?.id ?? "",
+      ].join(":"),
+    )
+    .join("|");
+
   useEffect(() => {
     let isMounted = true;
 
     async function loadDetectionEvidence() {
+      const visitIds = pagedItems
+        .map((item) => item.visit_id)
+        .filter((id): id is string => Boolean(id));
+      const eventIds = pagedItems
+        .map((item) => item.event_id)
+        .filter((id): id is string => Boolean(id));
+      const mediaAssetIds = pagedItems
+        .flatMap((item) => [item.best_media_asset_id, item.media_asset?.id])
+        .filter((id): id is string => Boolean(id));
+
       try {
-        const [nextProposals, nextRuns, nextMotionEvidence] = await Promise.all([
-          apiClient.getDetectionProposals(),
-          apiClient.getDetectionRuns(),
-          apiClient.listMotionEvidence({ status: "all" }),
+        // Motion evidence is read whole here exactly as before; it is not
+        // in this milestone's scope.
+        const motionEvidencePromise = apiClient.listMotionEvidence({ status: "all" });
+
+        if (visitIds.length === 0 && eventIds.length === 0 && mediaAssetIds.length === 0) {
+          const nextMotionEvidence = await motionEvidencePromise;
+          if (isMounted) {
+            setDetectionProposals([]);
+            setDetectionRuns([]);
+            setMotionEvidence(nextMotionEvidence.motion_evidence);
+          }
+          return;
+        }
+
+        const proposalPage = await apiClient.getDetectionProposalPage({
+          visit_ids: visitIds,
+          event_ids: eventIds,
+          media_asset_ids: mediaAssetIds,
+          limit: DETECTION_EVIDENCE_WINDOW,
+        });
+        // Two-pass: the runs this page needs are the ones behind those
+        // proposals, plus any run proving a page item's media was analysed
+        // at all (`reviewTriageSummary`'s `hasAnalyzerRun`).
+        const [runPage, nextMotionEvidence] = await Promise.all([
+          apiClient.getDetectionRunPage({
+            ids: proposalPage.items.map((proposal) => proposal.run_id),
+            media_asset_ids: mediaAssetIds,
+            limit: DETECTION_EVIDENCE_WINDOW,
+          }),
+          motionEvidencePromise,
         ]);
         if (isMounted) {
-          setDetectionProposals(nextProposals);
-          setDetectionRuns(nextRuns);
+          setDetectionProposals(proposalPage.items);
+          setDetectionRuns(runPage.items);
           setMotionEvidence(nextMotionEvidence.motion_evidence);
         }
       } catch {
@@ -1933,7 +1998,10 @@ export function ReviewQueuePage({
     return () => {
       isMounted = false;
     };
-  }, []);
+    // `pagedScopeKey` is the stable identity of the page's scope;
+    // `pagedItems` itself is a fresh array on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pagedScopeKey]);
 
   useEffect(() => {
     let isMounted = true;
@@ -1967,13 +2035,41 @@ export function ReviewQueuePage({
   }
 
   async function refreshDetectionEvidence() {
-    const [nextProposals, nextRuns, nextMotionEvidence] = await Promise.all([
-      apiClient.getDetectionProposals(),
-      apiClient.getDetectionRuns(),
-      apiClient.listMotionEvidence({ status: "all" }),
+    // Same page-scoped read as the effect above, after a saved correction.
+    const visitIds = pagedItems
+      .map((item) => item.visit_id)
+      .filter((id): id is string => Boolean(id));
+    const eventIds = pagedItems
+      .map((item) => item.event_id)
+      .filter((id): id is string => Boolean(id));
+    const mediaAssetIds = pagedItems
+      .flatMap((item) => [item.best_media_asset_id, item.media_asset?.id])
+      .filter((id): id is string => Boolean(id));
+
+    const motionEvidencePromise = apiClient.listMotionEvidence({ status: "all" });
+    if (visitIds.length === 0 && eventIds.length === 0 && mediaAssetIds.length === 0) {
+      setDetectionProposals([]);
+      setDetectionRuns([]);
+      setMotionEvidence((await motionEvidencePromise).motion_evidence);
+      return;
+    }
+
+    const proposalPage = await apiClient.getDetectionProposalPage({
+      visit_ids: visitIds,
+      event_ids: eventIds,
+      media_asset_ids: mediaAssetIds,
+      limit: DETECTION_EVIDENCE_WINDOW,
+    });
+    const [runPage, nextMotionEvidence] = await Promise.all([
+      apiClient.getDetectionRunPage({
+        ids: proposalPage.items.map((proposal) => proposal.run_id),
+        media_asset_ids: mediaAssetIds,
+        limit: DETECTION_EVIDENCE_WINDOW,
+      }),
+      motionEvidencePromise,
     ]);
-    setDetectionProposals(nextProposals);
-    setDetectionRuns(nextRuns);
+    setDetectionProposals(proposalPage.items);
+    setDetectionRuns(runPage.items);
     setMotionEvidence(nextMotionEvidence.motion_evidence);
   }
 

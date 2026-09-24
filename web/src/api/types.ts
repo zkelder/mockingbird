@@ -1844,6 +1844,23 @@ export interface MediaAsset {
   audio_channel_count?: number | null;
 }
 
+/**
+ * One bounded window of MediaAssets plus whole-library count truth.
+ * Remaining Performance P1 Closure v1 (P1-7).
+ *
+ * `total_count` and `image_count` describe every asset matching the active
+ * filter, not just `items`, so a page that labels a number a total can keep
+ * doing so while holding one window.
+ */
+export interface MediaAssetPage {
+  items: MediaAsset[];
+  limit: number;
+  offset: number;
+  total_count: number;
+  image_count: number;
+  has_more: boolean;
+}
+
 export interface VisitEvidenceFrame {
   media_asset_id: string;
   preview_url: string;
@@ -2454,6 +2471,36 @@ export interface DetectionProposal {
   notes?: string | null;
   created_at: string;
   decided_at?: string | null;
+}
+
+/**
+ * One bounded window of DetectionProposals plus the whole-set count.
+ * Remaining Performance P1 Closure v1 (P1-8).
+ */
+export interface DetectionProposalPage {
+  items: DetectionProposal[];
+  limit: number;
+  offset: number;
+  /** Every proposal matching the active scope and status filter. */
+  total_count: number;
+  has_more: boolean;
+  /**
+   * One count per status over the active scope, ignoring the status filter
+   * itself -- what the Detection Proposals page prints on its filter chips.
+   */
+  status_counts: Record<string, number>;
+}
+
+/**
+ * One bounded window of DetectionRuns plus the whole-set count.
+ * Remaining Performance P1 Closure v1 (P1-8).
+ */
+export interface DetectionRunPage {
+  items: DetectionRun[];
+  limit: number;
+  offset: number;
+  total_count: number;
+  has_more: boolean;
 }
 
 export interface DetectionProposalCreate {
@@ -3078,6 +3125,14 @@ export interface MockSpeciesSuggestionRequest {
 
 export interface SpeciesSuggestionListResponse {
   species_suggestions: SpeciesSuggestion[];
+  /**
+   * Remaining Performance P1 Closure v1 (P1-8): every suggestion matching
+   * the active filter, not just the bounded window in
+   * `species_suggestions`. Optional because the per-Visit callers do not
+   * request a window.
+   */
+  total_count?: number | null;
+  has_more?: boolean;
 }
 
 export interface SpeciesSuggestionStatusUpdateRequest {

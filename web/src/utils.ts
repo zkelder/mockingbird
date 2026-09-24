@@ -362,3 +362,28 @@ export function formatBytes(value: number): string {
   }
   return `${amount >= 10 ? amount.toFixed(0) : amount.toFixed(1)} ${units[unitIndex]}`;
 }
+
+/**
+ * Merge a bounded MediaAsset picker window with separately-hydrated assets.
+ *
+ * Remaining Performance P1 Closure v1 (P1-7). Pages that used to hold the
+ * whole MediaAsset library now read two bounded sets -- a recent window for
+ * their picker, and exactly the assets their already-bounded list
+ * references. This joins the two into the single newest-first list those
+ * pages previously derived from the library, de-duplicated by id.
+ */
+export function mergeMediaAssets<T extends { id: string; created_at: string }>(
+  ...groups: T[][]
+): T[] {
+  const byId = new Map<string, T>();
+  for (const group of groups) {
+    for (const asset of group) {
+      if (!byId.has(asset.id)) {
+        byId.set(asset.id, asset);
+      }
+    }
+  }
+  return [...byId.values()].sort(
+    (first, second) => Date.parse(second.created_at) - Date.parse(first.created_at),
+  );
+}

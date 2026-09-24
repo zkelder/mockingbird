@@ -342,15 +342,38 @@ function supportsFrameCapture(status?: StreamPlaybackStatus | null): boolean {
   return isLocalCameraBridgePlayback(status) || isWindowsDshowBridgePlayback(status);
 }
 
-function streamImageMediaAssets(mediaAssets: MediaAsset[], streamId: string): MediaAsset[] {
-  return mediaAssets
-    .filter(
-      (asset) =>
-        asset.stream_id === streamId &&
-        (asset.media_type === "image" || asset.content_type.startsWith("image/")),
-    )
-    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+/**
+ * Read this Stream's saved images, newest first.
+ *
+ * Remaining Performance P1 Closure v1 (P1-7). This used to download every
+ * MediaAsset in the library -- 11,244 rows / 11.9 MB at the accepted
+ * Profile B workload -- and then filter it in the browser, twice per visit
+ * to this page. The predicate (this Stream, and a declared image *or* an
+ * image content type) and the newest-first sort are now the server's
+ * `stream_id` + `image_only` + `newest_first`, so the work scales with
+ * this Stream's recent images rather than the whole library.
+ *
+ * `total_count` is every saved image for this Stream, which is what the
+ * page prints as "Saved images for this stream".
+ */
+async function loadStreamImageMediaAssets(
+  streamId: string,
+): Promise<{ items: MediaAsset[]; totalCount: number }> {
+  const page = await apiClient.getMediaAssetPage({
+    stream_id: streamId,
+    image_only: true,
+    newest_first: true,
+    limit: SAVED_IMAGE_WINDOW,
+  });
+  return { items: page.items, totalCount: page.total_count };
 }
+
+/**
+ * Remaining Performance P1 Closure v1 (P1-7): how many of this Stream's
+ * most recent saved images the page holds. The "Saved images for this
+ * stream" figure is the server's whole-Stream `total_count`, not this.
+ */
+const SAVED_IMAGE_WINDOW = 200;
 
 function formatVisitDuration(durationSeconds: number): string {
   if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
@@ -685,6 +708,8 @@ export function StreamDetailPage({
   const [captureError, setCaptureError] = useState<string | null>(null);
   const [isCapturingFrame, setIsCapturingFrame] = useState(false);
   const [savedImageAssets, setSavedImageAssets] = useState<MediaAsset[]>([]);
+  // Every saved image for this Stream, not just the window held above.
+  const [savedImageTotalCount, setSavedImageTotalCount] = useState(0);
   const [savedImageError, setSavedImageError] = useState<string | null>(null);
   const [isLoadingSavedImages, setIsLoadingSavedImages] = useState(false);
   const [motionResult, setMotionResult] = useState<MotionEvaluateSavedMediaResponse | null>(null);
@@ -1171,9 +1196,10 @@ export function StreamDetailPage({
       setIsLoadingSavedImages(true);
       setSavedImageError(null);
       try {
-        const mediaAssets = await apiClient.getMediaAssets();
+        const savedImages = await loadStreamImageMediaAssets(streamId);
         if (isMounted) {
-          setSavedImageAssets(streamImageMediaAssets(mediaAssets, streamId));
+          setSavedImageAssets(savedImages.items);
+          setSavedImageTotalCount(savedImages.totalCount);
         }
       } catch (caught) {
         if (isMounted) {
@@ -1683,10 +1709,10 @@ export function StreamDetailPage({
   async function refreshSavedImages(): Promise<MediaAsset[]> {
     setSavedImageError(null);
     try {
-      const mediaAssets = await apiClient.getMediaAssets();
-      const nextSavedImages = streamImageMediaAssets(mediaAssets, streamId);
-      setSavedImageAssets(nextSavedImages);
-      return nextSavedImages;
+      const savedImages = await loadStreamImageMediaAssets(streamId);
+      setSavedImageAssets(savedImages.items);
+      setSavedImageTotalCount(savedImages.totalCount);
+      return savedImages.items;
     } catch (caught) {
       setSavedImageError(caught instanceof Error ? caught.message : "Could not refresh saved images.");
       return savedImageAssets;
@@ -2175,8 +2201,9 @@ export function StreamDetailPage({
   const liveSessionFrameCount = liveSession?.frame_count ?? 0;
   const captureSaved = captureResult?.status === "saved";
   const latestSavedImage = savedImageAssets[0] ?? null;
-  const savedImageCount = savedImageAssets.length;
-  const canCheckMotion = savedImageCount >= 2;
+  const savedImageCount = savedImageTotalCount;
+  // Motion comparison works on frames actually loaded, not on the total.
+  const canCheckMotion = savedImageAssets.length >= 2;
   const motionPair = latestMotionPair(savedImageAssets);
   const motionActionLabel = canCheckMotion
     ? "Compare captured frames"

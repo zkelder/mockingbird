@@ -588,6 +588,54 @@ interface MediaLifecycleSummary {
 }
 
 const MEDIA_TIMELINE_LIMIT = 10;
+/**
+ * Remaining Performance P1 Closure v1 (P1-7): how many of each Stream's
+ * most recent MediaAssets this page holds. It renders at most
+ * `MEDIA_TIMELINE_LIMIT` of them per Stream, so this is comfortable
+ * headroom -- and it is per Stream, not per library, which is the point.
+ */
+const MEDIA_STREAM_WINDOW = 50;
+/**
+ * Remaining Performance P1 Closure v1 (P1-8): the cap on detection runs and
+ * proposals read for the loaded MediaAssets. Scoped to at most
+ * `MEDIA_STREAM_WINDOW` assets per Stream, so this is a safety bound.
+ */
+const TIMELINE_LIFECYCLE_WINDOW = 1000;
+
+/**
+ * Read each Stream's recent MediaAssets, plus that Stream's saved-image
+ * total.
+ *
+ * Remaining Performance P1 Closure v1 (P1-7). This page used to call
+ * `GET /api/media` -- every MediaAsset ever recorded, 11,244 rows and
+ * 11.9 MB at the accepted Profile B workload -- and group the result by
+ * Stream in the browser, in order to show ten rows per Stream. The read is
+ * now one bounded, newest-first window per Stream, and the "Saved images"
+ * figure comes from the server's whole-Stream `image_count` so it stays a
+ * total.
+ */
+async function loadStreamMediaWindows(
+  streams: Stream[],
+): Promise<{ assets: MediaAsset[]; imageCountByStream: Record<string, number> }> {
+  const pages = await Promise.all(
+    streams.map(async (stream) => {
+      const page = await apiClient.getMediaAssetPage({
+        stream_id: stream.id,
+        newest_first: true,
+        limit: MEDIA_STREAM_WINDOW,
+      });
+      return { streamId: stream.id, page };
+    }),
+  );
+  const imageCountByStream: Record<string, number> = {};
+  for (const { streamId, page } of pages) {
+    imageCountByStream[streamId] = page.image_count;
+  }
+  return {
+    assets: pages.flatMap(({ page }) => page.items),
+    imageCountByStream,
+  };
+}
 const MOTION_SNAPSHOT_LIMIT = 5;
 const LOCAL_IMAGE_DETECTOR_ADAPTER_ID = "local_image_detector";
 const SNAPSHOT_WATCH_INTERVAL_OPTIONS = [10, 30, 60];
@@ -895,6 +943,18 @@ function storageGuardrailSummary(
   streamImages: MediaAsset[],
   retentionItems: SavedMediaRetentionItem[],
   motionState: StreamMotionCheckState,
+  /**
+   * Remaining Performance P1 Closure v1 (P1-7): this Stream's *total*
+   * saved-image count, which since this milestone is no longer the same
+   * as `streamImages.length` -- that is now a bounded recent window.
+   *
+   * It matters that these stay distinct: `savedImageCount` gates
+   * `SNAPSHOT_WATCH_STORAGE_BLOCK_COUNT`, which stops repeated snapshot
+   * checks once a Stream has accumulated 100 saved images. Deriving it
+   * from a 50-item window would have silently disabled that guardrail.
+   * Defaults to the window so existing callers keep their old behaviour.
+   */
+  savedImageTotalCount: number = streamImages.length,
 ): StorageGuardrailSummary {
   const retentionByMediaId = new Map(
     retentionItems.map((item) => [item.media_asset_id, item]),
@@ -944,9 +1004,9 @@ function storageGuardrailSummary(
     readiness = "Export/reviewed media protected";
   } else if (reviewLinkedCount && reviewLinkedCount > 0) {
     readiness = "Review pending images";
-  } else if (streamImages.length > 100) {
+  } else if (savedImageTotalCount > 100) {
     readiness = "Watch accumulation";
-  } else if (streamImages.length > 20) {
+  } else if (savedImageTotalCount > 20) {
     readiness = "Watch accumulation";
   } else if (streamImages.length >= 2 && !motionState.result) {
     readiness = "OK";
@@ -974,7 +1034,7 @@ function storageGuardrailSummary(
   }
 
   return {
-    savedImageCount: streamImages.length,
+    savedImageCount: savedImageTotalCount,
     savedImageTotalBytes,
     recentSavedImageCount: streamImages.filter((asset) => {
       const createdAt = new Date(asset.created_at).getTime();
@@ -1732,6 +1792,11 @@ export function StreamsPage({
   const [snapshotProposalDecisionResult, setSnapshotProposalDecisionResult] =
     useState<DetectionProposalDecisionResult | null>(null);
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
+  // Every saved image per Stream, not just the window held above -- what
+  // the "Saved images" rows and the source-health readiness check report.
+  const [mediaImageCountByStream, setMediaImageCountByStream] = useState<
+    Record<string, number>
+  >({});
   const [savedMediaRetentionReport, setSavedMediaRetentionReport] =
     useState<SavedMediaRetentionReportResponse | null>(null);
   const [timelineDetectionRuns, setTimelineDetectionRuns] = useState<DetectionRun[]>([]);
@@ -2309,9 +2374,15 @@ export function StreamsPage({
     void loadSavedMediaRetentionReport();
   }, []);
 
+  // Keyed on the loaded MediaAssets, because the lifecycle read is scoped
+  // to them (Remaining Performance P1 Closure v1, P1-8). `mediaAssets` is a
+  // fresh array each render, so the key is its stable identity.
+  const timelineMediaKey = mediaAssets.map((asset) => asset.id).join("|");
+
   useEffect(() => {
     void loadTimelineLifecycleData();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timelineMediaKey]);
 
   useEffect(() => {
     void loadLocalDetectorAdapter();
@@ -2415,7 +2486,9 @@ export function StreamsPage({
     }
     setMediaAssetsError(null);
     try {
-      setMediaAssets(await apiClient.getMediaAssets());
+      const loaded = await loadStreamMediaWindows(streams);
+      setMediaAssets(loaded.assets);
+      setMediaImageCountByStream(loaded.imageCountByStream);
     } catch (caught) {
       setMediaAssetsError(
         caught instanceof Error ? caught.message : "Could not load saved Stream media.",
@@ -2451,23 +2524,36 @@ export function StreamsPage({
   async function refreshMediaAndStorage(): Promise<{
     nextMediaAssets: MediaAsset[];
     nextRetentionReport: SavedMediaRetentionReportResponse | null;
+    // Remaining Performance P1 Closure v1 (P1-7): per-Stream saved-image
+    // totals, which `nextMediaAssets` is now a bounded window of.
+    nextImageCountByStream: Record<string, number>;
   }> {
     setMediaAssetsError(null);
     setSavedMediaRetentionError(null);
     try {
-      const [nextMediaAssets, nextRetentionReport] = await Promise.all([
-        apiClient.getMediaAssets(),
+      const [loaded, nextRetentionReport] = await Promise.all([
+        loadStreamMediaWindows(streams),
         apiClient.getSavedMediaRetentionReport(),
       ]);
+      const nextMediaAssets = loaded.assets;
       setMediaAssets(nextMediaAssets);
+      setMediaImageCountByStream(loaded.imageCountByStream);
       setSavedMediaRetentionReport(nextRetentionReport);
-      return { nextMediaAssets, nextRetentionReport };
+      return {
+        nextMediaAssets,
+        nextRetentionReport,
+        nextImageCountByStream: loaded.imageCountByStream,
+      };
     } catch (caught) {
       const message =
         caught instanceof Error ? caught.message : "Could not refresh saved images.";
       setMediaAssetsError(message);
       setSavedMediaRetentionError(message);
-      return { nextMediaAssets: mediaAssets, nextRetentionReport: savedMediaRetentionReport };
+      return {
+        nextMediaAssets: mediaAssets,
+        nextRetentionReport: savedMediaRetentionReport,
+        nextImageCountByStream: mediaImageCountByStream,
+      };
     }
   }
 
@@ -2478,14 +2564,30 @@ export function StreamsPage({
     }
     setTimelineLifecycleError(null);
     try {
-      const [runs, proposals, evidenceResponse, labels] = await Promise.all([
-        apiClient.getDetectionRuns(),
-        apiClient.getDetectionProposals(),
+      // Remaining Performance P1 Closure v1 (P1-8): the timeline builds a
+      // lifecycle summary per *loaded* MediaAsset (`buildMediaLifecycleSummary`
+      // filters runs and proposals by `media_asset_id`), so it reads the runs
+      // and proposals for exactly those assets instead of all 2,811 of each
+      // at the accepted Profile B workload.
+      const timelineMediaAssetIds = mediaAssets.map((asset) => asset.id);
+      const [runPage, proposalPage, evidenceResponse, labels] = await Promise.all([
+        timelineMediaAssetIds.length > 0
+          ? apiClient.getDetectionRunPage({
+              media_asset_ids: timelineMediaAssetIds,
+              limit: TIMELINE_LIFECYCLE_WINDOW,
+            })
+          : Promise.resolve(null),
+        timelineMediaAssetIds.length > 0
+          ? apiClient.getDetectionProposalPage({
+              media_asset_ids: timelineMediaAssetIds,
+              limit: TIMELINE_LIFECYCLE_WINDOW,
+            })
+          : Promise.resolve(null),
         apiClient.listMotionEvidence({ status: "all" }),
         apiClient.getReviewLabels(),
       ]);
-      setTimelineDetectionRuns(runs);
-      setTimelineDetectionProposals(proposals);
+      setTimelineDetectionRuns(runPage?.items ?? []);
+      setTimelineDetectionProposals(proposalPage?.items ?? []);
       setTimelineMotionEvidence(evidenceResponse.motion_evidence);
       setTimelineReviewLabels(labels);
     } catch (caught) {
@@ -3228,7 +3330,8 @@ export function StreamsPage({
         lastWatchStatus: "Captured snapshot.",
       }));
 
-      const { nextMediaAssets, nextRetentionReport } = await refreshMediaAndStorage();
+      const { nextMediaAssets, nextRetentionReport, nextImageCountByStream } =
+        await refreshMediaAndStorage();
       const streamImages = sortNewestFirst(
         nextMediaAssets.filter(
           (asset) => asset.stream_id === context.stream.id && isImageMedia(asset),
@@ -3240,6 +3343,7 @@ export function StreamsPage({
         streamImages,
         streamRetentionItems,
         streamMotionCheckState[context.stream.id] ?? {},
+        nextImageCountByStream[context.stream.id] ?? streamImages.length,
       );
       if (nextStorageSummary.savedImageCount >= SNAPSHOT_WATCH_STORAGE_BLOCK_COUNT) {
         stopSnapshotWatch(
@@ -6002,6 +6106,10 @@ export function StreamsPage({
                     (zone) => zone.is_active && !isReviewableZone(zone),
                   ).length;
                   const allStreamImageAssets = allStreamMediaAssets.filter(isImageMedia);
+                  // Every saved image for this Stream, from the server --
+                  // the loaded window above is deliberately bounded.
+                  const streamSavedImageCount =
+                    mediaImageCountByStream[stream.id] ?? allStreamImageAssets.length;
                   const streamImageAssets = streamMediaAssets.filter(isImageMedia);
                   const recentMotionAssets = streamImageAssets.slice(0, MOTION_SNAPSHOT_LIMIT);
                   const motionState = streamMotionCheckState[stream.id] ?? {};
@@ -6020,7 +6128,7 @@ export function StreamsPage({
                     connection: selectedConnection,
                     setupReview: selectedSetupReview,
                     snapshotTest: lastSnapshotTest,
-                    savedImageCount: allStreamImageAssets.length,
+                    savedImageCount: streamSavedImageCount,
                     motionState,
                   });
                   const sourceHealthLastError =
@@ -6035,6 +6143,7 @@ export function StreamsPage({
                     allStreamImageAssets,
                     streamRetentionItems,
                     motionState,
+                    streamSavedImageCount,
                   );
                   const motionResult = motionState.result ?? null;
                   const motionCreatedEvidence = motionResult?.created_evidence[0] ?? null;
@@ -6217,7 +6326,7 @@ export function StreamsPage({
                           </div>
                           <div className="data-row">
                             <span>Saved images</span>
-                            <strong>{allStreamImageAssets.length}</strong>
+                            <strong>{streamSavedImageCount}</strong>
                           </div>
                           <div className="data-row">
                             <span>Last motion check</span>

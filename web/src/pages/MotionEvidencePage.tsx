@@ -18,7 +18,7 @@ import { EvidenceBadge } from "../components/EvidenceBadge";
 import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
-import { formatDateTime, formatLabel } from "../utils";
+import { formatDateTime, formatLabel, mergeMediaAssets } from "../utils";
 
 type MotionEvidenceFilter = "all" | MotionEvidenceStatus;
 
@@ -90,6 +90,14 @@ interface WebhookEvidenceProvenance {
   externalConfidence: string | null;
   externalTimestamp: string | null;
 }
+
+/**
+ * Remaining Performance P1 Closure v1 (P1-7): how many recent MediaAssets
+ * the "attach existing media" pickers offer. Assets this page's evidence
+ * actually references are hydrated separately and merged in, so nothing
+ * the page needs to resolve depends on falling inside this window.
+ */
+const MEDIA_PICKER_WINDOW = 100;
 
 interface MotionEvidencePageProps {
   streams: Stream[];
@@ -266,10 +274,20 @@ export function MotionEvidencePage({
     }
     setError(null);
     try {
-      const [response, nextMediaAssets] = await Promise.all([
+      // Remaining Performance P1 Closure v1 (P1-7): two bounded reads in
+      // place of the whole MediaAsset library. The picker offers a recent
+      // window; the lookup map is hydrated with exactly the snapshots this
+      // evidence list references, which is what it was ever used for.
+      const [response, pickerPage] = await Promise.all([
         apiClient.listMotionEvidence({ status: "all" }),
-        apiClient.getMediaAssets(),
+        apiClient.getMediaAssetPage({ limit: MEDIA_PICKER_WINDOW, newest_first: true }),
       ]);
+      const referenced = await apiClient.getMediaAssetsByIds(
+        response.motion_evidence
+          .map((item) => item.snapshot_media_asset_id)
+          .filter((id): id is string => Boolean(id)),
+      );
+      const nextMediaAssets = mergeMediaAssets(pickerPage.items, referenced);
       setEvidence(response.motion_evidence);
       setMediaAssets(nextMediaAssets);
       setSelectedEvidenceId((current) =>
@@ -766,7 +784,7 @@ export function MotionEvidencePage({
                 onChange={(event) => setManualSnapshotMediaAssetId(event.target.value)}
               >
                 <option value="">No attached media</option>
-                {[...mediaAssets].reverse().map((asset) => (
+                {mediaAssets.map((asset) => (
                   <option key={asset.id} value={asset.id}>
                     {asset.original_filename} - {asset.id}
                   </option>

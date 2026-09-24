@@ -35,6 +35,13 @@ const LOCAL_DETECTOR_ENV_VARS = [
   },
 ];
 
+/**
+ * Remaining Performance P1 Closure v1 (P1-7): how many recent saved images
+ * the "best frame" picker offers. The library-wide image total shown by the
+ * smoke check comes from the server's `image_count`, not from this window.
+ */
+const MEDIA_PICKER_WINDOW = 100;
+
 interface ModelAdaptersPageProps {
   onOpenDetectionProposals: () => void;
   onOpenEvent: (eventId: string) => void;
@@ -62,6 +69,8 @@ export function ModelAdaptersPage({
 }: ModelAdaptersPageProps) {
   const [adapters, setAdapters] = useState<ModelAdapter[]>([]);
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
+  // Every saved image in the library, not just the picker window above.
+  const [mediaImageCount, setMediaImageCount] = useState(0);
   const [evaluation, setEvaluation] = useState<AdapterEvaluationSummary | null>(null);
   const [selectedAdapterId, setSelectedAdapterId] = useState("");
   const [selectedMediaId, setSelectedMediaId] = useState("");
@@ -101,13 +110,19 @@ export function ModelAdaptersPage({
     }
     setError(null);
     try {
-      const [nextAdapters, nextMediaAssets, nextEvaluation] = await Promise.all([
+      // Remaining Performance P1 Closure v1 (P1-7): the picker below needs
+      // recent saved images, not the whole library, and the smoke check's
+      // "Saved images" row needs the library-wide image *total* -- which
+      // `image_count` reports over every matching asset, not this window.
+      const [nextAdapters, nextMediaPage, nextEvaluation] = await Promise.all([
         apiClient.getModelAdapters(),
-        apiClient.getMediaAssets(),
+        apiClient.getMediaAssetPage({ limit: MEDIA_PICKER_WINDOW, newest_first: true }),
         apiClient.getModelAdapterEvaluation(),
       ]);
+      const nextMediaAssets = nextMediaPage.items;
       setAdapters(nextAdapters);
       setMediaAssets(nextMediaAssets);
+      setMediaImageCount(nextMediaPage.image_count);
       setEvaluation(nextEvaluation);
       setVisibleEvaluationCount(15);
       setSelectedAdapterId((current) =>
@@ -230,7 +245,7 @@ export function ModelAdaptersPage({
       <RealModelSmokeCheck
         adapter={localDetectorAdapter}
         isLoading={isLoading}
-        mediaCount={mediaAssets.filter((asset) => asset.media_type === "image").length}
+        mediaCount={mediaImageCount}
         onOpenBirdLog={onOpenBirdLog}
         onOpenImport={onOpenImport}
         onOpenReview={onOpenReview}

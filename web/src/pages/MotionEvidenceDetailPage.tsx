@@ -60,12 +60,20 @@ export function MotionEvidenceDetailPage({
     }
     setError(null);
     try {
-      const [nextEvidence, nextMediaAssets] = await Promise.all([
-        apiClient.getMotionEvidence(motionEvidenceId),
-        apiClient.getMediaAssets().catch(() => []),
-      ]);
+      const nextEvidence = await apiClient.getMotionEvidence(motionEvidenceId);
       setEvidence(nextEvidence);
-      setMediaAssets(nextMediaAssets);
+      // Remaining Performance P1 Closure v1 (P1-7): this page needs exactly
+      // one MediaAsset -- the evidence's own snapshot. It used to download
+      // the whole library to look that one up.
+      const snapshotId = nextEvidence.snapshot_media_asset_id;
+      setMediaAssets(
+        snapshotId
+          ? await apiClient
+              .getMediaAssetPage({ ids: [snapshotId], limit: 1 })
+              .then((page) => page.items)
+              .catch(() => [])
+          : [],
+      );
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not load MotionEvidence detail.");
     } finally {

@@ -21,7 +21,7 @@ import { StatusPill } from "../components/StatusPill";
 import { TaxonomyLabelInput } from "../components/TaxonomyLabelInput";
 import { TaxonomyBadge } from "../components/TaxonomyBadge";
 import { displayTaxonomyLabel, findTaxonomyLabel } from "../components/taxonomy";
-import { formatDateTime, formatLabel } from "../utils";
+import { formatDateTime, formatLabel, mergeMediaAssets } from "../utils";
 
 type ProposalFilter = "all" | DetectionProposalStatus;
 
@@ -32,6 +32,16 @@ const proposalFilters: Array<{ value: ProposalFilter; label: string }> = [
   { value: "accepted", label: "Accepted" },
   { value: "all", label: "All" },
 ];
+
+/**
+ * Remaining Performance P1 Closure v1 (P1-7 / P1-8): how many recent
+ * MediaAssets the picker offers, and how many recent proposals this page
+ * holds. `GET /api/detection-proposals` used to return all 2,811 of them
+ * at the accepted Profile B workload. Every count this page labels a
+ * total now comes from the server, not from these windows.
+ */
+const MEDIA_PICKER_WINDOW = 100;
+const PROPOSAL_WINDOW = 200;
 
 interface DetectionProposalsPageProps {
   streams: Stream[];
@@ -58,6 +68,11 @@ export function DetectionProposalsPage({
 }: DetectionProposalsPageProps) {
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
   const [proposals, setProposals] = useState<DetectionProposal[]>([]);
+  // Whole-set counts from the server, so the filter chips and the
+  // "showing N of M" disclosure keep describing every proposal, not the
+  // bounded window this page holds.
+  const [proposalStatusCounts, setProposalStatusCounts] = useState<Record<string, number>>({});
+  const [proposalTotalCount, setProposalTotalCount] = useState(0);
   const [taxonomyLabels, setTaxonomyLabels] = useState<TaxonomyLabel[]>([]);
   const [zonesByStream, setZonesByStream] = useState<Record<string, Zone[]>>({});
   const [selectedMediaId, setSelectedMediaId] = useState("");
@@ -118,10 +133,27 @@ export function DetectionProposalsPage({
     }
     setError(null);
     try {
-      const [nextMediaAssets, nextProposals] = await Promise.all([
-        apiClient.getMediaAssets(),
-        apiClient.getDetectionProposals(),
+      // Remaining Performance P1 Closure v1 (P1-7 / P1-8): a bounded,
+      // newest-first window of proposals plus a recent MediaAsset window
+      // for the picker, then exactly the assets those proposals reference.
+      // The filter chips and the "showing N of M" line below read the
+      // server's whole-set counts, so they stay totals.
+      const [pickerPage, proposalPage] = await Promise.all([
+        apiClient.getMediaAssetPage({ limit: MEDIA_PICKER_WINDOW, newest_first: true }),
+        apiClient.getDetectionProposalPage({
+          limit: PROPOSAL_WINDOW,
+          newest_first: true,
+        }),
       ]);
+      const nextProposals = proposalPage.items;
+      const nextMediaAssets = mergeMediaAssets(
+        pickerPage.items,
+        await apiClient.getMediaAssetsByIds(
+          nextProposals.map((proposal) => proposal.media_asset_id),
+        ),
+      );
+      setProposalStatusCounts(proposalPage.status_counts);
+      setProposalTotalCount(proposalPage.total_count);
       const nextTaxonomyLabels = await apiClient.getTaxonomyLabels();
       const nextZonesByStream: Record<string, Zone[]> = {};
       await Promise.all(
@@ -246,20 +278,18 @@ export function DetectionProposalsPage({
     }
   }
 
-  const sortedProposals = [...proposals].reverse();
-  const proposalCounts = useMemo(() => {
-    const counts: Record<ProposalFilter, number> = {
-      all: proposals.length,
-      proposed: 0,
-      converted: 0,
-      rejected: 0,
-      accepted: 0,
-    };
-    proposals.forEach((proposal) => {
-      counts[proposal.status] += 1;
-    });
-    return counts;
-  }, [proposals]);
+  // The window already arrives newest-first from the server.
+  const sortedProposals = proposals;
+  const proposalCounts = useMemo<Record<ProposalFilter, number>>(
+    () => ({
+      all: proposalTotalCount,
+      proposed: proposalStatusCounts.proposed ?? 0,
+      converted: proposalStatusCounts.converted ?? 0,
+      rejected: proposalStatusCounts.rejected ?? 0,
+      accepted: proposalStatusCounts.accepted ?? 0,
+    }),
+    [proposalStatusCounts, proposalTotalCount],
+  );
   const filteredProposals =
     proposalFilter === "all"
       ? sortedProposals
@@ -523,7 +553,10 @@ export function DetectionProposalsPage({
           {!isLoading && filteredProposals.length > 0 ? (
             <span className="meta-text">
               Showing {Math.min(visibleProposalCount, filteredProposals.length)} of{" "}
-              {filteredProposals.length}
+              {proposalCounts[proposalFilter]}
+              {proposalCounts[proposalFilter] > filteredProposals.length
+                ? ` (the ${filteredProposals.length} most recent are loaded)`
+                : ""}
             </span>
           ) : null}
           <div className="media-list detection-proposal-list">
@@ -636,7 +669,7 @@ export function DetectionProposalsPage({
                 </button>
               </div>
             ) : null}
-            {!isLoading && proposals.length === 0 ? (
+            {!isLoading && proposalTotalCount === 0 ? (
               <EmptyState
                 title="No detection proposals yet"
                 description="Import media, generate demo proposal evidence, then convert it into review when it represents outdoor activity."
@@ -647,7 +680,7 @@ export function DetectionProposalsPage({
                 }
               />
             ) : null}
-            {!isLoading && proposals.length > 0 && filteredProposals.length === 0 ? (
+            {!isLoading && proposalTotalCount > 0 && filteredProposals.length === 0 ? (
               <EmptyState
                 title={`No ${formatLabel(proposalFilter)} proposals`}
                 description="Switch proposal status filters to inspect evidence that is still proposed, converted into review, or rejected."

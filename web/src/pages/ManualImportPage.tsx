@@ -17,6 +17,14 @@ import { PageHeader } from "../components/PageHeader";
 import { StatusPill } from "../components/StatusPill";
 import { formatLabel } from "../utils";
 
+/**
+ * Remaining Performance P1 Closure v1 (P1-7): how many recently-imported
+ * MediaAssets this page holds at once. Every one of them renders a preview
+ * image, so the unbounded version asked the browser for 11,244 previews at
+ * the accepted Profile B workload.
+ */
+const MEDIA_WINDOW = 50;
+
 interface ManualImportPageProps {
   streams: Stream[];
   sources: CameraSource[];
@@ -68,6 +76,7 @@ export function ManualImportPage({
   const [speciesGuess, setSpeciesGuess] = useState("");
   const [notes, setNotes] = useState("");
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
+  const [mediaTotalCount, setMediaTotalCount] = useState(0);
   const [setupReviews, setSetupReviews] = useState<Record<string, SourceSetupReviewResponse>>({});
   const [isCreatingImportSource, setIsCreatingImportSource] = useState(false);
   // UI/UX & First-Run Adoption v1: on a fresh install the only Stream is the
@@ -219,7 +228,17 @@ export function ManualImportPage({
     }
     setError(null);
     try {
-      setMediaAssets(await apiClient.getMediaAssets());
+      // Remaining Performance P1 Closure v1 (P1-7): one bounded, newest-
+      // first window instead of every MediaAsset ever imported. The page
+      // already showed this list newest-first, so the window is the same
+      // top of the list it always was; `total_count` keeps the disclosure
+      // below it honest about how much more exists.
+      const page = await apiClient.getMediaAssetPage({
+        limit: MEDIA_WINDOW,
+        newest_first: true,
+      });
+      setMediaAssets(page.items);
+      setMediaTotalCount(page.total_count);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Could not load imported media.");
     } finally {
@@ -749,7 +768,7 @@ export function ManualImportPage({
           </div>
           {isLoadingMedia ? <span className="meta-text">Loading imported media...</span> : null}
           <div className="media-list">
-            {[...mediaAssets].reverse().map((asset) => (
+            {mediaAssets.map((asset) => (
               <article className="media-list-item" key={asset.id}>
                 <MediaAssetPreview asset={asset} compact />
                 <div className="data-row">
@@ -768,6 +787,12 @@ export function ManualImportPage({
                 title="No imported media yet"
                 description="Choose local media to create the first reviewable observation."
               />
+            ) : null}
+            {!isLoadingMedia && mediaTotalCount > mediaAssets.length ? (
+              <span className="meta-text">
+                Showing the {mediaAssets.length} most recent of {mediaTotalCount} imported
+                media assets.
+              </span>
             ) : null}
           </div>
         </div>

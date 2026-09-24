@@ -14,7 +14,7 @@ import { MediaAssetPreview } from "../components/MediaAssetPreview";
 import { PageHeader } from "../components/PageHeader";
 import { speciesSuggestionMetricLabel } from "../components/speciesSuggestion";
 import { explainSpeciesSuggestion } from "../components/suggestionExplanation";
-import { formatDateTime, formatLabel } from "../utils";
+import { formatDateTime, formatLabel, mergeMediaAssets } from "../utils";
 
 type SpeciesSuggestionFilter = "all" | SpeciesSuggestionStatus;
 
@@ -41,6 +41,15 @@ const statusActions: Array<{ status: Exclude<SpeciesSuggestionStatus, "pending">
     { status: "superseded", label: "Supersede evidence" },
   ];
 
+/**
+ * Remaining Performance P1 Closure v1 (P1-7 / P1-8): how many recent
+ * suggestions this page holds, and how many recent MediaAssets its picker
+ * offers. `GET /api/species-suggestions` returned all 2,464 rows / 1.50 MB
+ * at the accepted Profile B workload.
+ */
+const SUGGESTION_WINDOW = 200;
+const MEDIA_PICKER_WINDOW = 100;
+
 interface SpeciesSuggestionsPageProps {
   onOpenEvent: (eventId: string) => void;
   onOpenVisit: (visitId: string) => void;
@@ -55,6 +64,8 @@ export function SpeciesSuggestionsPage({
   onUseAsCorrection,
 }: SpeciesSuggestionsPageProps) {
   const [suggestions, setSuggestions] = useState<SpeciesSuggestion[]>([]);
+  // Every suggestion matching the active filter, not just the window held.
+  const [suggestionTotalCount, setSuggestionTotalCount] = useState(0);
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>([]);
   const [selectedSuggestionId, setSelectedSuggestionId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<SpeciesSuggestionFilter>("pending");
@@ -145,17 +156,32 @@ export function SpeciesSuggestionsPage({
     }
     setError(null);
     try {
-      const [response, nextMediaAssets] = await Promise.all([
+      // Remaining Performance P1 Closure v1 (P1-7 / P1-8): a bounded,
+      // newest-first window of suggestions plus a recent MediaAsset window
+      // for the picker, then exactly the assets those suggestions
+      // reference. `total_count` keeps the badge honest about the rest.
+      const [response, pickerPage] = await Promise.all([
         apiClient.listSpeciesSuggestions({
           status: filters.status,
           suggested_label: filters.suggested_label,
           visit_id: filters.visit_id,
           event_id: filters.event_id,
           media_asset_id: filters.media_asset_id,
+          limit: SUGGESTION_WINDOW,
+          newest_first: true,
         }),
-        apiClient.getMediaAssets(),
+        apiClient.getMediaAssetPage({ limit: MEDIA_PICKER_WINDOW, newest_first: true }),
       ]);
+      const nextMediaAssets = mergeMediaAssets(
+        pickerPage.items,
+        await apiClient.getMediaAssetsByIds(
+          response.species_suggestions
+            .map((suggestion) => suggestion.media_asset_id)
+            .filter((id): id is string => Boolean(id)),
+        ),
+      );
       setSuggestions(response.species_suggestions);
+      setSuggestionTotalCount(response.total_count ?? response.species_suggestions.length);
       setMediaAssets(nextMediaAssets);
       setSelectedSuggestionId((current) =>
         options.selectSuggestionId &&
@@ -706,7 +732,7 @@ export function SpeciesSuggestionsPage({
                 onChange={(event) => setMediaAssetId(event.target.value)}
               >
                 <option value="">No media asset</option>
-                {[...mediaAssets].reverse().map((asset) => (
+                {mediaAssets.map((asset) => (
                   <option key={asset.id} value={asset.id}>
                     {asset.original_filename} - {asset.id}
                   </option>
@@ -783,7 +809,14 @@ export function SpeciesSuggestionsPage({
               Filter by status, label, and linked Event/Visit/media evidence.
             </span>
           </div>
-          <EvidenceBadge label={`${suggestions.length} shown`} tone="evidence" />
+          <EvidenceBadge
+            label={
+              suggestionTotalCount > suggestions.length
+                ? `${suggestions.length} shown of ${suggestionTotalCount}`
+                : `${suggestions.length} shown`
+            }
+            tone="evidence"
+          />
         </div>
         <form className="species-suggestion-filter-grid" onSubmit={applyFilters}>
           <label>

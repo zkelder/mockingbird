@@ -54,8 +54,11 @@ import type {
   DetectionProposalCreate,
   DetectionProposalDecisionCreate,
   DetectionProposalDecisionResult,
+  DetectionProposalPage,
+  DetectionProposalStatus,
   DetectionRun,
   DetectionRunCreate,
+  DetectionRunPage,
   EnvironmentalContextSettings,
   EnvironmentalContextSettingsUpdate,
   Event,
@@ -132,6 +135,7 @@ import type {
   StorageRetentionSettingsUpdate,
   StorageSummary,
   MediaAsset,
+  MediaAssetPage,
   MediaImportResult,
   LiveMotionEvaluateRequest,
   LiveMotionEvaluateResponse,
@@ -1050,6 +1054,74 @@ export const apiClient = {
       body: JSON.stringify(payload),
     }),
   getMediaAssets: () => request<MediaAsset[]>("/api/media"),
+  /**
+   * One bounded window of MediaAssets, with whole-library counts.
+   *
+   * Remaining Performance P1 Closure v1 (P1-7). Product pages read this
+   * instead of `getMediaAssets`, which used to hand every page the entire
+   * MediaAsset library (11,244 rows / 11.9 MB at the accepted Profile B
+   * workload) so the browser could build a lookup map or fill a picker.
+   *
+   * `ids` is the hydration form: pass exactly the assets an already-bounded
+   * list references. An explicit empty array correctly resolves to nothing,
+   * so callers should skip the call rather than pass `[]` by accident.
+   */
+  getMediaAssetPage: (
+    params: {
+      limit?: number;
+      offset?: number;
+      stream_id?: string;
+      media_type?: string;
+      ids?: string[];
+      image_only?: boolean;
+      newest_first?: boolean;
+    } = {},
+  ) => {
+    const search = new URLSearchParams();
+    if (params.limit !== undefined) search.set("limit", String(params.limit));
+    if (params.offset !== undefined) search.set("offset", String(params.offset));
+    if (params.stream_id) search.set("stream_id", params.stream_id);
+    if (params.media_type) search.set("media_type", params.media_type);
+    if (params.image_only !== undefined) search.set("image_only", String(params.image_only));
+    if (params.newest_first !== undefined)
+      search.set("newest_first", String(params.newest_first));
+    for (const id of params.ids ?? []) {
+      search.append("ids", id);
+    }
+    const query = search.toString();
+    return request<MediaAssetPage>(`/api/media/page${query ? `?${query}` : ""}`);
+  },
+  /**
+   * Resolve exactly the MediaAssets an already-bounded list references.
+   *
+   * Remaining Performance P1 Closure v1 (P1-7): this is the two-pass
+   * hydration that replaced the browser-side `mediaById` maps built by
+   * downloading the whole library. Ids are de-duplicated and requested in
+   * chunks so one call's URL stays bounded no matter how many rows the
+   * caller is hydrating; an empty id set makes no request at all.
+   */
+  getMediaAssetsByIds: async (ids: string[]): Promise<MediaAsset[]> => {
+    const unique = [...new Set(ids.filter(Boolean))];
+    if (unique.length === 0) {
+      return [];
+    }
+    const CHUNK = 200;
+    const chunks: string[][] = [];
+    for (let index = 0; index < unique.length; index += CHUNK) {
+      chunks.push(unique.slice(index, index + CHUNK));
+    }
+    const pages = await Promise.all(
+      chunks.map((chunk) =>
+        request<MediaAssetPage>(
+          `/api/media/page?${new URLSearchParams([
+            ["limit", String(CHUNK)],
+            ...chunk.map((id) => ["ids", id] as [string, string]),
+          ]).toString()}`,
+        ),
+      ),
+    );
+    return pages.flatMap((page) => page.items);
+  },
   getMediaAsset: (mediaId: string) => request<MediaAsset>(`/api/media/${mediaId}`),
   getSavedMediaRetentionReport: () =>
     request<SavedMediaRetentionReportResponse>("/api/media/saved-preview-retention"),
@@ -1137,6 +1209,30 @@ export const apiClient = {
       body: JSON.stringify(payload),
     }),
   getDetectionRuns: () => request<DetectionRun[]>("/api/detection-runs"),
+  /**
+   * One bounded window of DetectionRuns, with the whole-set count.
+   * Remaining Performance P1 Closure v1 (P1-8). `ids` and `media_asset_ids`
+   * are OR'd by the server.
+   */
+  getDetectionRunPage: (
+    params: {
+      limit?: number;
+      offset?: number;
+      ids?: string[];
+      media_asset_ids?: string[];
+      newest_first?: boolean;
+    } = {},
+  ) => {
+    const search = new URLSearchParams();
+    if (params.limit !== undefined) search.set("limit", String(params.limit));
+    if (params.offset !== undefined) search.set("offset", String(params.offset));
+    if (params.newest_first !== undefined)
+      search.set("newest_first", String(params.newest_first));
+    for (const id of params.ids ?? []) search.append("ids", id);
+    for (const id of params.media_asset_ids ?? []) search.append("media_asset_ids", id);
+    const query = search.toString();
+    return request<DetectionRunPage>(`/api/detection-runs/page${query ? `?${query}` : ""}`);
+  },
   createDetectionRun: (payload: DetectionRunCreate) =>
     request<DetectionRun>("/api/detection-runs", {
       method: "POST",
@@ -1150,6 +1246,38 @@ export const apiClient = {
   getDetectionRunProposals: (runId: string) =>
     request<DetectionProposal[]>(`/api/detection-runs/${runId}/proposals`),
   getDetectionProposals: () => request<DetectionProposal[]>("/api/detection-proposals"),
+  /**
+   * One bounded window of DetectionProposals, with the whole-set count.
+   *
+   * Remaining Performance P1 Closure v1 (P1-8). The three id sets are OR'd
+   * and mirror exactly how the pages relate a proposal to the row it is
+   * evidence for -- by Visit, by Event, or by MediaAsset.
+   */
+  getDetectionProposalPage: (
+    params: {
+      limit?: number;
+      offset?: number;
+      media_asset_ids?: string[];
+      visit_ids?: string[];
+      event_ids?: string[];
+      status?: DetectionProposalStatus;
+      newest_first?: boolean;
+    } = {},
+  ) => {
+    const search = new URLSearchParams();
+    if (params.limit !== undefined) search.set("limit", String(params.limit));
+    if (params.offset !== undefined) search.set("offset", String(params.offset));
+    if (params.newest_first !== undefined)
+      search.set("newest_first", String(params.newest_first));
+    if (params.status) search.set("status", params.status);
+    for (const id of params.media_asset_ids ?? []) search.append("media_asset_ids", id);
+    for (const id of params.visit_ids ?? []) search.append("visit_ids", id);
+    for (const id of params.event_ids ?? []) search.append("event_ids", id);
+    const query = search.toString();
+    return request<DetectionProposalPage>(
+      `/api/detection-proposals/page${query ? `?${query}` : ""}`,
+    );
+  },
   createDetectionProposal: (payload: DetectionProposalCreate) =>
     request<DetectionProposal>("/api/detection-proposals", {
       method: "POST",
@@ -1252,6 +1380,9 @@ export const apiClient = {
       event_id?: string;
       media_asset_id?: string;
       suggested_label?: string;
+      limit?: number;
+      offset?: number;
+      newest_first?: boolean;
     } = {},
   ) => {
     const searchParams = new URLSearchParams();
@@ -1269,6 +1400,17 @@ export const apiClient = {
     }
     if (params.suggested_label) {
       searchParams.set("suggested_label", params.suggested_label);
+    }
+    // Remaining Performance P1 Closure v1 (P1-8): bounded retrieval. The
+    // per-Visit callers pass neither, and keep the server's default.
+    if (params.limit !== undefined) {
+      searchParams.set("limit", String(params.limit));
+    }
+    if (params.offset !== undefined) {
+      searchParams.set("offset", String(params.offset));
+    }
+    if (params.newest_first !== undefined) {
+      searchParams.set("newest_first", String(params.newest_first));
     }
     const query = searchParams.toString();
     return request<SpeciesSuggestionListResponse>(
