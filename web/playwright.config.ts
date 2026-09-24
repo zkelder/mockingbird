@@ -51,7 +51,15 @@ export default defineConfig({
   // one page, and several specs here assert on a near-empty queue. It runs
   // against its own instance via playwright.review-queue.config.ts. Review
   // Queue Scale Closure v1.
-  testIgnore: ["**/onboarding.spec.ts", "**/review-queue-bounded-page.spec.ts"],
+  // bounded-product-reads.spec.ts is excluded for the same reason again
+  // (Remaining Performance P1 Closure v1): its subject is a MediaAsset
+  // library larger than the windows the product pages read, and several
+  // specs here assert on a near-empty one.
+  testIgnore: [
+    "**/onboarding.spec.ts",
+    "**/review-queue-bounded-page.spec.ts",
+    "**/bounded-product-reads.spec.ts",
+  ],
   fullyParallel: false,
   workers: 1,
   retries: 0,

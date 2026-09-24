@@ -10,6 +10,7 @@
     "test:e2e": "npm run build && node e2e/run-playwright.mjs",
     "test:e2e:onboarding": "npm run build && node e2e/run-playwright.mjs --config=playwright.onboarding.config.ts",
     "test:e2e:review-queue": "npm run build && node e2e/run-playwright.mjs --config=playwright.review-queue.config.ts",
+    "test:e2e:bounded-media": "npm run build && node e2e/run-playwright.mjs --config=playwright.bounded-media.config.ts",
     "test:e2e:install": "playwright install chromium",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview"
