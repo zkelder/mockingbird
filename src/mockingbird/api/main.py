@@ -132,8 +132,11 @@ from mockingbird.api.schemas import (
     DetectionProposalCreate,
     DetectionProposalDecisionCreate,
     DetectionProposalDecisionResult,
+    DetectionProposalPage,
+    DetectionProposalStatus,
     DetectionRun,
     DetectionRunCreate,
+    DetectionRunPage,
     ExternalUrlWorkerDryRunResponse,
     ExternalUrlPreviewRequest,
     ExternalUrlPreviewResponse,
@@ -178,6 +181,7 @@ from mockingbird.api.schemas import (
     LiveMotionMonitorStartRequest,
     LiveMotionReviewActivityResponse,
     MediaAsset,
+    MediaAssetPage,
     MediaImportResult,
     ModelAdapter,
     ModelReadinessSummary,
@@ -9204,15 +9208,42 @@ async def list_species_suggestions(
     event_id: str | None = None,
     media_asset_id: str | None = None,
     suggested_label: str | None = None,
+    limit: int = Query(default=_DEFAULT_LIST_PAGE_SIZE, ge=1, le=_MAX_LIST_PAGE_SIZE),
+    offset: int = Query(default=0, ge=0),
+    newest_first: bool = Query(default=False),
 ) -> SpeciesSuggestionListResponse:
+    """Read SpeciesSuggestions for the active filter, one bounded page.
+
+    Remaining Performance P1 Closure v1 (P1-8). Unfiltered, this route
+    returned every suggestion ever made -- 2,464 rows / 1.50 MB at the
+    accepted Profile B workload. `species_suggestions` is now bounded;
+    `total_count` counts every row matching the same filter, so the
+    Species Suggestions page presents a total as a total while holding
+    one window. The per-Visit callers (Visit detail, the review loop)
+    already scoped their reads and are unaffected."""
+
+    repository = get_repository()
+    suggestions = repository.list_species_suggestions(
+        status=status,
+        visit_id=visit_id,
+        event_id=event_id,
+        media_asset_id=media_asset_id,
+        suggested_label=suggested_label,
+        newest_first=newest_first,
+        limit=limit,
+        offset=offset,
+    )
+    total_count = repository.count_species_suggestions(
+        status=status,
+        visit_id=visit_id,
+        event_id=event_id,
+        media_asset_id=media_asset_id,
+        suggested_label=suggested_label,
+    )
     return SpeciesSuggestionListResponse(
-        species_suggestions=get_repository().list_species_suggestions(
-            status=status,
-            visit_id=visit_id,
-            event_id=event_id,
-            media_asset_id=media_asset_id,
-            suggested_label=suggested_label,
-        )
+        species_suggestions=suggestions,
+        total_count=total_count,
+        has_more=offset + len(suggestions) < total_count,
     )
 
 
@@ -14306,8 +14337,70 @@ async def remove_yard_map_zone_placement(
 
 
 @app.get("/api/media", response_model=list[MediaAsset])
-async def list_media_assets() -> list[MediaAsset]:
-    return _redact_media_assets(get_repository().list_media_assets())
+async def list_media_assets(
+    limit: int = Query(default=_DEFAULT_LIST_PAGE_SIZE, ge=1, le=_MAX_LIST_PAGE_SIZE),
+    offset: int = Query(default=0, ge=0),
+    stream_id: str | None = Query(default=None, max_length=256),
+    media_type: str | None = Query(default=None, max_length=64),
+) -> list[MediaAsset]:
+    """Read MediaAssets, oldest first, one bounded page at a time.
+
+    Remaining Performance P1 Closure v1 (P1-7). This route returned the
+    entire MediaAsset table -- 11,244 rows and 11.9 MB at the accepted
+    Profile B workload, ~47 MB at Profile D -- on every load of eight
+    product pages. It now carries the same bounded default and explicit
+    `limit`/`offset` continuation that `GET /api/visits` and
+    `GET /api/events` were given by this milestone's parent, so no caller
+    can reach whole-library retrieval by accident again.
+
+    Product pages use `GET /api/media/page` instead, which adds the
+    whole-library counts a bounded window needs in order to keep
+    presenting a total as a total."""
+
+    return _redact_media_assets(
+        get_repository().list_media_assets(
+            stream_id=stream_id,
+            media_type=media_type,
+            limit=limit,
+            offset=offset,
+        )
+    )
+
+
+@app.get("/api/media/page", response_model=MediaAssetPage)
+async def read_media_asset_page(
+    limit: int = Query(default=100, ge=1, le=_MAX_LIST_PAGE_SIZE),
+    offset: int = Query(default=0, ge=0),
+    stream_id: str | None = Query(default=None, max_length=256),
+    media_type: str | None = Query(default=None, max_length=64),
+    ids: list[str] | None = Query(default=None),
+    image_only: bool = Query(default=False),
+    newest_first: bool = Query(default=True),
+) -> MediaAssetPage:
+    """One bounded window of MediaAssets, with whole-library counts.
+
+    Remaining Performance P1 Closure v1 (P1-7). `items` is bounded by
+    `limit`; `total_count` and `image_count` are computed over every row
+    matching the active filter, so the accepted pages keep labelling
+    totals honestly while holding one window.
+
+    `ids` is the hydration form: a page reads one already-bounded list and
+    then asks for exactly the MediaAssets those rows reference, which is
+    what the browser-side `mediaById` lookup maps used the whole library
+    for. An explicit empty `ids` set correctly returns nothing.
+
+    This endpoint reads; it creates no product truth."""
+
+    page = get_repository().media_asset_page(
+        stream_id=stream_id,
+        media_type=media_type,
+        ids=ids,
+        image_only=image_only,
+        newest_first=newest_first,
+        limit=limit,
+        offset=offset,
+    )
+    return page.model_copy(update={"items": _redact_media_assets(page.items)})
 
 
 @app.post("/api/media/import", response_model=MediaImportResult, status_code=201)
@@ -14905,8 +14998,42 @@ async def run_model_adapter(
 
 
 @app.get("/api/detection-runs", response_model=list[DetectionRun])
-async def list_detection_runs() -> list[DetectionRun]:
-    return get_repository().list_detection_runs()
+async def list_detection_runs(
+    limit: int = Query(default=_DEFAULT_LIST_PAGE_SIZE, ge=1, le=_MAX_LIST_PAGE_SIZE),
+    offset: int = Query(default=0, ge=0),
+) -> list[DetectionRun]:
+    """Read DetectionRuns, oldest first, one bounded page at a time.
+
+    Remaining Performance P1 Closure v1 (P1-8). 2,811 rows / 539 KB at
+    Profile B, previously returned whole to three product surfaces."""
+
+    return get_repository().list_detection_runs(limit=limit, offset=offset)
+
+
+@app.get("/api/detection-runs/page", response_model=DetectionRunPage)
+async def read_detection_run_page(
+    limit: int = Query(default=200, ge=1, le=_MAX_LIST_PAGE_SIZE),
+    offset: int = Query(default=0, ge=0),
+    ids: list[str] | None = Query(default=None),
+    media_asset_ids: list[str] | None = Query(default=None),
+    newest_first: bool = Query(default=True),
+) -> DetectionRunPage:
+    """One bounded window of DetectionRuns, with the whole-set count.
+
+    Remaining Performance P1 Closure v1 (P1-8). `ids` and `media_asset_ids`
+    are OR'd: the Review Queue needs "the run behind each proposal on this
+    page" and "has this page's media been analysed at all" answered
+    together, both scoped to one bounded page of review work.
+
+    This endpoint reads; it creates no product truth."""
+
+    return get_repository().detection_run_page(
+        ids=ids,
+        media_asset_ids=media_asset_ids,
+        newest_first=newest_first,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @app.post("/api/detection-runs", response_model=DetectionRun, status_code=201)
@@ -14948,8 +15075,47 @@ async def list_detection_run_proposals(run_id: str) -> list[DetectionProposal]:
 
 
 @app.get("/api/detection-proposals", response_model=list[DetectionProposal])
-async def list_detection_proposals() -> list[DetectionProposal]:
-    return get_repository().list_detection_proposals()
+async def list_detection_proposals(
+    limit: int = Query(default=_DEFAULT_LIST_PAGE_SIZE, ge=1, le=_MAX_LIST_PAGE_SIZE),
+    offset: int = Query(default=0, ge=0),
+) -> list[DetectionProposal]:
+    """Read DetectionProposals, oldest first, one bounded page at a time.
+
+    Remaining Performance P1 Closure v1 (P1-8). 2,811 rows / 1.40 MB at
+    Profile B, previously returned whole to three product surfaces."""
+
+    return get_repository().list_detection_proposals(limit=limit, offset=offset)
+
+
+@app.get("/api/detection-proposals/page", response_model=DetectionProposalPage)
+async def read_detection_proposal_page(
+    limit: int = Query(default=200, ge=1, le=_MAX_LIST_PAGE_SIZE),
+    offset: int = Query(default=0, ge=0),
+    media_asset_ids: list[str] | None = Query(default=None),
+    visit_ids: list[str] | None = Query(default=None),
+    event_ids: list[str] | None = Query(default=None),
+    status: DetectionProposalStatus | None = Query(default=None),
+    newest_first: bool = Query(default=True),
+) -> DetectionProposalPage:
+    """One bounded window of DetectionProposals, with the whole-set count.
+
+    Remaining Performance P1 Closure v1 (P1-8). The three id sets are OR'd
+    and mirror exactly how the accepted pages relate a proposal to the row
+    it is evidence for -- by Visit, by Event, or by MediaAsset -- so one
+    call answers a whole bounded page's relations instead of the page
+    filtering the entire proposal history in the browser.
+
+    This endpoint reads; it creates no product truth."""
+
+    return get_repository().detection_proposal_page(
+        media_asset_ids=media_asset_ids,
+        visit_ids=visit_ids,
+        event_ids=event_ids,
+        status=status,
+        newest_first=newest_first,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @app.post("/api/detection-proposals", response_model=DetectionProposal, status_code=201)

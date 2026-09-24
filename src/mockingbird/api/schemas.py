@@ -2436,6 +2436,33 @@ class MediaAsset(BaseModel):
     audio_channel_count: int | None = Field(default=None, ge=1)
 
 
+class MediaAssetPage(BaseModel):
+    """One bounded page of MediaAssets, plus whole-library count truth.
+
+    Remaining Performance P1 Closure v1 (P1-7). `GET /api/media` returned
+    every MediaAsset ever recorded -- 11,244 rows and 11.9 MB at the
+    accepted Profile B workload, ~47 MB at Profile D -- to eight product
+    pages, none of which actually needed the whole library. This envelope
+    is the bounded read those pages use instead: `items` is limited by
+    `limit`, while `total_count` and `image_count` are computed over every
+    row matching the active filter, so a page that labels a value a total
+    can keep doing so honestly while only ever holding one window.
+
+    `image_count` exists because the Model Adapters page's "Saved images"
+    smoke-check row presents exactly that number as a total.
+
+    This endpoint reads; it creates no product truth.
+    """
+
+    items: list[MediaAsset] = Field(default_factory=list)
+    limit: int = Field(ge=1)
+    offset: int = Field(ge=0)
+    # Every row matching the active filter, not just this window.
+    total_count: int = Field(ge=0)
+    image_count: int = Field(ge=0)
+    has_more: bool = False
+
+
 class VisitEvidenceFrame(BaseModel):
     # Bounded, observational media for one Visit. Never expose its local path.
     media_asset_id: str
@@ -3927,6 +3954,13 @@ class SpeciesSuggestionResponse(BaseModel):
 
 class SpeciesSuggestionListResponse(BaseModel):
     species_suggestions: list[SpeciesSuggestionResponse]
+    # Remaining Performance P1 Closure v1 (P1-8). `species_suggestions` is
+    # now bounded by the request's `limit`; `total_count` counts every row
+    # matching the active filter, so the Species Suggestions page can keep
+    # presenting a total as a total. Both default to describing the list
+    # itself, which keeps every existing constructor of this model honest.
+    total_count: int | None = Field(default=None, ge=0)
+    has_more: bool = False
 
 
 class SpeciesSuggestionStatusUpdateRequest(BaseModel):
@@ -3951,6 +3985,44 @@ class DetectionProposal(BaseModel):
     notes: str | None = None
     created_at: datetime
     decided_at: datetime | None = None
+
+
+class DetectionProposalPage(BaseModel):
+    """One bounded page of DetectionProposals, plus whole-set count truth.
+
+    Remaining Performance P1 Closure v1 (P1-8). `GET /api/detection-proposals`
+    returned every proposal ever made (2,811 rows / 1.40 MB at Profile B) to
+    the Review Queue, the Streams timeline and the Detection Proposals page.
+    None of the three needed the whole set: the first two relate proposals to
+    an already-bounded set of Visits/Events/MediaAssets, which is what the
+    scoping filters on the bounded read express. See `MediaAssetPage`.
+    """
+
+    items: list[DetectionProposal] = Field(default_factory=list)
+    limit: int = Field(ge=1)
+    offset: int = Field(ge=0)
+    # Every proposal matching the active scope *and* status filter.
+    total_count: int = Field(ge=0)
+    has_more: bool = False
+    # One count per status over the active scope, ignoring the status
+    # filter itself. The Detection Proposals page prints these on its
+    # filter chips as totals, so they are computed by one grouped
+    # aggregate at the server rather than by counting a downloaded list.
+    status_counts: dict[str, int] = Field(default_factory=dict)
+
+
+class DetectionRunPage(BaseModel):
+    """One bounded page of DetectionRuns, plus whole-set count truth.
+
+    Remaining Performance P1 Closure v1 (P1-8). 2,811 rows / 539 KB at
+    Profile B, read whole by the same three surfaces. See `MediaAssetPage`.
+    """
+
+    items: list[DetectionRun] = Field(default_factory=list)
+    limit: int = Field(ge=1)
+    offset: int = Field(ge=0)
+    total_count: int = Field(ge=0)
+    has_more: bool = False
 
 
 class DetectionProposalCreate(BaseModel):

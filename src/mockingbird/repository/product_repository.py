@@ -497,9 +497,11 @@ from mockingbird.api.schemas import (
     DetectionProposalDecision,
     DetectionProposalDecisionCreate,
     DetectionProposalDecisionResult,
+    DetectionProposalPage,
     DetectionProposalStatus,
     DetectionRun,
     DetectionRunCreate,
+    DetectionRunPage,
     DetectionRunStatus,
     DetectionSource,
     Event,
@@ -529,6 +531,7 @@ from mockingbird.api.schemas import (
     LikelySpeciesOverviewResponse,
     LocalDataStatus,
     MediaAsset,
+    MediaAssetPage,
     MediaImportResult,
     ModelAdapter,
     ModelAdapterConfigurationStatus,
@@ -20164,12 +20167,146 @@ class ProductRepository:
         # Reviewed bird truth and reviewed non-bird activity are intentionally separate.
         return grouped(birds, limit=12), grouped(non_birds, limit=8)
 
-    def list_media_assets(self) -> list[MediaAsset]:
+    @staticmethod
+    def _media_asset_filters(
+        query,
+        *,
+        stream_id: str | None,
+        media_type: str | None,
+        ids: Sequence[str] | None,
+        image_only: bool = False,
+    ):
+        """Remaining Performance P1 Closure v1 (P1-7): the whole-library
+        predicates the product pages used to apply in the browser, ported
+        to the database so a bounded window is the *right* window.
+
+        `ids` is the two-pass hydration port: a page reads one bounded list
+        (Motion Evidence, proposals, suggestions), then asks for exactly the
+        MediaAssets those rows reference, instead of downloading the library
+        to build a lookup map."""
+
+        normalized_stream_id = _clean_optional_text(stream_id)
+        if normalized_stream_id is not None:
+            query = query.where(MediaAssetModel.stream_id == normalized_stream_id)
+        normalized_media_type = _clean_optional_text(media_type)
+        if normalized_media_type is not None:
+            query = query.where(MediaAssetModel.media_type == normalized_media_type)
+        if ids is not None:
+            wanted = [value for value in {_clean_optional_text(one) for one in ids} if value]
+            # An explicit but empty id set means "nothing referenced", which
+            # must stay empty rather than silently degrading to everything.
+            query = query.where(MediaAssetModel.id.in_(wanted))
+        if image_only:
+            # The exact predicate the Stream detail page applied in the
+            # browser (`streamImageMediaAssets`): a declared image *or* an
+            # image content type. Ported whole so the bounded window holds
+            # the same rows the unbounded download did.
+            query = query.where(
+                or_(
+                    MediaAssetModel.media_type == "image",
+                    MediaAssetModel.content_type.startswith("image/"),
+                )
+            )
+        return query
+
+    def list_media_assets(
+        self,
+        *,
+        stream_id: str | None = None,
+        media_type: str | None = None,
+        ids: Sequence[str] | None = None,
+        image_only: bool = False,
+        newest_first: bool = False,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[MediaAsset]:
+        """Read MediaAssets, oldest first by default, optionally bounded.
+
+        The default argument set reproduces this method's original
+        whole-table behaviour exactly, which is what every internal caller
+        outside the product-facing HTTP boundary still relies on."""
+
         with self.session_factory() as session:
-            assets = session.scalars(
-                select(MediaAssetModel).order_by(MediaAssetModel.created_at, MediaAssetModel.id)
-            ).all()
+            query = self._media_asset_filters(
+                select(MediaAssetModel),
+                stream_id=stream_id,
+                media_type=media_type,
+                ids=ids,
+                image_only=image_only,
+            )
+            if newest_first:
+                query = query.order_by(
+                    MediaAssetModel.created_at.desc(), MediaAssetModel.id.desc()
+                )
+            else:
+                query = query.order_by(MediaAssetModel.created_at, MediaAssetModel.id)
+            if offset:
+                query = query.offset(offset)
+            if limit is not None:
+                query = query.limit(limit)
+            assets = session.scalars(query).all()
             return [_media_asset_from_model(asset) for asset in assets]
+
+    def media_asset_page(
+        self,
+        *,
+        stream_id: str | None = None,
+        media_type: str | None = None,
+        ids: Sequence[str] | None = None,
+        image_only: bool = False,
+        newest_first: bool = True,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> MediaAssetPage:
+        """One bounded window of MediaAssets, plus whole-library counts.
+
+        Remaining Performance P1 Closure v1 (P1-7). The two counts are
+        aggregates, so they cost two `SELECT COUNT(*)` statements rather
+        than a row per asset -- the product pages that label a number a
+        total keep telling the truth without holding the library."""
+
+        items = self.list_media_assets(
+            stream_id=stream_id,
+            media_type=media_type,
+            ids=ids,
+            image_only=image_only,
+            newest_first=newest_first,
+            limit=limit,
+            offset=offset,
+        )
+        with self.session_factory() as session:
+            total_count = int(
+                session.scalar(
+                    self._media_asset_filters(
+                        select(func.count()).select_from(MediaAssetModel),
+                        stream_id=stream_id,
+                        media_type=media_type,
+                        ids=ids,
+                        image_only=image_only,
+                    )
+                )
+                or 0
+            )
+            image_count = int(
+                session.scalar(
+                    self._media_asset_filters(
+                        select(func.count()).select_from(MediaAssetModel),
+                        stream_id=stream_id,
+                        media_type=media_type,
+                        ids=ids,
+                        image_only=image_only,
+                    ).where(MediaAssetModel.media_type == "image")
+                )
+                or 0
+            )
+        return MediaAssetPage(
+            items=items,
+            limit=limit,
+            offset=offset,
+            total_count=total_count,
+            image_count=image_count,
+            has_more=offset + len(items) < total_count,
+        )
 
     def get_media_asset(self, media_id: str) -> MediaAsset | None:
         with self.session_factory() as session:
@@ -26858,7 +26995,16 @@ class ProductRepository:
         event_id: str | None = None,
         media_asset_id: str | None = None,
         suggested_label: str | None = None,
+        newest_first: bool = False,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[SpeciesSuggestionResponse]:
+        """Read SpeciesSuggestions for the active filter, optionally bounded.
+
+        Remaining Performance P1 Closure v1 (P1-8) added `newest_first`,
+        `limit` and `offset`; the default argument set reproduces the
+        original whole-table behaviour and ordering exactly."""
+
         with self.session_factory() as session:
             query = select(SpeciesSuggestionModel)
             if status is not None:
@@ -26878,17 +27024,62 @@ class ProductRepository:
             if normalized_label is not None:
                 query = query.where(SpeciesSuggestionModel.suggested_label == normalized_label)
 
-            suggestion_models = session.scalars(
-                query.order_by(
+            if newest_first:
+                ordered = query.order_by(
+                    SpeciesSuggestionModel.created_at.desc(),
+                    SpeciesSuggestionModel.rank,
+                    SpeciesSuggestionModel.id.desc(),
+                )
+            else:
+                ordered = query.order_by(
                     SpeciesSuggestionModel.created_at,
                     SpeciesSuggestionModel.rank,
                     SpeciesSuggestionModel.id,
                 )
-            ).all()
+            if offset:
+                ordered = ordered.offset(offset)
+            if limit is not None:
+                ordered = ordered.limit(limit)
+            suggestion_models = session.scalars(ordered).all()
             return [
                 _species_suggestion_from_model(suggestion)
                 for suggestion in suggestion_models
             ]
+
+    def count_species_suggestions(
+        self,
+        *,
+        status: SpeciesSuggestionStatus | None = None,
+        visit_id: str | None = None,
+        event_id: str | None = None,
+        media_asset_id: str | None = None,
+        suggested_label: str | None = None,
+    ) -> int:
+        """Count every SpeciesSuggestion matching the active filter.
+
+        Remaining Performance P1 Closure v1 (P1-8): one aggregate, so the
+        Species Suggestions page can present a total as a total while
+        reading only one bounded window of rows."""
+
+        with self.session_factory() as session:
+            query = select(func.count()).select_from(SpeciesSuggestionModel)
+            if status is not None:
+                query = query.where(SpeciesSuggestionModel.status == status.value)
+            normalized_visit_id = _clean_optional_text(visit_id)
+            if normalized_visit_id is not None:
+                query = query.where(SpeciesSuggestionModel.visit_id == normalized_visit_id)
+            normalized_event_id = _clean_optional_text(event_id)
+            if normalized_event_id is not None:
+                query = query.where(SpeciesSuggestionModel.event_id == normalized_event_id)
+            normalized_media_asset_id = _clean_optional_text(media_asset_id)
+            if normalized_media_asset_id is not None:
+                query = query.where(
+                    SpeciesSuggestionModel.media_asset_id == normalized_media_asset_id
+                )
+            normalized_label = _clean_optional_text(suggested_label)
+            if normalized_label is not None:
+                query = query.where(SpeciesSuggestionModel.suggested_label == normalized_label)
+            return int(session.scalar(query) or 0)
 
     def get_species_suggestion(self, suggestion_id: str) -> SpeciesSuggestionResponse | None:
         with self.session_factory() as session:
@@ -27459,15 +27650,102 @@ class ProductRepository:
                     ),
                 )
 
-    def list_detection_runs(self) -> list[DetectionRun]:
+    @staticmethod
+    def _detection_run_filters(
+        query,
+        *,
+        ids: Sequence[str] | None,
+        media_asset_ids: Sequence[str] | None,
+    ):
+        """Remaining Performance P1 Closure v1 (P1-8). The Review Queue asks
+        two questions of DetectionRuns -- "which run produced this proposal"
+        (`ids`) and "has this MediaAsset been analysed at all"
+        (`media_asset_ids`) -- both about an already-bounded page of work.
+        Both are ported here rather than answered by downloading every run.
+
+        The two filters are OR'd: one call answers both questions for one
+        page."""
+
+        clauses = []
+        if ids is not None:
+            wanted = [value for value in {_clean_optional_text(one) for one in ids} if value]
+            clauses.append(DetectionRunModel.id.in_(wanted))
+        if media_asset_ids is not None:
+            wanted_media = [
+                value for value in {_clean_optional_text(one) for one in media_asset_ids} if value
+            ]
+            clauses.append(DetectionRunModel.media_asset_id.in_(wanted_media))
+        if clauses:
+            query = query.where(or_(*clauses))
+        return query
+
+    def list_detection_runs(
+        self,
+        *,
+        ids: Sequence[str] | None = None,
+        media_asset_ids: Sequence[str] | None = None,
+        newest_first: bool = False,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[DetectionRun]:
+        """Read DetectionRuns, oldest first by default, optionally bounded.
+
+        The default argument set reproduces the original whole-table
+        behaviour exactly, for the internal callers that still want it."""
+
         with self.session_factory() as session:
-            runs = session.scalars(
-                select(DetectionRunModel).order_by(
-                    DetectionRunModel.created_at,
-                    DetectionRunModel.id,
+            query = self._detection_run_filters(
+                select(DetectionRunModel), ids=ids, media_asset_ids=media_asset_ids
+            )
+            if newest_first:
+                query = query.order_by(
+                    DetectionRunModel.created_at.desc(), DetectionRunModel.id.desc()
                 )
-            ).all()
+            else:
+                query = query.order_by(DetectionRunModel.created_at, DetectionRunModel.id)
+            if offset:
+                query = query.offset(offset)
+            if limit is not None:
+                query = query.limit(limit)
+            runs = session.scalars(query).all()
             return [_detection_run_from_model(run) for run in runs]
+
+    def detection_run_page(
+        self,
+        *,
+        ids: Sequence[str] | None = None,
+        media_asset_ids: Sequence[str] | None = None,
+        newest_first: bool = True,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> DetectionRunPage:
+        """One bounded window of DetectionRuns, plus the whole-set count."""
+
+        items = self.list_detection_runs(
+            ids=ids,
+            media_asset_ids=media_asset_ids,
+            newest_first=newest_first,
+            limit=limit,
+            offset=offset,
+        )
+        with self.session_factory() as session:
+            total_count = int(
+                session.scalar(
+                    self._detection_run_filters(
+                        select(func.count()).select_from(DetectionRunModel),
+                        ids=ids,
+                        media_asset_ids=media_asset_ids,
+                    )
+                )
+                or 0
+            )
+        return DetectionRunPage(
+            items=items,
+            limit=limit,
+            offset=offset,
+            total_count=total_count,
+            has_more=offset + len(items) < total_count,
+        )
 
     def get_detection_run(self, run_id: str) -> DetectionRun | None:
         with self.session_factory() as session:
@@ -27564,15 +27842,141 @@ class ProductRepository:
                     review_queue_count=self._visible_review_queue_count(session),
                 )
 
-    def list_detection_proposals(self) -> list[DetectionProposal]:
+    @staticmethod
+    def _detection_proposal_filters(
+        query,
+        *,
+        media_asset_ids: Sequence[str] | None,
+        visit_ids: Sequence[str] | None,
+        event_ids: Sequence[str] | None,
+    ):
+        """Remaining Performance P1 Closure v1 (P1-8): the exact relation the
+        Review Queue and the Streams timeline compute over proposals.
+
+        `ReviewQueuePage.proposalRelationForReviewItem` relates a proposal to
+        a queue item by `visit_id`, `event_id` or `media_asset_id`, and
+        `StreamsPage.buildMediaLifecycleSummary` by `media_asset_id`. Both
+        start from an already-bounded set of rows, so the three id sets are
+        OR'd: one call answers a whole page's relations."""
+
+        clauses = []
+        if media_asset_ids is not None:
+            wanted = [
+                value for value in {_clean_optional_text(one) for one in media_asset_ids} if value
+            ]
+            clauses.append(DetectionProposalModel.media_asset_id.in_(wanted))
+        if visit_ids is not None:
+            wanted_visits = [
+                value for value in {_clean_optional_text(one) for one in visit_ids} if value
+            ]
+            clauses.append(DetectionProposalModel.visit_id.in_(wanted_visits))
+        if event_ids is not None:
+            wanted_events = [
+                value for value in {_clean_optional_text(one) for one in event_ids} if value
+            ]
+            clauses.append(DetectionProposalModel.event_id.in_(wanted_events))
+        if clauses:
+            query = query.where(or_(*clauses))
+        return query
+
+    def list_detection_proposals(
+        self,
+        *,
+        media_asset_ids: Sequence[str] | None = None,
+        visit_ids: Sequence[str] | None = None,
+        event_ids: Sequence[str] | None = None,
+        status: DetectionProposalStatus | None = None,
+        newest_first: bool = False,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[DetectionProposal]:
+        """Read DetectionProposals, oldest first by default, optionally bounded.
+
+        The default argument set reproduces the original whole-table
+        behaviour exactly, for the internal callers that still want it."""
+
         with self.session_factory() as session:
-            proposals = session.scalars(
-                select(DetectionProposalModel).order_by(
-                    DetectionProposalModel.created_at,
-                    DetectionProposalModel.id,
+            query = self._detection_proposal_filters(
+                select(DetectionProposalModel),
+                media_asset_ids=media_asset_ids,
+                visit_ids=visit_ids,
+                event_ids=event_ids,
+            )
+            if status is not None:
+                query = query.where(DetectionProposalModel.status == status.value)
+            if newest_first:
+                query = query.order_by(
+                    DetectionProposalModel.created_at.desc(),
+                    DetectionProposalModel.id.desc(),
                 )
-            ).all()
+            else:
+                query = query.order_by(
+                    DetectionProposalModel.created_at, DetectionProposalModel.id
+                )
+            if offset:
+                query = query.offset(offset)
+            if limit is not None:
+                query = query.limit(limit)
+            proposals = session.scalars(query).all()
             return [_detection_proposal_from_model(proposal) for proposal in proposals]
+
+    def detection_proposal_page(
+        self,
+        *,
+        media_asset_ids: Sequence[str] | None = None,
+        visit_ids: Sequence[str] | None = None,
+        event_ids: Sequence[str] | None = None,
+        status: DetectionProposalStatus | None = None,
+        newest_first: bool = True,
+        limit: int = 200,
+        offset: int = 0,
+    ) -> DetectionProposalPage:
+        """One bounded window of DetectionProposals, plus the whole-set count."""
+
+        items = self.list_detection_proposals(
+            media_asset_ids=media_asset_ids,
+            visit_ids=visit_ids,
+            event_ids=event_ids,
+            status=status,
+            newest_first=newest_first,
+            limit=limit,
+            offset=offset,
+        )
+        with self.session_factory() as session:
+            scoped_count = self._detection_proposal_filters(
+                select(func.count()).select_from(DetectionProposalModel),
+                media_asset_ids=media_asset_ids,
+                visit_ids=visit_ids,
+                event_ids=event_ids,
+            )
+            total_query = scoped_count
+            if status is not None:
+                total_query = total_query.where(
+                    DetectionProposalModel.status == status.value
+                )
+            total_count = int(session.scalar(total_query) or 0)
+            # One grouped aggregate for every filter chip, over the same
+            # scope but deliberately *not* narrowed by `status` -- each
+            # chip reports its own whole-scope total.
+            status_rows = session.execute(
+                self._detection_proposal_filters(
+                    select(DetectionProposalModel.status, func.count()).select_from(
+                        DetectionProposalModel
+                    ),
+                    media_asset_ids=media_asset_ids,
+                    visit_ids=visit_ids,
+                    event_ids=event_ids,
+                ).group_by(DetectionProposalModel.status)
+            ).all()
+            status_counts = {str(value): int(count) for value, count in status_rows}
+        return DetectionProposalPage(
+            items=items,
+            limit=limit,
+            offset=offset,
+            total_count=total_count,
+            has_more=offset + len(items) < total_count,
+            status_counts=status_counts,
+        )
 
     def get_detection_proposal(self, proposal_id: str) -> DetectionProposal | None:
         with self.session_factory() as session:
