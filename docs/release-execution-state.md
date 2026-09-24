@@ -780,6 +780,19 @@ rewrite, no Gate G, no push. See §3, below, for this milestone's own
 record once implemented and validated. **Authorization: Performance /
 Scale / Stability Closure v1** (no longer UI/UX & First-Run Adoption v1).
 
+**Update, 2026-09-23/24, by Review Queue Scale Closure v1:** Performance /
+Scale / Stability Closure v1 is implemented but left one release-blocking
+P0 open (`GET /api/review-queue` unbounded), so it is **not yet globally
+accepted**. **Review Queue Scale Closure v1** was authorized externally as
+a bounded continuation to close exactly that P0, and is now implemented
+and validated -- see §3. It changes data access, not product meaning: the
+tabs, filters, reviewed history, correction flows, counts, demo-source
+exclusion and Measured/Inferred/Reviewed boundaries are the accepted ones.
+Schema unchanged at `v60`. **Not pushed.** Whether Performance / Scale /
+Stability Closure v1 can now be accepted, and whether Field Validation
+Closure is next, is the external sequencing decision -- this milestone
+authorizes nothing.
+
 ## 1. Current accepted state
 
 - **Repository:** `/home/zkelder/projects/mockingbird-active`
@@ -3874,6 +3887,99 @@ behaviour recorded in earlier audit notes, outside that milestone's scope
 and outside this one's. Verified starting baseline exactly as expected:
 branch `main`; HEAD `3133c64`; schema `v59`; working tree clean except the
 seven preserved untracked detector files and `uv.lock`.
+
+**Review Queue Scale Closure v1 -- IMPLEMENTED, pending external
+acceptance.** A bounded continuation authorized to close the one
+release-blocking P0 that Performance / Scale / Stability Closure v1 left
+open (its §R P0-4 and §Z): `GET /api/review-queue` is unbounded. See
+[review-queue-scale-closure-v1-report.md](review-queue-scale-closure-v1-report.md)
+for the complete record. **Schema `v60`, unchanged** -- no table, no
+column, no migration; entirely a read-path change plus two new read
+endpoints.
+
+That milestone had said plainly why it could not bound the response alone:
+`ReviewQueuePage.tsx` computed every tab count, triage count,
+source/stream facet, "showing N of M" disclosure and bulk-selection
+eligibility client-side over the whole download, so a windowed response
+presenting those numbers as totals would have been a truth regression, not
+a performance fix. This milestone moved those predicates to the server
+*without changing what they decide*:
+`src/mockingbird/repository/review_queue_filters.py` is a pure,
+session-free port with one function per named TypeScript original, and the
+client-side copies were deleted rather than left to drift.
+
+**Measured, before (a `git worktree` of the accepted baseline `73dbcd4`)
+and after, on the same machine, at both required profiles:**
+
+| | Before | After |
+|---|---|---|
+| Review Queue mount, Profile B (2,811 Visits) | 12.3 s / **20.4 MB** / 2,811 items / 28,227 statements | 1.6 s / **194 KB** / 25 items / 305 |
+| Review Queue mount, Profile C (burst/backlog, 2,058-item backlog) | 12.0 s / **24.1 MB** / 3,322 items / 23,400 | 2.0 s / **195 KB** / 25 items / 312 |
+| App-shell review counts, Profile C | 7.6 s / **14.9 MB** / 20,671 | 1.4 s / **238 bytes** / 105 |
+| Fast Review "next unresolved Visit", Profile C | 9.0 s / 20,671 | 0.9 s / **77** |
+
+Profile C reproduces the P0's own published figures exactly -- 2,058
+items, 14,921,425 bytes, 20,671 statements against "2,060 items, 14.9 MB,
+20,673" -- confirming the same workload. Latency conclusions are drawn
+from within-run comparisons (before-shape and after-shape measured in the
+same process, same minute, same database), because this machine is shared
+with an unrelated bursty workload.
+
+**Two real defects the work surfaced and fixed**, both of which only a
+running browser could have caught: the primary single-item correction path
+(every card's Confirm / Correct / False positive) stopped refreshing once
+the app shell no longer carried the queue, leaving tab counts stale; and
+two in-flight queue requests could let a slow earlier response reinstate a
+stale view.
+
+**Validation.** Tier 1: 28 new tests in
+`tests/test_review_queue_page_scale.py`, including the §12 structural
+regression tests -- ten times the reviewed history at an identical backlog
+must not move the response by more than 64 bytes, and ten times the
+*backlog* may only move the documented 200-target Fast Review snapshot.
+Tier 2: 279 passed, with 6 `test_dashboard_today.py` failures reproduced
+identically at the baseline. Browser: 4 new tests on their own isolated
+instance (`playwright.review-queue.config.ts`, the same isolation
+`onboarding.spec.ts` already has); the shared suite was **9 failed / 182
+passed at this HEAD against 10 failed / 181 passed at the baseline** -- a
+strict subset, **zero browser failures attributable to this milestone**.
+Tier 3 full Core, run twice: **12 failed / 6,173 passed / 4 skipped / 11
+xfailed** both times (46:47 and 45:58), every failure classified -- four
+from the established pre-existing set, seven reproduced identically at the
+baseline (the six `test_dashboard_today.py` date-sensitive tests plus
+`test_canonical_new_regular_species_consistency.py`, same family), and one
+Camera Node transport full-run timing flake. The two runs differ by exactly
+one swap inside that transport family:
+`test_transport_worker.py::test_retryable_failure_...` failed in run 1 and
+passed in run 2, while
+`test_camera_node_transport_acceptance.py::test_scenario_8_...` did the
+reverse. Both pass standalone, neither file references the review queue at
+all, `test_camera_node_transport_acceptance.py` is already a documented
+member of this repository's load-sensitive flake family (UI/UX & First-Run
+Adoption v1 classified `test_scenario_1_...` identically), and run 2's
+failure is provably a harness race rather than a product fault: it asserted
+`item.state in {"pending", "failed_retryable"}` and read `'transmitting'`
+having sampled the spool mid-attempt, on an item already carrying the
+correct `last_error='transport_protocol_unsupported'`. **Zero Core failures
+attributable to this milestone, in both runs.** `ruff` byte-identical to baseline on every changed product
+file; `tsc --noEmit` and `npm run build` clean.
+
+**Remaining Performance / Scale / Stability blockers:** P0-4 is closed.
+P1-7 (`GET /api/media`, 11.9 MB at Profile B), P1-8
+(`/api/detection-proposals`, `/api/detection-runs`,
+`/api/species-suggestions`), P2-1 (Bird Log journal), P2-2 (dataset
+coverage/quality) and P2-3 (`dashboard_summary`'s unrendered fields) are
+open and untouched. One new **P2-4, not release-blocking**: the bounded
+page's own classification pass is still O(total history) in *Python* (a
+handful of statements, but one `ReviewQueueItem` constructed per queue
+member), which is what keeps it at roughly a second rather than tens of
+milliseconds.
+
+Working tree clean apart from the seven preserved untracked detector files
+(verified untracked and byte-identical to their session-start SHA-256 at
+every commit boundary; explicit staging paths throughout) and `uv.lock`.
+Verified starting baseline exactly as expected: branch `main`; HEAD
+`73dbcd4`; schema `v60`. **Not pushed.**
 
 **Performance / Scale / Stability Closure v1 -- IMPLEMENTED, pending
 external acceptance.** See
