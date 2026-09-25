@@ -585,8 +585,8 @@ Findings:
 | P1-4 | `GET /api/visits` unbounded (the flagged endpoint) | 754 KB at Profile B, zero frontend consumers | **FIXED** (§S.5) |
 | P1-5 | `_review_queue_item_by_target` built the entire queue to find one item, on every correction | 228 -> 2,028 statements for a 10x backlog | **FIXED** (§S.2) |
 | P1-6 | Whole-table `taxonomy_labels` scan per label resolution | 7,340 scans in one dataset-quality request | **FIXED** (§S.2) |
-| P1-7 | `GET /api/media` returns every media asset | **11.9 MB** at Profile B, ~47 MB at Profile D; 6 page consumers | **NOT FIXED** -- needs a coordinated frontend change, §Z |
-| P1-8 | `GET /api/detection-proposals` / `/detection-runs` / `/species-suggestions` unbounded | 1.40 MB / 539 KB / 1.50 MB at Profile B; consumed whole by Review Queue and Streams | **NOT FIXED** -- same reason, §Z |
+| P1-7 | `GET /api/media` returns every media asset | **11.9 MB** at Profile B, ~47 MB at Profile D; 6 page consumers (8 call sites, found on re-inventory) | **FIXED** by *Remaining Performance P1 Closure v1* -- §AB |
+| P1-8 | `GET /api/detection-proposals` / `/detection-runs` / `/species-suggestions` unbounded | 1.40 MB / 539 KB / 1.50 MB at Profile B; consumed whole by Review Queue and Streams | **FIXED** by *Remaining Performance P1 Closure v1* -- §AB |
 
 ### P2 -- bounded high-value improvement
 
@@ -992,6 +992,11 @@ load-independent, carry the structural argument.
 
 ## Z. Remaining concrete v0.1 blockers
 
+*(Status since written: blocker 1 was closed by* Review Queue Scale Closure
+v1*; the P1-7 / P1-8 paragraph below was closed by* Remaining Performance
+P1 Closure v1 *-- see §AB. Blocker 2's carried-forward items are unchanged
+and remain open. The analysis below is kept as written.)*
+
 **1. `GET /api/review-queue` is unbounded (P0-4) -- reduced by 72% at
 Profile B, but not closed.**
 
@@ -1039,6 +1044,12 @@ synthetic workload uses tiny media files).
 
 ## AA. Advisory next step (advisory only)
 
+*(Superseded. Both halves of this advice were subsequently authorised and
+carried out: the Review Queue by* Review Queue Scale Closure v1*, and the
+media / detection / suggestion endpoints by* Remaining Performance P1
+Closure v1 *-- see §AB. The text is kept as written, because it is the
+record of what this milestone recommended at the time.)*
+
 The natural next piece of work is the one this milestone measured, root-
 caused, designed and deliberately did not take: **bounding the Review
 Queue end to end** -- server-side pagination with server-computed per-tab
@@ -1050,3 +1061,150 @@ the evidence needed to scope it is in §G, §H and §Z.
 
 Sequencing authority remains external. This milestone does not authorise
 itself, that work, or any successor.
+
+## AB. P1-7 and P1-8, closed by *Remaining Performance P1 Closure v1*
+
+§Z left two P1 blockers open and said why: both needed a coordinated
+frontend change this milestone was not authorised to make. §AA named that
+work. It was subsequently authorised, scoped to exactly these two items,
+and is now done. This section records the outcome; the Review Queue P0 that
+§Z listed first was closed separately and earlier, by *Review Queue Scale
+Closure v1*.
+
+**Both were reproduced first, at the same accepted Profile B workload
+(2,813 Visits / 11,244 media assets), before anything changed** -- every
+figure matching this report's own §R inventory:
+
+| Route | Rows | Bytes |
+|---|---:|---:|
+| `GET /api/media` | 11,244 | **11,865,634** (11.9 MB) |
+| `GET /api/detection-proposals` | 2,811 | **1,403,445** (1.40 MB) |
+| `GET /api/detection-runs` | 2,811 | **538,639** (539 KB) |
+| `GET /api/species-suggestions` | -- | **1,499,968** (1.50 MB) |
+
+### What changed
+
+Each of the four routes now carries the bounded default and explicit
+`limit`/`offset` continuation that §S.5 gave `GET /api/visits` and
+`GET /api/events`, so whole-history retrieval is no longer reachable by
+accident. Alongside them, three bounded-envelope reads --
+`GET /api/media/page`, `GET /api/detection-proposals/page` and
+`GET /api/detection-runs/page` -- follow the accepted
+`GET /api/review-queue/page` precedent: `items` bounded by the request,
+counts computed over the whole matching set.
+
+The ten product pages that consumed these routes were re-inventoried before
+any contract moved (the re-count found 8 `GET /api/media` call sites, not
+the 6 §R recorded), and each was ported to the read it actually needed:
+a server-side predicate, a bounded window, hydration by id, or a scope
+matching the work on screen. No page's layout, controls or wording was
+redesigned.
+
+### Measured outcome
+
+At the HTTP boundary, on the same Profile B database, before -> after:
+
+| Route | Before | After | Change |
+|---|---:|---:|---:|
+| `GET /api/media` | 11,865,634 B / 11,244 rows | 525,796 B / 500 rows | **-95.6%** |
+| `GET /api/detection-proposals` | 1,403,445 B / 2,811 rows | 247,703 B / 500 rows | **-82.4%** |
+| `GET /api/detection-runs` | 538,639 B / 2,811 rows | 95,115 B / 500 rows | **-82.3%** |
+| `GET /api/species-suggestions` | 1,499,968 B | 303,265 B | **-79.8%** |
+
+Those are the *routes*. What the pages now actually read matters more, and
+is the real closure evidence (same Profile B data, measured as serialized
+response bytes and SQL statements rather than wall-clock, which this shared
+machine reports unreliably -- see §T):
+
+| Read | Rows | Bytes | Statements |
+|---|---:|---:|---:|
+| *before*: whole MediaAsset library, on every load of 8 pages | 11,244 | 12,135,624 | 1 |
+| *after*: Stream detail -- one Stream's recent images | 200 | 216,738 | 3 |
+| *after*: Streams -- one window per Stream (x3 Streams) | 50 each | 54,247 each | 3 each |
+| *after*: any page's picker window | 100 | 108,415 | 3 |
+| *after*: MotionEvidence detail -- hydrate one snapshot | 1 | 1,168 | 3 |
+| *before*: whole proposal set, read by 3 surfaces | 2,811 | 1,403,445 | 1 |
+| *before*: whole run set, read by 3 surfaces | 2,811 | 538,639 | 1 |
+| *before*: whole suggestion set | 2,464 | 1,499,944 | 1 |
+| *after*: Review Queue -- proposals scoped to one 25-item page | 25 | 12,610 | 3 |
+| *after*: Review Queue -- runs behind those proposals | 25 | 4,893 | 2 |
+| *after*: Detection Proposals page -- window + chip counts | 200 | 100,378 | 3 |
+| *after*: Species Suggestions page -- window | 200 | 122,125 | 1 |
+
+The Review Queue's detection evidence is the sharpest single figure:
+**1.94 MB across two whole-history reads becomes 17.5 KB across two
+page-scoped reads, a 99.1% reduction**, and it no longer grows at all as
+history accumulates.
+
+### What was deliberately preserved
+
+**Totals stay totals.** Bounding a response whose count the UI labels as a
+total would be a truth regression, not a performance fix -- the same
+reasoning §Z gave for not bounding the Review Queue unilaterally. Every
+such value is now computed at the server by an aggregate:
+`MediaAssetPage.image_count` (the Model Adapters "Saved images" smoke-check
+row and the Streams per-Stream "Saved images" row),
+`DetectionProposalPage.status_counts` (the Detection Proposals filter
+chips, one grouped query, deliberately not narrowed by the active status so
+each chip reports its own total), and `total_count` on all three envelopes
+plus `SpeciesSuggestionListResponse`.
+
+**Predicates were ported, not approximated.** `image_only` reproduces
+`StreamDetailPage.streamImageMediaAssets` exactly, including an asset whose
+`media_type` is not `image` but whose `content_type` begins `image/`; the
+proposal scope mirrors `proposalRelationForReviewItem` (by Visit, by Event,
+or by MediaAsset, OR'd).
+
+**One guardrail was nearly broken silently, and was caught.**
+`StreamsPage.storageGuardrailSummary` feeds
+`SNAPSHOT_WATCH_STORAGE_BLOCK_COUNT`, which stops repeated snapshot checks
+once a Stream holds 100 saved images. Deriving that count from the new
+50-item window would have *disabled the guardrail outright* rather than
+merely mislabelling it, so `savedImageCount` is passed the Stream's real
+server-side total while the window continues to feed per-frame work. This
+is the class of bug a bound introduces quietly, and is why the regression
+tests assert on counts rather than on rendering.
+
+### Validation
+
+- **Tier 1**: 19 new structural tests
+  (`tests/test_remaining_performance_p1_closure.py`), plus 286 tests across
+  the focused consumer suites -- all passing. The structural tests pin the
+  property rather than a threshold: the same product-shaped read is asserted
+  to return the same rows and issue the same number of statements against a
+  60-asset and a 600-asset library, so a return to whole-history retrieval
+  fails on row count, never on timing. A repository-wide guard also fails if
+  any page calls an unbounded list helper again.
+- **Browser**: a new spec on its own isolated instance
+  (`npm run test:e2e:bounded-media`) watches the network and proves both
+  halves -- the requests are bounded or scoped, and the disclosed totals
+  still match server truth. 2/2 passing.
+- **Shared browser suite**: 9 stable failures, all reproduced identically at
+  the pre-milestone baseline `af448a2` across three runs of each; they are
+  shared-database contamination between specs in that suite, not
+  milestone-attributable. Two further specs
+  (`dataset-export-download`, `mobile-viewport-audit`) proved intermittently
+  flaky *on both* branches -- `dataset-export-download` failed at the
+  baseline on the third baseline run and passes 3/3 in isolation on the
+  milestone branch.
+- **Tier 3, full Core**: 6,191 passed, 13 failed, 4 skipped, 11 xfailed
+  (1:09:40). **Zero of the 13 are milestone-attributable.** Eleven
+  reproduce deterministically and identically at `af448a2` when run by the
+  same node ids (Today/dashboard, Doctor transport interpretation,
+  environmental-context temperature banding, place-change summary -- all
+  date-sensitive against the current clock). The remaining two
+  (`test_camera_node.py`, `test_camera_node_transport_acceptance.py`) are
+  timing races that pass in isolation on both branches, consistent with the
+  pre-existing Core flakiness earlier milestones recorded.
+
+### What this does not claim
+
+This closes P1-7 and P1-8 only. The P2 items this report carries (Bird Log
+journal scaling, Dataset Coverage/Quality scaling, the unrendered
+`dashboard_summary` fields, and the Review Queue's O(history) classification
+pass) were explicitly out of scope and are untouched. Wall-clock is not
+claimed as the measure of this work; the structural figures above are.
+
+Sequencing authority remains external. This section records an outcome; it
+does not authorise itself, a successor, or acceptance of the parent
+milestone.
