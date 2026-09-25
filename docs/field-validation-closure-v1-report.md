@@ -826,3 +826,45 @@ state.
   behaviours were re-run.
 - **This addendum does not accept Field Validation Closure v1.** It records the
   corrected evidence so that decision can be made.
+
+## Acceptance-closure pass (2026-09-25)
+
+Added when the correction milestone completed its remaining acceptance work. The
+corrected build's full Core gate and two dispositions now exist, so the
+acceptance decision has everything it needs.
+
+- **Full Core gate on the corrected build:** `11 failed, 6205 passed, 4 skipped,
+  35 deselected, 11 xfailed` (0:41:00). **Zero failures attributable to the
+  corrections.** All eleven reproduce deterministically in isolation *and* fail
+  identically at the pre-correction baseline `8a45d1a` -- i.e. at this report's
+  own successor commit, before either fix. Four are the established recorded
+  pre-existing set; the other seven were bisected to `3d78f8a` (Review Queue
+  Scale Closure v1, 2026-09-23), two milestones earlier. Full classification:
+  [native-windows-field-reliability-corrections-v1-report.md](native-windows-field-reliability-corrections-v1-report.md)
+  §M.
+- **§Q-2 and §Q-4 remain open and unfixed**, unchanged from the addendum above,
+  and neither is a v0.1 blocker.
+- **The stale `camera_connected` field** observed during the corrections' own
+  field run was traced end to end and dispositioned as a **nonblocking deferred
+  field-quality issue, not fixed**. It *is* user-facing (Stream detail and the
+  onboarding wizard render "Camera Healthy" from it), but it is a bounded 300 s
+  heartbeat freshness window with an honest post-threshold message and existing
+  regression tests on both sides, and the field observation fell inside that
+  window (~186 s). No recovery, resume or control path reads the field. Changing
+  it would reverse an accepted product decision encoded in a passing test, which
+  is a product change rather than a narrow repair. Reasoning in full:
+  corrections report §O.
+- **One new finding, which is NOT this report's and NOT the corrections'.**
+  `dashboard_summary`'s Today counts collapse toward `0` for reviewed/confirmed
+  Visits, because a review-queue bulk preload sharing the same read cache answers
+  Today's motion-evidence lookups with an authoritative `None`. Introduced by
+  `3d78f8a`, already present at `8a45d1a`, and therefore **present in the build
+  this report validated** -- §U's "no remaining v0.1 field blockers" verdict was
+  reached without knowledge of it. It is a user-facing truth regression on the
+  landing page and is recorded as a **release-blocker candidate for the owner's
+  decision** (corrections report §O). It was not fixed: it belongs to a
+  different milestone's change.
+
+**This pass still does not accept Field Validation Closure v1.** It completes the
+evidence and states the open decisions; global acceptance remains the
+owner's/ChatGPT's call.

@@ -500,7 +500,150 @@ and the schema. Result recorded in §M below.
 
 ## M. Tier 3 Core result
 
-<!-- CORE-RESULT -->
+**Run:** `.venv/bin/python -m pytest -m "not slow"` (the full Core gate) at this
+milestone's implementation HEAD.
+
+```
+11 failed, 6205 passed, 4 skipped, 35 deselected, 11 xfailed,
+284 warnings in 2460.46s (0:41:00)
+```
+
+**Failures attributable to this milestone: ZERO.** That is not asserted from the
+names -- every one of the eleven was classified against a real baseline:
+
+1. **All eleven reproduce deterministically when run in isolation** (4.77 s, same
+   eleven). None is order-dependent and none is flaky, so "flaky" was rejected as
+   a label rather than used as one.
+2. **All eleven fail identically at the pre-correction baseline `8a45d1a`** --
+   this milestone's own starting commit, checked out and re-run (4.25 s, same
+   eleven, same assertions). This is the decisive evidence: the failure set is
+   bit-for-bit the same before and after the corrections, so no correction in
+   this milestone caused, unmasked or worsened any of them.
+
+This mattered rather than being a formality: the milestone *did* change
+`src/mockingbird/time_utils.py`, and six of the eleven are local-day/`Today`
+assertions. Attribution was genuinely plausible and had to be disproved, not
+waved away.
+
+### Group 1 -- the established recorded pre-existing set (4 of 11)
+
+Already of record in
+[performance-scale-stability-closure-v1-report.md](performance-scale-stability-closure-v1-report.md)
+§X and re-confirmed by
+[review-queue-scale-closure-v1-report.md](review-queue-scale-closure-v1-report.md)
+§W:
+
+| Test | Status |
+| --- | --- |
+| `test_doctor_camera_node_transport.py::test_interpret_no_transport_configured_anywhere_is_pass` | pre-existing, of record |
+| `test_doctor_camera_node_transport.py::test_interpret_ignores_sources_without_transport_configured` | pre-existing, of record |
+| `test_environmental_context.py::test_temperature_band_established_once_enough_days_are_cached` | pre-existing, of record |
+| `test_place_change_summary_repository.py::test_api_round_trip_exposes_change_detection_fields` | pre-existing, of record (that file's own long-documented date-sensitive fixture) |
+
+Two members of that recorded six-set did **not** fail here
+(`test_place_biodiversity_summary_repository.py`, both cases), so this run is a
+strict improvement on that set, not a regression of it.
+
+### Group 2 -- pre-existing, but NOT previously recorded (7 of 11)
+
+These seven are new relative to the recorded set, so "pre-existing" was not
+accepted on the baseline run alone -- the first bad commit was located:
+
+| Test |
+| --- |
+| `test_canonical_new_regular_species_consistency.py::test_today_and_bird_log_agree_on_new_species` |
+| `test_dashboard_today.py::test_today_summary_uses_selected_local_day_and_current_reviewed_truth` |
+| `test_dashboard_today.py::test_today_summary_regulars_require_usable_day_coverage_and_exclude_non_nature_records` |
+| `test_dashboard_today.py::test_today_summary_new_today_is_wildlife_inclusive_not_bird_only` |
+| `test_dashboard_today.py::test_today_summary_counts_a_confirmed_kind_level_mammal_as_real_activity` |
+| `test_dashboard_today.py::test_today_summary_best_moments_caps_one_species_and_stays_diverse` |
+| `test_dashboard_today.py::test_today_summary_moves_from_likely_to_confirmed_without_duplication` |
+
+**Bisected:** `73dbcd4` **PASS** -> `3d78f8a` **FAIL**, and `73dbcd4` is
+`3d78f8a`'s direct parent, so the attribution is exact. First bad commit:
+`3d78f8a` *"Review Queue Scale Closure v1 (1/n): bulk-preload the queue build's
+last three per-item reads"* (2026-09-23) -- **two milestones before this one**,
+and already broken at this milestone's `8a45d1a` baseline.
+
+**Root cause, read from the code rather than inferred from the symptom.**
+`_preloaded_motion_evidence_for_review_queue_item` returns an *authoritative*
+`None` -- not its own `_PRELOAD_MISS` sentinel -- for any Visit/Event that is
+simply absent from the preloaded set. Its guards check only that the cache
+exists and that a Visit/Event id was supplied; they never check whether *this*
+target is one the preload actually covered. `_read_only_build_cache`'s contract
+is that "nested builds share the outermost cache and never clear it early", and
+`dashboard_summary` opens that outermost cache, calls
+`_visible_review_queue_items` **first** (which runs `_preload_review_queue_rows`
+and so populates `review_queue_motion_evidence` for the *queue's* member set
+only), and **then** calls `_dashboard_today_summary`, whose counting loop calls
+`_motion_evidence_for_review_queue_item` for Today's Visits. Reviewed/confirmed
+Visits are not queue members, so they receive `evidence=None`, which makes
+`_review_queue_product_context` classify `detector_class != "animal"`, and
+`detector_qualified_animal_visit_count` collapses toward 0.
+
+Every symptom matches: counts collapse to `0`, the "New Today" maps come back
+empty, and all seven failing cases add their Visits with `reviewed_label=`.
+
+**This is a real user-facing truth regression, not a test artifact** -- the
+affected field is what the landing page's Today panel reports. It is recorded in
+§O as a newly-identified pre-existing release-blocker candidate. It was **not
+fixed here**: it belongs to a different milestone's change, and fixing it is
+outside this milestone's authorized scope (fix exactly the two field blockers
+and their direct dependencies).
+
+---
+
+## Closure confirmations (durable intent, migration safety, field integrity)
+
+Recorded explicitly so the acceptance decision does not have to re-derive them.
+Each line cites existing evidence; nothing here was re-run for its own sake.
+
+### Durable observation-intent semantics -- confirmed
+
+The `stream_observation_intents` table (schema v61) means exactly this, and each
+clause is covered by a named, currently-passing test:
+
+| Contract clause | Evidence |
+| --- | --- |
+| Intentional **Start Observing** -> durable intent **ACTIVE** (`observing`) | `test_start_observing_records_durable_observing_intent`; field step A (intent row written `observing / user_started / 14:45:50.748`) |
+| Runtime teardown/restart does **not** clear that intent | `test_stopping_clears_the_intent_without_deleting_the_row` + §H's `stop_all` boundary; field: intent survived `POST /api/product/shutdown` and survived an abrupt `Stop-Process -Force` with `updated_at` unchanged |
+| Intentional **Stop Observing** -> durable intent **STOPPED** | `test_stop_observing_records_durable_stopped_intent`, `test_stop_observing_clears_intent_even_with_no_session_in_this_process` |
+| Restart restores **only** ACTIVE intent | `test_host_restart_resumes_a_stream_whose_durable_intent_is_observing`, `test_host_restart_leaves_a_deliberately_stopped_stream_stopped`, `test_host_restart_never_starts_a_stream_with_no_recorded_intent` (an absent row is never read as observing) |
+| An **offline Node at Host startup** stays recoverable when it returns | `test_host_restart_with_an_unavailable_node_resumes_once_it_returns`; field steps M-P (resumed ~29 s after the Node returned, no manual action) |
+| **No legacy monitoring supervisor** is activated for Camera Node Streams | `test_host_restart_never_resumes_a_non_camera_node_stream`, `test_non_camera_node_stream_is_ignored`, `test_host_restart_never_resumes_a_stream_that_lost_its_pairing`, `test_host_restart_never_resumes_an_archived_sources_stream`; §H's explicit rejection of `stream_monitoring_policies.mode` reuse, and `camera_node_recovery.py`'s docstring: the legacy `live_monitoring` lane and `DurableMonitoringSupervisor` are not touched at all |
+
+Re-confirmed green at the final HEAD:
+`test_durable_observation_intent.py`, `test_camera_node_recovery.py`,
+`test_time_utils.py`, `test_unified_observation_status.py` -> **103 passed**.
+
+### v60 -> v61 migration safety -- confirmed
+
+Covered by tests **and** by the real field deployment; not repeated here.
+
+| Requirement | Evidence |
+| --- | --- |
+| v60 -> v61 migration succeeds | `test_schema_61_registers_the_intent_migration_and_stays_reachable`, `test_upgrading_from_schema_60_creates_the_table_and_no_intent_rows`, `test_a_fresh_install_has_the_intent_table`, `test_the_migration_is_idempotent`; field: real field database migrated 60 -> **61** during deployment |
+| Sources / Streams / Visits / Reviews / media intact | field (§J): visits/candidates/media **169 / 167 / 343 -> 169 / 167 / 343**; streams/sources/reviewed **2 / 2 / 2 -> 2 / 2 / 2** |
+| Backup / migration safeguards still functional | field: pre-migration safety backup taken as part of deployment; `[PASS] database_schema`, `[PASS] media_integrity`, `PRAGMA quick_check` **ok** |
+| Migration creates **no** accidental ACTIVE intent | field: **0 intent rows** immediately after the upgrade; `test_upgrading_from_schema_60_creates_the_table_and_no_intent_rows` asserts the same invariant. An upgrade must not spontaneously start observing anywhere -- and did not |
+
+### Final field-integrity check -- already obtained, restated
+
+From §J and §K on the real native-Windows Host + real Camera Node. **Not
+re-run**: no correction in this closure pass changed any of these paths.
+
+| Check | Result |
+| --- | --- |
+| Graceful Host restart while ACTIVE | **resumes automatically**, ~12 s (14:50:12.9), fresh frames confirmed |
+| Deliberate STOP, then restart | **stays stopped** -- 20 polls / ~6 min, Node never probed |
+| Host starts while Node offline | honest `stopped` while unreachable, then **resumes automatically** ~29 s after the Node returned (15:08:38.5) |
+| Abrupt process kill while ACTIVE | **resumes automatically** (15:10:41); dying process wrote nothing |
+| Duplicate Visit ids | **0** |
+| Duplicate Reviewed truth | none -- 2 reviewed Visits / 2 labels throughout; no Inferred -> Reviewed promotion |
+| Source/Stream relationships | unchanged -- 2 / 2 throughout; 1 intent row, 1 distinct intent Stream |
+| Media loss | none -- 343 -> 359 assets, growth only from real new observation; `[PASS] media_integrity` |
+| Local Only preserved | yes -- no external timezone service, no network dependency added; timezone resolved from CLDR data packaged offline |
+| Database integrity | `PRAGMA quick_check` **ok**; schema **v61** `[PASS]` |
 
 ---
 
@@ -508,11 +651,36 @@ and the schema. Result recorded in §M below.
 
 | | |
 | --- | --- |
-| Implementation commit | `15691d9` |
-| Schema | **v61** (`v60 -> v61`, one additive table) |
-| Protected files | all seven verified **present, untracked, byte-identical** to their entry hashes at every commit boundary; `uv.lock` untouched and still untracked |
+| Correction implementation commit | `15691d9` |
+| Field-evidence commit | `2cdb39b` |
+| Acceptance-closure commit | this report's own commit (Tier 3 classification, the `camera_connected` disposition and these confirmations); no source file changed in it |
+| Schema | **v61** (`v60 -> v61`, one additive table); `CURRENT_DATABASE_SCHEMA_VERSION = 61` |
+| Version | `0.1.0`, unchanged |
+| Protected files | all seven verified **present, untracked, byte-identical** to their entry hashes at every commit boundary -- re-verified again at closure, see the table below; `uv.lock` untouched and still untracked |
 | Staging | explicit full paths only; no `git add -A`, no `git add .` |
 | Push | **not pushed.** No tag, no publish, no remote operation |
+
+**Protected-file re-verification at closure**, against the hashes of record in
+[field-validation-closure-v1-report.md](field-validation-closure-v1-report.md) §B:
+
+| File | SHA-256 (first 16) | Match | Tracked? |
+| --- | --- | --- | --- |
+| `docs/wildlife-detector-training-contract.md.orig` | `63f9e5ba142069da` | yes | untracked |
+| `scripts/evaluate_small_bird_detector.py` | `81cdff0423f12112` | yes | untracked |
+| `scripts/materialize_wildlife_stage2.py.orig` | `ade97d9d46f44661` | yes | untracked |
+| `scripts/train_wildlife_stage2_rfdetr.py.orig` | `a24aa6e294c04df1` | yes | untracked |
+| `src/mockingbird/detectors/small_bird_benchmark.py` | `e85a2315fbe1487e` | yes | untracked |
+| `src/mockingbird/training/wildlife.py.orig` | `548f0706b5498b02` | yes | untracked |
+| `tests/test_small_bird_benchmark.py` | `abad318b8df14c20` | yes | untracked |
+
+`uv.lock` (`f36f26ba9fffcbd8`) also untouched and untracked. The working tree
+carries these eight untracked files and **nothing else** -- no modified tracked
+file at any point in this closure pass.
+
+The baseline comparison in §M required checking out `8a45d1a` in a detached
+HEAD and returning to `main`; that is a read-only navigation of committed
+history, it cannot touch untracked files, and the hashes above were re-taken
+afterwards to prove it did not.
 
 ---
 
@@ -541,6 +709,103 @@ last-seen value. Nothing acted on it -- the supervisor probes live health, and
 Doctor's own `camera_node` check reported the staleness honestly -- but the
 Stream-level field is optimistic in that window. It is a pre-existing status
 projection this milestone did not touch.
+
+### The stale `camera_connected` field -- traced and dispositioned
+
+The observation above (`camera_connected: true` while the real Camera Node was
+genuinely unreachable) was given one bounded producer/consumer trace. Findings:
+
+**Producer.** Two, both in `src/mockingbird/observation/`:
+`engine_runtime.py` owns `_camera_connected` for a *live* session, and
+`unified_status.py` projects it for every lane. The field observation came from
+`camera_node_facts()`'s **no-session** branch
+([unified_status.py:233-272](../src/mockingbird/observation/unified_status.py)),
+which derives connectivity from `config.camera_node_last_seen_at`.
+
+**Consumers.** Outside the two producers, `camera_connected` is read in exactly
+three places, all **display-only**: `api/schemas.py:1557` (the wire field),
+`api/main.py:10930` (choosing which of two messages to show),
+`api/main.py:11909` (pass-through). One further use,
+`unified_status.py:210`, gates the `edit_camera_setup` UI link. **No recovery,
+resume, admission or control-flow path reads it** -- `camera_node_recovery.py`
+does not reference it at all, which is why the field run's supervisor still
+recovered correctly while the field was optimistic.
+
+**Is it user-facing? Yes -- this must be recorded plainly rather than
+dismissed.** `web/src/components/ObservationControlPanel.tsx:267` renders
+`<strong>Camera</strong> {status.camera_connected ? "Healthy" : "Needs
+attention"}`, and that panel is embedded by **`StreamDetailPage.tsx:4151`** (the
+Stream detail release surface) and **`OnboardingWizard.tsx:435`**. It is the
+only consumer, and it renders that line *only* when `state !== "observing"` --
+precisely the stopped/no-session branch the stale path feeds. So during the
+outage window a user on Stream detail did read "Camera Healthy". It is **not**
+surfaced on Cameras, Dashboard or Doctor, and Doctor's own `camera_node` check
+reports staleness honestly and independently.
+
+**Is it documented as last-seen state, or presented as current connectivity?**
+Presented as current (`"Camera Node is paired and ready."`), **but bounded and
+deliberate, not unbounded staleness.** `CAMERA_NODE_LAST_SEEN_STALE_AFTER_SECONDS
+= 300.0`; past it the same branch returns `camera_connected=False` with
+`"Camera Node offline -- last seen N minute(s) ago."` Both halves are existing,
+passing regression tests introduced by Camera Node Boot Identity + Autonomous
+Recovery v1:
+`test_camera_node_never_started_with_stale_last_seen_reports_offline` (60 min ->
+offline) and `test_camera_node_never_started_with_fresh_last_seen_reports_connected`
+(2 min -> connected, "a deliberate, disclosed scope boundary").
+
+**The field observation fell inside that window.** Node stopped 15:04:27,
+confirmed unreachable 15:04:48, polls ran 15:05:14 -> 15:07:33 -- at most ~186 s
+against a 300 s threshold. Nothing was observed outside it.
+
+**Disposition: nonblocking deferred field-quality issue. Not fixed.** The
+brief's rule A and rule B do not cleanly cover this case, so the reasoning is
+stated rather than a branch merely claimed:
+
+- Rule A's premise does **not** fully hold -- the value *is* on a user-facing
+  product surface. That half of A is not claimed here.
+- Rule B's condition is literally met for up to five minutes, but what it targets
+  -- a stale last-seen value masquerading indefinitely as live connectivity --
+  is **not** what exists. What exists is a heartbeat freshness window with an
+  explicit threshold, an honest post-threshold message, and regression tests
+  asserting both sides.
+- Decisively: "fixing" it would mean **reversing an explicitly accepted product
+  decision** encoded in a currently-passing test
+  (`..._with_fresh_last_seen_reports_connected`). Narrowing the window or
+  rewording the fresh-window copy is a product change to an accepted trade-off,
+  not a narrow defect repair, and is therefore outside this milestone's
+  authorized scope (fix exactly the two blockers and their direct dependencies).
+
+No live-probe or recovery behaviour was altered, and no Node self-test behaviour
+was touched. If the owner judges a 300 s optimistic window unacceptable on
+Stream detail, the narrowest available change is to the fresh-window *wording*
+(state last-seen age rather than "paired and ready"), which leaves the threshold,
+the probe and the recovery path untouched -- offered as an option, not taken
+here.
+
+### Newly identified: a pre-existing Dashboard/Today truth regression (NOT this milestone's)
+
+Found while classifying the Core run (§M), not by a health audit, and reported
+because leaving a known user-facing truth defect unrecorded would be worse than
+reporting one outside this milestone's scope.
+
+`dashboard_summary`'s Today counts collapse toward `0` for **reviewed/confirmed**
+Visits, because a review-queue bulk preload populated earlier in the *same shared
+read cache* answers Today's motion-evidence lookups with an authoritative `None`
+for Visits the queue never covered. Full mechanism, bisect and first bad commit
+(`3d78f8a`, Review Queue Scale Closure v1, 2026-09-23) are in §M.
+
+- **Attribution:** a prior milestone. Present and identical at this milestone's
+  `8a45d1a` baseline; nothing here caused or touched it.
+- **Severity:** the landing page's Today panel under-reports confirmed activity
+  -- a truth regression on a primary release surface, not cosmetic.
+- **Status:** **not fixed** (outside authorized scope). Recorded as a
+  **release-blocker candidate for the owner's decision**, and it is the one item
+  in this report that may bear on whether v0.1 is shippable.
+- **Caveat on scope of proof:** seven tests and the code path are the evidence.
+  The blast radius beyond `dashboard_summary` was deliberately **not** swept --
+  the same authoritative-`None` shape could in principle affect any builder that
+  runs inside a shared cache after a queue preload. Establishing that is the
+  fixing milestone's job, and this report does not claim it is confined to Today.
 
 ---
 

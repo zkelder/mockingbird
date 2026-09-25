@@ -3910,6 +3910,64 @@ v0.1 blocker. This entry **authorizes no further milestone**: *Documentation /
 Diagnostics / Release Engineering Closure* remains unauthorized until Field
 Validation Closure v1 is accepted.
 
+### Acceptance-closure record (2026-09-25)
+
+The correction milestone's remaining acceptance work is complete.
+
+| | |
+| --- | --- |
+| Correction implementation HEAD | `15691d9` |
+| Field-evidence HEAD | `2cdb39b` |
+| Schema | **v61** (`v60 -> v61`, one additive table); version `0.1.0` unchanged |
+| **Final Core result** | **`11 failed, 6205 passed, 4 skipped, 35 deselected, 11 xfailed` (0:41:00) -- ZERO failures attributable to this milestone** |
+| Core attribution method | all eleven reproduce deterministically in isolation, and all eleven fail **identically at the pre-correction baseline `8a45d1a`**. Four are the established recorded pre-existing set; seven were bisected to `3d78f8a` (Review Queue Scale Closure v1, 2026-09-23) -- `73dbcd4` PASS -> `3d78f8a` FAIL, direct parent, so the attribution is exact |
+| Real-hardware evidence | real Windows 10 Pro Host + real Raspberry Pi 4 Camera Node (`node-76ec8e53ae586dd0`, real `ov64a40` CSI camera); build confirmed via the product's own `GET /api/product/instance`; four Host restarts; v60 -> v61 migration of a real 169-Visit / 343-asset field database with all counts intact and **0 intent rows** |
+| Protected files | all seven re-verified byte-identical to their hashes of record and still untracked; `uv.lock` untouched. Working tree carries those eight untracked files and nothing else |
+| Push | **not pushed.** No tag, no publish, no remote operation |
+
+**Disposition of the stale `camera_connected` field: nonblocking deferred
+field-quality issue, NOT fixed.** Traced producer to consumer. It *is*
+user-facing -- `ObservationControlPanel` renders "Camera Healthy" from it on
+Stream detail and in the onboarding wizard -- so branch A's "not user-facing"
+premise is **not** claimed. But it is a bounded **300 s** heartbeat freshness
+window (`CAMERA_NODE_LAST_SEEN_STALE_AFTER_SECONDS`), past which the same
+projection reports `camera_connected: false` / "Camera Node offline -- last seen
+N minute(s) ago", with existing passing regression tests on **both** sides; the
+field observation fell inside that window (~186 s). No recovery, resume,
+admission or control-flow path reads the field -- only display. Changing it would
+reverse an accepted product decision encoded in a currently-passing test, which
+is a product change rather than a narrow repair, and so outside this milestone's
+authorization. Live-probe/recovery behaviour and Node self-test behaviour were
+untouched. Full reasoning: corrections report §O.
+
+**Durable observation-intent contract, migration safety and field integrity** are
+recorded clause by clause, each against a named passing test or a field
+observation, in the corrections report's "Closure confirmations" section.
+
+**Remaining Q-2 / Q-4: both open, both deliberately unfixed, and NEITHER is
+release-blocking.** Q-2 (stale Camera Node startup self-test) is invisible in the
+product -- the Host never reads it -- and pessimistic in direction. Q-4
+(false-Visit burst during camera re-initialisation) is within accepted, disclosed
+product behaviour, human review being the product's answer to false Visits.
+
+**One newly identified release-blocker CANDIDATE, belonging to a prior
+milestone.** While classifying the Core run, `dashboard_summary`'s Today counts
+were found to collapse toward `0` for reviewed/confirmed Visits: a review-queue
+bulk preload sharing the same read cache answers Today's motion-evidence lookups
+with an authoritative `None` for Visits the queue never covered
+(`_preloaded_motion_evidence_for_review_queue_item` returns `None` instead of its
+`_PRELOAD_MISS` sentinel; `_read_only_build_cache` has nested builds share the
+outermost cache). Introduced by `3d78f8a`, present at `8a45d1a`, therefore
+present in the build Field Validation Closure v1 validated -- its §U verdict of
+"no remaining v0.1 field blockers" was reached without knowledge of it. This is a
+user-facing truth regression on the landing page. **Not fixed** -- outside this
+milestone's authorized scope. Its blast radius beyond `dashboard_summary` was
+deliberately not swept and is **not** claimed to be confined to Today. Whether it
+blocks v0.1 is the owner's decision.
+
+**Field Validation Closure v1 still awaits ChatGPT acceptance.** Nothing in this
+entry marks it globally accepted.
+
 **Accepted, 2026-09-25, by Field Validation Closure v1's own baseline
 reconciliation.** Performance / Scale / Stability Closure v1 (the
 `IMPLEMENTED, pending external acceptance` entry below) and the
@@ -12902,6 +12960,15 @@ claims -- see
 [external-acceptance-entry-readiness-uninstall-closure-v1-report.md](external-acceptance-entry-readiness-uninstall-closure-v1-report.md)
 §4 and §6. The "Latest accepted Core checkpoint" below remains the most
 recent actual full-suite number.
+
+> **Pointer added 2026-09-25 (Native-Windows Field Reliability Corrections v1
+> acceptance-closure).** The checkpoint ledger below is historical and stops at
+> schema `v59`. It is **not** the current Core result. The most recent full Core
+> run is the one recorded in §3's acceptance-closure record: `11 failed, 6205
+> passed, 4 skipped, 35 deselected, 11 xfailed` at schema **v61**, with zero
+> failures attributable to that milestone. Reconciling this ledger (and the rest
+> of this file, un-reconciled since 2026-09-12) belongs to *Documentation /
+> Diagnostics / Release Engineering Closure*, which is **not yet authorized**.
 
 **Latest accepted Core checkpoint (Final Release Hardening & Launch
 Readiness v1):** 5995 passed / **4 failed** / 4 skipped / 35 deselected
