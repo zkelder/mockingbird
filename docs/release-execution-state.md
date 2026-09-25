@@ -3849,6 +3849,29 @@ exactly as open as stated.
 
 ## 3. Current authorized milestone
 
+**Accepted, 2026-09-25, by Field Validation Closure v1's own baseline
+reconciliation.** Performance / Scale / Stability Closure v1 (the
+`IMPLEMENTED, pending external acceptance` entry below) and the
+subsequent Review Queue Scale Closure v1 and Remaining Performance P1
+Closure v1 are now **accepted**: accepted HEAD `d5dd1d9`, schema `v60`.
+Validation state carried forward unchanged from each milestone's own
+record (below, and in
+[performance-scale-stability-closure-v1-report.md](performance-scale-stability-closure-v1-report.md),
+[review-queue-scale-closure-v1-report.md](review-queue-scale-closure-v1-report.md)
+and the Remaining Performance P1 Closure v1 commit series
+`1919017`..`d5dd1d9`). **No remaining P0 or P1 performance blocker**:
+the Review Queue unbounded-retrieval P0 that Performance / Scale /
+Stability Closure v1 disclosed is closed by Review Queue Scale Closure
+v1, and P1-7/P1-8 are closed by Remaining Performance P1 Closure v1.
+**Performance P2 items remain deferred**, unchanged and still
+unauthorized. **Current authorized milestone = Field Validation Closure
+v1** -- real-hardware field validation (native-Windows Host, real
+reference Camera Node, real camera, real network, accepted production ML
+pipeline), report-first, closing the remaining real-world field-evidence
+gaps rather than reopening accepted work. This entry records only that
+accepted delta; it rewrites no unrelated scheduler history and
+authorizes no milestone beyond Field Validation Closure v1 itself.
+
 **Accepted, 2026-09-22, by Performance / Scale / Stability Closure v1's
 own baseline reconciliation.** UI/UX & First-Run Adoption v1 (the entry
 below) is now accepted: accepted HEAD
