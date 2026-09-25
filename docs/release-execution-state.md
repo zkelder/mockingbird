@@ -3849,6 +3849,67 @@ exactly as open as stated.
 
 ## 3. Current authorized milestone
 
+**Recorded, 2026-09-25, by Native-Windows Field Reliability Corrections v1.**
+
+*Field Validation Closure v1* **executed at `8a45d1a` but is NOT accepted** --
+it is awaiting exactly two field corrections. Its report is valid evidence of
+what the `d5dd1d9` build did and is preserved unchanged; two of the four
+defects it disclosed (`Q-1` native-Windows local time falling back to a fixed
+UTC offset, and `Q-3` observation not resuming after a Host restart) were
+judged v0.1-critical and had to be fixed before that acceptance decision could
+be made.
+
+*Native-Windows Field Reliability Corrections v1* was **authorized** as that
+bounded correction milestone -- fix exactly those two blockers and their direct
+dependencies, nothing else, with mandatory repeat validation on the same real
+native-Windows Host + real Camera Node topology. See
+[native-windows-field-reliability-corrections-v1-contract.md](native-windows-field-reliability-corrections-v1-contract.md)
+and
+[native-windows-field-reliability-corrections-v1-report.md](native-windows-field-reliability-corrections-v1-report.md).
+
+**Concrete correction evidence, implemented at HEAD `15691d9`, schema
+`v60 -> v61`:**
+
+- **Blocker 1 (Q-1) CLOSED.** Two independent faults, both required: no
+  Windows -> IANA zone-name derivation existed anywhere in the product (so the
+  resolver always reached its fixed-offset fallback), and `tzdata` was not
+  packaged either (both `astral` and `tzlocal` declare it conditionally for
+  Windows, but `install_windows_runtime_dependencies` resolves environment
+  markers against the Linux build host while only wheel *tags* honor
+  `--platform win_amd64`). `tzlocal`'s CLDR `windowsZones` mapping is now
+  resolution step 3 -- after `TZ` and `/etc/localtime`, so no Linux/macOS
+  resolution changes -- and `tzdata` is packaged explicitly. Proven in the
+  deployed packaged runtime on the real Host: `TimeZoneKeyName "Eastern
+  Standard Time" -> America/New_York`; `2026-12-15 16:00Z -> 11:00 EST-0500`
+  (was `12:00 "Eastern Daylight Time-0400"`); `2026-07-15 16:00Z -> 12:00
+  EDT-0400`; both DST transitions correct on both sides; Doctor's Clock check
+  now reports `America/New_York` live. No stored timestamp rewritten, API UTC
+  fields unchanged, Local Only preserved, no external timezone service.
+- **Blocker 2 (Q-3) CLOSED.** The resume mechanism was never missing --
+  `CameraNodeRecoverySupervisor` reads an *in-memory* session status, which a
+  Host restart destroys; what was missing was a durable record of whether
+  observation *should* be active. New `stream_observation_intents` table
+  (schema `v61`, one additive table, one row per Stream), written at the
+  product action and deliberately never at a runtime teardown -- which makes a
+  clean restart and an abrupt kill one mechanism rather than two. Proven on the
+  real topology with **no manual action**: graceful restart resumed in ~12 s
+  with fresh frames and zero duplicate Stream/Source/session/Reviewed state; a
+  deliberately stopped observation **stayed stopped** across a restart (20
+  polls / ~6 min, Node never probed); a Host started while the Node was
+  unavailable resumed ~29 s after the Node returned; an **abrupt
+  `Stop-Process -Force`** also resumed automatically. `PRAGMA quick_check` ok,
+  0 duplicate Visit ids, Reviewed truth unchanged, no media loss.
+
+**This entry does not claim global acceptance of Field Validation Closure v1**
+-- that decision is the owner's/ChatGPT's, and the addendum in
+[field-validation-closure-v1-report.md](field-validation-closure-v1-report.md)
+exists so it can be made. `Q-2` (stale Camera Node startup self-test) and `Q-4`
+(camera-re-initialisation false-Visit burst) remain **open and deliberately
+unfixed**; neither was a dependency of either correction, and neither is a
+v0.1 blocker. This entry **authorizes no further milestone**: *Documentation /
+Diagnostics / Release Engineering Closure* remains unauthorized until Field
+Validation Closure v1 is accepted.
+
 **Accepted, 2026-09-25, by Field Validation Closure v1's own baseline
 reconciliation.** Performance / Scale / Stability Closure v1 (the
 `IMPLEMENTED, pending external acceptance` entry below) and the

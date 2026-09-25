@@ -721,3 +721,108 @@ not resume after a Host restart, which matters for unattended 24/7 use). Both
 fit naturally inside the expected next milestone, *Documentation / Diagnostics
 / Release Engineering Closure*, either as narrow corrections or as explicitly
 documented limitations. **This report authorizes no milestone.**
+
+---
+
+# Addendum -- Native-Windows Field Reliability Corrections v1 (2026-09-25)
+
+Added by *Native-Windows Field Reliability Corrections v1*, a bounded
+correction milestone authorized specifically because **this report's own §Q-1
+and §Q-3 had to be fixed before Field Validation Closure v1 could be
+accepted**. Everything above is preserved unchanged: it is valid evidence of
+what the `d5dd1d9` build actually did, and the two defects it recorded were
+real and correctly characterised.
+
+Full record:
+[native-windows-field-reliability-corrections-v1-report.md](native-windows-field-reliability-corrections-v1-report.md)
+(contract:
+[native-windows-field-reliability-corrections-v1-contract.md](native-windows-field-reliability-corrections-v1-contract.md)).
+
+**Both corrections were re-proven on this same real topology** -- the same
+native-Windows Host, the same reference Raspberry Pi Camera Node
+(`node-76ec8e53ae586dd0`), the same real `ov64a40` camera, the same real field
+database. Build under test `15691d9`, confirmed via the product's own
+`GET /api/product/instance`, not via any deploy helper's claim. The real field
+database migrated **v60 -> v61** during deployment with every count preserved
+exactly (169 Visits / 167 candidates / 343 media / 2 Streams / 2 Sources / 2
+reviewed Visits, all identical before and after).
+
+## Q-1 -- CORRECTED and field-verified
+
+§Q-1 named the fix correctly ("adding `tzdata` alone is insufficient ... it
+needs a Windows-registry -> IANA mapping"). Both halves were required, and both
+were genuinely broken:
+
+1. no Windows -> IANA name derivation existed anywhere in the product, so the
+   resolver always reached its fixed-offset fallback;
+2. `tzdata` was not packaged either -- `astral`/`tzlocal` declare it
+   conditionally for Windows, but the Windows installer resolves environment
+   markers against the *Linux build host* while only wheel tags honor
+   `--platform win_amd64`, so both conditions evaluated False.
+
+`tzlocal` (CLDR `windowsZones`) is now resolution step 3, after `TZ` and
+`/etc/localtime` and before the unchanged fixed-offset fallback; `tzdata` is
+packaged explicitly. Measured in the deployed packaged runtime on the real
+Host, against this report's own reproduction:
+
+| Instant | `d5dd1d9` (§Q-1) | `15691d9` |
+| --- | --- | --- |
+| 2026-12-15 16:00 UTC | 12:00 "Eastern Daylight Time-0400" -- **wrong** | **11:00 EST-0500** |
+| 2026-07-15 16:00 UTC | 12:00 EDT-0400 | 12:00 EDT-0400 |
+| resolved IANA key | `None` | `America/New_York` |
+| `tzdata` | NOT present | present |
+
+Both DST transitions are also correct on both sides (2026-03-08
+06:59:59Z -> 01:59:59 EST and 07:00:00Z -> 03:00:00 EDT; 2026-11-01
+05:59:59Z -> 01:59:59 EDT and 06:00:00Z -> 01:00:00 EST). Doctor's Clock check,
+read live over HTTP, now reports `Host local timezone resolved to
+America/New_York` where it previously could only report the fallback. Real
+field observations render in correct local time with descending order preserved,
+and **no stored timestamp was rewritten** -- the fix is entirely at read time,
+and §N's finding that the API boundary was already unambiguous UTC still holds.
+
+## Q-3 -- CORRECTED and field-verified
+
+§I's diagnosis was exactly right: `CameraNodeRecoverySupervisor` reads an
+**in-memory** session status, which a Host restart destroys. The resume
+mechanism was never missing -- the product simply had no durable record of
+whether observation was *supposed* to be happening, so it could not tell "the
+Host restarted" from "a person pressed Stop."
+
+`stream_observation_intents` (schema v61) now records that intent at the
+product action and deliberately **not** at any runtime teardown, which is what
+makes a crash and a clean restart one mechanism rather than two.
+
+Repeating §I's scenario on the corrected build, and then the cases §Q-3 could
+not previously reach:
+
+| Scenario | Result |
+| --- | --- |
+| Observing, graceful Host restart, **no manual action** | shutdown 14:49:49 -> relaunch 14:50:01 -> **resumed automatically 14:50:12.9** (~12 s); fresh frames confirmed 14:55:55 (598 track updates, 3 candidates in the resumed session) |
+| Duplicate state after resume | none: Streams 2, Sources 2, reviewed Visits 2, intent rows 1 -- identical to entry |
+| Deliberately stopped, then Host restarted | **stayed stopped** across 20 consecutive polls over ~6 minutes; the Node was never even probed |
+| Host starts while the Camera Node is **unavailable** | honest `stopped` for 10 polls while unreachable; Node returned 15:08:09 -> **resumed automatically 15:08:38.5** (~29 s), no manual action |
+| **Abrupt kill** (`Stop-Process -Force`, no graceful shutdown) | intent `updated_at` unchanged (the dying process wrote nothing) -> relaunch 15:10:36 -> **resumed automatically 15:10:41** |
+
+Across all four restarts on the real field database: `PRAGMA quick_check` **ok**,
+0 duplicate Visit ids, Reviewed truth unchanged (2 Visits / 2 labels), no
+Inferred -> Reviewed promotion, no media loss (343 -> 359 assets, growth only
+from real new observation), `[PASS] media_integrity`, and no phantom-online
+state.
+
+## What this addendum does and does not change
+
+- **§Q-1 and §Q-3 are closed.** Their "Not fixed here, deliberately" paragraphs
+  describe this report's own correct scope decision at the time, not the
+  current product.
+- **§Q-2 and §Q-4 stand unchanged and unfixed**, as the correction milestone's
+  brief directed; neither proved to be a dependency of either fix. Q-2 was
+  observed again live (`self_test: degraded` on a Node whose camera then worked)
+  and remains invisible in the product and pessimistic in direction.
+- **§U's "no remaining v0.1 field blockers" verdict is unchanged**, and the two
+  items it placed before the owner as decisions have now been decided and
+  implemented.
+- **§C, §F-§P's evidence is not re-litigated.** Only the two corrected
+  behaviours were re-run.
+- **This addendum does not accept Field Validation Closure v1.** It records the
+  corrected evidence so that decision can be made.
