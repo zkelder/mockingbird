@@ -689,7 +689,7 @@ recall evidence; that rests on the accepted Gate A body (§C, §J).
 
 ## V. Final HEAD / schema
 
-- Repository HEAD at closure: see the commit created by this milestone on
+- Repository HEAD at closure: `4ddc150` on
   `main` (report + `docs/release-execution-state.md` §3 delta only).
 - Product schema: **v60**, unchanged by this milestone. The real field
   database was migrated `v59 -> v60` *by the accepted build itself* during
